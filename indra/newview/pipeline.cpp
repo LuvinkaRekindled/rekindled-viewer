@@ -7581,6 +7581,12 @@ bool shadow_census_on()
     return on;
 }
 
+// LL_VK_SHADOWCENSUS=1: the passes renderShadow runs by kind: 0 the sun cascades of the main view, 1 the sun cascades of a reflection probe face (gCubeSnapshot), 2 the spot and projector maps; how many a frame and the main
+// thread's time in them. (The pass index of the frame cannot tell the kinds apart: a reused cascade does not count.)
+bool sShadowSpotCall = false;
+struct PassKindCensus { U64 mCalls[3] = {}, mNs[3] = {}; };
+PassKindCensus sPassKinds;
+
 void note_shadow_prep_frame(bool parallel, U32 cascades)
 {
     ShadowPrepTimes& t = sShadowPrepTimes[parallel ? 1 : 0];
@@ -7622,6 +7628,18 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                     k.mLodGroups[c].exchange(0) / f, k.mLodGroupsNew[c].exchange(0) / f, k.mLodDrawables[c].exchange(0) / f, k.mLodDrawablesNew[c].exchange(0) / f, k.mDeferred[c].exchange(0) / f);
             }
             LL_INFOS("ShadowCensus") << "per frame over " << t.mFrames << " frames:" << line << LL_ENDL;
+            {
+                static const char* kind_names[3] = { "main view cascades", "reflection probe faces", "spot/projector maps" };
+                std::string kinds;
+                for (int k = 0; k < 3; ++k)
+                {
+                    const double calls = (double)sPassKinds.mCalls[k];
+                    kinds += llformat(" | %s: %.2f passes a frame, %.3f ms a frame (%.0f us a pass)", kind_names[k], calls / f, (double)sPassKinds.mNs[k] / 1.0e6 / f, calls > 0 ? (double)sPassKinds.mNs[k] / 1.0e3 / calls : 0.0);
+                    sPassKinds.mCalls[k] = 0;
+                    sPassKinds.mNs[k] = 0;
+                }
+                LL_INFOS("ShadowCensus") << "renderShadow passes by kind, per frame over " << t.mFrames << " frames:" << kinds << LL_ENDL;
+            }
             CascadeCullCensus& k = sCascadeCullCensus;
             LL_INFOS("ShadowCensus") << llformat("rebuilds in the shadow prep per frame (the world view sees the group / only the cascades do): mesh %.2f / %.2f, geometry %.2f / %.2f, new draw info %.2f / %.2f",
                 k.mMeshDirty[0] / f, k.mMeshDirty[1] / f, k.mGeomDirty[0] / f, k.mGeomDirty[1] / f, k.mNewDrawInfo[0] / f, k.mNewDrawInfo[1] / f) << LL_ENDL;
@@ -23063,6 +23081,20 @@ static void shadow_census_report(U32 frames)
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_CPU_ZONE("renderShadow (all passes)");
+    struct PassKindScope
+    {
+        const bool mOn = shadow_census_on();
+        const int mKind = gCubeSnapshot ? 1 : (sShadowSpotCall ? 2 : 0);
+        const std::chrono::steady_clock::time_point mT0 = mOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+        ~PassKindScope()
+        {
+            if (mOn)
+            {
+                ++sPassKinds.mCalls[mKind];
+                sPassKinds.mNs[mKind] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mT0).count();
+            }
+        }
+    } pass_kind_scope;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_RENDER);
     LL_PROFILE_GPU_ZONE("renderShadow");
 
@@ -25772,7 +25804,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 RenderSpotLight = drawable;
 
+                sShadowSpotCall = true;
                 renderShadow(view[i + 4], proj[i + 4], shadow_cam, result[i], false);
+                sShadowSpotCall = false;
 
                 RenderSpotLight = nullptr;
 
