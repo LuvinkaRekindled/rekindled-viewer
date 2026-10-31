@@ -432,8 +432,8 @@ void LLSpatialGroup::rebuildGeom()
     clearState(FS_RELEASED);
     if (!isDead())
     {
-        getSpatialPartition()->rebuildGeom(this);
-        ll_scene_fragment_build(this);
+        { LL_CPU_ZONE("rebuild: partition rebuildGeom (the volume or simple geometry manager)"); getSpatialPartition()->rebuildGeom(this); }
+        { LL_CPU_ZONE("rebuild: scene geometry fragment build"); ll_scene_fragment_build(this); }
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {

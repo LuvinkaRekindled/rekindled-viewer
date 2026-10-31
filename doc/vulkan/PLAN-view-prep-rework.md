@@ -165,3 +165,60 @@ Measured first (probe, short zone laps): the attachment loop is 0.67 ms for abou
 **Reads in phase A that expect an earlier write of phase B (the audit):** `getSpatialBridge()` after `override_bbox` (movePartition can change the partition), `getSpatialGroup()` before the render order is written, `isState(ON_MOVE_LIST / EARLY_MOVE)`. Each is recorded with the value phase A saw, and phase B compares it with what it finds when the op is replayed: a **stale-read counter** (0 expected). That is the check: it needs no snapshot of the octree, and it counts exactly the cases where deferring a write would have changed what a later step saw.
 
 Steps: A1 the ledger and the replay with the counter, run serially (record every op in the loop, replay in order at the end of each avatar; the frame must come out the same, the counter must stay 0); A2 phase A as one job per avatar with a ledger each, replayed in avatar order (an avatar keeps an inline path for the agent's own avatar); A3 the avatar-local pieces (appearance animation, head offset, matrices) in the same jobs. Each behind a setting, the old path kept for the check until the soak.
+
+### 8.4 The inventory again, with the avatar jobs on (lap `inv2-poolnewz1`, short, zone timers on, 76 avatars, 701 nearby lights, 2026-10-31)
+
+Loop 10.93 ms (12.3 in the first inventory; the scenes differ). The main thread blocks 0.2 ms in all in the pool joins, as before.
+
+| Piece | ms | Before | Notes |
+|---|---|---|---|
+| `gObjectList.update` | 1.78 | 2.71 | avatar motion batch 0.77 (1.57), idleUpdate (avatars) 0.65, attachment loop on main 0.13 (0.79), flexible objects 0.15 |
+| `generateSunShadow` | 1.81 | 2.09 | renderShadow recording 0.75 (0.96), cull and cloud waits 0.33, spot/projector 0.15 |
+| `stateSort (early)` | 1.19 | 1.12 | postSort 0.67 (priority groups 0.32, render map 0.13), apply deltas 0.22, compute waits 0.13 |
+| `renderDeferredLighting` + post-deferred geometry | 1.17 + 0.95 | 1.05 + 0.85 | command recording |
+| `render_ui` | 1.11 | 1.12 | widgets 0.80, name tags 0.13 |
+| `avatar velocity` (rigged draws: collect, palettes, motion test 0.53; collect draw infos 0.15) | 0.63 | 0.68 | walks every rigged draw: per-avatar data |
+| `updateCull` | 0.45 | 0.44 | |
+| textures (`updateImages` 0.32, fetch dispatch 0.30, decode priority 0.22 + 0.17) | ~1.0 | 1.2 | |
+| octree movement: `partition move` 0.22 (295 calls, includes `updateInGroup` 0.17), `updateMovedList` 0.17, `idle: updateMove` 0.10 | **~0.4** | "~1.1" | **the first inventory added inclusive zones that nest in each other** (partition move contains updateInGroup contains movePartition); the cost of the octree movement bookkeeping is about 0.4 ms, not 1.1 |
+
+Corrections: (1) the octree movement is about 0.4 ms in all, and the avatar jobs have taken the attachment share of it out of the completion loop but their octree moves are still made on the main thread when the ledgers are replayed; (2) the avatar update has come down about 0.9 ms between the two inventories (some of it scene); the pieces left are the idle updates (0.65), the motion batch residue (blend 0.4 plus the join and replay) and the avatar velocity pass (0.63), which walks every rigged draw and is per-avatar data.
+
+### 8.5 Octree movement (read 2026-10-31; Adam chose it for being structural, knowing the cost is about 0.4 ms)
+
+Two parts, and they are not the same problem:
+
+1. **The moved list** (`updateMovedList(mMovedList)` in `updateMove`, `updateMovedList(mMovedBridge)` in `updateGeom`; 0.17 ms in the inventory scene, much more in a scene with many moving prims or vehicles). Each entry gets `updateMove()` (transform math in `updateXform`, `makeActive`, `updateText`, `movePartition`, rebuild marks), then the `done` handling (`makeStatic`, `ON_MOVE_LIST`, the animated-child rebuild, the erase). The shared writes are all recorded already by the avatar ledger (moved lists, the octree moves, `makeActiveShared`, `updateText`, the rebuild marks through `sSortSink`), plus `dirtySpatialGroup` (a group flag and a group rebuild mark) which still needs a recorded form. The ordering rule is the hierarchy: a child reads its parent's transform and the list holds parents first, so the unit of a job is a **linkset** (all entries of one root, in list order). Plan: a serial pre-pass (the cold-mode skip, the EARLY_MOVE test, grouping the entries by root), one pool job per linkset with a ledger range for each entry, then a serial post-pass in list order that replays each entry's ledger range and does its `done` handling and the erase exactly as the loop does now. Behind `LL_VK_MOVED_PARALLEL`, with the stale-read counter, the old loop kept for the soak.
+2. **The apply side** (`partition move` 0.22 ms in 295 calls, of which `updateInGroup` 0.17): the replay of the recorded octree moves is still serial. Most of the calls are the cheap case (the drawable stays in its group: `updateSpatialExtents`, `unbound()` up the parent chain, `OBJECT_DIRTY`). Parallel apply would need ownership of the group and its ancestors (a lock per node, or applying by subtree), for at most 0.1-0.2 ms. Not started: it is the part that changes the octree itself, and the data does not yet say it is worth it. If the cull walk and the group rebuild are reworked later (0.45 and 0.32 ms), the shape of the tree gets decided there.
+
+Estimated gain of part 1 in the inventory scene: under 0.1 ms; the point is the scenes with many movers, and having one path for everything that moves.
+
+### 8.6 The group rebuild: the audit (read 2026-10-31; no code; to come back to)
+
+`LLSpatialGroup::rebuildGeom` -> `LLSpatialPartition::rebuildGeom` (the simple partitions: clear the draw map, count, allocate the group's vertex buffer, `getGeometry`) or `LLVolumeGeometryManager::rebuildGeom` (the volume, bridge and avatar partitions, about 560 lines; `genDrawInfo` another 640). 0.32 ms in `postSort: rebuildPriorityGroups` (4 groups a frame), more in a scene that changes; the avatar bridge groups were three quarters flexible prims' rebuilds before FSFlexibleStayInGroup.
+
+**It is not the same audit as the attachment loop.** The attachment loop's shared writes were queue pushes and octree moves; the volume rebuild reaches into many systems before it makes any geometry:
+
+1. **Static scratch.** The faces are sorted into `sSimpleFaces[i]`, `sFullbrightFaces[i]`, `sAlphaFaces[i]`, `sBumpFaces`, `sNormFaces`, `sSpecFaces`, `sNormSpecFaces`, `sPbrFaces` (static arrays, `allocateFaces`): two groups cannot rebuild at once until these are per job.
+2. **Before the face loop, per drawable:** `vobj->updateTEMaterialTextures` and `updateTextureVirtualSize(true)` (texture stats and fetch priority on textures shared between groups), `gGLTFMaterialList.applyQueuedOverrides` (the global material list), `vobj->updateControlAvatar()` (can create or destroy an animesh control avatar), `avatar->addAttachmentOverridesForObject` (skeleton overrides of the avatar), `gMeshRepo.meshRezEnabled`, `LLPipeline::sVolumeSAFrame` (a global accumulator), `vobj->preRebuild()`.
+3. **In the face loop:** `facep->getPool()` / `setPoolType` and `gPipeline.getPoolTypeFromTE` (the draw pools' face lists are shared by every group), the texture of each face (`facep->getTexture()`), the rigged-state change of a drawable on first rigging.
+4. **`genDrawInfo`** (per mask: simple, fullbright, alpha, bump, norm, spec, normspec, pbr): creates the draw infos, new `LLVertexBuffer`s (the arena allocator takes a mutex and the render worker's command queue is written), `getGeometry` fills the group's own vertex data from each face's volume (the actual math), `mGeometryBytes`.
+
+**What this says about the shape of a parallel rebuild:** two phases. **Prepare (serial, the cross-system effects)** = items 2 and 3 plus the sorting into scratch; **generate (parallel, one job per group, scratch per job)** = `genDrawInfo` and `getGeometry`, which write the group's own buffers, draw infos and faces. The generate half is where the time probably is (it fills vertex data for every face of the group) and it is group-owned data, so it is the right unit. Open: the split of the 0.32 ms between the two halves is not measured (the zones inside rebuildGeom do not exist at CPU-zone level); three zones (face list and prepare, `genDrawInfo`, `getGeometry`) would say, and are the first thing to add when this is picked up. Also open: `LLVertexBuffer` allocation from a pool thread (the arena mutex is there; the render worker's queue write is the main thread's), and whether `getGeometry` reads anything a concurrent job writes (a face's texture entry, a volume's LOD data shared by several drawables).
+
+**Verdict:** tractable as prepare/generate, not as the plain record-and-replay of the avatar loop; the first step is the measurement, the second the per-job scratch arrays (a mechanical change with a check: the output vertex data and draw infos of a serial rebuild compared with the split one, which is a stronger check than the stale-read counter because the result is a buffer, not a queue).
+
+### 8.7 The group rebuild measured (laps `rb1-rebz1`, `rb2-rebz1`, full laps with the turn, zone timers on; zones added in llvovolume.cpp and LLSpatialGroup::rebuildGeom, kept)
+
+| Zone (ms a frame) | still before the turn | the minute of the turn | still after |
+|---|---|---|---|
+| `rebuildPriorityGroups` (4 calls) | 0.26-0.28 | 0.65-0.72 | 0.30-0.32 |
+| `genDrawInfo` (2-3 calls; 12-14 in the turn) | 0.05-0.06 | 0.29-0.34 | 0.07 |
+| of it, `getGeometryVolume` (the vertex math; 25 calls, 109-124 in the turn) | 0.03 | 0.15-0.18 | 0.03 |
+| prepare (the face list into the scratch) | 0.02-0.03 | 0.09-0.11 | 0.02 |
+| `LLSpatialGroup::rebuildGeom` -> partition `rebuildGeom` | 0.31 (457 calls) | 0.79 (835 calls) | 0.34 (484 calls) |
+| the scene geometry fragment build after it | 0.03 (457 calls) | 0.07 (835) | 0.03 |
+
+What it says: the real rebuild work is small. In the stills the generate and prepare halves together are about 0.09 ms; the rest of what `rebuildPriorityGroups` shows is **457 to 835 calls a frame to the group rebuild, most of them early-outs** (the group is not `GEOM_DIRTY`), and in a zone lap each call carries about 0.5 us of zone overhead, so the 0.31 and the 0.26 are mostly the timer: the same artefact as the visit cost of the attachment loop. After a turn the work is 0.45 ms (generate 0.34, prepare 0.11) and lasts the seconds it takes the new geometry to be built. The scene fragment build is 0.07 us a call: not a cost.
+
+**Verdict:** the parallel generate half (plan 8.6) would gain about 0.05 ms in a still scene and 0.2 ms for the seconds after a turn, against the per-job scratch arrays, the pool allocation and the output comparison it needs. Not worth building now. Two things worth keeping: (1) the 457 visits a frame (`postSort: rebuildGeom (drawable groups)` and the priority queue walk the groups that are not dirty) are a candidate for a dirty list instead of a scan; (2) the after-turn spike is where the generate half would matter if that spike is ever what is being fought. The zones stay in.
