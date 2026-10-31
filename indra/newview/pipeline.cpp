@@ -384,6 +384,7 @@ S32     LLPipeline::sReflectionProbeLevel = (S32)LLReflectionMap::ProbeLevel::NO
 S32     LLPipeline::sVisibleLightCount = 0;
 bool    LLPipeline::sRenderingHUDs;
 thread_local const LLPipeline::View* LLPipeline::sJobView = nullptr;       // <FS> view rework W3
+thread_local std::vector<LLPipeline::AvOp>* LLPipeline::sAvSink = nullptr;       // <FS> view rework A1
 F32     LLPipeline::sDistortionWaterClipPlaneMargin = 1.0125f;
 LLVector3 LLPipeline::sLastFocusPoint={};// <FS:Beq/> FIRE-16728 focus point lock & free focus DoF 
 bool    LLPipeline::sDoFEnabled = false;
@@ -2307,6 +2308,60 @@ void LLPipeline::resetFrameStats()
 }
 
 //external functions for asynchronous updating
+// <FS> view rework A1: the recorded writes of an avatar's attachment loop, made in the order they were requested
+void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
+{
+    sAvSink = nullptr;
+    static U64 calls = 0, total_ops = 0, by_kind[5] = {}, stale_group = 0, orders = 0;
+    for (const AvOp& op : ops)
+    {
+        ++by_kind[op.mKind];
+        switch (op.mKind)
+        {
+        case AvOp::MOVED_LIST:
+            mMovedList.push_back(op.mDrawable);
+            break;
+        case AvOp::MOVED_BRIDGE:
+            mMovedBridge.push_back(op.mDrawable);
+            break;
+        case AvOp::MOVE_PARTITION:
+            if (!op.mDrawable->isDead())
+            {
+                op.mDrawable->movePartition();
+            }
+            break;
+        case AvOp::BRIDGE_MOVE:
+            if (!op.mDrawable->isDead())
+            {
+                ((LLSpatialBridge*)op.mDrawable)->moveInPartition();
+            }
+            break;
+        case AvOp::RENDER_ORDER:
+        {
+            ++orders;
+            LLSpatialGroup* group = op.mDrawable->getSpatialGroup();
+            if (group != op.mSeenGroup)
+            {
+                ++stale_group;      // the loop saw another group than the one the drawable is in once the moves before this request were made
+            }
+            if (group)
+            {
+                group->mAvatarp = op.mAvatar;
+                group->mRenderOrder = op.mOrder;
+            }
+            break;
+        }
+        }
+    }
+    total_ops += ops.size();
+    ops.clear();
+    if (++calls % 6000 == 0)
+    {
+        LL_INFOS("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
+                             << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", bridge moves " << by_kind[AvOp::BRIDGE_MOVE] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
+    }
+}
+
 void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
 {
     LL_CPU_ZONE("pipeline: updateMoveDampedAsync");
@@ -2334,7 +2389,14 @@ void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
     // Put on move list so that EARLY_MOVE gets cleared
     if (!drawablep->isState(LLDrawable::ON_MOVE_LIST))
     {
-        mMovedList.push_back(drawablep);
+        if (sAvSink)
+        {
+            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 });      // <FS> A1: the push is replayed, the bit is set at once
+        }
+        else
+        {
+            mMovedList.push_back(drawablep);
+        }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }
 }
@@ -2366,7 +2428,14 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
     // Put on move list so that EARLY_MOVE gets cleared
     if (!drawablep->isState(LLDrawable::ON_MOVE_LIST))
     {
-        mMovedList.push_back(drawablep);
+        if (sAvSink)
+        {
+            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 });      // <FS> A1: the push is replayed, the bit is set at once
+        }
+        else
+        {
+            mMovedList.push_back(drawablep);
+        }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }
 }
@@ -4748,11 +4817,13 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
     {
         if (drawablep->isSpatialBridge())
         {
-            mMovedBridge.push_back(drawablep);
+            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep, nullptr, nullptr, 0 }); }
+            else { mMovedBridge.push_back(drawablep); }
         }
         else
         {
-            mMovedList.push_back(drawablep);
+            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 }); }
+            else { mMovedList.push_back(drawablep); }
         }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }

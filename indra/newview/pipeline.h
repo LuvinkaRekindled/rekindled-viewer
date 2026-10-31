@@ -368,6 +368,19 @@ public:
     };
     static thread_local std::vector<SortDelta>* sSortSink;      // set: the effects are recorded, not made
     static thread_local std::vector<SortDelta>* sSortTee;       // set: recorded and made (the check's second run)
+    // <FS> view rework A1 (doc/vulkan/PLAN-view-prep-rework.md section 8.3): the writes to shared state that the attachment loop of an avatar makes (the moved lists, the octree move of a drawable and of a bridge, the render
+    // order written on a group) are recorded while sAvSink is set and replayed in the order they were made (applyAvOps) when the loop of the avatar is over. A drawable's own state bits (ON_MOVE_LIST, EARLY_MOVE, ACTIVE) are still set
+    // at once, so the next step of the loop sees them. LL_VK_AV_LEDGER=1 turns it on.
+    struct AvOp
+    {
+        enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, BRIDGE_MOVE, RENDER_ORDER } mKind;
+        LLDrawable* mDrawable;
+        LLVOAvatar* mAvatar;            // RENDER_ORDER
+        LLSpatialGroup* mSeenGroup;     // RENDER_ORDER: the group the loop saw when it made the request
+        U32 mOrder;                     // RENDER_ORDER
+    };
+    static thread_local std::vector<AvOp>* sAvSink;
+    void applyAvOps(std::vector<AvOp>& ops);
     static thread_local std::vector<LLDrawable*>* sSortPoolSink;     // set: the drawables the pools take by face are listed here, not in mDeferredPoolFill (a chunk of the parallel sort)
     static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
     static void sortJournalVolume(LLVOVolume* volume);

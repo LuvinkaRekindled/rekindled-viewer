@@ -783,6 +783,12 @@ void LLDrawable::movePartition()
     LL_CPU_ZONE("octree: drawable movePartition");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
+    if (LLPipeline::sAvSink)
+    {
+        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this, nullptr, nullptr, 0 });      // <FS> view rework A1: made when the avatar's loop is over
+        return;
+    }
+
     LLSpatialPartition* part = getSpatialPartition();
     if (part)
     {
@@ -1722,9 +1728,26 @@ bool LLSpatialBridge::updateMove()
     mOctree->balance();
     if (part)
     {
-        part->move(this, getSpatialGroup(), true);
+        if (LLPipeline::sAvSink)
+        {
+            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::BRIDGE_MOVE, this, nullptr, nullptr, 0 });      // <FS> view rework A1
+        }
+        else
+        {
+            part->move(this, getSpatialGroup(), true);
+        }
     }
     return true;
+}
+
+// <FS> view rework A1: the shared half of updateMove, made when the avatar's attachment loop replays its writes
+void LLSpatialBridge::moveInPartition()
+{
+    LLSpatialPartition* part = mDrawable && mDrawable->getRegion() ? mDrawable->getRegion()->getSpatialPartition(mPartitionType) : nullptr;
+    if (part)
+    {
+        part->move(this, getSpatialGroup(), true);
+    }
 }
 
 void LLSpatialBridge::shiftPos(const LLVector4a& vec)
