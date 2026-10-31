@@ -112,3 +112,39 @@ Expected gain (honest): 0.5 to 1 ms of the 2.2 ms the world view costs on the ma
 ## 8. Direction (Adam, 2026-10-31): as much off the main thread as possible, not limited by legacy
 
 The goal is to take everything off the main thread that can leave it, and to question each piece that stays: is it a real constraint or only the old object model? Before W4 starts, write a **main-thread inventory** here: every piece of per-frame view work that still runs on the main thread (cull serial parts, delta apply, wake queue, the group geometry rebuild, the render map join, the far avatar tier, the alpha group sort, the occlusion and Hi-Z bookkeeping, the pool fills), each with its cost and why it is there: a real ordering or hardware constraint, or data that the legacy object model (faces, drawables, volume LOD, shared draw info lists) does not protect. The legacy-owned ones are candidates for new ownership rules (per-group ownership of faces and draw infos, per-thread queues merged at the join), not for leaving as they are. W3 (jobs work for their own view, not the globals) is the first piece of that; the join and apply as pool jobs (W4) is the second; the geometry rebuild by group is the third and the largest.
+
+### 8.1 Main-thread inventory (measured 2026-10-31, lap `inv1-poolnewz1`, first still, default placement, 548-640 nearby lights; zone timers on, so every figure is about 15% high; ms a frame on the main thread)
+
+The loop in that lap is 12.3 ms (display() 7.9, idle() 4.0). Blocked time (the main thread waiting, not working) is small everywhere: the pool joins block 0.24 ms in all (shadow prep cull wait 0.14, point cloud wait 0.07, the rest under 0.03). **The main thread is not waiting for the pool; it is doing work, and it runs a share of the pool's own jobs.** So overlap (W4) can win back at most that 0.24 ms of waiting; the larger gains are in work that the main thread does itself and the pool does not.
+
+| Piece | ms | Kind | Why it is on the main thread, and the question to ask |
+|---|---|---|---|
+| `gObjectList.update` (avatar motion batch 1.57, avatar idleUpdate 0.76, attachment loop 0.79, flexible objects 0.18) | 2.71 | legacy | Avatars' skeleton updates mutate shared avatar and drawable state; the blend already runs on the pool but main works a share and the rest is serial. Largest single piece, and not view preparation. Per-avatar ownership of its skeleton, attachments and drawable updates is the candidate. |
+| `generateSunShadow` (renderShadow 0.96 for 4.4 passes, cull and cloud waits 0.31, spot/projector 0.31, rest cascade plan, mark and render map joins) | 2.09 | mixed | Recording the draws of a pass touches the command stream (a real ordering constraint: one recorder per pass, but the passes could be recorded on several threads into sub-streams: the F3 sub-stream test exists). The plan and the joins are the W3/W4 work. |
+| `render_ui` (widgets draw 0.81, world panel 0.63, nearby panel 0.60, floaters 0.51, radar 0.30) | 1.12 | legacy | The widget tree is drawn on the main thread because widgets read and write shared UI state; most of it is unchanged frame to frame (the UI cache idea, `LL_VK_UI_CACHE`). |
+| `stateSort (early)` (postSort 0.62: priority groups 0.24, render map 0.14; apply deltas 0.19; compute waits 0.14) | 1.12 | legacy | The deltas and the group rebuild mutate groups and faces the legacy model shares. W4 (apply by owner), then group-owned geometry rebuild. |
+| `renderDeferredLighting` + post-deferred geometry + local lights | 1.05 | real, partly | Command recording for the main view's lighting and alpha passes: ordering is real; the alpha and lighting lists could be built off main. |
+| `avatar velocity` (rigged draws: collect, palettes, motion test) | 0.68 | legacy | Walks every rigged draw; per-avatar data, a candidate for the same per-avatar ownership. |
+| `updateCull` (partition cull 0.18, jobs wait 0.14) | 0.44 | mostly done | On the pool; the serial parts are the top levels of split partitions and the bridge/sky handling. |
+| Object movement bookkeeping (`partition move` 0.23, `updateInGroup` 0.18, `movePartition` 0.13, `drawable updateMove` 0.14, `bridge updateMove` 0.16, `updateMoveDampedAsync` 0.15, `updateMovedList` 0.14) | ~1.1 | legacy | Moves drawables between octree groups; the octree is mutated by one thread. A per-partition owner or a ledger applied by partition is the candidate. |
+| Textures (`updateImages` 0.46, fetch dispatch 0.44, decode priority 0.31) | 1.2 | legacy | Priority and fetch decisions per texture; independent per texture, a pool candidate. |
+| `updateGeom` / `pipeline: updateGeom` | 0.32 | legacy | Part of the geometry rebuild above. |
+
+What this changes in the plan: W4 (launch early / join late) is worth at most about 0.24 ms in the still phase. The big pieces are owner-based: avatars (2.7 + 0.7), the UI (1.1), the octree movement (1.1), textures (1.2), the group geometry rebuild (0.3 to 0.5), the shadow recording (1.0). Each needs an ownership rule, not a faster pool. One cheap dial first: the pool is capped at 8 threads (7 workers) on this 32-thread machine, and the main thread works a share of every batch; a larger pool shortens every parallel stage that has enough jobs (`LL_VK_POOL_WORKERS` to try).
+
+### 8.2 The avatar update (lap `av1-att1`, FS_AVATAR_TIMERS=1, about 100 avatars, ms a frame on the main thread; design target 150 avatars, Adam: 100-150 is the most a sim has)
+
+| Part | ms | Notes |
+|---|---|---|
+| idle loop, `updateCharacter` (67 avatars a frame) | 0.39 | root position and rotation 0.09 (35 avatars), the agent's own avatar inline 0.14-0.16 (its motion stops go to the network), hidden avatars 0.06 |
+| deferred motion blend, parallel (34 avatars a batch) | 0.37-0.42 wall | skeleton blend and world matrices; every avatar owns its joints, already a pool job per avatar |
+| **completion loop, serial** (34 avatars, about 27 us each) | **0.87-0.93** | `updateCharacterPostMotion` (head offset, footstep sounds, matrices) and `idleUpdatePostCharacter` |
+| `idleUpdateMisc` inside it (67 avatars, 12 us each) | 0.8 | mostly the attachment loop (0.75): per attachment the rigged box override, drawable move and bridge move |
+| appearance animation | 0.2 | the avatar's own visual params |
+| name tags | 0.16 | HUD name tag objects |
+
+Why more workers do not help the batch (15 against 7 workers: 1.32 against 1.39 ms): 70% of it is the serial completion loop, which runs after the parallel blend on the calling thread.
+
+What the completion loop touches that is not the avatar's own: the sound system (footsteps), the voice client (visualizer, lip sync), the HUD name tag objects, the selection manager (is an attachment selected), and the octree through each attachment's drawable move and bridge move (partition moves, the moved list). What is the avatar's own: its joints and matrices, head offset, visual parameters and appearance animation, the box of its drawable.
+
+Direction (two phases per avatar, the shape the sort already has): **A, parallel, one job per avatar:** blend, matrices, head offset, appearance animation, and the attachment loop's computing (the boxes, the moves it would make) written into a ledger of effects. **B, serial, in avatar order:** apply the ledger to the octree and the moved list, footsteps, name tags, voice. The attachment loop already has the "skip when nothing changed" logic that keeps most of the effects away. Estimate (soft, not tried): the serial part falls from 1.7 ms (completion loop plus attachment moves) to about 0.7, and the extra workers then matter because phase A has 34 to 100 equal jobs. The agent's own avatar stays inline (network).

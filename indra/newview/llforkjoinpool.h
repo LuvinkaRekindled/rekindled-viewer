@@ -19,6 +19,7 @@
 #ifndef LL_LLFORKJOINPOOL_H
 #define LL_LLFORKJOINPOOL_H
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -218,7 +219,13 @@ public:
             checked = true;
             const unsigned hardware_threads = std::thread::hardware_concurrency();
             const unsigned budget = hardware_threads / 2 < 8u ? hardware_threads / 2 : 8u;
-            const unsigned workers = (hardware_threads >= 8) ? budget - 1 : 0;
+            unsigned workers = (hardware_threads >= 8) ? budget - 1 : 0;
+            // LL_VK_POOL_WORKERS=<n>: the worker count by hand (a test of a larger pool: the main thread works a share of every batch, so a pool of n workers is n + 1 threads of work)
+            const char* forced = getenv("LL_VK_POOL_WORKERS");
+            if (forced && hardware_threads >= 8)
+            {
+                workers = (unsigned)std::max(atoi(forced), 0);
+            }
             if (workers > 0)
             {
                 pool = std::make_unique<LLForkJoinPool>(workers);
