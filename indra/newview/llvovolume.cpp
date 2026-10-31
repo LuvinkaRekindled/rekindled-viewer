@@ -5853,14 +5853,14 @@ bool can_batch_texture(LLFace* facep)
 
 const static U32 MAX_FACE_COUNT = 4096U;
 int32_t LLVolumeGeometryManager::sInstanceCount = 0;
-LLFace** LLVolumeGeometryManager::sFullbrightFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sBumpFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sSimpleFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sNormFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sSpecFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sNormSpecFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sPbrFaces[2] = { NULL };
-LLFace** LLVolumeGeometryManager::sAlphaFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sFullbrightFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sBumpFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sSimpleFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sNormFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sSpecFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sNormSpecFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sPbrFaces[2] = { NULL };
+thread_local LLFace** LLVolumeGeometryManager::sAlphaFaces[2] = { NULL };
 
 LLVolumeGeometryManager::LLVolumeGeometryManager()
     : LLGeometryManager()
@@ -5883,6 +5883,20 @@ LLVolumeGeometryManager::~LLVolumeGeometryManager()
     {
         freeFaces();
         sInstanceCount = 0;
+    }
+}
+
+// <FS> group rebuild R1: the thread that rebuilds a group has scratch arrays of its own (made on first use, given back when the thread ends)
+void LLVolumeGeometryManager::ensureFaces()
+{
+    if (!sSimpleFaces[0])
+    {
+        allocateFaces(MAX_FACE_COUNT);
+        static thread_local struct ScratchGuard
+        {
+            ~ScratchGuard() { LLVolumeGeometryManager::freeFaces(); }
+        } guard;
+        (void)guard;
     }
 }
 
@@ -6292,6 +6306,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
     llassert(!gCubeSnapshot);
+    ensureFaces();
 
     if (group->isDead())
     {
