@@ -4019,6 +4019,8 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     view.mReflectionRender = sReflectionRender;
     view.mCubeSnapshot = gCubeSnapshot;
     view.mViewerCamera = &camera == LLViewerCamera::getInstance();
+    view.mRenderingHUDs = sRenderingHUDs;
+    memcpy(view.mRenderTypes, gPipeline.mRenderTypeEnabled, sizeof(view.mRenderTypes));
     return view;
 }
 
@@ -5028,7 +5030,7 @@ void LLPipeline::sortJournalVolume(LLVOVolume* volume)
     }
 }
 
-static int sort_split_mode(LLCamera& camera, bool defer_pools)
+static int sort_split_mode(const LLPipeline::View& view, bool defer_pools)
 {
     const int mode = sort_split_setting();
     if (mode <= 0)
@@ -5041,8 +5043,7 @@ static int sort_split_mode(LLCamera& camera, bool defer_pools)
     {
         return 0;
     }
-    if (&camera != LLViewerCamera::getInstance() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || LLPipeline::sShadowRender || LLPipeline::sReflectionRender || gCubeSnapshot
-        || LLPipeline::sRenderingHUDs)
+    if (!view.isMainWorldSort())
     {
         return 0;
     }
@@ -5209,10 +5210,12 @@ struct SortTaskScope
     std::vector<LLDrawable*>* mPool = LLPipeline::sSortPoolSink;
     SortJournal* mJournal = sSortJournal;
     bool mParallel = LLPipeline::sParallelPrep;
+    LLViewerCamera::eCameraID mCameraID = LLViewerCamera::sCurCameraID;
 
-    SortTaskScope(SortChunk& chunk, bool journaling)
+    SortTaskScope(SortChunk& chunk, bool journaling, const LLPipeline::View& view)
     {
         LLPipeline::sParallelPrep = true;       // (the bridges' octrees are locked while they are culled, and the statistics are not shared)
+        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)view.mCameraID;       // (the walks read it; a pool thread's own is CAMERA_WORLD whatever the view is)
         if (chunk.mLocal)
         {
             sCull = chunk.mLocal;
@@ -5223,6 +5226,7 @@ struct SortTaskScope
     }
     ~SortTaskScope()
     {
+        LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
         LLPipeline::sSortPoolSink = mPool;
@@ -5245,8 +5249,9 @@ U32 sort_chunk_size(size_t items, size_t workers)
 }
 }
 
-bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal_ptr)
+bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal_ptr)
 {
+    LLCamera& camera = *view.mCamera;
     LLForkJoinPool* pool = LLForkJoinPool::shared();
     if (!pool || &read != sCull || !mDeferPoolFill || LLGpuZoneTimer::isActive())
     {
@@ -5259,7 +5264,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
     {
         return false;       // (too little work to be worth a wake-up)
     }
-    if (sUseOcclusion > 1)
+    if (view.mUseOcclusion > 1)
     {
         // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
         for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); i != read.endDrawableGroups(); ++i)
@@ -5284,7 +5289,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
             return;
         }
         group->checkOcclusion();
-        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        if (view.mUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
         }
@@ -5305,7 +5310,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
             return;
         }
         group->checkOcclusion();
-        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        if (view.mUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
         }
@@ -5351,7 +5356,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
     const std::function<void(size_t)> first_job = [&](size_t c)
     {
         SortChunk& chunk = first[c];
-        SortTaskScope scope(chunk, journaling);
+        SortTaskScope scope(chunk, journaling, view);
         for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
         {
             if (chunk.mKind == 0)
@@ -5402,7 +5407,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
     {
         SortJournal* saved_journal = sSortJournal;
         sSortJournal = journal;
-        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+        if (view.mWorldCameraID && !view.mCubeSnapshot)
         {
             LLCullResult::bridge_iterator bridges = read.beginVisibleBridge();
             LLSpatialGroup* last_group = NULL;
@@ -5459,7 +5464,7 @@ bool LLPipeline::sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::ve
     const std::function<void(size_t)> second_job = [&](size_t c)
     {
         SortChunk& chunk = second[c];
-        SortTaskScope scope(chunk, journaling);
+        SortTaskScope scope(chunk, journaling, view);
         if (chunk.mKind == 2)
         {
             for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
@@ -5567,8 +5572,9 @@ bool lod_state_equal(const LLVOVolume::LODState& a, const LLVOVolume::LODState& 
 }
 
 // the loops deferred into a scratch copy of the cull lists (serial or on the pool): nothing applied, the fields they write put back, what they asked for and left kept in 'result'
-void LLPipeline::sortDryRun(LLCamera& camera, bool parallel, void* result_ptr)
+void LLPipeline::sortDryRun(const View& view, bool parallel, void* result_ptr)
 {
+    LLCamera& camera = *view.mCamera;
     SortDryResult& out = *(SortDryResult*)result_ptr;
     static LLCullResult scratch_serial, scratch_parallel;
     LLCullResult& scratch = parallel ? scratch_parallel : scratch_serial;
@@ -5587,7 +5593,7 @@ void LLPipeline::sortDryRun(LLCamera& camera, bool parallel, void* result_ptr)
     pool_save.swap(mDeferredPoolFill);
     out.mLedger.clear();
     sCull = &scratch;
-    out.mParallel = parallel && sortLoopsParallel(camera, scratch, out.mLedger, &journal);
+    out.mParallel = parallel && sortLoopsParallel(view, scratch, out.mLedger, &journal);
     if (!out.mParallel)
     {
         out.mLedger.clear();
@@ -5626,13 +5632,13 @@ void LLPipeline::sortDryRun(LLCamera& camera, bool parallel, void* result_ptr)
 }
 
 // LL_VK_SORT_SPLIT=4: the compute on this thread against the compute on the pool, on the same input; then the sort runs as before (the frame is made by the old loops)
-void LLPipeline::sortParallelCheck(LLCamera& camera)
+void LLPipeline::sortParallelCheck(const View& view)
 {
     LL_CPU_ZONE("stateSort: parallel check");
     static U64 checked = 0, same_count = 0, differed = 0, serial_only = 0;
     static SortDryResult a, b;
-    sortDryRun(camera, false, &a);
-    sortDryRun(camera, true, &b);
+    sortDryRun(view, false, &a);
+    sortDryRun(view, true, &b);
     if (!b.mParallel)
     {
         ++serial_only;
@@ -5721,7 +5727,7 @@ void LLPipeline::sortParallelCheck(LLCamera& camera)
                               << a.mVisible.size() << " visible drawables, " << a.mBridges.size() << " bridges, " << a.mFinalVols.size() << " volumes with their LOD computed)" << LL_ENDL;
     }
     // the frame is made by the old loops
-    sortLoops(camera, *sCull);
+    sortLoops(*view.mCamera, *sCull);
 }
 
 // the loops of stateSort for the main view: the occlusion check and the visibility stamp of every group and drawable the cull found, the distance and LOD of the bridges and drawables, and the mesh
@@ -5872,7 +5878,8 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("stateSort");
 
-    sVisSortOn = LLVisCensus::sOn && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
+    const View view = currentView(camera, false);
+    sVisSortOn = LLVisCensus::sOn && view.isMainWorldSort();
     struct VisSortEnd
     {
         U64 mT0;
@@ -5903,7 +5910,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     // <FS> the split (see sortLoops): 0 as before, 1 compute then apply, 2 the check
-    const int split = sort_split_mode(camera, defer_pools);
+    const int split = sort_split_mode(view, defer_pools);
     // (the loops and the apply pass timed per path, logged every 600 sorts of the main view: 0 the loops as before, 1 the split run serially, 2 the split with the compute on the pool)
     static double time_compute[3] = {}, time_apply[3] = {};
     static U32 sorts[3] = {}, effects[3] = {}, window = 0, fallbacks = 0;
@@ -5923,7 +5930,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             path = 1;
             if (split == 3)
             {
-                if (sortLoopsParallel(camera, *sCull, ledger_a, nullptr))
+                if (sortLoopsParallel(view, *sCull, ledger_a, nullptr))
                 {
                     path = 2;
                 }
@@ -5954,7 +5961,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         }
         else if (split == 4)
         {
-            sortParallelCheck(camera);
+            sortParallelCheck(view);
         }
         else
         {
@@ -6679,7 +6686,8 @@ static U32 main_map_chunk()
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    const bool vis_post = LLVisCensus::sOn && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs;
+    const View view = currentView(camera, false);
+    const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     struct VisPostEnd
     {
         bool mOn; U64 mT0;
@@ -6724,7 +6732,7 @@ void LLPipeline::postSort(LLCamera &camera)
     // the far avatars' attachment groups over their budget (the main view only)
     static std::unordered_set<const LLSpatialGroup*> far_skip;
     far_skip.clear();
-    if (&camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs)
+    if (view.isMainWorldSort())
     {
         LL_CPU_ZONE("postSort: far avatar tier");
         far_avatar_tier(sCull, far_skip);
@@ -6740,7 +6748,7 @@ void LLPipeline::postSort(LLCamera &camera)
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && !sShadowRender;
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
-    const bool geo_list = geo_collect && &camera == LLViewerCamera::getInstance() && ll_scene_geo_main_view() && ll_scene_geo_serving() && !sRenderingHUDs;       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
+    const bool geo_list = geo_collect && view.mViewerCamera && ll_scene_geo_main_view() && ll_scene_geo_serving() && !view.mRenderingHUDs;       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
     const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
     if (geo_elide)
@@ -6755,7 +6763,7 @@ void LLPipeline::postSort(LLCamera &camera)
         const U32 chunk_size = main_map_chunk();
         const U32 n_groups = sCull->getVisibleGroupsSize();
         if (chunk_size && n_groups >= min_groups && !vis_post && !geo_owner && !scene_stats && !cascade_cull_active && !LLGpuZoneTimer::isActive()
-            && &camera == LLViewerCamera::getInstance() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !sShadowRender && !sReflectionRender && !gCubeSnapshot && !sRenderingHUDs)
+            && view.isMainWorldSort())
         {
             LLForkJoinPool* pool = LLForkJoinPool::shared();
             if (pool)
@@ -6768,7 +6776,7 @@ void LLPipeline::postSort(LLCamera &camera)
                     {
                         LLSpatialGroup* group = *i;
                         if (group->isDead()
-                            || (sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                            || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
                             || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
                         {
                             continue;
@@ -6803,7 +6811,7 @@ void LLPipeline::postSort(LLCamera &camera)
                     {
                         LLSpatialGroup* group = visible_groups[gi];
                         if (group->isDead()
-                            || (sUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                            || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
                             || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
                         {
                             continue;
@@ -6830,7 +6838,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
                         {
                             LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
-                            if (!hasRenderType(j->first))
+                            if (!view.hasRenderType(j->first))
                             {
                                 continue;
                             }
@@ -6850,7 +6858,7 @@ void LLPipeline::postSort(LLCamera &camera)
                                 chunk.mIndices += info->mCount;
                             }
                         }
-                        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                        if (view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                         {
                             if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA) != group->mDrawMap.end())
                             {

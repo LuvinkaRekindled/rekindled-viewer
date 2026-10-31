@@ -351,22 +351,7 @@ public:
 
     // <FS> view rework (doc/vulkan/PLAN-view-prep-rework.md, W1): what a view is, as data. Made once at the top of a stage from the state the pipeline has at that call (currentView); the stage and its
     // jobs read the view, not the globals and thread-locals it was made from. The jobs still install the camera id they work for (the walks below read it), from the view.
-    struct View
-    {
-        LLCamera* mCamera = nullptr;
-        S32 mCameraID = 0;                  // LLViewerCamera::eCameraID
-        S32 mUseOcclusion = 0;
-        bool mWorldCameraID = false;        // the camera id is CAMERA_WORLD
-        bool mHud = false;
-        bool mShadowRender = false;
-        bool mReflectionRender = false;
-        bool mCubeSnapshot = false;
-        bool mViewerCamera = false;         // the camera is the viewer's own
-        // the world camera's view: not a HUD, a shadow cascade, a probe or a snapshot
-        bool isWorld() const { return mWorldCameraID && !mHud && !mShadowRender && !mReflectionRender && !mCubeSnapshot; }
-        // ... and made with the viewer's camera
-        bool isMainWorld() const { return isWorld() && mViewerCamera; }
-    };
+    struct View;                            // (defined after the render type enum: it holds a copy of the mask)
     static View currentView(LLCamera& camera, bool hud);
 
     // <FS> the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1): the loops of stateSort make their writes to shared state (the rebuild and partition move queues, the LOD update of
@@ -390,9 +375,9 @@ public:
     void sortLoops(LLCamera& camera, LLCullResult& read);
     void sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b);
     // stage 2: the compute on the pool (LL_VK_SORT_SPLIT=3; =4 checks it against the serial compute). False: the sort has to stay serial (no pool, a group whose occlusion state the main thread must change).
-    bool sortLoopsParallel(LLCamera& camera, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal);
-    void sortDryRun(LLCamera& camera, bool parallel, void* result);
-    void sortParallelCheck(LLCamera& camera);
+    bool sortLoopsParallel(const View& view, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal);
+    void sortDryRun(const View& view, bool parallel, void* result);
+    void sortParallelCheck(const View& view);
     void refillPools(LLCullResult& result);
     void checkRenderMapLive(LLCullResult& result);     // LL_VK_BUILDER_VERIFY: every draw info in the render map is still one of its group's
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
@@ -784,6 +769,29 @@ public:
         RENDER_TYPE_HUD_PARTICLES,
         NUM_RENDER_TYPES,
         END_RENDER_TYPES = NUM_RENDER_TYPES
+    };
+
+    // <FS> view rework W1/W2 (doc/vulkan/PLAN-view-prep-rework.md): what a view is, as data. See currentView.
+    struct View
+    {
+        LLCamera* mCamera = nullptr;
+        S32 mCameraID = 0;                  // LLViewerCamera::eCameraID
+        S32 mUseOcclusion = 0;
+        bool mWorldCameraID = false;        // the camera id is CAMERA_WORLD
+        bool mHud = false;                  // the HUD attachments' cull (updateCull's argument)
+        bool mRenderingHUDs = false;        // the HUD pass (sRenderingHUDs)
+        bool mShadowRender = false;
+        bool mReflectionRender = false;
+        bool mCubeSnapshot = false;
+        bool mViewerCamera = false;         // the camera is the viewer's own
+        bool mRenderTypes[NUM_RENDER_TYPES] = {};       // a copy of the render type mask: the jobs of a stage do not read the pipeline's
+        // the world camera's view: not a HUD, a shadow cascade, a probe or a snapshot
+        bool isWorld() const { return mWorldCameraID && !mHud && !mShadowRender && !mReflectionRender && !mCubeSnapshot; }
+        // ... and made with the viewer's camera
+        bool isMainWorld() const { return isWorld() && mViewerCamera; }
+        // ... and not the HUD pass (what the sort and the render map of the main view ask)
+        bool isMainWorldSort() const { return isMainWorld() && !mRenderingHUDs; }
+        bool hasRenderType(U32 type) const { return type == 0 ? false : mRenderTypes[type]; }       // (as LLPipeline::hasRenderType)
     };
 
     enum LLRenderDebugFeatureMask
