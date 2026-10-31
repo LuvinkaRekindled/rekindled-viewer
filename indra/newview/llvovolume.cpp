@@ -67,6 +67,7 @@
 #include "llvktexanim.h"
 #include "llworld.h"
 #include "llselectmgr.h"
+#include "llforkjoinpool.h"
 #include "pipeline.h"
 #include "llvkbridge.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
@@ -5967,6 +5968,63 @@ static void visCensusExtents(LLDrawInfo& info, const LLFace& face)
     }
 }
 
+// <FS> cheaper fill: LL_VK_CHEAP_FILL (default on, 0 = the old paths; 2 = also checks every cached result against the computed one and logs a difference)
+static int cheap_fill_mode()
+{
+    static const int mode = getenv("LL_VK_CHEAP_FILL") ? atoi(getenv("LL_VK_CHEAP_FILL")) : 1;
+    return mode;
+}
+
+// The faces of a render batch are sorted by material (CompareBatchBreaker), so consecutive faces mostly share one: the hash of a material (xxh128 over the object) is kept for the run of faces of
+// one fillBatch (the materials do not change while a batch is filled). This thread's, on only inside fillBatch.
+struct MaterialHashMemo
+{
+    bool mOn = false;
+    const LLMaterial* mMat = nullptr;
+    LLUUID mMatId;
+    const LLGLTFMaterial* mGltf = nullptr;
+    LLUUID mGltfId;
+};
+static thread_local MaterialHashMemo sHashMemo;
+
+static LLUUID material_hash(const LLMaterial* mat)
+{
+    MaterialHashMemo& memo = sHashMemo;
+    if (!memo.mOn || cheap_fill_mode() == 0)
+    {
+        return mat->getHash();
+    }
+    if (memo.mMat != mat)
+    {
+        memo.mMat = mat;
+        memo.mMatId = mat->getHash();
+    }
+    else if (cheap_fill_mode() == 2 && memo.mMatId != mat->getHash())
+    {
+        LL_WARNS_ONCE("CheapFill") << "a material's hash changed during a fill" << LL_ENDL;
+    }
+    return memo.mMatId;
+}
+
+static LLUUID material_hash(const LLGLTFMaterial* mat)
+{
+    MaterialHashMemo& memo = sHashMemo;
+    if (!memo.mOn || cheap_fill_mode() == 0)
+    {
+        return mat->getHash();
+    }
+    if (memo.mGltf != mat)
+    {
+        memo.mGltf = mat;
+        memo.mGltfId = mat->getHash();
+    }
+    else if (cheap_fill_mode() == 2 && memo.mGltfId != mat->getHash())
+    {
+        LL_WARNS_ONCE("CheapFill") << "a GLTF material's hash changed during a fill" << LL_ENDL;
+    }
+    return memo.mGltfId;
+}
+
 void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep, U32 type, LLSpatialGroup::draw_map_t* drawmap)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
@@ -6077,7 +6135,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
 
     if (gltf_mat != nullptr)
     {
-        mat_id = gltf_mat->getHash(); // TODO: cache this hash
+        mat_id = material_hash(gltf_mat);       // <FS> (kept for the run of faces of the batch)
         if (!facep->hasMedia() || (tex && tex->getType() != LLViewerTexture::MEDIA_TEXTURE))
         { // no media texture, face texture will be unused
             tex = nullptr;
@@ -6088,7 +6146,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         mat = te->getMaterialParams().get();
         if (mat)
         {
-            mat_id = te->getMaterialParams()->getHash();
+            mat_id = material_hash(mat);
         }
     }
 
@@ -6327,6 +6385,14 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
             rebuildMesh(group);
         }
         return;
+    }
+
+    if (LLRebuildBatch* batch = LLRebuildBatch::current())
+    {
+        if (batch->pending(group))
+        {   // rebuilt again before the loop is over: the first rebuild's fill goes first
+            batch->flush();
+        }
     }
 
     group->mBuilt = 1.f;
@@ -6838,20 +6904,29 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
     bool alpha_sort = true;
     bool rigged = false;
     { LL_CPU_ZONE("rebuild: genDrawInfo (all masks, static and rigged)");
+    std::vector<FillTask> fill_tasks;       // <FS> R3b2: the fill of every batch of every kind, run together below
     for (int i = 0; i < 2; ++i) //two sets, static and rigged)
     {
-        geometryBytes += genDrawInfo(group, simple_mask | extra_mask, sSimpleFaces[i], simple_count[i], false, batch_textures, rigged);
-        geometryBytes += genDrawInfo(group, fullbright_mask | extra_mask, sFullbrightFaces[i], fullbright_count[i], false, batch_textures, rigged);
-        geometryBytes += genDrawInfo(group, alpha_mask | extra_mask, sAlphaFaces[i], alpha_count[i], alpha_sort, batch_textures, rigged);
-        geometryBytes += genDrawInfo(group, bump_mask | extra_mask, sBumpFaces[i], bump_count[i], false, false, rigged);
-        geometryBytes += genDrawInfo(group, norm_mask | extra_mask, sNormFaces[i], norm_count[i], false, false, rigged);
-        geometryBytes += genDrawInfo(group, spec_mask | extra_mask, sSpecFaces[i], spec_count[i], false, false, rigged);
-        geometryBytes += genDrawInfo(group, normspec_mask | extra_mask, sNormSpecFaces[i], normspec_count[i], false, false, rigged);
-        geometryBytes += genDrawInfo(group, pbr_mask | extra_mask, sPbrFaces[i], pbr_count[i], false, false, rigged);
+        geometryBytes += genDrawInfo(group, simple_mask | extra_mask, sSimpleFaces[i], simple_count[i], false, batch_textures, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, fullbright_mask | extra_mask, sFullbrightFaces[i], fullbright_count[i], false, batch_textures, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, alpha_mask | extra_mask, sAlphaFaces[i], alpha_count[i], alpha_sort, batch_textures, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, bump_mask | extra_mask, sBumpFaces[i], bump_count[i], false, false, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, norm_mask | extra_mask, sNormFaces[i], norm_count[i], false, false, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, spec_mask | extra_mask, sSpecFaces[i], spec_count[i], false, false, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, normspec_mask | extra_mask, sNormSpecFaces[i], normspec_count[i], false, false, rigged, &fill_tasks);
+        geometryBytes += genDrawInfo(group, pbr_mask | extra_mask, sPbrFaces[i], pbr_count[i], false, false, rigged, &fill_tasks);
 
         // for rigged set, add weights and disable alpha sorting (rigged items use depth buffer)
         extra_mask |= LLVertexBuffer::MAP_WEIGHT4;
         rigged = true;
+    }
+    if (LLRebuildBatch* batch = LLRebuildBatch::current())
+    {
+        batch->add(this, group, fill_tasks);
+    }
+    else
+    {
+        runFillTasks(group, fill_tasks);
     }
     }
 
@@ -6880,6 +6955,13 @@ void LLVolumeGeometryManager::rebuildMesh(LLSpatialGroup* group)
     llassert(group);
     if (group && group->hasState(LLSpatialGroup::MESH_DIRTY) && !group->hasState(LLSpatialGroup::GEOM_DIRTY))
     {
+        if (LLRebuildBatch* batch = LLRebuildBatch::current())
+        {
+            if (batch->pending(group))
+            {   // its geometry is not filled yet
+                batch->flush();
+            }
+        }
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("rebuildMesh - gen draw info");
 
@@ -7011,265 +7093,49 @@ struct CompareBatchBreakerRigged
     }
 };
 
-U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort, bool batch_textures, bool rigged)
+// <FS> group rebuild R3b2: what fillBatch does to the faces themselves before it fills, on the calling thread: the places of the faces in the buffer, the buffer (which frees the buffer a face had, and adds the face to the
+// size table of sculpted attachments), and the texture stamps (the counter of a texture the faces share). The same order as in fillBatch, so the offsets come out the same.
+void LLVolumeGeometryManager::prepareBatch(FillTask& task)
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
-
-    U32 geometryBytes = 0;
-
-    //calculate maximum number of vertices to store in a single buffer
-    static LLCachedControl<S32> max_vbo_size(gSavedSettings, "RenderMaxVBOSize", 512);
-    U32 max_vertices = (max_vbo_size * 1024)/LLVertexBuffer::calcVertexSize(group->getSpatialPartition()->mVertexDataMask);
-    max_vertices = llmin(max_vertices, (U32) 65535);
-
+    U32 indices_index = 0;
+    U16 index_offset = 0;
+    for (LLFace** f = task.mBegin; f < task.mEnd; ++f)
     {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - sort");
-
-        if (rigged)
+        LLFace* facep = *f;
+        if (task.mBuffer.isNull())
         {
-            if (!distance_sort) // <--- alpha "sort" rigged faces by maintaining original draw order
-            {
-                //sort faces by things that break batches, including avatar and mesh id
-                std::sort(faces, faces + face_count, CompareBatchBreakerRigged());
-            }
+            facep->setVertexBuffer(task.mBuffer);
+            facep->setSize(0, 0);
+            continue;
         }
-        else if (!distance_sort)
-        {
-            //sort faces by things that break batches, not including avatar and mesh id
-            std::sort(faces, faces + face_count, CompareBatchBreaker());
-        }
-        else
-        {
-            //sort faces by distance
-            std::sort(faces, faces+face_count, LLFace::CompareDistanceGreater());
-        }
+        facep->setIndicesIndex(indices_index);
+        facep->setGeomIndex(index_offset);
+        facep->setVertexBuffer(task.mBuffer);
+        facep->updateRebuildFlags();    // (reads the drawable's rebuild state, which a batched group has cleared by the time of the fill)
+        facep->stampTextures();
+        index_offset += facep->getGeomCount();
+        indices_index += facep->getIndicesCount();
     }
+    task.mPrepared = true;
+}
 
-    bool hud_group = group->isHUDGroup() ;
-    LLFace** face_iter = faces;
-    LLFace** end_faces = faces+face_count;
-
-    LLSpatialGroup::buffer_map_t buffer_map;
-
-    LLViewerTexture* last_tex = NULL;
-
-    S32 texture_index_channels = LLShaderProgram::sIndexedTextureChannels;
-
-    bool flexi = false;
-
-    struct DrawBatch
-    {
-        LLFace** mBegin;
-        LLFace** mEnd;
-        U32 mIndexCount;
-        U32 mGeomCount;
-        bool mBakeSunlight;
-        LLPointer<LLVertexBuffer> mBuffer;
-    };
-    std::vector<DrawBatch> batches;
-
-    // <FS> group rebuild R3a: the batches of the kind are planned first (which faces go in one vertex buffer), their buffers are allocated next, and the faces are filled and registered last: the
-    // same work in the same order of batches as the single loop that did all three for one batch before it planned the next, in three passes, so that the allocation (which only the main thread may do)
-    // and the fill (which can go to a pool thread) are apart.
-    while (face_iter != end_faces)
-    {
-        //pull off next face
-        LLFace* facep = *face_iter;
-        LLViewerTexture* tex = facep->getTexture();
-        const LLTextureEntry* te = facep->getTextureEntry();
-        LLMaterialID matId = te->getMaterialID();       // (the material pointer that was copied here was not used: another copy of a shared, counted pointer a face)
-
-        // if (distance_sort)
-        // {
-        //  tex = NULL;
-        // }
-
-        if (last_tex != tex)
-        {
-            last_tex = tex;
-        }
-
-        bool bake_sunlight = LLPipeline::sBakeSunlight && facep->getDrawable()->isStatic();
-
-        U32 index_count = facep->getIndicesCount();
-        U32 geom_count = facep->getGeomCount();
-
-        flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
-
-        //sum up vertices needed for this render batch
-        LLFace** i = face_iter;
-        ++i;
-
-        const U32 MAX_TEXTURE_COUNT = 32;
-        LLViewerTexture* texture_list[MAX_TEXTURE_COUNT];
-
-        U32 texture_count = 0;
-
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - face size");
-            if (batch_textures)
-            {
-                U8 cur_tex = 0;
-                facep->setTextureIndex(cur_tex);
-                if (texture_count < MAX_TEXTURE_COUNT && tex) // <FS:Beq/> [FIRE-34534] guard additional cases of tex == null
-                {
-                    texture_list[texture_count++] = tex;
-                }
-
-                if (can_batch_texture(facep))
-                { //populate texture_list with any textures that can be batched
-                  //move i to the next unbatchable face
-                    while (i != end_faces)
-                    {
-                        facep = *i;
-
-                        if (!can_batch_texture(facep))
-                        { //face is bump mapped or has an animated texture matrix -- can't
-                            //batch more than 1 texture at a time
-                            facep->setTextureIndex(0);
-                            break;
-                        }
-
-                        if (facep->getTexture() != tex)
-                        {
-                            if (distance_sort)
-                            { //textures might be out of order, see if texture exists in current batch
-                                bool found = false;
-                                for (U32 tex_idx = 0; tex_idx < texture_count; ++tex_idx)
-                                {
-                                    if (facep->getTexture() == texture_list[tex_idx])
-                                    {
-                                        cur_tex = tex_idx;
-                                        found = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!found)
-                                {
-                                    cur_tex = texture_count;
-                                }
-                            }
-                            else
-                            {
-                                cur_tex++;
-                            }
-
-                            if (cur_tex >= texture_index_channels)
-                            { //cut batches when index channels are depleted
-                                break;
-                            }
-
-                            tex = facep->getTexture();
-
-                            // <FS:Beq> Quick hack test of proper batching logic
-                            // if (texture_count < MAX_TEXTURE_COUNT)
-                            // only add to the batch if this is a new texture
-                            if (cur_tex == texture_count && texture_count < MAX_TEXTURE_COUNT && tex) // <FS:Beq/> [FIRE-34534] guard additional cases of tex == null
-                            // </FS:Beq>
-                            {
-                                texture_list[texture_count++] = tex;
-                            }
-                        }
-
-                        if (geom_count + facep->getGeomCount() > max_vertices)
-                        { //cut batches on geom count too big
-                            break;
-                        }
-
-                        ++i;
-
-                        flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
-
-                        index_count += facep->getIndicesCount();
-                        geom_count += facep->getGeomCount();
-
-                        facep->setTextureIndex(cur_tex);
-                    }
-                }
-                else
-                {
-                    facep->setTextureIndex(0);
-                }
-
-                tex = texture_list[0];
-            }
-            else
-            {
-                while (i != end_faces &&
-                    (LLPipeline::sTextureBindTest ||
-                        (distance_sort ||
-                            ((*i)->getTexture() == tex))))
-                {
-                    facep = *i;
-                    const LLTextureEntry* nextTe = facep->getTextureEntry();
-                    if (nextTe->getMaterialID() != matId)
-                    {
-                        break;
-                    }
-
-                    //face has no texture index
-                    facep->mDrawInfo = NULL;
-                    facep->setTextureIndex(FACE_DO_NOT_BATCH_TEXTURES);
-
-                    if (geom_count + facep->getGeomCount() > max_vertices)
-                    { //cut batches on geom count too big
-                        break;
-                    }
-
-                    ++i;
-                    index_count += facep->getIndicesCount();
-                    geom_count += facep->getGeomCount();
-
-                    flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
-                }
-            }
-        }
-
-        batches.push_back({ face_iter, i, index_count, geom_count, bake_sunlight, nullptr });
-        face_iter = i;
-    }
-
-    // allocation pass
-    for (DrawBatch& batch : batches)
-    {
-        const U32 index_count = batch.mIndexCount;
-        const U32 geom_count = batch.mGeomCount;
-
-        //create vertex buffer
-        LLPointer<LLVertexBuffer> buffer;
-
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - allocate");
-            buffer = new LLVertexBuffer(mask);
-            if(!buffer->allocateBuffer(geom_count, index_count))
-            {
-                LL_WARNS() << "Failed to allocate group Vertex Buffer to "
-                    << geom_count << " vertices and "
-                    << index_count << " indices" << LL_ENDL;
-                buffer = NULL;
-            }
-        }
-
-        if (buffer)
-        {
-            geometryBytes += buffer->getSize() + buffer->getIndicesSize();
-            buffer_map[mask][*batch.mBegin].push_back(buffer);
-        }
-
-        batch.mBuffer = buffer;
-    }
-
-    // fill pass: the geometry of the faces into the buffers, and the registration in the passes
-    for (DrawBatch& batch : batches)
-    {
-        LLPointer<LLVertexBuffer> buffer = batch.mBuffer;
-        const bool bake_sunlight = batch.mBakeSunlight;
-        face_iter = batch.mBegin;
-        LLFace** i = batch.mEnd;
-        LLFace* facep = nullptr;
-        LLViewerTexture* tex = nullptr;
-        LLSpatialGroup::draw_map_t batch_map;       // <FS> R3b1: what this batch registers, appended to the group's draw map below in the order of the batches
+// <FS> group rebuild R3b2: the geometry of the faces of one render batch into its buffer, and the faces' registration in the passes (into the task's own draw map)
+void LLVolumeGeometryManager::fillBatch(FillTask& task)
+{
+    LLSpatialGroup* group = task.mGroup;
+    const U32 mask = task.mMask;
+    const bool hud_group = task.mHudGroup;
+    const bool batch_textures = task.mBatchTextures;
+    const bool distance_sort = task.mDistanceSort;
+    LLPointer<LLVertexBuffer> buffer = task.mBuffer;
+    const bool bake_sunlight = task.mBakeSunlight;
+    LLFace** face_iter = task.mBegin;
+    LLFace** i = task.mEnd;
+    LLFace* facep = nullptr;
+    LLViewerTexture* tex = nullptr;
+    LLSpatialGroup::draw_map_t& batch_map = task.mMap;
+    struct HashMemoScope { HashMemoScope() { sHashMemo = MaterialHashMemo(); sHashMemo.mOn = true; } ~HashMemoScope() { sHashMemo = MaterialHashMemo(); } } hash_memo_scope;
+    struct StampFlag { bool mWas; explicit StampFlag(bool on) : mWas(LLFace::sStampedByCaller) { LLFace::sStampedByCaller = on; } ~StampFlag() { LLFace::sStampedByCaller = mWas; } } stamp_flag(task.mPrepared);
 
         //add face geometry
 
@@ -7284,14 +7150,20 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
             if (buffer.isNull())
             {
                 // Bulk allocation failed
-                facep->setVertexBuffer(buffer);
-                facep->setSize(0, 0); // mark as no geometry
+                if (!task.mPrepared)
+                {
+                    facep->setVertexBuffer(buffer);
+                    facep->setSize(0, 0); // mark as no geometry
+                }
                 ++face_iter;
                 continue;
             }
-            facep->setIndicesIndex(indices_index);
-            facep->setGeomIndex(index_offset);
-            facep->setVertexBuffer(buffer);
+            if (!task.mPrepared)
+            {
+                facep->setIndicesIndex(indices_index);
+                facep->setGeomIndex(index_offset);
+                facep->setVertexBuffer(buffer);
+            }
 
             if (batch_textures && facep->getTextureIndex() == FACE_DO_NOT_BATCH_TEXTURES)
             {
@@ -7300,7 +7172,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
             {
                 //for debugging, set last time face was updated vs moved
-                facep->updateRebuildFlags();
+                if (!task.mPrepared) facep->updateRebuildFlags();
 
                 { //copy face geometry into vertex buffer
                     LLDrawable* drawablep = facep->getDrawable();
@@ -7681,12 +7553,446 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
             ++face_iter;
         }
+}
 
-        for (auto& entry : batch_map)
+// LL_VK_REBUILD_PARALLEL: 0 = the fills on this thread, 1 = the fill tasks of one group on the pool, 2 (the default since 2026-10-31) = the fills of all the groups of a rebuild loop together (LLRebuildBatch)
+static int rebuild_parallel_mode()
+{
+    static const int mode = getenv("LL_VK_REBUILD_PARALLEL") ? atoi(getenv("LL_VK_REBUILD_PARALLEL")) : 2;
+    return mode;
+}
+
+// the tasks of the kinds of one group, in the order genDrawInfo made them: on the pool when LL_VK_REBUILD_PARALLEL is set (the tasks of animated children stay on this thread), then the draw maps appended to the group's in that order
+void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<FillTask>& tasks)
+{
+    LL_CPU_ZONE("rebuild: fill tasks (geometry and registration)");
+    static const bool parallel_on = rebuild_parallel_mode() == 1;
+    LLForkJoinPool* pool = parallel_on && !LLGpuZoneTimer::isActive() ? LLForkJoinPool::shared() : nullptr;
+    std::vector<size_t> parallel;
+    for (size_t k = 0; k < tasks.size(); ++k)
+    {
+        if (!tasks[k].mSerialOnly)
+        {
+            parallel.push_back(k);
+        }
+    }
+    if (pool && parallel.size() >= 2)
+    {
+        for (size_t k : parallel)
+        {
+            prepareBatch(tasks[k]);
+        }
+        const std::function<void(size_t)> job = [&](size_t j) { fillBatch(tasks[parallel[j]]); };
+        pool->run(parallel.size(), job);
+        for (FillTask& task : tasks)
+        {
+            if (task.mSerialOnly)
+            {
+                fillBatch(task);
+            }
+        }
+    }
+    else
+    {
+        for (FillTask& task : tasks)
+        {
+            fillBatch(task);
+        }
+    }
+    for (FillTask& task : tasks)
+    {
+        for (auto& entry : task.mMap)
         {
             LLSpatialGroup::drawmap_elem_t& dst = group->mDrawMap[entry.first];
             dst.insert(dst.end(), entry.second.begin(), entry.second.end());
         }
+        task.mMap.clear();
+    }
+}
+
+thread_local LLRebuildBatch* LLRebuildBatch::sCurrent = nullptr;
+
+LLRebuildBatch::Scope::Scope()
+{
+    mOwner = rebuild_parallel_mode() == 2 && !LLRebuildBatch::sCurrent && !LLGpuZoneTimer::isActive();
+    if (mOwner)
+    {
+        LLRebuildBatch::sCurrent = &mBatch;
+    }
+}
+
+LLRebuildBatch::Scope::~Scope()
+{
+    if (mOwner)
+    {
+        mBatch.flush();
+        LLRebuildBatch::sCurrent = nullptr;
+    }
+}
+
+void LLRebuildBatch::add(LLVolumeGeometryManager* manager, LLSpatialGroup* group, std::vector<LLVolumeGeometryManager::FillTask>& tasks)
+{
+    mEntries.emplace_back();
+    Entry& entry = mEntries.back();
+    entry.mManager = manager;
+    entry.mGroup = group;
+    entry.mTasks = std::move(tasks);
+    tasks.clear();
+    for (LLVolumeGeometryManager::FillTask& task : entry.mTasks)
+    {
+        task.mFaces.assign(task.mBegin, task.mEnd);
+        task.mBegin = task.mFaces.data();
+        task.mEnd = task.mBegin + task.mFaces.size();
+        if (!task.mSerialOnly)
+        {
+            manager->prepareBatch(task);        // the main thread's part of the fill, now: the group's next rebuild or any reader of its faces sees what a rebuild at once would have left
+        }
+    }
+    mIndex[group] = mEntries.size() - 1;
+    mJustDeferred = group;
+}
+
+void LLRebuildBatch::fragmentLater(LLSpatialGroup* group)
+{
+    auto it = mIndex.find(group);
+    if (it != mIndex.end())
+    {
+        mEntries[it->second].mFragment = true;
+    }
+}
+
+void LLRebuildBatch::flush()
+{
+    if (mEntries.empty())
+    {
+        return;
+    }
+    LL_CPU_ZONE("rebuild batch: flush (fills of all the groups, draw maps, fragments)");
+    std::vector<Entry> entries;
+    entries.swap(mEntries);         // (nothing below rebuilds a group, but a flush from inside a fill would find the batch empty)
+    mIndex.clear();
+    mJustDeferred = nullptr;
+
+    typedef std::pair<LLVolumeGeometryManager*, LLVolumeGeometryManager::FillTask*> Job;
+    std::vector<Job> parallel, serial;
+    for (Entry& entry : entries)
+    {
+        for (LLVolumeGeometryManager::FillTask& task : entry.mTasks)
+        {
+            (task.mPrepared ? parallel : serial).push_back(Job(entry.mManager, &task));
+        }
+    }
+    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    if (pool && parallel.size() >= 2)
+    {
+        const std::function<void(size_t)> job = [&](size_t j) { parallel[j].first->fillBatch(*parallel[j].second); };
+        pool->run(parallel.size(), job);
+    }
+    else
+    {
+        for (Job& j : parallel) { j.first->fillBatch(*j.second); }
+    }
+    for (Job& j : serial) { j.first->fillBatch(*j.second); }
+
+    for (Entry& entry : entries)
+    {
+        LLSpatialGroup* group = entry.mGroup;
+        for (LLVolumeGeometryManager::FillTask& task : entry.mTasks)
+        {
+            if (!group->isDead())
+            {
+                for (auto& element : task.mMap)
+                {
+                    LLSpatialGroup::drawmap_elem_t& dst = group->mDrawMap[element.first];
+                    dst.insert(dst.end(), element.second.begin(), element.second.end());
+                }
+            }
+            task.mMap.clear();
+        }
+        if (entry.mFragment && !group->isDead())
+        {
+            LL_CPU_ZONE("rebuild: scene geometry fragment build");
+            ll_scene_fragment_build(group);
+        }
+    }
+}
+
+U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort, bool batch_textures, bool rigged, std::vector<FillTask>* deferred)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
+
+    U32 geometryBytes = 0;
+
+    //calculate maximum number of vertices to store in a single buffer
+    static LLCachedControl<S32> max_vbo_size(gSavedSettings, "RenderMaxVBOSize", 512);
+    U32 max_vertices = (max_vbo_size * 1024)/LLVertexBuffer::calcVertexSize(group->getSpatialPartition()->mVertexDataMask);
+    max_vertices = llmin(max_vertices, (U32) 65535);
+
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - sort");
+
+        if (rigged)
+        {
+            if (!distance_sort) // <--- alpha "sort" rigged faces by maintaining original draw order
+            {
+                //sort faces by things that break batches, including avatar and mesh id
+                std::sort(faces, faces + face_count, CompareBatchBreakerRigged());
+            }
+        }
+        else if (!distance_sort)
+        {
+            //sort faces by things that break batches, not including avatar and mesh id
+            std::sort(faces, faces + face_count, CompareBatchBreaker());
+        }
+        else
+        {
+            //sort faces by distance
+            std::sort(faces, faces+face_count, LLFace::CompareDistanceGreater());
+        }
+    }
+
+    bool hud_group = group->isHUDGroup() ;
+    LLFace** face_iter = faces;
+    LLFace** end_faces = faces+face_count;
+
+    LLSpatialGroup::buffer_map_t buffer_map;
+
+    LLViewerTexture* last_tex = NULL;
+
+    S32 texture_index_channels = LLShaderProgram::sIndexedTextureChannels;
+
+    bool flexi = false;
+
+    struct DrawBatch
+    {
+        LLFace** mBegin;
+        LLFace** mEnd;
+        U32 mIndexCount;
+        U32 mGeomCount;
+        bool mBakeSunlight;
+        LLPointer<LLVertexBuffer> mBuffer;
+    };
+    std::vector<DrawBatch> batches;
+
+    // <FS> group rebuild R3a: the batches of the kind are planned first (which faces go in one vertex buffer), their buffers are allocated next, and the faces are filled and registered last: the
+    // same work in the same order of batches as the single loop that did all three for one batch before it planned the next, in three passes, so that the allocation (which only the main thread may do)
+    // and the fill (which can go to a pool thread) are apart.
+    while (face_iter != end_faces)
+    {
+        //pull off next face
+        LLFace* facep = *face_iter;
+        LLViewerTexture* tex = facep->getTexture();
+        const LLTextureEntry* te = facep->getTextureEntry();
+        LLMaterialID matId = te->getMaterialID();       // (the material pointer that was copied here was not used: another copy of a shared, counted pointer a face)
+
+        // if (distance_sort)
+        // {
+        //  tex = NULL;
+        // }
+
+        if (last_tex != tex)
+        {
+            last_tex = tex;
+        }
+
+        bool bake_sunlight = LLPipeline::sBakeSunlight && facep->getDrawable()->isStatic();
+
+        U32 index_count = facep->getIndicesCount();
+        U32 geom_count = facep->getGeomCount();
+
+        flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
+
+        //sum up vertices needed for this render batch
+        LLFace** i = face_iter;
+        ++i;
+
+        const U32 MAX_TEXTURE_COUNT = 32;
+        LLViewerTexture* texture_list[MAX_TEXTURE_COUNT];
+
+        U32 texture_count = 0;
+
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - face size");
+            if (batch_textures)
+            {
+                U8 cur_tex = 0;
+                facep->setTextureIndex(cur_tex);
+                if (texture_count < MAX_TEXTURE_COUNT && tex) // <FS:Beq/> [FIRE-34534] guard additional cases of tex == null
+                {
+                    texture_list[texture_count++] = tex;
+                }
+
+                if (can_batch_texture(facep))
+                { //populate texture_list with any textures that can be batched
+                  //move i to the next unbatchable face
+                    while (i != end_faces)
+                    {
+                        facep = *i;
+
+                        if (!can_batch_texture(facep))
+                        { //face is bump mapped or has an animated texture matrix -- can't
+                            //batch more than 1 texture at a time
+                            facep->setTextureIndex(0);
+                            break;
+                        }
+
+                        if (facep->getTexture() != tex)
+                        {
+                            if (distance_sort)
+                            { //textures might be out of order, see if texture exists in current batch
+                                bool found = false;
+                                for (U32 tex_idx = 0; tex_idx < texture_count; ++tex_idx)
+                                {
+                                    if (facep->getTexture() == texture_list[tex_idx])
+                                    {
+                                        cur_tex = tex_idx;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found)
+                                {
+                                    cur_tex = texture_count;
+                                }
+                            }
+                            else
+                            {
+                                cur_tex++;
+                            }
+
+                            if (cur_tex >= texture_index_channels)
+                            { //cut batches when index channels are depleted
+                                break;
+                            }
+
+                            tex = facep->getTexture();
+
+                            // <FS:Beq> Quick hack test of proper batching logic
+                            // if (texture_count < MAX_TEXTURE_COUNT)
+                            // only add to the batch if this is a new texture
+                            if (cur_tex == texture_count && texture_count < MAX_TEXTURE_COUNT && tex) // <FS:Beq/> [FIRE-34534] guard additional cases of tex == null
+                            // </FS:Beq>
+                            {
+                                texture_list[texture_count++] = tex;
+                            }
+                        }
+
+                        if (geom_count + facep->getGeomCount() > max_vertices)
+                        { //cut batches on geom count too big
+                            break;
+                        }
+
+                        ++i;
+
+                        flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
+
+                        index_count += facep->getIndicesCount();
+                        geom_count += facep->getGeomCount();
+
+                        facep->setTextureIndex(cur_tex);
+                    }
+                }
+                else
+                {
+                    facep->setTextureIndex(0);
+                }
+
+                tex = texture_list[0];
+            }
+            else
+            {
+                while (i != end_faces &&
+                    (LLPipeline::sTextureBindTest ||
+                        (distance_sort ||
+                            ((*i)->getTexture() == tex))))
+                {
+                    facep = *i;
+                    const LLTextureEntry* nextTe = facep->getTextureEntry();
+                    if (nextTe->getMaterialID() != matId)
+                    {
+                        break;
+                    }
+
+                    //face has no texture index
+                    facep->mDrawInfo = NULL;
+                    facep->setTextureIndex(FACE_DO_NOT_BATCH_TEXTURES);
+
+                    if (geom_count + facep->getGeomCount() > max_vertices)
+                    { //cut batches on geom count too big
+                        break;
+                    }
+
+                    ++i;
+                    index_count += facep->getIndicesCount();
+                    geom_count += facep->getGeomCount();
+
+                    flexi = flexi || facep->getViewerObject()->getVolume()->isUnique();
+                }
+            }
+        }
+
+        batches.push_back({ face_iter, i, index_count, geom_count, bake_sunlight, nullptr });
+        face_iter = i;
+    }
+
+    // allocation pass
+    for (DrawBatch& batch : batches)
+    {
+        const U32 index_count = batch.mIndexCount;
+        const U32 geom_count = batch.mGeomCount;
+
+        //create vertex buffer
+        LLPointer<LLVertexBuffer> buffer;
+
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("genDrawInfo - allocate");
+            buffer = new LLVertexBuffer(mask);
+            if(!buffer->allocateBuffer(geom_count, index_count))
+            {
+                LL_WARNS() << "Failed to allocate group Vertex Buffer to "
+                    << geom_count << " vertices and "
+                    << index_count << " indices" << LL_ENDL;
+                buffer = NULL;
+            }
+        }
+
+        if (buffer)
+        {
+            geometryBytes += buffer->getSize() + buffer->getIndicesSize();
+            buffer_map[mask][*batch.mBegin].push_back(buffer);
+        }
+
+        batch.mBuffer = buffer;
+    }
+
+    // fill pass: one task a batch (R3b2); the caller of a deferred genDrawInfo runs them, otherwise they run here
+    std::vector<FillTask> local_tasks;
+    std::vector<FillTask>& tasks = deferred ? *deferred : local_tasks;
+    for (DrawBatch& batch : batches)
+    {
+        FillTask task;
+        task.mGroup = group;
+        task.mMask = mask;
+        task.mHudGroup = hud_group;
+        task.mBatchTextures = batch_textures;
+        task.mDistanceSort = distance_sort;
+        task.mBakeSunlight = batch.mBakeSunlight;
+        task.mBegin = batch.mBegin;
+        task.mEnd = batch.mEnd;
+        task.mBuffer = batch.mBuffer;
+        for (LLFace** f = batch.mBegin; f < batch.mEnd && !task.mSerialOnly; ++f)
+        {
+            LLDrawable* d = (*f)->getDrawable();
+            const LLTextureEntry* fte = (*f)->getTextureEntry();
+            // an animated child writes its object's relative transform; a selected face (or one that just was) makes or frees a vertex buffer of its own; a rigged face holds its avatar in the draw info, and an avatar's count is not atomic
+            task.mSerialOnly = (d && d->isState(LLDrawable::ANIMATED_CHILD)) || (fte && fte->isSelected()) || (*f)->hasSelectionBuffer() || (*f)->mAvatar || (*f)->getViewerObject()->isSelected();
+        }
+        tasks.push_back(std::move(task));
+    }
+    if (!deferred)
+    {
+        runFillTasks(group, local_tasks);
     }
 
     group->mBufferMap[mask].clear();

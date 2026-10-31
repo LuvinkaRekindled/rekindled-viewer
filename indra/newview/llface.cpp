@@ -76,6 +76,7 @@ static LLStaticHashedString sTextureIndexIn("texture_index_in");
 static LLStaticHashedString sColorIn("color_in");
 
 bool LLFace::sSafeRenderSelect = true; // false
+thread_local bool LLFace::sStampedByCaller = false;
 
 
 #define DOTVEC(a,b) (a.mV[0]*b.mV[0] + a.mV[1]*b.mV[1] + a.mV[2]*b.mV[2])
@@ -1305,6 +1306,44 @@ void push_for_transform(LLVertexBuffer* buff, U32 source_count, U32 dest_count)
     }
 }
 
+// <FS> cheaper fill: the transpose of the inverse of a skin's bind shape matrix (the normal matrix of a rigged face) was worked out for every face; the faces of a batch share a skin, so the last one is kept,
+// per thread, with the matrix it came from (compared by value: a changed bind shape matrix gives a new result). LL_VK_CHEAP_FILL=0 turns it off, 2 checks every hit.
+static int face_cheap_fill_mode()
+{
+    static const int mode = getenv("LL_VK_CHEAP_FILL") ? atoi(getenv("LL_VK_CHEAP_FILL")) : 1;
+    return mode;
+}
+
+static void bind_shape_normal_matrix(const LLMatrix4a& bind, LLMatrix4a& out)
+{
+    static thread_local bool have = false;
+    static thread_local LLMatrix4a last_src, last_out;
+    const F32* src = bind.getF32ptr();
+    const int mode = face_cheap_fill_mode();
+    if (mode != 0 && have && memcmp(last_src.getF32ptr(), src, 16 * sizeof(F32)) == 0)
+    {
+        out = last_out;
+        if (mode == 2)
+        {
+            glm::mat4 m = glm::make_mat4((F32*)src);
+            m = glm::transpose(glm::inverse(m));
+            LLMatrix4a check;
+            check.loadu(glm::value_ptr(m));
+            if (memcmp(check.getF32ptr(), out.getF32ptr(), 16 * sizeof(F32)) != 0)
+            {
+                LL_WARNS_ONCE("CheapFill") << "a cached bind shape normal matrix differs from the computed one" << LL_ENDL;
+            }
+        }
+        return;
+    }
+    glm::mat4 m = glm::make_mat4((F32*)src);
+    m = glm::transpose(glm::inverse(m));
+    out.loadu(glm::value_ptr(m));
+    last_src = bind;
+    last_out = out;
+    have = true;
+}
+
 bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 S32 face_index,
                                 const LLMatrix4& mat_vert_in,
@@ -1315,7 +1354,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 bool rebuild_for_gltf)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;
-    stampTextures();        // <FS> a rebuild of the face's vertices and texture coordinates is how a change of the texture entry (scale, offset, colour) reaches the face: the texture priority cache starts over
+    if (!sStampedByCaller) stampTextures();        // <FS> a rebuild of the face's vertices and texture coordinates is how a change of the texture entry (scale, offset, colour) reaches the face: the texture priority cache starts over
     llassert(verify());
 
     if (face_index < 0 || face_index >= volume.getNumVolumeFaces())
@@ -1673,10 +1712,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                 skin = mSkinInfo;
             }
 
-            //TODO -- cache this (check profile marker above)?
-            glm::mat4 m = glm::make_mat4((F32*)skin->mBindShapeMatrix.getF32ptr());
-            m = glm::transpose(glm::inverse(m));
-            mat_normal.loadu(glm::value_ptr(m));
+            bind_shape_normal_matrix(skin->mBindShapeMatrix, mat_normal);       // <FS> (kept for the faces of a batch that share the skin)
         }
         else
         {
@@ -2003,6 +2039,15 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                     // hold onto strider to front of TC array for use later
                     bump_tc = dst;
 
+                    if (face_cheap_fill_mode() != 0 && texgen != LLTextureEntry::TEX_GEN_PLANAR && !(tex_mode && mTextureMatrix) && !do_xform)
+                    {
+                        // <FS> cheaper fill: not planar, no texture matrix, no transform on this channel: the loop below would copy the coordinates one by one
+                        if (num_vertices > 0)
+                        {
+                            memcpy((void*)dst.get(), (const void*)vf.mTexCoords, num_vertices * sizeof(LLVector2));
+                        }
+                    }
+                    else
                     {
                         // NOTE: split TEX_GEN_PLANAR implementation to reduce branchiness of inner loop
                         // These are per-vertex operations and every little bit counts

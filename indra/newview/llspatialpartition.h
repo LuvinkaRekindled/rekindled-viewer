@@ -774,7 +774,28 @@ class LLVolumeGeometryManager: public LLGeometryManager
     virtual void rebuildMesh(LLSpatialGroup* group);
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count);
-    U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false);
+    // <FS> group rebuild R3b2: the fill and registration of one render batch as a task of its own. genDrawInfo plans the batches of a kind and allocates their buffers (the main thread), and either runs the
+    // tasks at once or hands them to the caller (deferred), which runs the tasks of all the kinds of a group together, on the pool when LL_VK_REBUILD_PARALLEL is set, and appends their draw maps to the group's in order.
+    struct FillTask
+    {
+        LLSpatialGroup* mGroup = nullptr;
+        U32 mMask = 0;
+        bool mHudGroup = false;
+        bool mBatchTextures = false;
+        bool mDistanceSort = false;
+        bool mBakeSunlight = false;
+        bool mPrepared = false;         // the caller did the faces' own setup (indices, vertex buffer, texture stamps) already: the fill runs on a pool thread
+        bool mSerialOnly = false;       // a face of an animated child: updateRelativeXform writes its object, which the faces of other batches can share
+        LLFace** mBegin = nullptr;
+        LLFace** mEnd = nullptr;
+        std::vector<LLFace*> mFaces;    // the faces when the task waits for a batch (R3b3): the scratch the face lists were sorted into is the next group's
+        LLPointer<LLVertexBuffer> mBuffer;
+        LLSpatialGroup::draw_map_t mMap;
+    };
+    void prepareBatch(FillTask& task);
+    void fillBatch(FillTask& task);
+    void runFillTasks(LLSpatialGroup* group, std::vector<FillTask>& tasks);
+    U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false, std::vector<FillTask>* deferred = nullptr);
     // drawmap: the draw map to register into (default: the group's own). The fill of a render batch registers into one of its own that is appended to the group's when the batch is done (R3b1: a draw info only ever grows with faces of its own vertex buffer, which is its own batch)
     void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type, LLSpatialGroup::draw_map_t* drawmap = nullptr);
 
@@ -792,6 +813,41 @@ private:
     static thread_local LLFace** sNormSpecFaces[2];
     static thread_local LLFace** sPbrFaces[2];
     static thread_local LLFace** sAlphaFaces[2];
+};
+
+// <FS> group rebuild R3b3: the fills of the groups a loop rebuilds, launched on the pool once instead of once a group (LL_VK_REBUILD_PARALLEL=2). While a scope is open, a volume group's rebuild plans its batches and allocates
+// their buffers as it always did, and hands the fill tasks to the batch; the group's state is as after a rebuild at once, but its draw map and the scene fragment wait for flush(), which the scope's owner calls after the loop
+// (and which a rebuild or a mesh rebuild of a pending group calls first). Main thread only.
+class LLRebuildBatch
+{
+public:
+    struct Scope;
+    static LLRebuildBatch* current() { return sCurrent; }
+    bool pending(const LLSpatialGroup* group) const { return mIndex.find(group) != mIndex.end(); }
+    void add(LLVolumeGeometryManager* manager, LLSpatialGroup* group, std::vector<LLVolumeGeometryManager::FillTask>& tasks);
+    void fragmentLater(LLSpatialGroup* group);
+    void flush();
+    LLSpatialGroup* mJustDeferred = nullptr;    // the group whose rebuild was just handed over: LLSpatialGroup::rebuildGeom builds its fragment later
+private:
+    struct Entry
+    {
+        LLVolumeGeometryManager* mManager = nullptr;
+        LLSpatialGroup* mGroup = nullptr;
+        std::vector<LLVolumeGeometryManager::FillTask> mTasks;
+        bool mFragment = false;
+    };
+    std::vector<Entry> mEntries;
+    std::unordered_map<const LLSpatialGroup*, size_t> mIndex;
+    static thread_local LLRebuildBatch* sCurrent;
+};
+
+struct LLRebuildBatch::Scope
+{
+    LLRebuildBatch mBatch;
+    bool mOwner;
+    Scope();
+    ~Scope();
+    void flush() { if (mOwner) mBatch.flush(); }
 };
 
 //spatial partition that uses volume geometry manager (implemented in LLVOVolume.cpp)

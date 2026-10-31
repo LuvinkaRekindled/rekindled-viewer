@@ -134,6 +134,9 @@ public:
     U32             getPoolType()       const   { return mPoolType; }
     LLDrawable*     getDrawable()       const   { return mDrawablep; }
     void            stampTextures();    // <FS> native-vk: something the texture priority reads from this face changed (see LLViewerTexture::mFaceStamp)
+    // <FS> R3b2: set on the thread that fills the faces of a render batch when the caller has stamped the batch's faces itself (the stamps are main thread work: they raise the counter of a texture the faces share)
+    static thread_local bool sStampedByCaller;
+    bool            hasSelectionBuffer() const { return mVertexBufferGLTF.notNull(); }
     LLViewerObject* getViewerObject()   const   { return mVObjp; }
     S32             getLOD()            const   { return mVObjp.notNull() ? mVObjp->getLOD() : 0; }
     void            setPoolType(U32 type)       { mPoolType = type; }
