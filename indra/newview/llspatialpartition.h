@@ -775,7 +775,8 @@ class LLVolumeGeometryManager: public LLGeometryManager
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count);
     U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false);
-    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type);
+    // drawmap: the draw map to register into (default: the group's own). The fill of a render batch registers into one of its own that is appended to the group's when the batch is done (R3b1: a draw info only ever grows with faces of its own vertex buffer, which is its own batch)
+    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type, LLSpatialGroup::draw_map_t* drawmap = nullptr);
 
 private:
     static void allocateFaces(U32 pMaxFaceCount);
