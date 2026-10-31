@@ -1188,7 +1188,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 
         // <FS> view rework A2 (LL_VK_AV_PARALLEL=1): the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
-        static const bool av_parallel = getenv("LL_VK_AV_PARALLEL") != nullptr;
+        static const bool av_parallel = !getenv("LL_VK_AV_PARALLEL") || getenv("LL_VK_AV_PARALLEL")[0] != '0';       // (on unless LL_VK_AV_PARALLEL=0)
         if (av_parallel && !gFSAvTimersOn && !LLAttCensus::sOn)
         {
             static std::vector<LLVOAvatar*> jobs;
