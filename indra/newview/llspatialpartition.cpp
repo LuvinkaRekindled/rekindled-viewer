@@ -432,8 +432,22 @@ void LLSpatialGroup::rebuildGeom()
     clearState(FS_RELEASED);
     if (!isDead())
     {
+        LLRebuildBatch* batch = LLRebuildBatch::current();
+        if (batch)
+        {
+            batch->mJustDeferred = nullptr;
+        }
         { LL_CPU_ZONE("rebuild: partition rebuildGeom (the volume or simple geometry manager)"); getSpatialPartition()->rebuildGeom(this); }
-        { LL_CPU_ZONE("rebuild: scene geometry fragment build"); ll_scene_fragment_build(this); }
+        if (batch && batch->mJustDeferred == this)
+        {   // its fill waits for the batch: so does the fragment, which reads the draw infos
+            batch->mJustDeferred = nullptr;
+            batch->fragmentLater(this);
+        }
+        else
+        {
+            LL_CPU_ZONE("rebuild: scene geometry fragment build");
+            ll_scene_fragment_build(this);
+        }
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
         {

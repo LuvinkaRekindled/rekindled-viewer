@@ -100,12 +100,13 @@ public:
         return *this;
     }
 
-    void ref()
+    // <FS> const like LLRefCount's: a pointer to a const object (LLPointer<const LLMeshSkinInfo>) holds a reference too
+    void ref() const
     {
         mRef++;
     }
 
-    void unref()
+    void unref() const
     {
         llassert(mRef >= 1);
         if ((--mRef) == 0)
@@ -125,7 +126,7 @@ public:
     }
 
 private:
-    LLAtomicS32 mRef;
+    mutable LLAtomicS32 mRef;
 };
 
 /**

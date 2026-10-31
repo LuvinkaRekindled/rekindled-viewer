@@ -4602,6 +4602,7 @@ void LLPipeline::rebuildPriorityGroups()
     wakeGroups();       // <FS> Released groups a camera wants again, a few at a time
 
     mGroupQ1Locked = true;
+    LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3 (a scope inside another does nothing: postSort and the shadow prep have their own)
     // census (LL_VK_ITEMCENSUS=1): the groups rebuilt here, by partition type: how many a frame and the time of their rebuildGeom
     static const bool q1_census = ItemCensus::on();
     static U64 q1_groups[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_frames = 0, q1_calls = 0;
@@ -4708,6 +4709,7 @@ void LLPipeline::rebuildPriorityGroups()
         (void)hz; (void)q1_frames;
     }
 
+    rebuild_batch.flush();
     mGroupSaveQ1 = mGroupQ1;
     mGroupQ1.clear();
     mGroupQ1Locked = false;
@@ -6801,6 +6803,7 @@ void LLPipeline::postSort(LLCamera &camera)
 
     if (!gCubeSnapshot)
     {
+        LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of the drawable groups and of the priority groups, together
         // rebuild drawable geometry
         const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
         {
@@ -6824,6 +6827,7 @@ void LLPipeline::postSort(LLCamera &camera)
         sCull->assertDrawMapsEmpty();
 
         { LL_CPU_ZONE("postSort: rebuildPriorityGroups"); rebuildPriorityGroups(); }
+        rebuild_batch.flush();
     }
 
     LL_PUSH_CALLSTACKS();
@@ -7962,6 +7966,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
 
     const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
     PhaseLap lap;
+    LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of every group these rebuilds make, once
 
     for (ShadowCascadePrep& prep : preps)
     {
@@ -8024,6 +8029,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
         }
     }
 
+    rebuild_batch.flush();
     lap.mark(PH_NEW_DRAWINFO);
 
     // pack vertex buffers for groups that chose to delay their updates

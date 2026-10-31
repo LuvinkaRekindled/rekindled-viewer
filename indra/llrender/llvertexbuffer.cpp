@@ -28,6 +28,7 @@
 
 #include "llfasttimer.h"
 #include "llsys.h"
+#include <mutex>
 #include "llvertexbuffer.h"
 // #include "llrender.h"
 #include "llrenderheaders.h"
@@ -1079,6 +1080,8 @@ LLVertexBuffer::LLVertexBuffer(U32 typemask)
 // list of mapped buffers
 // NOTE: must not be LLPointer<LLVertexBuffer> to avoid breaking non-ref-counted LLVertexBuffer instances
 static std::vector<LLVertexBuffer*> sMappedBuffers;
+// <FS> group rebuild R3b2: buffers are first mapped by the jobs that fill them, on pool threads
+static std::mutex sMappedBuffersMutex;
 
 //static
 void LLVertexBuffer::flushBuffers()
@@ -1453,6 +1456,7 @@ void LLVertexBuffer::_mapBuffer()
     if (!mMapped)
     {
         mMapped = true;
+        std::lock_guard<std::mutex> lock(sMappedBuffersMutex);
         sMappedBuffers.push_back(this);
     }
 }
