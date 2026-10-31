@@ -7057,6 +7057,20 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
     bool flexi = false;
 
+    struct DrawBatch
+    {
+        LLFace** mBegin;
+        LLFace** mEnd;
+        U32 mIndexCount;
+        U32 mGeomCount;
+        bool mBakeSunlight;
+        LLPointer<LLVertexBuffer> mBuffer;
+    };
+    std::vector<DrawBatch> batches;
+
+    // <FS> group rebuild R3a: the batches of the kind are planned first (which faces go in one vertex buffer), their buffers are allocated next, and the faces are filled and registered last: the
+    // same work in the same order of batches as the single loop that did all three for one batch before it planned the next, in three passes, so that the allocation (which only the main thread may do)
+    // and the fill (which can go to a pool thread) are apart.
     while (face_iter != end_faces)
     {
         //pull off next face
@@ -7212,6 +7226,16 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
             }
         }
 
+        batches.push_back({ face_iter, i, index_count, geom_count, bake_sunlight, nullptr });
+        face_iter = i;
+    }
+
+    // allocation pass
+    for (DrawBatch& batch : batches)
+    {
+        const U32 index_count = batch.mIndexCount;
+        const U32 geom_count = batch.mGeomCount;
+
         //create vertex buffer
         LLPointer<LLVertexBuffer> buffer;
 
@@ -7230,8 +7254,21 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         if (buffer)
         {
             geometryBytes += buffer->getSize() + buffer->getIndicesSize();
-            buffer_map[mask][*face_iter].push_back(buffer);
+            buffer_map[mask][*batch.mBegin].push_back(buffer);
         }
+
+        batch.mBuffer = buffer;
+    }
+
+    // fill pass: the geometry of the faces into the buffers, and the registration in the passes
+    for (DrawBatch& batch : batches)
+    {
+        LLPointer<LLVertexBuffer> buffer = batch.mBuffer;
+        const bool bake_sunlight = batch.mBakeSunlight;
+        face_iter = batch.mBegin;
+        LLFace** i = batch.mEnd;
+        LLFace* facep = nullptr;
+        LLViewerTexture* tex = nullptr;
 
         //add face geometry
 
