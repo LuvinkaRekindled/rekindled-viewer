@@ -778,18 +778,19 @@ class LLVolumeGeometryManager: public LLGeometryManager
     void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type);
 
 private:
-    void allocateFaces(U32 pMaxFaceCount);
-    void freeFaces();
+    static void allocateFaces(U32 pMaxFaceCount);
+    static void freeFaces();
+    static void ensureFaces();      // <FS> group rebuild R1: this thread's scratch, made on first use
 
     static int32_t sInstanceCount;
-    static LLFace** sFullbrightFaces[2];
-    static LLFace** sBumpFaces[2];
-    static LLFace** sSimpleFaces[2];
-    static LLFace** sNormFaces[2];
-    static LLFace** sSpecFaces[2];
-    static LLFace** sNormSpecFaces[2];
-    static LLFace** sPbrFaces[2];
-    static LLFace** sAlphaFaces[2];
+    static thread_local LLFace** sFullbrightFaces[2];      // <FS> group rebuild R1: the scratch of one rebuild, one set per thread (the rebuilds of two groups can then run at once)
+    static thread_local LLFace** sBumpFaces[2];
+    static thread_local LLFace** sSimpleFaces[2];
+    static thread_local LLFace** sNormFaces[2];
+    static thread_local LLFace** sSpecFaces[2];
+    static thread_local LLFace** sNormSpecFaces[2];
+    static thread_local LLFace** sPbrFaces[2];
+    static thread_local LLFace** sAlphaFaces[2];
 };
 
 //spatial partition that uses volume geometry manager (implemented in LLVOVolume.cpp)
