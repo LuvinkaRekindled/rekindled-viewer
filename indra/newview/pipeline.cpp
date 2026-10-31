@@ -7565,6 +7565,22 @@ struct PhaseLap
     void reset() { mLast = std::chrono::steady_clock::now(); }
 };
 
+// <FS> LL_VK_SHADOWCENSUS=1: what the cascade culls, marks and rebuilds do for groups and drawables that the main view does not see this frame (the question for GPU-driven shadow casters: does the CPU
+// cull of a cascade give the CPU anything besides a draw list?). "new": not stamped visible by the world camera this frame. Per cascade: the groups the cull found, the drawables the marks stamped, how many of
+// those were new, the groups whose LOD check ran, the drawables left to the main thread (not volumes). The rebuilds of the shadow prep, by whether the world view sees the group.
+struct CascadeCullCensus
+{
+    std::atomic<U64> mDrawGroups[4], mVisGroups[4], mDrawGroupsNew[4], mVisGroupsNew[4], mDrawables[4], mDrawablesNew[4], mLodGroups[4], mLodGroupsNew[4], mLodDrawables[4], mLodDrawablesNew[4], mDeferred[4];
+    U64 mMeshDirty[2] = {}, mGeomDirty[2] = {}, mNewDrawInfo[2] = {};      // main thread; [0] the world view sees the group, [1] only the cascades do
+};
+CascadeCullCensus sCascadeCullCensus;
+
+bool shadow_census_on()
+{
+    static const bool on = getenv("LL_VK_SHADOWCENSUS") != nullptr;
+    return on;
+}
+
 void note_shadow_prep_frame(bool parallel, U32 cascades)
 {
     ShadowPrepTimes& t = sShadowPrepTimes[parallel ? 1 : 0];
@@ -7594,6 +7610,25 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             sCascadeRenders[c] = 0;
         }
         LL_INFOS("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
+        if (shadow_census_on() && t.mFrames > 0)
+        {
+            const double f = (double)t.mFrames;
+            std::string line;
+            for (int c = 0; c < 4; ++c)
+            {
+                CascadeCullCensus& k = sCascadeCullCensus;
+                line += llformat(" | cascade %d: drawable groups %.1f (new %.1f), visible groups %.1f (new %.1f), drawables stamped %.1f (new %.1f), LOD-checked groups %.1f (new %.1f) with %.1f drawables (new %.1f), left to the main thread %.1f",
+                    c, k.mDrawGroups[c].exchange(0) / f, k.mDrawGroupsNew[c].exchange(0) / f, k.mVisGroups[c].exchange(0) / f, k.mVisGroupsNew[c].exchange(0) / f, k.mDrawables[c].exchange(0) / f, k.mDrawablesNew[c].exchange(0) / f,
+                    k.mLodGroups[c].exchange(0) / f, k.mLodGroupsNew[c].exchange(0) / f, k.mLodDrawables[c].exchange(0) / f, k.mLodDrawablesNew[c].exchange(0) / f, k.mDeferred[c].exchange(0) / f);
+            }
+            LL_INFOS("ShadowCensus") << "per frame over " << t.mFrames << " frames:" << line << LL_ENDL;
+            CascadeCullCensus& k = sCascadeCullCensus;
+            LL_INFOS("ShadowCensus") << llformat("rebuilds in the shadow prep per frame (the world view sees the group / only the cascades do): mesh %.2f / %.2f, geometry %.2f / %.2f, new draw info %.2f / %.2f",
+                k.mMeshDirty[0] / f, k.mMeshDirty[1] / f, k.mGeomDirty[0] / f, k.mGeomDirty[1] / f, k.mNewDrawInfo[0] / f, k.mNewDrawInfo[1] / f) << LL_ENDL;
+            memset(k.mMeshDirty, 0, sizeof(k.mMeshDirty));
+            memset(k.mGeomDirty, 0, sizeof(k.mGeomDirty));
+            memset(k.mNewDrawInfo, 0, sizeof(k.mNewDrawInfo));
+        }
         {
             const U64 jobs = sViewJobs.mJobs.exchange(0);
             if (jobs)
@@ -7900,6 +7935,9 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
     ShadowPrepScope scope(prep, &local);        // (what markVisible pushes lands in `local`, and is appended to the cascade's result in list order afterwards)
     LLCamera& camera = prep.mCamera;
     LLCullResult& result = *prep.mResult;
+    const bool census = shadow_census_on();
+    const size_t ci = (size_t)(prep.mIndex & 3);
+    const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
 
     if (kind == 0)
     {
@@ -7911,10 +7949,20 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
             {
                 continue;
             }
+            if (census)
+            {
+                sCascadeCullCensus.mDrawGroups[ci].fetch_add(1, std::memory_order_relaxed);
+                sCascadeCullCensus.mDrawGroupsNew[ci].fetch_add((S32)group->getVisible(LLViewerCamera::CAMERA_WORLD) < frame ? 1 : 0, std::memory_order_relaxed);
+            }
             group->setVisible();
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+                if (census && drawablep)
+                {
+                    sCascadeCullCensus.mDrawables[ci].fetch_add(1, std::memory_order_relaxed);
+                    sCascadeCullCensus.mDrawablesNew[ci].fetch_add((S32)drawablep->getVisible() < frame ? 1 : 0, std::memory_order_relaxed);
+                }
                 markVisible(drawablep, camera);
             }
         }
@@ -7929,10 +7977,21 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
         {
             continue;
         }
+        const bool group_new = census && (S32)group->getVisible(LLViewerCamera::CAMERA_WORLD) < frame;
+        if (census)
+        {
+            sCascadeCullCensus.mVisGroups[ci].fetch_add(1, std::memory_order_relaxed);
+            sCascadeCullCensus.mVisGroupsNew[ci].fetch_add(group_new ? 1 : 0, std::memory_order_relaxed);
+        }
         group->setVisible();
         if (!group->changeLOD())
         {
             continue;
+        }
+        if (census)
+        {
+            sCascadeCullCensus.mLodGroups[ci].fetch_add(1, std::memory_order_relaxed);
+            sCascadeCullCensus.mLodGroupsNew[ci].fetch_add(group_new ? 1 : 0, std::memory_order_relaxed);
         }
         for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
         {
@@ -7945,8 +8004,17 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
             {
                 continue;
             }
+            if (census)
+            {
+                sCascadeCullCensus.mLodDrawables[ci].fetch_add(1, std::memory_order_relaxed);
+                sCascadeCullCensus.mLodDrawablesNew[ci].fetch_add((S32)drawablep->getVisible() < frame ? 1 : 0, std::memory_order_relaxed);
+            }
             if (!drawablep->getVOVolume())
             {
+                if (census)
+                {
+                    sCascadeCullCensus.mDeferred[ci].fetch_add(1, std::memory_order_relaxed);
+                }
                 deferred.push_back(drawablep); // pools: the main thread
                 continue;
             }
@@ -7967,6 +8035,9 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
     PhaseLap lap;
     LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of every group these rebuilds make, once
+    const bool census = shadow_census_on();
+    const S32 census_frame = LLViewerOctreeEntryData::getCurrentFrame();
+    const auto world_sees = [census_frame](LLSpatialGroup* g) { return (S32)g->getVisible(LLViewerCamera::CAMERA_WORLD) >= census_frame ? 0 : 1; };      // (the index of the census row: 1 = only the cascades)
 
     for (ShadowCascadePrep& prep : preps)
     {
@@ -7978,6 +8049,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             LLSpatialGroup* group = *iter;
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
+                if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
                 { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
@@ -7986,6 +8058,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             LLSpatialGroup* group = *iter;
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
+                if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
                 { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
@@ -7996,6 +8069,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             LLSpatialGroup* group = *iter;
             if (!group->isDead())
             {
+                if (census && group->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY)) { ++sCascadeCullCensus.mGeomDirty[world_sees(group)]; }
                 group->rebuildGeom();
             }
         }
@@ -8024,6 +8098,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             }
             if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
             {  // no way this group is going to be drawable without a rebuild
+                if (census) { ++sCascadeCullCensus.mNewDrawInfo[world_sees(group)]; }
                 group->rebuildGeom();
             }
         }
@@ -24685,6 +24760,52 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             cloud_lap.mark(PH_POINT_CLOUD);
         }
 
+        // <FS> LL_VK_CASCADE_COVER (default on, 0 = the old reuse rules of the far cascades): a far cascade's map is reused for as long as it still covers every receiver point of the slice (an exact test, see below), and
+        // while the camera moves the far cascades are fitted a little wider so that the map lasts: by the angle the camera turns and the distance it travels in the reuse interval. Zero when the camera is still, so
+        // the picture of a still camera is what it was. The rate is worked out once a frame (a second camera in the same frame, a mirror, does not change it).
+        static const int cover_mode = getenv("LL_VK_CASCADE_COVER") ? atoi(getenv("LL_VK_CASCADE_COVER")) : 1;
+        static LLCachedControl<U32> cover_interval(gSavedSettings, "FSShadowFarCascadeInterval", 2);
+        static LLCachedControl<U32> cover_first(gSavedSettings, "FSShadowFarCascadeFirst", 2);
+        static LLCachedControl<F32> cover_max_margin(gSavedSettings, "FSShadowFarCascadeMaxMargin", 0.12f);
+        const bool cover_on = cover_mode != 0 && !gCubeSnapshot && cover_interval > 1 && !rt_sun_cascades_unused() && !hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA);
+        F32 cover_turn_frac = 0.f, cover_travel = 0.f;      // the angle turned (as a share of the horizontal field of view) and the distance travelled in a reuse interval
+        F32 cover_tan_half = 1.f;
+        if (cover_on)
+        {
+            static U64 rate_frame = 0;
+            static LLVector3 rate_at, rate_origin;
+            static F64 rate_time = 0.0;
+            static F32 rate_omega = 0.f, rate_speed = 0.f;
+            const U64 now_frame = LLFrameTimer::getFrameCount();
+            if (now_frame != rate_frame)
+            {
+                const F64 now_time = LLTimer::getTotalSeconds();
+                const F64 dt = now_time - rate_time;
+                if (rate_frame != 0 && dt > 0.0005 && dt < 0.5)
+                {
+                    const F32 ang = acosf(llclamp(camera.getAtAxis() * rate_at, -1.f, 1.f));
+                    const F32 omega = ang / (F32)dt;
+                    const F32 speed = (camera.getOrigin() - rate_origin).length() / (F32)dt;
+                    rate_omega = rate_omega * 0.6f + omega * 0.4f;      // (a little smoothing: a frame's rate is noisy)
+                    rate_speed = rate_speed * 0.6f + speed * 0.4f;
+                }
+                else
+                {
+                    rate_omega = rate_speed = 0.f;
+                }
+                rate_frame = now_frame;
+                rate_time = now_time;
+                rate_at = camera.getAtAxis();
+                rate_origin = camera.getOrigin();
+            }
+            const F32 interval_s = (F32)cover_interval * llmax((F32)gFrameIntervalSeconds.value(), 0.001f);
+            const F32 vfov = camera.getView();
+            cover_tan_half = tanf(vfov * 0.5f) * camera.getAspect();            // (the half width of the view at a distance of 1)
+            const F32 hfov = 2.f * atanf(cover_tan_half);
+            cover_turn_frac = hfov > 0.01f ? rate_omega * interval_s / hfov : 0.f;
+            cover_travel = rate_speed * interval_s;
+        }
+
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)
         {
             LL_CPU_ZONE("generateSunShadow: cascade setup (a cascade, no render)");
@@ -24849,6 +24970,27 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             //get some "interesting" points of reference
             LLVector3 center = (min+max)*0.5f;
             LLVector3 size = (max-min)*0.5f;
+            if (cover_on && (U32)j >= cover_first)
+            {
+                // <FS> the fit of a far cascade is widened (across the light, not along it) by what the camera does in a reuse interval: its turn as a share of the field of view, and its travel as a share
+                // of the width of the slice. Nothing when the camera is still.
+                const F32 slice_width = 2.f * llmax(dist[j], 1.f) * cover_tan_half;
+                const F32 margin = llmin(cover_turn_frac + (slice_width > 0.f ? cover_travel / slice_width : 0.f), (F32)cover_max_margin);
+                if (margin > 0.002f)
+                {
+                    for (U32 i = 0; i < wpf.size(); ++i)
+                    {
+                        wpf[i].mV[0] = center.mV[0] + (wpf[i].mV[0] - center.mV[0]) * (1.f + margin);
+                        wpf[i].mV[2] = center.mV[2] + (wpf[i].mV[2] - center.mV[2]) * (1.f + margin);
+                    }
+                    size.mV[0] *= (1.f + margin);
+                    size.mV[2] *= (1.f + margin);
+                    min.mV[0] = center.mV[0] - size.mV[0];
+                    max.mV[0] = center.mV[0] + size.mV[0];
+                    min.mV[2] = center.mV[2] - size.mV[2];
+                    max.mV[2] = center.mV[2] + size.mV[2];
+                }
+            }
             LLVector3 near_center = center;
             near_center.mV[1] += size.mV[1]*2.f;
 
@@ -25094,7 +25236,25 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     const bool same_view = fabsf(camera.getView() - cr.mCameraView) < 0.002f * llmax(cr.mCameraView, 0.01f)
                         && fabsf(dist[j] - cr.mSplitNear) <= 0.03f * llmax(cr.mSplitNear, 1.f)
                         && fabsf(dist[j + 1] - cr.mSplitFar) <= 0.03f * llmax(cr.mSplitFar, 1.f);
-                    if (!its_turn && same_view && frame_now - cr.mFrame < 2 * (U64)far_interval && moved < far_max_move && turn_cos > max_turn_cos && sun_cos > cosf(0.3f * DEG_TO_RAD))
+                    if (cover_on)
+                    {
+                        // <FS> the old map is used while it still holds every receiver point of this frame's slice (the points the new fit was made from), seen through the old view and projection; the field of view
+                        // and the sun still have to match, the split distances and the camera's motion do not (they only matter through what the slice contains)
+                        bool covered = !its_turn && frame_now - cr.mFrame < 2 * (U64)far_interval && sun_cos > cosf(0.3f * DEG_TO_RAD)
+                            && fabsf(camera.getView() - cr.mCameraView) < 0.002f * llmax(cr.mCameraView, 0.01f) && !fp.empty();
+                        if (covered)
+                        {
+                            const glm::mat4 old_view_proj = cr.mProj * cr.mView;
+                            for (size_t i = 0; i < fp.size() && covered; ++i)
+                            {
+                                const glm::vec4 c = old_view_proj * glm::vec4(fp[i].mV[0], fp[i].mV[1], fp[i].mV[2], 1.f);
+                                const F32 slack = 0.01f * fabsf(c.w);
+                                covered = c.w > 0.f && fabsf(c.x) <= c.w + slack && fabsf(c.y) <= c.w + slack && fabsf(c.z) <= c.w + slack;
+                            }
+                        }
+                        reuse_shadow_map = covered;
+                    }
+                    else if (!its_turn && same_view && frame_now - cr.mFrame < 2 * (U64)far_interval && moved < far_max_move && turn_cos > max_turn_cos && sun_cos > cosf(0.3f * DEG_TO_RAD))
                     {
                         reuse_shadow_map = true;
                     }
