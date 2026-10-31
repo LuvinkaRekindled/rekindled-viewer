@@ -23,6 +23,11 @@
 #include "lluniformcensus.h"
 #include "llshaderprogram.h"
 #include "llviewercontrol.h"
+#include "llviewerobjectlist.h"
+#include "llviewertexturelist.h"
+#include "lldrawable.h"
+#include "llvertexbuffer.h"
+#include "pipeline.h"
 
 namespace
 {
@@ -1058,4 +1063,104 @@ void HitchWatch::frame()
     sHwMainTid.store(GetCurrentThreadId());
     sHwFrameNo.fetch_add(1);
     sHwLastFrame.store(hw_now());
+}
+
+// <FS> LL_VK_GROWTH=1: one line every 10 s from the main loop with what could be growing while the scene is flat (process private bytes, working set, page faults,
+// object and active object counts, vertex buffer bytes). For the late creep in a long still (doc/vulkan/EXPIRY-design.md).
+void fs_growth_probe()
+{
+    static const bool on = getenv("LL_VK_GROWTH") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static double last_at = 0.0;
+    static DWORD last_faults = 0;
+    const double now = LLTimer::getTotalSeconds();
+    if (now - last_at < 10.0)
+    {
+        return;
+    }
+    const double dt = last_at > 0.0 ? now - last_at : 10.0;
+    last_at = now;
+    PROCESS_MEMORY_COUNTERS_EX pmc = {};
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+    double best_step = 1e9;
+    for (int k = 0; k < 5; ++k)
+    {
+        best_step = std::min(best_step, chain_ns_per_step());
+    }
+    LL_INFOS("Growth") << "private " << llformat("%.0f", pmc.PrivateUsage / 1048576.0) << " MB, working set " << llformat("%.0f", pmc.WorkingSetSize / 1048576.0) << " MB, page faults "
+        << llformat("%.0f", (pmc.PageFaultCount - last_faults) / dt) << "/s | objects " << gObjectList.getNumObjects() << ", active " << gObjectList.getNumActiveObjects()
+        << ", textures " << gTextureList.getNumImages() << ", core clock " << llformat("%.2f", 3.0 / best_step) << " GHz if 3 cycles a step"
+        << ", vertex buffers " << llformat("%.0f", LLVertexBuffer::getBytesAllocated() / 1048576.0) << " MB" << LL_ENDL;
+    last_faults = pmc.PageFaultCount;
+}
+
+// <FS> The faulting thread's stack when an access violation happens (written next to the executable as crash-stack-<pid>.txt, and to the log): the viewer's own crash handler leaves no dump here, and the
+// Windows event only gives a module and an offset. A first-chance handler for the access violation only (C++ exceptions and the SEH the work queue converts are other codes); at most 6 are written.
+// Off with LL_VK_NO_CRASHSTACK=1.
+namespace
+{
+    LONG CALLBACK fs_crash_stack_handler(EXCEPTION_POINTERS* ep)
+    {
+        const DWORD code = ep->ExceptionRecord->ExceptionCode;
+        if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION && code != EXCEPTION_STACK_OVERFLOW)
+        {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        static std::atomic<int> written{0};
+        if (written.fetch_add(1) >= 6)
+        {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        std::string text = llformat("exception 0x%08lx at %p on thread %lu, %s address %p\n", code, ep->ExceptionRecord->ExceptionAddress, GetCurrentThreadId(),
+            ep->ExceptionRecord->NumberParameters >= 2 ? (ep->ExceptionRecord->ExceptionInformation[0] == 0 ? "reading" : ep->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing" : "executing") : "?",
+            ep->ExceptionRecord->NumberParameters >= 2 ? (void*)ep->ExceptionRecord->ExceptionInformation[1] : nullptr);
+        CONTEXT ctx = *ep->ContextRecord;
+        for (int i = 0; i < 40 && ctx.Rip; ++i)
+        {
+            HMODULE module = nullptr;
+            char name[MAX_PATH] = {};
+            if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)ctx.Rip, &module) && module)
+            {
+                GetModuleFileNameA(module, name, MAX_PATH);
+            }
+            const char* base_name = strrchr(name, '\\');
+            text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)(ctx.Rip - (DWORD64)module), fs_describe_address((void*)ctx.Rip).c_str());
+            DWORD64 base = 0;
+            PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+            if (!fn)
+            {
+                if (IsBadReadPtr((void*)ctx.Rsp, 8)) { break; }
+                ctx.Rip = *(DWORD64*)ctx.Rsp;
+                ctx.Rsp += 8;
+            }
+            else
+            {
+                PVOID handler = nullptr;
+                DWORD64 frame = 0;
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
+            }
+        }
+        char path[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, path, MAX_PATH);
+        std::string file(path);
+        file = file.substr(0, file.find_last_of('\\') + 1) + "crash-stack-" + std::to_string(GetCurrentProcessId()) + ".txt";
+        if (FILE* f = fopen(file.c_str(), "ab"))
+        {
+            fwrite(text.data(), 1, text.size(), f);
+            fclose(f);
+        }
+        LL_WARNS("CrashStack") << text << LL_ENDL;
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    const bool sCrashStackInstalled = []() {
+        if (!getenv("LL_VK_NO_CRASHSTACK"))
+        {
+            AddVectoredExceptionHandler(1, fs_crash_stack_handler);
+        }
+        return true;
+    }();
 }

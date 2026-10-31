@@ -2372,7 +2372,8 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
 
 int LLPipeline::coldMode()
 {
-    static const int mode = getenv("LL_VK_EXPIRY") ? atoi(getenv("LL_VK_EXPIRY")) : 0;
+    // <FS> default: the setting FSObjectExpiry (on = mode 4, Cold + Released + the object kill, as soaked in laps clK/clL/clQ on 2026-10-30); LL_VK_EXPIRY=0..4 overrides it (read once, a change needs a restart)
+    static const int mode = getenv("LL_VK_EXPIRY") ? atoi(getenv("LL_VK_EXPIRY")) : (gSavedSettings.controlExists("FSObjectExpiry") && gSavedSettings.getBOOL("FSObjectExpiry") ? 4 : 0);
     return mode;
 }
 
@@ -2428,7 +2429,7 @@ void LLPipeline::releaseScan()
     {
         return;
     }
-    static const S32 min_age = getenv("LL_VK_REL_FRAMES") ? atoi(getenv("LL_VK_REL_FRAMES")) : 3600;
+    static const S32 min_age = getenv("LL_VK_REL_FRAMES") ? atoi(getenv("LL_VK_REL_FRAMES")) : 5400;
     static U32 last = 0;
     const U32 frame = (U32)LLFrameTimer::getFrameCount();
     if (frame - last < 60)
@@ -2449,8 +2450,12 @@ void LLPipeline::releaseScan()
     }
 }
 
+// <FS> the wake queue is written by the threads of the parallel shadow preparation (markNotCulled of a Released group) as well as by the main thread: one lock for the queue and the FS_WAKING bit
+static std::mutex sWakeMutex;
+
 void LLPipeline::wakeRequest(LLSpatialGroup* group)
 {
+    std::lock_guard<std::mutex> lock(sWakeMutex);
     if (!group->hasState(LLSpatialGroup::FS_WAKING))
     {
         group->setState(LLSpatialGroup::FS_WAKING);
@@ -2460,21 +2465,26 @@ void LLPipeline::wakeRequest(LLSpatialGroup* group)
 
 void LLPipeline::wakeForget(LLSpatialGroup* group)
 {
+    std::lock_guard<std::mutex> lock(sWakeMutex);
     mWakeQ.erase(std::remove(mWakeQ.begin(), mWakeQ.end(), group), mWakeQ.end());
 }
 
 void LLPipeline::wakeGroups()
 {
-    if (mWakeQ.empty())
+    std::vector<LLSpatialGroup*> now;
     {
-        return;
+        std::lock_guard<std::mutex> lock(sWakeMutex);
+        if (mWakeQ.empty())
+        {
+            return;
+        }
+        static const size_t per_frame = getenv("LL_VK_WAKE_PER_FRAME") ? (size_t)atoi(getenv("LL_VK_WAKE_PER_FRAME")) : 48;
+        const size_t n = std::min(per_frame, mWakeQ.size());
+        std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->mDistance < b->mDistance; });
+        now.assign(mWakeQ.begin(), mWakeQ.begin() + n);
+        mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
     }
     LL_CPU_ZONE("expiry: wake groups");
-    static const size_t per_frame = getenv("LL_VK_WAKE_PER_FRAME") ? (size_t)atoi(getenv("LL_VK_WAKE_PER_FRAME")) : 48;
-    const size_t n = std::min(per_frame, mWakeQ.size());
-    std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->mDistance < b->mDistance; });
-    std::vector<LLSpatialGroup*> now(mWakeQ.begin(), mWakeQ.begin() + n);
-    mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
     for (LLSpatialGroup* group : now)
     {
         group->clearState(LLSpatialGroup::FS_WAKING);
@@ -2790,6 +2800,10 @@ void LLPipeline::sceneStateCensus()
         LL_INFOS("SceneCensus") << "why the active and listed objects are active (an object can have several):" << r << LL_ENDL;
     }
     {
+        extern void fs_leave_census_report(double frames);      // (llspatialpartition.cpp, LL_VK_LEAVECENSUS=1)
+        fs_leave_census_report(600.0);
+    }
+    {
         // why the entries of the moved list are not skipped by the Cold stage (coldGroup / updateMovedList): not a plain root, or which cameras still had their group within LL_VK_COLD_FRAMES (600)
         static const S32 cold_frames = getenv("LL_VK_COLD_FRAMES") ? atoi(getenv("LL_VK_COLD_FRAMES")) : 600;
         const S32 now_frame = LLViewerOctreeEntryData::getCurrentFrame();
@@ -3066,6 +3080,8 @@ void LLPipeline::cpuProbe()
 void LLPipeline::updateMove()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+
+    { extern void fs_growth_probe(); fs_growth_probe(); }   // <FS> LL_VK_GROWTH=1
 
     if (FreezeTime)
     {
@@ -17858,15 +17874,16 @@ void LLPipeline::renderAvatarVelocity()
         const bool use_packets = use_packets_setting && gAvatarVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
         std::vector<LLVkBridge::ShadowSkinEntry> entries;
         std::vector<F32> palettes, prev_palettes;
-        std::unordered_map<const F32*, U32> palette_offsets;
         std::vector<LLDrawInfo*> fallback;
+        std::unordered_map<const F32*, U32> palette_offsets;
         struct AvatarState { bool mOk; F32 mDistance; };
         std::unordered_map<const LLVOAvatar*, AvatarState> avatar_ok;
         std::unordered_map<const F32*, bool> palette_still;
         std::vector<LLDrawInfo*> infos;
+        LL_CPU_ZONE("avatar velocity: rigged draws (collect, palettes, motion test)");
         for (U32 type : kVelocityRiggedTypes)
         {
-            collect_main_view_draw_infos(type, infos);       // (S4 B: the render map and the draws the scene table serves)
+            { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos); }       // (S4 B: the render map and the draws the scene table serves)
             for (LLDrawInfo* params : infos)
             {
                 LLVOAvatar* avatar = params->mAvatar.get();
@@ -17893,7 +17910,9 @@ void LLPipeline::renderAvatarVelocity()
                     ++rigged_skipped;
                     continue;
                 }
-                const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
+                const LLVOAvatar::MatrixPaletteCache* mpc_ptr;
+                { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(params->mSkinInfo); }
+                const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
                 const U32 joints = (U32)mpc.mMatrixPalette.size();
                 if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
                 {
@@ -17904,7 +17923,8 @@ void LLPipeline::renderAvatarVelocity()
                     auto still = palette_still.find(mpc.mGLMp.data());
                     if (still == palette_still.end())
                     {
-                        const F32 px = motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance);
+                        F32 px;
+                        { LL_CPU_ZONE("avatar velocity: motion test"); px = motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance); }
                         if (vel_census)
                         {
                             ++vc_palettes;
@@ -17944,6 +17964,7 @@ void LLPipeline::renderAvatarVelocity()
 
         if (!entries.empty())
         {
+            LL_CPU_ZONE("avatar velocity: rigged record (build and send)");
             setup(gAvatarVelocityPullProgram);
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 8;

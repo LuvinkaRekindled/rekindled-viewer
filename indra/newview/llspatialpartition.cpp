@@ -251,6 +251,65 @@ void LLSpatialGroup::validateDrawMap()
 #endif
 }
 
+// <FS> LL_VK_LEAVECENSUS=1: for the drawables of avatar bridge groups, how often updateInGroup keeps them and why it does not (the centre is outside the node, or the node is too small for them),
+// by what they are (rigged, flexible, light, other). Reported with the scene census (fs_leave_census_report, every 600 frames).
+namespace
+{
+    struct LeaveCensus
+    {
+        U64 mCalls = 0, mStayed = 0;
+        U64 mOutside[4] = {}, mTooBig[4] = {};        // rigged, flexible, light, other
+        F64 mRadiusSum[4] = {}, mNodeSum[4] = {};      // for the ones that were too big: bin radius and node size
+    } sLeave;
+}
+
+static void fs_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool inside, bool fits, bool stayed)
+{
+    static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
+    if (!on || !group->getSpatialPartition() || group->getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_AVATAR)
+    {
+        return;
+    }
+    ++sLeave.mCalls;
+    if (stayed)
+    {
+        ++sLeave.mStayed;
+        return;
+    }
+    LLViewerObject* vobj = drawablep->getVObj().get();
+    LLVOVolume* vol = vobj && vobj->getPCode() == LL_PCODE_VOLUME ? (LLVOVolume*)vobj : nullptr;
+    const int kind = drawablep->isState(LLDrawable::RIGGED) ? 0 : (vol && vol->isFlexibleFast()) ? 1 : (vol && vol->getIsLight()) ? 2 : 3;
+    if (!inside)
+    {
+        ++sLeave.mOutside[kind];
+    }
+    else if (!fits)
+    {
+        ++sLeave.mTooBig[kind];
+        sLeave.mRadiusSum[kind] += drawablep->getBinRadius();
+        sLeave.mNodeSum[kind] += group->getOctreeNode() ? group->getOctreeNode()->getSize()[0] : 0.f;
+    }
+}
+
+void fs_leave_census_report(double frames)
+{
+    static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static const char* const names[4] = { "rigged", "flexible", "light", "other" };
+    const LeaveCensus& c = sLeave;
+    std::string text;
+    for (int k = 0; k < 4; ++k)
+    {
+        text += llformat(" | %s: centre outside the node %.2f, too big for it %.2f (bin radius %.2f m against node %.2f m)", names[k], c.mOutside[k] / frames, c.mTooBig[k] / frames,
+            c.mTooBig[k] ? c.mRadiusSum[k] / (F64)c.mTooBig[k] : 0.0, c.mTooBig[k] ? c.mNodeSum[k] / (F64)c.mTooBig[k] : 0.0);
+    }
+    LL_INFOS("LeaveCensus") << "avatar bridge drawables a frame: updateInGroup calls " << c.mCalls / frames << ", stayed " << c.mStayed / frames << text << LL_ENDL;
+    sLeave = LeaveCensus();
+}
+
 bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 {
     LL_CPU_ZONE("octree: group updateInGroup");
@@ -272,16 +331,18 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
         stay_flexible = vobj && vobj->getPCode() == LL_PCODE_VOLUME && ((LLVOVolume*)vobj)->isFlexibleFast();
     }
 
-    if (mOctreeNode->isInside(drawablep->getPositionGroup()) &&
-        (stay_flexible || mOctreeNode->contains(drawablep->getEntry()) ||
-         (drawablep->getBinRadius() > mOctreeNode->getSize()[0] &&
-                parent && parent->getElementCount() >= gOctreeMaxCapacity)))
+    const bool inside = mOctreeNode->isInside(drawablep->getPositionGroup());
+    const bool fits = stay_flexible || mOctreeNode->contains(drawablep->getEntry()) ||
+        (drawablep->getBinRadius() > mOctreeNode->getSize()[0] && parent && parent->getElementCount() >= gOctreeMaxCapacity);
+    if (inside && fits)
     {
         unbound();
         setState(OBJECT_DIRTY);
         //setState(GEOM_DIRTY);
+        fs_leave_census(this, drawablep, true, true, true);
         return true;
     }
+    fs_leave_census(this, drawablep, inside, fits, false);
 
     return false;
 }
@@ -366,7 +427,9 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
 
 void LLSpatialGroup::rebuildGeom()
 {
-    clearState(FS_RELEASED | FS_WAKING);        // <FS> whatever asked for this rebuild, the draw infos are back after it (a stale entry in the wake queue is skipped)
+    // <FS> whatever asked for this rebuild, the draw infos are back after it. FS_WAKING stays: a group is in the wake queue exactly when it has that bit (wakeGroups clears it when it takes the group out, and
+    // the destructor takes a waiting group out), so the entry cannot outlive the group; wakeGroups skips a group that is no longer FS_RELEASED.
+    clearState(FS_RELEASED);
     if (!isDead())
     {
         getSpatialPartition()->rebuildGeom(this);
