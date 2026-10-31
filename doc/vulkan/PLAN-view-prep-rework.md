@@ -298,3 +298,15 @@ What it does (pipeline.cpp, generateSunShadow): a far cascade (from `FSShadowFar
 
 Result (the turn, left arrow held, 60 s): far cascades render 186 / 199 / 203 of 300 frames (300 each before), 312 reuses per 300 frames (0 before; the still 675 as before); `renderShadow` passes 6.6 -> 5.5 a frame, `generateSunShadow` 4.33 -> 3.75 ms (-0.58), render map wait 0.39 -> 0.31, rebuild 0.38 -> 0.29. The still is unchanged (renders per 300 frames 300 / 75 / 75 / 75, as before). Reuse in the turn is a third of what is possible: the 12 % cap and the new receivers that come into view ahead of the turn are what end it. Adam, watching the lap: one or two shadows popped back in; he put one down to an avatar whose idle animation had a bigger walking radius (the receiver bounds the coverage test uses are the group bounds, which lag an avatar's animated extents; a cheap fix if it matters: add the avatars' extents to the test).
 
+### 8.16 The passes of renderShadow by kind (lap `kinds-shadowcensus1`, full, no zones, `LL_VK_SHADOWCENSUS=1`; 2026-10-31)
+
+| kind | still passes a frame | still ms a frame (us a pass) | turn passes | turn ms (us a pass) |
+|---|---|---|---|---|
+| main view sun cascades | 1.75 | 0.73 (417) | 2.90 | 1.30 (446) |
+| reflection probe faces | 0.67 | 0.015 (23) | 0.66 | 0.017 (25) |
+| spot / projector maps | 2.00 | 0.106 (53) | 2.00 | 0.258 (129) |
+
+Corrections to 8.13: the probe face passes are 0.67 a frame, not 1.6, and cost next to nothing (23 us a pass); the spot and projector maps are always two a frame. The 4.4 passes of the still are 1.75 + 0.67 + 2.0, and the cost is the sun cascades (417-446 us a pass, with the coverage reuse 2.9 passes in the turn instead of 4.0). The spot maps cost 0.1 ms in the still and 0.26 ms in the turn (the serial updateCull and stateSort of each spot frustum grow with the camera's motion). The unexplained part of 8.13 is not timers (about 140 zone entries a frame at about 0.2 us in `renderShadow`; `shadowPrepFinish` 0.02 ms in the still, 0.08 in the turn): it is about 0.1 ms of fixed work a cascade pass with no zone of its own.
+
+What is left on the shadow side, each small or a trade: a higher margin cap (more reuse in fast turns, a few percent less far shadow density while turning; the turn is at 2.9 of 4.0 passes now, 1.75 in the still); avatar extents in the coverage test (the pop-backs); reuse of the spot maps when nothing in their frustum moved (0.1-0.26 ms, casters such as avatars make the test hard); GPU-driven casters (0.5-0.7 ms in a turn).
+
