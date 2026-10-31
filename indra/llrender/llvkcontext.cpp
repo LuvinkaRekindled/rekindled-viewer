@@ -2322,6 +2322,93 @@ static VkDeviceSize as_class_bytes(VkDeviceSize n)
     return (n + 255) / 256 * 256;
 }
 
+// The host block gate (doc/vulkan/PLAN-texture-handles.md section 17.15, Aftermath of 2026-10-31): a new host-written block is written once by the GPU (a fill that is submitted without waiting) and nothing is placed in it until that fill
+// has finished; arenaPrepareTick keeps a spare block made and filled ahead of need, so a request normally finds a ready block. The sudden device losses were a vertex shader reading a page of a host-written block made one to three
+// seconds before that the GPU could not translate (Error_DMA_PageFault), in video and in system memory; the shaders reach these blocks by device address only, so nothing in a frame's commands names the allocation. Stress laps
+// (LL_VK_ARENA_BLOCK_MB=16): 1 loss in 3 without the gate, none in 7 with it or with a blocking fill. Normal laps: 2 losses in 2 without, none with. Cost in the default placement: none measured.
+// LL_VK_HOST_BLOCK_GATE=0 switches it off. LL_VK_HOST_BLOCK_SPARE (default 1) is how many blocks with at least half their room free are kept; LL_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block) is how much the fill writes.
+static bool host_block_gate()
+{
+    static const bool v = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_GATE", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+    return v;
+}
+
+static U32 host_block_spare()
+{
+    static const U32 v = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_SPARE", b, sizeof(b)) > 0 ? (U32)std::max(atoi(b), 1) : 1u; }();
+    return v;
+}
+
+void Context::arenaStartReadyFill(ArenaBlock* block)
+{
+    block->mReady = false;
+    VkCommandPoolCreateInfo pi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pi.queueFamilyIndex = mQueueFamily;
+    VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    bool ok = vk_ok(vkCreateCommandPool(mDevice, &pi, nullptr, &block->mReadyPool), "ready fill pool")
+        && vk_ok(vkCreateFence(mDevice, &fi, nullptr, &block->mReadyFence), "ready fill fence");
+    if (ok)
+    {
+        VkCommandBufferAllocateInfo ai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+        ai.commandPool = block->mReadyPool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        ok = vk_ok(vkAllocateCommandBuffers(mDevice, &ai, &cmd), "ready fill command buffer");
+    }
+    if (ok)
+    {
+        VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &bi);
+        // LL_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block): how much the fill writes; a command that names the allocation may be all the driver needs, and a whole 64 MB block is a PCIe transfer
+        static const VkDeviceSize fill_bytes = []() { char b[16] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_FILL_KB", b, sizeof(b)) > 0 ? (VkDeviceSize)std::max(atoi(b), 0) * 1024 : (VkDeviceSize)0; }();
+        vkCmdFillBuffer(cmd, block->mBuffer, 0, fill_bytes ? std::min<VkDeviceSize>(fill_bytes, block->mSize) : VK_WHOLE_SIZE, 0u);
+        vkEndCommandBuffer(cmd);
+        VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &cmd;
+        ok = vk_ok(vkQueueSubmit(mQueue, 1, &si, block->mReadyFence), "ready fill submit");
+    }
+    if (!ok)
+    {
+        // (no fill: the block is used as before)
+        if (block->mReadyFence) { vkDestroyFence(mDevice, block->mReadyFence, nullptr); block->mReadyFence = VK_NULL_HANDLE; }
+        if (block->mReadyPool) { vkDestroyCommandPool(mDevice, block->mReadyPool, nullptr); block->mReadyPool = VK_NULL_HANDLE; }
+        block->mReady = true;
+    }
+}
+
+bool Context::arenaFinishReady(ArenaBlock* block, bool wait)
+{
+    if (block->mReady)
+    {
+        return true;
+    }
+    if (block->mReadyFence)
+    {
+        const VkResult r = wait ? vkWaitForFences(mDevice, 1, &block->mReadyFence, VK_TRUE, 10ull * 1000 * 1000 * 1000) : vkGetFenceStatus(mDevice, block->mReadyFence);
+        if (r != VK_SUCCESS)
+        {
+            return false;
+        }
+        vkDestroyFence(mDevice, block->mReadyFence, nullptr);
+        block->mReadyFence = VK_NULL_HANDLE;
+    }
+    if (block->mReadyPool)
+    {
+        vkDestroyCommandPool(mDevice, block->mReadyPool, nullptr);
+        block->mReadyPool = VK_NULL_HANDLE;
+    }
+    block->mReady = true;
+    if (!wait)
+    {
+        ++mGatePrepared;        // (it was ready before anyone had to wait for it)
+    }
+    return true;
+}
+
 Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kind, bool dedicated)
 {
     const bool shared = kind == ArenaKind::Shared, host = kind == ArenaKind::Host, accel = kind == ArenaKind::Accel;
@@ -2415,6 +2502,13 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         address_info.buffer = block->mBuffer;
         block->mAddress = vkGetBufferDeviceAddress(mDevice, &address_info);
     }
+    if (host)
+    {
+        if (host_block_gate())
+        {
+            arenaStartReadyFill(block);
+        }
+    }
     bool placed = false;
     for (ArenaBlock*& slot : mArenaBlocks)
     {
@@ -2439,6 +2533,7 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
 
 void Context::arenaDestroyBlock(ArenaBlock* block)
 {
+    arenaFinishReady(block, true);
     for (ArenaBlock*& slot : mArenaBlocks)
     {
         if (slot == block) slot = nullptr;
@@ -2518,7 +2613,7 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
             VkDeviceSize best_free = ~0ull;
             for (ArenaBlock* b : mArenaBlocks)
             {
-                if (b && !b->mDedicated && !b->mPooled && b->mShared == shared && b->mHost == host && b->mAccel == accel)
+                if (b && !b->mDedicated && !b->mPooled && b->mShared == shared && b->mHost == host && b->mAccel == accel && arenaFinishReady(b, false))
                 {
                     const VkDeviceSize free_bytes = b->mSize > b->mUsed ? b->mSize - b->mUsed : 0;
                     if (free_bytes >= size + alignment && free_bytes < best_free)
@@ -2535,9 +2630,30 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
         }
         for (ArenaBlock* b : mArenaBlocks)
         {
-            if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && b->mAccel == accel && place(b))
+            if (b && !b->mDedicated && b->mShared == shared && b->mHost == host && b->mAccel == accel && arenaFinishReady(b, false) && place(b))
             {
                 return true;
+            }
+        }
+        if (host)
+        {
+            // a block that is still being filled and has room: wait for it (a few ms) rather than make another one
+            for (ArenaBlock* b : mArenaBlocks)
+            {
+                if (b && !b->mReady && !b->mDedicated && b->mHost && b->mSize > b->mUsed + size + alignment)
+                {
+                    LARGE_INTEGER w0, w1, wf;
+                    QueryPerformanceFrequency(&wf);
+                    QueryPerformanceCounter(&w0);
+                    const bool done = arenaFinishReady(b, true);
+                    QueryPerformanceCounter(&w1);
+                    ++mGateLate;
+                    mGateLateMs += (double)(w1.QuadPart - w0.QuadPart) * 1000.0 / (double)wf.QuadPart;
+                    if (done && place(b))
+                    {
+                        return true;
+                    }
+                }
             }
         }
     }
@@ -2569,6 +2685,17 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
         ++mArenaCounters.mAccelPoolMisses;
     }
     ArenaBlock* fresh = arenaNewBlock(size + alignment, kind, dedicated);
+    if (fresh && !fresh->mReady)
+    {
+        // made because the request could not wait for a spare: the fill is waited for here, the case the spare is there to avoid
+        LARGE_INTEGER w0, w1, wf;
+        QueryPerformanceFrequency(&wf);
+        QueryPerformanceCounter(&w0);
+        arenaFinishReady(fresh, true);
+        QueryPerformanceCounter(&w1);
+        ++mGateLate;
+        mGateLateMs += (double)(w1.QuadPart - w0.QuadPart) * 1000.0 / (double)wf.QuadPart;
+    }
     if (!fresh || !place(fresh))
     {
         LL_WARNS("Vulkan") << "buffer arena: no room for " << size << " bytes" << LL_ENDL;
@@ -2794,6 +2921,47 @@ std::string Context::arenaAccelCensus()
     return out;
 }
 
+// once a frame on the render worker (LL_VK_HOST_BLOCK_GATE): finished fills make their blocks ready, and when fewer than LL_VK_HOST_BLOCK_SPARE host blocks have half their room free (ready or being filled) another is made and
+// its fill submitted, so the next request finds a block the GPU has already written
+void Context::arenaPrepareTick()
+{
+    if (!host_block_gate() || mAllocator == nullptr)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mArenaMutex);
+    U32 spare = 0;
+    for (ArenaBlock* b : mArenaBlocks)
+    {
+        if (!b || !b->mHost || b->mDedicated)
+        {
+            continue;
+        }
+        if (!b->mReady)
+        {
+            arenaFinishReady(b, false);
+        }
+        if (b->mSize > b->mUsed && (b->mSize - b->mUsed) * 2 >= b->mSize)
+        {
+            ++spare;
+        }
+    }
+    if (spare < host_block_spare())
+    {
+        arenaNewBlock(arena_block_bytes(), ArenaKind::Host, false);
+    }
+    static U32 ticks = 0;
+    if (++ticks % 1800 == 0)
+    {
+        if (mGatePrepared || mGateLate)
+        {
+            LL_INFOS("Vulkan") << "buffer arena: host block gate, over the last 1800 frames: " << mGatePrepared << " blocks ready in time, " << mGateLate << " waited for (" << mGateLateMs << " ms in all)" << LL_ENDL;
+        }
+        mGatePrepared = mGateLate = 0;
+        mGateLateMs = 0.0;
+    }
+}
+
 void Context::arenaShutdown()
 {
     std::lock_guard<std::mutex> lock(mArenaMutex);
@@ -2801,6 +2969,7 @@ void Context::arenaShutdown()
     {
         if (b)
         {
+            arenaFinishReady(b, true);
             vmaDestroyVirtualBlock(b->mVirtual);
             vmaDestroyBuffer(mAllocator, b->mBuffer, b->mAllocation);
             delete b;
