@@ -11054,7 +11054,8 @@ void LLCullShadow::poseLog(LLCamera& camera)
     {
         const LLVector3 at = camera.getAtAxis();
         const LLVector3 o = camera.getOrigin();
-        LL_INFOS("CullPose") << "camera yaw " << atan2f(at.mV[1], at.mV[0]) << " pitch " << asinf(llclamp(at.mV[2], -1.f, 1.f)) << " origin " << o.mV[0] << " " << o.mV[1] << " " << o.mV[2] << LL_ENDL;
+        LL_INFOS("CullPose") << "camera yaw " << atan2f(at.mV[1], at.mV[0]) << " pitch " << asinf(llclamp(at.mV[2], -1.f, 1.f)) << " origin " << o.mV[0] << " " << o.mV[1] << " " << o.mV[2]
+            << " | avatars " << gObjectList.getAvatarCount() << " (visible " << LLVOAvatar::sNumVisibleAvatars << "), objects " << gObjectList.getNumObjects() << LL_ENDL;       // (the crowd of a lap: it drifts, and so does the frame time with it)
     }
 }
 
