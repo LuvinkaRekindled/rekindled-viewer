@@ -10016,6 +10016,7 @@ void after_frame()
     }
     gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
     gFsWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
+    LLVk::Context::instance().arenaPrepareTick();        // <FS> LL_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
     std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
     if (sUiDiff)
     {

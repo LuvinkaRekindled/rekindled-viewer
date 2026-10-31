@@ -367,6 +367,7 @@ public:
 
     // Records into a one-off command buffer, submits it and waits. For start-up work and rare uploads only.
     bool immediateSubmit(const std::function<void(VkCommandBuffer)>& record);
+    void arenaPrepareTick();    // once a frame on the render worker: finished fills make their blocks ready, and a spare host block is made and filled ahead of need (LL_VK_HOST_BLOCK_GATE)
 
     // Submits what the current frame has recorded so far, waits for the GPU, and carries on recording into the same
     // frame (same slot, same command buffer, swapchain semaphores untouched). Lets a readback see the frame's results.
@@ -446,7 +447,14 @@ private:
         U64 mIdleSince = 0;                 // the frame it went into the pool
         U64 mUsed = 0;                      // bytes allocated in it (the placement takes the fullest block that fits; under mArenaMutex)
         U64 mEmptyFrame = 0;                // the frame its last allocation was freed (an empty regular block is given back after a while, see arenaTrimPool)
+        bool mReady = true;                 // false while the GPU has not yet written the whole block once (host blocks with LL_VK_HOST_BLOCK_GATE: see arenaStartReadyFill); nothing is placed in it until then
+        VkFence mReadyFence = VK_NULL_HANDLE;
+        VkCommandPool mReadyPool = VK_NULL_HANDLE;
     };
+    void arenaStartReadyFill(ArenaBlock* block);                 // submits the first-use fill of a new host block without waiting (the render worker's thread; mArenaMutex held)
+    bool arenaFinishReady(ArenaBlock* block, bool wait);         // true when the block is ready (waits for the fill when asked); frees the fill's fence and pool
+    U32 mGateLate = 0, mGatePrepared = 0;                        // blocks that were waited for, blocks that were ready in time
+    double mGateLateMs = 0.0;
     U64 mPoolBytes = 0;                     // what the pool holds now (under mArenaMutex)
     U64 mPoolLastTrim = 0;
     void arenaTrimPool();                   // gives back what has waited too long or does not fit (mArenaMutex held)
