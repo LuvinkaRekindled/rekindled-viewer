@@ -301,6 +301,15 @@ public:
 
     void            idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &position);
     void            idleUpdateMisc(bool detailed_update);
+    // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job, LL_VK_AV_PARALLEL=1) and
+    // idleUpdateMisc replays them in its turn (replayAttachmentJob) instead of running the loop
+    void            idleUpdateAttachments(bool visible);
+    bool            canRunAttachmentJob();
+    static S32      sAttachmentSelectedForJobs;     // -1: ask the selection manager; 0/1: what the main thread found before the jobs started (getObjectCount() cleans the selection's node list: not for several threads)
+    void            runAttachmentJob();
+    void            replayAttachmentJob();
+    bool            mAttJobDone = false;
+    std::shared_ptr<void> mAttLedger;       // the writes of the attachment job (AvJobLedger in llvoavatar.cpp), made on first use
     virtual void    idleUpdateAppearanceAnimation();
     void            idleUpdateLipSync(bool voice_enabled);
     void            idleUpdateLoadingEffect();

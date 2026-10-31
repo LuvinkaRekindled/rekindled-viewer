@@ -1185,6 +1185,37 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             batch[index]->runDeferredMotionBlend();
         };
         pool->run(batch.size(), blend);
+
+        // <FS> view rework A2 (LL_VK_AV_PARALLEL=1): the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
+        // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
+        static const bool av_parallel = getenv("LL_VK_AV_PARALLEL") != nullptr;
+        if (av_parallel && !gFSAvTimersOn && !LLAttCensus::sOn)
+        {
+            static std::vector<LLVOAvatar*> jobs;
+            jobs.clear();
+            for (LLPointer<LLVOAvatar>& avatar : batch)
+            {
+                if (avatar->canRunAttachmentJob())
+                {
+                    jobs.push_back(avatar.get());
+                }
+            }
+            static U64 runs = 0, job_total = 0, batch_total = 0;
+            if (jobs.size() >= 4)
+            {
+                const std::function<void(size_t)> att_job = [](size_t index) { jobs[index]->runAttachmentJob(); };
+                // (asked here, on this thread: getObjectCount() cleans the selection's node list)
+                LLVOAvatar::sAttachmentSelectedForJobs = (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment()) ? 1 : 0;
+                pool->run(jobs.size(), att_job);
+                LLVOAvatar::sAttachmentSelectedForJobs = -1;
+                job_total += jobs.size();
+            }
+            batch_total += batch.size();
+            if (++runs % 6000 == 0)
+            {
+                LL_INFOS("AvLedger") << "attachment loops as pool jobs: " << (double)job_total / runs << " avatars a batch run as jobs (of " << (double)batch_total / runs << " in the batch)" << LL_ENDL;
+            }
+        }
     }
     else
     {

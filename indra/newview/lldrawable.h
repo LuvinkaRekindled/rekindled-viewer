@@ -145,6 +145,7 @@ public:
     F32 updateXform(bool undamped);
 
     virtual void makeActive();
+    void makeActiveShared();        // <FS> view rework A2: what makeActive does once the drawable is marked ACTIVE (the shared half: texture records, the hierarchy, the rebuild and the octree)
     /*virtual*/ void makeStatic(bool warning_enabled = true);
 
     bool isActive() const                           { return isState(ACTIVE); }

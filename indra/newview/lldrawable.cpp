@@ -529,6 +529,27 @@ void LLDrawable::makeActive()
     if (!isState(ACTIVE)) // && mGeneration > 0)
     {
         setState(ACTIVE);
+        if (LLPipeline::sAvSink)
+        {
+            // <FS> view rework A2: the bit is set at once (the rest of the loop sees an active drawable), the shared half is made when the avatar's writes are replayed
+            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MAKE_ACTIVE_SHARED, this, nullptr, nullptr, 0 });
+            return;
+        }
+        makeActiveShared();
+    }
+    else if (!isRoot() && !mParent->isActive()) //this should not happen, but occasionally it does...
+    {
+        mParent->makeActive();
+        //NOTE: linked set will now NEVER become static
+        mParent->setState(LLDrawable::ACTIVE_CHILD);
+    }
+
+    llassert(isAvatar() || isRoot() || mParent->isActive());
+}
+
+void LLDrawable::makeActiveShared()
+{
+    {
         for (S32 fi = 0; fi < getNumFaces(); ++fi) LLTexRecs::faceChanged(getFace(fi));        // <FS> H6: its faces' texture records are volatile from now on
 
         //parent must be made active first
@@ -560,14 +581,6 @@ void LLDrawable::makeActive()
         }
         updatePartition();
     }
-    else if (!isRoot() && !mParent->isActive()) //this should not happen, but occasionally it does...
-    {
-        mParent->makeActive();
-        //NOTE: linked set will now NEVER become static
-        mParent->setState(LLDrawable::ACTIVE_CHILD);
-    }
-
-    llassert(isAvatar() || isRoot() || mParent->isActive());
 }
 
 

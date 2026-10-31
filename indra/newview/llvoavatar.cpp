@@ -3737,22 +3737,19 @@ struct AvLedgerScope
 };
 }
 
-void LLVOAvatar::idleUpdateMisc(bool detailed_update)
+S32 LLVOAvatar::sAttachmentSelectedForJobs = -1;
+
+namespace
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
-    if (LLVOAvatar::sJointDebug)
-    {
-        LL_INFOS() << getDebugName() << ": joint touches: " << LLJoint::sNumTouches << " updates: " << LLJoint::sNumUpdates << LL_ENDL;
-    }
+struct AvJobLedger
+{
+    std::vector<LLPipeline::AvOp> mOps;
+    std::vector<LLPipeline::SortDelta> mSort;
+};
+}
 
-    LLJoint::sNumUpdates = 0;
-    LLJoint::sNumTouches = 0;
-
-    bool visible = isVisible() || mNeedsAnimUpdate;
-
-    // update attachments positions
-    if (detailed_update)
-    {
+void LLVOAvatar::idleUpdateAttachments(bool visible)
+{
         LL_CPU_ZONE("att: attachment loop (per avatar)");
         static const bool av_ledger = getenv("LL_VK_AV_LEDGER") != nullptr;
         AvLedgerScope ledger_scope(av_ledger && !isSelf() && !LLPipeline::sAvSink);
@@ -3760,7 +3757,8 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
         ++gAttStats.avatars;
         LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
         U32 draw_order = 0;
-        bool attachment_selected = LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment();
+        bool attachment_selected = sAttachmentSelectedForJobs >= 0 ? sAttachmentSelectedForJobs != 0
+            : (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment());
 
         // <FS> A rigged attachment is culled with the avatar's own world box (override_bbox) and drawn with the avatar's joints, so while that box has not
         // changed there is nothing for its per-frame update to change: the box it would get, its drawable move and its bridge move all come out the same.
@@ -4057,6 +4055,65 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
                     (double)s.rigidFirst / F, (double)s.rigidSame / F, (double)s.rigidMovedTiny / F, (double)s.rigidMoved1mm / F) << LL_ENDL;
                 gAttStats = AttStats();
             }
+        }
+}
+
+// <FS> view rework A2: an avatar of the motion batch whose attachment loop can run as a pool job: not the viewer's own, its detailed update this frame, and not sitting on the ground (updateCharacterPostMotion moves
+// its root then, and the loop reads the skeleton)
+bool LLVOAvatar::canRunAttachmentJob()
+{
+    return mMotionUpdateDeferred && mDeferredDetailedUpdate && !mDeferredMatricesOnly && !isSelf() && !isDead() && mDrawable.notNull()
+        && !(!getParent() && (isSitting() || mDeferredSitGroundConstrained));
+}
+
+void LLVOAvatar::runAttachmentJob()
+{
+    if (!mAttLedger) { mAttLedger = std::make_shared<AvJobLedger>(); }
+    AvJobLedger& led = *static_cast<AvJobLedger*>(mAttLedger.get());
+    std::vector<LLPipeline::AvOp>* saved_av = LLPipeline::sAvSink;
+    std::vector<LLPipeline::SortDelta>* saved_sort = LLPipeline::sSortSink;
+    led.mOps.clear();
+    led.mSort.clear();
+    LLPipeline::sAvSink = &led.mOps;
+    LLPipeline::sSortSink = &led.mSort;
+    idleUpdateAttachments(isVisible() || mNeedsAnimUpdate);
+    LLPipeline::sAvSink = saved_av;
+    LLPipeline::sSortSink = saved_sort;
+    mAttJobDone = true;
+}
+
+void LLVOAvatar::replayAttachmentJob()
+{
+    mAttJobDone = false;
+    AvJobLedger& led = *static_cast<AvJobLedger*>(mAttLedger.get());
+    gPipeline.applyAvOps(led.mOps);
+    gPipeline.applySortDeltas(led.mSort);
+    led.mSort.clear();
+}
+
+void LLVOAvatar::idleUpdateMisc(bool detailed_update)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    if (LLVOAvatar::sJointDebug)
+    {
+        LL_INFOS() << getDebugName() << ": joint touches: " << LLJoint::sNumTouches << " updates: " << LLJoint::sNumUpdates << LL_ENDL;
+    }
+
+    LLJoint::sNumUpdates = 0;
+    LLJoint::sNumTouches = 0;
+
+    bool visible = isVisible() || mNeedsAnimUpdate;
+
+    // update attachments positions
+    if (detailed_update)
+    {
+        if (mAttJobDone)
+        {
+            replayAttachmentJob();      // <FS> A2: the loop ran as a pool job, its writes are made now
+        }
+        else
+        {
+            idleUpdateAttachments(visible);
         }
     }
     else if (LLAttCensus::sOn)
@@ -6531,6 +6588,8 @@ void LLVOAvatar::completeDeferredMotionUpdate()
 
     if (isDead())
     {
+        mAttJobDone = false;
+        mAttLedger.reset();
         return;
     }
 
