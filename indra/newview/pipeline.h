@@ -411,6 +411,7 @@ public:
         glm::mat4 mProj;
         glm::mat4 mLastView;
         glm::mat4 mLastProj;
+        const View* mJobView = nullptr;         // the view its jobs work for (view rework W3): set by generateSunShadow where the cascades are prepared, owned there
         bool mCullActive = false;               // FSShadowCascadeAvatarCull for this cascade
         LLVector3 mCullOrigin;
         LLVector3 mCullAt;
@@ -793,6 +794,13 @@ public:
         bool isMainWorldSort() const { return isMainWorld() && !mRenderingHUDs; }
         bool hasRenderType(U32 type) const { return type == 0 ? false : mRenderTypes[type]; }       // (as LLPipeline::hasRenderType)
     };
+
+    // <FS> view rework W3: the view the job running on this thread works for (null: the thread works with the pipeline's own state, as the main thread does). The three flags below and the render type mask are read through
+    // these, so the jobs of two views (the world and a shadow cascade) can have different values at the same time; a job installs its view with ViewScope (pipeline.cpp) and the pointer is put back afterwards.
+    static thread_local const View* sJobView;
+    static S32  useOcclusion()      { return sJobView ? sJobView->mUseOcclusion : sUseOcclusion; }
+    static bool shadowRender()      { return sJobView ? sJobView->mShadowRender : sShadowRender; }
+    static bool reflectionRender()  { return sJobView ? sJobView->mReflectionRender : sReflectionRender; }
 
     enum LLRenderDebugFeatureMask
     {

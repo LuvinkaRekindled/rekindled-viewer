@@ -46,7 +46,7 @@ Stages, each a function of view data that can run on any thread:
 1. **Plan** (cheap, main thread): clip planes, cascade cameras, the cull settings of each view. Output: a `ShadowPlan` of plain data.
 2. **Extents** (pool, one job a cascade): the visible-extents walk. Done as step 0 (section 6).
 3. **Cull and mark** (pool, chunks): visible groups and drawables of a view, marked per camera slot.
-4. **Rebuild** (main thread, as now: GL buffers, the priority queue).
+4. **Rebuild** (main thread, as now: the vertex and index buffers are filled through the legacy buffer API, face and group state is updated, the priority queue; no OpenGL calls are left in that path).
 5. **Render map** (pool, chunks): the draw infos of the visible groups.
 6. **Render** (main thread): draw each prepared view.
 
@@ -83,7 +83,7 @@ What it is today (read in `pipeline.cpp`):
 
 - `updateCull(camera, result)`: a serial loop over the partitions (mode 0) or `cull_partitions_parallel` (default, `LL_VK_CULL_SPLIT` 3; 4 = pool run checked against the serial one). The pool path cuts the partitions into runs of equal measured cost (a partition over 80 us is walked in pieces: top levels on the caller, subtrees as jobs), each job writes into its own `LLCullResult` and its own **effects ledger** (`SortDelta`: rebuild a drawable, move a partition, rebuild a group, set an object's LOD, rebuild a mesh, mark a bridge dead, wake a group), and the caller concatenates both in unit order and applies the ledger (`applySortDeltas`). Then the object cache cull, the sky.
 - `stateSort(camera, result, defer_pools)`: `sort_split_mode` picks 0 (loops as before), 1 (compute into a ledger, then apply), 2 (check), 3 (compute on the pool: `sortLoopsParallel`), 4 (check of the parallel one); then `postSort`.
-- `postSort`: rebuild drawable groups, `rebuildPriorityGroups` (geometry builds, GL work), the far avatar tier, the render map (`main_map_chunk` chunks on the pool when a dozen conditions hold, else the serial loop), the alpha group sort.
+- `postSort`: rebuild drawable groups, `rebuildPriorityGroups` (geometry builds: filling vertex buffers and draw infos, updating face and group state), the far avatar tier, the render map (`main_map_chunk` chunks on the pool when a dozen conditions hold, else the serial loop), the alpha group sort.
 - Gates that keep each path off: the visibility, occlusion and cull-shadow censuses (`LLVisCensus`, `LLOccCensus`, `LLCullShadow`), the GPU zone timers, debug LOD views, the camera not being the world camera, shadow/reflection/HUD/cube snapshot flags. Shared state the paths read or fake: thread-locals `sCull`, `sSortSink`, `sSortTee`, `sSortPoolSink`, `sParallelPrep`, `sShadowCascadeCull`, `LLViewerCamera::sCurCameraID`, and the globals `sUseOcclusion`, `sShadowRender`, `sReflectionRender`, `sRenderingHUDs`, `gCubeSnapshot`, the render-type mask.
 
 What is already right and stays: the shape "jobs read, write into a result of their own plus a ledger of effects, one apply in a fixed order". It is the same shape as the cascades. The rework makes it the only shape and gives it a name:
@@ -108,3 +108,7 @@ Expected gain (honest): 0.5 to 1 ms of the 2.2 ms the world view costs on the ma
 
 - Decided 2026-10-31: the world view first (section 6b, steps W1-W6; the overlap comes with W4).
 - Decided 2026-10-31: the old and the new path both stay behind settings for the checks, the old one is deleted after a clean soak.
+
+## 8. Direction (Adam, 2026-10-31): as much off the main thread as possible, not limited by legacy
+
+The goal is to take everything off the main thread that can leave it, and to question each piece that stays: is it a real constraint or only the old object model? Before W4 starts, write a **main-thread inventory** here: every piece of per-frame view work that still runs on the main thread (cull serial parts, delta apply, wake queue, the group geometry rebuild, the render map join, the far avatar tier, the alpha group sort, the occlusion and Hi-Z bookkeeping, the pool fills), each with its cost and why it is there: a real ordering or hardware constraint, or data that the legacy object model (faces, drawables, volume LOD, shared draw info lists) does not protect. The legacy-owned ones are candidates for new ownership rules (per-group ownership of faces and draw infos, per-thread queues merged at the join), not for leaving as they are. W3 (jobs work for their own view, not the globals) is the first piece of that; the join and apply as pool jobs (W4) is the second; the geometry rebuild by group is the third and the largest.
