@@ -1097,6 +1097,19 @@ void fs_growth_probe()
     last_faults = pmc.PageFaultCount;
 }
 
+// <FS> one stack address as text: module+offset (what a pdb reads) and the nearest symbol
+std::string fs_describe_frame(const void* pc)
+{
+    HMODULE module = nullptr;
+    char name[MAX_PATH] = {};
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)pc, &module) && module)
+    {
+        GetModuleFileNameA(module, name, MAX_PATH);
+    }
+    const char* base_name = strrchr(name, '\\');
+    return llformat("%s+0x%llx  %s", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)pc - (DWORD64)module), fs_describe_address(pc).c_str());
+}
+
 // <FS> the calling thread's stack as text, one frame a line (module+offset and the nearest symbol), for probes that log where something happened (LL_VK_DRAWABLE_TRACE)
 std::string fs_stack_here(int skip, int max_frames)
 {
