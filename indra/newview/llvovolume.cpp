@@ -445,6 +445,13 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                     }
 
                     gPipeline.markTextured(mDrawable);
+                    // <FS> LL d67326e62 (heap-use-after-free in LLDrawInfo texture matrix): the matrices just deleted are named by the draw infos of the group, which must be rebuilt
+                    if (LLSpatialGroup* group = mDrawable->getSpatialGroup())
+                    {
+                        group->dirtyGeom();
+                        gPipeline.markRebuild(group);
+                    }
+                    // </FS>
                     mFaceMappingChanged = true;
                     mTexAnimMode = 0;
                 }
@@ -644,6 +651,13 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                 }
 
                 gPipeline.markTextured(mDrawable);
+                // <FS> LL d67326e62: as above
+                if (LLSpatialGroup* group = mDrawable->getSpatialGroup())
+                {
+                    group->dirtyGeom();
+                    gPipeline.markRebuild(group);
+                }
+                // </FS>
                 mFaceMappingChanged = true;
                 mTexAnimMode = 0;
             }

@@ -67,7 +67,7 @@ void set_thread_name( DWORD dwThreadID, const char* threadName)
 
     __try
     {
-        ::RaiseException( MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(DWORD), (ULONG_PTR*)&info );
+        ::RaiseException( MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(ULONG_PTR), (ULONG_PTR*)&info );      // <FS> LL fa8967bb6: the count is in ULONG_PTR units (DWORD read twice the struct: a stack overflow)
     }
     __except(EXCEPTION_CONTINUE_EXECUTION)
     {
