@@ -13737,6 +13737,41 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
 // The workers mark groups and drawables visible as they go, and whether an attachment's bridge is culled depends on that
 // (it asks whether its avatar was seen), so a serial run after them can see more than a serial run before them. What the
 // parallel result lacks compared with a serial run made first is the problem; extras are only counted.
+// <FS> the draw infos of a result for a pass type: its render map, and (when the scene table serves a type of its groups, mGeoElided) the served items of the fragments of its groups, which the render map no longer
+// holds (the same as collect_main_view_draw_infos, for any result): what shadowPrepCompare compares
+static void result_draw_infos(LLCullResult& result, U32 type, std::vector<const void*>& out)
+{
+    for (LLCullResult::drawinfo_iterator i = result.beginRenderMap(type); i != result.endRenderMap(type); )
+    {
+        out.push_back(*i);
+        LLCullResult::increment_iterator(i, result.endRenderMap(type));
+    }
+    if (!result.mGeoElided)
+    {
+        return;
+    }
+    const int tn = ll_scene_geo_type_number(type);
+    if (tn < 0)
+    {
+        return;
+    }
+    for (U32 handle : result.mGeoHandles)
+    {
+        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+        if (!f || !f->mGeoServedMask)
+        {
+            continue;
+        }
+        for (const LLSceneFragment::GeoItem& item : f->mGeo)
+        {
+            if (item.mServed && item.mType == (U32)tn && (f->mGeoServedMask & (1ull << item.mType)))
+            {
+                out.push_back(item.mInfo);
+            }
+        }
+    }
+}
+
 void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference)
 {
     LLCullResult& r = *prep.mResult;
@@ -13765,9 +13800,21 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     check("rigged alpha groups", sorted_pointers(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), sorted_pointers(reference.beginRiggedAlphaGroups(), reference.endRiggedAlphaGroups()));
     check("bridges", sorted_pointers(r.beginVisibleBridge(), r.endVisibleBridge()), sorted_pointers(reference.beginVisibleBridge(), reference.endVisibleBridge()));
     check("visible drawables", sorted_pointers(r.beginVisibleList(), r.endVisibleList()), sorted_pointers(reference.beginVisibleList(), reference.endVisibleList()));
+    // <FS> the render map job leaves the static shadow types out on purpose when the fragments name the casters (sViewJobsSkipStatic: the ray-only modes with the resident scene, R1a), so the serial reference, which lists
+    // them, is not what the parallel result should equal for those types (the check reported them missing for every cascade: render maps 23, 26, 32, 40, 48, 56, 64, 2026-11-01)
+    const bool static_skipped = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
     {
-        check(llformat("render map %u", type).c_str(), sorted_pointers(r.beginRenderMap(type), r.endRenderMap(type)), sorted_pointers(reference.beginRenderMap(type), reference.endRenderMap(type)));
+        if (static_skipped && shadow_view_class(type) == 0)
+        {
+            continue;
+        }
+        std::vector<const void*> mine, theirs;
+        result_draw_infos(r, type, mine);
+        result_draw_infos(reference, type, theirs);
+        std::sort(mine.begin(), mine.end());
+        std::sort(theirs.begin(), theirs.end());
+        check(llformat("render map %u", type).c_str(), mine, theirs);        // (the render map and what the scene table serves of it: the table made the render maps of the result shorter than the serial reference's)
     }
 
     static U32 sChecks = 0;
@@ -13778,6 +13825,51 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     if (!diff.empty())
     {
         ++sMismatches;
+        if (sMismatches <= 6)
+        {
+            // <FS> where a missing render map entry comes from: the group that owns it in the serial result, and what that group is like (the first few of each pass type)
+            std::unordered_map<const void*, std::pair<LLSpatialGroup*, U32>> owner;
+            for (LLCullResult::sg_iterator g = reference.beginVisibleGroups(); g != reference.endVisibleGroups(); ++g)
+            {
+                for (auto& kv : (*g)->mDrawMap)
+                {
+                    for (LLDrawInfo* info : kv.second)
+                    {
+                        owner[info] = { *g, kv.first };
+                    }
+                }
+            }
+            std::set<LLSpatialGroup*> in_mine(r.beginVisibleGroups(), r.endVisibleGroups());
+            std::string detail;
+            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+            {
+                if (static_skipped && shadow_view_class(type) == 0)
+                {
+                    continue;
+                }
+                std::vector<const void*> mine, theirs, missing;
+                result_draw_infos(r, type, mine);
+                result_draw_infos(reference, type, theirs);
+                std::sort(mine.begin(), mine.end());
+                std::sort(theirs.begin(), theirs.end());
+                std::set_difference(theirs.begin(), theirs.end(), mine.begin(), mine.end(), std::back_inserter(missing));
+                for (size_t m = 0; m < missing.size() && m < 2; ++m)
+                {
+                    auto it = owner.find(missing[m]);
+                    if (it == owner.end())
+                    {
+                        detail += llformat(" [type %u: owner not among the serial result's groups]", type);
+                        continue;
+                    }
+                    LLSpatialGroup* g = it->second.first;
+                    detail += llformat(" [type %u (drawmap type %u), group %p: in parallel groups %d, dead %d, occluded %d, new_drawinfo %d, geom_dirty %d, partition %u, parallel hasRenderType %d, serial hasRenderType %d, geom %u/%u]",
+                        type, it->second.second, (void*)g, (int)in_mine.count(g), (int)g->isDead(), (int)g->isOcclusionState(LLSpatialGroup::OCCLUDED), (int)g->hasState(LLSpatialGroup::NEW_DRAWINFO),
+                        (int)g->hasState(LLSpatialGroup::GEOM_DIRTY), g->getSpatialPartition() ? (U32)g->getSpatialPartition()->mPartitionType : 99u,
+                        prep.mJobView ? (int)prep.mJobView->hasRenderType(type) : -1, (int)gPipeline.hasRenderType(type), (U32)g->mGeoServedMask, (U32)g->mGeoHandle);
+                }
+            }
+            LL_WARNS("ShadowPrep") << "cascade " << prep.mIndex << " missing entries, detail:" << detail << LL_ENDL;
+        }
         if (sMismatches <= 20 || sMismatches % 300 == 0)
         {
             LL_WARNS("ShadowPrep") << "cascade " << prep.mIndex << " lacks entries of the serial result:" << diff << LL_ENDL;
