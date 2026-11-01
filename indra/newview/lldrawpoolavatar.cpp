@@ -267,7 +267,13 @@ void LLDrawPoolAvatar::renderPostDeferred(S32 pass)
 
     is_post_deferred_render = true;
     // F3.5c: the avatar alpha samples the depth buffer; it writes none here (a draw that does is reported by the worker's declared-depth check)
-    LLRenderState::DepthReadOnlyScope depth_read_only(true, !LLPipeline::sImpostorRender);
+    // <FS> it did write some: nothing turned the depth mask off, so the draws kept the mask the lighting stage left (the original viewer's behaviour) and the declaration was ignored (DepthRO warning, 2026-11-01).
+    // Now the pass writes none, as declared: the soft edges of classic hair and eyelashes no longer cut a halo into what is drawn later and into the depth of field and AO; overlapping strands blend in draw order.
+    // LL_VK_AV_ALPHA_DEPTH=1 restores the old writing (the user judges the look).
+    static const bool alpha_writes_depth = getenv("LL_VK_AV_ALPHA_DEPTH") && atoi(getenv("LL_VK_AV_ALPHA_DEPTH")) != 0;
+    const bool alpha_read_only = !LLPipeline::sImpostorRender && !alpha_writes_depth;
+    LLRenderState::DepthReadOnlyScope depth_read_only(true, alpha_read_only);
+    LLRenderState::DepthScope alpha_depth(true, false, LLRenderState::CompareOp::LessEqual, alpha_read_only);
     if (LLPipeline::sImpostorRender)
     { //HACK for impostors so actual pass ends up being proper pass
         render(0);

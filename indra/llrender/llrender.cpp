@@ -927,10 +927,18 @@ LLRender::~LLRender()
 
 bool LLRender::init(bool needs_vertex_buffer)
 {
-    gRender.setSceneBlendType(LLRender::BT_ALPHA);
+    // <FS> the worker threads' form (init(false): the image thread, the render work queue) has no pipeline state to start: the context's state belongs to the main producer, so the blend and cull defaults
+    // were dropped there and logged (VkState, once each in every run)
+    if (needs_vertex_buffer)
+    {
+        gRender.setSceneBlendType(LLRender::BT_ALPHA);
+    }
     gRender.setAmbientLightColor(LLColor4::black);
 
-    LLVkState::setCullFace(LLRenderState::CullFace::Back);
+    if (needs_vertex_buffer)
+    {
+        LLVkState::setCullFace(LLRenderState::CullFace::Back);
+    }
 
     // necessary for reflection maps
 
