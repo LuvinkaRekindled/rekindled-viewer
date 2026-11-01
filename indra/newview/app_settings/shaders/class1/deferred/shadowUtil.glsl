@@ -335,10 +335,10 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 #define LL_RT_SUN_SELF_FADE 0.4
 #endif
 #define LL_RT_SUN_SELF_NEAR0 (LL_RT_SUN_SELF_NEAR * LL_RT_SUN_SELF_FADE)
-// LL_VK_RT_SUN_PENUMBRA (metres, default 0 = off): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
+// LL_VK_RT_SUN_PENUMBRA (metres, default 0.008 since 2026-11-01; 0 = off, with LL_VK_RT_SUN_ALPHA_STRENGTH 0.6 that is the translucent floor of 2026-10-28): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
 // where skin scatters light a few millimetres sideways and blurs it. When the first ray of a pixel hit a close skinned surface at distance t, the other rays of the pixel go to a disc of radius PENUMBRA / t (at most 0.35).
 #ifndef LL_RT_SUN_PENUMBRA
-#define LL_RT_SUN_PENUMBRA 0.0
+#define LL_RT_SUN_PENUMBRA 0.008
 #endif
 // LL_VK_RT_SUN_PENUMBRA_RAYS (default 8, at most 16): the rays of a pixel whose first ray met a close skinned surface. Two rays on a wide disc give a handful of levels per pixel, and a snapshot has no accumulation to
 // smooth them: the soft edge is a stack of steps (the lips and the jaw drawn as contours in the shadow on the neck). Only those pixels pay.
@@ -980,12 +980,12 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
 #ifndef LL_RT_SUN_BIAS_ALPHA
 #define LL_RT_SUN_BIAS_ALPHA 0.015
 #endif
-// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 0.6; 1 = an avatar blocks its own light fully, the look before 2026-10-28): the most light the close surfaces of an avatar may block together on that same
+// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 1 since 2026-11-01 with the penumbra cone: the cone makes the self shadow soft, no floor; 0.6 = the translucent floor of 2026-10-28; 1 = an avatar blocks its own light fully): the most light the close surfaces of an avatar may block together on that same
 // avatar (rtShadowRaySoftS: hair on the face, a hand on the shoulder, the chin on the chest). Hair and skin are translucent and bounce light, so a self shadow is never as dark as an opaque object's.
 // 0.6 is Adam's choice by eye (2026-10-28, with SELFNEAR 0.8, the receiver probe and the 4 mm start disc).
 // LL_VK_RT_SUN_HAIRFILL (0..1, default 0): the shadow of a blended surface (the hair itself) is lifted toward lit by this fraction: bounced light and scattering fill the shadows hair has on itself.
 #ifndef LL_RT_SUN_ALPHA_STRENGTH
-#define LL_RT_SUN_ALPHA_STRENGTH 0.6
+#define LL_RT_SUN_ALPHA_STRENGTH 1.0
 #endif
 #ifndef LL_RT_SUN_HAIRFILL
 #define LL_RT_SUN_HAIRFILL 0.0
