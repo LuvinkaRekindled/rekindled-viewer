@@ -7504,6 +7504,14 @@ U32 LLViewerObject::getPartitionType() const
 
 void LLViewerObject::dirtySpatialGroup() const
 {
+    if (LLPipeline::sAvSink)
+    {
+        // <FS> view rework O1: the group's flags and rebuild mark are written when the job's writes are made
+        LLPipeline::AvOp op = { LLPipeline::AvOp::DIRTY_GROUP, nullptr, nullptr, nullptr, 0 };
+        op.mObject = const_cast<LLViewerObject*>(this);
+        LLPipeline::sAvSink->push_back(op);
+        return;
+    }
     if (mDrawable)
     {
         LLSpatialGroup* group = mDrawable->getSpatialGroup();

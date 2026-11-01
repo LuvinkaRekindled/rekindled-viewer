@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include <mutex>
 #include <atomic>
+#include <intrin.h>      // <FS> _mm_pause (cleanJointMatricesOnce)
 #include "llgpuzonetimer.h"
 #include <chrono>
 
@@ -6538,8 +6539,9 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
 //-----------------------------------------------------------------------------
 bool LLVOAvatar::canDeferMotionUpdate() const
 {
+    static const bool self_deferred = !getenv("LL_VK_AV_SELF") || getenv("LL_VK_AV_SELF")[0] != '0';        // <FS> stage d: the own avatar in the batch (LL_VK_AV_SELF=0: inline, as before)
     if (!sMotionUpdateBatch
-        || isSelf()                     // own avatar: motion stop requests go to the network
+        || (isSelf() && !self_deferred)     // own avatar: motion stop requests go to the network (kept while the blend runs as a job, made afterwards: flushDeferredStopRequests)
         || isUIAvatar()
         || mSpecialRenderMode != 0
         || !canDeferNormalMotionUpdate())
@@ -6560,6 +6562,51 @@ bool LLVOAvatar::canDeferMotionUpdate() const
 // <FS> The deferred pose blend, run on a worker thread (see run_avatar_motion_batch). The skeleton's world matrices follow the blend: each joint is worked out from
 // its own local transform and its parent's (read only), and every avatar has its own joints, so this is done here, in parallel, instead of serially afterwards in
 // updateCharacterPostMotion() (which then finds the matrices clean). The counters of LLJoint are statistics only.
+thread_local LLVOAvatar* LLVOAvatar::sBlendJobAvatar = nullptr;
+
+void LLVOAvatar::cleanJointMatricesOnce(U32 frame)
+{
+    const U32 done = frame & 0x7FFFFFFFu;
+    const U32 busy = done | 0x80000000u;
+    U32 state = mJointCleanState.load(std::memory_order_acquire);
+    while (state != done)
+    {
+        if (state != busy && mJointCleanState.compare_exchange_weak(state, busy, std::memory_order_acq_rel))
+        {
+            cleanJointMatrices();
+            mJointCleanState.store(done, std::memory_order_release);
+            return;
+        }
+        if (state == busy)
+        {
+            _mm_pause();
+            state = mJointCleanState.load(std::memory_order_acquire);
+        }
+    }
+}
+
+void LLVOAvatar::cleanJointMatrices()
+{
+    if (mRoot)
+    {
+        mRoot->updateWorldMatrixChildren();
+    }
+    for (S32 i = 0; i < mNumCollisionVolumes; ++i)
+    {
+        if (mCollisionVolumes[i].mDirtyFlags & LLJoint::MATRIX_DIRTY)
+        {
+            mCollisionVolumes[i].getWorldMatrix();
+        }
+    }
+    for (auto& attachment : mAttachmentPoints)
+    {
+        if (attachment.second && (attachment.second->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+        {
+            attachment.second->getWorldMatrix();
+        }
+    }
+}
+
 void LLVOAvatar::runDeferredMotionBlend()
 {
     if (mDeferredMatricesOnly)
@@ -6570,7 +6617,10 @@ void LLVOAvatar::runDeferredMotionBlend()
         }
         return;
     }
+    LLVOAvatar* saved_job_avatar = sBlendJobAvatar;
+    sBlendJobAvatar = this;
     finishNormalMotionUpdate();
+    sBlendJobAvatar = saved_job_avatar;
     if (mRoot)
     {
         mRoot->updateWorldMatrixChildren();
@@ -6594,6 +6644,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     }
 
     AvScope done_scope(AV_DEFERRED_DONE);
+    flushDeferredStopRequests();        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
     updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial);
     idleUpdatePostCharacter(mDeferredDetailedUpdate);

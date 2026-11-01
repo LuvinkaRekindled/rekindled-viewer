@@ -28,6 +28,7 @@
 #ifndef LL_VOAVATAR_H
 #define LL_VOAVATAR_H
 
+#include <atomic>
 #include <map>
 #include <deque>
 #include <string>
@@ -291,6 +292,16 @@ public:
     // Runs the deferred pose blend phase. Safe to call from a worker thread
     // while no other thread touches avatars or the world.
     void            runDeferredMotionBlend();
+    // <FS> texture priority jobs (plan 8.26): every joint a rigged mesh can be rigged to has its world matrix up to date, so that LLJoint::getWorldMatrix only reads: the skeleton below the root, the collision
+    // volumes and the attachment points (which do not update with the tree). Main thread.
+    void            cleanJointMatrices();
+    // the same, once a frame, from any thread: the first caller cleans, the others wait for it (the texture priority jobs: only the avatars that own a rigged face the jobs look at are cleaned)
+    void            cleanJointMatricesOnce(U32 frame);
+    std::atomic<U32> mJointCleanState{ 0 };     // the frame of the last clean, with 0x80000000 set while it is being done
+    // <FS> stage d (view prep rework): the blend of the own avatar runs in the batch too. The motion controller asks the avatar to stop a motion (requestStopMotion), which for the own avatar is a message to the
+    // server and a change of the agent's state: while the blend runs as a job the ids are kept (sBlendJobAvatar names the avatar a job is blending) and the requests are made when the job is done
+    static thread_local LLVOAvatar* sBlendJobAvatar;
+    virtual void    flushDeferredStopRequests() {}
     // Runs the rest of idleUpdate() on the main thread once the blend is done.
     void            completeDeferredMotionUpdate();
     void            updateFootstepSounds();
@@ -1007,6 +1018,13 @@ public:
         bool mHasPrev = false;
         bool mComputed = false;     // mFrame is only meaningful after the first computation (the constructor sets it to "last frame")
 
+        // <FS> the avatar frame record (view prep rework): what the avatar velocity pass works out for this palette once a frame (the frame it was worked out in, and the answer), kept here instead of in
+        // maps made again every frame. Written by that pass only.
+        mutable U32 mMotionFrame = 0xFFFFFFFFu;
+        mutable bool mMotionStill = false;      // the palette moved less than the pass's threshold since the frame before
+        mutable U32 mOffsetFrame = 0xFFFFFFFFu;
+        mutable U32 mOffset = 0;                // where the palette is in the pass's palette record
+
         MatrixPaletteCache() :
             mFrame(gFrameCount - 1)
         {
@@ -1017,6 +1035,11 @@ public:
     // Will do a map lookup for the entry associated with the given MeshSkinInfo
     // Will update said entry if it hasn't been updated yet this frame
     const MatrixPaletteCache& updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skinInfo);
+
+    // <FS> the avatar frame record: what the velocity pass decides about this avatar once a frame (the frame it did, whether the avatar is drawn into the velocity map, its distance from the camera)
+    U32 mVelocityFrame = 0xFFFFFFFFu;
+    bool mVelocityOk = false;
+    F32 mVelocityDistance = 0.f;
 
     // Map of LLMeshSkinInfo::mHash to MatrixPaletteCache
     typedef std::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;

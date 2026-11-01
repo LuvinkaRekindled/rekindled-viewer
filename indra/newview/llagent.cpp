@@ -3228,10 +3228,14 @@ void LLAgent::setStartPositionSuccess(const LLSD &result)
 
 void LLAgent::requestStopMotion( LLMotion* motion )
 {
+    requestStopMotionId(motion->getID());
+}
+
+void LLAgent::requestStopMotionId(const LLUUID& anim_state)
+{
     // Notify all avatars that a motion has stopped.
     // This is needed to clear the animation state bits
-    LLUUID anim_state = motion->getID();
-    onAnimStop(motion->getID());
+    onAnimStop(anim_state);
 
     // if motion is not looping, it could have stopped by running out of time
     // so we need to tell the server this

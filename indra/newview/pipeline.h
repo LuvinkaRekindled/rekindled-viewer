@@ -373,7 +373,7 @@ public:
     // at once, so the next step of the loop sees them. LL_VK_AV_LEDGER=1 turns it on.
     struct AvOp
     {
-        enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, BRIDGE_MOVE, RENDER_ORDER, MAKE_ACTIVE_SHARED, UPDATE_TEXT } mKind;
+        enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, BRIDGE_MOVE, RENDER_ORDER, MAKE_ACTIVE_SHARED, UPDATE_TEXT, DIRTY_GROUP } mKind;
         LLDrawable* mDrawable;
         LLVOAvatar* mAvatar;            // RENDER_ORDER
         LLSpatialGroup* mSeenGroup;     // RENDER_ORDER: the group the loop saw when it made the request
@@ -382,6 +382,12 @@ public:
     };
     static thread_local std::vector<AvOp>* sAvSink;
     void applyAvOps(std::vector<AvOp>& ops);
+    void applyAvOpsRange(const AvOp* begin, const AvOp* end);
+    void applySortDeltasRange(const SortDelta* begin, const SortDelta* end);
+    // <FS> view rework O1 (LL_VK_MOVED_PARALLEL): the entries of the moved list that are plain volume prims, grouped by linkset, run their updateMove as pool jobs that record their writes to shared state; the
+    // writes are made, and the done handling of each entry, in list order afterwards. False when it did not run (too few entries, a census on, the setting off).
+    bool updateMovedListParallel(LLDrawable::drawable_vector_t& moved_list);
+    void updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list, size_t first);
     static thread_local std::vector<LLDrawable*>* sSortPoolSink;     // set: the drawables the pools take by face are listed here, not in mDeferredPoolFill (a chunk of the parallel sort)
     static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
     static void sortJournalVolume(LLVOVolume* volume);

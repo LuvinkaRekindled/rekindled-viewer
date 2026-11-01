@@ -1167,10 +1167,31 @@ void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
 // virtual
 void LLVOAvatarSelf::requestStopMotion(LLMotion* motion)
 {
+    if (sBlendJobAvatar == this)
+    {
+        // <FS> stage d: this is the own avatar's blend running as a pool job: the request (a message to the server, the agent's state) is made when the job is done, on the main thread
+        mDeferredStopIds.push_back(motion->getID());
+        return;
+    }
     // Only agent avatars should handle the stop motion notifications.
 
     // Notify agent that motion has stopped
     gAgent.requestStopMotion(motion);
+}
+
+// virtual
+void LLVOAvatarSelf::flushDeferredStopRequests()
+{
+    if (mDeferredStopIds.empty())
+    {
+        return;
+    }
+    const std::vector<LLUUID> ids = std::move(mDeferredStopIds);
+    mDeferredStopIds.clear();
+    for (const LLUUID& id : ids)
+    {
+        gAgent.requestStopMotionId(id);
+    }
 }
 
 // virtual
