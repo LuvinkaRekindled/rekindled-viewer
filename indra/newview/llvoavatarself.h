@@ -90,6 +90,8 @@ public:
     /*virtual*/ bool        hasMotionFromSource(const LLUUID& source_id);
     /*virtual*/ void        stopMotionFromSource(const LLUUID& source_id);
     /*virtual*/ void        requestStopMotion(LLMotion* motion);
+    /*virtual*/ void        flushDeferredStopRequests();
+    std::vector<LLUUID>     mDeferredStopIds;       // <FS> stage d: motions stopped while the blend ran as a pool job
     /*virtual*/ LLJoint*    getJoint(std::string_view name);
 
     /*virtual*/ void renderJoints();

@@ -32,6 +32,8 @@
 
 #include "llviewercontrol.h"
 #include "llvolume.h"
+#include <atomic>
+#include "lljoint.h"      // <FS> the joints' dirty flags (gFSTexPreDirtyReads)
 #include "m3math.h"
 #include "llmatrix4a.h"
 #include "v3color.h"
@@ -77,6 +79,7 @@ static LLStaticHashedString sColorIn("color_in");
 
 bool LLFace::sSafeRenderSelect = true; // false
 thread_local bool LLFace::sStampedByCaller = false;
+thread_local std::vector<LLFace*>* LLFace::sStampSink = nullptr;
 
 
 #define DOTVEC(a,b) (a.mV[0]*b.mV[0] + a.mV[1]*b.mV[1] + a.mV[2]*b.mV[2])
@@ -532,7 +535,14 @@ U16 LLFace::getGeometry(LLStrider<LLVector3> &vertices, LLStrider<LLVector3> &no
 
 void LLFace::updateCenterAgent()
 {
-    stampTextures();
+    if (sStampSink)
+    {
+        sStampSink->push_back(this);
+    }
+    else
+    {
+        stampTextures();
+    }
     if (mDrawablep->isActive())
     {
         mCenterAgent = mCenterLocal * getRenderMatrix();
@@ -2478,6 +2488,11 @@ F32 LLFace::getTextureVirtualSize()
     return face_area;
 }
 
+// <FS> LL_VK_TEX_PRE: the texture priority jobs run calcPixelArea of rigged faces on pool threads, which is safe only while every joint they read is clean (getWorldMatrix recomputes and writes a dirty one):
+// the jobs count the dirty joints they meet (the expectation is 0; plan 8.26)
+thread_local bool gFSTexPreJob = false;
+std::atomic<U32> gFSTexPreDirtyReads{0};
+
 bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
 {
     // <FS> rigged faces transform the bounding box of every joint they use, which makes them the expensive case; their result
@@ -2538,6 +2553,10 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
 
                         if (joint)
                         {
+                            if (gFSTexPreJob && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+                            {
+                                ++gFSTexPreDirtyReads;
+                            }
                             LLMatrix4a worldMat;
                             worldMat.loadu((F32*)&joint->getWorldMatrix().mMatrix[0][0]);
 

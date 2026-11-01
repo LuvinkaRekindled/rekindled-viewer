@@ -593,6 +593,7 @@ public:
     void            stopCurrentAnimations(bool force_keep_script_perms = false);
     // </FS:Ansariel>
     void            requestStopMotion(LLMotion* motion);
+    void            requestStopMotionId(const LLUUID& anim_state);      // <FS> stage d: what requestStopMotion does with the id of the motion (the own avatar's blend runs on a pool thread and the request is made afterwards)
     void            onAnimStop(const LLUUID& id);
     void            sendAnimationRequests(const std::vector<LLUUID> &anim_ids, EAnimRequest request);
     void            sendAnimationRequest(const LLUUID &anim_id, EAnimRequest request);

@@ -29,6 +29,11 @@
 
 #include <sys/stat.h>
 
+#include <atomic>
+#include "llcharacter.h"    // <FS> the skeletons are cleaned before the texture priority jobs
+#include "llvoavatar.h"
+#include "llforkjoinpool.h"
+#include "llgpuzonetimer.h"
 #include "llviewertexturelist.h"
 #include "fstexturearrivaltrace.h"     // <FS> the arrival trace
 #include "lldrawpool.h"
@@ -1579,6 +1584,24 @@ FbStats sFb;
 F32 sStampEpochTime = 0.f;      // gFrameTimeSeconds when the camera epoch last changed: a result is only kept once the camera has stood still for a moment (the face areas it read were then made under that pose, not up to 0.1 s earlier)
 }
 
+// <FS> LL_VK_TEX_PRE (default 0 = off; 1 = on; the face loops otherwise stay on this thread, 2 = the loops run here as before and are compared with the precomputed ones): the face loops of the textures of a slice that the worker's record
+// and the kept result cannot answer run as pool jobs before the slice's per-texture pass; updateImageDecodePriority then takes the precomputed values where it would have run the loop. A texture with a face that
+// is due a pixel area refresh (calcPixelArea writes the face, which two textures can share) is left to this thread.
+struct FaceLoopPre
+{
+    bool mValid = false;
+    U32 mFaceCount = 0;
+    F32 mMaxVsize = 0.f;
+    bool mOnScreen = false;
+    U32 mFacesSeen = 0, mFacesOccluded = 0;
+    bool mVolatile = false;
+};
+extern thread_local bool gFSTexPreJob;          // llface.cpp: set while a texture priority job runs
+extern std::atomic<U32> gFSTexPreDirtyReads;    // llface.cpp: dirty joints a job met in calcPixelArea of a rigged face
+static const FaceLoopPre* sCurrentPre = nullptr;     // main thread: the precomputed loop of the texture being looked at
+static const int sPreMode = []{ const char* e = getenv("LL_VK_TEX_PRE"); return e ? atoi(e) : 1; }();       // on by default since 2026-11-01 (plan 8.26: the rigged faces are in the jobs, their joints cleaned first); 0 = the loops on this thread, 2 = verify
+static U64 sPreCandidates = 0, sPreComputed = 0, sPreUsed = 0, sPreCompared = 0, sPreDiffer = 0, sPreFrames = 0, sPreEntries = 0;
+
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
 {
     llassert(!gCubeSnapshot);
@@ -1619,6 +1642,9 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             else if (sStampMode == 1) { stamp_use = true; ++sStamp.mHit; }
             else { stamp_verify = true; ++sStamp.mHit; }
         }
+
+        const FaceLoopPre* pre = (sCurrentPre && sCurrentPre->mValid) ? sCurrentPre : nullptr;       // <FS> LL_VK_TEX_PRE
+        bool loop_ran = false;
 
         // get adjusted bias based on image resolution
         LLImageTex* img = imagep->getImageTexture();
@@ -1662,8 +1688,20 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             on_screen = stamp.mOnScreen;
             face_count = stamp.mFaceCount;
         }
+        else if (pre && sPreMode == 1)
+        {
+            // <FS> the loop ran as a pool job
+            face_count = pre->mFaceCount;
+            max_vsize = pre->mMaxVsize;
+            on_screen = pre->mOnScreen;
+            faces_seen = pre->mFacesSeen;
+            faces_occluded = pre->mFacesOccluded;
+            stamp_volatile = pre->mVolatile;
+            ++sPreUsed;
+        }
         else
         { LL_CPU_ZONE("textures: decode priority: face loop");
+        loop_ran = true;
         for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
         {
             face_count += imagep->getNumFaces(i);
@@ -1764,6 +1802,29 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
         } // (face loop zone)
+        if (loop_ran && pre && sPreMode == 2)
+        {
+            // <FS> LL_VK_TEX_PRE=2: the loop above ran here; the pool's answer for the same texture has to be the same
+            ++sPreCompared;
+            U32 pre_bits, loop_bits;
+            memcpy(&pre_bits, &pre->mMaxVsize, 4);
+            memcpy(&loop_bits, &max_vsize, 4);
+            // (the pool's threads keep denormals, this thread flushes them to zero: a size of 1e-42 and one of 0 are the same size)
+            const bool same_size = pre_bits == loop_bits || (fabsf(pre->mMaxVsize) < 1.0e-30f && fabsf(max_vsize) < 1.0e-30f);
+            const bool same = pre->mFaceCount == face_count && same_size && pre->mOnScreen == on_screen && pre->mFacesSeen == faces_seen
+                && pre->mFacesOccluded == faces_occluded && (!sStampMode || pre->mVolatile == stamp_volatile);
+            if (!same)
+            {
+                ++sPreDiffer;
+                static U32 said = 0;
+                if (said++ < 40)
+                {
+                    LL_INFOS("TexPre") << "precomputed loop differs for " << imagep->getID() << ": faces " << pre->mFaceCount << "/" << face_count << ", size " << pre->mMaxVsize << "/" << max_vsize << ", on screen "
+                                       << pre->mOnScreen << "/" << on_screen << ", seen " << pre->mFacesSeen << "/" << faces_seen << ", occluded " << pre->mFacesOccluded << "/" << faces_occluded
+                                       << ", volatile " << pre->mVolatile << "/" << stamp_volatile << LL_ENDL;
+                }
+            }
+        }
 
         if (!stamp_use && !rec_use)
         {
@@ -2507,13 +2568,198 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     LLTimer timer;
 
-    for (auto& imagep : entries)
+    // <FS> LL_VK_TEX_PRE: the face loops of the slice on the pool (see FaceLoopPre)
+    static std::vector<FaceLoopPre> pres;
+    pres.clear();
+    LLForkJoinPool* pre_pool = (sPreMode != 0 && sStampMode != 2 && !gCubeSnapshot && entries.size() >= 96 && !LLGpuZoneTimer::isActive()) ? LLForkJoinPool::shared() : nullptr;
+    if (pre_pool)
     {
+        LL_CPU_ZONE("textures: decode priority: face loops on the pool");
+        pres.assign(entries.size(), FaceLoopPre());
+        static LLCachedControl<F32> pre_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.0095f);
+        static LLCachedControl<F32> pre_scale_max(gSavedSettings, "TextureScaleMaxAreaFactor", 25.f);
+        const F32 scale_min = pre_scale_min, scale_max = pre_scale_max;
+        const S32 pre_stamp_bias = (S32)(LLViewerTexture::sDesiredDiscardBias * 20.f);
+        const U32 max_faces_to_check = 1024;
+        std::atomic<U64> candidates{ 0 }, computed{ 0 };
+        // a job that meets a due rigged face makes the avatar's joints clean first (once a frame per avatar, the first job to ask does it and the others wait: LLVOAvatar::cleanJointMatricesOnce), so
+        // LLJoint::getWorldMatrix only reads. LL_VK_TEX_PRE_RIGGED=0 leaves the rigged faces to this thread, as in 8.19.
+        static const bool rigged_in_jobs = !getenv("LL_VK_TEX_PRE_RIGGED") || atoi(getenv("LL_VK_TEX_PRE_RIGGED")) != 0;
+        const bool skeletons_clean = rigged_in_jobs;
+        // the loop of updateImageDecodePriority for one texture, without its writes (the faces are not touched); false when the texture needs none or has a face that is due a pixel area refresh
+        const auto precompute = [&](LLViewerFetchedTexture* imagep, FaceLoopPre& out) -> bool
+        {
+            if (imagep->getBoostLevel() >= LLViewerFetchedTexture::BOOST_HIGH)
+            {
+                return false;
+            }
+            if (sStampMode == 1)
+            {
+                const LLViewerTexture::FaceLoopCache& stamp = imagep->mFaceCache;
+                if (stamp.mValid && stamp.mFaceStamp == imagep->mFaceStamp && stamp.mCamEpoch == sCameraEpoch && stamp.mBias == pre_stamp_bias && gFrameTimeSeconds - stamp.mTime < sStampAge)
+                {
+                    return false;       // the kept result answers
+                }
+            }
+            if (LLTexRecs::sMode == 2)
+            {
+                LLTexRecs::Result rec_res;
+                if (LLTexRecs::result(imagep, rec_res) && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
+                {
+                    U32 fc = 0;
+                    for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
+                    {
+                        fc += imagep->getNumFaces(i);
+                    }
+                    if (fc == rec_res.mFaces && fc <= max_faces_to_check)
+                    {
+                        return false;   // the worker's record answers
+                    }
+                }
+            }
+            candidates.fetch_add(1, std::memory_order_relaxed);
+            LLImageTex* img = imagep->getImageTexture();
+            F32 max_discard = F32(img ? img->getMaxDiscardLevel() : MAX_DISCARD_LEVEL);
+            F32 bias = llclamp(max_discard - 2.f, 1.f, LLViewerTexture::sDesiredDiscardBias);
+            bias = (F32) llroundf(powf(4, bias - 1.f));
+            constexpr F32 BIAS_TRS_ON_SCREEN = 1.f;
+            F32 max_vsize = 0.f;
+            bool on_screen = false;
+            U32 face_count = 0, faces_seen = 0, faces_occluded = 0;
+            bool is_volatile = false;
+            for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
+            {
+                face_count += imagep->getNumFaces(i);
+                S32 faces_to_check = (face_count > max_faces_to_check) ? 0 : imagep->getNumFaces(i);
+                for (S32 fi = 0; fi < faces_to_check; ++fi)
+                {
+                    LLFace* face = (*(imagep->getFaceList(i)))[fi];
+                    if (face && face->getViewerObject())
+                    {
+                        ++faces_seen;
+                        {
+                            LLDrawable* drw = face->getDrawable();
+                            LLSpatialGroup* grp = drw ? drw->getSpatialGroup() : nullptr;
+                            if (grp && grp->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED)) ++faces_occluded;
+                        }
+                        if (sStampMode && (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
+                                           || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE))
+                        {
+                            is_volatile = true;
+                        }
+                        {
+                            // a face that is due a pixel area refresh is claimed (0xFFFFFFFF in mLastTextureUpdate while it is worked out; to everyone else that reads as "being done") by exactly one job;
+                            // a texture whose face another job has claimed is left to the main thread, where the face is fresh by then. A rigged face whose rig table needs an update (a write to the volume
+                            // face, which meshes share) is left to the main thread too.
+                            std::atomic_ref<U32> stamp_of_face(face->mLastTextureUpdate);
+                            U32 last = stamp_of_face.load(std::memory_order_acquire);
+                            if (last == 0xFFFFFFFFu)
+                            {
+                                return false;
+                            }
+                            if ((gFrameCount - last) > 10)
+                            {
+                                if (face->isState(LLFace::RIGGED))
+                                {
+                                    // calcPixelArea of a rigged face reads the joints' world matrices (LLJoint::getWorldMatrix recomputes a dirty joint and writes it: two jobs for faces of one avatar would
+                                    // tear it, which shows as a spike in the skin) and may update the rig table (shared between meshes). The skeletons were cleaned before the jobs (see below), so the matrices
+                                    // are only read; a face whose rig table needs an update stays with the main thread.
+                                    LLViewerObject* rigged_obj = face->getViewerObject();
+                                    LLVolume* rigged_volume = rigged_obj ? rigged_obj->getVolume() : nullptr;
+                                    if (!skeletons_clean || !rigged_volume || !rigged_obj->getAvatar() || face->getTEOffset() < 0 || face->getTEOffset() >= rigged_volume->getNumVolumeFaces()
+                                        || rigged_volume->getVolumeFace(face->getTEOffset()).mJointRiggingInfoTab.needsUpdate())
+                                    {
+                                        return false;
+                                    }
+                                    rigged_obj->getAvatar()->cleanJointMatricesOnce(gFrameCount);
+                                }
+                                if (!stamp_of_face.compare_exchange_strong(last, 0xFFFFFFFFu, std::memory_order_acq_rel))
+                                {
+                                    return false;
+                                }
+                                F32 area_radius, area_cos;
+                                face->mInFrustum = face->calcPixelArea(area_cos, area_radius);
+                                stamp_of_face.store(gFrameCount, std::memory_order_release);
+                            }
+                        }
+                        F32 vsize = face->getPixelArea();
+                        on_screen |= face->mInFrustum;
+                        S32 te_offset = face->getTEOffset();
+                        LLViewerObject* objp = face->getViewerObject();
+                        const LLTextureEntry* te = (te_offset < 0 || te_offset >= objp->getNumTEs()) ? nullptr : objp->getTE(te_offset);
+                        F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
+                        min_scale = llclamp(min_scale * min_scale, scale_min, scale_max);
+                        vsize /= min_scale;
+                        if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 1.9f + face->mImportanceToCamera / 2.f)
+                        {
+                            vsize /= bias;
+                        }
+                        if (face->mInFrustum)
+                        {
+                            static LLCachedControl<F32> texture_camera_boost(gSavedSettings, "TextureCameraBoost", 8.f);
+                            vsize *= llmax(face->mImportanceToCamera * texture_camera_boost, 1.f);
+                        }
+                        max_vsize = llmax(max_vsize, vsize);
+                        if (max_vsize >= LLViewerFetchedTexture::sMaxVirtualSize
+                            && (on_screen || LLViewerTexture::sDesiredDiscardBias <= BIAS_TRS_ON_SCREEN))
+                        {
+                            break;
+                        }
+                    }
+                }
+                if (max_vsize >= LLViewerFetchedTexture::sMaxVirtualSize
+                    && (on_screen || LLViewerTexture::sDesiredDiscardBias <= BIAS_TRS_ON_SCREEN))
+                {
+                    break;
+                }
+            }
+            out.mFaceCount = face_count;
+            out.mMaxVsize = max_vsize;
+            out.mOnScreen = on_screen;
+            out.mFacesSeen = faces_seen;
+            out.mFacesOccluded = faces_occluded;
+            out.mVolatile = is_volatile;
+            out.mValid = true;
+            computed.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        };
+        static const size_t chunk = getenv("LL_VK_TEX_PRE_CHUNK") ? (size_t)std::max(1, atoi(getenv("LL_VK_TEX_PRE_CHUNK"))) : 8;       // (a chunk with a few rigged faces, a joint walk each, ran long beside the others at 32)
+        const size_t chunks = (entries.size() + chunk - 1) / chunk;
+        const std::function<void(size_t)> job = [&](size_t c)
+        {
+            struct JobFlag { bool mPrev = gFSTexPreJob; JobFlag() { gFSTexPreJob = true; } ~JobFlag() { gFSTexPreJob = mPrev; } } job_flag;
+            const size_t end = std::min(entries.size(), (c + 1) * chunk);
+            for (size_t i = c * chunk; i < end; ++i)
+            {
+                LLViewerFetchedTexture* imagep = entries[i];
+                if (imagep && imagep->getNumRefs() > 1)
+                {
+                    precompute(imagep, pres[i]);
+                }
+            }
+        };
+        pre_pool->run(chunks, job);
+        sPreCandidates += candidates.load();
+        sPreComputed += computed.load();
+        sPreEntries += entries.size();
+        if (++sPreFrames % 3000 == 0)
+        {
+            LL_INFOS("TexPre") << "texture face loops on the pool, per frame over " << sPreFrames << " frames: " << (double)sPreEntries / sPreFrames << " textures in the slice, " << (double)sPreCandidates / sPreFrames
+                               << " needed a loop, " << (double)sPreComputed / sPreFrames << " computed by jobs, " << (double)sPreUsed / sPreFrames << " used, dirty joints met by the jobs " << gFSTexPreDirtyReads.load() << (sPreMode == 2 ? "; compared " : "")
+                               << (sPreMode == 2 ? std::to_string(sPreCompared) + ", differed " + std::to_string(sPreDiffer) : std::string()) << LL_ENDL;
+        }
+    }
+
+    for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index)
+    {
+        auto& imagep = entries[entry_index];
         mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
 
         if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
         {
+            sCurrentPre = pres.empty() ? nullptr : &pres[entry_index];
             { LL_CPU_ZONE("textures: decode priority (per texture)"); updateImageDecodePriority(imagep); }
+            sCurrentPre = nullptr;
             { LL_CPU_ZONE("textures: updateFetch (per texture)"); imagep->updateFetch(); }
         }
 

@@ -2311,10 +2311,17 @@ void LLPipeline::resetFrameStats()
 // <FS> view rework A1: the recorded writes of an avatar's attachment loop, made in the order they were requested
 void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
 {
+    applyAvOpsRange(ops.data(), ops.data() + ops.size());
+    ops.clear();
+}
+
+void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
+{
     sAvSink = nullptr;
-    static U64 calls = 0, total_ops = 0, by_kind[8] = {}, stale_group = 0, orders = 0;
-    for (const AvOp& op : ops)
+    static U64 calls = 0, total_ops = 0, by_kind[12] = {}, stale_group = 0, orders = 0;
+    for (const AvOp* op_ptr = begin; op_ptr != end; ++op_ptr)
     {
+        const AvOp& op = *op_ptr;
         ++by_kind[op.mKind];
         switch (op.mKind)
         {
@@ -2348,6 +2355,12 @@ void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
                 op.mObject->updateText();
             }
             break;
+        case AvOp::DIRTY_GROUP:
+            if (op.mObject && !op.mObject->isDead())
+            {
+                op.mObject->dirtySpatialGroup();
+            }
+            break;
         case AvOp::RENDER_ORDER:
         {
             ++orders;
@@ -2365,8 +2378,7 @@ void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
         }
         }
     }
-    total_ops += ops.size();
-    ops.clear();
+    total_ops += (U64)(end - begin);
     if (++calls % 6000 == 0)
     {
         LL_INFOS("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
@@ -2599,16 +2611,28 @@ bool LLPipeline::coldGroup(const LLSpatialGroup* group)
 
 void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 {
+    if (&moved_list == &mMovedList && updateMovedListParallel(moved_list))
+    {
+        return;
+    }
+    updateMovedListSerial(moved_list, 0);
+}
+
+void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list, size_t first)
+{
     LL_CPU_ZONE("pipeline: updateMovedList");
     LL_PROFILE_ZONE_SCOPED;
-    for (LLDrawable::drawable_vector_t::iterator iter = moved_list.begin();
-         iter != moved_list.end(); )
+    // <FS> by index: updateMove marks the parent and the children of a drawable moved (markMoved, from makeActive), which pushes onto this very list; a push that moves the vector's storage left the iterator of the
+    // old loop pointing at freed memory (a crash reading 0xFFFFFFFFFFFFFFFF during the loading of a crowd). An entry pushed during the pass is reached later in the same pass, as the loop always meant.
+    size_t next = first;
+    while (next < moved_list.size())
     {
-        LLDrawable::drawable_vector_t::iterator curiter = iter++;
-        LLDrawable *drawablep = *curiter;
+        const size_t cur = next++;
+        LLDrawable *drawablep = moved_list[cur];
         if (!drawablep)
         {
-            iter = moved_list.erase(curiter);
+            moved_list.erase(moved_list.begin() + cur);
+            next = cur;
             continue;
         }
         bool done = true;
@@ -2673,9 +2697,296 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
                     drawablep->getVObj()->dirtySpatialGroup();
                 }
             }
-            iter = moved_list.erase(curiter);
+            // (the entry is where it was unless something erased entries of the list meanwhile)
+            size_t at = cur;
+            if (at >= moved_list.size() || moved_list[at].get() != drawablep)
+            {
+                at = moved_list.size();
+                for (size_t k = 0; k < moved_list.size(); ++k)
+                {
+                    if (moved_list[k].get() == drawablep)
+                    {
+                        at = k;
+                        break;
+                    }
+                }
+            }
+            if (at < moved_list.size())
+            {
+                moved_list.erase(moved_list.begin() + at);
+                next = at;
+            }
         }
     }
+}
+
+// <FS> view rework O1 (LL_VK_MOVED_PARALLEL=1; default off until soaked): see pipeline.h. The unit of a job is a linkset (a child reads its parent's transform, and the list holds parents first): every entry of
+// a root, in list order, runs in one job whose writes to shared state (the moved lists, the octree moves, makeActive, the HUD text, the rebuild and partition marks, the group flags, the texture stamps) go
+// into the job's ledgers. A serial pass in list order then makes each entry's writes and does its done handling, or runs the entry the old way when it is not plain (an avatar, an attachment, a flexible
+// prim, a rigged or animated object, a linkset with one of those in it).
+enum MovedAction : U8 { ERASE_NULL, KEEP, SERIAL, JOB };
+struct MovedEnt
+{
+    LLDrawable* mDrawable = nullptr;
+    MovedAction mAction = SERIAL;
+    bool mDone = false;
+    U32 mLinkset = 0;
+    size_t mOps[2] = { 0, 0 };
+    size_t mSort[2] = { 0, 0 };
+    size_t mStamps[2] = { 0, 0 };
+};
+struct MovedLed
+{
+    std::vector<LLPipeline::AvOp> mOps;
+    std::vector<LLPipeline::SortDelta> mSort;
+    std::vector<LLFace*> mStamps;
+    std::vector<U32> mEntries;
+    bool mPlain = true;
+};
+
+static bool moved_entry_plain(LLDrawable* d)
+{
+    if (!d || d->isDead() || d->isSpatialBridge() || d->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
+    {
+        return false;
+    }
+    LLViewerObject* vobj = d->getVObj();
+    if (!vobj || vobj->isDead() || vobj->getPCode() != LL_PCODE_VOLUME || vobj->isAvatar() || vobj->isAttachment() || vobj->isHUDAttachment() || vobj->isAnimatedObject() || vobj->isRiggedMesh())
+    {
+        return false;
+    }
+    return !static_cast<LLVOVolume*>(vobj)->isFlexible();
+}
+
+bool LLPipeline::updateMovedListParallel(LLDrawable::drawable_vector_t& moved_list)
+{
+    static const int mode = getenv("LL_VK_MOVED_PARALLEL") ? atoi(getenv("LL_VK_MOVED_PARALLEL")) : 0;
+    static const size_t kMinEntries = 48;
+    if (mode == 0 || moved_list.size() < kMinEntries || LLAttCensus::sOn || ItemCensus::on() || LLGpuZoneTimer::isActive())
+    {
+        return false;
+    }
+    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    if (!pool)
+    {
+        return false;
+    }
+    LL_CPU_ZONE("pipeline: updateMovedList (parallel)");
+
+    typedef MovedAction Action;
+    typedef MovedEnt Ent;
+    typedef MovedLed Led;
+    static std::vector<Ent> ents;
+    static std::vector<Led> leds;
+    static std::unordered_map<LLDrawable*, U32> linkset_of;
+    ents.clear();
+    linkset_of.clear();
+    size_t used_leds = 0;
+
+    const size_t n = moved_list.size();
+    ents.resize(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        Ent& e = ents[i];
+        LLDrawable* drawablep = moved_list[i];
+        e.mDrawable = drawablep;
+        if (!drawablep)
+        {
+            e.mAction = ERASE_NULL;
+            continue;
+        }
+        // the cold skip, as in the serial loop (it leaves the entry on the list unmoved)
+        if (coldMode() > 0 && !drawablep->isDead() && drawablep->isRoot() && !drawablep->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD | LLDrawable::EARLY_MOVE))
+        {
+            LLViewerObject* vobj = drawablep->getVObj();
+            LLSpatialGroup* group = drawablep->getSpatialGroup();
+            if (vobj && group && !vobj->isAvatar() && !vobj->isAttachment() && !vobj->isHUDAttachment())
+            {
+                ++sColdMovedSeen;
+                if (coldGroup(group))
+                {
+                    const LLVector4a* b = group->getBounds();
+                    LLVector4a p;
+                    p.load3(vobj->getPositionAgent().mV);
+                    LLVector4a d;
+                    d.setSub(p, b[0]);
+                    d.setAbs(d);
+                    LLVector4a over;
+                    over.setSub(d, b[1]);
+                    if (over.getF32ptr()[0] <= 0.f && over.getF32ptr()[1] <= 0.f && over.getF32ptr()[2] <= 0.f)
+                    {
+                        ++sColdMovedSkipped;
+                        if (coldMode() >= 2)
+                        {
+                            drawablep->setState(LLDrawable::MOVE_UNDAMPED);
+                            e.mAction = KEEP;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        e.mAction = SERIAL;
+        if (!drawablep->isDead() && !drawablep->isState(LLDrawable::EARLY_MOVE))
+        {
+            LLDrawable* root = drawablep->getRoot();
+            auto it = linkset_of.find(root);
+            if (it == linkset_of.end())
+            {
+                if (used_leds == leds.size())
+                {
+                    leds.emplace_back();
+                }
+                Led& led = leds[used_leds];
+                led.mOps.clear();
+                led.mSort.clear();
+                led.mStamps.clear();
+                led.mEntries.clear();
+                led.mPlain = moved_entry_plain(root);
+                it = linkset_of.emplace(root, (U32)used_leds).first;
+                ++used_leds;
+            }
+            Led& led = leds[it->second];
+            led.mPlain = led.mPlain && moved_entry_plain(drawablep);
+            led.mEntries.push_back((U32)i);
+            e.mLinkset = it->second;
+        }
+    }
+    // a linkset becomes jobs only when every entry of it is plain
+    std::vector<U32> job_leds;
+    for (size_t k = 0; k < used_leds; ++k)
+    {
+        if (leds[k].mPlain)
+        {
+            job_leds.push_back((U32)k);
+            for (U32 i : leds[k].mEntries)
+            {
+                ents[i].mAction = JOB;
+            }
+        }
+    }
+    static U64 calls = 0, entries_total = 0, job_entries = 0, linksets = 0, ops_total = 0, stamps_total = 0;
+    ++calls;
+    entries_total += n;
+    job_entries += std::count_if(ents.begin(), ents.end(), [](const Ent& e) { return e.mAction == JOB; });
+    linksets += job_leds.size();
+
+    if (job_leds.size() >= 2)
+    {
+        const std::function<void(size_t)> job = [&](size_t j)
+        {
+            Led& led = leds[job_leds[j]];
+            std::vector<AvOp>* saved_av = sAvSink;
+            std::vector<SortDelta>* saved_sort = sSortSink;
+            std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
+            sAvSink = &led.mOps;
+            sSortSink = &led.mSort;
+            LLFace::sStampSink = &led.mStamps;
+            for (U32 i : led.mEntries)
+            {
+                Ent& e = ents[i];
+                e.mOps[0] = led.mOps.size();
+                e.mSort[0] = led.mSort.size();
+                e.mStamps[0] = led.mStamps.size();
+                e.mDone = e.mDrawable->updateMove();
+                e.mOps[1] = led.mOps.size();
+                e.mSort[1] = led.mSort.size();
+                e.mStamps[1] = led.mStamps.size();
+            }
+            sAvSink = saved_av;
+            sSortSink = saved_sort;
+            LLFace::sStampSink = saved_stamps;
+        };
+        pool->run(job_leds.size(), job);
+    }
+    else
+    {
+        // nothing worth a launch: every entry the old way
+        for (Ent& e : ents)
+        {
+            if (e.mAction == JOB)
+            {
+                e.mAction = SERIAL;
+            }
+        }
+    }
+
+    // the writes and the done handling, in list order
+    LLDrawable::drawable_vector_t kept;
+    kept.reserve(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        Ent& e = ents[i];
+        LLDrawable* drawablep = e.mDrawable;
+        if (e.mAction == ERASE_NULL)
+        {
+            continue;
+        }
+        if (e.mAction == KEEP)
+        {
+            kept.push_back(drawablep);
+            continue;
+        }
+        bool done = true;
+        if (e.mAction == JOB)
+        {
+            Led& led = leds[e.mLinkset];
+            applyAvOpsRange(led.mOps.data() + e.mOps[0], led.mOps.data() + e.mOps[1]);
+            applySortDeltasRange(led.mSort.data() + e.mSort[0], led.mSort.data() + e.mSort[1]);
+            for (size_t k = e.mStamps[0]; k < e.mStamps[1]; ++k)
+            {
+                led.mStamps[k]->stampTextures();
+            }
+            ops_total += e.mOps[1] - e.mOps[0];
+            stamps_total += e.mStamps[1] - e.mStamps[0];
+            done = e.mDone;
+        }
+        else if (!drawablep->isDead() && !drawablep->isState(LLDrawable::EARLY_MOVE))
+        {
+            done = drawablep->updateMove();
+        }
+        drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED);
+        if (done)
+        {
+            if (drawablep->isRoot() && !drawablep->isState(LLDrawable::ACTIVE))
+            {
+                drawablep->makeStatic();
+            }
+            drawablep->clearState(LLDrawable::ON_MOVE_LIST);
+            if (drawablep->isState(LLDrawable::ANIMATED_CHILD))
+            {
+                drawablep->clearState(LLDrawable::ANIMATED_CHILD);
+                markRebuild(drawablep, LLDrawable::REBUILD_VOLUME);
+                if (drawablep->getVObj())
+                {
+                    drawablep->getVObj()->dirtySpatialGroup();
+                }
+            }
+        }
+        else
+        {
+            kept.push_back(drawablep);
+        }
+    }
+    // what the serial entries and the replayed writes pushed while this ran is the tail of the list: the old loop reached those entries in the same call
+    LLDrawable::drawable_vector_t tail;
+    if (moved_list.size() > n)
+    {
+        tail.assign(moved_list.begin() + n, moved_list.end());
+    }
+    moved_list = kept;
+    const size_t first_tail = moved_list.size();
+    moved_list.insert(moved_list.end(), tail.begin(), tail.end());
+    if (!tail.empty())
+    {
+        updateMovedListSerial(moved_list, first_tail);
+    }
+    if (calls % 3000 == 0)
+    {
+        LL_INFOS("MovedParallel") << "moved list in " << calls << " calls: " << (double)entries_total / calls << " entries a call, " << (double)job_entries / calls << " of them run as jobs in "
+                                  << (double)linksets / calls << " linksets; writes replayed a call " << (double)ops_total / calls << ", texture stamps " << (double)stamps_total / calls << LL_ENDL;
+    }
+    return true;
 }
 
 // <FS> LL_VK_SCENECENSUS=1: how much the scene holds (objects, drawables, spatial groups with built geometry, draw infos and triangles, lights, queues) against what is inside the world camera's frustum.
@@ -5159,10 +5470,16 @@ static int sort_split_mode(const LLPipeline::View& view, bool defer_pools)
 
 void LLPipeline::applySortDeltas(std::vector<SortDelta>& deltas)
 {
+    applySortDeltasRange(deltas.data(), deltas.data() + deltas.size());
+}
+
+void LLPipeline::applySortDeltasRange(const SortDelta* begin, const SortDelta* end)
+{
     sSortSink = nullptr;
     sSortTee = nullptr;
-    for (const SortDelta& d : deltas)
+    for (const SortDelta* delta_ptr = begin; delta_ptr != end; ++delta_ptr)
     {
+        const SortDelta& d = *delta_ptr;
         switch (d.mKind)
         {
         case SortDelta::REBUILD_DRAWABLE:
@@ -18027,12 +18344,294 @@ bool LLPipeline::avatarVelocityWanted()
            && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
+// <FS> view prep rework, the avatar velocity pass (plan 8.25): the rigged draws are collected and looked at (the avatar's answers, the palettes, the "did not move" test, the palette record) by
+// build_velocity_rigged. It only reads the render map, the avatars and their palette caches (the lazy palette cache is one at a time under its mutex) and writes the avatar frame record, so it runs on a
+// pool thread: started in beginAvatarVelocity, before the G-buffer is recorded, and joined in renderAvatarVelocity, which then sends the record. LL_VK_VEL_JOB: 1 job (default), 0 inline as before,
+// 2 job, and the same build again inline on the main thread to compare what they made (counts, logged every 600 frames).
+struct VelocityRiggedWork
+{
+    // in
+    LLVector3 mCameraOrigin;
+    F32 mRange = 0.f, mMinMotionPx = 0.f, mFocalPx = 0.f;
+    bool mUsePackets = false;
+    U32 mFrame = 0;
+    LLCullResult* mCull = nullptr;      // the cull result of the thread that prepared the work (sCull is thread-local: a pool thread has none)
+    bool mObjectsOn = false;            // the moving objects (step 1b) are worked out in the job too
+    // out
+    std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
+    std::vector<F32> mPalettes, mPrevPalettes;
+    std::vector<LLDrawInfo*> mFallback;
+    U32 mSkipped = 0, mStill = 0;
+    std::vector<LLVkBridge::ShadowPacketEntry> mObjEntries;     // step 1b: draws that move as a whole, their matrices (this frame's, last frame's)
+    std::vector<F32> mObjCur, mObjPrev;
+    U32 mObjUnfit = 0;
+};
+static VelocityRiggedWork sVelWork;
+static LLForkJoinPool::Handle sVelHandle;
+static bool sVelLaunched = false;
+static std::function<void(size_t)> sVelFn;
+static U32 sVelocityPassCount = 0;
+static int velocity_job_mode()
+{
+    static const int mode = getenv("LL_VK_VEL_JOB") ? atoi(getenv("LL_VK_VEL_JOB")) : 1;
+    return mode;
+}
+// census (LL_VK_SCENECENSUS), per 600 frames: how far the palettes moved since the frame before (the "did not move" test of the pass), by the number of palettes in each class, and what the avatars
+// asked for are doing (speed, motions playing)
+static const bool vel_census = getenv("LL_VK_SCENECENSUS") != nullptr;
+static U64 vc_frames = 0, vc_avatars = 0, vc_moving = 0, vc_motions = 0, vc_palettes = 0, vc_hist[7] = {};
+
+static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
+{
+    static LLCachedControl<F32> range_setting(gSavedSettings, "RenderAvatarMotionVectorsRange", 48.f);
+    static LLCachedControl<F32> min_motion_setting(gSavedSettings, "RenderAvatarMotionVectorsMinMotion", 0.3f);
+    static LLCachedControl<bool> use_packets_setting(gSavedSettings, "RenderAvatarMotionVectorsPackets", true);
+    w.mRange = llmax(range_setting(), 1.f);
+    w.mCameraOrigin = LLViewerCamera::getInstance()->getOrigin();
+    w.mMinMotionPx = min_motion_setting();
+    w.mFocalPx = 0.5f * map_height * LLViewerCamera::sJitteredProjection[1][1];
+    // the rigged draws are collected first: the ones a render packet record can carry go into one record (cheap), the rest are drawn one by one (the first version of the pass, which
+    // is also the whole pass when RenderAvatarMotionVectorsPackets is off or the packet program is not available)
+    w.mUsePackets = use_packets_setting && gAvatarVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+    w.mCull = sCull;
+    static LLCachedControl<bool> objects_setting(gSavedSettings, "RenderAvatarMotionVectorsObjects", true);
+    w.mObjectsOn = objects_setting && gObjectVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+    w.mFrame = ++sVelocityPassCount;     // <FS> the avatar frame record: the answers are kept on the avatar and on its palette entries, stamped with this run of the pass (no maps made again every frame; a second run in one frame starts over)
+    w.mEntries.clear();
+    w.mPalettes.clear();
+    w.mPrevPalettes.clear();
+    w.mFallback.clear();
+    w.mSkipped = w.mStill = 0;
+    w.mObjEntries.clear();
+    w.mObjCur.clear();
+    w.mObjPrev.clear();
+    w.mObjUnfit = 0;
+}
+
+static void build_velocity_rigged(VelocityRiggedWork& w)
+{
+    LL_CPU_ZONE("avatar velocity: rigged draws (collect, palettes, motion test)");
+    struct CullPtrScope
+    {
+        LLCullResult* mPrev = sCull;
+        explicit CullPtrScope(LLCullResult* cull) { sCull = cull; }
+        ~CullPtrScope() { sCull = mPrev; }
+    } cull_scope(w.mCull);
+    const bool use_packets = w.mUsePackets;
+    const F32 min_motion_px = w.mMinMotionPx;
+    const U32 vel_frame = w.mFrame;
+    std::vector<LLDrawInfo*> infos;
+    for (U32 type : kVelocityRiggedTypes)
+    {
+        { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos); }       // (S4 B: the render map and the draws the scene table serves)
+        for (LLDrawInfo* params : infos)
+        {
+            LLVOAvatar* avatar = params->mAvatar.get();
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            if (!params->mCount || !avatar || params->mSkinInfo.isNull() || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+            {
+                continue;
+            }
+            if (avatar->mVelocityFrame != vel_frame)
+            {
+                const F32 distance = (avatar->getRenderPosition() - w.mCameraOrigin).length();
+                const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= w.mRange;
+                avatar->mVelocityFrame = vel_frame;
+                avatar->mVelocityOk = ok;
+                avatar->mVelocityDistance = distance;
+                if (vel_census && ok)
+                {
+                    ++vc_avatars;
+                    vc_moving += avatar->getVelocity().magVecSquared() > 0.01f;
+                    vc_motions += avatar->getMotionController().getActiveMotions().size();
+                }
+            }
+            if (!avatar->mVelocityOk)
+            {
+                ++w.mSkipped;
+                continue;
+            }
+            const LLVOAvatar::MatrixPaletteCache* mpc_ptr;
+            { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(params->mSkinInfo); }
+            const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
+            const U32 joints = (U32)mpc.mMatrixPalette.size();
+            if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
+            {
+                continue;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
+            }
+            if (min_motion_px > 0.f)
+            {
+                if (mpc.mMotionFrame != vel_frame)
+                {
+                    F32 px;
+                    {
+                        LL_CPU_ZONE("avatar velocity: motion test");
+                        const F32* cur = mpc.mGLMp.data();
+                        const F32* prev = mpc.mPrevGLMp.data();
+                        F32 biggest = 0.f;
+                        for (size_t k = 0, count = (size_t)joints * 12; k < count; ++k)
+                        {
+                            biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
+                        }
+                        px = biggest * 1.5f * w.mFocalPx / llmax(avatar->mVelocityDistance, 0.5f);
+                    }
+                    if (vel_census)
+                    {
+                        ++vc_palettes;
+                        ++vc_hist[px < 0.f + 0.01f ? 0 : px < 0.05f ? 1 : px < 0.15f ? 2 : px < 0.3f ? 3 : px < 1.f ? 4 : px < 3.f ? 5 : 6];
+                    }
+                    mpc.mMotionStill = px < min_motion_px;
+                    mpc.mMotionFrame = vel_frame;
+                }
+                if (mpc.mMotionStill)
+                {
+                    ++w.mStill;
+                    continue;
+                }
+            }
+            if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
+            {
+                if (mpc.mOffsetFrame != vel_frame)
+                {
+                    mpc.mOffset = (U32)w.mPalettes.size();
+                    mpc.mOffsetFrame = vel_frame;
+                    w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+                    w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
+                }
+                LLVkBridge::ShadowSkinEntry e = {};
+                e.mVertexBuffer = vb->getVertexBufferId();
+                e.mIndexBuffer = vb->getIndexBufferId();
+                e.mFirstIndex = params->mOffset;
+                e.mIndexCount = params->mCount;
+                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+                e.mPaletteOffset = mpc.mOffset;
+                e.mJoints = joints;
+                w.mEntries.push_back(e);
+                continue;
+            }
+            w.mFallback.push_back(params);
+        }
+    }
+
+    // Step 1b: draws that move as a whole (vehicles, physical objects, rigid attachments worn on a joint): the draws that are not rigged, whose model matrix changed since last frame.
+    // One record like the rigged one; the draws of a matrix that did not move keep the camera vector. The history of the matrices (sModelMatrixHistory) is the pass's own.
+    if (w.mObjectsOn)
+    {
+        LL_CPU_ZONE("avatar velocity: moving objects");
+        const U32 frame = gFrameCount;
+        std::unordered_map<const LLMatrix4*, U32> numbers;
+        const LLMatrix4* last_matrix = nullptr;
+        const ModelMatrixHistory* last_history = nullptr;
+        std::vector<LLDrawInfo*> moving_infos;
+        for (U32 rigged_type : kVelocityRiggedTypes)
+        {
+            // the rigged variant of a pass type is the next number
+            collect_main_view_draw_infos(rigged_type - 1, moving_infos);       // (S4 C: the render map and the draws the scene table serves)
+            for (LLDrawInfo* params : moving_infos)
+            {
+                const LLMatrix4* matrix = params->mModelMatrix;
+                if (!matrix)
+                {
+                    continue;
+                }
+                if (matrix != last_matrix)
+                {
+                    last_matrix = matrix;
+                    const F32* value = (const F32*)matrix->mMatrix;
+                    auto it = sModelMatrixHistory.find(matrix);
+                    if (it == sModelMatrixHistory.end())
+                    {
+                        ModelMatrixHistory fresh;
+                        memcpy(fresh.mCur, value, sizeof(fresh.mCur));
+                        memcpy(fresh.mPrev, value, sizeof(fresh.mPrev));
+                        fresh.mFrame = frame;
+                        fresh.mMoving = false;
+                        it = sModelMatrixHistory.emplace(matrix, fresh).first;
+                    }
+                    else if (it->second.mFrame != frame)
+                    {
+                        ModelMatrixHistory& h = it->second;
+                        if (h.mFrame == frame - 1)
+                        {
+                            memcpy(h.mPrev, h.mCur, sizeof(h.mPrev));
+                        }
+                        else
+                        {
+                            memcpy(h.mPrev, value, sizeof(h.mPrev));
+                        }
+                        memcpy(h.mCur, value, sizeof(h.mCur));
+                        h.mFrame = frame;
+                        // the translation is the last row of a viewer matrix (row vectors)
+                        const F32 dx = value[12] - w.mCameraOrigin.mV[VX], dy = value[13] - w.mCameraOrigin.mV[VY], dz = value[14] - w.mCameraOrigin.mV[VZ];
+                        const F32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
+                        bool moving = distance <= w.mRange && memcmp(h.mCur, h.mPrev, sizeof(h.mCur)) != 0;
+                        if (moving && w.mMinMotionPx > 0.f)
+                        {
+                            F32 biggest = 0.f;
+                            for (size_t k = 0; k < 16; ++k)
+                            {
+                                biggest = llmax(biggest, fabsf(h.mCur[k] - h.mPrev[k]));
+                            }
+                            moving = biggest * 1.5f * w.mFocalPx / llmax(distance, 0.5f) >= w.mMinMotionPx;
+                        }
+                        h.mMoving = moving;
+                    }
+                    last_history = &it->second;
+                }
+                if (!last_history->mMoving || !params->mCount)
+                {
+                    continue;
+                }
+                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+                    || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+                {
+                    ++w.mObjUnfit;
+                    continue;
+                }
+                auto number = numbers.find(matrix);
+                if (number == numbers.end())
+                {
+                    number = numbers.emplace(matrix, (U32)(w.mObjCur.size() / 16)).first;
+                    w.mObjCur.insert(w.mObjCur.end(), last_history->mCur, last_history->mCur + 16);
+                    w.mObjPrev.insert(w.mObjPrev.end(), last_history->mPrev, last_history->mPrev + 16);
+                }
+                w.mObjEntries.push_back({ vb->getVertexBufferId(), vb->getIndexBufferId(), params->mOffset, params->mCount, number->second, 0 });
+            }
+        }
+        if (frame % 600 == 0)
+        {
+            for (auto it = sModelMatrixHistory.begin(); it != sModelMatrixHistory.end(); )
+            {
+                it = (it->second.mFrame + 120 < frame) ? sModelMatrixHistory.erase(it) : std::next(it);
+            }
+        }
+    }
+}
+
 void LLPipeline::beginAvatarVelocity()
 {
+    if (sVelLaunched)
+    {
+        // (a pass that was launched and never rendered: its job still writes the work)
+        LLForkJoinPool::shared()->join(sVelHandle);
+        sVelLaunched = false;
+    }
     mAvatarVelocityActive = avatarVelocityWanted();
     LLViewerJointMesh::sVelocityDraws.clear();
     LLViewerJointMesh::sRecordVelocity = mAvatarVelocityActive;
     mAvatarVelocityDrawn = false;
+    if (mAvatarVelocityActive && velocity_job_mode() != 0)
+    {
+        LLForkJoinPool* pool = LLForkJoinPool::shared();
+        if (pool)
+        {
+            velocity_prepare(sVelWork, (F32)mAvatarVelocityMap.getHeight());
+            sVelFn = [](size_t) { build_velocity_rigged(sVelWork); };
+            sVelHandle = pool->launch(1, sVelFn);
+            sVelLaunched = true;
+        }
+    }
 }
 
 void LLPipeline::renderAvatarVelocity()
@@ -18040,6 +18639,11 @@ void LLPipeline::renderAvatarVelocity()
     LLViewerJointMesh::sRecordVelocity = false;
     if (!mAvatarVelocityActive)
     {
+        if (sVelLaunched)
+        {
+            LLForkJoinPool::shared()->join(sVelHandle);
+            sVelLaunched = false;
+        }
         LLViewerJointMesh::sVelocityDraws.clear();
         return;
     }
@@ -18096,104 +18700,49 @@ void LLPipeline::renderAvatarVelocity()
     gRenderLastMatrix = NULL;
 
     U32 rigged_draws = 0, rigged_skipped = 0, body_draws = 0, packet_draws = 0, still_draws = 0, object_draws = 0, object_matrices = 0, object_unfit = 0;
-    // census (LL_VK_SCENECENSUS), per 600 frames: how far the palettes moved since the frame before (the "did not move" test of the pass), by the number of palettes in each class, and what the avatars
-    // asked for are doing (speed, motions playing)
-    static const bool vel_census = getenv("LL_VK_SCENECENSUS") != nullptr;
-    static U64 vc_frames = 0, vc_avatars = 0, vc_moving = 0, vc_motions = 0, vc_palettes = 0, vc_hist[7] = {};
     {
-        // the rigged draws are collected first: the ones a render packet record can carry go into one record (cheap), the rest are drawn one by one (the first version of the pass, which
-        // is also the whole pass when RenderAvatarMotionVectorsPackets is off or the packet program is not available)
-        static LLCachedControl<bool> use_packets_setting(gSavedSettings, "RenderAvatarMotionVectorsPackets", true);
-        const bool use_packets = use_packets_setting && gAvatarVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
-        std::vector<LLVkBridge::ShadowSkinEntry> entries;
-        std::vector<F32> palettes, prev_palettes;
-        std::vector<LLDrawInfo*> fallback;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        struct AvatarState { bool mOk; F32 mDistance; };
-        std::unordered_map<const LLVOAvatar*, AvatarState> avatar_ok;
-        std::unordered_map<const F32*, bool> palette_still;
-        std::vector<LLDrawInfo*> infos;
-        LL_CPU_ZONE("avatar velocity: rigged draws (collect, palettes, motion test)");
-        for (U32 type : kVelocityRiggedTypes)
+        // (the rigged draws were collected and looked at by build_velocity_rigged: on a pool thread while the G-buffer was recorded, or here when it was not started)
+        VelocityRiggedWork& work = sVelWork;
+        if (sVelLaunched)
         {
-            { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos); }       // (S4 B: the render map and the draws the scene table serves)
-            for (LLDrawInfo* params : infos)
+            LL_CPU_ZONE("avatar velocity: wait for the rigged job");
+            LLForkJoinPool::shared()->join(sVelHandle);
+            sVelLaunched = false;
+            if (velocity_job_mode() == 2)
             {
-                LLVOAvatar* avatar = params->mAvatar.get();
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!params->mCount || !avatar || params->mSkinInfo.isNull() || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+                // the same build again here: what the job made against what the main thread makes now
+                static U32 checks = 0, differences = 0;
+                VelocityRiggedWork again;
+                velocity_prepare(again, (F32)mAvatarVelocityMap.getHeight());
+                build_velocity_rigged(again);
+                ++checks;
+                if (again.mEntries.size() != work.mEntries.size() || again.mPalettes.size() != work.mPalettes.size() || again.mFallback.size() != work.mFallback.size() || again.mSkipped != work.mSkipped
+                    || again.mStill != work.mStill || again.mObjEntries.size() != work.mObjEntries.size() || again.mObjCur.size() != work.mObjCur.size() || again.mObjUnfit != work.mObjUnfit
+                    || (!again.mObjEntries.empty() && memcmp(again.mObjEntries.data(), work.mObjEntries.data(), again.mObjEntries.size() * sizeof(again.mObjEntries[0])) != 0)
+                    || (!again.mObjCur.empty() && memcmp(again.mObjCur.data(), work.mObjCur.data(), again.mObjCur.size() * sizeof(F32)) != 0)
+                    || (!again.mEntries.empty() && memcmp(again.mEntries.data(), work.mEntries.data(), again.mEntries.size() * sizeof(again.mEntries[0])) != 0)
+                    || (!again.mPalettes.empty() && memcmp(again.mPalettes.data(), work.mPalettes.data(), again.mPalettes.size() * sizeof(F32)) != 0))
                 {
-                    continue;
+                    ++differences;
                 }
-                auto found = avatar_ok.find(avatar);
-                if (found == avatar_ok.end())
+                if (checks % 600 == 0)
                 {
-                    const F32 distance = (avatar->getRenderPosition() - camera_origin).length();
-                    const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= range;
-                    found = avatar_ok.emplace(avatar, AvatarState{ ok, distance }).first;
-                    if (vel_census && ok)
-                    {
-                        ++vc_avatars;
-                        vc_moving += avatar->getVelocity().magVecSquared() > 0.01f;
-                        vc_motions += avatar->getMotionController().getActiveMotions().size();
-                    }
+                    LL_INFOS("VkMotion") << "avatar velocity job check: " << differences << " of " << checks << " passes differed from the build on the main thread (entries " << work.mEntries.size() << " vs " << again.mEntries.size()
+                                         << ", palettes " << work.mPalettes.size() << " vs " << again.mPalettes.size() << ", still " << work.mStill << " vs " << again.mStill << ")" << LL_ENDL;
                 }
-                if (!found->second.mOk)
-                {
-                    ++rigged_skipped;
-                    continue;
-                }
-                const LLVOAvatar::MatrixPaletteCache* mpc_ptr;
-                { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(params->mSkinInfo); }
-                const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
-                const U32 joints = (U32)mpc.mMatrixPalette.size();
-                if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
-                {
-                    continue;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
-                }
-                if (min_motion_px > 0.f)
-                {
-                    auto still = palette_still.find(mpc.mGLMp.data());
-                    if (still == palette_still.end())
-                    {
-                        F32 px;
-                        { LL_CPU_ZONE("avatar velocity: motion test"); px = motion_pixels(mpc.mGLMp.data(), mpc.mPrevGLMp.data(), (size_t)joints * 12, found->second.mDistance); }
-                        if (vel_census)
-                        {
-                            ++vc_palettes;
-                            ++vc_hist[px < 0.f + 0.01f ? 0 : px < 0.05f ? 1 : px < 0.15f ? 2 : px < 0.3f ? 3 : px < 1.f ? 4 : px < 3.f ? 5 : 6];
-                        }
-                        still = palette_still.emplace(mpc.mGLMp.data(), px < min_motion_px).first;
-                    }
-                    if (still->second)
-                    {
-                        ++still_draws;
-                        continue;
-                    }
-                }
-                if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
-                {
-                    auto it = palette_offsets.find(mpc.mGLMp.data());
-                    if (it == palette_offsets.end())
-                    {
-                        it = palette_offsets.emplace(mpc.mGLMp.data(), (U32)palettes.size()).first;
-                        palettes.insert(palettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
-                        prev_palettes.insert(prev_palettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
-                    }
-                    LLVkBridge::ShadowSkinEntry e = {};
-                    e.mVertexBuffer = vb->getVertexBufferId();
-                    e.mIndexBuffer = vb->getIndexBufferId();
-                    e.mFirstIndex = params->mOffset;
-                    e.mIndexCount = params->mCount;
-                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                    e.mPaletteOffset = it->second;
-                    e.mJoints = joints;
-                    entries.push_back(e);
-                    continue;
-                }
-                fallback.push_back(params);
             }
         }
+        else
+        {
+            velocity_prepare(work, (F32)mAvatarVelocityMap.getHeight());
+            build_velocity_rigged(work);
+        }
+        std::vector<LLVkBridge::ShadowSkinEntry>& entries = work.mEntries;
+        std::vector<F32>& palettes = work.mPalettes;
+        std::vector<F32>& prev_palettes = work.mPrevPalettes;
+        std::vector<LLDrawInfo*>& fallback = work.mFallback;
+        rigged_skipped = work.mSkipped;
+        still_draws = work.mStill;
 
         if (!entries.empty())
         {
@@ -18250,95 +18799,17 @@ void LLPipeline::renderAvatarVelocity()
         }
     }
 
-    // Step 1b: draws that move as a whole (vehicles, physical objects, rigid attachments worn on a joint): the draws that are not rigged, whose model matrix changed since last frame.
-    // One record like the rigged one; the draws of a matrix that did not move keep the camera vector.
+    // Step 1b: the moving objects were worked out with the rigged draws (build_velocity_rigged); this is the record
     {
-        LL_CPU_ZONE("avatar velocity: moving objects");
-        static LLCachedControl<bool> objects_setting(gSavedSettings, "RenderAvatarMotionVectorsObjects", true);
-        const bool objects_on = objects_setting && gObjectVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+        LL_CPU_ZONE("avatar velocity: moving objects (send)");
+        VelocityRiggedWork& work = sVelWork;
+        const bool objects_on = work.mObjectsOn;
         if (objects_on)
         {
-            const U32 frame = gFrameCount;
-            std::vector<LLVkBridge::ShadowPacketEntry> entries;
-            std::vector<F32> cur_matrices, prev_matrices;
-            std::unordered_map<const LLMatrix4*, U32> numbers;
-            const LLMatrix4* last_matrix = nullptr;
-            const ModelMatrixHistory* last_history = nullptr;
-            for (U32 rigged_type : kVelocityRiggedTypes)
-            {
-                // the rigged variant of a pass type is the next number
-                static std::vector<LLDrawInfo*> moving_infos;
-                collect_main_view_draw_infos(rigged_type - 1, moving_infos);       // (S4 C: the render map and the draws the scene table serves)
-                for (LLDrawInfo* params : moving_infos)
-                {
-                    const LLMatrix4* matrix = params->mModelMatrix;
-                    if (!matrix)
-                    {
-                        continue;
-                    }
-                    if (matrix != last_matrix)
-                    {
-                        last_matrix = matrix;
-                        const F32* value = (const F32*)matrix->mMatrix;
-                        auto it = sModelMatrixHistory.find(matrix);
-                        if (it == sModelMatrixHistory.end())
-                        {
-                            ModelMatrixHistory fresh;
-                            memcpy(fresh.mCur, value, sizeof(fresh.mCur));
-                            memcpy(fresh.mPrev, value, sizeof(fresh.mPrev));
-                            fresh.mFrame = frame;
-                            fresh.mMoving = false;
-                            it = sModelMatrixHistory.emplace(matrix, fresh).first;
-                        }
-                        else if (it->second.mFrame != frame)
-                        {
-                            ModelMatrixHistory& h = it->second;
-                            if (h.mFrame == frame - 1)
-                            {
-                                memcpy(h.mPrev, h.mCur, sizeof(h.mPrev));
-                            }
-                            else
-                            {
-                                memcpy(h.mPrev, value, sizeof(h.mPrev));
-                            }
-                            memcpy(h.mCur, value, sizeof(h.mCur));
-                            h.mFrame = frame;
-                            // the translation is the last row of a viewer matrix (row vectors)
-                            const F32 dx = value[12] - camera_origin.mV[VX], dy = value[13] - camera_origin.mV[VY], dz = value[14] - camera_origin.mV[VZ];
-                            const F32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
-                            h.mMoving = distance <= range && memcmp(h.mCur, h.mPrev, sizeof(h.mCur)) != 0
-                                        && (min_motion_px <= 0.f || motion_pixels(h.mCur, h.mPrev, 16, distance) >= min_motion_px);
-                        }
-                        last_history = &it->second;
-                    }
-                    if (!last_history->mMoving || !params->mCount)
-                    {
-                        continue;
-                    }
-                    const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                    if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
-                        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
-                    {
-                        ++object_unfit;
-                        continue;
-                    }
-                    auto number = numbers.find(matrix);
-                    if (number == numbers.end())
-                    {
-                        number = numbers.emplace(matrix, (U32)(cur_matrices.size() / 16)).first;
-                        cur_matrices.insert(cur_matrices.end(), last_history->mCur, last_history->mCur + 16);
-                        prev_matrices.insert(prev_matrices.end(), last_history->mPrev, last_history->mPrev + 16);
-                    }
-                    entries.push_back({ vb->getVertexBufferId(), vb->getIndexBufferId(), params->mOffset, params->mCount, number->second, 0 });
-                }
-            }
-            if (frame % 600 == 0)
-            {
-                for (auto it = sModelMatrixHistory.begin(); it != sModelMatrixHistory.end(); )
-                {
-                    it = (it->second.mFrame + 120 < frame) ? sModelMatrixHistory.erase(it) : std::next(it);
-                }
-            }
+            object_unfit = work.mObjUnfit;
+            std::vector<LLVkBridge::ShadowPacketEntry>& entries = work.mObjEntries;
+            std::vector<F32>& cur_matrices = work.mObjCur;
+            std::vector<F32>& prev_matrices = work.mObjPrev;
 
             if (!entries.empty())
             {
@@ -25588,9 +26059,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 if (job_census) { map_chunks[c].mMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
             };
             const auto map_wall0 = std::chrono::steady_clock::now();
-            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(map_chunks.size(), map_job); }
-            { LL_CPU_ZONE("shadow prep: merge render map chunks");
-            for (MapChunk& c : map_chunks)
+            // appends one chunk's result to its cascade's, in chunk order
+            const auto merge_map_chunk = [&](MapChunk& c)
             {
                 LLCullResult& into = *pending[c.mPrep].mResult;
                 LLCullResult& from = *c.mLocal;
@@ -25614,7 +26084,60 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 {
                     into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
                 }
+            };
+            // <FS> LL_VK_PREP_PIPELINE (default OFF, 1 = on; 0 = the stages one after the other as before): the render map of every cascade is launched at once, and the cascades are then taken in order (the nearest, smallest one first): join its map,
+            // merge, submit its builders, record it, while the pool is still making the maps of the later ones. The main thread's wait for the maps is hidden behind the recording of the earlier cascades. The flags
+            // of the shadow state stay until the last cascade is recorded (renderShadow sets and restores them itself).
+            static const bool prep_pipeline = getenv("LL_VK_PREP_PIPELINE") && atoi(getenv("LL_VK_PREP_PIPELINE")) != 0;       // off by default: measured worse (8.13) until the builders are submitted a cascade ahead
+            bool recorded_in_pipeline = false;
+            if (prep_pipeline && !job_census)
+            {
+                std::vector<size_t> first(pending.size() + 1, map_chunks.size());
+                for (size_t c = map_chunks.size(); c-- > 0;)
+                {
+                    first[map_chunks[c].mPrep] = c;
+                }
+                for (size_t p = pending.size(); p-- > 0;)
+                {
+                    first[p] = std::min(first[p], first[p + 1]);
+                }
+                std::vector<std::function<void(size_t)>> map_fns(pending.size());
+                std::vector<LLForkJoinPool::Handle> handles(pending.size());
+                for (size_t p = 0; p < pending.size(); ++p)
+                {
+                    map_fns[p] = [&map_job, base = first[p]](size_t c) { map_job(base + c); };
+                    handles[p] = prep_pool->launch(first[p + 1] - first[p], map_fns[p]);
+                }
+                for (size_t p = 0; p < pending.size(); ++p)
+                {
+                    { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->join(handles[p]); }
+                    { LL_CPU_ZONE("shadow prep: merge render map chunks");
+                    for (size_t c = first[p]; c < first[p + 1]; ++c)
+                    {
+                        merge_map_chunk(map_chunks[c]);
+                    }
+                    }
+                    if (p == 0)
+                    {
+                        lap.mark(PH_RENDER_MAP);
+                        note_shadow_prep_time(true, prep_start);
+                    }
+                    shadowPrepSubmitBuilds(pending[p]);
+                    render_cascade(pending[p], true);
+                }
+                sUseOcclusion = saved_occlusion;
+                LLPipeline::sShadowRender = saved_shadow_render;
+                recorded_in_pipeline = true;
             }
+            else
+            {
+                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(map_chunks.size(), map_job); }
+                { LL_CPU_ZONE("shadow prep: merge render map chunks");
+                for (MapChunk& c : map_chunks)
+                {
+                    merge_map_chunk(c);
+                }
+                }
             }
             if (job_census)
             {
@@ -25631,21 +26154,24 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
                 c.mLongestMs[1] += longest;
             }
-            lap.mark(PH_RENDER_MAP);
-
-            for (ShadowCascadePrep& prep : pending)
+            if (!recorded_in_pipeline)
             {
-                shadowPrepSubmitBuilds(prep);
-            }
+                lap.mark(PH_RENDER_MAP);
 
-            sUseOcclusion = saved_occlusion;
-            LLPipeline::sShadowRender = saved_shadow_render;
+                for (ShadowCascadePrep& prep : pending)
+                {
+                    shadowPrepSubmitBuilds(prep);
+                }
 
-            note_shadow_prep_time(true, prep_start);
+                sUseOcclusion = saved_occlusion;
+                LLPipeline::sShadowRender = saved_shadow_render;
 
-            for (ShadowCascadePrep& prep : pending)
-            {
-                render_cascade(prep, true);
+                note_shadow_prep_time(true, prep_start);
+
+                for (ShadowCascadePrep& prep : pending)
+                {
+                    render_cascade(prep, true);
+                }
             }
             for (ShadowCascadePrep& prep : pending)
             {
