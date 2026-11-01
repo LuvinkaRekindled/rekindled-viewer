@@ -5596,6 +5596,7 @@ struct ResPair
     ResFrag* mFrag = nullptr; U32 mIndex = 0;                  // its fragment and its place in the fragment's pairs (the events of its buffers find the entries by them)
     U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false;
     U64 mNote[6] = {};                                          // epoch, moves, version of both buffers at the last full ray note (the cheap note is valid while they are the same)
+    U64 mBaseEvb = ~0ull, mBaseEib = ~0ull;                     // <FS> the epochs of both buffers when the entries were last written (kept across the lookups of a generation change): an epoch that differs later means the entries' ranges were made for other contents
 };
 struct ResFrag
 {
@@ -5735,6 +5736,20 @@ static int res_pair_check(ResPair& p)
     {
         return 0;
     }
+    // <FS> LL_VK_RES_EPOCH_LOG (default on): the entries of a resident fragment or the scene geometry table keep the ranges (first, count) they were made with and only get the addresses written again; an epoch that changed
+    // since the entries were last written means the buffer name holds other contents (respecified, deleted, recycled), the ranges may not fit them, and the viewer's renewal of the fragment is still to come. Counted and logged.
+    if (p.mBaseEvb != ~0ull && (p.mBaseEvb != p.mPvb->mEpoch || p.mBaseEib != p.mPib->mEpoch))
+    {
+        static U64 epoch_changed = 0;
+        static const bool log_on = getenv("LL_VK_RES_EPOCH_LOG") == nullptr || atoi(getenv("LL_VK_RES_EPOCH_LOG")) != 0;
+        ++epoch_changed;
+        if (log_on && (epoch_changed <= 40 || epoch_changed % 1000 == 0))
+        {
+            LL_INFOS("VkResident") << "a pair's entries are written again after its buffers' epoch changed: vb " << p.mVb << " ib " << p.mIb << ", vb epoch " << p.mBaseEvb << " -> " << p.mPvb->mEpoch << ", ib epoch " << p.mBaseEib
+                                   << " -> " << p.mPib->mEpoch << " (the entries keep their ranges); " << epoch_changed << " so far" << LL_ENDL;
+        }
+    }
+    p.mBaseEvb = p.mPvb->mEpoch; p.mBaseEib = p.mPib->mEpoch;
     p.mEvb = p.mPvb->mEpoch; p.mMvb = p.mPvb->mMoves; p.mEib = p.mPib->mEpoch; p.mMib = p.mPib->mMoves;
     p.mOk = true;
     return 1;

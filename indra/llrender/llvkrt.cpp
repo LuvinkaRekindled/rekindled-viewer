@@ -2733,6 +2733,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             for (const Range& r : want)
             {
                 U32 out_of_range = 0, bad_coords = 0, first_bad_index = 0, max_index = 0, nans = 0, infs = 0, huge = 0;
+                U32 first_bad_vertex = ~0u, first_bad_k = 0, min_bad_vertex = ~0u, max_bad_vertex = 0;     // <FS> which vertex slots are bad (and where in the range the first is named)
                 F32 sample[3] = {};
                 F32 lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
                 for (U32 k = 0; k < r.mCount; ++k)
@@ -2753,6 +2754,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                         const F32 c = pos[4 * (size_t)v + a];
                         if (!(c > -1e5f && c < 1e5f))
                         {
+                            if (first_bad_vertex == ~0u)
+                            {
+                                first_bad_vertex = v;
+                                first_bad_k = k;
+                            }
+                            min_bad_vertex = std::min(min_bad_vertex, v);
+                            max_bad_vertex = std::max(max_bad_vertex, v);
                             if (bad_coords < 3)
                             {
                                 sample[bad_coords] = c;
@@ -2795,7 +2803,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                         LL_WARNS("VkRt") << "bad range in a structure to build: vb " << g.mKey.mVb << " (" << vi.mSize << " bytes, " << verts << " vertex slots) ib " << g.mKey.mIb << " ("
                                          << ii.mSize << " bytes) kind " << g.mKey.mKind << ", range first " << r.mFirst << " count " << r.mCount << ": " << out_of_range << " indices out of range (first "
                                          << first_bad_index << ", largest " << max_index << "), " << bad_coords << " bad coordinates (" << nans << " NaN, " << infs << " infinite, " << huge << " huge; e.g. " << sample[0] << ", " << sample[1] << ", " << sample[2] << "), bounds of the good ones (" << lo[0] << "," << lo[1] << "," << lo[2]
-                                         << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << "); vb epoch " << vi.mEpoch << " version " << vi.mVersion << " moves " << vi.mMoves << (vi.mDevice ? " (device)" : " (host)")
+                                         << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << "); bad vertex slots " << (first_bad_vertex == ~0u ? std::string("none") : std::to_string(min_bad_vertex) + ".." + std::to_string(max_bad_vertex) + " (first " + std::to_string(first_bad_vertex) + ", named by index " + std::to_string(first_bad_k) + " of the range, of " + std::to_string(verts) + " slots)")
+                                         << "; vb epoch " << vi.mEpoch << " version " << vi.mVersion << " moves " << vi.mMoves << (vi.mDevice ? " (device)" : " (host)")
                                          << ", ib epoch " << ii.mEpoch << " version " << ii.mVersion << " moves " << ii.mMoves << (ii.mDevice ? " (device)" : " (host)")
                                          << "; seen " << seen.mTimes << " time(s)" << (first_time ? "" : llformat(", last with vb epoch %llu version %llu, ib epoch %llu version %llu", seen.mVbEpoch, seen.mVbVersion, seen.mIbEpoch, seen.mIbVersion).c_str()) << LL_ENDL;
                     }
