@@ -9913,7 +9913,21 @@ void rtPinUpdate()
             }
             if (sPins[sPinCheckCursor].mName && sPins[sPinCheckCursor].mSlot)
             {
+                // <FS> LL_VK_PIN_SWEEP_LOG (default on): a slot that differs from the pin's here is a change of the texture that no pin_touch told (the event path missed it), found up to 32 frames late
+                const U32 before_slot = sPins[sPinCheckCursor].mSlot;
+                const U32 pin_name = sPins[sPinCheckCursor].mName;
                 pin_resolve((U32)sPinCheckCursor);
+                if (sPins[sPinCheckCursor].mSlot != before_slot)
+                {
+                    static U64 swept = 0;
+                    static const bool log_on = getenv("LL_VK_PIN_SWEEP_LOG") == nullptr || atoi(getenv("LL_VK_PIN_SWEEP_LOG")) != 0;
+                    ++swept;
+                    if (log_on && (swept <= 30 || swept % 200 == 0))
+                    {
+                        LL_INFOS("VkPins") << "the pin sweep found a texture change that no event reported: texture " << pin_name << " pin " << sPinCheckCursor << ", slot " << before_slot << " -> " << sPins[sPinCheckCursor].mSlot
+                                           << ", refs " << sPins[sPinCheckCursor].mRefs << " (geometry " << sPins[sPinCheckCursor].mGeoRefs << "); " << swept << " so far, " << (total - 1) << " pins" << LL_ENDL;
+                    }
+                }
             }
         }
     }
