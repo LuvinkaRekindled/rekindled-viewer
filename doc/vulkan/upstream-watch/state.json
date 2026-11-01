@@ -1,0 +1,15 @@
+{
+  "our_base": "master",
+  "ll": {
+    "branch": "develop",
+    "reviewed_sha": "373addb1cbdb6ae505c8e797c33729cb1ad75dba"
+  },
+  "fs": {
+    "merged_tag": null,
+    "reviewed_tag": "Firestorm_Release_7.2.5.81788"
+  },
+  "aurora": {
+    "branch": "main",
+    "reviewed_sha": "f234fd51efcc69c6a68e392197b2e9d7fbf63dae"
+  }
+}
