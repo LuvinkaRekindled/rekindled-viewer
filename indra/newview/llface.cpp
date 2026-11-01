@@ -33,6 +33,8 @@
 #include "llviewercontrol.h"
 #include "llvolume.h"
 #include <atomic>
+#include <mutex>
+#include <set>
 #include "lljoint.h"      // <FS> the joints' dirty flags (gFSTexPreDirtyReads)
 #include "m3math.h"
 #include "llmatrix4a.h"
@@ -1354,6 +1356,98 @@ static void bind_shape_normal_matrix(const LLMatrix4a& bind, LLMatrix4a& out)
     have = true;
 }
 
+// <FS> LL_VK_GEOMCHECK (default on while the "bad range in a structure to build" warnings of the ray scene are open, 0 = off): a face's geometry is checked as it is written, and the owner is named once per object and
+// kind of defect: positions of the volume face that are not finite or beyond 1e5 (the volume's own data), positions written to the buffer that are (the transform), indices of the volume face past its vertex count, indices
+// whose buffer position (the face's offset) leaves the face's slots or wraps the 16 bits. The ray scene builder skips such a range (it names the buffers only).
+static bool geom_check_on()
+{
+    static const bool on = getenv("LL_VK_GEOMCHECK") ? atoi(getenv("LL_VK_GEOMCHECK")) != 0 : true;
+    return on;
+}
+
+static void geom_check_report(const LLFace* face, const char* what, S32 face_index, const std::string& detail)
+{
+    static std::mutex lock;
+    static std::set<std::string> seen;
+    static U32 total = 0;
+    LLViewerObject* obj = face->getViewerObject();
+    std::string key = std::string(what) + (obj ? obj->getID().asString() : std::string("(no object)"));
+    std::lock_guard<std::mutex> guard(lock);
+    ++total;
+    if (seen.size() >= 80 || !seen.insert(key).second)
+    {
+        return;
+    }
+    std::string who = "(no object)";
+    if (obj)
+    {
+        const LLVector3& s = obj->getScale();
+        who = llformat("object %s pcode %u scale (%g, %g, %g)%s%s%s", obj->getID().asString().c_str(), (U32)obj->getPCode(), s.mV[0], s.mV[1], s.mV[2],
+                       obj->isAttachment() ? ", attachment" : "", obj->isMesh() ? ", mesh" : "", obj->isSculpted() ? ", sculpted" : "");
+        if (obj->getPCode() == LL_PCODE_VOLUME)
+        {
+            LLVOVolume* vol = static_cast<LLVOVolume*>(obj);
+            who += llformat(", lod %d%s", (S32)vol->getLOD(), vol->isRiggedMesh() ? ", rigged" : "");
+            if (vol->getVolume())
+            {
+                const LLVolumeParams& vp = vol->getVolume()->getParams();
+                who += llformat(", profile curve %u hollow %g, path curve %u", (U32)vp.getProfileParams().getCurveType(), vp.getProfileParams().getHollow(), (U32)vp.getPathParams().getCurveType());
+            }
+        }
+    }
+    LL_WARNS("GeomCheck") << what << ": face " << face_index << " of " << who << ": " << detail << " (" << total << " reports so far, " << seen.size() << " distinct)" << LL_ENDL;
+}
+
+static bool geom_coord_bad(F32 c)
+{
+    return !(c > -1e5f && c < 1e5f);
+}
+
+static void geom_check_positions(const LLFace* face, const LLVolumeFace& vf, S32 face_index, S32 num_vertices, const F32* out, S32 slots)
+{
+    S32 src_bad = 0, src_first = -1, out_bad = 0, out_first = -1;
+    for (S32 i = 0; i < num_vertices; ++i)
+    {
+        const F32* p = vf.mPositions[i].getF32ptr();
+        if (geom_coord_bad(p[0]) || geom_coord_bad(p[1]) || geom_coord_bad(p[2]))
+        {
+            if (!src_bad) { src_first = i; }
+            ++src_bad;
+        }
+    }
+    for (S32 i = 0; i < slots; ++i)
+    {
+        if (geom_coord_bad(out[4 * i]) || geom_coord_bad(out[4 * i + 1]) || geom_coord_bad(out[4 * i + 2]))
+        {
+            if (!out_bad) { out_first = i; }
+            ++out_bad;
+        }
+    }
+    if (src_bad || out_bad)
+    {
+        geom_check_report(face, src_bad ? "volume face positions are bad" : "written positions are bad (the volume face's are fine: the transform)", face_index,
+                          llformat("%d of %d volume face vertices bad (first %d), %d of %d written slots bad (first %d), %d vertices in the face", src_bad, num_vertices, src_first, out_bad, slots, out_first, (S32)vf.mNumVertices));
+    }
+}
+
+static void geom_check_indices(const LLFace* face, const LLVolumeFace& vf, S32 face_index, S32 num_vertices, S32 num_indices, U16 index_offset, S32 slots)
+{
+    S32 past_face = 0, outside = 0, wrapped = 0, first = -1;
+    for (S32 i = 0; i < num_indices; ++i)
+    {
+        const U32 v = vf.mIndices[i];
+        const U32 at = v + (U32)index_offset;
+        if (v >= (U32)vf.mNumVertices) { if (!past_face) { first = i; } ++past_face; }
+        if (at > 0xFFFFu) { ++wrapped; }
+        else if (at < (U32)index_offset || at >= (U32)index_offset + (U32)slots) { ++outside; }
+    }
+    if (past_face || outside || wrapped)
+    {
+        geom_check_report(face, "indices are bad", face_index,
+                          llformat("%d of %d indices past the volume face's %d vertices (first at %d), %d outside the face's %d slots at offset %u, %d wrap 16 bits", past_face, num_indices, (S32)vf.mNumVertices, first, outside, slots, (U32)index_offset, wrapped));
+    }
+}
+
 bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 S32 face_index,
                                 const LLMatrix4& mat_vert_in,
@@ -1605,6 +1699,10 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
             {
                 *idx++ = vf.mIndices[i]+index_offset;
             }
+        }
+        if (geom_check_on())
+        {
+            geom_check_indices(this, vf, face_index, num_vertices, num_indices, index_offset, (S32)mGeomCount);
         }
     }
 
@@ -2192,6 +2290,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
 
             LLVector4a res0; //,res1,res2,res3;
+            res0.clear();       // <FS> the padding loop below stores it for the slots after the last vertex, and for all of them when the face has no vertices: it was read uninitialized
 
             LLVector4a texIdx;
 
@@ -2235,6 +2334,10 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 #endif
 // </FS:Zi>
                 dst += 4;
+            }
+            if (geom_check_on())
+            {
+                geom_check_positions(this, vf, face_index, num_vertices, (const F32*)vert.get(), (S32)mGeomCount);
             }
         }
 
