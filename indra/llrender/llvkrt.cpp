@@ -2672,14 +2672,27 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 if (out_of_range || bad_coords)
                 {
                     ++sStats.mBadVertices;
-                    static U32 logged = 0;
-                    if (logged++ < 40)
+                    // <FS> which buffers and when: the epoch / version / moves of both (an epoch is another owner or contents of the name: the pairing the structure was made for), and whether this range was flagged before
+                    // (a range that is flagged again with other epochs or versions is a buffer that changed under the structure; the same ones again is data that stays bad). The first 60 distinct ranges are logged,
+                    // and the 2nd, 10th and 100th time one is seen again.
+                    struct SeenBad { U32 mTimes = 0; U64 mVbEpoch = 0, mIbEpoch = 0, mVbVersion = 0, mIbVersion = 0; };
+                    static std::unordered_map<U64, SeenBad> seen_bad;
+                    SeenBad& seen = seen_bad[((U64)g.mKey.mVb << 44) ^ ((U64)g.mKey.mIb << 24) ^ ((U64)r.mFirst << 12) ^ (U64)r.mCount ^ ((U64)g.mKey.mKind << 60)];
+                    ++seen.mTimes;
+                    const bool first_time = seen.mTimes == 1;
+                    if ((first_time && seen_bad.size() <= 60) || seen.mTimes == 2 || seen.mTimes == 10 || seen.mTimes == 100)
                     {
                         LL_WARNS("VkRt") << "bad range in a structure to build: vb " << g.mKey.mVb << " (" << vi.mSize << " bytes, " << verts << " vertex slots) ib " << g.mKey.mIb << " ("
                                          << ii.mSize << " bytes) kind " << g.mKey.mKind << ", range first " << r.mFirst << " count " << r.mCount << ": " << out_of_range << " indices out of range (first "
                                          << first_bad_index << ", largest " << max_index << "), " << bad_coords << " bad coordinates (" << nans << " NaN, " << infs << " infinite, " << huge << " huge; e.g. " << sample[0] << ", " << sample[1] << ", " << sample[2] << "), bounds of the good ones (" << lo[0] << "," << lo[1] << "," << lo[2]
-                                         << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << ")" << LL_ENDL;
+                                         << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << "); vb epoch " << vi.mEpoch << " version " << vi.mVersion << " moves " << vi.mMoves << (vi.mDevice ? " (device)" : " (host)")
+                                         << ", ib epoch " << ii.mEpoch << " version " << ii.mVersion << " moves " << ii.mMoves << (ii.mDevice ? " (device)" : " (host)")
+                                         << "; seen " << seen.mTimes << " time(s)" << (first_time ? "" : llformat(", last with vb epoch %llu version %llu, ib epoch %llu version %llu", seen.mVbEpoch, seen.mVbVersion, seen.mIbEpoch, seen.mIbVersion).c_str()) << LL_ENDL;
                     }
+                    seen.mVbEpoch = vi.mEpoch;
+                    seen.mIbEpoch = ii.mEpoch;
+                    seen.mVbVersion = vi.mVersion;
+                    seen.mIbVersion = ii.mVersion;
                     if (skip_bad)
                     {
                         b.mBad.push_back(r.id());
