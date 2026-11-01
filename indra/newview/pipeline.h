@@ -327,6 +327,7 @@ public:
     bool visibleObjectsInFrustum(LLCamera& camera);
     bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max);
     bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
+    bool pointCloudFromExtents(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp);      // <FS> what getVisiblePointCloud makes of the visible extents (the walk is separate: LL_VK_PC_SPLIT)
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
     void updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments = false);
@@ -446,6 +447,9 @@ public:
         LLAsyncPool::JobPtr mAlphaJob[2];
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
+    void shadowPrepHull(ShadowCascadePrep& prep);      // <FS> the second half of shadowPrepCull: the groups the slice cannot see a shadow from (LL_VK_SHADOW_HULL)
+    // <FS> LL_VK_SC_SPLIT: the cull of all the pending cascades as pool jobs by partition and subtree (what a serial shadowPrepCull per cascade finds, in the same order)
+    void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class LLForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
     void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
     void shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local);      // the visible groups [begin, end) of the cascade into `local` (a chunk of the render map job)

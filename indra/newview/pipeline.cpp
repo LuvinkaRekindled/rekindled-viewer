@@ -8223,6 +8223,14 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
         ++part_index;
     }
 
+    shadowPrepHull(prep);
+
+    // (the marking of the groups the walks found is shadowPrepMark, in chunks)
+}
+
+void LLPipeline::shadowPrepHull(ShadowCascadePrep& prep)
+{
+    LLCullResult& result = *prep.mResult;
     if (prep.mHull.mValid)
     {
         // <FS> LL_VK_SHADOW_HULL: the groups the slice cannot see a shadow from (see shadow_hull_build)
@@ -8259,8 +8267,150 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
         sHullVerified[index].fetch_add(verified, std::memory_order_relaxed);
         sHullVerifyHits[index].fetch_add(hits, std::memory_order_relaxed);
     }
+}
 
-    // (the marking of the groups the walks found is shadowPrepMark, in chunks)
+// <FS> LL_VK_SC_SPLIT (default 1, 0 = one pool job a cascade as before; check it with FSParallelShadowPrepCheck): the cull of every pending cascade as pool jobs by partition and by subtree. The units of a cascade are
+// made in the order of the serial walk (the partitions in list order; a partition that cost over LL_VK_SC_SPLIT_US (default 60 us) for that cascade last time has its top levels walked here, between the segments
+// of its result, and its subtrees that cost over LL_VK_SC_NODE_US (default 40 us) as jobs of their own), each with a result of its own, appended to the cascade's result in that order afterwards.
+namespace
+{
+std::unordered_map<U64, float> sScCostUs;       // the last measured cost of the walk of a partition for a cascade (smoothed); key: partition * 4 + cascade index
+std::unordered_map<U64, float> sScNodeUs;       // the same for a subtree that was a job; key: node * 4 + cascade index
+std::vector<std::unique_ptr<LLCullResult>> sScLocals;
+struct ScChunk
+{
+    size_t mPrep;                       // index into pending
+    LLSpatialPartition* mPart;
+    bool mSegment;                      // the top levels of a split partition, walked on the calling thread (no job)
+    bool mTask;                         // a subtree of a split partition
+    LLViewerOctreeCull::SplitTask mSplit;
+    LLCullResult* mLocal;
+    float mUs;
+};
+}
+
+void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, LLForkJoinPool* pool)
+{
+    LL_CPU_ZONE("shadow prep: cull split");
+    static const double split_cost = getenv("LL_VK_SC_SPLIT_US") ? atof(getenv("LL_VK_SC_SPLIT_US")) : 60.0;
+    static const double node_split = getenv("LL_VK_SC_NODE_US") ? atof(getenv("LL_VK_SC_NODE_US")) : 40.0;
+    std::deque<ScChunk> chunks;
+    std::unordered_map<U64, float> now_us;
+    auto new_chunk = [&](size_t p, LLSpatialPartition* part, bool segment, bool task, const LLViewerOctreeCull::SplitTask& split) -> ScChunk&
+    {
+        const size_t idx = chunks.size();
+        if (sScLocals.size() <= idx)
+        {
+            sScLocals.push_back(std::make_unique<LLCullResult>());
+        }
+        sScLocals[idx]->clearLists();
+        chunks.push_back({ p, part, segment, task, split, sScLocals[idx].get(), 0.f });
+        return chunks.back();
+    };
+    {
+    LL_CPU_ZONE("shadow prep: cull split units (top levels)");
+    for (size_t p = 0; p < pending.size(); ++p)
+    {
+        ShadowCascadePrep& prep = pending[p];
+        prep.mResult->clear();
+        prep.mDeferred.clear();
+        for (LLSpatialPartition* part : partitions)
+        {
+            const U64 key = ((U64)(uintptr_t)part << 2) | (U64)(prep.mIndex & 3);
+            auto cost = sScCostUs.find(key);
+            if (cost != sScCostUs.end() && cost->second > split_cost)
+            {
+                const auto w0 = std::chrono::steady_clock::now();
+                ScChunk& first = new_chunk(p, part, true, false, { nullptr, 0 });
+                ShadowPrepScope scope(prep, first.mLocal);
+                const OctreeNode* root = part->mOctree;
+                part->cullShadowSplit(prep.mCamera, 8, [&](const OctreeNode* n)
+                {
+                    if (n == root)
+                    {
+                        return true;
+                    }
+                    auto it = sScNodeUs.find(((U64)(uintptr_t)n << 2) | (U64)(prep.mIndex & 3));
+                    return it != sScNodeUs.end() && it->second > node_split;
+                }, [&](const LLViewerOctreeCull::SplitTask& task)
+                {
+                    new_chunk(p, part, false, true, task);
+                    ScChunk& next = new_chunk(p, part, true, false, { nullptr, 0 });
+                    sCull = next.mLocal;                // (the scope puts the thread's own back at the end)
+                });
+                now_us[key] += (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count();
+            }
+            else
+            {
+                new_chunk(p, part, false, false, { nullptr, 0 });
+            }
+        }
+    }
+    }
+    std::vector<size_t> work;
+    for (size_t c = 0; c < chunks.size(); ++c)
+    {
+        if (!chunks[c].mSegment)
+        {
+            work.push_back(c);
+        }
+    }
+    const std::function<void(size_t)> job = [&](size_t w)
+    {
+        ScChunk& chunk = chunks[work[w]];
+        ShadowCascadePrep& prep = pending[chunk.mPrep];
+        ShadowPrepScope scope(prep, chunk.mLocal);
+        const auto t0 = std::chrono::steady_clock::now();
+        if (chunk.mTask)
+        {
+            chunk.mPart->cullShadowTask(prep.mCamera, chunk.mSplit);
+        }
+        else
+        {
+            chunk.mPart->cullShadowWhole(prep.mCamera);
+        }
+        chunk.mUs = (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    };
+    if (!work.empty())
+    {
+        LL_CPU_ZONE("shadow prep: cull job (wait for the pool)");
+        pool->run(work.size(), job);
+    }
+    // the results of each cascade, in the order of the serial walk
+    LL_CPU_ZONE("shadow prep: cull split merge");
+    for (const ScChunk& chunk : chunks)
+    {
+        LLCullResult& into = *pending[chunk.mPrep].mResult;
+        LLCullResult& l = *chunk.mLocal;
+        for (LLCullResult::drawable_iterator d = l.beginVisibleList(); d != l.endVisibleList(); ++d) into.pushDrawable(*d);
+        for (LLCullResult::bridge_iterator b = l.beginVisibleBridge(); b != l.endVisibleBridge(); ++b) into.pushBridge(*b);
+        for (LLCullResult::sg_iterator g = l.beginDrawableGroups(); g != l.endDrawableGroups(); ++g) into.pushDrawableGroup(*g);
+        for (LLCullResult::sg_iterator g = l.beginVisibleGroups(); g != l.endVisibleGroups(); ++g) into.pushVisibleGroup(*g);
+        for (LLCullResult::sg_iterator g = l.beginOcclusionGroups(); g != l.endOcclusionGroups(); ++g) into.pushOcclusionGroup(*g);
+        for (LLCullResult::sg_iterator g = l.beginAlphaGroups(); g != l.endAlphaGroups(); ++g) into.pushAlphaGroup(*g);
+        for (LLCullResult::sg_iterator g = l.beginRiggedAlphaGroups(); g != l.endRiggedAlphaGroups(); ++g) into.pushRiggedAlphaGroup(*g);
+        if (!chunk.mSegment)
+        {
+            const U64 key = ((U64)(uintptr_t)chunk.mPart << 2) | (U64)(pending[chunk.mPrep].mIndex & 3);
+            now_us[key] += chunk.mUs;
+            if (chunk.mTask)
+            {
+                float& c = sScNodeUs[((U64)(uintptr_t)chunk.mSplit.mNode << 2) | (U64)(pending[chunk.mPrep].mIndex & 3)];
+                c = c > 0.f ? c * 0.7f + chunk.mUs * 0.3f : chunk.mUs;
+            }
+        }
+    }
+    for (const auto& entry : now_us)
+    {
+        float& c = sScCostUs[entry.first];
+        c = c > 0.f ? c * 0.8f + entry.second * 0.2f : entry.second;
+    }
+    if (sScCostUs.size() > 8192) sScCostUs.clear();
+    if (sScNodeUs.size() > 16384) sScNodeUs.clear();
+    for (ShadowCascadePrep& prep : pending)
+    {
+        shadowPrepHull(prep);
+    }
 }
 
 // worker: mark a range of the cascade's groups visible, and their drawables. Kind 0: the drawable groups (what stateSort does with them when there is no occlusion culling, less the mesh rebuild); kind 1: the visible groups
@@ -24620,6 +24770,14 @@ bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector
         return false;
     }
 
+    return pointCloudFromExtents(camera, min, max, fp);
+}
+
+// <FS> the second half of getVisiblePointCloud: the corners of the box of the visible extents that lie inside the camera's frustum and the frustum's corners inside the box (the walk that found the extents is separate)
+bool LLPipeline::pointCloudFromExtents(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+
     //get set of planes on bounding box
     LLPlane bp[] = {
         LLPlane(min, LLVector3(-1,0,0)),
@@ -24859,6 +25017,151 @@ struct CascadeReuse
     F32 mSplitFar = 0.f;
 };
 CascadeReuse sCascadeReuse[4];
+}
+
+// <FS> LL_VK_PC_SPLIT (default 1, 0 = one pool job a cascade as before; check it with LL_VK_PC_CHECK=1): the visible extents of the cascades' frusta (the octree walks of getVisiblePointCloud) as pool jobs by partition and by
+// subtree instead of one job a cascade, which made the stage as long as the walk of the widest cascade. A partition whose walk for that cascade cost more than LL_VK_PC_SPLIT_US (default 60 us) the last time is walked
+// in pieces the way the main cull is (its top levels here, the subtrees that cost more than LL_VK_PC_NODE_US (default 40 us) as jobs of their own); the rest are one job a partition and cascade. The extents are
+// minima and maxima: the pieces are merged in any order.
+namespace
+{
+std::unordered_map<U64, float> sPcCostUs;       // the last measured cost of the walk of a partition for a cascade (smoothed); key: partition * 4 + cascade
+std::unordered_map<U64, float> sPcNodeUs;       // the same for a subtree that was a job; key: node * 4 + cascade
+struct PcUnit
+{
+    S32 mCascade;
+    LLSpatialPartition* mPart;
+    bool mTask;
+    LLViewerOctreeCull::SplitTask mSplit;
+    LLVector4a mMin, mMax;
+    bool mEmpty;
+    float mUs;
+};
+std::vector<PcUnit> sPcUnits;
+}
+
+static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S32 count, LLVector3* mins, LLVector3* maxs, bool* empty)
+{
+    LL_CPU_ZONE("shadow prep: point cloud split");
+    const F32 X = 65536.f;
+    LLVector4a cmin[4], cmax[4];
+    bool cempty[4];
+    for (S32 j = 0; j < count; ++j)
+    {
+        cmin[j].splat(X);
+        cmax[j].splat(-X);
+        cempty[j] = true;
+    }
+    static std::vector<LLSpatialPartition*> parts;
+    parts.clear();
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+        {
+            LLSpatialPartition* part = region->getSpatialPartition(i);
+            if (part && gPipeline.hasRenderType(part->mDrawableType))
+            {
+                parts.push_back(part);
+            }
+        }
+    }
+    static const double split_cost = getenv("LL_VK_PC_SPLIT_US") ? atof(getenv("LL_VK_PC_SPLIT_US")) : 60.0;
+    static const double node_split = getenv("LL_VK_PC_NODE_US") ? atof(getenv("LL_VK_PC_NODE_US")) : 40.0;
+    std::unordered_map<U64, float> now_us;          // what the walks cost this time (the top levels here and the jobs together), by partition and cascade
+    sPcUnits.clear();
+    for (S32 j = 0; j < count; ++j)
+    {
+        for (LLSpatialPartition* part : parts)
+        {
+            const U64 key = ((U64)(uintptr_t)part << 2) | (U64)j;
+            auto cost = sPcCostUs.find(key);
+            if (cost != sPcCostUs.end() && cost->second > split_cost)
+            {
+                const auto w0 = std::chrono::steady_clock::now();
+                const OctreeNode* root = part->mOctree;
+                part->visibleExtentsSplit(*cams[j], cmin[j], cmax[j], cempty[j], 8, [&](const OctreeNode* n)
+                {
+                    if (n == root)
+                    {
+                        return true;
+                    }
+                    auto it = sPcNodeUs.find(((U64)(uintptr_t)n << 2) | (U64)j);
+                    return it != sPcNodeUs.end() && it->second > node_split;
+                }, [&](const LLViewerOctreeCull::SplitTask& task)
+                {
+                    PcUnit unit;
+                    unit.mCascade = j;
+                    unit.mPart = part;
+                    unit.mTask = true;
+                    unit.mSplit = task;
+                    unit.mMin.splat(X);
+                    unit.mMax.splat(-X);
+                    unit.mEmpty = true;
+                    unit.mUs = 0.f;
+                    sPcUnits.push_back(unit);
+                });
+                now_us[key] += (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count();
+            }
+            else
+            {
+                PcUnit unit;
+                unit.mCascade = j;
+                unit.mPart = part;
+                unit.mTask = false;
+                unit.mSplit = { nullptr, 0 };
+                unit.mMin.splat(X);
+                unit.mMax.splat(-X);
+                unit.mEmpty = true;
+                unit.mUs = 0.f;
+                sPcUnits.push_back(unit);
+            }
+        }
+    }
+    const std::function<void(size_t)> job = [&](size_t u)
+    {
+        PcUnit& unit = sPcUnits[u];
+        const auto t0 = std::chrono::steady_clock::now();
+        if (unit.mTask)
+        {
+            unit.mPart->visibleExtentsTask(*cams[unit.mCascade], unit.mSplit, unit.mMin, unit.mMax, unit.mEmpty);
+        }
+        else
+        {
+            unit.mPart->visibleExtentsWhole(*cams[unit.mCascade], unit.mMin, unit.mMax, unit.mEmpty);
+        }
+        unit.mUs = (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    };
+    if (!sPcUnits.empty())
+    {
+        LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)");
+        pool->run(sPcUnits.size(), job);
+    }
+    for (const PcUnit& unit : sPcUnits)
+    {
+        const S32 j = unit.mCascade;
+        cmin[j].setMin(cmin[j], unit.mMin);
+        cmax[j].setMax(cmax[j], unit.mMax);
+        cempty[j] = cempty[j] && unit.mEmpty;
+        now_us[((U64)(uintptr_t)unit.mPart << 2) | (U64)j] += unit.mUs;
+        if (unit.mTask)
+        {
+            float& c = sPcNodeUs[((U64)(uintptr_t)unit.mSplit.mNode << 2) | (U64)j];
+            c = c > 0.f ? c * 0.7f + unit.mUs * 0.3f : unit.mUs;
+        }
+    }
+    for (const auto& entry : now_us)
+    {
+        float& c = sPcCostUs[entry.first];
+        c = c > 0.f ? c * 0.8f + entry.second * 0.2f : entry.second;
+    }
+    if (sPcCostUs.size() > 8192) sPcCostUs.clear();
+    if (sPcNodeUs.size() > 16384) sPcNodeUs.clear();
+    for (S32 j = 0; j < count; ++j)
+    {
+        mins[j].set(cmin[j].getF32ptr());
+        maxs[j].set(cmax[j].getF32ptr());
+        empty[j] = cempty[j];
+    }
 }
 
 void LLPipeline::generateSunShadow(LLCamera& camera)
@@ -25273,11 +25576,32 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     }
                 }
             }
-            const std::function<void(size_t)> cloud_job = [&](size_t j)
+            static const int pc_split = getenv("LL_VK_PC_SPLIT") ? atoi(getenv("LL_VK_PC_SPLIT")) : 1;
+            if (pc_split != 0)
             {
-                clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
-            };
-            { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->run((size_t)cloud_count, cloud_job); }
+                LLCamera* cams[4] = {};
+                LLVector3 mins[4], maxs[4];
+                bool empty[4] = {};
+                for (S32 j = 0; j < cloud_count; ++j)
+                {
+                    cams[j] = &clouds[j].mCam;
+                }
+                visible_extents_split(prep_pool, cams, cloud_count, mins, maxs, empty);
+                for (S32 j = 0; j < cloud_count; ++j)
+                {
+                    clouds[j].mMin = mins[j];
+                    clouds[j].mMax = maxs[j];
+                    clouds[j].mHave = !empty[j] && pointCloudFromExtents(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp);
+                }
+            }
+            else
+            {
+                const std::function<void(size_t)> cloud_job = [&](size_t j)
+                {
+                    clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
+                };
+                { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->run((size_t)cloud_count, cloud_job); }
+            }
             cloud_lap.mark(PH_POINT_CLOUD);
         }
 
@@ -25946,7 +26270,42 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 if (job_census) { job_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
             };
             const auto cull_wall0 = std::chrono::steady_clock::now();
-            { LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job); }
+            static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
+            if (sc_split != 0)
+            {
+                shadowPrepCullSplit(pending, partitions, prep_pool);
+                if (sc_split == 2)
+                {
+                    // LL_VK_SC_SPLIT=2: what the split made is compared, list by list and in order, with what the serial cull of the same cascade makes (which then stays as the result)
+                    static U64 checks = 0, differs = 0;
+                    auto list_of = [](auto begin, auto end) { std::vector<const void*> v; for (auto i = begin; i != end; ++i) { v.push_back((const void*)*i); } return v; };
+                    for (ShadowCascadePrep& prep : pending)
+                    {
+                        LLCullResult& r = *prep.mResult;
+                        const std::vector<const void*> vg = list_of(r.beginVisibleGroups(), r.endVisibleGroups()), dg = list_of(r.beginDrawableGroups(), r.endDrawableGroups()),
+                            ag = list_of(r.beginAlphaGroups(), r.endAlphaGroups()), rg = list_of(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), br = list_of(r.beginVisibleBridge(), r.endVisibleBridge()),
+                            vl = list_of(r.beginVisibleList(), r.endVisibleList()), og = list_of(r.beginOcclusionGroups(), r.endOcclusionGroups());
+                        shadowPrepCull(prep, partitions);
+                        LLCullResult& s = *prep.mResult;
+                        const bool same = vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
+                            && ag == list_of(s.beginAlphaGroups(), s.endAlphaGroups()) && rg == list_of(s.beginRiggedAlphaGroups(), s.endRiggedAlphaGroups())
+                            && br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) && vl == list_of(s.beginVisibleList(), s.endVisibleList())
+                            && og == list_of(s.beginOcclusionGroups(), s.endOcclusionGroups());
+                        ++checks;
+                        differs += same ? 0 : 1;
+                        if (!same || checks % 1800 == 0)
+                        {
+                            LL_INFOS("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
+                                << (same ? "" : " (this one: cascade " + std::to_string(prep.mIndex) + ", visible groups " + std::to_string(vg.size()) + " against " + std::to_string((size_t)(s.endVisibleGroups() - s.beginVisibleGroups()))
+                                    + ", drawable groups " + std::to_string(dg.size()) + " against " + std::to_string((size_t)(s.endDrawableGroups() - s.beginDrawableGroups())) + ")") << LL_ENDL;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job);
+            }
             {
                 // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
                 static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;

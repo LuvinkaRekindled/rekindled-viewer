@@ -482,6 +482,15 @@ public:
     // <FS> stage 3a: cull(camera) in pieces (see LLViewerOctreeCull::traverseTop); the main view only (no shadow culler)
     void cullSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
     void cullTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
+    // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullSplit and cullTask cut the main cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
+    // on its own thread, before any of these run: rebound() writes); empty is cleared when the walk found a visible group.
+    // <FS> the cascades' cull (LL_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
+    void cullShadowWhole(LLCamera& camera);
+    void cullShadowSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
+    void cullShadowTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
+    void visibleExtentsWhole(LLCamera& camera, LLVector4a& min, LLVector4a& max, bool& empty);
+    void visibleExtentsSplit(LLCamera& camera, LLVector4a& min, LLVector4a& max, bool& empty, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
+    void visibleExtentsTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task, LLVector4a& min, LLVector4a& max, bool& empty);
 
     bool isVisible(const LLVector3& v);
     bool isHUDPartition() ;
@@ -575,6 +584,7 @@ public:
     }
 
     void clear();
+    void clearLists();      // <FS> only the lists a cull fills
 
     sg_iterator beginVisibleGroups();
     sg_iterator endVisibleGroups();
