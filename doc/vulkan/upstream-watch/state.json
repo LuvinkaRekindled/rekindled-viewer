@@ -1,11 +1,11 @@
 {
-  "our_base": "master",
+  "our_base": "Firestorm_Release_7.2.5.81788",
   "ll": {
     "branch": "develop",
     "reviewed_sha": "373addb1cbdb6ae505c8e797c33729cb1ad75dba"
   },
   "fs": {
-    "merged_tag": null,
+    "merged_tag": "Firestorm_Release_7.2.5.81788",
     "reviewed_tag": "Firestorm_Release_7.2.5.81788"
   },
   "aurora": {
