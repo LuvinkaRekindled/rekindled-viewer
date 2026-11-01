@@ -5811,14 +5811,43 @@ static void res_buffer_gone(U32 name)
     }
 }
 
-// the pair's buffers, found (again) if the cached pointer was dropped, and usable by the ray scene
-static bool res_pair_ready(ResPair& p)
+// <FS> the pair's cached buffer pointers, valid for the buffer table as it is now: a buffer entry that went since they were found (sPacketBufferGeneration moved on) drops both, and they are looked up again. res_buffer_gone
+// drops the pointers of the pairs registered under the name of a buffer that goes, but a pair that missed it kept a pointer to a freed entry, and res_pair_ready wrote through it (the crash of 2026-11-01, 10:55:29:
+// res_pair_ready <- res_enter <- res_ray_membership, a write to the index buffer entry 34 s after the start, in the minidump); res_pair_check had the generation test already, this path did not.
+// (a census of what the generation test caught: a cached pointer that is not what the table holds now is one that res_buffer_gone did not drop; logged the first few times, and every 600th)
+static void res_pair_note_stale(const ResPair& p, const Buf* old_v, const Buf* old_i)
 {
+    static U64 stale = 0;
+    const bool gone_v = old_v && (p.mPvb != old_v);
+    const bool gone_i = old_i && (p.mPib != old_i);
+    if (gone_v || gone_i)
+    {
+        ++stale;
+        if (stale <= 8 || stale % 600 == 0)
+        {
+            LL_WARNS("VkResident") << "a resident pair kept a pointer to a buffer entry that is gone (vertex buffer " << p.mVb << (gone_v ? " stale" : " ok") << ", index buffer " << p.mIb << (gone_i ? " stale" : " ok")
+                << "): dropped by the generation test, " << stale << " so far" << LL_ENDL;
+        }
+    }
+}
+
+static bool res_pair_buffers(ResPair& p)
+{
+    const Buf* old_v = nullptr;
+    const Buf* old_i = nullptr;
+    if (p.mGen != sPacketBufferGeneration)
+    {
+        old_v = p.mPvb;
+        old_i = p.mPib;
+        p.mPvb = nullptr;
+        p.mPib = nullptr;
+    }
     if (!p.mPvb)
     {
         auto v = sGL.mBuffers.find(p.mVb);
         if (v == sGL.mBuffers.end())
         {
+            res_pair_note_stale(p, old_v, old_i);
             return false;
         }
         p.mPvb = &v->second;
@@ -5828,9 +5857,24 @@ static bool res_pair_ready(ResPair& p)
         auto i = sGL.mBuffers.find(p.mIb);
         if (i == sGL.mBuffers.end())
         {
+            res_pair_note_stale(p, old_v, old_i);
             return false;
         }
         p.mPib = &i->second;
+    }
+    if (old_v || old_i)
+    {
+        res_pair_note_stale(p, old_v, old_i);
+    }
+    return true;
+}
+
+// the pair's buffers, found (again) if the cached pointer was dropped, and usable by the ray scene
+static bool res_pair_ready(ResPair& p)
+{
+    if (!res_pair_buffers(p))
+    {
+        return false;
     }
     p.mPvb->mResWatched = true;
     p.mPvb->mResName = p.mVb;
@@ -6473,7 +6517,7 @@ static void res_ray_membership(U64 frame)
         {
             for (ResPair& p : item.mFrag->mPairs)
             {
-                if (p.mPvb && p.mPib)
+                if (res_pair_buffers(p))        // (the cached pointers of a pair are only used once they are known to be current)
                 {
                     p.mPvb->mLastUseFrame = frame;
                     p.mPib->mLastUseFrame = frame;

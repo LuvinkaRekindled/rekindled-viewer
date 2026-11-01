@@ -543,6 +543,8 @@ public:
     void rebuildPools(); // Rebuild pools
 
     void findReferences(LLDrawable *drawablep); // Find the lists which have references to this object
+    bool inMovedList(const LLDrawable* drawablep) const;    // <FS> LL_VK_DRAWABLE_TRACE: is the drawable an entry of the moved list (by pointer)
+    static inline LLDrawable* sMovedCurrent = nullptr;      // <FS> the entry updateMovedListSerial is working on (main thread only)
     bool verify();                      // Verify that all data in the pipeline is "correct"
 
     S32  getLightCount() const { return static_cast<S32>(mLights.size()); }

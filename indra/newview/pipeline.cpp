@@ -2135,6 +2135,18 @@ void LLPipeline::allocDrawable(LLViewerObject *vobj)
 }
 
 
+bool LLPipeline::inMovedList(const LLDrawable* drawablep) const
+{
+    for (const LLPointer<LLDrawable>& d : mMovedList)
+    {
+        if (d.get() == drawablep)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void LLPipeline::unlinkDrawable(LLDrawable *drawable)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -2149,6 +2161,14 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
         LLDrawable::drawable_vector_t::iterator iter = std::find(mMovedList.begin(), mMovedList.end(), drawablep);
         if (iter != mMovedList.end())
         {
+            // <FS> LL_VK_DRAWABLE_TRACE: the entry the moved list pass is working on is taken off the list from inside its own updateMove (see updateMovedListSerial): who does it
+            static const bool trace = getenv("LL_VK_DRAWABLE_TRACE") ? atoi(getenv("LL_VK_DRAWABLE_TRACE")) != 0 : true;
+            static std::atomic<int> logged{0};
+            if (trace && drawablep.get() == sMovedCurrent && logged.fetch_add(1) < 8)
+            {
+                extern std::string fs_stack_here(int skip, int max_frames);
+                LL_WARNS("DrawableTrace") << "the moved list pass's current drawable is unlinked from inside its updateMove (dead " << drawablep->isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
+            }
             mMovedList.erase(iter);
         }
     }
@@ -2629,7 +2649,11 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
     while (next < moved_list.size())
     {
         const size_t cur = next++;
-        LLDrawable *drawablep = moved_list[cur];
+        // <FS> a counted reference for the pass over this entry: updateMove can unlink the drawable (unlinkDrawable erases its entry, which was the last reference), and the raw pointer was then used freed
+        // (crashes of 2026-11-01 in updateMovedListSerial: the dump stopped at isRoot() after updateMove and clearState on the freed drawable, ~33 s after the login)
+        LLPointer<LLDrawable> hold = moved_list[cur];
+        LLDrawable *drawablep = hold.get();
+        sMovedCurrent = drawablep;
         if (!drawablep)
         {
             moved_list.erase(moved_list.begin() + cur);
@@ -2719,6 +2743,7 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
             }
         }
     }
+    sMovedCurrent = nullptr;
 }
 
 // <FS> view rework O1 (LL_VK_MOVED_PARALLEL=1; default off until soaked): see pipeline.h. The unit of a job is a linkset (a child reads its parent's transform, and the list holds parents first): every entry of

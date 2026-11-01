@@ -1097,6 +1097,26 @@ void fs_growth_probe()
     last_faults = pmc.PageFaultCount;
 }
 
+// <FS> the calling thread's stack as text, one frame a line (module+offset and the nearest symbol), for probes that log where something happened (LL_VK_DRAWABLE_TRACE)
+std::string fs_stack_here(int skip, int max_frames)
+{
+    void* frames[48] = {};
+    const USHORT n = CaptureStackBackTrace((DWORD)skip + 1, (DWORD)std::min(max_frames, 48), frames, nullptr);
+    std::string text;
+    for (USHORT i = 0; i < n; ++i)
+    {
+        HMODULE module = nullptr;
+        char name[MAX_PATH] = {};
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)frames[i], &module) && module)
+        {
+            GetModuleFileNameA(module, name, MAX_PATH);
+        }
+        const char* base_name = strrchr(name, '\\');
+        text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)frames[i] - (DWORD64)module), fs_describe_address(frames[i]).c_str());
+    }
+    return text;
+}
+
 // <FS> The faulting thread's stack when an access violation happens (written next to the executable as crash-stack-<pid>.txt, and to the log): the viewer's own crash handler leaves no dump here, and the
 // Windows event only gives a module and an offset. A first-chance handler for the access violation only (C++ exceptions and the SEH the work queue converts are other codes); at most 6 are written.
 // Off with LL_VK_NO_CRASHSTACK=1.
