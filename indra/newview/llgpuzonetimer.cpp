@@ -17,6 +17,7 @@
 #include <unordered_set>
 
 #include "llfasttimer.h"
+#include "llvkbridge.h"
 #include "llrenderheaders.h"
 #include "llvkzones.h"
 #include "llvkbridge.h"
@@ -1096,6 +1097,9 @@ void fs_growth_probe()
         << ", vertex buffers " << llformat("%.0f", LLVertexBuffer::getBytesAllocated() / 1048576.0) << " MB" << LL_ENDL;
     last_faults = pmc.PageFaultCount;
 }
+
+// <FS> LL_VK_SYNC_LOG: names the functions that wait in LLVkAsync::syncCall
+static const bool sSyncSymbolizerSet = []() { LLVkBridge::setSymbolizer(&fs_describe_address); return true; }();
 
 // <FS> one stack address as text: module+offset (what a pdb reads) and the nearest symbol
 std::string fs_describe_frame(const void* pc)

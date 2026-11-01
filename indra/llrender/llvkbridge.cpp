@@ -10,6 +10,7 @@
 #if !defined(LL_VULKAN)
 
 bool LLVkBridge::isReady() { return false; }
+void LLVkBridge::setSymbolizer(std::string (*)(const void*)) {}
 bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
 bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
 std::string LLVkBridge::accelCensus() { return std::string(); }
@@ -201,6 +202,11 @@ void LLVkBridge::setPresentPreference(S32 mode, bool vsync_on)
 LLVkBridge::Mutex& LLVkBridge::lock()
 {
     return LLVkWorker::gMutex;
+}
+
+void LLVkBridge::setSymbolizer(std::string (*fn)(const void*))
+{
+    LLVkAsync::setSymbolizer(fn);
 }
 
 bool LLVkBridge::isReady()

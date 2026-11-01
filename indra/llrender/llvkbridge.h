@@ -28,6 +28,8 @@ namespace LLVkBridge
     constexpr unsigned kGeoPassTypes = 20;
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
+    // <FS> LL_VK_SYNC_LOG: names an address in the report of the main thread's waits on the worker (the viewer's symbol lookup)
+    void setSymbolizer(std::string (*fn)(const void*));
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
     // where the video memory goes besides the textures (doc/vulkan/EXPIRY-design.md): the arena blocks (geometry and other device blocks, host-written blocks, acceleration structure blocks: bytes alive and bytes in use),
