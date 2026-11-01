@@ -330,6 +330,7 @@ static LLStaticHashedString sOffset("offset");
 static LLStaticHashedString sScreenRes("screenRes");
 static LLStaticHashedString sDelta("delta");
 static LLStaticHashedString sDistFactor("dist_factor");
+static LLStaticHashedString sSunPassthrough("sun_passthrough");     // <FS> blurLightF.glsl
 static LLStaticHashedString sKern("kern");
 static LLStaticHashedString sKernScale("kern_scale");
 static LLStaticHashedString sSmaaRTMetrics("SMAA_RT_METRICS");
@@ -21852,6 +21853,16 @@ void LLPipeline::renderDeferredLighting()
                                               (F32)deferred_light_target->getWidth(),
                                               (F32)deferred_light_target->getHeight());
 
+                {
+                    // <FS> the noise of the SSAO (aoUtil.glsl, its own uniform: the cascade shadow's PCF rotation must not move) moves every frame whenever the upscaler is there to average it, not only with ray traced shadows: without this the pattern stays where it is on the screen,
+                    // the upscaler cannot average it, and it shows as speckles that look projected onto a moving avatar (2026-11-01). With it the lightmap blur is not needed with the upscaler (RenderShadowBlurWithDLSS).
+                    static LLStaticHashedString ao_frame_s("ao_noise_frame");
+                    // LL_VK_AO_NOISE: 1 (default) the AO noise moves with the upscaler whatever the shadows are; 2 only with ray traced shadows (how it was before 2026-11-01); 0 never (a fixed pattern)
+                    static const int ao_noise_mode = getenv("LL_VK_AO_NOISE") ? atoi(getenv("LL_VK_AO_NOISE")) : 1;
+                    const bool ao_noise_moves = sDLSS && (ao_noise_mode == 1 || (ao_noise_mode == 2 && LLVkBridge::rtShadowMode()));
+                    sun_shader.uniform1f(ao_frame_s, ao_noise_moves ? (F32)(mJitterIndex % 64) : 0.f);
+                }
+
                 if (LLVkBridge::rtShadowMode())
                 {
                     // <FS> soft ray traced sun shadows: the sun's disc and the rays per pixel (the other shaders that sample the sun shadow leave these at 0 and trace one hard ray)
@@ -21887,7 +21898,9 @@ void LLPipeline::renderDeferredLighting()
         // <FS> with the upscaler on, the lightmap blur (two passes of 13 depth tests and taps a pixel, 12% of the pixel shader warps in the GPU Trace of 2026-10-26) is left out: the sun shadow is
         // accumulated over frames (RenderRTShadowAccumulate) or denoised by the upscaler, and the upscaler averages the SSAO noise. RenderShadowBlurWithDLSS brings it back.
         static LLCachedControl<bool> blur_with_dlss(gSavedSettings, "RenderShadowBlurWithDLSS", false);
-        const bool skip_blur = sDLSS && !blur_with_dlss && !rrBlurForce();
+        // the blur is for the cascade (legacy) shadows and their SSAO: with ray traced sun shadows and the upscaler on the ray traced shadow is accumulated and denoised already, so the blur is left out there
+        // (RenderShadowBlurWithDLSS keeps it, blurring only the SSAO and the spot shadows: sun_passthrough); with the cascade shadows it runs whether the upscaler is on or not (2026-11-01, the user)
+        const bool skip_blur = sDLSS && LLVkBridge::rtShadowMode() && !blur_with_dlss && !rrBlurForce();
         if (RenderDeferredSSAO && !gCubeSnapshot && skip_blur)
         {
             if (accumulated)
@@ -21934,6 +21947,10 @@ void LLPipeline::renderDeferredLighting()
                 x += 1.f;
             }
 
+            // <FS> a ray traced sun shadow with the upscaler on is accumulated over frames and denoised by the upscaler: the blur leaves that channel alone (it still smooths the SSAO, which the upscaler cannot
+            // average on a moving avatar). Without the upscaler the blur is what smooths the ray traced shadow, as before.
+            const F32 sun_passthrough = (sDLSS && LLVkBridge::rtShadowMode()) ? 1.f : 0.f;
+            gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
             gDeferredBlurLightProgram.uniform2f(sDelta, 1.f, 0.f);
             gDeferredBlurLightProgram.uniform1f(sDistFactor, dist_factor);
             gDeferredBlurLightProgram.uniform3fv(sKern, kern_length, gauss[0].mV);
@@ -21953,6 +21970,7 @@ void LLPipeline::renderDeferredLighting()
 
             RenderPassScope pass_12827(*deferred_light_target);
 
+            gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
             gDeferredBlurLightProgram.uniform2f(sDelta, 0.f, 1.f);
 
             {
