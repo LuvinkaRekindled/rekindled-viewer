@@ -2623,6 +2623,12 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             const U64 verts = vi.mSize / 16;
             std::vector<Range> kept;
             kept.reserve(want.size());
+            // <FS> the ranges flagged so far (see the warning below): a range that passes the check after it was flagged has recovered
+            struct SeenBad { U32 mTimes = 0; U64 mVbEpoch = 0, mIbEpoch = 0, mVbVersion = 0, mIbVersion = 0, mFirstFrame = 0; bool mRecovered = false; };
+            static std::unordered_map<U64, SeenBad> seen_bad;
+            static U64 sRecovered = 0, sRecoveredWithin2 = 0;
+            const U64 check_frame = ctx.getFrameNumber();
+            auto bad_key = [&g](const Range& rr) { return ((U64)g.mKey.mVb << 44) ^ ((U64)g.mKey.mIb << 24) ^ ((U64)rr.mFirst << 12) ^ (U64)rr.mCount ^ ((U64)g.mKey.mKind << 60); };
             for (const Range& r : want)
             {
                 U32 out_of_range = 0, bad_coords = 0, first_bad_index = 0, max_index = 0, nans = 0, infs = 0, huge = 0;
@@ -2675,11 +2681,14 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     // <FS> which buffers and when: the epoch / version / moves of both (an epoch is another owner or contents of the name: the pairing the structure was made for), and whether this range was flagged before
                     // (a range that is flagged again with other epochs or versions is a buffer that changed under the structure; the same ones again is data that stays bad). The first 60 distinct ranges are logged,
                     // and the 2nd, 10th and 100th time one is seen again.
-                    struct SeenBad { U32 mTimes = 0; U64 mVbEpoch = 0, mIbEpoch = 0, mVbVersion = 0, mIbVersion = 0; };
-                    static std::unordered_map<U64, SeenBad> seen_bad;
-                    SeenBad& seen = seen_bad[((U64)g.mKey.mVb << 44) ^ ((U64)g.mKey.mIb << 24) ^ ((U64)r.mFirst << 12) ^ (U64)r.mCount ^ ((U64)g.mKey.mKind << 60)];
+                    SeenBad& seen = seen_bad[bad_key(r)];
                     ++seen.mTimes;
                     const bool first_time = seen.mTimes == 1;
+                    if (first_time || seen.mRecovered)
+                    {
+                        seen.mFirstFrame = check_frame;     // (flagged again after it had recovered: a new episode)
+                        seen.mRecovered = false;
+                    }
                     if ((first_time && seen_bad.size() <= 60) || seen.mTimes == 2 || seen.mTimes == 10 || seen.mTimes == 100)
                     {
                         LL_WARNS("VkRt") << "bad range in a structure to build: vb " << g.mKey.mVb << " (" << vi.mSize << " bytes, " << verts << " vertex slots) ib " << g.mKey.mIb << " ("
@@ -2699,6 +2708,23 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                         b.mBadVbVersion = vi.mVersion;
                         b.mBadIbVersion = ii.mVersion;
                         continue;
+                    }
+                }
+                {
+                    auto it = seen_bad.find(bad_key(r));
+                    if (it != seen_bad.end() && it->second.mTimes > 0 && !it->second.mRecovered)
+                    {
+                        it->second.mRecovered = true;
+                        ++sRecovered;
+                        const U64 frames = check_frame - it->second.mFirstFrame;
+                        sRecoveredWithin2 += frames <= 2;
+                        static U32 recovered_logged = 0;
+                        if (recovered_logged++ < 40)
+                        {
+                            LL_INFOS("VkRt") << "a flagged range is good now: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " range first " << r.mFirst << " count " << r.mCount << ", " << frames << " frame(s) after it was first flagged (vb epoch "
+                                             << it->second.mVbEpoch << " -> " << vi.mEpoch << " version " << it->second.mVbVersion << " -> " << vi.mVersion << ", ib epoch " << it->second.mIbEpoch << " -> " << ii.mEpoch << " version "
+                                             << it->second.mIbVersion << " -> " << ii.mVersion << "); " << sRecovered << " recovered so far, " << sRecoveredWithin2 << " of them within 2 frames, " << sStats.mBadVertices << " flags in total" << LL_ENDL;
+                        }
                     }
                 }
                 kept.push_back(r);
