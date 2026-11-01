@@ -460,6 +460,13 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
             continue;
         }
 #endif
+#if LL_RT_SUN_DEBUG == 0
+        if (skin_floor <= 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && LL_RT_SUN_PENUMBRA > 0.0)
+        {
+            // <FS> no floor (strength 1) with the penumbra cone on: the solid close avatar hit still blocks, but the pixel is told about it (a pixel's other rays widen with the distance of the nearest close avatar surface)
+            rt_near_skin_t = (rt_near_skin_t == 0.0) ? t_hit : min(rt_near_skin_t, t_hit);
+        }
+#endif
         break;
     }
 #ifdef LL_RT_CAP_DEBUG

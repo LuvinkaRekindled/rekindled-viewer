@@ -2571,13 +2571,13 @@
     <key>FSShadowFarCascadeFirst</key>
     <map>
       <key>Comment</key>
-      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 1 (the default) means cascades 1 to 3, leaving the nearest one updated every frame.</string>
+      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 2 (the default since 2026-11-01) means cascades 2 and 3, leaving the two nearest updated every frame: with 1 the mid-distance foliage's shadow edges popped each time cascade 1 was re-rendered (a clean launch at interval 4, first 1 flickered; first 2 and 3 did not). 1 reuses cascades 1 to 3.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>1</integer>
+      <integer>2</integer>
     </map>
     <key>FSShadowFarCascadeMaxCameraMove</key>
     <map>
@@ -2714,7 +2714,7 @@
     <key>RenderShadowBlurWithDLSS</key>
     <map>
       <key>Comment</key>
-      <string>Run the two pass blur of the sun shadow / SSAO lightmap (RenderShadowBlurSize) also when DLSS is on. false (the default): with DLSS the blur is left out, the ray traced sun shadow is accumulated over frames and the upscaler averages the rest; about the cost of the sun shadow shader itself.</string>
+      <string>With ray traced sun shadows and the upscaler on (DLSS), the two pass blur of the sun shadow / SSAO lightmap (RenderShadowBlurSize) is left out: the ray traced shadow is accumulated over frames and denoised by the upscaler. true: the blur runs there too (it leaves the ray traced sun shadow channel alone and blurs the SSAO and the spot shadows). With the cascade (legacy) shadows the blur always runs, whether DLSS is on or not.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

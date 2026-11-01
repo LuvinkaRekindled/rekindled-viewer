@@ -35,6 +35,7 @@ uniform vec2 delta;
 uniform vec2 screen_res;
 uniform vec3 kern[4];
 uniform float kern_scale;
+uniform float sun_passthrough;   // <FS> 1: the sun shadow channel (r) keeps its own value and only the SSAO (g) and the spot shadows are blurred (ray traced sun shadow with the upscaler on)
 
 in vec2 vary_fragcoord;
 
@@ -106,6 +107,7 @@ void main()
     }
 
     col /= defined_weight.xyxx;
+    col.r = mix(col.r, ccol.r, sun_passthrough);
     //col.y *= col.y;
 
     frag_color = max(col, vec4(0));
