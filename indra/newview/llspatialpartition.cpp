@@ -1557,6 +1557,51 @@ bool LLSpatialPartition::getVisibleExtents(LLCamera& camera, LLVector3& visMin, 
     return vis.mEmpty;
 }
 
+// <FS> the cascades' cull in pieces (see the declarations in llspatialpartition.h)
+void LLSpatialPartition::cullShadowWhole(LLCamera& camera)
+{
+    LL_CPU_ZONE("updateCull: partition cull");
+    LLOctreeCullShadow culler(&camera);
+    culler.traverse(mOctree);
+}
+
+void LLSpatialPartition::cullShadowSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task)
+{
+    LLOctreeCullShadow culler(&camera);
+    culler.traverseTop(mOctree, levels, descend_more, on_task);
+}
+
+void LLSpatialPartition::cullShadowTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task)
+{
+    LL_CPU_ZONE("updateCull: partition cull");
+    LLOctreeCullShadow culler(&camera);
+    culler.traverseTask(task);
+}
+
+// <FS> the cascades' point cloud in pieces (see the declarations in llspatialpartition.h)
+void LLSpatialPartition::visibleExtentsWhole(LLCamera& camera, LLVector4a& min, LLVector4a& max, bool& empty)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
+    LLOctreeCullVisExtents vis(&camera, min, max);
+    vis.traverse(mOctree);
+    empty = empty && vis.mEmpty;
+}
+
+void LLSpatialPartition::visibleExtentsSplit(LLCamera& camera, LLVector4a& min, LLVector4a& max, bool& empty, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task)
+{
+    LLOctreeCullVisExtents vis(&camera, min, max);
+    vis.traverseTop(mOctree, levels, descend_more, on_task);
+    empty = empty && vis.mEmpty;
+}
+
+void LLSpatialPartition::visibleExtentsTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task, LLVector4a& min, LLVector4a& max, bool& empty)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
+    LLOctreeCullVisExtents vis(&camera, min, max);
+    vis.traverseTask(task);
+    empty = empty && vis.mEmpty;
+}
+
 bool LLSpatialPartition::visibleObjectsInFrustum(LLCamera& camera)
 {
     LLOctreeCullDetectVisible vis(&camera);
@@ -4330,6 +4375,25 @@ void LLCullResult::pushBack(T& head, U32& count, V* val)
     head[count] = val;
     head.push_back(NULL);
     count++;
+}
+
+// <FS> the lists a cull fills (groups, drawables, bridges), without the render maps and the scene table fields that a cull never touches: the results of the pieces of a split cull (LL_VK_SC_SPLIT)
+void LLCullResult::clearLists()
+{
+    mVisibleGroupsSize = 0;
+    mVisibleGroupsEnd = &mVisibleGroups[0];
+    mAlphaGroupsSize = 0;
+    mAlphaGroupsEnd = &mAlphaGroups[0];
+    mRiggedAlphaGroupsSize = 0;
+    mRiggedAlphaGroupsEnd = &mRiggedAlphaGroups[0];
+    mOcclusionGroupsSize = 0;
+    mOcclusionGroupsEnd = &mOcclusionGroups[0];
+    mDrawableGroupsSize = 0;
+    mDrawableGroupsEnd = &mDrawableGroups[0];
+    mVisibleListSize = 0;
+    mVisibleListEnd = &mVisibleList[0];
+    mVisibleBridgeSize = 0;
+    mVisibleBridgeEnd = &mVisibleBridge[0];
 }
 
 void LLCullResult::clear()

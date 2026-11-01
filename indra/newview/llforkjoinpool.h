@@ -141,7 +141,43 @@ public:
             std::lock_guard<std::mutex> lock(mMutex);      // (under the mutex: a worker that is about to sleep cannot miss it)
             mGeneration.fetch_add(1, std::memory_order_release);
         }
-        mWake.notify_all();
+        // <FS> LL_VK_POOL_WAKE (default 1, 0 = notify_all as before): wake only as many sleeping workers as the batch has jobs for besides the launching thread's own share. A batch of one or two jobs (a shadow cascade's
+        // cull) used to wake every sleeper: seven futex wake-ups on the launching thread and seven threads fighting for the mutex to find nothing to do. Workers that are still spinning see the new generation by themselves.
+        static const bool targeted_wake = !getenv("LL_VK_POOL_WAKE") || atoi(getenv("LL_VK_POOL_WAKE")) != 0;
+        static const bool wake_stats = getenv("LL_VK_POOL_WAKE_STATS") != nullptr;
+        const auto notify_t0 = wake_stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+        const int sleepers = mSleeping.load(std::memory_order_acquire);
+        if (targeted_wake && sleepers > 0)
+        {
+            const int want = (int)std::min<size_t>(count > 0 ? count - 1 : 0, (size_t)sleepers);
+            if (want >= sleepers)
+            {
+                mWake.notify_all();
+            }
+            else
+            {
+                for (int i = 0; i < want; ++i)
+                {
+                    mWake.notify_one();
+                }
+            }
+        }
+        else if (!targeted_wake)
+        {
+            mWake.notify_all();
+        }
+        if (wake_stats)
+        {
+            static std::atomic<unsigned long long> launches{ 0 }, notify_ns{ 0 }, sleeper_sum{ 0 }, job_sum{ 0 };
+            notify_ns += (unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - notify_t0).count();
+            sleeper_sum += (unsigned long long)sleepers;
+            job_sum += count;
+            if (++launches % 3000 == 0)
+            {
+                LL_INFOS("ForkJoin") << "pool launches (every 3000): " << (double)notify_ns.load() / launches.load() / 1000.0 << " us a launch spent waking, " << (double)sleeper_sum.load() / launches.load()
+                    << " workers asleep at a launch, " << (double)job_sum.load() / launches.load() << " jobs a launch (targeted wake " << (targeted_wake ? "on" : "off") << ")" << LL_ENDL;
+            }
+        }
         Handle h;
         h.mSlot = slot;
         h.mTag = tag;
@@ -338,7 +374,9 @@ private:
             if (!spinUntil([&] { return mStop.load(std::memory_order_relaxed) || mGeneration.load(std::memory_order_acquire) != seen; }, 150))
             {
                 std::unique_lock<std::mutex> lock(mMutex);
+                ++mSleeping;        // (under the mutex: a launch that reads it afterwards counts this worker; one that read it before has already changed the generation, which the predicate below sees)
                 mWake.wait(lock, [&] { return mStop.load() || mGeneration.load(std::memory_order_acquire) != seen; });
+                --mSleeping;
             }
             if (mStop.load())
             {
@@ -473,6 +511,7 @@ private:
     std::vector<std::thread> mThreads;
     std::mutex mMutex;
     std::condition_variable mWake;
+    std::atomic<int> mSleeping{ 0 };       // workers waiting on mWake (LL_VK_POOL_WAKE)
     std::condition_variable mDone;
     Batch mBatches[kSlots];
     std::atomic<unsigned long long> mSerial{ 0 };
