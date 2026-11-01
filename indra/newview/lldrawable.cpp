@@ -31,6 +31,7 @@
 #include "llattcensus.h"
 #include "llviewertexturerecs.h"
 #include <mutex>
+#include <atomic>
 
 // library includes
 #include "material_codes.h"
@@ -170,8 +171,21 @@ void LLDrawable::initClass()
 }
 
 
+std::string fs_stack_here(int skip, int max_frames);
+
 void LLDrawable::destroy()
 {
+    // <FS> LL_VK_DRAWABLE_TRACE (default on while the moved list crash of 2026-11-01 is open, 0 = off): a drawable freed while the moved list still holds it. The list holds a counted pointer, so this is a reference
+    // released one time too many; the stack is the code that released the last one. (lap rp4-scchk1: updateMovedListSerial read entry 0 of 89 after it was freed)
+    static const bool trace = getenv("LL_VK_DRAWABLE_TRACE") ? atoi(getenv("LL_VK_DRAWABLE_TRACE")) != 0 : true;
+    if (trace && isState(ON_MOVE_LIST) && gPipeline.mInitialized && gPipeline.inMovedList(this))
+    {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 8)
+        {
+            LL_WARNS("DrawableTrace") << "a drawable is freed while the moved list holds it (state " << (U32)mState << ", dead " << isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
+        }
+    }
     if (gDebugRender)
     {
         gPipeline.checkReferences(this);
