@@ -40,6 +40,8 @@ namespace LLVkAsync
     void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size);
     // runs fn on the worker after everything queued before it, and waits for it to finish
     void syncCall(const std::function<void()>& fn);
+    // <FS> LL_VK_SYNC_LOG (default on): the main thread's waits in syncCall are timed by the function that called it and reported every 10 s (VkSync); the symbolizer names an address
+    void setSymbolizer(std::string (*fn)(const void*));
     // bytes the worker has yet to replay (what the main thread has written and the worker has not taken): a syncCall waits for all of it
     unsigned long long backlogBytes();
 

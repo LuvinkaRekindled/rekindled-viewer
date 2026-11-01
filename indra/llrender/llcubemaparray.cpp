@@ -116,21 +116,22 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
 
     // Copy each cubemap from the incoming array to the new array
     U32 min_count = std::min(count, lhs.mCount);
-    for (U32 i = 0; i < min_count * 6; ++i)
+    // <FS> the image read back below is that of the NEW array (mImage), the same for every layer (nothing in the loop changes what it reads), and a readback makes the main thread wait for the whole worker queue
+    // (76 waits, 500 ms in the 10 s of a login, worst 228 ms: LL_VK_SYNC_LOG): it is read back and scaled once, and written to each layer
+    if (min_count > 0)
     {
-        U32 src_resolution = lhs.mWidth;
-        U32 dst_resolution = mWidth;
+        PixelFormat components = PixelFormat::RGB;
+        if (mImage->getComponents() == 4)
+            components = PixelFormat::RGBA;
+        // S32 format = GL_RGB; // <FS:Beq/> unused
+
+        // Handle different resolutions by scaling the image
+        LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
+        LLVkTex::getImage(mImage->getTexName(), TextureTarget::CubeArray, 0, components, ComponentType::U8, src_image->getData());
+
+        LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
+        for (U32 i = 0; i < min_count * 6; ++i)
         {
-            PixelFormat components = PixelFormat::RGB;
-            if (mImage->getComponents() == 4)
-                components = PixelFormat::RGBA;
-            // S32 format = GL_RGB; // <FS:Beq/> unused
-
-            // Handle different resolutions by scaling the image
-            LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
-            LLVkTex::getImage(mImage->getTexName(), TextureTarget::CubeArray, 0, components, ComponentType::U8, src_image->getData());
-
-            LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
             LLVkTex::subImage3D(mImage->getTexName(), TextureTarget::CubeArray, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
         }
     }
