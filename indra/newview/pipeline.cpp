@@ -2343,6 +2343,17 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     for (const AvOp* op_ptr = begin; op_ptr != end; ++op_ptr)
     {
         const AvOp& op = *op_ptr;
+        // <FS> the recorded request names its drawable by a raw pointer, made on a pool thread and replayed here: one that was freed since is not touched (and a moved list entry made of it would dangle). Logged with the stack of its destruction.
+        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !fs_drawable_looks_live(op.mDrawable))
+        {
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 8)
+            {
+                LL_WARNS("DrawableTrace") << "an avatar attachment request (kind " << (int)op.mKind << ") names a drawable that is already freed (" << (const void*)op.mDrawable << "), dropped; "
+                    << fs_drawable_destroy_info(op.mDrawable) << LL_ENDL;
+            }
+            continue;
+        }
         ++by_kind[op.mKind];
         switch (op.mKind)
         {
@@ -2649,6 +2660,24 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
     while (next < moved_list.size())
     {
         const size_t cur = next++;
+        // <FS> an entry that is not a live drawable any more (the crashes of 2026-11-01 read a freed one at the start of the pass): logged with the stack of its destruction, taken off the list without touching it
+        // (the slot is cleared in place: dropping the LLPointer would write the reference count of freed memory)
+        if (const LLDrawable* raw = moved_list[cur].get())
+        {
+            if (!fs_drawable_looks_live(raw))
+            {
+                static std::atomic<int> logged{0};
+                if (logged.fetch_add(1) < 8)
+                {
+                    LL_WARNS("DrawableTrace") << "moved list entry " << cur << " of " << moved_list.size() << " (" << (const void*)raw << ") is not a live drawable; dropped; " << fs_drawable_destroy_info(raw) << LL_ENDL;
+                }
+                static_assert(sizeof(LLPointer<LLDrawable>) == sizeof(void*), "the slot is cleared as one pointer");
+                *reinterpret_cast<void**>(&moved_list[cur]) = nullptr;
+                moved_list.erase(moved_list.begin() + cur);
+                next = cur;
+                continue;
+            }
+        }
         // <FS> a counted reference for the pass over this entry: updateMove can unlink the drawable (unlinkDrawable erases its entry, which was the last reference), and the raw pointer was then used freed
         // (crashes of 2026-11-01 in updateMovedListSerial: the dump stopped at isRoot() after updateMove and clearState on the freed drawable, ~33 s after the login)
         LLPointer<LLDrawable> hold = moved_list[cur];

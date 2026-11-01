@@ -172,9 +172,105 @@ void LLDrawable::initClass()
 
 
 std::string fs_stack_here(int skip, int max_frames);
+std::string fs_describe_frame(const void* pc);
+
+// <FS> the ring of destroyed drawables (see lldrawable.h)
+namespace
+{
+    struct DestroyRec
+    {
+        const void* mAddr = nullptr;
+        U32 mThread = 0;
+        U32 mFrame = 0;
+        U32 mSeq = 0;
+        USHORT mDepth = 0;
+        void* mFrames[18] = {};
+    };
+    constexpr U32 kDestroyRing = 8192;
+    DestroyRec sDestroyRing[kDestroyRing];
+    std::atomic<U32> sDestroyNext{0};
+
+    bool ring_on()
+    {
+        static const bool on = getenv("LL_VK_DRAWABLE_RING") ? atoi(getenv("LL_VK_DRAWABLE_RING")) != 0 : true;
+        return on;
+    }
+
+    void ring_note(const void* p)
+    {
+        const U32 seq = sDestroyNext.fetch_add(1);
+        DestroyRec& r = sDestroyRing[seq % kDestroyRing];
+        r.mAddr = nullptr;                      // (a reader that meets it half written sees no address)
+        r.mThread = GetCurrentThreadId();
+        r.mFrame = LLViewerOctreeEntryData::getCurrentFrame();
+        r.mSeq = seq;
+        r.mDepth = CaptureStackBackTrace(2, 18, r.mFrames, nullptr);
+        r.mAddr = p;
+    }
+
+    // the first word of the object, read under a handler (a freed block can be unmapped)
+    bool read_first_word(const void* p, const void*& word)
+    {
+        __try
+        {
+            word = *(const void* const*)p;
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+}
+
+bool fs_drawable_looks_live(const void* p)
+{
+    static const char* image_base = (const char*)GetModuleHandle(nullptr);
+    static const size_t image_size = []()
+    {
+        const IMAGE_DOS_HEADER* dos = (const IMAGE_DOS_HEADER*)image_base;
+        const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(image_base + dos->e_lfanew);
+        return (size_t)nt->OptionalHeader.SizeOfImage;
+    }();
+    const void* word = nullptr;
+    if (!p || !read_first_word(p, word))
+    {
+        return false;
+    }
+    const char* w = (const char*)word;
+    return w >= image_base && w < image_base + image_size;
+}
+
+std::string fs_drawable_destroy_info(const void* p)
+{
+    if (!ring_on())
+    {
+        return "(the ring is off: LL_VK_DRAWABLE_RING=0)";
+    }
+    const U32 newest = sDestroyNext.load();
+    const U32 count = std::min(newest, kDestroyRing);
+    for (U32 k = 0; k < count; ++k)
+    {
+        const DestroyRec& r = sDestroyRing[(newest - 1 - k) % kDestroyRing];
+        if (r.mAddr == p)
+        {
+            std::string text = llformat("destroyed %u destructions ago, in frame %u (now frame %u), on thread %lu (main %lu):\n", k, r.mFrame, LLViewerOctreeEntryData::getCurrentFrame(), (unsigned long)r.mThread, (unsigned long)GetCurrentThreadId());
+            for (USHORT i = 0; i < r.mDepth; ++i)
+            {
+                text += llformat("  %s\n", fs_describe_frame(r.mFrames[i]).c_str());
+            }
+            return text;
+        }
+    }
+    return llformat("not among the last %u destroyed drawables (%u destroyed so far): not freed by ~LLDrawable, or longer ago", count, newest);
+}
 
 void LLDrawable::destroy()
 {
+    if (ring_on())
+    {
+        ring_note(this);
+    }
     // <FS> LL_VK_DRAWABLE_TRACE (default on while the moved list crash of 2026-11-01 is open, 0 = off): a drawable freed while the moved list still holds it. The list holds a counted pointer, so this is a reference
     // released one time too many; the stack is the code that released the last one. (lap rp4-scchk1: updateMovedListSerial read entry 0 of 89 after it was freed)
     static const bool trace = getenv("LL_VK_DRAWABLE_TRACE") ? atoi(getenv("LL_VK_DRAWABLE_TRACE")) != 0 : true;
