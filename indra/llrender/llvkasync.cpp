@@ -1041,27 +1041,16 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
 namespace
 {
 std::string (*gSymbolizer)(const void*) = nullptr;
-struct SyncSite { U64 mCalls = 0; double mTotalMs = 0.0, mMaxMs = 0.0; };
-struct SyncKey { const void* mA; const void* mB; bool operator==(const SyncKey& o) const { return mA == o.mA && mB == o.mB; } };
+struct SyncSite { U64 mCalls = 0; double mTotalMs = 0.0, mMaxMs = 0.0; const void* mThird = nullptr; };
+struct SyncKey { const void* mA; const void* mB; const void* mC = nullptr; bool operator==(const SyncKey& o) const { return mA == o.mA && mB == o.mB; } };
 struct SyncKeyHash { size_t operator()(const SyncKey& k) const { return std::hash<const void*>()(k.mA) * 31 + std::hash<const void*>()(k.mB); } };
 std::unordered_map<SyncKey, SyncSite, SyncKeyHash> gSyncSites;
 double gSyncTotalMs = 0.0;
 U64 gSyncCalls = 0;
 LONGLONG gSyncReportAt = 0;
 
-void sync_note(const SyncKey& caller, double ms)
+void sync_report_if_due(bool counted)
 {
-    static const bool on = getenv("LL_VK_SYNC_LOG") == nullptr || atoi(getenv("LL_VK_SYNC_LOG")) != 0;
-    if (!on)
-    {
-        return;
-    }
-    SyncSite& s = gSyncSites[caller];
-    ++s.mCalls;
-    s.mTotalMs += ms;
-    s.mMaxMs = std::max(s.mMaxMs, ms);
-    gSyncTotalMs += ms;
-    ++gSyncCalls;
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&freq);
@@ -1071,21 +1060,41 @@ void sync_note(const SyncKey& caller, double ms)
     }
     if (now.QuadPart - gSyncReportAt >= 10 * freq.QuadPart)
     {
-        std::vector<std::pair<SyncKey, SyncSite>> rows(gSyncSites.begin(), gSyncSites.end());
-        std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.mTotalMs > b.second.mTotalMs; });
-        std::string text = "main thread waited in syncCall over the last 10 s: " + std::to_string(gSyncCalls) + " calls, " + std::to_string((int)gSyncTotalMs) + " ms in all;";
-        for (size_t i = 0; i < rows.size() && i < 8; ++i)
+        if (gSyncCalls)
         {
-            char buf[128];
-            snprintf(buf, sizeof(buf), " [%llu calls, %.1f ms, max %.1f ms] ", (unsigned long long)rows[i].second.mCalls, rows[i].second.mTotalMs, rows[i].second.mMaxMs);
-            text += buf + (gSymbolizer ? gSymbolizer(rows[i].first.mA) + " < " + gSymbolizer(rows[i].first.mB) : std::to_string((unsigned long long)(uintptr_t)rows[i].first.mA));
+            std::vector<std::pair<SyncKey, SyncSite>> rows(gSyncSites.begin(), gSyncSites.end());
+            std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.mTotalMs > b.second.mTotalMs; });
+            std::string text = "main thread waited in syncCall over the last 10 s: " + std::to_string(gSyncCalls) + " calls, " + std::to_string((int)gSyncTotalMs) + " ms in all;";
+            for (size_t i = 0; i < rows.size() && i < 8; ++i)
+            {
+                char buf[128];
+                snprintf(buf, sizeof(buf), " [%llu calls, %.1f ms, max %.1f ms] ", (unsigned long long)rows[i].second.mCalls, rows[i].second.mTotalMs, rows[i].second.mMaxMs);
+                text += buf + (gSymbolizer ? gSymbolizer(rows[i].first.mA) + " < " + gSymbolizer(rows[i].first.mB) + " < " + gSymbolizer(rows[i].second.mThird) : std::to_string((unsigned long long)(uintptr_t)rows[i].first.mA));
+            }
+            LL_INFOS("VkSync") << text << LL_ENDL;
+            gSyncSites.clear();
+            gSyncTotalMs = 0.0;
+            gSyncCalls = 0;
         }
-        LL_INFOS("VkSync") << text << LL_ENDL;
-        gSyncSites.clear();
-        gSyncTotalMs = 0.0;
-        gSyncCalls = 0;
         gSyncReportAt = now.QuadPart;
     }
+}
+
+void sync_note(const SyncKey& caller, double ms)
+{
+    static const bool on = getenv("LL_VK_SYNC_LOG") == nullptr || atoi(getenv("LL_VK_SYNC_LOG")) != 0;
+    if (!on)
+    {
+        return;
+    }
+    SyncSite& s = gSyncSites[caller];
+    s.mThird = caller.mC;
+    ++s.mCalls;
+    s.mTotalMs += ms;
+    s.mMaxMs = std::max(s.mMaxMs, ms);
+    gSyncTotalMs += ms;
+    ++gSyncCalls;
+    sync_report_if_due(true);
 }
 }
 
@@ -1096,13 +1105,14 @@ void setSymbolizer(std::string (*fn)(const void*))
 
 void syncCall(const std::function<void()>& fn)
 {
-    SyncKey caller = { _ReturnAddress(), nullptr };
+    SyncKey caller = { _ReturnAddress(), nullptr, nullptr };
     {
-        void* up[3] = {};
-        if (CaptureStackBackTrace(1, 3, up, nullptr) >= 2)
+        void* up[4] = {};
+        if (CaptureStackBackTrace(1, 4, up, nullptr) >= 3)
         {
             caller.mA = up[0];
             caller.mB = up[1];          // (the function that called the one that waits: getImage is called by readBackRaw, the cube map array, ...)
+            caller.mC = up[2];          // and the one that called that (shown, not part of the key)
         }
     }
     LARGE_INTEGER t0;
@@ -1361,6 +1371,7 @@ std::string pacingReport()
 void frameBegin(S32 width, S32 height)
 {
     note_gap(gBeginGaps, gLastBeginTick);
+    sync_report_if_due(false);         // <FS> LL_VK_SYNC_LOG: the main thread's own waits are reported from here too, so a quiet spell does not hold a report back
     const long long wait_start = now_ticks();
     // how many frames the main thread may be ahead of the worker: one keeps the frame times even (LL_VK_ASYNC_DEPTH overrides, for comparing)
     static const unsigned depth = []() { const char* v = getenv("LL_VK_ASYNC_DEPTH"); return v ? (unsigned)std::max(1, atoi(v)) : 1u; }();

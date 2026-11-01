@@ -2933,11 +2933,22 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
 
     if (need_readback)
     {
-        readbackRawImage();
-        if (mIsRawImageValid)
+        // <FS> A read back waits for the render worker to replay everything queued before it (two waits: the level query and the image): in a login 50 textures asked for one in 10 s, 430 ms of the main
+        // thread's time (LL_VK_SYNC_LOG). When the worker is far behind, or enough were made this frame, the callbacks stay in the list and are tried again in a later frame (the entries are not run, so
+        // nothing is lost: this function is called again for a texture that still has callbacks).
+        if (!LLVkBridge::readbackAffordable())
         {
-            current_raw_discard = mRawDiscardLevel;
-            current_raw_image = mRawImage;
+            need_readback = false;
+            run_raw_callbacks = false;
+        }
+        else
+        {
+            readbackRawImage();
+            if (mIsRawImageValid)
+            {
+                current_raw_discard = mRawDiscardLevel;
+                current_raw_image = mRawImage;
+            }
         }
     }
 
