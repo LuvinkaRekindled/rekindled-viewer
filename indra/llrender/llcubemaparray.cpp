@@ -125,11 +125,10 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
             components = PixelFormat::RGBA;
         // S32 format = GL_RGB; // <FS:Beq/> unused
 
-        // Handle different resolutions by scaling the image
-        LLPointer<LLImageRaw> src_image = new LLImageRaw(lhs.mWidth, lhs.mWidth, lhs.mImage->getComponents());
-        LLVkTex::getImage(mImage->getTexName(), TextureTarget::CubeArray, 0, components, ComponentType::U8, src_image->getData());
-
-        LLPointer<LLImageRaw> scaled_image = src_image->scaled(mWidth, mWidth);
+        // <FS> what was read back was the new array's own level 0 (nothing was ever copied from lhs), which holds no data yet: the layers are written black, without the wait for the worker (the probes are
+        // rendered again after a resize). A true copy of the old array would be a copy on the GPU (not done).
+        LLPointer<LLImageRaw> scaled_image = new LLImageRaw(mWidth, mWidth, mImage->getComponents());
+        scaled_image->clear(0, 0, 0, 0);
         for (U32 i = 0; i < min_count * 6; ++i)
         {
             LLVkTex::subImage3D(mImage->getTexName(), TextureTarget::CubeArray, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
