@@ -141,6 +141,11 @@ struct Group
     F32 mModel[16] = {};
     std::vector<Range> mRanges;
     std::vector<U16> mRangeHold;        // parallel to mRanges: resident casters holding the range (holdRange)
+    // <FS> parallel to mRanges: the epochs of the vertex and index buffer when the range was last noted (~0ull: not known). A range noted for an earlier epoch names positions of contents the name no longer holds
+    // (the buffer was respecified, deleted or recycled since), and is left out of a build until it is noted again: it used to be built from, and failed the data check (the bad range warnings), or, on a
+    // device written buffer that the CPU cannot check, went to the GPU.
+    std::vector<std::pair<U64, U64>> mRangeEpochs;
+    std::vector<U64> mRangeStale;       // parallel to mRanges: the frame the range was first found stale (noted for an earlier epoch) and not noted since, 0 = not stale
     bool mManaged = false;              // a resident caster has held a range: the structure covers exactly mRanges, not everything ever named
     std::vector<AlphaInfo> mAlpha;      // kind 1: parallel to mRanges
     U32 mId = ~0u;                      // its row in sSeenRows (the per-pass note stamps live there, contiguous)
@@ -1714,6 +1719,14 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta)
         // nothing holds the range any more: it leaves the group, and the scene call looks at the group (its structure may cover a range that is not wanted now)
         g->mRanges.erase(g->mRanges.begin() + k);
         g->mRangeHold.erase(g->mRangeHold.begin() + k);
+        if (k < g->mRangeEpochs.size())
+        {
+            g->mRangeEpochs.erase(g->mRangeEpochs.begin() + k);
+        }
+        if (k < g->mRangeStale.size())
+        {
+            g->mRangeStale.erase(g->mRangeStale.begin() + k);
+        }
         if (k < g->mAlpha.size())
         {
             g->mAlpha.erase(g->mAlpha.begin() + k);
@@ -1840,10 +1853,31 @@ void noteCaster(const Caster& c, CasterRef* ref)
     }
     std::vector<Range>& ranges = g.mRanges;
     const Range r = { c.mFirst, c.mCount };
+    // <FS> the buffers' epochs of this note (~0ull: the note carried no buffer info)
+    const std::pair<U64, U64> note_epochs = (c.mVi.mAddress && c.mIi.mAddress) ? std::make_pair((U64)c.mVi.mEpoch, (U64)c.mIi.mEpoch) : std::make_pair(~0ull, ~0ull);
+    g.mRangeEpochs.resize(ranges.size(), std::make_pair(~0ull, ~0ull));
     for (size_t k = 0; k < ranges.size(); ++k)
     {
         if (ranges[k] == r)
         {
+            g.mRangeEpochs[k] = note_epochs;
+            if (k < g.mRangeStale.size())
+            {
+                if (g.mRangeStale[k])
+                {
+                    // <FS> how long a range was stale before a note renewed it (frames): the histogram is logged every 500 renewals
+                    static U64 buckets[5] = {}, renewed = 0;
+                    const U64 since = g.mRangeStale[k] & ~(1ull << 63);
+                    const U64 now_frame = frame_tag - 1;
+                    const U64 dur = now_frame > since ? now_frame - since : 0;
+                    ++buckets[dur <= 2 ? 0 : dur <= 8 ? 1 : dur <= 30 ? 2 : dur <= 240 ? 3 : 4];
+                    if (++renewed % 500 == 0 || renewed == 20)
+                    {
+                        LL_INFOS("VkRt") << "stale ranges noted again after (frames): up to 2: " << buckets[0] << ", up to 8: " << buckets[1] << ", up to 30: " << buckets[2] << ", up to 240: " << buckets[3] << ", longer: " << buckets[4] << " (" << renewed << " renewals)" << LL_ENDL;
+                    }
+                }
+                g.mRangeStale[k] = 0;               // noted again: not stale
+            }
             if (c.mAlpha && memcmp(&g.mAlpha[k], c.mAlpha, sizeof(AlphaInfo)) != 0)
             {
                 g.mAlpha[k] = *c.mAlpha;                // the textures (or the material) may have changed
@@ -1858,6 +1892,8 @@ void noteCaster(const Caster& c, CasterRef* ref)
     {
         ranges.push_back(r);
         g.mRangeHold.push_back(0);
+        g.mRangeEpochs.push_back(note_epochs);
+        g.mRangeStale.resize(ranges.size(), 0);
         ++sStats.mDirtyWhy[3];
         mark_dirty(g);
         g.mAlpha.push_back(c.mAlpha ? *c.mAlpha : AlphaInfo());
@@ -2437,6 +2473,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             b.mBad.clear();                     // the data was written: look at the ranges again
         }
+        std::vector<size_t> stale_drop;         // <FS> ranges stale for over the limit (see below), taken out of the group after the loop
+        g.mRangeStale.resize(g.mRanges.size(), 0);
         for (size_t k = 0; k < g.mRanges.size(); ++k)
         {
             const Range& r = g.mRanges[k];
@@ -2444,6 +2482,50 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 continue;                       // outside the data (a stale range)
             }
+            static const bool epoch_check = getenv("LL_VK_RT_EPOCH") == nullptr || atoi(getenv("LL_VK_RT_EPOCH")) != 0;       // (0 = built from whatever was noted, as before)
+            if (epoch_check && k < g.mRangeEpochs.size() && g.mRangeEpochs[k].first != ~0ull && (g.mRangeEpochs[k].first != vi.mEpoch || g.mRangeEpochs[k].second != ii.mEpoch))
+            {
+                // <FS> noted for buffers of an earlier epoch (respecified, deleted or recycled since): not built from until it is noted again
+                static U64 stale_epoch = 0;
+                if (stale_epoch++ < 20 || stale_epoch % 1000 == 0)
+                {
+                    LL_INFOS("VkRt") << "a range noted for an earlier epoch is left out of the build: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " range first " << r.mFirst << " count " << r.mCount << " (noted at vb epoch "
+                                     << g.mRangeEpochs[k].first << ", ib epoch " << g.mRangeEpochs[k].second << "; now " << vi.mEpoch << ", " << ii.mEpoch << "), " << stale_epoch << " so far" << LL_ENDL;
+                }
+                // <FS> how long: a range that stays stale and is not held (nothing notes it again: its owner is gone, the name was recycled) leaves the group after LL_VK_RT_STALE_FRAMES (default 240) frames,
+                // so that it is not looked at at every scene call for ever. A held range (a resident caster holds it, and only a full note of that caster renews it) is never dropped here: one that stays
+                // stale means the resident side did not notice the respecify, which is logged (HELD) so it can be fixed there.
+                static const U64 stale_limit = getenv("LL_VK_RT_STALE_FRAMES") ? (U64)atoll(getenv("LL_VK_RT_STALE_FRAMES")) : 240;
+                const U64 now_frame = ctx.getFrameNumber();
+                constexpr U64 kReported = 1ull << 63;       // (the top bit of the stale frame: this range was reported as held and stale)
+                if (!g.mRangeStale[k])
+                {
+                    g.mRangeStale[k] = now_frame ? now_frame : 1;
+                }
+                const U64 stale_age = now_frame - (g.mRangeStale[k] & ~kReported);
+                const bool held = k < g.mRangeHold.size() && g.mRangeHold[k] > 0;
+                if (held)
+                {
+                    static U64 held_stale = 0;
+                    if (stale_age >= stale_limit && !(g.mRangeStale[k] & kReported))
+                    {
+                        g.mRangeStale[k] |= kReported;
+                        ++held_stale;
+                        if (held_stale <= 40 || held_stale % 100 == 0)
+                        {
+                            LL_WARNS("VkRt") << "a HELD range stays stale (" << stale_age << " frames): the resident side did not note it again after the buffers were respecified: vb " << g.mKey.mVb << " ib " << g.mKey.mIb
+                                             << " range first " << r.mFirst << " count " << r.mCount << ", holds " << g.mRangeHold[k] << ", kind " << g.mKey.mKind << ", noted at vb epoch " << g.mRangeEpochs[k].first
+                                             << ", ib epoch " << g.mRangeEpochs[k].second << ", now " << vi.mEpoch << ", " << ii.mEpoch << "; " << held_stale << " so far" << LL_ENDL;
+                        }
+                    }
+                }
+                else if (stale_limit && stale_age > stale_limit)
+                {
+                    stale_drop.push_back(k);
+                }
+                continue;
+            }
+            g.mRangeStale[k] = 0;
             if (!b.mBad.empty() && std::find(b.mBad.begin(), b.mBad.end(), r.id()) != b.mBad.end())
             {
                 continue;                       // failed the data check for these buffer versions
@@ -2453,6 +2535,25 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 want.push_back(r);
                 grew = true;
             }
+        }
+        if (!stale_drop.empty())
+        {
+            for (size_t i = stale_drop.size(); i-- > 0;)
+            {
+                const size_t k = stale_drop[i];
+                g.mRanges.erase(g.mRanges.begin() + k);
+                if (k < g.mRangeHold.size()) { g.mRangeHold.erase(g.mRangeHold.begin() + k); }
+                if (k < g.mRangeEpochs.size()) { g.mRangeEpochs.erase(g.mRangeEpochs.begin() + k); }
+                if (k < g.mRangeStale.size()) { g.mRangeStale.erase(g.mRangeStale.begin() + k); }
+                if (k < g.mAlpha.size()) { g.mAlpha.erase(g.mAlpha.begin() + k); }
+            }
+            static U64 dropped_stale = 0;
+            dropped_stale += stale_drop.size();
+            if (dropped_stale <= 20 || dropped_stale % 500 < stale_drop.size())
+            {
+                LL_INFOS("VkRt") << stale_drop.size() << " range(s) stale for over the limit left the group of vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " (" << g.mRanges.size() << " left), " << dropped_stale << " dropped so far" << LL_ENDL;
+            }
+            mark_dirty(g);
         }
         {
             // the ranges taken over from the structure (b.mBuilt) were checked against the index buffer they were built over: a rebuild after the buffer shrank or was rewritten smaller
