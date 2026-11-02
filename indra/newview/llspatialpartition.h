@@ -183,6 +183,7 @@ public:
     U8   mShiny = 0;
     bool mFullbright = false;
     bool mHasGlow = false;
+    bool mParticleRows = false;         // <FS> GPU particles stage 1 (PLAN-gpu-particles.md): the buffer holds one row a particle (not four vertices), mOffset / mCount are 6 vertices a particle: the pull shaders expand each row to a quad
     // <FS> S7 B0 (doc/vulkan/S7-design.md section 13): the union of the extents of the faces this draw covers (agent space for a static drawable, the drawable's own space for an active one: the model
     // matrix maps it); only filled for volume faces while LL_VK_VISCENSUS is on (LLVolumeGeometryManager::registerFace)
     LLVector4a mExtents[2];
@@ -747,6 +748,7 @@ public:
     virtual void addGeometryCount(LLSpatialGroup* group, U32 &vertex_count, U32& index_count);
     virtual F32 calcPixelArea(LLSpatialGroup* group, LLCamera& camera);
 protected:
+    bool rebuildRows(LLSpatialGroup* group);        // <FS> GPU particles stage 1: one row a particle for the pull shaders (false: the group needs the quads, nothing was changed)
     U32 mRenderPass;
 };
 

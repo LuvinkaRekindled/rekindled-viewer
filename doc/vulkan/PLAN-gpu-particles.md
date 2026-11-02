@@ -25,3 +25,5 @@ Decision: particles move to the GPU. Reasons given: no real downside, sims full 
 About 0.3 ms of main thread in the plaza, GPU draw negligible: the plaza alone does not pay for it. The club and spam sims do; the census there fixes the order of work.
 
 **Update 2026-11-02:** measured again with the census (`mt3-`, `mt4-`, plan 8.35): the particle partition rebuild is about 0.6 ms a frame (about 16 different groups at 40 us, none rebuilt twice) and `updateParticles` 0.36 ms: about 1.0 ms of the main thread in the plaza, not 0.3 ms. Stage 1 alone removes the 0.6 ms.
+
+**Stage 1 built 2026-11-02 (plan 8.36):** rows for the pull shaders, ribbons included, switch `LL_VK_GPU_PARTICLES`. The group rebuild is 40% cheaper (38 -> 22 kcycles); the per-particle `LLFace` setup in `updateGeometry` (60 kcycles a call) is now the larger part: stage 1b removes the face. Not yet looked at by Adam.

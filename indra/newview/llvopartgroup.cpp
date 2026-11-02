@@ -227,9 +227,38 @@ LLVector3 LLVOPartGroup::getCameraPosition() const
     return gAgentCamera.getCameraPositionAgent();
 }
 
+// <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): where a particle group rebuild spends its time (log tag Q1Census, every 3000 rebuilds)
+static struct ParticleRebuildStats
+{
+    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0;
+} sPartStats;
+
+// GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
+static bool fs_gpu_particles_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLES"); return !v || atoi(v) != 0; }();
+    return on;
+}
+
+static void fs_particle_stats_log()
+{
+    const double n = 3000.0, k = 1000.0;
+    const double legacy = std::max<double>(1.0, n - (double)sPartStats.mRows);
+    const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
+    LL_INFOS("Q1Census") << "rows path kcycles a rebuild: gather " << sPartStats.mRGather / rr / k << ", clearDrawMap " << sPartStats.mRClear / rr / k << ", sort " << sPartStats.mRSort / rr / k << ", buffer " << sPartStats.mRBuffer / rr / k
+        << ", rows + draw infos " << sPartStats.mRWrite / rr / k << " (ribbon particles a rebuild " << sPartStats.mRRibbons / rr << ")" << LL_ENDL;
+    LL_INFOS("Q1Census") << "particle group rebuild, kcycles a rebuild over 3000 (" << sPartStats.mRows << " as rows for the GPU, " << (U64)legacy << " as quads): rows " << (sPartStats.mRows ? sPartStats.mRowsCycles / (double)sPartStats.mRows / k : 0.0)
+        << " (" << (sPartStats.mRows ? sPartStats.mRowsParticles / (double)sPartStats.mRows : 0.0) << " particles) | quads: total " << sPartStats.mTotal / legacy / k << " = face count " << sPartStats.mCount / legacy / k << " + sort " << sPartStats.mSort / legacy / k
+        << " + corner math " << sPartStats.mCorners / legacy / k << " + the rest " << (sPartStats.mTotal - sPartStats.mCount - sPartStats.mSort - sPartStats.mCorners) / legacy / k
+        << " (" << sPartStats.mParticles / legacy << " particles); of the quads: " << sPartStats.mBailRibbon << " groups left with a ribbon particle (" << (sPartStats.mBailRibbon ? sPartStats.mBailRibbonParts / (double)sPartStats.mBailRibbon : 0.0) << " particles each), "
+        << sPartStats.mHud << " HUD groups (" << (sPartStats.mHud ? sPartStats.mHudParts / (double)sPartStats.mHud : 0.0) << " each); LLVOPartGroup::updateGeometry in the same window: " << sPartStats.mGeomCalls << " calls, " << (sPartStats.mGeomCalls ? sPartStats.mGeomCycles / (double)sPartStats.mGeomCalls / k : 0.0) << " kcycles a call" << LL_ENDL;
+    sPartStats = ParticleRebuildStats();
+}
+
 bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
 {
     LL_PROFILE_ZONE_SCOPED;
+    struct GeomTimer { U64 t0 = __rdtsc(); ~GeomTimer() { sPartStats.mGeomCycles += __rdtsc() - t0; ++sPartStats.mGeomCalls; } } geom_timer;
 
     dirtySpatialGroup();
 
@@ -690,6 +719,23 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
         group->mLastUpdateViewAngle = group->mViewAngle;
     }
 
+    const unsigned long long ps_t0 = __rdtsc();
+    if (mPartitionType != LLViewerRegion::PARTITION_PARTICLE)
+    {
+        ++sPartStats.mHud;
+    }
+    if (mPartitionType == LLViewerRegion::PARTITION_PARTICLE && fs_gpu_particles_on() && rebuildRows(group))
+    {
+        group->mLastUpdateTime = gFrameTimeSeconds;
+        group->clearState(LLSpatialGroup::GEOM_DIRTY);
+        sPartStats.mRowsCycles += __rdtsc() - ps_t0;
+        ++sPartStats.mRows;
+        if (++sPartStats.mRebuilds % 3000 == 0)
+        {
+            fs_particle_stats_log();
+        }
+        return;
+    }
     group->clearDrawMap();
 
     //get geometry count
@@ -697,6 +743,12 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     U32 vertex_count = 0;
 
     addGeometryCount(group, vertex_count, index_count);
+    sPartStats.mCount += __rdtsc() - ps_t0;
+    sPartStats.mParticles += vertex_count / 4;
+    if (mPartitionType != LLViewerRegion::PARTITION_PARTICLE)
+    {
+        sPartStats.mHudParts += vertex_count / 4;
+    }
 
 
     if (vertex_count > 0 && index_count > 0)
@@ -750,6 +802,195 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
 
     group->mLastUpdateTime = gFrameTimeSeconds;
     group->clearState(LLSpatialGroup::GEOM_DIRTY);
+    sPartStats.mTotal += __rdtsc() - ps_t0;
+    if (++sPartStats.mRebuilds % 3000 == 0)
+    {
+        fs_particle_stats_log();
+    }
+}
+
+// <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): the group's particles as rows (position, velocity for a follow-velocity particle, half size, colour, glow) in the vertex buffer, in
+// back to front order; the alpha pull shaders make the camera facing quad of each (alphaPullV.glsl, emissivePullV.glsl: flags & GEO_PARTICLE_ROWS). Draws by texture / blend / fullbright as the quads
+// path did. A group with a ribbon particle keeps the quads path (false: nothing changed).
+bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
+{
+    struct Entry { F32 mDist; LLViewerPart* mPart; LLFace* mFace; };
+    static std::vector<Entry> entries;
+    entries.clear();
+    U32 ribbons = 0;
+    unsigned long long rt = __rdtsc();
+    auto lap = [&](U64& into) { const unsigned long long now = __rdtsc(); into += now - rt; rt = now; };
+
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    const LLVector3 origin = camera->getOrigin();
+    const LLVector3 at_axis = camera->getAtAxis();
+    for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+    {
+        LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+        if (!drawablep || drawablep->isDead())
+        {
+            continue;
+        }
+        LLVOPartGroup* obj = static_cast<LLVOPartGroup*>(drawablep->getVObj().get());
+        LLViewerPartGroup* parts = obj->getViewerPartGroup();
+        if (!parts)
+        {
+            return false;
+        }
+        obj->mDepth = 0.f;
+        U32 count = 0;
+        const S32 faces = drawablep->getNumFaces();
+        const S32 particles = (S32)parts->mParticles.size();
+        for (S32 j = 0; j < faces && j < particles; ++j)
+        {
+            LLFace* facep = drawablep->getFace(j);
+            if (!facep || !facep->hasGeometry())
+            {
+                continue;
+            }
+            LLViewerPart* part = parts->mParticles[j];
+            if (part->mFlags & LLPartData::LL_PART_RIBBON_MASK)
+            {
+                ++ribbons;
+            }
+            const F32 dist = (part->mPosAgent - origin) * at_axis;
+            obj->mDepth += dist;
+            ++count;
+            entries.push_back({ dist, part, facep });
+        }
+        if (count)
+        {
+            obj->mDepth /= count;
+        }
+    }
+
+    lap(sPartStats.mRGather);
+    group->clearDrawMap();
+    lap(sPartStats.mRClear);
+    const U32 n = (U32)entries.size();
+    if (!n)
+    {
+        group->mVertexBuffer = NULL;
+        group->mBufferMap.clear();
+        return true;
+    }
+    sPartStats.mRRibbons += ribbons;
+    const U32 rows = n + ribbons;           // (a ribbon particle is two rows: itself and the point it joins to)
+    group->mBuilt = 1.f;
+    if (group->changeLOD())
+    {
+        group->mLastUpdateDistance = group->mDistance;
+        group->mLastUpdateViewAngle = group->mViewAngle;
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.mDist > b.mDist; });
+    lap(sPartStats.mRSort);
+
+    if (group->mVertexBuffer.isNull() || group->mVertexBuffer->getNumVerts() < rows || group->mVertexBuffer->getNumIndices() < 6 * rows)
+    {
+        const U32 capacity = rows + rows / 4 + 8;         // (a row is 48 bytes: room to grow without a new buffer every time a particle is born)
+        group->mVertexBuffer = new LLVertexBuffer(LLVOPartGroup::VERTEX_DATA_MASK);
+        group->mVertexBuffer->allocateBuffer(capacity, 6 * capacity);
+        // (the draws read no indices; the buffer keeps one quad's so it is a whole buffer to everything that looks at it)
+        U16* indicesp = (U16*)group->mVertexBuffer->mapIndexBuffer(0, 6);
+        indicesp[0] = 0; indicesp[1] = 1; indicesp[2] = 2; indicesp[3] = 1; indicesp[4] = 3; indicesp[5] = 2;
+    }
+    LLVertexBuffer* buffer = group->mVertexBuffer;
+    lap(sPartStats.mRBuffer);
+
+    LLStrider<LLVector4a> positionp;
+    LLStrider<LLVector3> velocityp;
+    LLStrider<LLVector2> sizep;
+    LLStrider<LLColor4U> colorp;
+    LLStrider<LLColor4U> glowp;
+    buffer->getVertexStrider(positionp, 0, rows);
+    buffer->getNormalStrider(velocityp, 0, rows);
+    buffer->getTexCoord0Strider(sizep, 0, rows);
+    buffer->getColorStrider(colorp, 0, rows);
+    buffer->getEmissiveStrider(glowp, 0, rows);
+    auto write_row = [&](const LLVector3& pos, F32 kind, const LLVector3& v, F32 hx, F32 hy, const LLColor4U& color, const LLColor4U& glow)
+    {
+        LLVector4a position;
+        position.load3(pos.mV);
+        position.getF32ptr()[3] = kind;     // 0 a quad, 1 the first row of a ribbon piece, 2 its second row (the point it joins to)
+        *positionp++ = position;
+        *velocityp++ = v;
+        *sizep++ = LLVector2(hx, hy);
+        *colorp++ = color;
+        *glowp++ = glow;
+    };
+
+    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mDrawMap[mRenderPass];
+    LLDrawInfo* info = nullptr;
+    U32 row = 0;
+    for (U32 k = 0; k < n; ++k)
+    {
+        const LLViewerPart& part = *entries[k].mPart;
+
+        const LLColor4U color = part.mColor;
+        U32 added = 1;
+        if (part.mFlags & LLPartData::LL_PART_RIBBON_MASK)
+        {
+            // as LLVOPartGroup::getGeometry: the piece joins this particle to its parent (or to its source object, or to nothing)
+            LLVector3 ppos = part.mPosAgent, paxis = part.mAxis;
+            F32 pscale = part.mScale.mV[0];
+            LLColor4U pcolor, pglow;
+            if (part.mParent)
+            {
+                ppos = part.mParent->mPosAgent;
+                paxis = part.mParent->mAxis;
+                pscale = part.mParent->mScale.mV[0];
+                pglow = part.mParent->mGlow;
+                pcolor = part.mParent->mColor;
+            }
+            else
+            {
+                if (part.mPartSourcep->mSourceObjectp.notNull())
+                {
+                    LLVector3 v = LLVector3(0, 0, 1);
+                    v *= part.mPartSourcep->mSourceObjectp->getRenderRotation();
+                    paxis = v;
+                    ppos = part.mPartSourcep->mPosAgent;
+                    pscale = part.mStartScale.mV[0];
+                }
+                pglow = LLColor4U(0, 0, 0, (U8)ll_round(255.f * part.mStartGlow));
+                pcolor = part.mStartColor;
+            }
+            write_row(part.mPosAgent, 1.f, part.mAxis * (0.5f * part.mScale.mV[0]), 0.f, 0.f, color, part.mGlow);
+            write_row(ppos, 2.f, paxis * (0.5f * pscale), 0.f, 0.f, pcolor, pglow);
+            added = 2;
+        }
+        else
+        {
+            write_row(part.mPosAgent, 0.f, ((part.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) && !part.mVelocity.isExactlyZero()) ? part.mVelocity : LLVector3(0.f, 0.f, 0.f), 0.5f * part.mScale.mV[0], 0.5f * part.mScale.mV[1], color, part.mGlow);
+        }
+
+        LLFace* facep = entries[k].mFace;
+        LLViewerTexture* texture = facep->getTexture();
+        const bool fullbright = facep->isState(LLFace::FULLBRIGHT);
+        LLRender::eBlendFactor bf_src = (LLRender::eBlendFactor)part.mBlendFuncSource;
+        LLRender::eBlendFactor bf_dst = (LLRender::eBlendFactor)part.mBlendFuncDest;
+        const bool glow = part.mGlow.mV[3] != 0;
+        if (info && info->mTexture == texture && info->mFullbright == fullbright && info->mBlendFuncDst == bf_dst && info->mBlendFuncSrc == bf_src)
+        {
+            info->mCount += 6 * added;
+            info->mEnd = (U16)(row + added - 1);
+            info->mHasGlow = info->mHasGlow || glow;
+        }
+        else
+        {
+            info = new LLDrawInfo((U16)row, (U16)(row + added - 1), 6 * added, 6 * row, texture, buffer, fullbright);
+            info->mBlendFuncDst = bf_dst;
+            info->mBlendFuncSrc = bf_src;
+            info->mHasGlow = glow;
+            info->mParticleRows = true;
+            draw_vec.push_back(info);
+        }
+        row += added;
+    }
+    lap(sPartStats.mRWrite);
+    sPartStats.mRowsParticles += n;
+    return true;
 }
 
 void LLParticlePartition::addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count)
@@ -800,7 +1041,9 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
 {
     LL_PROFILE_ZONE_SCOPED;
 
+    const unsigned long long ps_t0 = __rdtsc();
     std::sort(mFaceList.begin(), mFaceList.end(), LLFace::CompareDistanceGreater());
+    sPartStats.mSort += __rdtsc() - ps_t0;
 
     group->clearDrawMap();
 
@@ -844,7 +1087,9 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
 
         LLColor4U* start_glow = cur_glow.get();
 
+        const unsigned long long ps_c0 = __rdtsc();
         object->getGeometry(facep->getTEOffset(), cur_vert, cur_norm, cur_tc, cur_col, cur_glow, cur_idx);
+        sPartStats.mCorners += __rdtsc() - ps_c0;
 
         bool has_glow = false;
 

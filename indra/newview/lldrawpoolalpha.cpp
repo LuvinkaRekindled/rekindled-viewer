@@ -1111,7 +1111,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             run_begin(key);
                         }
                         tr_add(transient, params);
-                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE) && (!params.mParticleRows || params.mHasGlow))        // (a particle draw without glow adds nothing to the alpha)
                         {
                             const bool pbr_draw = params.mGLTFMaterial.notNull();
                             if (pbr_draw ? glow_pbr_table : glow_plain_table)
