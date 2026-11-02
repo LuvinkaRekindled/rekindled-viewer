@@ -30,6 +30,7 @@
 #include "llasyncpool.h"
 
 #include "llspatialpartition.h"
+#include "llviewerpartsource.h"
 
 #include "llappviewer.h"
 #include "lltexturecache.h"

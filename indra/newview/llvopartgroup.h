@@ -47,6 +47,7 @@ struct LLPartEval
     F32 mDist = 0.f;                // along the camera's at axis
     LLColor4U mColor, mGlow, mPColor, mPGlow;
     LLViewerTexture* mTex = nullptr;
+    S32 mSlot = -1;                 // G0: the slot of the record in the group's store (-1: a stepped particle)
     S32 mIndex = 0;                 // the pick number: a place in the group's particle list, then in its records
     U8 mBlendSrc = 0, mBlendDst = 0;
     bool mFullbright = false;
@@ -63,6 +64,16 @@ public:
 
     enum
     {
+        // G0: the record store of a group (llviewerpartsim.cpp, fs_store_write): the arrays hold the fields of a record
+        RECORD_DATA_MASK =  LLVertexBuffer::MAP_VERTEX |
+                            LLVertexBuffer::MAP_NORMAL |
+                            LLVertexBuffer::MAP_TANGENT |
+                            LLVertexBuffer::MAP_WEIGHT4 |
+                            LLVertexBuffer::MAP_TEXCOORD0 |
+                            LLVertexBuffer::MAP_TEXCOORD1 |
+                            LLVertexBuffer::MAP_TEXCOORD2 |
+                            LLVertexBuffer::MAP_COLOR |
+                            LLVertexBuffer::MAP_EMISSIVE,
         VERTEX_DATA_MASK =  LLVertexBuffer::MAP_VERTEX |
                             LLVertexBuffer::MAP_NORMAL |
                             LLVertexBuffer::MAP_TEXCOORD0 |
@@ -122,6 +133,7 @@ public:
     bool updateRows(LLDrawable* drawable, S32 num_parts);
     bool updateFacesLegacy(LLDrawable* drawable, S32 num_parts);
     bool mRowsMode = false;
+    bool mPure = false;             // G0: every particle of the group is a record and the store holds them (updateRows)
     std::vector<LLPartEval> mEval;
     LLVector3 mEvalMin, mEvalMax;           // the box of the drawn particles (the group's extents take it in: a record does not stay in the group's box)
     bool mEvalValid = false;

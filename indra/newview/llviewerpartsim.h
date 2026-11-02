@@ -33,6 +33,7 @@
 #include "llviewerpartsource.h"
 
 class LLViewerTexture;
+class LLVertexBuffer;
 class LLViewerPart;
 class LLViewerRegion;
 class LLVOPartGroup;
@@ -111,6 +112,7 @@ struct LLViewerPartRecord
         TARGET_LINEAR,      // the source's position + age / max age of the way to the source's target
         TARGET_POS          // the stepping's pull towards the target (velocity moves towards the speed that gets there in the time left) solved: the velocity error falls with (time left)^4
     };
+    U8 mSrcLocal = 0;       // G0: the number of the source in the group's list (mSources), what the shader's source table is indexed by
     U8 mMode = FREE;
     bool mBounce = false;   // bounces at the height of the floor (FREE: the source's height when the particle was made; FOLLOW: the source's): z mirrored, vertical speed * -0.75
     F32 mFloorZ = 0.f;
@@ -165,6 +167,16 @@ public:
     std::vector<F64> mDeadAt;
     bool addRecord(const LLViewerPart& part, const F32 desired_size, int mode);
     bool expireRecords();                   // true: some went
+
+    // <FS> GPU particles G0: the records for the GPU. mStore: a vertex buffer with a record a slot (slot = the record's place in mRecords), its index data is the order of the slots of the frame
+    // (written by LLParticlePartition::rebuildRows); mSources: the distinct sources of the records (at most 255; more and the group is drawn from rows).
+    std::vector<LLPointer<LLViewerPartSource> > mSources;
+    LLPointer<LLVertexBuffer> mStore;
+    U32 mStoreCap = 0;
+    std::vector<U32> mDirtySlots;           // slots whose record is to be written to the store
+    bool mStoreAll = true;                  // every slot is to be written (a new store)
+    bool mNoGpu = false;                    // too many sources: rows
+    bool syncStore();                       // the store has room for the records and holds them; false: no store (the records are drawn from rows)
 
     const LLVector3 &getCenterAgent() const     { return mCenterAgent; }
     S32 getCount() const                    { return (S32) (mParticles.size() + mRecords.size()); }

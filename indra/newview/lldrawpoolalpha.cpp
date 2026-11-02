@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lldrawpoolalpha.h"
+#include "llviewerpartsim.h"
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
@@ -560,6 +561,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     {
         std::vector<LLVkBridge::GeoEntry> mEntries;
         std::vector<F32> mMatrices, mTexmats, mPbr;
+        std::vector<F32> mParticleSources;      // G0: (now) row, then 8 floats a source
         std::vector<const LLMatrix4*> mMatrixKeys;
         std::vector<U8> mBlob;
     };
@@ -568,6 +570,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     tr.mMatrices.clear();
     tr.mTexmats.clear();
     tr.mPbr.clear();
+    tr.mParticleSources.clear();
     tr.mMatrixKeys.clear();
     const glm::mat4 tr_view = gRender.getModelviewMatrix();         // (what the old draws start from before their model matrix: the HUD and probe renders set it on the stack)
     const glm::mat4 tr_proj = gRender.getProjectionMatrix();
@@ -617,7 +620,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_FLUSH);
         ItemCensus::add(ItemCensus::ALPHA_TR_FLUSH, tr.mEntries.size());
         const size_t entries_bytes = tr.mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = tr.mMatrices.size() * sizeof(F32), texmat_bytes = tr.mTexmats.size() * sizeof(F32), pbr_bytes = tr.mPbr.size() * sizeof(F32);
-        tr.mBlob.resize(entries_bytes + matrix_bytes + texmat_bytes + pbr_bytes);
+        const size_t source_bytes = tr.mParticleSources.size() * sizeof(F32);
+        tr.mBlob.resize(entries_bytes + matrix_bytes + texmat_bytes + pbr_bytes + source_bytes);
         U8* at = tr.mBlob.data();
         memcpy(at, tr.mEntries.data(), entries_bytes);
         at += entries_bytes;
@@ -631,6 +635,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         if (pbr_bytes)
         {
             memcpy(at, tr.mPbr.data(), pbr_bytes);
+            at += pbr_bytes;
+        }
+        if (source_bytes)
+        {
+            memcpy(at, tr.mParticleSources.data(), source_bytes);
         }
         LLVkBridge::ShadowPacketsHeader header;
         header.mKind = 32;
@@ -638,6 +647,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         header.mMatrices = (U32)(tr.mMatrices.size() / 44);
         header.mFragment = (U32)(tr.mTexmats.size() / 16);
         header.mPaletteFloats = (U32)(tr.mPbr.size() / 40);
+        header.mParticleFloats = (U32)tr.mParticleSources.size();
         header.mPass = tr_rigged ? 1u : 0u;
         if (tr_rigged)
         {
@@ -654,6 +664,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         tr.mMatrices.clear();
         tr.mTexmats.clear();
         tr.mPbr.clear();
+        tr.mParticleSources.clear();
         tr.mMatrixKeys.clear();
         pending_key = -1;
     };
@@ -692,6 +703,21 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             e.mPbrRow = (U32)(tr.mPbr.size() / 40);
             tr.mPbr.insert(tr.mPbr.end(), t.mPbrValues, t.mPbrValues + 40);
+        }
+        if (draw.mParticleRecords)
+        {
+            // G0: the sources of the entry's records at this frame, after the (now) row; e.mPbrRow = the number of the entry's first source
+            if (tr.mParticleSources.empty())
+            {
+                const F64 now = LLViewerPartSim::getSimTime();
+                const F32 hi = (F32)now;
+                tr.mParticleSources.insert(tr.mParticleSources.end(), { hi, (F32)(now - (F64)hi), 0.f, 0.f });
+            }
+            e.mPbrRow = (U32)((tr.mParticleSources.size() - 4) / 8);
+            for (const LLPointer<LLViewerPartSource>& src : draw.mPartSources)
+            {
+                tr.mParticleSources.insert(tr.mParticleSources.end(), { src->mPosAgent.mV[0], src->mPosAgent.mV[1], src->mPosAgent.mV[2], 0.f, src->mTargetPosAgent.mV[0], src->mTargetPosAgent.mV[1], src->mTargetPosAgent.mV[2], 0.f });
+            }
         }
         tr.mEntries.push_back(e);
     };

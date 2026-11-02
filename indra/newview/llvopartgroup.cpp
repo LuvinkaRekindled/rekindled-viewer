@@ -264,8 +264,15 @@ LLVector3 LLVOPartGroup::getCameraPosition() const
 // <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): where a particle group rebuild spends its time (log tag Q1Census, every 3000 rebuilds)
 static struct ParticleRebuildStats
 {
-    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
+    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
+
+// GPU particles G0: LL_VK_GPU_PARTICLE_EVAL=1 draws a group whose particles are all records from the group's record store: the shader evaluates them (default off)
+static bool fs_gpu_particle_eval_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return v && atoi(v) != 0; }();
+    return on;
+}
 
 // GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
 static bool fs_gpu_particles_on()
@@ -279,6 +286,11 @@ static void fs_particle_stats_log()
     const double n = 3000.0, k = 1000.0;
     const double legacy = std::max<double>(1.0, n - (double)sPartStats.mRows);
     const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
+    if (sPartStats.mGpuGroups)
+    {
+        LL_INFOS("Q1Census") << "particle groups drawn from their record store (shader evaluation): " << sPartStats.mGpuGroups << " of " << sPartStats.mRows << " rebuilds; the others: more than one part group in the spatial group " << sPartStats.mNoMulti
+            << ", a ribbon " << sPartStats.mNoRibbon << ", not all records (stepped particles) or no store " << sPartStats.mNoImpure << LL_ENDL;
+    }
     if (sPartStats.mCGroups)
     {
         const double g = (double)sPartStats.mCGroups;
@@ -371,6 +383,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
     const S32 particles = (S32)list.size();
     const bool has_records = !mViewerPartGroupp->mRecords.empty();
     bool stop = false;
+    mPure = false;
 
     const F32 NEAR_PART_DIST_SQ = 5.f*5.f;  // Only discard particles > 5 m from the camera
     const F32 MIN_PART_AREA = .005f*.005f;  // only less than 5 mm x 5 mm at 1 m from camera
@@ -556,6 +569,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             row.mBlendDst = rec.mBlendDst;
             row.mFullbright = (rec.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
             row.mIndex = particles + ri;
+            row.mSlot = ri;
             row.mDist = (pos - origin) * at_axis;
             if (rec.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK)
             {
@@ -568,6 +582,10 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         }
     }
     mPixelArea = drawn_area * pixel_meter_ratio;
+    if (fs_gpu_particle_eval_on() && has_records && particles == 0 && !stop && mViewerPartGroupp->syncStore())
+    {
+        mPure = true;       // (the record store holds every particle of the group: the draws can read it)
+    }
 
     //record max scale (used to stretch bounding box for visibility culling)
     mScale.set(max_scale, max_scale, max_scale);
@@ -1170,6 +1188,8 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     static std::vector<Entry> entries;
     entries.clear();
     U32 ribbons = 0;
+    U32 live_drawables = 0;
+    LLVOPartGroup* only_obj = nullptr;
     unsigned long long rt = __rdtsc();
     auto lap = [&](U64& into) { const unsigned long long now = __rdtsc(); into += now - rt; rt = now; };
 
@@ -1193,6 +1213,8 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         {
             return false;       // (a group with a drawable that has the quads path's faces: the quads path takes the whole group)
         }
+        ++live_drawables;
+        only_obj = obj;
         obj->mDepth = 0.f;
         U32 count = 0;
         for (const LLPartEval& r : obj->mEval)
@@ -1233,7 +1255,54 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.mDist > b.mDist; });
     lap(sPartStats.mRSort);
 
-    if (group->mVertexBuffer.isNull() || group->mVertexBuffer->getNumVerts() < rows || group->mVertexBuffer->getNumIndices() < 6 * rows)
+    if (fs_gpu_particle_eval_on() && !(live_drawables == 1 && only_obj && only_obj->mPure && ribbons == 0))
+    {
+        // (why a group is not drawn from its store)
+        if (live_drawables > 1) { ++sPartStats.mNoMulti; }
+        else if (ribbons) { ++sPartStats.mNoRibbon; }
+        else { ++sPartStats.mNoImpure; }
+    }
+    if (live_drawables == 1 && only_obj && only_obj->mPure && ribbons == 0)
+    {
+        // G0: the group's record store is the vertex buffer of the draws and its index data is this frame's order of the slots; the shader evaluates the records
+        LLViewerPartGroup* parts = only_obj->getViewerPartGroup();
+        LLVertexBuffer* store = parts->mStore.get();
+        U16* order = (U16*)store->mapIndexBuffer(0, n);
+        for (U32 k = 0; k < n; ++k)
+        {
+            order[k] = (U16)entries[k].mRow->mSlot;
+        }
+        group->mVertexBuffer = store;
+        LLSpatialGroup::drawmap_elem_t& store_draws = group->mDrawMap[mRenderPass];
+        LLDrawInfo* run = nullptr;
+        for (U32 k = 0; k < n; ++k)
+        {
+            const LLPartEval& r = *entries[k].mRow;
+            LLViewerTexture* texture = r.mTex;
+            if (run && run->mTexture == texture && run->mFullbright == r.mFullbright && run->mBlendFuncDst == (LLRender::eBlendFactor)r.mBlendDst && run->mBlendFuncSrc == (LLRender::eBlendFactor)r.mBlendSrc)
+            {
+                run->mCount += 6;
+                run->mEnd = (U16)k;
+                run->mHasGlow = true;
+            }
+            else
+            {
+                run = new LLDrawInfo((U16)k, (U16)k, 6, 6 * k, texture, store, r.mFullbright);
+                run->mBlendFuncDst = (LLRender::eBlendFactor)r.mBlendDst;
+                run->mBlendFuncSrc = (LLRender::eBlendFactor)r.mBlendSrc;
+                run->mHasGlow = true;           // (the shader knows the glow of a record; a draw without glow adds nothing)
+                run->mParticleRecords = true;
+                run->mPartSources = parts->mSources;
+                store_draws.push_back(run);
+            }
+        }
+        lap(sPartStats.mRWrite);
+        sPartStats.mRowsParticles += n;
+        ++sPartStats.mGpuGroups;
+        return true;
+    }
+
+    if (group->mVertexBuffer.isNull() || group->mVertexBuffer->getTypeMask() != LLVOPartGroup::VERTEX_DATA_MASK || group->mVertexBuffer->getNumVerts() < rows || group->mVertexBuffer->getNumIndices() < 6 * rows)
     {
         const U32 capacity = rows + rows / 4 + 8;         // (a row is 48 bytes: room to grow without a new buffer every time a particle is born)
         group->mVertexBuffer = new LLVertexBuffer(LLVOPartGroup::VERTEX_DATA_MASK);

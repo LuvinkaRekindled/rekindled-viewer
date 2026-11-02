@@ -43,6 +43,8 @@
 #include "llvoavatarself.h"
 #include "llvovolume.h"
 #include "llviewertexture.h"
+#include "llvertexbuffer.h"
+#include "llvopartgroup.h"
 
 const F32 PART_SIM_BOX_SIDE = 16.f;
 
@@ -459,10 +461,111 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
     LLViewerPartRecord rec;
     fs_fill_record(part, mode, rec);
     rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
+    if (rec.mSourcep.notNull())
+    {
+        size_t k = 0;
+        while (k < mSources.size() && mSources[k] != rec.mSourcep)
+        {
+            ++k;
+        }
+        if (k == mSources.size())
+        {
+            if (k >= 255)
+            {
+                mNoGpu = true;
+            }
+            else
+            {
+                mSources.push_back(rec.mSourcep);
+            }
+        }
+        rec.mSrcLocal = (U8)llmin<size_t>(k, 255);
+    }
     mDeadAt.push_back(rec.mT0 + (F64)rec.mMaxAge);
+    if (!mStoreAll)
+    {
+        mDirtySlots.push_back((U32)mRecords.size());
+    }
     mRecords.push_back(std::move(rec));
     ++LLViewerPartSim::sParticleCount;
     ++LLViewerPartSim::sRecordCount;
+    return true;
+}
+
+// the record of a slot as the shader reads it (alphaPullV.glsl / emissivePullV.glsl, ll_record_eval): positions = (pos0, t0 high), normals = (vel0, t0 low), tangents = (accel, max age),
+// weight4 = (target at spawn, floor height), texcoord0 / 1 = start / end scale, texcoord2 = two words (start glow | end glow << 8 | mode << 16 | bounce << 18 | interp colour << 19 | interp scale << 20 |
+// follow velocity << 21 | source number << 24, end colour), colour = start colour
+static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const LLViewerPartRecord* recs)
+{
+    LLStrider<LLVector4a> pos, nrm, tan, wt;
+    LLStrider<LLVector2> tc0, tc1, tc2;
+    LLStrider<LLColor4U> col;
+    store->getVertexStrider(pos, slot, count);
+    store->getNormalStrider(nrm, slot, count);
+    store->getTangentStrider(tan, slot, count);
+    store->getWeight4Strider(wt, slot, count);
+    store->getTexCoord0Strider(tc0, slot, count);
+    store->getTexCoord1Strider(tc1, slot, count);
+    store->getTexCoord2Strider(tc2, slot, count);
+    store->getColorStrider(col, slot, count);
+    for (U32 i = 0; i < count; ++i)
+    {
+        const LLViewerPartRecord& r = recs[i];
+        const F32 t0_hi = (F32)r.mT0;
+        const F32 t0_lo = (F32)(r.mT0 - (F64)t0_hi);
+        LLVector4a v;
+        v.set(r.mPos0.mV[0], r.mPos0.mV[1], r.mPos0.mV[2], t0_hi);
+        *pos++ = v;
+        v.set(r.mVel0.mV[0], r.mVel0.mV[1], r.mVel0.mV[2], t0_lo);
+        *nrm++ = v;
+        v.set(r.mAccel.mV[0], r.mAccel.mV[1], r.mAccel.mV[2], r.mMaxAge);
+        *tan++ = v;
+        v.set(r.mTarget0.mV[0], r.mTarget0.mV[1], r.mTarget0.mV[2], r.mFloorZ);
+        *wt++ = v;
+        *tc0++ = r.mStartScale;
+        *tc1++ = r.mEndScale;
+        const U32 flags = (U32)ll_round(r.mStartGlow * 255.f) | ((U32)ll_round(r.mEndGlow * 255.f) << 8) | ((U32)r.mMode << 16) | (r.mBounce ? (1u << 18) : 0u)
+            | ((r.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? (1u << 19) : 0u) | ((r.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? (1u << 20) : 0u)
+            | ((r.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) ? (1u << 21) : 0u) | ((U32)r.mSrcLocal << 24);
+        const LLColor4U end_color = r.mEndColor;
+        const U32 words[2] = { flags, *(const U32*)end_color.mV };
+        LLVector2 raw;
+        memcpy(raw.mV, words, 8);
+        *tc2++ = raw;
+        *col++ = LLColor4U(r.mStartColor);
+    }
+}
+
+bool LLViewerPartGroup::syncStore()
+{
+    if (mNoGpu || mRecords.empty())
+    {
+        return false;
+    }
+    const U32 n = (U32)mRecords.size();
+    if (mStore.isNull() || mStoreCap < n)
+    {
+        mStoreCap = n + n / 4 + 8;
+        mStore = new LLVertexBuffer(LLVOPartGroup::RECORD_DATA_MASK);
+        mStore->allocateBuffer(mStoreCap, mStoreCap);
+        mStoreAll = true;
+    }
+    if (mStoreAll)
+    {
+        fs_store_write(mStore.get(), 0, n, mRecords.data());
+        mStoreAll = false;
+    }
+    else
+    {
+        for (const U32 slot : mDirtySlots)
+        {
+            if (slot < n)
+            {
+                fs_store_write(mStore.get(), slot, 1, &mRecords[slot]);
+            }
+        }
+    }
+    mDirtySlots.clear();
     return true;
 }
 
@@ -479,6 +582,10 @@ bool LLViewerPartGroup::expireRecords()
             if (i + 1 != mRecords.size())
             {
                 mRecords[i] = std::move(mRecords.back());
+                if (!mStoreAll)
+                {
+                    mDirtySlots.push_back((U32)i);
+                }
             }
             mRecords.pop_back();
             --LLViewerPartSim::sParticleCount;
