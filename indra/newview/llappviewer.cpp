@@ -3690,7 +3690,8 @@ bool LLAppViewer::initConfiguration()
     //
     // Set the name of the window
     //
-    gWindowTitle = LLVersionInfo::getInstance()->getChannelAndVersion();    // <FS:CR>
+    // <FS> Rekindled: the window is titled with the viewer's name and its version; the channel string (what the grid is told at login, the settings folder) stays as it is
+    gWindowTitle = LLTrans::getString("APP_NAME") + " Viewer " + LLVersionInfo::getInstance()->getVersion();
 #if LL_DEBUG
     gWindowTitle += std::string(" [DEBUG]");
 #endif
