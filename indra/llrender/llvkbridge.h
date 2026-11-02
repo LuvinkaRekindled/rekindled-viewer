@@ -144,6 +144,7 @@ namespace LLVkBridge
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
         U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below); kind 0: 1 = drawn only, not named to the ray scene (S6.6c)
         U64 mProgram = ~0ull;       // S6.3: the program (an LLVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
+        U32 mParticleFloats = 0;    // kind 32 (G0): floats of the particle source table after the PBR rows: a row (now high, now low, 0, 0), then a source is 8 floats (position, 0, target, 0); entries of GEO_PARTICLE_RECORDS name theirs by mPbrRow (the first source of the entry)
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
@@ -245,6 +246,7 @@ namespace LLVkBridge
         GEO_RIGGED = 2,             // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
         GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
         GEO_STRIP = 8,              // S6.6: the draw is a triangle strip (a record of one entry)
+        GEO_PARTICLE_RECORDS = 32,  // GPU particles G0 (PLAN-gpu-particles-gpu-sort.md): the arrays hold one RECORD a slot (the laws of LLViewerPartRecord), the index buffer the order of the slots; mFirstIndex / mIndexCount count 6 vertices a particle of the order
         GEO_PARTICLE_ROWS = 16      // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
     };
     struct GeoEntry
