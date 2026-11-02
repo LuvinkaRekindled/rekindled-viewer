@@ -75,3 +75,15 @@ Classes:
 ### Expectation
 
 Plaza: the groups loop (0.24 ms) and the stage 1 rows work (0.12 ms) shrink by the analytic share (64%): about 0.2-0.25 ms. A particle-heavy sim (thousands of particles, mostly analytic): 1 ms and up, no per-frame per-particle cost left except what the GPU does. The plan stays honest about the plaza being the small case: stage 1 was the structural move, stage 2 is what the club and the spam sims pay for.
+
+### Decisions (Adam, 2026-11-02: "i agree")
+
+1. **Bounce stays CPU-stepped** (class C, stage 1 rows), not a closed form: the old stepping rests with small hops and follows a moving source's floor; a closed form would differ, for about 0.06 ms in the plaza. Revisit with data from a place with many bouncing particles.
+2. **Frame-rate independence: proceed.** The analytic particles run from the same clamped simulation clock; the compare mode (step 1) shows the differences.
+3. **Budget cut: dropped** in the order-dependent form; the shader collapses a single quad above the same area threshold (the guard against a screen-filling puff stays, the arbitrary loss of later particles goes).
+
+### Step 1 (compare mode), built 2026-11-02
+
+`LLViewerPart` keeps its spawn state (`mSpawnPos`, `mSpawnVel`, set in `LLViewerPartSim::addPart`, moved by `LLViewerPartGroup::shift`). With `LL_VK_PARTSIM_COMPARE=1` every particle with no per-frame input (no wind, target, bounce, follow source, callback) is compared after each step with `pos0 + v0*age + 0.5*a*age^2`, the velocity, and the colour, scale and glow at `age / maxAge`; the largest differences of each 600 frames go to the `Q1Census` log. Launch mode `partcmp` in `h6-fixed.ps1`.
+
+**Step 1 result (lap `pt9-partcmp1`, 2026-11-02; 3.8 million particle steps compared over the lap, about 650,000 per 600 frames):** colour 0, scale 0, glow 0 of 255 (exactly equal), velocity 1e-6 m/s. Position: the largest difference grows with age, 1.5 mm at age 2.5 s, 4 mm at 7.9 s, 15 mm at 30 s (ages up to 30 s exist in the plaza), and 4-7% of the steps in the later windows are over 1 mm. That is the old stepping's rounding, not the closed form's: it sums `dt*vel` in 32 bit floats, thousands of times, at coordinates around 100 m (a float step there is 8 um, a random walk over 1,800 steps is a few mm), while the closed form rounds once. A centimetre of a particle that is itself decimetres wide at 30 s of age is not visible. The gate I wrote (1 mm) is too tight for ages over 3 s; the gate that matters is met: no difference that shows, none that grows apart from the age. The closed form is the more accurate of the two.
