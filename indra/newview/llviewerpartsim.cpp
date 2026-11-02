@@ -489,6 +489,10 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
         }
         rec.mClass = (U8)c;
         ++mClassCount[c];
+        if (rec.mStartGlow > 0.f || rec.mEndGlow > 0.f)
+        {
+            ++mClassGlow[c];
+        }
     }
     if (rec.mSourcep.notNull())
     {
@@ -579,6 +583,17 @@ bool LLViewerPartGroup::syncStore()
         mStore = new LLVertexBuffer(LLVOPartGroup::RECORD_DATA_MASK);
         mStore->allocateBuffer(mStoreCap, mStoreCap);
         mStoreAll = true;
+        // the rows the sort pass writes (G1): a whole buffer to everything that looks at it (one quad's indices, the draws read none)
+        mRows = new LLVertexBuffer(LLVOPartGroup::VERTEX_DATA_MASK);
+        mRows->allocateBuffer(mStoreCap, 6);
+        U16* quad = (U16*)mRows->mapIndexBuffer(0, 6);
+        quad[0] = 0; quad[1] = 1; quad[2] = 2; quad[3] = 1; quad[4] = 3; quad[5] = 2;
+        // (one row written so the buffer has storage at the worker before the first sort pass writes it)
+        LLStrider<LLVector4a> first_row;
+        mRows->getVertexStrider(first_row, 0, 1);
+        LLVector4a zero;
+        zero.clear();
+        *first_row = zero;
     }
     if (mStoreAll)
     {
@@ -717,6 +732,10 @@ bool LLViewerPartGroup::expireRecords()
             mDeadAt[i] = mDeadAt.back();
             mDeadAt.pop_back();
             --mClassCount[mRecords[i].mClass];
+            if (mRecords[i].mStartGlow > 0.f || mRecords[i].mEndGlow > 0.f)
+            {
+                --mClassGlow[mRecords[i].mClass];
+            }
             if (i + 1 != mRecords.size())
             {
                 mRecords[i] = std::move(mRecords.back());
@@ -1255,14 +1274,27 @@ void LLViewerPartSim::sortStores()
         }
         ++groups_sent;
         LLVertexBuffer* s = g->mStore.get();
+        LLVertexBuffer* rows = g->mRows.get();
+        if (!rows)
+        {
+            continue;
+        }
         jobs.push_back(s->getVertexBufferId());
-        jobs.push_back(s->getIndexBufferId());
+        jobs.push_back(rows->getVertexBufferId());
         jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_NORMAL));
         jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TANGENT));
         jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_WEIGHT4));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TEXCOORD0));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TEXCOORD1));
         jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TEXCOORD2));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_COLOR));
+        jobs.push_back(rows->getOffset(LLVertexBuffer::TYPE_NORMAL));
+        jobs.push_back(rows->getOffset(LLVertexBuffer::TYPE_TEXCOORD0));
+        jobs.push_back(rows->getOffset(LLVertexBuffer::TYPE_COLOR));
+        jobs.push_back(rows->getOffset(LLVertexBuffer::TYPE_EMISSIVE));
         jobs.push_back((U32)g->mRecords.size());
         jobs.push_back((U32)((sources.size() - 4) / 8));
+        jobs.push_back(0);
         for (const LLPointer<LLViewerPartSource>& src : g->mSources)
         {
             sources.insert(sources.end(), { src->mPosAgent.mV[0], src->mPosAgent.mV[1], src->mPosAgent.mV[2], 0.f, src->mTargetPosAgent.mV[0], src->mTargetPosAgent.mV[1], src->mTargetPosAgent.mV[2], 0.f });

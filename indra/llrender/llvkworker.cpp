@@ -9454,66 +9454,174 @@ static const char* kParticleSortShader = R"GLSL(
 #extension GL_EXT_buffer_reference_uvec2 : require
 layout(local_size_x = 256) in;
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer V2 { vec2 t[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RW { uint r[]; };
-layout(buffer_reference, std430, buffer_reference_align = 4) buffer WW { uint w[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer O4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer O2 { vec2 t[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer OW { uint w[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { uint j[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Sources { vec4 s[]; };
 layout(push_constant) uniform PC { uvec2 jobs; uvec2 sources; vec4 at; vec4 origin; } pc;
 shared uint sKey[1024];
 shared uint sIdx[1024];
 
-uint sort_key(uint slot, uvec2 pa, uvec2 na, uvec2 ta, uvec2 wa, uvec2 ca, uint src_base)
+// the job in registers: the record store's base address and the offsets of its arrays, the row buffer's, the count and the first source
+uvec2 gStore;
+uint gON, gOT, gOW, gOS0, gOS1, gOS2, gOC;
+uvec2 gRows;
+uint gRN, gRT, gRC, gRE;
+uint gSrc;
+
+uvec2 addr(uvec2 base, uint off)
 {
-    vec4 a = V4(pa).v[slot];
-    vec4 b = V4(na).v[slot];
-    vec4 c = V4(ta).v[slot];
-    vec4 d = V4(wa).v[slot];
-    uint flags = RW(ca).r[2u * slot];
-    uint cls = (flags >> 22) & 3u;
+    uint carry;
+    uint lo = uaddCarry(base.x, off, carry);
+    return uvec2(lo, base.y + carry);
+}
+
+// the vertical motion above a floor at height 0 with the bounce of LLViewerPartRecord::evaluate (fs_bounce_z in llviewerpartsim.cpp): the flights between the bounces
+void bounce_z(float z0, float v0, float a, float age, out float z_out, out float v_out)
+{
+    float z = z0, v = v0, left = age;
+    if (z < 0.0)
+    {
+        z = -z;
+        v *= -0.75;
+    }
+    for (int bounce = 0; bounce < 24; ++bounce)
+    {
+        float hit = -1.0;
+        if (a == 0.0)
+        {
+            if (v < 0.0)
+            {
+                hit = max(-z / v, 0.0);
+            }
+        }
+        else
+        {
+            float disc = v * v - 2.0 * a * z;
+            if (disc >= 0.0)
+            {
+                float root = sqrt(disc);
+                float t1 = (-v - root) / a, t2 = (-v + root) / a;
+                float lo = min(t1, t2), hi = max(t1, t2);
+                if (lo > -1e-7 && v + a * lo < 0.0)
+                {
+                    hit = max(lo, 0.0);
+                }
+                else if (hi > -1e-7 && v + a * hi < 0.0)
+                {
+                    hit = max(hi, 0.0);
+                }
+            }
+        }
+        if (hit < 0.0 || hit > left)
+        {
+            z_out = z + v * left + 0.5 * a * left * left;
+            v_out = v + a * left;
+            return;
+        }
+        v = (v + a * hit) * -0.75;
+        z = 0.0;
+        left -= hit;
+        if (abs(v) < 0.02 && a <= 0.0)
+        {
+            break;
+        }
+    }
+    z_out = 0.0;
+    v_out = 0.0;
+}
+
+struct Part { vec3 pos; vec3 vel; vec2 half_size; vec4 color; float glow; uint cls; };
+
+// a record at the frame's clock: LLViewerPartRecord::evaluate, and the colour, scale and glow of its age (the same arithmetic as the CPU's, in the same order)
+Part eval_record(uint slot)
+{
+    vec4 a = V4(gStore).v[slot];                        // pos0, t0 high
+    vec4 b = V4(addr(gStore, gON)).v[slot];             // vel0, t0 low
+    vec4 c = V4(addr(gStore, gOT)).v[slot];             // accel, max age
+    vec4 d = V4(addr(gStore, gOW)).v[slot];             // target at spawn, floor height
+    vec2 scale0 = V2(addr(gStore, gOS0)).t[slot];
+    vec2 scale1 = V2(addr(gStore, gOS1)).t[slot];
+    uvec2 misc = floatBitsToUint(V2(addr(gStore, gOS2)).t[slot]);
+    vec4 color0 = unpackUnorm4x8(RW(addr(gStore, gOC)).r[slot]);
+    vec4 color1 = unpackUnorm4x8(misc.y);
+    uint flags = misc.x;
     uint mode = (flags >> 16) & 3u;
     bool bounce = ((flags >> 18) & 1u) != 0u;
+
     Sources table = Sources(pc.sources);
     vec4 clock = table.s[0];
     float age = (clock.x - a.w) + (clock.y - b.w);
     float max_age = c.w;
     float frac = age / max_age;
+    bool alive = age >= 0.0 && age <= max_age;
+
     vec3 pos0 = a.xyz, vel0 = b.xyz, acc = c.xyz;
     vec3 src_pos = vec3(0.0), src_target = vec3(0.0);
     if (mode != 0u)
     {
-        uint k = src_base + (flags >> 24);
+        uint k = gSrc + (flags >> 24);
         src_pos = table.s[1u + 2u * k].xyz;
         src_target = table.s[2u + 2u * k].xyz;
     }
-    vec3 pos;
+    Part p;
     if (mode == 2u)
     {
-        pos = src_pos + (src_target - src_pos) * frac;
+        vec3 delta = src_target - src_pos;
+        p.pos = src_pos + delta * frac;
+        p.vel = delta;
     }
     else if (mode == 3u)
     {
+        // the pull towards the target solved (LLViewerPartRecord::evaluate)
         float r0 = max_age, r = max(max_age - age, 0.0);
         float rho = r / r0, rho4 = rho * rho * rho * rho;
         vec3 u0 = (d.xyz - pos0) / r0;
         vec3 w0 = u0 - vel0;
         vec3 cc = w0 + acc * (r0 / 3.0);
         vec3 u = u0 + cc * (0.25 * (1.0 - rho4)) - acc * ((r0 - r) / 3.0);
-        pos = src_target - u * r;
+        vec3 w = cc * rho4 - acc * (r / 3.0);
+        p.pos = src_target - u * r;
+        p.vel = u - w;
     }
     else
     {
         vec3 base = (mode == 1u) ? src_pos : pos0;
-        pos = base + vel0 * age + acc * (0.5 * age * age);
+        p.pos = base + vel0 * age + acc * (0.5 * age * age);
+        p.vel = vel0 + acc * age;
         if (bounce)
         {
             float floor_z = (mode == 1u) ? src_pos.z : d.w;
-            pos.z = max(pos.z, floor_z);
+            float z0 = (mode == 1u) ? 0.0 : pos0.z - d.w;
+            float z, v;
+            bounce_z(z0, vel0.z, acc.z, age, z, v);
+            p.pos.z = floor_z + z;
+            p.vel.z = v;
         }
     }
-    float dist = dot(pos - pc.origin.xyz, pc.at.xyz);
+    vec2 scale = ((flags >> 20) & 1u) != 0u ? scale0 * (1.0 - frac) + frac * scale1 : scale0;
+    p.color = ((flags >> 19) & 1u) != 0u ? color0 * (1.0 - frac) + color1 * frac : color0;
+    float glow_start = float(flags & 255u) / 255.0, glow_end = float((flags >> 8) & 255u) / 255.0;
+    p.glow = floor((glow_start + (glow_end - glow_start) * frac) * 255.0 + 0.5) / 255.0;
+    p.half_size = alive ? 0.5 * scale : vec2(0.0);      // (a dead record draws a degenerate quad)
+    if (((flags >> 21) & 1u) == 0u || dot(p.vel, p.vel) == 0.0)
+    {
+        p.vel = vec3(0.0);                              // (only a follow-velocity particle turns to its velocity)
+    }
+    p.cls = (flags >> 22) & 3u;
+    return p;
+}
+
+uint sort_key(uint slot)
+{
+    Part p = eval_record(slot);
+    float dist = dot(p.pos - pc.origin.xyz, pc.at.xyz);
     uint u = floatBitsToUint(dist);
     u ^= ((u >> 31) != 0u) ? 0xFFFFFFFFu : 0x80000000u;      // ascending with the distance
-    return (cls << 30) | ((~u) >> 2);                        // the class first, the far ones first
+    return (p.cls << 30) | ((~u) >> 2);                      // the class first, the far ones first
 }
 
 void main()
@@ -9521,19 +9629,17 @@ void main()
     uint job = gl_WorkGroupID.x;
     uint tid = gl_LocalInvocationID.x;
     Jobs J = Jobs(pc.jobs);
-    uint b = job * 16u;
-    uvec2 pa = uvec2(J.j[b + 0u], J.j[b + 1u]);
-    uvec2 na = uvec2(J.j[b + 2u], J.j[b + 3u]);
-    uvec2 ta = uvec2(J.j[b + 4u], J.j[b + 5u]);
-    uvec2 wa = uvec2(J.j[b + 6u], J.j[b + 7u]);
-    uvec2 ca = uvec2(J.j[b + 8u], J.j[b + 9u]);
-    uvec2 oa = uvec2(J.j[b + 10u], J.j[b + 11u]);
-    uint n = J.j[b + 12u];
-    uint src_base = J.j[b + 13u];
+    uint b = job * 32u;
+    gStore = uvec2(J.j[b + 0u], J.j[b + 1u]);
+    gON = J.j[b + 2u]; gOT = J.j[b + 3u]; gOW = J.j[b + 4u]; gOS0 = J.j[b + 5u]; gOS1 = J.j[b + 6u]; gOS2 = J.j[b + 7u]; gOC = J.j[b + 8u];
+    gRows = uvec2(J.j[b + 9u], J.j[b + 10u]);
+    gRN = J.j[b + 11u]; gRT = J.j[b + 12u]; gRC = J.j[b + 13u]; gRE = J.j[b + 14u];
+    uint n = J.j[b + 15u];
+    gSrc = J.j[b + 16u];
     if (n > 1024u) return;
     for (uint i = tid; i < 1024u; i += 256u)
     {
-        sKey[i] = (i < n) ? sort_key(i, pa, na, ta, wa, ca, src_base) : 0xFFFFFFFFu;
+        sKey[i] = (i < n) ? sort_key(i) : 0xFFFFFFFFu;
         sIdx[i] = i;
     }
     barrier();
@@ -9561,12 +9667,20 @@ void main()
             barrier();
         }
     }
-    WW outp = WW(oa);
-    for (uint p = tid; p < (n + 1u) / 2u; p += 256u)
+    // the rows, in the sorted order, as the stage 1 draws read them (alphaPullV.glsl, flags & 16): positions (centre, kind 0), normals (velocity of a follow-velocity particle), texcoord0 (half size), colour, emissive (glow in the alpha byte)
+    O4 row_pos = O4(gRows);
+    O4 row_vel = O4(addr(gRows, gRN));
+    O2 row_size = O2(addr(gRows, gRT));
+    OW row_col = OW(addr(gRows, gRC));
+    OW row_glow = OW(addr(gRows, gRE));
+    for (uint r = tid; r < n; r += 256u)
     {
-        uint lo = sIdx[2u * p];
-        uint hi = (2u * p + 1u < n) ? sIdx[2u * p + 1u] : 0u;
-        outp.w[p] = lo | (hi << 16);
+        Part p = eval_record(sIdx[r]);
+        row_pos.v[r] = vec4(p.pos, 0.0);
+        row_vel.v[r] = vec4(p.vel, 0.0);
+        row_size.t[r] = p.half_size;
+        row_col.w[r] = packUnorm4x8(p.color);
+        row_glow.w[r] = packUnorm4x8(vec4(0.0, 0.0, 0.0, p.glow));
     }
 }
 )GLSL";
@@ -9621,7 +9735,7 @@ bool part_sort_init()
     return true;
 }
 
-// kind 36: the jobs (8 words each: store vertex buffer, store index buffer, offsets of the normal, tangent, weight4 and texcoord2 arrays, record count, first source), then the source table
+// kind 36: the jobs (16 words each: store vertex buffer, row buffer, the store's offsets (normal, tangent, weight4, texcoord0, texcoord1, texcoord2, colour), the rows' (normal, texcoord0, colour, emissive), record count, first source), then the source table
 // (mParticleFloats floats: a (now) row and 8 floats a source); mViewProj[0..2] = the camera's at axis, [4..6] its position
 void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -9634,8 +9748,8 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     Renderer& r = Renderer::instance();
     Context& ctx = Context::instance();
     const U32* in = (const U32*)blob;
-    const F32* sources_in = (const F32*)(blob + 32ull * h.mEntries);
-    Renderer::ScratchAlloc jobs = r.allocVertexScratch(64ull * h.mEntries);
+    const F32* sources_in = (const F32*)(blob + 64ull * h.mEntries);
+    Renderer::ScratchAlloc jobs = r.allocVertexScratch(128ull * h.mEntries);
     Renderer::ScratchAlloc sources = r.allocVertexScratch(4ull * std::max<U32>(h.mParticleFloats, 4));
     if (!jobs.mPtr || !jobs.mAddress || !sources.mPtr || !sources.mAddress)
     {
@@ -9650,29 +9764,33 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     U32 valid = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const U32* j = in + 8ull * i;
+        const U32* j = in + 16ull * i;
         Buf* vb = packet_buffer(j[0]);
-        Buf* ib = packet_buffer(j[1]);
-        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        Buf* rb = packet_buffer(j[1]);
+        if (!vb || !rb || !vb->mVk.valid() || !rb->mVk.valid() || !vb->mVk.mAddress || !rb->mVk.mAddress)
         {
             ++s.mBad;
             continue;
         }
-        const U64 pa = (U64)vb->mVk.mAddress, oa = (U64)ib->mVk.mAddress;
-        const U64 addr[5] = { pa, pa + j[2], pa + j[3], pa + j[4], pa + j[5] };
-        U32* o = out + 16ull * valid;
-        for (int k = 0; k < 5; ++k)
+        const U64 pa = (U64)vb->mVk.mAddress, ra = (U64)rb->mVk.mAddress;
+        U32* o = out + 32ull * valid;
+        memset(o, 0, 128);
+        o[0] = (U32)pa;
+        o[1] = (U32)(pa >> 32);
+        for (int k = 0; k < 7; ++k)
         {
-            o[2 * k] = (U32)addr[k];
-            o[2 * k + 1] = (U32)(addr[k] >> 32);
+            o[2 + k] = j[2 + k];            // the store's offsets: normal, tangent, weight4, texcoord0, texcoord1, texcoord2, colour
         }
-        o[10] = (U32)oa;
-        o[11] = (U32)(oa >> 32);
-        o[12] = j[6];
-        o[13] = j[7];
-        o[14] = o[15] = 0;
+        o[9] = (U32)ra;
+        o[10] = (U32)(ra >> 32);
+        for (int k = 0; k < 4; ++k)
+        {
+            o[11 + k] = j[9 + k];           // the rows': normal, texcoord0, colour, emissive
+        }
+        o[15] = j[13];
+        o[16] = j[14];
         vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
+        rb->mLastUseFrame = frame_now;
         used.push_back(j[0]);
         used.push_back(j[1]);
         ++valid;
