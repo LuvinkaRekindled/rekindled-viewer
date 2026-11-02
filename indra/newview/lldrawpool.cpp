@@ -1165,15 +1165,6 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     {
         e.mFlags |= LLVkBridge::GEO_NO_INDEX | LLVkBridge::GEO_PARTICLE_ROWS;       // (the shader makes the corners from gl_VertexIndex: no index buffer is read)
     }
-    if (params.mParticleRecords)
-    {
-        // a record store: the record arrays besides the positions (the shader reads them by address), the index buffer is the order
-        e.mFlags |= LLVkBridge::GEO_PARTICLE_RECORDS;
-        e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
-        e.mTexcoord1Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD1);
-        e.mTexcoord2Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD2);
-        e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-    }
     return true;
 }
 
