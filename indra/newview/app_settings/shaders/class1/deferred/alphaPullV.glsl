@@ -109,6 +109,65 @@ uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
 uniform uvec2 ll_packet_texmats;
 
+// <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): a draw with flags & 16 holds one ROW a particle in the vertex arrays (positions: the centre in agent space, normals.xyz: the velocity of a
+// follow-velocity particle or zero, texcoords: half width and half height, colours, emissive) and 6 vertices a particle; the quad is made here as LLVOPartGroup::getGeometry did on the CPU: facing the
+// camera, up = world up unless the particle follows its velocity. Corners 0..3 are the old quad's vertices (up-left, down-left, up-right, down-right).
+vec3 ll_particle_corner(GeoPacket pk, GeoMatrix m, out uint row, out uint corner)
+{
+    uint pi = pk.first + uint(gl_VertexIndex);
+    row = pi / 6u;
+    uint c = pi - row * 6u;
+    corner = (c == 0u) ? 0u : ((c == 1u || c == 3u) ? 1u : ((c == 2u || c == 5u) ? 2u : 3u));
+    vec4 center4 = GeoVec4(pk.positions).v[row];
+    vec3 center = center4.xyz;
+    if (center4.w > 0.5)
+    {
+        // a ribbon piece: row = the particle (w 1) and row + 1 = the point it joins to (w 2); corners 0 and 1 are on the joined point, 2 and 3 on the particle (the old quad's order); the normals hold the half axis
+        if (center4.w > 1.5)
+        {
+            return center;                          // (the second row draws a degenerate piece: nothing)
+        }
+        bool joined = corner < 2u;
+        vec4 other = GeoVec4(pk.positions).v[row + 1u];
+        vec3 axis = GeoVec4(pk.normals).v[joined ? row + 1u : row].xyz;
+        float side = ((corner & 1u) == 0u) ? 1.0 : -1.0;
+        vec3 at_point = joined ? other.xyz : center;
+        if (joined)
+        {
+            row = row + 1u;                         // (its colour and glow)
+        }
+        return at_point + axis * side;
+    }
+    vec3 vel = GeoVec4(pk.normals).v[row].xyz;
+    vec2 half_size = GeoVec2(pk.texcoords).t[row];
+    mat3 rot = mat3(m.mv);
+    vec3 at = rot * center + m.mv[3].xyz;               // from the camera to the particle
+    vec3 side = cross(at, m.mv[2].xyz);                 // (mv[2].xyz: the agent up axis in eye space)
+    float side_len = length(side);
+    vec3 right = (side_len > 1e-8) ? side / side_len : rot * vec3(0.0, 1.0, 0.0);
+    vec3 upv = cross(right, at);
+    float up_len = length(upv);
+    vec3 up = (up_len > 1e-8) ? upv / up_len : m.mv[2].xyz;
+    if (dot(vel, vel) > 0.0)
+    {
+        vec3 nv = rot * vel;
+        vec2 f = vec2(dot(nv, right), dot(nv, up));
+        float fl = length(f);
+        if (fl > 1e-6)
+        {
+            f /= fl;
+            vec3 new_up = f.x * right + f.y * up;
+            vec3 new_right = f.y * right - f.x * up;
+            up = normalize(new_up);
+            right = normalize(new_right);
+        }
+    }
+    float sx = ((corner & 2u) != 0u) ? 1.0 : -1.0;
+    float sy = ((corner & 1u) != 0u) ? -1.0 : 1.0;
+    vec3 d_eye = right * (sx * half_size.x) + up * (sy * half_size.y);
+    return center + d_eye * rot;                        // (back to agent space: the transpose of the rotation)
+}
+
 #ifdef IS_FULLBRIGHT_PULL
 void calcAtmospherics(vec3 inPositionEye);
 out vec3 vary_position;
@@ -130,15 +189,36 @@ flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw
 void main()
 {
     GeoPacket pk = GeoPackets(ll_packet_table).p[gl_InstanceIndex];
+#ifdef HAS_SKIN
+    const bool is_particle = false;
+#else
+    bool is_particle = (pk.flags & 16u) != 0u;
+#endif
+    uint particle_corner = 0u;
 #if defined(HAS_SKIN) && defined(HAS_INDEXED_DRAW)
     uint index = uint(gl_VertexIndex);          // an indexed draw (the hardware read the index buffer)
 #else
-    uint i = pk.first + uint(gl_VertexIndex);
-    uint word = GeoWords(pk.indices).w[i >> 1];
-    uint index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    uint index;
+    if (is_particle)
+    {
+        index = 0u;                             // (the row, below)
+    }
+    else
+    {
+        uint i = pk.first + uint(gl_VertexIndex);
+        uint word = GeoWords(pk.indices).w[i >> 1];
+        index = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+    }
+#endif
+    GeoMatrix m = GeoMatrices(ll_packet_models).m[pk.model];
+#ifndef HAS_SKIN
+    vec3 particle_pos = vec3(0.0);
+    if (is_particle)
+    {
+        particle_pos = ll_particle_corner(pk, m, index, particle_corner);
+    }
 #endif
     vec4 position = GeoVec4(pk.positions).v[index];
-    GeoMatrix m = GeoMatrices(ll_packet_models).m[pk.model];
 
 #ifdef HAS_SKIN
     mat3 sm;
@@ -146,13 +226,17 @@ void main()
     skinTransform(pk, index, sm, trans);
     vec4 vert = vec4(sm * position.xyz + trans, 1.0);
 #else
-    vec4 vert = vec4(position.xyz, 1.0);
+    vec4 vert = vec4(is_particle ? particle_pos : position.xyz, 1.0);
 #endif
     vec4 pos = m.mv * vert;
     vec4 clip = m.mvp * vert;
     gl_Position = clip;
 
     vec2 texcoord = GeoVec2(pk.texcoords).t[index];
+    if (is_particle)
+    {
+        texcoord = vec2(((particle_corner & 2u) != 0u) ? 1.0 : 0.0, ((particle_corner & 1u) != 0u) ? 0.0 : 1.0);
+    }
     if (pk.pad.x != 0u)
     {
         // <FS> a texture animation's slot holds its parameters (llvktexanim.h): the matrix is made against the clock in slot 0
@@ -172,6 +256,10 @@ void main()
     vary_norm = normalize(mat3(m.mv) * (sm * normal));
 #else
     vary_norm = normalize(mat3(m.n0.xyz, m.n1.xyz, m.n2.xyz) * normal);
+    if (is_particle)
+    {
+        vary_norm = vec3(0.0, 0.0, 1.0);        // (a particle's normal is the direction back to the camera: +z in eye space)
+    }
 #endif
     vary_fragcoord = clip.xyz + vec3(0.0, 0.0, near_clip);
 #endif

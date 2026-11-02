@@ -244,7 +244,8 @@ namespace LLVkBridge
         GEO_ONE_TEXTURE = 1,        // one diffuse texture, mTextures[0]: the vertices carry no texture index
         GEO_RIGGED = 2,             // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
         GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
-        GEO_STRIP = 8               // S6.6: the draw is a triangle strip (a record of one entry)
+        GEO_STRIP = 8,              // S6.6: the draw is a triangle strip (a record of one entry)
+        GEO_PARTICLE_ROWS = 16      // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
     };
     struct GeoEntry
     {
