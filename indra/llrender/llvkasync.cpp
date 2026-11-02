@@ -1103,6 +1103,18 @@ void setSymbolizer(std::string (*fn)(const void*))
     gSymbolizer = fn;
 }
 
+std::string stackHere(int skip, int frames)
+{
+    void* up[32] = {};
+    const USHORT n = CaptureStackBackTrace((DWORD)skip + 1, (DWORD)std::min(frames, 32), up, nullptr);
+    std::string text;
+    for (USHORT i = 0; i < n; ++i)
+    {
+        text += "  " + (gSymbolizer ? gSymbolizer(up[i]) : std::to_string((unsigned long long)(uintptr_t)up[i])) + "\n";
+    }
+    return text;
+}
+
 void syncCall(const std::function<void()>& fn)
 {
     SyncKey caller = { _ReturnAddress(), nullptr, nullptr };

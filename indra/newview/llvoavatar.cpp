@@ -2943,6 +2943,12 @@ void LLVOAvatar::updateMeshData()
                     memset((U8*) buff->getMappedData(), 0, buff->getSize());
                     memset((U8*) buff->getMappedIndices(), 0, buff->getIndicesSize());
                 }
+                else
+                {
+                    // <FS> a new buffer holds whatever the heap held: the slots no part of the mesh writes (the vertices between the parts when a part changes its level of detail and the later parts' offsets lag, see the
+                    // comment above) came out as garbage positions (1.5e25, 3e32: the VertexCheck and the ray scene's bad range warnings, 2-9 vertices a buffer): zero, which makes a degenerate triangle at the origin
+                    memset((U8*) buff->getMappedData(), 0, buff->getSize());
+                }
                 facep->setVertexBuffer(buff);
             }
             else
@@ -2963,6 +2969,10 @@ void LLVOAvatar::updateMeshData()
                         buff->allocateBuffer(1, 3);
                         memset((U8*) buff->getMappedData(), 0, buff->getSize());
                         memset((U8*) buff->getMappedIndices(), 0, buff->getIndicesSize());
+                    }
+                    else
+                    {
+                        memset((U8*) buff->getMappedData(), 0, buff->getSize());        // <FS> as above
                     }
                 }
             }
