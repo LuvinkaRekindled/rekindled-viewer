@@ -789,14 +789,14 @@ bool LLViewerPartSim::shouldAddPart()
     return true;
 }
 
-// <FS> GPU particles stage 2: LL_VK_GPU_PARTICLE_SIM=1 (and the rows of stage 1 on) keeps the particles without per-frame input as records
+// <FS> GPU particles stage 2: the particles without per-frame input are kept as records (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SIM=0 steps them; needs the rows of stage 1, LL_VK_GPU_PARTICLES)
 static bool fs_partsim_records_on()
 {
     static const bool on = []()
     {
         const char* rows = getenv("LL_VK_GPU_PARTICLES");
         const char* sim = getenv("LL_VK_GPU_PARTICLE_SIM");
-        return (!rows || atoi(rows) != 0) && sim && atoi(sim) != 0;
+        return (!rows || atoi(rows) != 0) && (!sim || atoi(sim) != 0);
     }();
     return on;
 }
