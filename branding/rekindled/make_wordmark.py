@@ -41,3 +41,37 @@ for dark in (False, True):
     write('Rekindled', dark, '.', '-dark' if dark else '')
     write('rekindled', dark, 'alt-lowercase', '-dark' if dark else '')
 print('written')
+
+# ---- the lockups with the word VIEWER (heroes: the start page, the splash): a small spaced caps tagline in the same stroke style
+def tag_letter(ch, x):
+    if ch == 'V': return ['M%d 0 L%d 90 L%d 0' % (x, x + 30, x + 60)], 60
+    if ch == 'I': return ['M%d 0 V90' % x], 0
+    if ch == 'E': return ['M%d 0 H%d V90 H%d M%d 45 H%d' % (x + 46, x, x + 46, x, x + 38)], 46
+    if ch == 'W': return ['M%d 0 L%d 90 L%d 24 L%d 90 L%d 0' % (x, x + 22, x + 44, x + 66, x + 88)], 88
+    if ch == 'R': return ['M%d 90 V0 H%d A22 22 0 0 1 %d 44 H%d M%d 44 L%d 90' % (x, x + 30, x + 30, x, x + 26, x + 54)], 54
+TAG_K = 0.30            # the tagline's letters are 27 tall against the wordmark's 90
+TAG_GAPS = [70, 100, 80, 80, 100]       # V-I, I-E, E-W, W-E, E-R: less beside the diagonals (V, W), so the white between the letters looks even
+def tagline(dark, extra):
+    x = 0; paths = []
+    for i, ch in enumerate('VIEWER'):
+        p, w = tag_letter(ch, x); paths += p; x += w + (TAG_GAPS[i] + extra if i < 5 else 0)
+    stops = ('#4D8DFF', '#8277FF', '#C26BFF') if dark else ('#1E6BFF', '#5B4DFF', '#B03CFF')
+    grad = '<linearGradient id="gTag" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="%d" y2="0"><stop offset="0" stop-color="%s"/><stop offset="0.55" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient>' % ((x,) + stops)
+    body = '<g fill="none" stroke="url(#gTag)" stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round">%s</g>' % (5.0 / TAG_K, ''.join('<path d="%s"/>' % p for p in paths))
+    return x * TAG_K, grad, body
+def write_viewer_lockups(dark):
+    suffix = '-dark' if dark else ''
+    ww, wgrad, wbody = word_svg_parts('Rekindled', dark)
+    # horizontal: the mark, then the wordmark with VIEWER under it, left aligned
+    tw, tgrad, tbody = tagline(dark, 0)
+    lw = 190 + ww + 40
+    open('rekindled-logo-viewer%s.svg' % suffix, 'w', newline='\n').write('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d 190" width="%d" height="190"><title>Rekindled Viewer</title><defs>%s%s%s</defs><g transform="scale(0.72)">%s</g><g transform="translate(205 30)">%s</g><g transform="translate(205 157) scale(%s)">%s</g></svg>\n' % (lw, lw, mark_defs, wgrad, tgrad, mark_body, wbody, TAG_K, tbody))
+    # stacked: the mark over the wordmark over VIEWER, centred
+    tw2, tgrad2, tbody2 = tagline(dark, 45)
+    W = ww + 120; mark_px = 0.8 * 256
+    H = int(mark_px + 36 + 90 + 34 + 27 + 40)
+    mx = (W - mark_px) / 2
+    open('rekindled-logo-stacked%s.svg' % suffix, 'w', newline='\n').write('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"><title>Rekindled Viewer</title><defs>%s%s%s</defs><g transform="translate(%.1f 8) scale(0.8)">%s</g><g transform="translate(%.1f %d)">%s</g><g transform="translate(%.1f %d) scale(%s)">%s</g></svg>\n' % (W, H, W, H, mark_defs, wgrad, tgrad2, mx, mark_body, (W - ww) / 2, int(mark_px + 36), wbody, (W - tw2) / 2, int(mark_px + 36 + 90 + 34), TAG_K, tbody2))
+for dark in (False, True):
+    write_viewer_lockups(dark)
+print('viewer lockups written')
