@@ -9311,14 +9311,6 @@ bool scene_resident_on()
     static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
     return on;
 }
-// <FS> do the sun cascades take their static casters from the fragments (the resident tables, culled on the GPU)? Only when the casters are named to the ray scene (a ray tracing mode). In the raster renderer they come
-// from the cascades' builders, as without the resident scene: the resident draw reads a table that is written again in place, while the frames before are still on the GPU (a table entry whose buffer
-// pair changed is rewritten ~30 times a frame while the camera moves, and a frame in flight read the torn entries: one frame with stray shadows or none). LL_VK_RES_RASTER=1 brings the resident draw back.
-bool scene_cascade_fragments()
-{
-    static const bool force = scene_env("LL_VK_RES_RASTER");
-    return scene_fragments_use() && (force || !scene_resident_on() || LLVkBridge::rtShadowMode());
-}
 // R1a (doc/vulkan/S-retire-views-design.md): on by default, LL_VK_VIEWJOBS=0 off, LL_VK_VIEWJOBS_AB=<s> alternates it (log marker "[phase] view jobs now ON/off").
 // bits: 1 = R1a (the cascades' dead static lists; ON by default since 2026-10-21, the user: "R1a on"), 2 = R2 (postSort does not walk all-served groups; off, 0.02-0.04 ms); LL_VK_VIEWJOBS=0 turns both off.
 // LL_VK_VIEWJOBS_AB=<s> alternates them (with LL_VK_VIEWJOBS unset the alternation is R1a)
@@ -17969,7 +17961,7 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
     LLAsyncPool& pool = LLAsyncPool::shared();
     prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
     std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
-    if (!(scene_cascade_fragments() && !scene_verify_on() && (!LLVkBridge::rtShadowMode() || scene_resident_on())))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
+    if (!(scene_fragments_use() && !scene_verify_on() && (!LLVkBridge::rtShadowMode() || scene_resident_on())))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
     {
         prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
         std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
@@ -24023,7 +24015,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // S1: the cascade's casters from the groups' retained fragments (LL_VK_SCENE_FRAGMENTS=1), compared with the builder's when LL_VK_SCENE_VERIFY=1 (then the builder's record is the one drawn)
         ShadowStaticBuild from_fragments;       // ray shadows with resident fragments: the entries of the groups the worker does not hold, expanded here
         bool fragment_source = false;
-        if ((!rt_skip || scene_resident_on()) && prepared && (scene_cascade_fragments() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
+        if ((!rt_skip || scene_resident_on()) && prepared && (scene_fragments_use() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
             bool all_types = true;
             for (size_t t = 0; t < count && all_types; ++t)
@@ -24033,7 +24025,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (all_types)
             {
                 LL_CPU_ZONE("packets: shadow static (fragments)");
-                const bool use = scene_cascade_fragments();
+                const bool use = scene_fragments_use();
                 SceneGather gather;
                 scene_gather(result, use, gather, !rt_skip);
                 if (source && scene_verify_on() && !scene_resident_on())
