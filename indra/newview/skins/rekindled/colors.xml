@@ -27,25 +27,25 @@
 	 value="0.30 0.55 1.0 1.0" />
 	<color
 	 name="EmphasisColor"             
-	 value="0.37 0.42 1.0 1.0" />
+	 value="0.55 0.38 1.0 1.0" />
 	<color
 	 name="EmphasisColorLight"
-	 value="0.70 0.74 1.0 1.0" />
+	 value="0.76 0.66 1.0 1.0" />
 	<color
 	 name="SchemeLightest"
-	 value="0.51 0.47 1.0 1.0" />
+	 value="0.60 0.50 0.80 1.0" />
 	<color
 	 name="SchemeLightest_35"
-	 value="0.51 0.47 1.0 0.35" />
+	 value="0.60 0.50 0.80 0.35" />
 	<color 
 	 name="SchemeDark"
-	 value="0.23 0.20 0.66 1.0" />
+	 value="0.38 0.30 0.60 1.0" />
 	<color
 	 name="EmphasisColor_13"
-	 value="0.30 0.55 1.0 0.13" />
+	 value="0.55 0.38 1.0 0.13" />
 	<color
 	 name="EmphasisColor_35"
-	 value="0.30 0.55 1.0 0.35" />
+	 value="0.55 0.38 1.0 0.35" />
 	<color
 	 name="White"
 	 value="1 1 1 1" />
