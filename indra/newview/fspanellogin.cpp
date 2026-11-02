@@ -883,6 +883,24 @@ void FSPanelLogin::loadLoginPage()
 
     LL_DEBUGS("AppInit") << "login_page: " << login_page << LL_ENDL;
 
+    // <FS> Rekindled: the start page replaces the grid's login page content. It is a static page, so no
+    // login parameters (OS, version, grid) are sent to it. ForceLoginURL still wins, and an empty setting
+    // gives the grid's own page back.
+    if (gSavedSettings.getString("ForceLoginURL").empty())
+    {
+        const std::string start_page = gSavedSettings.getString("FSRekindledStartPage");
+        if (!start_page.empty())
+        {
+            LLMediaCtrl* start_browser = sInstance->getChild<LLMediaCtrl>("login_html");
+            if (start_browser->getCurrentNavUrl() != start_page)
+            {
+                start_browser->navigateTo(start_page, HTTP_CONTENT_TEXT_HTML);
+            }
+            return;
+        }
+    }
+    // </FS>
+
     // allow users (testers really) to specify a different login content URL
     std::string force_login_url = gSavedSettings.getString("ForceLoginURL");
     if ( force_login_url.length() > 0 )

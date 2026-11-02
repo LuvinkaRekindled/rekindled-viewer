@@ -767,6 +767,56 @@ std::string getRuntime()
     return llformat("%.4f", (F32)LLTimer::getElapsedSeconds().value());
 }
 
+#if LL_WINDOWS
+// <FS> Rekindled: the settings folder is now Rekindled_x64. On the first start with no such folder, copy the
+// old Firestorm_x64 one (settings and per-account data, not the logs) so nothing has to be set up again.
+// The copy goes to a temporary name first and is renamed into place, so a failed copy is tried again next start.
+static void fs_migrate_old_settings_folder()
+{
+    const char* appdata = std::getenv("APPDATA");
+    if (!appdata || !*appdata)
+    {
+        return;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root(appdata);
+    const fs::path from = root / "Firestorm_x64";
+    const fs::path to = root / (APP_NAME + "_x64");
+    const fs::path tmp = root / (APP_NAME + "_x64.migrating");
+    if (fs::exists(to, ec) || !fs::is_directory(from, ec))
+    {
+        return;
+    }
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp, ec);
+    fs::directory_iterator it(from, ec);
+    if (ec)
+    {
+        fs::remove_all(tmp, ec);
+        return;
+    }
+    for (const fs::directory_entry& e : it)
+    {
+        if (e.path().filename() == "logs")
+        {
+            continue;
+        }
+        fs::copy(e.path(), tmp / e.path().filename(), fs::copy_options::recursive | fs::copy_options::skip_existing, ec);
+        if (ec)
+        {
+            fs::remove_all(tmp, ec);
+            return;
+        }
+    }
+    fs::rename(tmp, to, ec);
+    if (ec)
+    {
+        fs::remove_all(tmp, ec);
+    }
+}
+#endif
+
 LLAppViewer::LLAppViewer()
 :   mMarkerFile(),
     mLogoutMarkerFile(),
@@ -802,6 +852,9 @@ LLAppViewer::LLAppViewer()
     // Need to do this initialization before we do anything else, since anything
     // that touches files should really go through the lldir API
 
+#if LL_WINDOWS
+    fs_migrate_old_settings_folder();
+#endif
     // <FS:ND> Init our custom directories, not from SecondLife
     // gDirUtilp->initAppDirs("SecondLife");
 #if ADDRESS_SIZE == 64

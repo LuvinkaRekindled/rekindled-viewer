@@ -1912,37 +1912,15 @@ If you do not understand the distinction then leave this control alone."
      label="Vulkan"
      name="Vulkan panel" >
       <check_box
-       enabled="false"
-       height="16"
-       initial_value="true"
-       label="Use the Vulkan renderer (always on)"
-       layout="topleft"
-       left="10"
-       name="FSVulkanRenderer"
-       tool_tip="This viewer draws with Vulkan only."
-       top_pad="25"
-       width="400"/>
-      <check_box
-       enabled="false"
-       height="16"
-       initial_value="true"
-       label="Run Vulkan on its own thread (always on)"
-       layout="topleft"
-       left_delta="18"
-       name="FSVulkanAsync"
-       tool_tip="Vulkan work always runs on its own thread."
-       top_pad="8"
-       width="400"/>
-      <check_box
        control_name="FSVkDLSS"
        height="16"
        initial_value="false"
        label="Upscale with DLSS / FSR (experimental)"
        layout="topleft"
-       left_delta="0"
+       left="10"
        name="FSVkDLSS"
        tool_tip="Draws the world with an upscaler: NVIDIA DLSS (RTX graphics cards) or AMD FSR 3.1 (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA / 100% draws at the full window size and only smooths edges: the sharpest picture, no speed gain. Needs the Vulkan renderer. If the viewer was started with this off, restart it after turning it on; once DLSS is running, switching it off and changing the mode apply at once."
-       top_pad="8"
+       top_pad="25"
        width="400"/>
       <text
        type="string"

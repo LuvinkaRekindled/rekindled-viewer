@@ -6791,6 +6791,17 @@
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>FSRekindledStartPage</key>
+    <map>
+      <key>Comment</key>
+      <string>Start page shown in the login panel instead of the grid's login page content. Empty = use the grid's page. ForceLoginURL still overrides it.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://sl-op.com/rekindled/start.html</string>
+    </map>
     <key>ForceLoginURL</key>
     <map>
       <key>Comment</key>
