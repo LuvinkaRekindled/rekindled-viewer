@@ -25384,6 +25384,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     glm::mat4 last_modelview = get_last_modelview();
     glm::mat4 last_projection = get_last_projection();
+    const LLViewerCamera::eCameraID entry_camera_id = LLViewerCamera::sCurCameraID;     // <FS> put back on the way out: the passes below leave the id of the last cascade or spot light set
 
     pushRenderTypeMask();
     andRenderTypeMask(LLPipeline::RENDER_TYPE_SIMPLE,
@@ -26726,6 +26727,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 if (prep.mSkinJob) { prep.mSkinJob->wait(); }
                 for (LLAsyncPool::JobPtr& job : prep.mAlphaJob) { if (job) { job->wait(); } }
             }
+            // <FS> the deferred cascade passes set the camera id and the current and last matrices of the cascade they drew: nothing after this point may see them
+            LLViewerCamera::sCurCameraID = entry_camera_id;
+            set_current_modelview(saved_view);
+            set_current_projection(saved_proj);
+            set_last_modelview(last_modelview);
+            set_last_projection(last_projection);
         }
 
         if (!gCubeSnapshot)
@@ -26907,6 +26914,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     set_last_modelview(last_modelview);
     set_last_projection(last_projection);
+    LLViewerCamera::sCurCameraID = entry_camera_id;      // <FS> (the id of the last cascade or spot light is not left set)
 
     popRenderTypeMask();
 
