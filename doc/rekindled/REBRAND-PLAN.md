@@ -39,3 +39,7 @@ The first wordmark gradient (#1E6BFF, #5B4DFF, #B03CFF) has contrast ratios on a
 ## 6. Lettering decision (2026-11-02)
 
 The user: the capital R version looks good; the R and the lowercase r sat farther from the next letter than the others did (their ink is only at the top / the stem), so the gap after r is 14 and after R 16 instead of 28 (`branding/rekindled/make_wordmark.py` builds every wordmark and lockup). The brand wordmark is **"Rekindled"** (capital R): `rekindled-wordmark[-dark].svg`, `rekindled-logo[-dark].svg`; the lowercase "rekindled" is kept in `alt-lowercase/`; all caps was looked at and not taken (the spark over the I reads as a dotted I). The directory on sl-op.com is `rekindled`: `https://sl-op.com/rekindled/start.html` (the first notes said `rekindle`, a typo).
+
+## 7. Hero lockups with the word VIEWER (2026-11-02)
+
+For the start page and the splash: `rekindled-logo-viewer[-dark].svg` (horizontal: the mark, then Rekindled with a small spaced VIEWER under it, left aligned) and `rekindled-logo-stacked[-dark].svg` (the mark over Rekindled over VIEWER, centred). VIEWER is the same stroke lettering at 30% height with the spacing set by eye (less beside the diagonals V and W); all built by `make_wordmark.py`.
