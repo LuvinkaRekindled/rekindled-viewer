@@ -501,10 +501,10 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
 
 extern U32 gFrameCount;
 
-// <FS> GPU particles G1: LL_VK_GPU_PARTICLE_SORT=1 (with LL_VK_GPU_PARTICLE_EVAL, which it implies): the order of a record store is written by the GPU
+// <FS> GPU particles G1: the order of a record store is written by the GPU (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SORT=0 sorts on the CPU; implies the shader evaluation of G0)
 bool ll_particle_sort_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_SORT"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_SORT"); return !v || atoi(v) != 0; }();
     return on;
 }
 

@@ -276,11 +276,11 @@ static struct ParticleRebuildStats
     U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mFastGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
 
-// GPU particles G0: LL_VK_GPU_PARTICLE_EVAL=1 draws a group whose particles are all records from the group's record store: the shader evaluates them (default off)
+// GPU particles G0: a group whose particles are all records is drawn from the group's record store, the shader evaluates them (default on since 2026-11-02; LL_VK_GPU_PARTICLE_EVAL=0 and LL_VK_GPU_PARTICLE_SORT=0 evaluate on the CPU)
 bool ll_particle_sort_on();
 static bool fs_gpu_particle_eval_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return (v && atoi(v) != 0) || ll_particle_sort_on(); }();
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return (!v || atoi(v) != 0) || ll_particle_sort_on(); }();
     return on;
 }
 
@@ -1275,8 +1275,9 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
 // G1: the draws of a pure record group sorted on the GPU: one draw info a draw class, over the class's range of the sorted order (the classes' live counts give the ranges)
 static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts, U32 render_pass)
 {
-    LLVertexBuffer* store = parts->mStore.get();
-    group->mVertexBuffer = store;
+    // the rows the sort pass wrote, class after class (the classes' live counts give the ranges), are drawn as rows of stage 1
+    LLVertexBuffer* rows = parts->mRows.get();
+    group->mVertexBuffer = rows;
     LLSpatialGroup::drawmap_elem_t& class_draws = group->mDrawMap[render_pass];
     U32 first = 0;
     for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
@@ -1287,12 +1288,11 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
             continue;
         }
         const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
-        LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), store, key.mFullbright);
+        LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), rows, key.mFullbright);
         run->mBlendFuncDst = (LLRender::eBlendFactor)key.mDst;
         run->mBlendFuncSrc = (LLRender::eBlendFactor)key.mSrc;
-        run->mHasGlow = true;
-        run->mParticleRecords = true;
-        run->mPartSources = parts->mSources;
+        run->mHasGlow = parts->mClassGlow[c] > 0;       // (a class without a glow in it draws no glow pass: the second draw over every particle was most of the GPU cost)
+        run->mParticleRows = true;
         class_draws.push_back(run);
         first += cnt;
     }

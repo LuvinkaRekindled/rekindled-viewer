@@ -176,6 +176,7 @@ public:
     struct ClassKey { LLPointer<LLViewerTexture> mTex; U8 mSrc = 0, mDst = 0; bool mFullbright = false; };
     std::vector<ClassKey> mClasses;
     U32 mClassCount[4] = {};
+    U32 mClassGlow[4] = {};                 // ... of which records with a glow (start or end above 0): a class without any draws no glow pass
     // G1 step 2: what the group's extents, texture priority and draws need without evaluating the records: how far each kind of record can be from where it starts (a ball round its spawn point,
     // round its source for the follow source law, between the source and its target for the linear law, round the target for the pull), kept as grow-only aggregates and made again from the live
     // records now and then
@@ -189,6 +190,7 @@ public:
     void rebuildAggregates();
     bool pathBox(LLVector3& lo, LLVector3& hi) const;   // the box of the group's particles now (false: no records)
     LLPointer<LLVertexBuffer> mStore;
+    LLPointer<LLVertexBuffer> mRows;        // G1: the rows the GPU writes from the store each frame (sorted, evaluated), what the draws read
     U32 mStoreCap = 0;
     std::vector<U32> mDirtySlots;           // slots whose record is to be written to the store
     bool mStoreAll = true;                  // every slot is to be written (a new store)
