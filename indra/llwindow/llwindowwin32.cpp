@@ -3500,7 +3500,8 @@ void LLSplashScreenWin32::showImpl()
 
     // Should set taskbar text without creating a header for the window (caption)
     //SetWindowText(mWindow, TEXT("Second Life"));
-    SetWindowText(mWindow, ll_convert<std::wstring>(APP_NAME).c_str());
+    // <FS> Rekindled: the splash is titled with the display name (the APP_NAME constant also names the settings folder)
+    SetWindowText(mWindow, L"Rekindled");
 }
 
 
