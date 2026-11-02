@@ -242,6 +242,15 @@ F32 LLVOPartGroup::getPartSize(S32 idx)
             return 2.f * r.mHalfX;
         }
     }
+    {
+        const S32 ri = idx - (S32)mViewerPartGroupp->mParticles.size();
+        if (ri >= 0 && ri < (S32)mViewerPartGroupp->mRecords.size())
+        {
+            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const F32 frac = (F32)(LLViewerPartSim::getSimTime() - rec.mT0) / rec.mMaxAge;
+            return ((rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale).mV[0];
+        }
+    }
 
     return 0.f;
 }
@@ -264,7 +273,7 @@ LLVector3 LLVOPartGroup::getCameraPosition() const
 // <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): where a particle group rebuild spends its time (log tag Q1Census, every 3000 rebuilds)
 static struct ParticleRebuildStats
 {
-    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
+    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mFastGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
 
 // GPU particles G0: LL_VK_GPU_PARTICLE_EVAL=1 draws a group whose particles are all records from the group's record store: the shader evaluates them (default off)
@@ -289,7 +298,7 @@ static void fs_particle_stats_log()
     const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
     if (sPartStats.mGpuGroups)
     {
-        LL_INFOS("Q1Census") << "particle groups drawn from their record store (shader evaluation): " << sPartStats.mGpuGroups << " of " << sPartStats.mRows << " rebuilds; the others: more than one part group in the spatial group " << sPartStats.mNoMulti
+        LL_INFOS("Q1Census") << "particle groups drawn from their record store (shader evaluation): " << sPartStats.mGpuGroups << " of " << sPartStats.mRows << " rebuilds (" << sPartStats.mFastGroups << " with nothing evaluated on the CPU); the others: more than one part group in the spatial group " << sPartStats.mNoMulti
             << ", a ribbon " << sPartStats.mNoRibbon << ", not all records (stepped particles) or no store " << sPartStats.mNoImpure << LL_ENDL;
     }
     if (sPartStats.mCGroups)
@@ -385,6 +394,45 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
     const bool has_records = !mViewerPartGroupp->mRecords.empty();
     bool stop = false;
     mPure = false;
+    // G1 step 2: a group of records only, with the GPU sort on: nothing is evaluated here. The extents are the box of the group's path aggregates (and the sources' positions now), the texture
+    // priority comes from the classes, the cuts (size, area) are the shader's
+    const bool fast_path = ll_particle_sort_on() && has_records && particles == 0 && !mViewerPartGroupp->mNoGpu && mViewerPartGroupp->syncStore();
+    bool fast_box = false;
+    if (fast_path)
+    {
+        LLViewerPartGroup* g = mViewerPartGroupp;
+        if (++g->mAggAge % 120 == 0)
+        {
+            g->rebuildAggregates();     // (the aggregates only grow between: made again from the live records twice a second or so)
+        }
+        LLVector3 lo, hi;
+        fast_box = g->pathBox(lo, hi);
+        if (fast_box)
+        {
+            box_min = lo;
+            box_max = hi;
+        }
+        max_scale = g->mMaxScale;
+        for (U32 c = 0; c < g->mClasses.size() && c < 4; ++c)
+        {
+            if (g->mClassCount[c])
+            {
+                LLViewerTexture* tex = g->mClasses[c].mTex.get();
+                bool known = false;
+                for (LLViewerTexture* t : textures)
+                {
+                    known = known || t == tex;
+                }
+                if (!known)
+                {
+                    textures.push_back(tex);
+                }
+            }
+        }
+        const LLVector3 center = fast_box ? (lo + hi) * 0.5f : camera_agent;
+        const F32 d2 = (center - camera_agent).lengthSquared();
+        drawn_area = max_scale * max_scale * (d2 > 1.f ? 1.f / d2 : 1.f);
+    }
 
     const F32 NEAR_PART_DIST_SQ = 5.f*5.f;  // Only discard particles > 5 m from the camera
     const F32 MIN_PART_AREA = .005f*.005f;  // only less than 5 mm x 5 mm at 1 m from camera
@@ -436,7 +484,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         }
     };
 
-    for (S32 i = 0; i < particles; i++)
+    for (S32 i = 0; i < particles && !fast_path; i++)
     {
         const LLViewerPart* part = list[i];
 
@@ -529,7 +577,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         grow(part->mPosAgent);
         mEval.push_back(row);
     }
-    if (!stop)
+    if (!stop && !fast_path)
     {
         const F64 now = LLViewerPartSim::getSimTime();
         const S32 record_count = (S32)mViewerPartGroupp->mRecords.size();
@@ -583,14 +631,14 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         }
     }
     mPixelArea = drawn_area * pixel_meter_ratio;
-    if (fs_gpu_particle_eval_on() && has_records && particles == 0 && !stop && mViewerPartGroupp->syncStore())
+    if (fast_path || (fs_gpu_particle_eval_on() && has_records && particles == 0 && !stop && mViewerPartGroupp->syncStore()))
     {
         mPure = true;       // (the record store holds every particle of the group: the draws can read it)
     }
 
     //record max scale (used to stretch bounding box for visibility culling)
     mScale.set(max_scale, max_scale, max_scale);
-    mEvalValid = !mEval.empty();
+    mEvalValid = !mEval.empty() || fast_box;
     if (mEvalValid)
     {
         mEvalMin = box_min;
@@ -800,6 +848,50 @@ bool LLVOPartGroup::lineSegmentIntersect(const LLVector4a& start, const LLVector
     F32 closest_t = 2.f;
     bool ret = false;
 
+    if (mEval.empty() && mPure && mViewerPartGroupp)
+    {
+        // G1 step 2: nothing was evaluated for the frame: the records of the group are evaluated for the ray (the same law as the shader's, LLViewerPartRecord::evaluate)
+        const F64 now = LLViewerPartSim::getSimTime();
+        const S32 base = (S32)mViewerPartGroupp->mParticles.size();
+        for (S32 ri = 0; ri < (S32)mViewerPartGroupp->mRecords.size(); ++ri)
+        {
+            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const F32 age = (F32)(now - rec.mT0);
+            if (age > rec.mMaxAge)
+            {
+                continue;
+            }
+            LLVector3 pos, vel;
+            rec.evaluate(now, pos, vel);
+            const F32 frac = age / rec.mMaxAge;
+            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
+            LLViewerPart tmp;
+            tmp.mPosAgent = pos;
+            tmp.mScale = scale;
+            tmp.mVelocity = vel;
+            tmp.mFlags = ((rec.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) && !vel.isExactlyZero()) ? LLPartData::LL_PART_FOLLOW_VELOCITY_MASK : 0;
+            LLVector4a v[4];
+            LLStrider<LLVector4a> verticesp;
+            verticesp = v;
+            getGeometry(tmp, verticesp);
+            F32 a, b, t;
+            if ((LLTriangleRayIntersect(v[0], v[1], v[2], start, dir, a, b, t) || LLTriangleRayIntersect(v[1], v[3], v[2], start, dir, a, b, t)) && t >= 0.f && t <= 1.f && t < closest_t)
+            {
+                ret = true;
+                closest_t = t;
+                if (face_hit)
+                {
+                    *face_hit = base + ri;
+                }
+                if (intersection)
+                {
+                    LLVector4a intersect = dir;
+                    intersect.mul(closest_t);
+                    intersection->setAdd(intersect, start);
+                }
+            }
+        }
+    }
     for (const LLPartEval& r : mEval)
     {
         const S32 idx = r.mIndex;
@@ -1180,6 +1272,32 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     }
 }
 
+// G1: the draws of a pure record group sorted on the GPU: one draw info a draw class, over the class's range of the sorted order (the classes' live counts give the ranges)
+static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts, U32 render_pass)
+{
+    LLVertexBuffer* store = parts->mStore.get();
+    group->mVertexBuffer = store;
+    LLSpatialGroup::drawmap_elem_t& class_draws = group->mDrawMap[render_pass];
+    U32 first = 0;
+    for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
+    {
+        const U32 cnt = parts->mClassCount[c];
+        if (!cnt)
+        {
+            continue;
+        }
+        const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
+        LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), store, key.mFullbright);
+        run->mBlendFuncDst = (LLRender::eBlendFactor)key.mDst;
+        run->mBlendFuncSrc = (LLRender::eBlendFactor)key.mSrc;
+        run->mHasGlow = true;
+        run->mParticleRecords = true;
+        run->mPartSources = parts->mSources;
+        class_draws.push_back(run);
+        first += cnt;
+    }
+}
+
 // <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): the group's particles as rows (position, velocity for a follow-velocity particle, half size, colour, glow) in the vertex buffer, in
 // back to front order; the alpha pull shaders make the camera facing quad of each (alphaPullV.glsl, emissivePullV.glsl: flags & GEO_PARTICLE_ROWS). Draws by texture / blend / fullbright as the quads
 // path did. A group with a ribbon particle keeps the quads path (false: nothing changed).
@@ -1237,6 +1355,28 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     lap(sPartStats.mRGather);
     group->clearDrawMap();
     lap(sPartStats.mRClear);
+    if (ll_particle_sort_on() && live_drawables == 1 && only_obj && only_obj->mPure && only_obj->mEval.empty() && only_obj->getViewerPartGroup() && !only_obj->getViewerPartGroup()->mRecords.empty())
+    {
+        // G1 step 2: nothing was evaluated on the CPU (updateRows took the fast path): the group's records are drawn from their store, the sort and the evaluation are the GPU's
+        LLViewerPartGroup* parts = only_obj->getViewerPartGroup();
+        group->mBuilt = 1.f;
+        if (group->changeLOD())
+        {
+            group->mLastUpdateDistance = group->mDistance;
+            group->mLastUpdateViewAngle = group->mViewAngle;
+        }
+        LLVector3 lo, hi;
+        if (parts->pathBox(lo, hi))
+        {
+            only_obj->mDepth = ((lo + hi) * 0.5f - origin) * at_axis;
+        }
+        fs_make_class_draws(group, parts, mRenderPass);
+        lap(sPartStats.mRWrite);
+        sPartStats.mRowsParticles += (U32)parts->mRecords.size();
+        ++sPartStats.mGpuGroups;
+        ++sPartStats.mFastGroups;
+        return true;
+    }
     const U32 n = (U32)entries.size();
     if (!n)
     {
@@ -1271,26 +1411,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         if (ll_particle_sort_on())
         {
             // G1: the GPU writes the order (class, then back to front); the CPU only knows the classes' ranges from their live counts
-            group->mVertexBuffer = store;
-            LLSpatialGroup::drawmap_elem_t& class_draws = group->mDrawMap[mRenderPass];
-            U32 first = 0;
-            for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
-            {
-                const U32 cnt = parts->mClassCount[c];
-                if (!cnt)
-                {
-                    continue;
-                }
-                const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
-                LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), store, key.mFullbright);
-                run->mBlendFuncDst = (LLRender::eBlendFactor)key.mDst;
-                run->mBlendFuncSrc = (LLRender::eBlendFactor)key.mSrc;
-                run->mHasGlow = true;
-                run->mParticleRecords = true;
-                run->mPartSources = parts->mSources;
-                class_draws.push_back(run);
-                first += cnt;
-            }
+            fs_make_class_draws(group, parts, mRenderPass);
             lap(sPartStats.mRWrite);
             sPartStats.mRowsParticles += n;
             ++sPartStats.mGpuGroups;
