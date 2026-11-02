@@ -60,6 +60,7 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         // <FS:Ansariel> Output device selection
         virtual output_device_map_t getDevices();
         virtual void setDevice(const LLUUID& device_uuid);
+        virtual void setHRTF(bool enable);
         virtual void idle();
         void changeDevice();
         void setupDeviceEvents(ALCdevice* device);
@@ -82,6 +83,8 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         LLUUID mSelectedDeviceUUID{};
         ALCdevice* mCurrentDevice{ nullptr };
         ALCcontext* mCurrentContext{ nullptr };
+        bool mHRTF{ false };
+        void applyHRTF();
 public:
         LLAtomicBool mDeviceListChanged{ false };
         // </FS:Ansariel>

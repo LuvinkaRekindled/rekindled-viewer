@@ -1102,9 +1102,15 @@ bool idle_startup()
             delete gAudiop;
             gAudiop = NULL;
 
+            // Temporary switch while OpenAL replaces FMOD (PLAN-openal-replaces-fmod.md): LL_AUDIO_BACKEND=openal skips FMOD
+            const char* audio_backend = getenv("LL_AUDIO_BACKEND");
+            const bool want_openal = audio_backend && 0 == strcmp(audio_backend, "openal");
+
 #ifdef LL_FMODSTUDIO
 #if !LL_WINDOWS
-            if (NULL == getenv("LL_BAD_FMODSTUDIO_DRIVER"))
+            if (NULL == getenv("LL_BAD_FMODSTUDIO_DRIVER") && !want_openal)
+#else
+            if (!want_openal)
 #endif // !LL_WINDOWS
             {
                 gAudiop = (LLAudioEngine *) new LLAudioEngine_FMODSTUDIO(gSavedSettings.getBOOL("FMODProfilerEnable"), gSavedSettings.getU32("FMODResampleMethod"));
@@ -1150,6 +1156,7 @@ bool idle_startup()
 
                     // <FS:Ansariel> Output device selection
                     gAudiop->setDevice(LLUUID(gSavedSettings.getString("FSOutputDeviceUUID")));
+                    gAudiop->setHRTF(gSavedSettings.getBOOL("FSAudioHRTF"));
 
                     gAudiop->setMuted(true);
                 }

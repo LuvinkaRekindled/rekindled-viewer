@@ -39,6 +39,9 @@
 typedef SSIZE_T ssize_t;
 #endif
 
+#include <atomic>
+#include <string>
+
 #include "vlc/vlc.h"
 #include "vlc/libvlc_version.h"
 
@@ -67,6 +70,7 @@ private:
     void setVolume(const F64 volume);
     void setVolumeVLC();
     void updateTitle(const char* title);
+    void sendStreamMetadata();
 
     static void* lock(void* data, void** p_pixels);
     static void unlock(void* data, void* id, void* const* raw_pixels);
@@ -97,6 +101,10 @@ private:
     F64 mCurTime;
     F64 mDuration;
     EStatus mVlcStatus;
+
+    std::atomic<bool> mMetaDirty{ false };  // the stream tags changed (set on a libvlc thread, sent from the idle message)
+    std::string mSentArtist;
+    std::string mSentTitle;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -285,6 +293,10 @@ void MediaPluginLibVLC::eventCallbacks(const libvlc_event_t* event, void* ptr)
         parent->setDurationDirty();
         break;
 
+    case libvlc_MediaMetaChanged:
+        parent->mMetaDirty = true;
+        break;
+
     case libvlc_MediaPlayerTitleChanged:
     {
         char* title = libvlc_media_get_meta(parent->mLibVLCMedia, libvlc_meta_Title);
@@ -349,6 +361,13 @@ void MediaPluginLibVLC::playMedia()
         libvlc_event_attach(em, libvlc_MediaPlayerTitleChanged, eventCallbacks, this);
     }
 
+    // the tags of a radio stream (the artist and title of the song now playing)
+    libvlc_event_manager_t* mem = libvlc_media_event_manager(mLibVLCMedia);
+    if (mem)
+    {
+        libvlc_event_attach(mem, libvlc_MediaMetaChanged, eventCallbacks, this);
+    }
+
     libvlc_video_set_callbacks(mLibVLCMediaPlayer, lock, unlock, display, &mLibVLCCallbackContext);
     libvlc_video_set_format(mLibVLCMediaPlayer, "RV32", mWidth, mHeight, mWidth * mDepth);
 
@@ -407,6 +426,64 @@ void MediaPluginLibVLC::updateTitle(const char* title)
 {
     LLPluginMessage message(LLPLUGIN_MESSAGE_CLASS_MEDIA, "name_text");
     message.setValue("name", title);
+    sendMessage(message);
+}
+
+// Sends the artist and title of the song now playing on a radio stream, the way the viewer expects it
+// (the message the gstreamer plugin sends; the stream title floater and the announcements read it).
+void MediaPluginLibVLC::sendStreamMetadata()
+{
+    if (!mLibVLCMedia)
+    {
+        return;
+    }
+
+    auto get_meta = [this](libvlc_meta_t type)
+    {
+        std::string result;
+        if (char* value = libvlc_media_get_meta(mLibVLCMedia, type))
+        {
+            result = value;
+            libvlc_free(value);
+        }
+        return result;
+    };
+
+    std::string artist = get_meta(libvlc_meta_Artist);
+    std::string title = get_meta(libvlc_meta_Title);
+    const std::string now_playing = get_meta(libvlc_meta_NowPlaying);
+
+    if (!now_playing.empty())
+    {
+        // a shoutcast or icecast stream sends "Artist - Title" in one tag
+        const size_t split = now_playing.find(" - ");
+        if (split != std::string::npos)
+        {
+            artist = now_playing.substr(0, split);
+            title = now_playing.substr(split + 3);
+        }
+        else
+        {
+            artist.clear();
+            title = now_playing;
+        }
+    }
+    else if (artist.empty())
+    {
+        // only a station name in the title tag: not a song
+        title.clear();
+    }
+
+    if (artist == mSentArtist && title == mSentTitle)
+    {
+        return;
+    }
+    mSentArtist = artist;
+    mSentTitle = title;
+
+    LLPluginMessage message(LLPLUGIN_MESSAGE_CLASS_MEDIA, "ndMediadata_change");
+    message.setValue("title", title);
+    message.setValue("artist", artist);
     sendMessage(message);
 }
 
@@ -498,6 +575,10 @@ void MediaPluginLibVLC::receiveMessage(const char* message_string)
             }
             else if (message_name == "idle")
             {
+                if (mMetaDirty.exchange(false))
+                {
+                    sendStreamMetadata();
+                }
                 setStatus(mVlcStatus);
             }
             else if (message_name == "cleanup")

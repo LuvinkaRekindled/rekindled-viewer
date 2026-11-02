@@ -687,11 +687,45 @@ void LLAudioEngine_OpenAL::changeDevice()
     if (alcReopenDeviceSOFT(mCurrentDevice, device_name.has_value() ? device_name.value().c_str() : nullptr, nullptr))
     {
         alcMakeContextCurrent(mCurrentContext);
+        applyHRTF();
     }
     else
     {
         LL_WARNS() << "LLAudioEngine_OpenAL::setDevice() error: Reopen failed" << LL_ENDL;
     }
+}
+
+void LLAudioEngine_OpenAL::setHRTF(bool enable)
+{
+    mHRTF = enable;
+    applyHRTF();
+}
+
+// OpenAL Soft turns HRTF on by itself for a headphone output; the setting decides (off by default)
+void LLAudioEngine_OpenAL::applyHRTF()
+{
+    if (!mCurrentDevice || !alcIsExtensionPresent(mCurrentDevice, "ALC_SOFT_HRTF"))
+    {
+        return;
+    }
+
+    LPALCRESETDEVICESOFT alcResetDeviceSOFT = (LPALCRESETDEVICESOFT)alcGetProcAddress(mCurrentDevice, "alcResetDeviceSOFT");
+    if (!alcResetDeviceSOFT)
+    {
+        return;
+    }
+
+    ALCint attribs[] = { ALC_HRTF_SOFT, mHRTF ? ALC_TRUE : ALC_FALSE, 0 };
+    if (!alcResetDeviceSOFT(mCurrentDevice, attribs))
+    {
+        LL_WARNS() << "LLAudioEngine_OpenAL::applyHRTF(): alcResetDeviceSOFT failed" << LL_ENDL;
+        return;
+    }
+
+    ALCint status = 0;
+    alcGetIntegerv(mCurrentDevice, ALC_HRTF_STATUS_SOFT, 1, &status);
+    LL_INFOS() << "LLAudioEngine_OpenAL::applyHRTF(): requested " << (mHRTF ? "on" : "off") << ", HRTF status " << status
+        << " (0 disabled, 1 enabled, 2 denied, 3 required, 4 headphones detected, 5 unsupported format)" << LL_ENDL;
 }
 
 LLAudioEngine_OpenAL::output_device_map_t LLAudioEngine_OpenAL::getDevices()
