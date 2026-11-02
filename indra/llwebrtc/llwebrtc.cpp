@@ -286,7 +286,7 @@ void LLWebRTCAudioDeviceModule::SetTuning(bool tuning, bool mute)
         inner_->InitMicrophone();
         inner_->InitRecording();
         inner_->StartRecording();
-        inner_->StopPlayout();
+        StopPlayout(); // <FS> Rekindled: stops whichever playout is in use
     }
     // On exit, capture is deliberately left running (mute is handled by gain,
     // not by stopping the device, so there's no AEC cold-start hiss).  Playout

@@ -14,10 +14,16 @@ set(llwebrtc_SOURCE_FILES
     llwebrtc.cpp
     )
 
+if (WINDOWS)
+    # <FS> Rekindled: voice playout through a media stream
+    list(APPEND llwebrtc_SOURCE_FILES llwebrtc_winplayout.cpp)
+endif (WINDOWS)
+
 set(llwebrtc_HEADER_FILES
     CMakeLists.txt
     llwebrtc.h
     llwebrtc_impl.h
+    llwebrtc_winplayout.h
     )
 
 list(APPEND llwebrtc_SOURCE_FILES ${llwebrtc_HEADER_FILES})
@@ -40,6 +46,8 @@ if (WINDOWS)
                                        msdmo
                                        strmiids
                                        iphlpapi
+                                       avrt
+                                       ole32
                                        crypt32
                                        libcmt)
     # as the webrtc libraries are release, build this binary as release as well.
