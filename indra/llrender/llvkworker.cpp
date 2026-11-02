@@ -5623,10 +5623,18 @@ static const U32 kResCapacity = 131072;
 static const U32 kResMatrixSlots = 256;
 static struct ResState
 {
-    Buffer mTable, mBounds, mModels;
+    // <FS> the master copy of the table, the bounds and the region matrices: ordinary memory the worker writes as it likes. A pass does not read it: it reads a copy made in the scratch of the frame
+    // that draws (res_frame_copy), so a frame that is still on the GPU never sees what a later frame writes here (the table used to be one buffer that was rewritten in place: a frame in flight read
+    // entries half written, and drew stray or no shadows)
+    std::vector<ResGpu32> mTv;
+    std::vector<F32> mBv, mMv;
     ResGpu32* mT = nullptr;
     F32* mB = nullptr;
     F32* mM = nullptr;
+    U64 mVersion = 1;                                           // bumped by every write to the master copy
+    U64 mCopyFrame = ~0ull, mCopyVersion = 0;                   // the frame and version the copy below was made for
+    U32 mCopyN = 0;
+    Renderer::ScratchAlloc mCopyT, mCopyB, mCopyM;
     bool mReady = false, mFailed = false;
     U32 mHigh = 0;                                              // slots used so far (the cull covers 0..mHigh)
     std::vector<U32> mFree;
@@ -5664,21 +5672,12 @@ static bool res_init()
         LL_WARNS("VkScene") << "resident shadow entries: the device lacks buffer addresses or first-instance indirect draws" << LL_ENDL;
         return false;
     }
-    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    if (!ctx.createBuffer((VkDeviceSize)sizeof(ResGpu32) * kResCapacity, usage, Context::Memory::UploadDevice, sRes.mTable)
-        || !ctx.createBuffer(16ull * kResCapacity, usage, Context::Memory::UploadDevice, sRes.mBounds)
-        || !ctx.createBuffer(64ull * kResMatrixSlots, usage, Context::Memory::UploadDevice, sRes.mModels)
-        || !sRes.mTable.mMapped || !sRes.mBounds.mMapped || !sRes.mModels.mMapped || !sRes.mTable.mAddress || !sRes.mBounds.mAddress || !sRes.mModels.mAddress)
-    {
-        LL_WARNS("VkScene") << "resident shadow entries: the tables could not be created" << LL_ENDL;
-        return false;
-    }
-    sRes.mT = (ResGpu32*)sRes.mTable.mMapped;
-    sRes.mB = (F32*)sRes.mBounds.mMapped;
-    sRes.mM = (F32*)sRes.mModels.mMapped;
-    memset(sRes.mT, 0, sizeof(ResGpu32) * kResCapacity);
-    memset(sRes.mB, 0, 16ull * kResCapacity);
-    memset(sRes.mM, 0, 64ull * kResMatrixSlots);
+    sRes.mTv.assign(kResCapacity, ResGpu32());
+    sRes.mBv.assign(4ull * kResCapacity, 0.f);
+    sRes.mMv.assign(16ull * kResMatrixSlots, 0.f);
+    sRes.mT = sRes.mTv.data();
+    sRes.mB = sRes.mBv.data();
+    sRes.mM = sRes.mMv.data();
     for (U32 i = 0; i < kResMatrixSlots; ++i)
     {
         sRes.mM[16 * i] = sRes.mM[16 * i + 5] = sRes.mM[16 * i + 10] = sRes.mM[16 * i + 15] = 1.f;
@@ -5757,6 +5756,7 @@ static int res_pair_check(ResPair& p)
 
 static void res_write_entries(ResFrag& f, size_t pair_index)
 {
+    ++sRes.mVersion;
     const ResPair& p = f.mPairs[pair_index];
     for (size_t i = 0; i < f.mEntries.size(); ++i)
     {
@@ -5988,6 +5988,7 @@ static void res_release(U32 id)
     {
         return;
     }
+    ++sRes.mVersion;
     if (it->second.mInCull && sRes.mCull[it->second.mCullIndex].mHeld)
     {
         res_leave(it->second);
@@ -6018,6 +6019,7 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     res_release(h.mFragment);
     res_reclaim(Context::instance().getFrameNumber());
+    ++sRes.mVersion;
     const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
     ResFrag f;
     memcpy(f.mBounds, h.mViewProj, sizeof(f.mBounds));
@@ -6239,6 +6241,10 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
         return;
     }
     const U32 n = std::min<U32>(h.mMatrices, kResMatrixSlots);
+    if (memcmp(sRes.mM, blob, 64 * (size_t)n) != 0)
+    {
+        ++sRes.mVersion;
+    }
     memcpy(sRes.mM, blob, 64 * (size_t)n);
     for (U32 s = 0; s < n; ++s)
     {
@@ -6676,11 +6682,28 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
+    // the table, the bounds and the matrices this frame's passes read: a copy of the master in the frame's own scratch, made once for as long as the master does not change (the passes of a frame
+    // after the first usually find it as it was); nothing that is on the GPU from an earlier frame is written
+    if (sRes.mCopyFrame != frame_now || sRes.mCopyVersion != sRes.mVersion || sRes.mCopyN != n || !sRes.mCopyT.mPtr)
+    {
+        Renderer::ScratchAlloc ct = r.allocVertexScratch(sizeof(ResGpu32) * (size_t)n);
+        Renderer::ScratchAlloc cb = r.allocVertexScratch(16ull * n);
+        Renderer::ScratchAlloc cm = r.allocVertexScratch(64ull * kResMatrixSlots);
+        if (!ct.mPtr || !cb.mPtr || !cm.mPtr || !ct.mAddress || !cb.mAddress || !cm.mAddress)
+        {
+            return;
+        }
+        memcpy(ct.mPtr, sRes.mT, sizeof(ResGpu32) * (size_t)n);
+        memcpy(cb.mPtr, sRes.mB, 16ull * n);
+        memcpy(cm.mPtr, sRes.mM, 64ull * kResMatrixSlots);
+        sRes.mCopyT = ct; sRes.mCopyB = cb; sRes.mCopyM = cm;
+        sRes.mCopyFrame = frame_now; sRes.mCopyVersion = sRes.mVersion; sRes.mCopyN = n;
+    }
     static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
     memcpy(params.mPtr, blob, 96);
     ((U32*)params.mPtr)[24] = n;
     ((U32*)params.mPtr)[25] = plane_count;
-    const U64 ta = (U64)sRes.mTable.mAddress, ba = (U64)sRes.mBounds.mAddress, ma = (U64)sRes.mModels.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
+    const U64 ta = (U64)sRes.mCopyT.mAddress, ba = (U64)sRes.mCopyB.mAddress, ma = (U64)sRes.mCopyM.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
     const U32 push[10] = { (U32)ta, (U32)(ta >> 32), (U32)ba, (U32)(ba >> 32), (U32)ma, (U32)(ma >> 32), (U32)pa, (U32)(pa >> 32), (U32)ca, (U32)(ca >> 32) };
     r.recordExternal({}, [&](VkCommandBuffer cmd) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sCullPipe.mPipe);
