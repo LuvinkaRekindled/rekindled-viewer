@@ -25942,6 +25942,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
                 mShadowError.mV[j] = 0.f;
                 mShadowFOV.mV[j] = 0.f;
+                result[j].clear();      // <FS> not prepared this frame: nothing may read an older frame's lists, draw infos or builder output from it
 
                 continue;
             }
@@ -26240,6 +26241,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                                                  0.5f, 0.5f, 0.5f, 1.0f);
                         mSunShadowMatrix[j] = rt_reuse_trans * proj[j] * view[j] * inv_view;
                         sShadowPassesReused++;
+                        result[j].clear();      // <FS> (see above)
                         continue;
                     }
                 }
@@ -26291,6 +26293,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                                           0.5f, 0.5f, 0.5f, 1.0f);
                     mSunShadowMatrix[j] = reuse_trans * proj[j] * view[j] * inv_view;
                     sShadowPassesReused++;
+                    result[j].clear();      // <FS> (see above)
                     continue;
                 }
             }
