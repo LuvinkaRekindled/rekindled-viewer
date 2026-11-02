@@ -6965,6 +6965,23 @@ struct ShadowCascadeCull
 };
 static thread_local ShadowCascadeCull sShadowCascadeCull; // <FS> per thread, see sCull
 
+// <FS> arms the cascade avatar cull for the life of the scope and switches it off on every way out, so that a path out of a cascade's pass cannot leave it on for the cull of the main view
+struct ShadowCascadeCullArm
+{
+    ShadowCascadeCullArm(bool active, const LLVector3& origin, const LLVector3& at, F32 slice_start, F32 margin)
+    {
+        sShadowCascadeCull.mActive = active;
+        if (active)
+        {
+            sShadowCascadeCull.mCameraOrigin = origin;
+            sShadowCascadeCull.mCameraAt = at;
+            sShadowCascadeCull.mSliceStart = slice_start;
+            sShadowCascadeCull.mMargin = margin;
+        }
+    }
+    ~ShadowCascadeCullArm() { sShadowCascadeCull.mActive = false; }
+};
+
 
 // true if every part of the avatar is in front of the slice start by more than the margin
 static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCascadeCull& cascade_cull)
@@ -25619,15 +25636,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
 
             {
-                // <FS> arm the cascade avatar cull for this pass
-                if (prep.mCullActive)
-                {
-                    sShadowCascadeCull.mActive = true;
-                    sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
-                    sShadowCascadeCull.mCameraAt = prep.mCullAt;
-                    sShadowCascadeCull.mSliceStart = prep.mCullSliceStart;
-                    sShadowCascadeCull.mMargin = prep.mCullMargin;
-                }
+                // <FS> arm the cascade avatar cull for this pass (off again on every way out of the scope)
+                ShadowCascadeCullArm cull_arm(prep.mCullActive, prep.mCullOrigin, prep.mCullAt, prep.mCullSliceStart, prep.mCullMargin);
 
                 sShadowPrepTimed = !prepared;
                 PhaseLap shadow_lap;
@@ -25640,8 +25650,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     sCascadeRenders[j]++;
                 }
                 sShadowPrepTimed = false;
-
-                sShadowCascadeCull.mActive = false;
             }
 
             if (!cascade_unused)
@@ -26410,18 +26418,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 for (ShadowCascadePrep& prep : pending)
                 {
                     LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
-                    if (prep.mCullActive)
-                    {
-                        sShadowCascadeCull.mActive = true;
-                        sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
-                        sShadowCascadeCull.mCameraAt = prep.mCullAt;
-                        sShadowCascadeCull.mSliceStart = prep.mCullSliceStart;
-                        sShadowCascadeCull.mMargin = prep.mCullMargin;
-                    }
+                    ShadowCascadeCullArm cull_arm(prep.mCullActive, prep.mCullOrigin, prep.mCullAt, prep.mCullSliceStart, prep.mCullMargin);
                     LLCamera reference_camera = prep.mCamera;
                     updateCull(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
                     stateSort(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
-                    sShadowCascadeCull.mActive = false;
                 }
                 LLViewerCamera::sCurCameraID = saved_camera_id;
             }
