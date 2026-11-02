@@ -280,7 +280,59 @@ static struct PartSimCensus
     U64 mFollowSrc = 0, mWind = 0, mTargetPos = 0, mTargetLinear = 0, mBounce = 0, mCallback = 0, mRibbon = 0, mFollowVel = 0, mInterpColor = 0, mInterpScale = 0, mEmissive = 0;
     U64 mAnalytic = 0, mAnalyticSrc = 0, mParented = 0, mAgeSum = 0;
     U64 mMaxAgeMs = 0;
+    // closed form against the stepped state (LL_VK_PARTSIM_COMPARE=1): the largest differences of the window
+    U64 mCmpN = 0, mCmpPosOver = 0;
+    F32 mCmpPos = 0.f, mCmpVel = 0.f, mCmpColor = 0.f, mCmpScale = 0.f, mCmpGlow = 0.f, mCmpPosAge = 0.f;
 } sSimCensus;
+
+static bool fs_partsim_compare_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_PARTSIM_COMPARE"); return v && atoi(v) != 0; }();
+    return on;
+}
+
+// a particle with no per-frame input at the age it was just stepped to: the closed form of what the stepping did (position and velocity of a constant acceleration, colour / scale / glow linear in age / max age)
+static void fs_partsim_compare(const LLViewerPart* part)
+{
+    const F32 age = part->mLastUpdateTime;
+    const LLVector3 p = part->mSpawnPos + part->mSpawnVel * age + part->mAccel * (0.5f * age * age);
+    const LLVector3 v = part->mSpawnVel + part->mAccel * age;
+    const F32 frac = age / part->mMaxAge;
+    LLColor4 color = part->mStartColor;
+    if (part->mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK)
+    {
+        color.setVec(part->mStartColor);
+        color *= 1.f - frac;
+        color %= 1.f - frac;
+        color += frac % (frac * part->mEndColor);
+    }
+    LLVector2 scale = part->mStartScale;
+    if (part->mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK)
+    {
+        scale.setVec(part->mStartScale);
+        scale *= 1.f - frac;
+        scale += frac * part->mEndScale;
+    }
+    const F32 glow = (F32)(U8)ll_round(lerp(part->mStartGlow, part->mEndGlow, frac) * 255.f);
+
+    ++sSimCensus.mCmpN;
+    const F32 dpos = (p - part->mPosAgent).length();
+    if (dpos > sSimCensus.mCmpPos)
+    {
+        sSimCensus.mCmpPos = dpos;
+        sSimCensus.mCmpPosAge = age;
+    }
+    sSimCensus.mCmpPosOver += dpos > 0.001f;
+    sSimCensus.mCmpVel = llmax(sSimCensus.mCmpVel, (v - part->mVelocity).length());
+    F32 dcol = 0.f;
+    for (int k = 0; k < 4; ++k)
+    {
+        dcol = llmax(dcol, fabsf(color.mV[k] - part->mColor.mV[k]));
+    }
+    sSimCensus.mCmpColor = llmax(sSimCensus.mCmpColor, dcol);
+    sSimCensus.mCmpScale = llmax(sSimCensus.mCmpScale, fabsf(scale.mV[0] - part->mScale.mV[0]), fabsf(scale.mV[1] - part->mScale.mV[1]));
+    sSimCensus.mCmpGlow = llmax(sSimCensus.mCmpGlow, fabsf(glow - (F32)part->mGlow.mV[3]));
+}
 
 void LLViewerPartGroup::updateParticles(const F32 lastdt)
 {
@@ -290,6 +342,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
 
     LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
 
+    const bool compare_on = fs_partsim_compare_on();
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     LLViewerRegion *regionp = getRegion();
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch    
@@ -427,6 +480,11 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
 
         // Set the last update time to now.
         part->mLastUpdateTime = cur_time;
+        if (compare_on && part->mSpawnKnown && part->mVPCallback == nullptr
+            && !(part->mFlags & (LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_TARGET_POS_MASK | LLPartData::LL_PART_TARGET_LINEAR_MASK | LLPartData::LL_PART_BOUNCE_MASK | LLPartData::LL_PART_FOLLOW_SRC_MASK)))
+        {
+            fs_partsim_compare(part);
+        }
 
 
         // Kill dead particles (either flagged dead, or too old)
@@ -508,6 +566,7 @@ void LLViewerPartGroup::shift(const LLVector3 &offset)
     for (S32 i = 0 ; i < (S32)mParticles.size(); i++)
     {
         mParticles[i]->mPosAgent += offset;
+        mParticles[i]->mSpawnPos += offset;
     }
 }
 
@@ -643,6 +702,9 @@ bool LLViewerPartSim::shouldAddPart()
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
     ++sSimCensus.mSpawned;
+    part->mSpawnPos = part->mPosAgent;
+    part->mSpawnVel = part->mVelocity;
+    part->mSpawnKnown = true;
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
     {
         put(part);
@@ -892,6 +954,11 @@ void LLViewerPartSim::updateSimulation()
             << "%, bounce " << 100.0 * sSimCensus.mBounce / st << "%, callback " << 100.0 * sSimCensus.mCallback / st << "%, ribbon " << 100.0 * sSimCensus.mRibbon / st << "% (with a parent " << 100.0 * sSimCensus.mParented / st
             << "%), follow velocity " << 100.0 * sSimCensus.mFollowVel / st << "%, interp colour " << 100.0 * sSimCensus.mInterpColor / st << "%, interp scale " << 100.0 * sSimCensus.mInterpScale / st << "%, emissive " << 100.0 * sSimCensus.mEmissive / st
             << "%; mean max age " << sSimCensus.mAgeSum / st / 1000.0 << " s" << LL_ENDL;
+        if (sSimCensus.mCmpN)
+        {
+            LL_INFOS("Q1Census") << "closed form against the stepped state, " << sSimCensus.mCmpN << " particle steps compared: largest position difference " << sSimCensus.mCmpPos << " m (at age " << sSimCensus.mCmpPosAge << " s; "
+                << sSimCensus.mCmpPosOver << " steps over 1 mm), velocity " << sSimCensus.mCmpVel << " m/s, colour " << sSimCensus.mCmpColor << " (1.0 = full scale), scale " << sSimCensus.mCmpScale << " m, glow " << sSimCensus.mCmpGlow << " of 255" << LL_ENDL;
+        }
         sSimCensus = PartSimCensus();
     }
     if (LLDrawable::getCurrentFrame()%16==0)

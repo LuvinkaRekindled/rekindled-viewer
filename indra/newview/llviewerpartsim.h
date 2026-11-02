@@ -72,6 +72,9 @@ public:
     LLVector3       mPosAgent;
     LLVector3       mVelocity;
     LLVector3       mAccel;
+    LLVector3       mSpawnPos;                  // <FS> GPU particles stage 2 (PLAN-gpu-particles.md): the state when the source made the particle: a particle with no per-frame input is a function of these and its age
+    LLVector3       mSpawnVel;
+    bool            mSpawnKnown = false;
     LLVector3       mAxis;
     LLColor4        mColor;
     LLVector2       mScale;
