@@ -264,7 +264,7 @@ LLVector3 LLVOPartGroup::getCameraPosition() const
 // <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): where a particle group rebuild spends its time (log tag Q1Census, every 3000 rebuilds)
 static struct ParticleRebuildStats
 {
-    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0;
+    U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
 
 // GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
@@ -279,6 +279,13 @@ static void fs_particle_stats_log()
     const double n = 3000.0, k = 1000.0;
     const double legacy = std::max<double>(1.0, n - (double)sPartStats.mRows);
     const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
+    if (sPartStats.mCGroups)
+    {
+        const double g = (double)sPartStats.mCGroups;
+        LL_INFOS("Q1Census") << "particle groups as the GPU sort would see them (" << sPartStats.mCGroups << " rebuilds): draw states (blend pair + fullbright) a group " << sPartStats.mCClasses / g << ", groups with more than one " << 100.0 * sPartStats.mCMulti / g
+            << "%, textures a group " << sPartStats.mCTextures / g << ", draw infos (runs of one texture and state in the sorted order) a group " << sPartStats.mCRuns / g << " for " << sPartStats.mCParts / g << " particles, runs of one state (textures ignored) a group "
+            << sPartStats.mCClassRuns / g << LL_ENDL;
+    }
     LL_INFOS("Q1Census") << "rows path kcycles a rebuild: gather " << sPartStats.mRGather / rr / k << ", clearDrawMap " << sPartStats.mRClear / rr / k << ", sort " << sPartStats.mRSort / rr / k << ", buffer " << sPartStats.mRBuffer / rr / k
         << ", rows + draw infos " << sPartStats.mRWrite / rr / k << " (ribbon particles a rebuild " << sPartStats.mRRibbons / rr << ")" << LL_ENDL;
     LL_INFOS("Q1Census") << "particle group rebuild, kcycles a rebuild over 3000 (" << sPartStats.mRows << " as rows for the GPU, " << (U64)legacy << " as quads): rows " << (sPartStats.mRows ? sPartStats.mRowsCycles / (double)sPartStats.mRows / k : 0.0)
@@ -1303,6 +1310,38 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     }
     lap(sPartStats.mRWrite);
     sPartStats.mRowsParticles += n;
+    {
+        // GPU sort design (doc/vulkan/PLAN-gpu-particles.md): how many draw states (blend pair + fullbright) and textures a group has, and how many runs the back to front order makes of them
+        U32 classes = 0, textures = 0;
+        U32 class_keys[8] = {};
+        const LLViewerTexture* tex_keys[16] = {};
+        for (U32 k = 0; k < n; ++k)
+        {
+            const LLPartEval& r = *entries[k].mRow;
+            const U32 key = ((U32)r.mBlendSrc << 8) | ((U32)r.mBlendDst << 1) | (r.mFullbright ? 1u : 0u);
+            bool known = false;
+            for (U32 c = 0; c < classes && c < 8; ++c) { if (class_keys[c] == key) { known = true; break; } }
+            if (!known) { if (classes < 8) { class_keys[classes] = key; } ++classes; }
+            bool tknown = false;
+            for (U32 t = 0; t < textures && t < 16; ++t) { if (tex_keys[t] == r.mTex) { tknown = true; break; } }
+            if (!tknown) { if (textures < 16) { tex_keys[textures] = r.mTex; } ++textures; }
+        }
+        ++sPartStats.mCGroups;
+        sPartStats.mCClasses += classes;
+        sPartStats.mCMulti += classes > 1;
+        sPartStats.mCTextures += textures;
+        sPartStats.mCRuns += draw_vec.size();
+        sPartStats.mCParts += n;
+        // runs of one draw state (texture ignored): a group sorted back to front, how often does the state change
+        U32 state_runs = 0, last_key = ~0u;
+        for (U32 k = 0; k < n; ++k)
+        {
+            const LLPartEval& r = *entries[k].mRow;
+            const U32 key = ((U32)r.mBlendSrc << 8) | ((U32)r.mBlendDst << 1) | (r.mFullbright ? 1u : 0u);
+            if (key != last_key) { ++state_runs; last_key = key; }
+        }
+        sPartStats.mCClassRuns += state_runs;
+    }
     return true;
 }
 
