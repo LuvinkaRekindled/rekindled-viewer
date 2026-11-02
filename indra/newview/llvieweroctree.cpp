@@ -851,7 +851,7 @@ std::vector<LLVkBridge::HizBox> sHizItemBoxes;       // S7 B0: the table items' 
 std::vector<HizItemInfo> sHizItemInfo;
 F32 sHizPrevVp[16] = {};
 bool sHizHavePrev = false;
-struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; std::vector<HizItemInfo> mItems; bool mPrev = false; };
+struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; std::vector<HizItemInfo> mItems; bool mPrev = false; F32 mEye[3] = {}; F32 mAt[3] = {}; };     // mEye, mAt: the camera the boxes were tested with (plan 8.38)
 std::deque<HizPending> sHizPending;
 }
 
@@ -940,6 +940,12 @@ void LLHiz::send(const F32* view_proj)
     HizPending p;
     p.mSerial = serial;
     p.mFrame = (U32)gFrameCount;
+    {
+        const LLViewerCamera* cam = LLViewerCamera::getInstance();
+        const LLVector3& eye = cam->getOrigin();
+        const LLVector3& at = cam->getAtAxis();
+        for (int a = 0; a < 3; ++a) { p.mEye[a] = eye.mV[a]; p.mAt[a] = at.mV[a]; }
+    }
     p.mIds.reserve(sHizBoxTargets.size());
     p.mItems.swap(sHizItemInfo);
     p.mPrev = items && sHizHavePrev;
@@ -1000,6 +1006,24 @@ void LLHiz::apply()
             ++LLOccCensus::sHizApplied;
             ++LLOccCensus::sHizLag[LLOccCensus::age_slot((U32)gFrameCount, p.mFrame)];
         }
+        // <FS> plan 8.38: a verdict is only good for the camera it was tested with. The results arrive 2 to 4 frames after the boxes were sent; while the camera moves fast (a zoom, a flight through foliage)
+        // an occluded verdict that was right for its frame is applied where the camera is now, and the group vanishes for a few frames (the own avatar for 15 frames, 2026-11-02). A batch whose camera has
+        // moved more than LL_VK_HIZ_STALE_M metres (0.5) or turned more than LL_VK_HIZ_STALE_DEG degrees (2) since is stale: its occluded verdicts count as visible (its visible ones are always safe).
+        bool stale = false;
+        {
+            static const F32 stale_m = getenv("LL_VK_HIZ_STALE_M") ? (F32)atof(getenv("LL_VK_HIZ_STALE_M")) : 0.5f;
+            static const F32 stale_cos = cosf((getenv("LL_VK_HIZ_STALE_DEG") ? (F32)atof(getenv("LL_VK_HIZ_STALE_DEG")) : 2.f) * 3.14159265f / 180.f);
+            const LLViewerCamera* cam = LLViewerCamera::getInstance();
+            const LLVector3& eye = cam->getOrigin();
+            const LLVector3& at = cam->getAtAxis();
+            const F32 dx = eye.mV[0] - p.mEye[0], dy = eye.mV[1] - p.mEye[1], dz = eye.mV[2] - p.mEye[2];
+            const F32 dot = at.mV[0] * p.mAt[0] + at.mV[1] * p.mAt[1] + at.mV[2] * p.mAt[2];
+            stale = (dx * dx + dy * dy + dz * dz > stale_m * stale_m) || dot < stale_cos;
+            if (census && stale)
+            {
+                ++LLOccCensus::sHizStale;
+            }
+        }
         for (size_t i = 0; i < p.mIds.size(); ++i)
         {
             auto it = sHizTargets.find(p.mIds[i]);
@@ -1022,10 +1046,10 @@ void LLHiz::apply()
             }
             t->mHizSerial = 0;
             const U32 word = words[3 * i];
-            const bool occluded = (word & 1u) != 0;
+            const bool occluded = (word & 1u) != 0 && !stale;
             if (census)
             {
-                LLOccCensus::sHizOccluded += occluded;
+                LLOccCensus::sHizOccluded += (word & 1u) != 0;
                 ++LLOccCensus::sHizLod[std::min<U32>((word >> 8) & 0xff, 15)];
                 LLOccCensus::sHizWhy[0] += (word >> 16) & 1u;
                 LLOccCensus::sHizWhy[1] += (word >> 17) & 1u;
@@ -1432,10 +1456,16 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
     if (occluded)
     {
-        setOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        // <FS> plan 8.38: occluded on two agreeing verdicts, so one wrong or stale answer never hides the group; visible on one
+        if (mHizOccludedOnce)
+        {
+            setOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        }
+        mHizOccludedOnce = true;
     }
     else
     {
+        mHizOccludedOnce = false;
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
     }
     LLViewerCamera::sCurCameraID = saved_camera;
@@ -1467,12 +1497,12 @@ void LLOccCensus::report()
             << ", send " << (double)sHizTicksSend * ms_per_tick / frames << ", apply results " << (double)sHizTicksApply * ms_per_tick / frames
             << " | per frame: batches sent " << (double)sHizSends / frames << " (refused " << (double)sHizRefused / frames << "), boxes " << (double)sHizBoxes / frames
             << ", results applied " << (double)sHizApplied / frames << " batches, lost " << (double)sHizLost / frames << ", targets gone " << (double)sHizDead / frames << ", superseded " << (double)sHizSuperseded / frames
-            << ", OCCLUDED " << (double)sHizOccluded / frames << "; special cases: cut by the near plane (visible) " << (double)sHizWhy[0] / frames << ", off screen (occluded) " << (double)sHizWhy[1] / frames << ", beyond far (visible) " << (double)sHizWhy[2] / frames << ", wholly behind the camera (occluded) " << (double)sHizWhy[3] / frames
+            << ", OCCLUDED " << (double)sHizOccluded / frames << ", batches stale for the camera (their occluded verdicts counted visible) " << (double)sHizStale / frames << "; special cases: cut by the near plane (visible) " << (double)sHizWhy[0] / frames << ", off screen (occluded) " << (double)sHizWhy[1] / frames << ", beyond far (visible) " << (double)sHizWhy[2] / frames << ", wholly behind the camera (occluded) " << (double)sHizWhy[3] / frames
             << " | result age in frames when applied (0 1 2 3 4 5 6 7+): " << lag << " | pyramid level used (0..11): " << lod
             << " | probes: calls " << (double)sProbeCalls / frames << ", eye inside " << (double)sProbeInside / frames << ", boxes " << (double)sProbeAdded / frames << ", still awaiting " << (double)sProbeAwaiting / frames
             << ", results visible " << (double)sProbeVisible / frames << " occluded " << (double)sProbeOccluded / frames << LL_ENDL;
         sHizTicksCollect = sHizTicksSend = sHizTicksApply = 0;
-        sHizSends = sHizRefused = sHizBoxes = sHizApplied = sHizOccluded = sHizLost = sHizSuperseded = sHizDead = 0;
+        sHizSends = sHizRefused = sHizBoxes = sHizApplied = sHizOccluded = sHizLost = sHizSuperseded = sHizDead = sHizStale = 0;
         for (int a = 0; a < AGES; ++a) sHizLag[a] = 0;
         for (int a = 0; a < 16; ++a) sHizLod[a] = 0;
         sHizWhy[0] = sHizWhy[1] = sHizWhy[2] = sHizWhy[3] = 0;
