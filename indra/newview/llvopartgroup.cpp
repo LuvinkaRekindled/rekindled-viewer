@@ -127,6 +127,17 @@ void LLVOPartGroup::updateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
 
     newMin.setSub(p, scale);
     newMax.setAdd(p,scale);
+    if (mEvalValid)
+    {   // <FS> stage 2: a record is not moved to another group when it leaves this one's box: the extents hold where the drawn particles are
+        LLVector4a lo, hi, pad;
+        lo.load3(mEvalMin.mV);
+        hi.load3(mEvalMax.mV);
+        pad.splat(mScale.mV[0]);
+        lo.sub(pad);
+        hi.add(pad);
+        newMin.setMin(newMin, lo);
+        newMax.setMax(newMax, hi);
+    }
 
     llassert(newMin.isFinite3());
     llassert(newMax.isFinite3());
@@ -179,6 +190,14 @@ LLDrawable* LLVOPartGroup::createDrawable(LLPipeline *pipeline)
      {
          ret = mViewerPartGroupp->mParticles[idx]->mPartSourcep->getOwnerUUID();
      }
+     else if (idx - (S32) mViewerPartGroupp->mParticles.size() < (S32) mViewerPartGroupp->mRecords.size())
+     {
+         const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
+         if (rec.mSourcep.notNull())
+         {
+             ret = rec.mSourcep->getOwnerUUID();
+         }
+     }
 
      return ret;
  }
@@ -197,6 +216,14 @@ LLDrawable* LLVOPartGroup::createDrawable(LLPipeline *pipeline)
              ret = source->getID();
          }
      }
+     else if (idx - (S32) mViewerPartGroupp->mParticles.size() < (S32) mViewerPartGroupp->mRecords.size())
+     {
+         const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
+         if (rec.mSourcep.notNull() && rec.mSourcep->mSourceObjectp.notNull())
+         {
+             ret = rec.mSourcep->mSourceObjectp->getID();
+         }
+     }
 
      return ret;
  }
@@ -207,6 +234,13 @@ F32 LLVOPartGroup::getPartSize(S32 idx)
     if (idx < (S32) mViewerPartGroupp->mParticles.size())
     {
         return mViewerPartGroupp->mParticles[idx]->mScale.mV[0];
+    }
+    for (const LLPartEval& r : mEval)
+    {
+        if (r.mIndex == idx)
+        {
+            return 2.f * r.mHalfX;
+        }
     }
 
     return 0.f;
@@ -277,7 +311,8 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
 
     if (!num_parts)
     {
-        mVisible.clear();
+        mEval.clear();
+        mEvalValid = false;
         if (group && drawable->getNumFaces())
         {
             group->setState(LLSpatialGroup::GEOM_DIRTY);
@@ -301,7 +336,8 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
     return updateFacesLegacy(drawable, num_parts);
 }
 
-// <FS> GPU particles stage 1b: the cuts of updateGeometry without a face a particle. False: a particle of the group shows the parcel media (its face takes the media texture): the quads path.
+// <FS> GPU particles stage 1b / 2: the cuts of updateGeometry without a face a particle, and the particles of the group (the stepped ones and the records at this frame's clock) as LLPartEval rows.
+// False: a stepped particle of the group shows the parcel media (its face takes the media texture): the quads path (not while the group has records, which the quads path cannot draw).
 bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
 {
     F32 tot_area = 0;
@@ -313,14 +349,72 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
 
     mDepth = 0.f;
     const LLVector3 camera_agent = getCameraPosition();
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    const LLVector3 origin = camera->getOrigin();
+    const LLVector3 at_axis = camera->getAtAxis();
     F32 max_scale = 0.f;
     F32 drawn_area = 0.f;
     static std::vector<LLViewerTexture*> textures;
     textures.clear();
-    mVisible.clear();
+    mEval.clear();
     LLViewerTexture* last_texture = nullptr;
+    bool any_texture = false;
+    LLVector3 box_min(FLT_MAX, FLT_MAX, FLT_MAX), box_max(-FLT_MAX, -FLT_MAX, -FLT_MAX);
     const LLViewerPartGroup::part_list_t& list = mViewerPartGroupp->mParticles;
     const S32 particles = (S32)list.size();
+    const bool has_records = !mViewerPartGroupp->mRecords.empty();
+    bool stop = false;
+
+    const F32 NEAR_PART_DIST_SQ = 5.f*5.f;  // Only discard particles > 5 m from the camera
+    const F32 MIN_PART_AREA = .005f*.005f;  // only less than 5 mm x 5 mm at 1 m from camera
+    // the cuts for a particle of either kind: 0 = no more (the area budget), 1 = not this one (too small and far), 2 = draw it
+    auto visit = [&](const LLVector3& pos, F32 sx, F32 sy) -> int
+    {
+        const F32 camera_dist_squared = (pos - camera_agent).lengthSquared();
+        const F32 inv_camera_dist_squared = camera_dist_squared > 1.f ? 1.f / camera_dist_squared : 1.f;
+        const F32 area = sx * sy * inv_camera_dist_squared;
+        tot_area = llmax(tot_area, area);
+        if (tot_area > max_area)
+        {
+            return 0;
+        }
+        if (camera_dist_squared > NEAR_PART_DIST_SQ && area < MIN_PART_AREA)
+        {
+            return 1;
+        }
+        drawn_area = tot_area;
+        return 2;
+    };
+    auto add_texture = [&](LLViewerTexture* texture)
+    {
+        if (!any_texture || texture != last_texture)
+        {
+            bool known = false;
+            for (LLViewerTexture* t : textures)
+            {
+                if (t == texture)
+                {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known)
+            {
+                textures.push_back(texture);
+            }
+            last_texture = texture;
+            any_texture = true;
+        }
+    };
+    auto grow = [&](const LLVector3& p)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            box_min.mV[k] = llmin(box_min.mV[k], p.mV[k]);
+            box_max.mV[k] = llmax(box_max.mV[k], p.mV[k]);
+        }
+    };
+
     for (S32 i = 0; i < particles; i++)
     {
         const LLViewerPart* part = list[i];
@@ -345,52 +439,137 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             }
         }
 
-        const LLVector3 at(part->mPosAgent - camera_agent);
-        const F32 camera_dist_squared = at.lengthSquared();
-        const F32 inv_camera_dist_squared = camera_dist_squared > 1.f ? 1.f / camera_dist_squared : 1.f;
-        const F32 area = part->mScale.mV[0] * part->mScale.mV[1] * inv_camera_dist_squared;
-        tot_area = llmax(tot_area, area);
-        if (tot_area > max_area)
+        const int verdict = visit(part->mPosAgent, part->mScale.mV[0], part->mScale.mV[1]);
+        if (verdict == 0)
         {
+            stop = true;
             break;
         }
-
-        const F32 NEAR_PART_DIST_SQ = 5.f*5.f;  // Only discard particles > 5 m from the camera
-        const F32 MIN_PART_AREA = .005f*.005f;  // only less than 5 mm x 5 mm at 1 m from camera
-        if (camera_dist_squared > NEAR_PART_DIST_SQ && area < MIN_PART_AREA)
+        if (verdict == 1)
         {
             continue;
         }
 
         LLViewerTexture* texture = part->mImagep.get();
-        if (texture != last_texture)
+        if (!has_records && (!any_texture || texture != last_texture) && texture && texture->hasParcelMedia())
         {
-            if (texture && texture->hasParcelMedia())
-            {
-                return false;
-            }
-            bool known = false;
-            for (LLViewerTexture* t : textures)
-            {
-                if (t == texture)
-                {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known)
-            {
-                textures.push_back(texture);
-            }
-            last_texture = texture;
+            return false;
         }
-        mVisible.push_back(i);
-        drawn_area = tot_area;
+        add_texture(texture);
+
+        LLPartEval row;
+        row.mPos = part->mPosAgent;
+        row.mColor = part->mColor;
+        row.mGlow = part->mGlow;
+        row.mTex = texture;
+        row.mBlendSrc = part->mBlendFuncSource;
+        row.mBlendDst = part->mBlendFuncDest;
+        row.mFullbright = (part->mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
+        row.mIndex = i;
+        row.mDist = (part->mPosAgent - origin) * at_axis;
+        if (part->mFlags & LLPartData::LL_PART_RIBBON_MASK)
+        {
+            // as LLVOPartGroup::getGeometry: the piece joins this particle to its parent (or to its source object, or to nothing)
+            row.mRibbon = true;
+            LLVector3 ppos = part->mPosAgent, paxis = part->mAxis;
+            F32 pscale = part->mScale.mV[0];
+            if (part->mParent)
+            {
+                ppos = part->mParent->mPosAgent;
+                paxis = part->mParent->mAxis;
+                pscale = part->mParent->mScale.mV[0];
+                row.mPGlow = part->mParent->mGlow;
+                row.mPColor = part->mParent->mColor;
+            }
+            else
+            {
+                if (part->mPartSourcep.notNull() && part->mPartSourcep->mSourceObjectp.notNull())
+                {
+                    LLVector3 v = LLVector3(0, 0, 1);
+                    v *= part->mPartSourcep->mSourceObjectp->getRenderRotation();
+                    paxis = v;
+                    ppos = part->mPartSourcep->mPosAgent;
+                    pscale = part->mStartScale.mV[0];
+                }
+                row.mPGlow = LLColor4U(0, 0, 0, (U8)ll_round(255.f * part->mStartGlow));
+                row.mPColor = part->mStartColor;
+            }
+            row.mAxisHalf = part->mAxis * (0.5f * part->mScale.mV[0]);
+            row.mPPos = ppos;
+            row.mPAxisHalf = paxis * (0.5f * pscale);
+            grow(ppos);
+        }
+        else
+        {
+            row.mVel = ((part->mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) && !part->mVelocity.isExactlyZero()) ? part->mVelocity : LLVector3(0.f, 0.f, 0.f);
+            row.mHalfX = 0.5f * part->mScale.mV[0];
+            row.mHalfY = 0.5f * part->mScale.mV[1];
+        }
+        grow(part->mPosAgent);
+        mEval.push_back(row);
+    }
+    if (!stop)
+    {
+        const F64 now = LLViewerPartSim::getSimTime();
+        const S32 record_count = (S32)mViewerPartGroupp->mRecords.size();
+        for (S32 ri = 0; ri < record_count; ri++)
+        {
+            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const F32 age = (F32)(now - rec.mT0);
+            if (age > rec.mMaxAge)
+            {
+                continue;       // (the simulation's sweep takes it out)
+            }
+            const F32 frac = age / rec.mMaxAge;
+            const LLVector3 pos = rec.mPos0 + rec.mVel0 * age + rec.mAccel * (0.5f * age * age);
+            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
+
+            max_scale = llmax(max_scale, scale.mV[0], scale.mV[1]);
+
+            const int verdict = visit(pos, scale.mV[0], scale.mV[1]);
+            if (verdict == 0)
+            {
+                break;
+            }
+            if (verdict == 1)
+            {
+                continue;
+            }
+
+            LLViewerTexture* texture = rec.mImagep.get();
+            add_texture(texture);
+
+            LLPartEval row;
+            row.mPos = pos;
+            row.mColor = (rec.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? fs_part_color_at(rec.mStartColor, rec.mEndColor, frac) : rec.mStartColor;
+            row.mGlow = LLColor4U(0, 0, 0, (U8)ll_round(lerp(rec.mStartGlow, rec.mEndGlow, frac) * 255.f));
+            row.mTex = texture;
+            row.mBlendSrc = rec.mBlendSrc;
+            row.mBlendDst = rec.mBlendDst;
+            row.mFullbright = (rec.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
+            row.mIndex = particles + ri;
+            row.mDist = (pos - origin) * at_axis;
+            if (rec.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK)
+            {
+                const LLVector3 vel = rec.mVel0 + rec.mAccel * age;
+                row.mVel = vel.isExactlyZero() ? LLVector3(0.f, 0.f, 0.f) : vel;
+            }
+            row.mHalfX = 0.5f * scale.mV[0];
+            row.mHalfY = 0.5f * scale.mV[1];
+            grow(pos);
+            mEval.push_back(row);
+        }
     }
     mPixelArea = drawn_area * pixel_meter_ratio;
 
     //record max scale (used to stretch bounding box for visibility culling)
     mScale.set(max_scale, max_scale, max_scale);
+    mEvalValid = !mEval.empty();
+    if (mEvalValid)
+    {
+        mEvalMin = box_min;
+        mEvalMax = box_max;
+    }
 
     // the faces: one a distinct texture, so the texture priority loop sees the texture a few times, not once a particle
     const S32 wanted = (S32)textures.size();
@@ -436,7 +615,8 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
 bool LLVOPartGroup::updateFacesLegacy(LLDrawable* drawable, S32 num_parts)
 {
     mRowsMode = false;
-    mVisible.clear();
+    mEval.clear();
+    mEvalValid = false;
     LLFace* facep;
     if (num_parts > drawable->getNumFaces())
     {
@@ -594,15 +774,34 @@ bool LLVOPartGroup::lineSegmentIntersect(const LLVector4a& start, const LLVector
     F32 closest_t = 2.f;
     bool ret = false;
 
-    for (U32 idx = 0; idx < mViewerPartGroupp->mParticles.size(); ++idx)
+    for (const LLPartEval& r : mEval)
     {
-        const LLViewerPart &part = *((LLViewerPart*) (mViewerPartGroupp->mParticles[idx]));
-
+        const S32 idx = r.mIndex;
         LLVector4a v[4];
-        LLStrider<LLVector4a> verticesp;
-        verticesp = v;
-
-        getGeometry(part, verticesp);
+        if (r.mRibbon)
+        {
+            LLVector4a pos, axis, ppos, paxis;
+            pos.load3(r.mPos.mV);
+            axis.load3(r.mAxisHalf.mV);
+            ppos.load3(r.mPPos.mV);
+            paxis.load3(r.mPAxisHalf.mV);
+            v[0].setAdd(ppos, paxis);
+            v[1].setSub(ppos, paxis);
+            v[2].setAdd(pos, axis);
+            v[3].setSub(pos, axis);
+        }
+        else
+        {
+            // the quad of a drawn particle, made as getGeometry makes it from a part
+            LLViewerPart tmp;
+            tmp.mPosAgent = r.mPos;
+            tmp.mScale = LLVector2(2.f * r.mHalfX, 2.f * r.mHalfY);
+            tmp.mVelocity = r.mVel;
+            tmp.mFlags = r.mVel.isExactlyZero() ? 0 : LLPartData::LL_PART_FOLLOW_VELOCITY_MASK;
+            LLStrider<LLVector4a> verticesp;
+            verticesp = v;
+            getGeometry(tmp, verticesp);
+        }
 
         F32 a,b,t;
         if (LLTriangleRayIntersect(v[0], v[1], v[2], start, dir, a,b,t) ||
@@ -960,7 +1159,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
 // path did. A group with a ribbon particle keeps the quads path (false: nothing changed).
 bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
 {
-    struct Entry { F32 mDist; LLViewerPart* mPart; };
+    struct Entry { F32 mDist; const LLPartEval* mRow; };
     static std::vector<Entry> entries;
     entries.clear();
     U32 ribbons = 0;
@@ -989,22 +1188,15 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         }
         obj->mDepth = 0.f;
         U32 count = 0;
-        const S32 particles = (S32)parts->mParticles.size();
-        for (const S32 j : obj->mVisible)
+        for (const LLPartEval& r : obj->mEval)
         {
-            if (j >= particles)
-            {
-                continue;       // (the list is shorter than when updateGeometry made the visible list)
-            }
-            LLViewerPart* part = parts->mParticles[j];
-            if (part->mFlags & LLPartData::LL_PART_RIBBON_MASK)
+            if (r.mRibbon)
             {
                 ++ribbons;
             }
-            const F32 dist = (part->mPosAgent - origin) * at_axis;
-            obj->mDepth += dist;
+            obj->mDepth += r.mDist;
             ++count;
-            entries.push_back({ dist, part });
+            entries.push_back({ r.mDist, &r });
         }
         if (count)
         {
@@ -1073,51 +1265,25 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     U32 row = 0;
     for (U32 k = 0; k < n; ++k)
     {
-        const LLViewerPart& part = *entries[k].mPart;
+        const LLPartEval& r = *entries[k].mRow;
 
-        const LLColor4U color = part.mColor;
         U32 added = 1;
-        if (part.mFlags & LLPartData::LL_PART_RIBBON_MASK)
+        if (r.mRibbon)
         {
-            // as LLVOPartGroup::getGeometry: the piece joins this particle to its parent (or to its source object, or to nothing)
-            LLVector3 ppos = part.mPosAgent, paxis = part.mAxis;
-            F32 pscale = part.mScale.mV[0];
-            LLColor4U pcolor, pglow;
-            if (part.mParent)
-            {
-                ppos = part.mParent->mPosAgent;
-                paxis = part.mParent->mAxis;
-                pscale = part.mParent->mScale.mV[0];
-                pglow = part.mParent->mGlow;
-                pcolor = part.mParent->mColor;
-            }
-            else
-            {
-                if (part.mPartSourcep->mSourceObjectp.notNull())
-                {
-                    LLVector3 v = LLVector3(0, 0, 1);
-                    v *= part.mPartSourcep->mSourceObjectp->getRenderRotation();
-                    paxis = v;
-                    ppos = part.mPartSourcep->mPosAgent;
-                    pscale = part.mStartScale.mV[0];
-                }
-                pglow = LLColor4U(0, 0, 0, (U8)ll_round(255.f * part.mStartGlow));
-                pcolor = part.mStartColor;
-            }
-            write_row(part.mPosAgent, 1.f, part.mAxis * (0.5f * part.mScale.mV[0]), 0.f, 0.f, color, part.mGlow);
-            write_row(ppos, 2.f, paxis * (0.5f * pscale), 0.f, 0.f, pcolor, pglow);
+            write_row(r.mPos, 1.f, r.mAxisHalf, 0.f, 0.f, r.mColor, r.mGlow);
+            write_row(r.mPPos, 2.f, r.mPAxisHalf, 0.f, 0.f, r.mPColor, r.mPGlow);
             added = 2;
         }
         else
         {
-            write_row(part.mPosAgent, 0.f, ((part.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) && !part.mVelocity.isExactlyZero()) ? part.mVelocity : LLVector3(0.f, 0.f, 0.f), 0.5f * part.mScale.mV[0], 0.5f * part.mScale.mV[1], color, part.mGlow);
+            write_row(r.mPos, 0.f, r.mVel, r.mHalfX, r.mHalfY, r.mColor, r.mGlow);
         }
 
-        LLViewerTexture* texture = part.mImagep.get();
-        const bool fullbright = (part.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
-        LLRender::eBlendFactor bf_src = (LLRender::eBlendFactor)part.mBlendFuncSource;
-        LLRender::eBlendFactor bf_dst = (LLRender::eBlendFactor)part.mBlendFuncDest;
-        const bool glow = part.mGlow.mV[3] != 0;
+        LLViewerTexture* texture = r.mTex;
+        const bool fullbright = r.mFullbright;
+        LLRender::eBlendFactor bf_src = (LLRender::eBlendFactor)r.mBlendSrc;
+        LLRender::eBlendFactor bf_dst = (LLRender::eBlendFactor)r.mBlendDst;
+        const bool glow = r.mGlow.mV[3] != 0;
         if (info && info->mTexture == texture && info->mFullbright == fullbright && info->mBlendFuncDst == bf_dst && info->mBlendFuncSrc == bf_src)
         {
             info->mCount += 6 * added;

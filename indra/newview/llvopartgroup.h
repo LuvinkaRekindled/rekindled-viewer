@@ -36,6 +36,23 @@
 
 class LLViewerPartGroup;
 
+// <FS> GPU particles stage 1b / 2: one particle that is drawn this frame, ready for its row (position, velocity of a follow-velocity particle, half size, colour, glow, what the draw batches by); a ribbon
+// piece also has the half axis of its own end and the point and half axis of the end it joins
+struct LLPartEval
+{
+    LLVector3 mPos;
+    LLVector3 mVel;
+    LLVector3 mAxisHalf, mPPos, mPAxisHalf;
+    F32 mHalfX = 0.f, mHalfY = 0.f;
+    F32 mDist = 0.f;                // along the camera's at axis
+    LLColor4U mColor, mGlow, mPColor, mPGlow;
+    LLViewerTexture* mTex = nullptr;
+    S32 mIndex = 0;                 // the pick number: a place in the group's particle list, then in its records
+    U8 mBlendSrc = 0, mBlendDst = 0;
+    bool mFullbright = false;
+    bool mRibbon = false;
+};
+
 class LLVOPartGroup : public LLAlphaObject
 {
 public:
@@ -105,7 +122,9 @@ public:
     bool updateRows(LLDrawable* drawable, S32 num_parts);
     bool updateFacesLegacy(LLDrawable* drawable, S32 num_parts);
     bool mRowsMode = false;
-    std::vector<S32> mVisible;
+    std::vector<LLPartEval> mEval;
+    LLVector3 mEvalMin, mEvalMax;           // the box of the drawn particles (the group's extents take it in: a record does not stay in the group's box)
+    bool mEvalValid = false;
 
 protected:
     ~LLVOPartGroup();
