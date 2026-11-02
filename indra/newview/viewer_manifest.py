@@ -321,9 +321,7 @@ class ViewerManifest(LLManifest,FSViewerManifest):
         global CHANNEL_VENDOR_BASE
         # a standard map of strings for replacing in the templates
         #<FS:TS> tag "OS" after CHANNEL_VENDOR_BASE and before any suffix
-        channel_base = "Phoenix-" + CHANNEL_VENDOR_BASE
-        if self.fs_is_opensim():
-            channel_base = channel_base + "OS"
+        channel_base = CHANNEL_VENDOR_BASE # <FS> Rekindled: no "Phoenix-" prefix and no "OS" tag in the name
         #</FS:TS>
         substitution_strings = {
             'channel_vendor_base' : '_'.join(channel_base.split()),
@@ -353,10 +351,7 @@ class ViewerManifest(LLManifest,FSViewerManifest):
         #    app_suffix=self.channel_variant()
         app_suffix=self.channel_variant()
 
-        #<FS:ND> tag "OS" after CHANNEL_VENDOR_BASE and before any suffix
-        if self.fs_is_opensim():
-            app_suffix = "OS" + app_suffix
-        #</FS:ND>
+        # <FS> Rekindled: no "OS" tag after the vendor base (the viewer serves both Second Life and OpenSim)
 
         #<FS:ND> Don't separate name by whitespace. This break a lot of things in the old FS installer logic.
         #return CHANNEL_VENDOR_BASE + ' ' + app_suffix
