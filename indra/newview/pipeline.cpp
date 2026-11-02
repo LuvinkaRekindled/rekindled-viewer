@@ -14292,6 +14292,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 // <FS> Shadow pass bookkeeping for the FSGpuZoneTimers log: the index of the renderShadow call within the
 // frame (sun cascades first, then spot lights, then the reflection probe's cascades).
 static U32 sShadowPassIndex = 0;
+static std::atomic<U32> sCascadeStaticEntries[4];     // <FS> the static caster entries the last pass of each sun cascade sent (the cascade diagnostic in generateSunShadow reads it)
 static U32 sShadowPassesReused = 0; // <FS> far cascade passes skipped (shadow map reused) since the last log
 static U32 sCurrentShadowPass = 0;
 static bool sCurrentShadowPassIsCube = false;
@@ -24101,6 +24102,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             verify_shadow_static("static", *source, built);
         }
         const std::vector<LLVkBridge::ShadowPacketEntry>& entries = source->mEntries;
+        if (shadow_pass_index() < 4) { sCascadeStaticEntries[shadow_pass_index()].store((U32)entries.size(), std::memory_order_relaxed); }
         const std::vector<F32>& matrices = source->mMatrices;
         const std::vector<LLDrawInfo*>& fallback = source->mFallback;
         if (rt_skip)
@@ -25643,7 +25645,21 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sShadowPrepTimed = !prepared;
                 PhaseLap shadow_lap;
                 const auto cascade_start = std::chrono::steady_clock::now();
+                if (j >= 0 && j < 4) { sCascadeStaticEntries[j].store(0, std::memory_order_relaxed); }
                 renderShadow(prep.mView, prep.mProj, shadow_cam, *prep.mResult, true, prepared ? &prep : nullptr);
+                if (j >= 0 && j < 4 && !gCubeSnapshot && !cascade_unused)
+                {
+                    // <FS> diagnostic (blink hunt): a cascade whose static caster entries fall to under half of what it sent a moment ago is logged, with what its cull found (stray-shadow frames: the near shadows go for one frame)
+                    static U32 prev_entries[4] = {}, logged = 0;
+                    const U32 now_entries = sCascadeStaticEntries[j].load(std::memory_order_relaxed);
+                    const U32 groups = prep.mResult->getVisibleGroupsSize();
+                    if (prev_entries[j] >= 100 && now_entries * 2 < prev_entries[j] && logged++ < 200)
+                    {
+                        LL_WARNS("ShadowPrepDiag") << "frame " << LLFrameTimer::getFrameCount() << " cascade " << j << " prepared " << (prepared ? 1 : 0) << ": " << now_entries << " static caster entries (the frame before: " << prev_entries[j]
+                            << "), visible groups " << groups << ", drawable groups " << prep.mResult->getDrawableGroupsSize() << ", visible drawables " << (U32)(prep.mResult->endVisibleList() - prep.mResult->beginVisibleList()) << LL_ENDL;
+                    }
+                    prev_entries[j] = now_entries;
+                }
                 shadow_lap.mark(PH_RENDERSHADOW);
                 if (!gCubeSnapshot && j >= 0 && j < 4)
                 {
