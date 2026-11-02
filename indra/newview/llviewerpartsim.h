@@ -88,6 +88,39 @@ public:
 
 
 
+// <FS> GPU particles stage 2 (doc/vulkan/PLAN-gpu-particles.md): a particle with no per-frame input (no wind, target, bounce, follow source, ribbon, callback) is not stepped: its position,
+// velocity, colour, scale and glow are functions of its age (the closed form step 1 compared against the stepping: colour, scale and glow equal, position within the stepping's float rounding).
+// The group keeps it as a record; LLVOPartGroup::updateRows evaluates it.
+struct LLViewerPartRecord
+{
+    LLVector3 mPos0, mVel0, mAccel;
+    F64 mT0 = 0.0;                          // the simulation clock (LLViewerPartSim::getSimTime) when the first step began
+    F32 mMaxAge = 0.f;
+    U32 mFlags = 0;
+    LLColor4 mStartColor, mEndColor;
+    LLVector2 mStartScale, mEndScale;
+    F32 mStartGlow = 0.f, mEndGlow = 0.f;
+    U8 mBlendSrc = 0, mBlendDst = 0;
+    LLPointer<LLViewerTexture> mImagep;
+    LLPointer<LLViewerPartSource> mSourcep;
+};
+
+// the stepping's interpolations as they are written there (start * (1 - f) + end * f, a channel at a time), so the closed form and the stepping agree to the last bit
+inline LLColor4 fs_part_color_at(const LLColor4& start, const LLColor4& end, F32 f)
+{
+    LLColor4 c;
+    for (int k = 0; k < 4; ++k)
+    {
+        c.mV[k] = start.mV[k] * (1.f - f) + end.mV[k] * f;
+    }
+    return c;
+}
+
+inline LLVector2 fs_part_scale_at(const LLVector2& start, const LLVector2& end, F32 f)
+{
+    return LLVector2(start.mV[0] * (1.f - f) + f * end.mV[0], start.mV[1] * (1.f - f) + f * end.mV[1]);
+}
+
 class LLViewerPartGroup
 {
 public:
@@ -112,8 +145,14 @@ public:
     typedef std::vector<LLViewerPart*>  part_list_t;
     part_list_t mParticles;
 
+    // <FS> GPU particles stage 2: the particles that are functions of their age (mDeadAt: the clock after which each is gone, -1 = removed by its source's id)
+    std::vector<LLViewerPartRecord> mRecords;
+    std::vector<F64> mDeadAt;
+    bool addRecord(const LLViewerPart& part, const F32 desired_size);
+    bool expireRecords();                   // true: some went
+
     const LLVector3 &getCenterAgent() const     { return mCenterAgent; }
-    S32 getCount() const                    { return (S32) mParticles.size(); }
+    S32 getCount() const                    { return (S32) (mParticles.size() + mRecords.size()); }
     LLViewerRegion *getRegion() const       { return mRegionp; }
 
     void removeParticlesByID(const U32 source_id);
@@ -168,6 +207,7 @@ public:
         }
         return 0.f;
     }
+    static F64 getSimTime() { return sSimTime; }
     F32 getRefRate() { return sParticleAdaptiveRate; }
     F32 getBurstRate() {return sParticleBurstRate; }
     void addPart(LLViewerPart* part);
@@ -193,13 +233,16 @@ public:
 
 protected:
     LLViewerPartGroup *createViewerPartGroup(const LLVector3 &pos_agent, const F32 desired_size, bool hud);
-    LLViewerPartGroup *put(LLViewerPart* part);
+    LLViewerPartGroup *put(LLViewerPart* part, bool as_record = false);
 
     group_list_t mViewerPartGroups;
     source_list_t mViewerPartSources;
     LLFrameTimer mSimulationTimer;
 
     static S32 sMaxParticleCount;
+    static F64 sSimTime;                    // <FS> GPU particles stage 2: the simulation clock (the sum of the frames' dt, each at most 0.1 s)
+    static F32 sSimDt;
+    static std::atomic<S32> sRecordCount;   // ... of sParticleCount, the particles that are records
     static std::atomic<S32> sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
     static F32 sParticleAdaptiveRate;
     static F32 sParticleBurstRate;

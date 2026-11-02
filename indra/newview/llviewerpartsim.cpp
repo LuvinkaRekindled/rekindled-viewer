@@ -42,12 +42,16 @@
 #include "llspatialpartition.h"
 #include "llvoavatarself.h"
 #include "llvovolume.h"
+#include "llviewertexture.h"
 
 const F32 PART_SIM_BOX_SIDE = 16.f;
 
 //static
 S32 LLViewerPartSim::sMaxParticleCount = 0;
 std::atomic<S32> LLViewerPartSim::sParticleCount{0}; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+F64 LLViewerPartSim::sSimTime = 0.0;
+F32 LLViewerPartSim::sSimDt = 0.f;
+std::atomic<S32> LLViewerPartSim::sRecordCount{0};
 std::atomic<S32> LLViewerPartSim::sParticleCount2{0}; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
 // This controls how greedy individual particle burst sources are allowed to be, and adapts according to how near the particle-count limit we are.
 F32 LLViewerPartSim::sParticleAdaptiveRate = 0.0625f;
@@ -205,7 +209,11 @@ LLViewerPartGroup::~LLViewerPartGroup()
     }
     mParticles.clear();
 
-    LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    const S32 records = (S32) mRecords.size();
+    mRecords.clear();
+    mDeadAt.clear();
+    LLViewerPartSim::sRecordCount -= records;
+    LLViewerPartSim::sParticleCount -= count + records; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
 }
 
 void LLViewerPartGroup::cleanup()
@@ -272,11 +280,82 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
     return true;
 }
 
+// <FS> GPU particles stage 2: the same placement rules as addPart, the particle kept as a record (the caller deletes the LLViewerPart)
+bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size)
+{
+    if (mHud || (part.mFlags & LLPartData::LL_PART_HUD))
+    {
+        return false;
+    }
+
+    bool uniform_part = part.mScale.mV[0] == part.mScale.mV[1] &&
+                    !(part.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK);
+
+    if (!posInGroup(part.mPosAgent, desired_size) ||
+        (mUniformParticles && !uniform_part) ||
+        (!mUniformParticles && uniform_part))
+    {
+        return false;
+    }
+
+    gPipeline.markRebuild(mVOPartGroupp->mDrawable, LLDrawable::REBUILD_ALL);
+
+    LLViewerPartRecord rec;
+    rec.mPos0 = part.mPosAgent;
+    rec.mVel0 = part.mVelocity;
+    rec.mAccel = part.mAccel;
+    rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
+    rec.mMaxAge = part.mMaxAge;
+    rec.mFlags = part.mFlags;
+    rec.mStartColor = part.mStartColor;
+    rec.mEndColor = part.mEndColor;
+    rec.mStartScale = part.mStartScale;
+    rec.mEndScale = part.mEndScale;
+    rec.mStartGlow = part.mStartGlow;
+    rec.mEndGlow = part.mEndGlow;
+    rec.mBlendSrc = part.mBlendFuncSource;
+    rec.mBlendDst = part.mBlendFuncDest;
+    rec.mImagep = part.mImagep;
+    rec.mSourcep = part.mPartSourcep;
+    mDeadAt.push_back(rec.mT0 + (F64)rec.mMaxAge);
+    mRecords.push_back(std::move(rec));
+    ++LLViewerPartSim::sParticleCount;
+    ++LLViewerPartSim::sRecordCount;
+    return true;
+}
+
+bool LLViewerPartGroup::expireRecords()
+{
+    const F64 now = LLViewerPartSim::sSimTime;
+    bool gone = false;
+    for (size_t i = 0; i < mDeadAt.size();)
+    {
+        if (now > mDeadAt[i])
+        {
+            mDeadAt[i] = mDeadAt.back();
+            mDeadAt.pop_back();
+            if (i + 1 != mRecords.size())
+            {
+                mRecords[i] = std::move(mRecords.back());
+            }
+            mRecords.pop_back();
+            --LLViewerPartSim::sParticleCount;
+            --LLViewerPartSim::sRecordCount;
+            gone = true;
+        }
+        else
+        {
+            ++i;
+        }
+    }
+    return gone;
+}
+
 
 // <FS> GPU particles stage 2 census (doc/vulkan/PLAN-gpu-particles.md): what the simulation steps, by behaviour (log tag Q1Census, every 600 frames)
 static struct PartSimCensus
 {
-    U64 mFrames = 0, mStepped = 0, mSpawned = 0, mSrcCycles = 0, mGrpCycles = 0, mGroups = 0, mGroupsSkipped = 0, mSources = 0;
+    U64 mRecs = 0, mFrames = 0, mStepped = 0, mSpawned = 0, mSrcCycles = 0, mGrpCycles = 0, mGroups = 0, mGroupsSkipped = 0, mSources = 0;
     U64 mFollowSrc = 0, mWind = 0, mTargetPos = 0, mTargetLinear = 0, mBounce = 0, mCallback = 0, mRibbon = 0, mFollowVel = 0, mInterpColor = 0, mInterpScale = 0, mEmissive = 0;
     U64 mAnalytic = 0, mAnalyticSrc = 0, mParented = 0, mAgeSum = 0;
     U64 mMaxAgeMs = 0;
@@ -301,17 +380,12 @@ static void fs_partsim_compare(const LLViewerPart* part)
     LLColor4 color = part->mStartColor;
     if (part->mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK)
     {
-        color.setVec(part->mStartColor);
-        color *= 1.f - frac;
-        color %= 1.f - frac;
-        color += frac % (frac * part->mEndColor);
+        color = fs_part_color_at(part->mStartColor, part->mEndColor, frac);
     }
     LLVector2 scale = part->mStartScale;
     if (part->mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK)
     {
-        scale.setVec(part->mStartScale);
-        scale *= 1.f - frac;
-        scale += frac * part->mEndScale;
+        scale = fs_part_scale_at(part->mStartScale, part->mEndScale, frac);
     }
     const F32 glow = (F32)(U8)ll_round(lerp(part->mStartGlow, part->mEndGlow, frac) * 255.f);
 
@@ -526,6 +600,11 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
         }
     }
 
+    if (expireRecords())
+    {
+        changed = true;
+    }
+
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch
     // S32 removed = end - (S32)mParticles.size();
     // if (removed > 0)
@@ -547,7 +626,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     // </FS:Beq>
 
     // Kill the viewer object if this particle group is empty
-    if (mParticles.empty())
+    if (mParticles.empty() && mRecords.empty())
     {
         gObjectList.killObject(mVOPartGroupp);
         mVOPartGroupp = NULL;
@@ -568,6 +647,10 @@ void LLViewerPartGroup::shift(const LLVector3 &offset)
         mParticles[i]->mPosAgent += offset;
         mParticles[i]->mSpawnPos += offset;
     }
+    for (LLViewerPartRecord& rec : mRecords)
+    {
+        rec.mPos0 += offset;
+    }
 }
 
 void LLViewerPartGroup::removeParticlesByID(const U32 source_id)
@@ -577,6 +660,13 @@ void LLViewerPartGroup::removeParticlesByID(const U32 source_id)
         if(mParticles[i]->mPartSourcep->getID() == source_id)
         {
             mParticles[i]->mFlags = LLViewerPart::LL_PART_DEAD_MASK;
+        }
+    }
+    for (size_t i = 0; i < mRecords.size(); i++)
+    {
+        if (mRecords[i].mSourcep.notNull() && mRecords[i].mSourcep->getID() == source_id)
+        {
+            mDeadAt[i] = -1.0;
         }
     }
 }
@@ -600,7 +690,7 @@ void LLViewerPartSim::checkParticleCount(U32 size)
     // {
     //     LL_ERRS() << "current particle size: " << LLViewerPartSim::sParticleCount2 << " array size: " << size << LL_ENDL ; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
     // }
-    if(LLViewerPartSim::sParticleCount2 != LLViewerPartSim::sParticleCount)
+    if(LLViewerPartSim::sParticleCount2 + LLViewerPartSim::sRecordCount != LLViewerPartSim::sParticleCount)
     {
         static int fail_count{0};
         if(fail_count > 10)
@@ -699,6 +789,26 @@ bool LLViewerPartSim::shouldAddPart()
     return true;
 }
 
+// <FS> GPU particles stage 2: LL_VK_GPU_PARTICLE_SIM=1 (and the rows of stage 1 on) keeps the particles without per-frame input as records
+static bool fs_partsim_records_on()
+{
+    static const bool on = []()
+    {
+        const char* rows = getenv("LL_VK_GPU_PARTICLES");
+        const char* sim = getenv("LL_VK_GPU_PARTICLE_SIM");
+        return (!rows || atoi(rows) != 0) && sim && atoi(sim) != 0;
+    }();
+    return on;
+}
+
+static bool fs_part_is_record(const LLViewerPart& part)
+{
+    const U32 excluded = LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_TARGET_POS_MASK | LLPartData::LL_PART_TARGET_LINEAR_MASK | LLPartData::LL_PART_BOUNCE_MASK
+        | LLPartData::LL_PART_FOLLOW_SRC_MASK | LLPartData::LL_PART_RIBBON_MASK | LLPartData::LL_PART_HUD;
+    return !(part.mFlags & excluded) && part.mVPCallback == nullptr && part.mParent == nullptr && part.mMaxAge > 0.f
+        && !(part.mImagep.notNull() && part.mImagep->hasParcelMedia());
+}
+
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
     ++sSimCensus.mSpawned;
@@ -707,7 +817,14 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
     part->mSpawnKnown = true;
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
     {
-        put(part);
+        if (fs_partsim_records_on() && fs_part_is_record(*part))
+        {
+            put(part, true);
+        }
+        else
+        {
+            put(part);
+        }
     }
     else
     {
@@ -718,7 +835,7 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
 }
 
 
-LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
+LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part, bool as_record)
 {
     const F32 MAX_MAG = 1000000.f*1000000.f; // 1 million
     LLViewerPartGroup *return_group = NULL ;
@@ -737,7 +854,7 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
         S32 count = (S32) mViewerPartGroups.size();
         for (S32 i = 0; i < count; i++)
         {
-            if (mViewerPartGroups[i]->addPart(part, desired_size))
+            if (as_record ? mViewerPartGroups[i]->addRecord(*part, desired_size) : mViewerPartGroups[i]->addPart(part, desired_size))
             {
                 // We found a spatial group that we fit into, add us and exit
                 return_group = mViewerPartGroups[i];
@@ -753,7 +870,7 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
             LLViewerPartGroup *groupp = createViewerPartGroup(part->mPosAgent, desired_size, part->mFlags & LLPartData::LL_PART_HUD);
             groupp->mUniformParticles = (part->mScale.mV[0] == part->mScale.mV[1] &&
                                     !(part->mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK));
-            if (!groupp->addPart(part))
+            if (!(as_record ? groupp->addRecord(*part, -1.f) : groupp->addPart(part)))
             {
                 LL_WARNS() << "LLViewerPartSim::put - Particle didn't go into its box!" << LL_ENDL;
                 LL_INFOS() << groupp->getCenterAgent() << LL_ENDL;
@@ -770,6 +887,11 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
     {
         delete part ;
         part = NULL ;
+    }
+    else if (as_record)
+    {
+        delete part;        // (kept as a record)
+        part = NULL;
     }
 
     return return_group ;
@@ -812,6 +934,8 @@ void LLViewerPartSim::updateSimulation()
     static LLFrameTimer update_timer;
 
     const F32 dt = llmin(update_timer.getElapsedTimeAndResetF32(), 0.1f);
+    sSimTime += (F64)dt;
+    sSimDt = dt;
 
     // <FS:LO> Dont suspend partical processing while particles are hidden, just skip over drawing them
     /*if (!(gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES)))
@@ -906,6 +1030,7 @@ void LLViewerPartSim::updateSimulation()
     sSimCensus.mGroups += (U64)count;
     for (i = 0; i < count; i++)
     {
+        sSimCensus.mRecs += mViewerPartGroups[i]->mRecords.size();
         LLViewerObject* vobj = mViewerPartGroups[i]->mVOPartGroupp;
 
         S32 visirate = 1;
@@ -948,7 +1073,7 @@ void LLViewerPartSim::updateSimulation()
     {
         const double f = 600.0, k = 1000.0, st = std::max<double>(1.0, (double)sSimCensus.mStepped);
         LL_INFOS("Q1Census") << "particle simulation per frame over 600: sources loop " << sSimCensus.mSrcCycles / f / k << " kcycles (" << sSimCensus.mSources / f << " sources), groups loop " << sSimCensus.mGrpCycles / f / k << " kcycles ("
-            << sSimCensus.mGroups / f << " groups, " << sSimCensus.mGroupsSkipped / f << " skipped as not visible), particles stepped " << sSimCensus.mStepped / f << ", spawned " << sSimCensus.mSpawned / f
+            << sSimCensus.mGroups / f << " groups, " << sSimCensus.mGroupsSkipped / f << " skipped as not visible), particles stepped " << sSimCensus.mStepped / f << ", records " << sSimCensus.mRecs / f << ", spawned " << sSimCensus.mSpawned / f
             << "; share of the stepped particles: analytic (no wind / target / bounce / callback) " << 100.0 * sSimCensus.mAnalytic / st << "%, of those with nothing from the source either " << 100.0 * sSimCensus.mAnalyticSrc / st
             << "%; follow source " << 100.0 * sSimCensus.mFollowSrc / st << "%, wind " << 100.0 * sSimCensus.mWind / st << "%, target pos " << 100.0 * sSimCensus.mTargetPos / st << "%, target linear " << 100.0 * sSimCensus.mTargetLinear / st
             << "%, bounce " << 100.0 * sSimCensus.mBounce / st << "%, callback " << 100.0 * sSimCensus.mCallback / st << "%, ribbon " << 100.0 * sSimCensus.mRibbon / st << "% (with a parent " << 100.0 * sSimCensus.mParented / st
