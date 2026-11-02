@@ -96,7 +96,7 @@ if(WINDOWS)
     endif ()
 
     if (TARGET ll::openal)
-        list(APPEND release_files openal32.dll alut.dll)
+        list(APPEND release_files openal32.dll)
     endif ()
 
     #*******************************
@@ -212,7 +212,7 @@ elseif(DARWIN)
     endif ()
 
     if (TARGET ll::openal)
-      list(APPEND release_files libalut.dylib libopenal.dylib)
+      list(APPEND release_files libopenal.dylib)
     endif ()
 
 elseif(LINUX)
