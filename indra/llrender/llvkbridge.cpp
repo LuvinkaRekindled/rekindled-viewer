@@ -80,6 +80,12 @@ void LLVkBridge::stopAsync() {}
 #include "llwindow.h"
 
 #include <cstdlib>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <deque>
+#include <string>
+#include <vector>
 #include <chrono>
 #include <mutex>
 #include <unordered_map>
@@ -645,6 +651,325 @@ bool represent_after_resize()
 
 }
 
+
+// ---- <FS> blink capture (LL_VK_BLINK_CAPTURE=1, off by default) ----------------------------------------------------------------------------------------------------------------------------
+// A diagnostic for a frame that is wrong for one frame (a patch of the ground black, a green flash): every finished frame is also blitted down to a small image and copied into a ring of host
+// buffers, read back when the GPU has finished with it (no wait, so the timing is that of a normal run apart from two small copies). Each new frame is compared with the two before it: where a block
+// is much darker (or much greener) in the middle frame and the frames on both sides agree with each other, the three frames and a difference picture are written as BMP files into
+// <exe folder>\blink-captures (LL_VK_BLINK_DIR) and a VkBlink line goes to the log.
+namespace
+{
+struct BlinkCapture
+{
+    static constexpr U32 RING = 8;
+    static constexpr U32 CAP_W = 320;
+    static constexpr U32 CELL = 8;
+    struct Slot
+    {
+        LLVk::Image mImage;
+        LLVk::Buffer mBuffer;
+        U64 mFrame = 0;
+        U64 mSeq = 0;       // the number of the capture (the frame numbers skip: the viewer closes an off-screen frame after most presented ones)
+        bool mPending = false;
+    };
+    struct Done
+    {
+        U64 mFrame = 0;
+        U64 mSeq = 0;
+        std::vector<U8> mRGBA;
+        std::vector<F32> mLuma;     // a mean a block
+        std::vector<F32> mGreen;    // green minus the mean of red and blue, a mean a block
+    };
+    bool mOn = false, mChecked = false;
+    U32 mW = 0, mH = 0, mSrcW = 0, mSrcH = 0;
+    Slot mSlots[RING];
+    std::deque<Done> mHistory;
+    U64 mCaptured = 0, mSkippedBusy = 0, mTriggers = 0, mSaved = 0, mLastSaveFrame = 0, mChecks = 0, mGap = 0;
+    F32 mDrop = 0.25f;          // LL_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
+    U32 mBlocks = 3;            // LL_VK_BLINK_BLOCKS: how many blocks must do it
+    U32 mMaxSaved = 300;        // LL_VK_BLINK_MAX: how many blinks are written out
+    U32 mMaxDark = 0, mMaxGreen = 0, mMaxBright = 0;       // the strongest changes seen since the last log line (how far the thresholds are from what happens)
+    std::string mDir;
+
+    bool enabled()
+    {
+        if (!mChecked)
+        {
+            mChecked = true;
+            const char* e = getenv("LL_VK_BLINK_CAPTURE");
+            mOn = e && e[0] && e[0] != '0';
+            if (mOn)
+            {
+                const char* d = getenv("LL_VK_BLINK_DIR");
+                if (d && d[0])
+                {
+                    mDir = d;
+                }
+                else
+                {
+                    char path[MAX_PATH] = {};
+                    GetModuleFileNameA(nullptr, path, MAX_PATH);
+                    std::string exe = path;
+                    const size_t slash = exe.find_last_of("\\/");
+                    mDir = (slash == std::string::npos ? std::string() : exe.substr(0, slash)) + "\\blink-captures";
+                }
+                if (const char* v = getenv("LL_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
+                if (const char* v = getenv("LL_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("LL_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
+                CreateDirectoryA(mDir.c_str(), nullptr);
+                LL_INFOS("VkBlink") << "blink capture is ON (LL_VK_BLINK_CAPTURE): small copies of every frame, bad frames saved to " << mDir << " (a block " << (S32)(mDrop * 100.f) << "% darker for one frame, " << mBlocks << " blocks)" << LL_ENDL;
+            }
+        }
+        return mOn;
+    }
+
+    void release()
+    {
+        LLVk::Context& ctx = LLVk::Context::instance();
+        for (Slot& s : mSlots)
+        {
+            if (s.mImage.valid()) ctx.destroyImage(s.mImage);
+            if (s.mBuffer.valid()) ctx.destroyBuffer(s.mBuffer);
+            s = Slot();
+        }
+        mHistory.clear();
+    }
+
+    bool setup(U32 src_w, U32 src_h)
+    {
+        if (mW && src_w == mSrcW && src_h == mSrcH)
+        {
+            return true;
+        }
+        release();
+        LLVk::Context& ctx = LLVk::Context::instance();
+        mSrcW = src_w;
+        mSrcH = src_h;
+        mW = CAP_W;
+        mH = std::max<U32>(CELL, ((U64)CAP_W * src_h / std::max<U32>(1, src_w) + CELL / 2) / CELL * CELL);
+        for (Slot& s : mSlots)
+        {
+            if (!ctx.createImage2D(mW, mH, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, s.mImage)
+                || !ctx.createBuffer((VkDeviceSize)mW * mH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, LLVk::Context::Memory::Readback, s.mBuffer))
+            {
+                LL_WARNS("VkBlink") << "blink capture: could not create the capture images; off" << LL_ENDL;
+                release();
+                mOn = false;
+                return false;
+            }
+        }
+        LL_INFOS("VkBlink") << "blink capture: frames of " << src_w << "x" << src_h << " are copied to " << mW << "x" << mH << " (" << mW / CELL << "x" << mH / CELL << " blocks)" << LL_ENDL;
+        return true;
+    }
+
+    // BMP, 24 bit, rows bottom up (the capture is already flipped to top-down: write the rows reversed)
+    void writeBmp(const std::string& path, const U8* rgba, U32 w, U32 h)
+    {
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f)
+        {
+            return;
+        }
+        const U32 row = (w * 3 + 3) / 4 * 4, size = row * h;
+        U8 header[54] = { 'B', 'M' };
+        auto put32 = [&](int at, U32 v) { for (int i = 0; i < 4; ++i) header[at + i] = (U8)(v >> (8 * i)); };
+        put32(2, 54 + size); put32(10, 54); put32(14, 40); put32(18, w); put32(22, h);
+        header[26] = 1; header[28] = 24; put32(34, size);
+        fwrite(header, 1, 54, f);
+        std::vector<U8> line(row, 0);
+        for (U32 y = 0; y < h; ++y)
+        {
+            const U8* src = rgba + (size_t)(h - 1 - y) * w * 4;
+            for (U32 x = 0; x < w; ++x)
+            {
+                line[x * 3 + 0] = src[x * 4 + 2];
+                line[x * 3 + 1] = src[x * 4 + 1];
+                line[x * 3 + 2] = src[x * 4 + 0];
+            }
+            fwrite(line.data(), 1, row, f);
+        }
+        fclose(f);
+    }
+
+    void analyse(Done& d)
+    {
+        const U32 bw = mW / CELL, bh = mH / CELL;
+        d.mLuma.assign((size_t)bw * bh, 0.f);
+        d.mGreen.assign((size_t)bw * bh, 0.f);
+        for (U32 by = 0; by < bh; ++by)
+        {
+            for (U32 bx = 0; bx < bw; ++bx)
+            {
+                F32 l = 0.f, g = 0.f;
+                for (U32 y = 0; y < CELL; ++y)
+                {
+                    const U8* px = d.mRGBA.data() + ((size_t)(by * CELL + y) * mW + bx * CELL) * 4;
+                    for (U32 x = 0; x < CELL; ++x, px += 4)
+                    {
+                        const F32 r = px[0] / 255.f, gr = px[1] / 255.f, b = px[2] / 255.f;
+                        l += 0.2126f * r + 0.7152f * gr + 0.0722f * b;
+                        g += gr - 0.5f * (r + b);
+                    }
+                }
+                d.mLuma[(size_t)by * bw + bx] = l / (CELL * CELL);
+                d.mGreen[(size_t)by * bw + bx] = g / (CELL * CELL);
+            }
+        }
+    }
+
+    // the oldest three in the history: a, b (the frame under test), c
+    void check()
+    {
+        if (mHistory.size() < 3)
+        {
+            return;
+        }
+        const Done& a = mHistory[mHistory.size() - 3];
+        const Done& b = mHistory[mHistory.size() - 2];
+        const Done& c = mHistory[mHistory.size() - 1];
+        if (b.mSeq != a.mSeq + 1 || c.mSeq != b.mSeq + 1)
+        {
+            ++mGap;
+            return;
+        }
+        ++mChecks;
+        U32 dark = 0, green = 0, bright = 0;
+        const size_t n = b.mLuma.size();
+        for (size_t k = 0; k < n; ++k)
+        {
+            const F32 la = a.mLuma[k], lb = b.mLuma[k], lc = c.mLuma[k];
+            const F32 lo = std::min(la, lc), hi = std::max(la, lc);
+            if (hi > 0.05f && hi - lo < 0.15f * hi && lb < (1.f - mDrop) * lo)
+            {
+                ++dark;
+            }
+            else if (hi > 0.05f && hi - lo < 0.15f * hi && lb > (1.f + 2.f * mDrop) * hi + 0.05f)
+            {
+                ++bright;
+            }
+            const F32 ga = a.mGreen[k], gb = b.mGreen[k], gc = c.mGreen[k];
+            if (gb - std::max(ga, gc) > 0.12f && std::fabs(ga - gc) < 0.08f)
+            {
+                ++green;
+            }
+        }
+        mMaxDark = std::max(mMaxDark, dark);
+        mMaxGreen = std::max(mMaxGreen, green);
+        mMaxBright = std::max(mMaxBright, bright);
+        if (dark < mBlocks && green < 4 && bright < mBlocks)
+        {
+            return;
+        }
+        ++mTriggers;
+        if (mSaved >= mMaxSaved || b.mSeq < mLastSaveFrame + 6)
+        {
+            return;
+        }
+        mLastSaveFrame = b.mSeq;
+        ++mSaved;
+        char base[64];
+        snprintf(base, sizeof(base), "blink-%03llu-frame%llu-d%u-b%u-g%u", (unsigned long long)mSaved, (unsigned long long)b.mFrame, dark, bright, green);
+        const std::string stem = mDir + "\\" + base;
+        writeBmp(stem + "-a-before.bmp", a.mRGBA.data(), mW, mH);
+        writeBmp(stem + "-b-bad.bmp", b.mRGBA.data(), mW, mH);
+        writeBmp(stem + "-c-after.bmp", c.mRGBA.data(), mW, mH);
+        std::vector<U8> diff(b.mRGBA.size());
+        for (size_t i = 0; i < b.mRGBA.size(); i += 4)
+        {
+            for (int ch = 0; ch < 3; ++ch)
+            {
+                const int mean = ((int)a.mRGBA[i + ch] + (int)c.mRGBA[i + ch]) / 2;
+                diff[i + ch] = (U8)std::min(255, std::abs((int)b.mRGBA[i + ch] - mean) * 4);
+            }
+            diff[i + 3] = 255;
+        }
+        writeBmp(stem + "-d-diff.bmp", diff.data(), mW, mH);
+        LL_INFOS("VkBlink") << "blink " << mSaved << " at frame " << b.mFrame << ": " << dark << " blocks dark, " << green << " blocks green, " << bright << " blocks bright (of " << n << "), saved " << base << LL_ENDL;
+    }
+
+    // frames the GPU has finished are read, oldest first
+    void collect()
+    {
+        LLVk::Context& ctx = LLVk::Context::instance();
+        for (;;)
+        {
+            Slot* best = nullptr;
+            for (Slot& s : mSlots)
+            {
+                if (s.mPending && ctx.frameFinished(s.mFrame) && (!best || s.mFrame < best->mFrame))
+                {
+                    best = &s;
+                }
+            }
+            if (!best)
+            {
+                return;
+            }
+            Done d;
+            d.mFrame = best->mFrame;
+            d.mSeq = best->mSeq;
+            d.mRGBA.assign((const U8*)best->mBuffer.mMapped, (const U8*)best->mBuffer.mMapped + (size_t)mW * mH * 4);
+            best->mPending = false;
+            analyse(d);
+            mHistory.push_back(std::move(d));
+            while (mHistory.size() > 4)
+            {
+                mHistory.pop_front();
+            }
+            check();
+        }
+    }
+
+    // recorded after the blit to the swapchain: the backbuffer is in TRANSFER_SRC layout
+    void record(LLVk::Context& ctx, LLVk::Renderer& renderer, LLVk::Image& backbuffer, U32 w, U32 h)
+    {
+        if (!setup(w, h))
+        {
+            return;
+        }
+        collect();
+        Slot* slot = nullptr;
+        for (U32 i = 0; i < RING && !slot; ++i)
+        {
+            Slot& s = mSlots[(mCaptured + i) % RING];
+            if (!s.mPending)
+            {
+                slot = &s;
+            }
+        }
+        if (!slot)
+        {
+            ++mSkippedBusy;
+            return;
+        }
+        renderer.ensureLayout(slot->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageBlit blit = {};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[0] = { 0, 0, 0 };
+        blit.srcOffsets[1] = { (S32)w, (S32)h, 1 };
+        blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.dstOffsets[0] = { 0, (S32)mH, 0 };      // (rows flipped like the blit to the window: the viewer's images have row 0 at the bottom)
+        blit.dstOffsets[1] = { (S32)mW, 0, 1 };
+        LLVk::vkCmdBlitImage(ctx.getCommandBuffer(), backbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        renderer.ensureLayout(slot->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy copy = {};
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageExtent = { mW, mH, 1 };
+        LLVk::vkCmdCopyImageToBuffer(ctx.getCommandBuffer(), slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mBuffer.mBuffer, 1, &copy);
+        slot->mFrame = ctx.getFrameNumber();
+        slot->mSeq = mCaptured;
+        slot->mPending = true;
+        ++mCaptured;
+        if (mCaptured % 3000 == 0)
+        {
+            LL_INFOS("VkBlink") << "blink capture: " << mCaptured << " frames copied, " << mSkippedBusy << " skipped (ring busy), " << mChecks << " checks (" << mGap << " skipped for a gap), the strongest block counts in the last 3000: dark " << mMaxDark << ", green " << mMaxGreen << ", bright " << mMaxBright << "; " << mTriggers << " blinks seen, " << mSaved << " saved" << LL_ENDL;
+            mMaxDark = mMaxGreen = mMaxBright = 0;
+        }
+    }
+};
+BlinkCapture sBlink;
+}
+
 void LLVkBridge::endFrameImpl()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
@@ -690,6 +1015,10 @@ void LLVkBridge::endFrameImpl()
     blit.dstOffsets[1] = { (S32)target.mExtent.width, 0, 1 };
     LLVk::vkCmdBlitImage(ctx.getCommandBuffer(), sMirror.mBackbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target.mImage,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    if (sBlink.enabled())
+    {
+        sBlink.record(ctx, renderer, sMirror.mBackbuffer, sMirror.mBackWidth, sMirror.mBackHeight);        // <FS> LL_VK_BLINK_CAPTURE
+    }
 
     renderer.ensureLayout(target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     renderer.endFrame();
