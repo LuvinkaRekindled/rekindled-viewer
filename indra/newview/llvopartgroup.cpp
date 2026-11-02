@@ -521,7 +521,8 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
                 continue;       // (the simulation's sweep takes it out)
             }
             const F32 frac = age / rec.mMaxAge;
-            const LLVector3 pos = rec.mPos0 + rec.mVel0 * age + rec.mAccel * (0.5f * age * age);
+            LLVector3 pos, vel;
+            rec.evaluate(now, pos, vel);
             const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
 
             max_scale = llmax(max_scale, scale.mV[0], scale.mV[1]);
@@ -551,7 +552,6 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             row.mDist = (pos - origin) * at_axis;
             if (rec.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK)
             {
-                const LLVector3 vel = rec.mVel0 + rec.mAccel * age;
                 row.mVel = vel.isExactlyZero() ? LLVector3(0.f, 0.f, 0.f) : vel;
             }
             row.mHalfX = 0.5f * scale.mV[0];

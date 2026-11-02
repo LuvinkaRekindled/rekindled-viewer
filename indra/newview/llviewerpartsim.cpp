@@ -280,8 +280,164 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
     return true;
 }
 
+// <FS> GPU particles stage 2 / 3: the vertical motion above a floor at relative height 0 with the stepping's bounce (z mirrored, vertical speed * -0.75 each time the particle is below), as the exact
+// sequence of flights between the bounces; it ends in rest on the floor when the bounces are too small to see (the stepping hops about on it)
+static void fs_bounce_z(F32 z0, F32 v0, F32 a, F32 age, F32& z_out, F32& v_out)
+{
+    F32 z = z0, v = v0, left = age;
+    if (z < 0.f)
+    {
+        z = -z;
+        v *= -0.75f;
+    }
+    for (int bounce = 0; bounce < 24; ++bounce)
+    {
+        // the first time in (0, left] the flight z + v t + a t^2 / 2 is back at the floor, going down
+        F32 hit = -1.f;
+        if (a == 0.f)
+        {
+            if (v < 0.f)
+            {
+                hit = llmax(-z / v, 0.f);       // (a particle that starts on the floor going down bounces at once)
+            }
+        }
+        else
+        {
+            const F32 disc = v * v - 2.f * a * z;
+            if (disc >= 0.f)
+            {
+                const F32 root = sqrtf(disc);
+                const F32 t1 = (-v - root) / a, t2 = (-v + root) / a;
+                const F32 lo = llmin(t1, t2), hi = llmax(t1, t2);
+                // (going down at the root: v + a t < 0)
+                if (lo > -1e-7f && v + a * lo < 0.f)
+                {
+                    hit = llmax(lo, 0.f);
+                }
+                else if (hi > -1e-7f && v + a * hi < 0.f)
+                {
+                    hit = llmax(hi, 0.f);
+                }
+            }
+        }
+        if (hit < 0.f || hit > left)
+        {
+            z_out = z + v * left + 0.5f * a * left * left;
+            v_out = v + a * left;
+            return;
+        }
+        v = (v + a * hit) * -0.75f;
+        z = 0.f;
+        left -= hit;
+        if (fabsf(v) < 0.02f && a <= 0.f)
+        {
+            break;      // (too small to see: at rest on the floor)
+        }
+    }
+    z_out = 0.f;
+    v_out = 0.f;
+}
+
+void LLViewerPartRecord::evaluate(F64 now, LLVector3& pos, LLVector3& vel) const
+{
+    const F32 age = (F32)(now - mT0);
+    const F32 half_age2 = 0.5f * age * age;
+    const LLViewerPartSource* src = mSourcep.get();
+    switch (mMode)
+    {
+    case TARGET_LINEAR:
+        if (src)
+        {
+            const LLVector3 delta = src->mTargetPosAgent - src->mPosAgent;
+            pos = src->mPosAgent + delta * (age / mMaxAge);
+            vel = delta;
+            return;
+        }
+        break;
+    case TARGET_POS:
+        if (src)
+        {
+            // dx/dt = -v, dv/dt = (5 / r) (x / r - v) + a with r the time left and x the way to the target: with u = x / r and w = u - v, dw/dt = -4 w / r - a, so
+            // w = (w0 + a r0 / 3) (r / r0)^4 - a r / 3 and u = u0 + (w0 + a r0 / 3) (1 - (r / r0)^4) / 4 - a (r0 - r) / 3; the stepping is this law with its step size (an error that falls with the step: 3 cm at 120 fps)
+            const F32 r0 = mMaxAge, r = llmax(mMaxAge - age, 0.f);
+            const F32 rho = r / r0, rho4 = rho * rho * rho * rho;
+            const LLVector3 u0 = (mTarget0 - mPos0) / r0;
+            const LLVector3 w0 = u0 - mVel0;
+            const LLVector3 c = w0 + mAccel * (r0 / 3.f);
+            const LLVector3 u = u0 + c * (0.25f * (1.f - rho4)) - mAccel * ((r0 - r) / 3.f);
+            const LLVector3 w = c * rho4 - mAccel * (r / 3.f);
+            pos = src->mTargetPosAgent - u * r;
+            vel = u - w;
+            return;
+        }
+        break;
+    default:
+        break;
+    }
+    const LLVector3 base = (mMode == FOLLOW && src) ? src->mPosAgent : mPos0;
+    pos = base + mVel0 * age + mAccel * half_age2;
+    vel = mVel0 + mAccel * age;
+    if (mBounce)
+    {
+        const F32 floor_z = (mMode == FOLLOW && src) ? src->mPosAgent.mV[VZ] : mFloorZ;
+        const F32 z0 = (mMode == FOLLOW && src) ? 0.f : mPos0.mV[VZ] - mFloorZ;
+        F32 z, v;
+        fs_bounce_z(z0, mVel0.mV[VZ], mAccel.mV[VZ], age, z, v);
+        pos.mV[VZ] = floor_z + z;
+        vel.mV[VZ] = v;
+    }
+}
+
+// the law of a particle as a record, or -1 when it needs the stepping (wind, a callback, a ribbon, a HUD particle, parcel media, a pull towards a target with an acceleration or a bounce, ...)
+static int fs_record_mode(const LLViewerPart& part)
+{
+    const U32 fl = part.mFlags;
+    const U32 excluded = LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_RIBBON_MASK | LLPartData::LL_PART_HUD;
+    if ((fl & excluded) || part.mVPCallback != nullptr || part.mParent != nullptr || part.mMaxAge <= 0.f || (part.mImagep.notNull() && part.mImagep->hasParcelMedia()))
+    {
+        return -1;
+    }
+    const bool bounce = (fl & LLPartData::LL_PART_BOUNCE_MASK) != 0;
+    if (fl & LLPartData::LL_PART_TARGET_LINEAR_MASK)
+    {
+        return (bounce || part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::TARGET_LINEAR;
+    }
+    if (fl & LLPartData::LL_PART_TARGET_POS_MASK)
+    {
+        return (bounce || part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::TARGET_POS;
+    }
+    if (fl & LLPartData::LL_PART_FOLLOW_SRC_MASK)
+    {
+        return part.mPartSourcep.isNull() ? -1 : LLViewerPartRecord::FOLLOW;
+    }
+    return (bounce && part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::FREE;
+}
+
+static void fs_fill_record(const LLViewerPart& part, int mode, LLViewerPartRecord& rec)
+{
+    rec.mPos0 = part.mSpawnKnown ? part.mSpawnPos : part.mPosAgent;
+    rec.mVel0 = part.mSpawnKnown ? part.mSpawnVel : part.mVelocity;
+    rec.mAccel = part.mAccel;
+    rec.mMaxAge = part.mMaxAge;
+    rec.mFlags = part.mFlags;
+    rec.mStartColor = part.mStartColor;
+    rec.mEndColor = part.mEndColor;
+    rec.mStartScale = part.mStartScale;
+    rec.mEndScale = part.mEndScale;
+    rec.mStartGlow = part.mStartGlow;
+    rec.mEndGlow = part.mEndGlow;
+    rec.mBlendSrc = part.mBlendFuncSource;
+    rec.mBlendDst = part.mBlendFuncDest;
+    rec.mImagep = part.mImagep;
+    rec.mSourcep = part.mPartSourcep;
+    rec.mMode = (U8)mode;
+    rec.mBounce = (part.mFlags & LLPartData::LL_PART_BOUNCE_MASK) != 0;
+    rec.mFloorZ = part.mPartSourcep.notNull() ? part.mPartSourcep->mPosAgent.mV[VZ] : part.mPosAgent.mV[VZ];
+    rec.mTarget0 = part.mPartSourcep.notNull() ? part.mPartSourcep->mTargetPosAgent : part.mPosAgent;
+}
+
 // <FS> GPU particles stage 2: the same placement rules as addPart, the particle kept as a record (the caller deletes the LLViewerPart)
-bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size)
+bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, int mode)
 {
     if (mHud || (part.mFlags & LLPartData::LL_PART_HUD))
     {
@@ -301,22 +457,8 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size)
     gPipeline.markRebuild(mVOPartGroupp->mDrawable, LLDrawable::REBUILD_ALL);
 
     LLViewerPartRecord rec;
-    rec.mPos0 = part.mPosAgent;
-    rec.mVel0 = part.mVelocity;
-    rec.mAccel = part.mAccel;
+    fs_fill_record(part, mode, rec);
     rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
-    rec.mMaxAge = part.mMaxAge;
-    rec.mFlags = part.mFlags;
-    rec.mStartColor = part.mStartColor;
-    rec.mEndColor = part.mEndColor;
-    rec.mStartScale = part.mStartScale;
-    rec.mEndScale = part.mEndScale;
-    rec.mStartGlow = part.mStartGlow;
-    rec.mEndGlow = part.mEndGlow;
-    rec.mBlendSrc = part.mBlendFuncSource;
-    rec.mBlendDst = part.mBlendFuncDest;
-    rec.mImagep = part.mImagep;
-    rec.mSourcep = part.mPartSourcep;
     mDeadAt.push_back(rec.mT0 + (F64)rec.mMaxAge);
     mRecords.push_back(std::move(rec));
     ++LLViewerPartSim::sParticleCount;
@@ -362,6 +504,11 @@ static struct PartSimCensus
     // closed form against the stepped state (LL_VK_PARTSIM_COMPARE=1): the largest differences of the window
     U64 mCmpN = 0, mCmpPosOver = 0;
     F32 mCmpPos = 0.f, mCmpVel = 0.f, mCmpColor = 0.f, mCmpScale = 0.f, mCmpGlow = 0.f, mCmpPosAge = 0.f;
+    // by law (free, follow source, target linear, target position, bounce): steps compared, largest and root mean square position difference
+    U64 mModeN[5] = {};
+    F32 mModeMax[5] = {};
+    F64 mModeSq[5] = {};
+    U64 mModeRecs[5] = {};
 } sSimCensus;
 
 static bool fs_partsim_compare_on()
@@ -370,12 +517,23 @@ static bool fs_partsim_compare_on()
     return on;
 }
 
-// a particle with no per-frame input at the age it was just stepped to: the closed form of what the stepping did (position and velocity of a constant acceleration, colour / scale / glow linear in age / max age)
+// the closed form of every law against the stepped state (a particle just stepped to its age): the free flight and the colour / scale / glow are expected to agree, the follow source and target linear laws too;
+// the bounce and the pull towards a target are different laws (continuous, not the stepping's), the log says how far apart they are
+static int fs_record_mode(const LLViewerPart& part);
+static void fs_fill_record(const LLViewerPart& part, int mode, LLViewerPartRecord& rec);
 static void fs_partsim_compare(const LLViewerPart* part)
 {
+    const int mode = fs_record_mode(*part);
+    if (mode < 0)
+    {
+        return;
+    }
+    LLViewerPartRecord rec;
+    fs_fill_record(*part, mode, rec);
     const F32 age = part->mLastUpdateTime;
-    const LLVector3 p = part->mSpawnPos + part->mSpawnVel * age + part->mAccel * (0.5f * age * age);
-    const LLVector3 v = part->mSpawnVel + part->mAccel * age;
+    rec.mT0 = 0.0;
+    LLVector3 p, v;
+    rec.evaluate((F64)age, p, v);
     const F32 frac = age / part->mMaxAge;
     LLColor4 color = part->mStartColor;
     if (part->mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK)
@@ -389,15 +547,22 @@ static void fs_partsim_compare(const LLViewerPart* part)
     }
     const F32 glow = (F32)(U8)ll_round(lerp(part->mStartGlow, part->mEndGlow, frac) * 255.f);
 
-    ++sSimCensus.mCmpN;
+    const int cls = rec.mBounce ? 4 : (int)rec.mMode;
     const F32 dpos = (p - part->mPosAgent).length();
-    if (dpos > sSimCensus.mCmpPos)
+    ++sSimCensus.mModeN[cls];
+    sSimCensus.mModeMax[cls] = llmax(sSimCensus.mModeMax[cls], dpos);
+    sSimCensus.mModeSq[cls] += (F64)dpos * dpos;
+    if (cls == 0)
     {
-        sSimCensus.mCmpPos = dpos;
-        sSimCensus.mCmpPosAge = age;
+        ++sSimCensus.mCmpN;
+        if (dpos > sSimCensus.mCmpPos)
+        {
+            sSimCensus.mCmpPos = dpos;
+            sSimCensus.mCmpPosAge = age;
+        }
+        sSimCensus.mCmpPosOver += dpos > 0.001f;
+        sSimCensus.mCmpVel = llmax(sSimCensus.mCmpVel, (v - part->mVelocity).length());
     }
-    sSimCensus.mCmpPosOver += dpos > 0.001f;
-    sSimCensus.mCmpVel = llmax(sSimCensus.mCmpVel, (v - part->mVelocity).length());
     F32 dcol = 0.f;
     for (int k = 0; k < 4; ++k)
     {
@@ -554,8 +719,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
 
         // Set the last update time to now.
         part->mLastUpdateTime = cur_time;
-        if (compare_on && part->mSpawnKnown && part->mVPCallback == nullptr
-            && !(part->mFlags & (LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_TARGET_POS_MASK | LLPartData::LL_PART_TARGET_LINEAR_MASK | LLPartData::LL_PART_BOUNCE_MASK | LLPartData::LL_PART_FOLLOW_SRC_MASK)))
+        if (compare_on && part->mSpawnKnown)
         {
             fs_partsim_compare(part);
         }
@@ -801,14 +965,6 @@ static bool fs_partsim_records_on()
     return on;
 }
 
-static bool fs_part_is_record(const LLViewerPart& part)
-{
-    const U32 excluded = LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_TARGET_POS_MASK | LLPartData::LL_PART_TARGET_LINEAR_MASK | LLPartData::LL_PART_BOUNCE_MASK
-        | LLPartData::LL_PART_FOLLOW_SRC_MASK | LLPartData::LL_PART_RIBBON_MASK | LLPartData::LL_PART_HUD;
-    return !(part.mFlags & excluded) && part.mVPCallback == nullptr && part.mParent == nullptr && part.mMaxAge > 0.f
-        && !(part.mImagep.notNull() && part.mImagep->hasParcelMedia());
-}
-
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
     ++sSimCensus.mSpawned;
@@ -817,9 +973,10 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
     part->mSpawnKnown = true;
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
     {
-        if (fs_partsim_records_on() && fs_part_is_record(*part))
+        const int mode = fs_partsim_records_on() ? fs_record_mode(*part) : -1;
+        if (mode >= 0)
         {
-            put(part, true);
+            put(part, true, mode);
         }
         else
         {
@@ -835,7 +992,7 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
 }
 
 
-LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part, bool as_record)
+LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part, bool as_record, int record_mode)
 {
     const F32 MAX_MAG = 1000000.f*1000000.f; // 1 million
     LLViewerPartGroup *return_group = NULL ;
@@ -854,7 +1011,7 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part, bool as_record)
         S32 count = (S32) mViewerPartGroups.size();
         for (S32 i = 0; i < count; i++)
         {
-            if (as_record ? mViewerPartGroups[i]->addRecord(*part, desired_size) : mViewerPartGroups[i]->addPart(part, desired_size))
+            if (as_record ? mViewerPartGroups[i]->addRecord(*part, desired_size, record_mode) : mViewerPartGroups[i]->addPart(part, desired_size))
             {
                 // We found a spatial group that we fit into, add us and exit
                 return_group = mViewerPartGroups[i];
@@ -870,7 +1027,7 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part, bool as_record)
             LLViewerPartGroup *groupp = createViewerPartGroup(part->mPosAgent, desired_size, part->mFlags & LLPartData::LL_PART_HUD);
             groupp->mUniformParticles = (part->mScale.mV[0] == part->mScale.mV[1] &&
                                     !(part->mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK));
-            if (!(as_record ? groupp->addRecord(*part, -1.f) : groupp->addPart(part)))
+            if (!(as_record ? groupp->addRecord(*part, -1.f, record_mode) : groupp->addPart(part)))
             {
                 LL_WARNS() << "LLViewerPartSim::put - Particle didn't go into its box!" << LL_ENDL;
                 LL_INFOS() << groupp->getCenterAgent() << LL_ENDL;
@@ -1031,6 +1188,10 @@ void LLViewerPartSim::updateSimulation()
     for (i = 0; i < count; i++)
     {
         sSimCensus.mRecs += mViewerPartGroups[i]->mRecords.size();
+        for (const LLViewerPartRecord& rec : mViewerPartGroups[i]->mRecords)
+        {
+            ++sSimCensus.mModeRecs[rec.mBounce ? 4 : rec.mMode];
+        }
         LLViewerObject* vobj = mViewerPartGroups[i]->mVOPartGroupp;
 
         S32 visirate = 1;
@@ -1073,12 +1234,27 @@ void LLViewerPartSim::updateSimulation()
     {
         const double f = 600.0, k = 1000.0, st = std::max<double>(1.0, (double)sSimCensus.mStepped);
         LL_INFOS("Q1Census") << "particle simulation per frame over 600: sources loop " << sSimCensus.mSrcCycles / f / k << " kcycles (" << sSimCensus.mSources / f << " sources), groups loop " << sSimCensus.mGrpCycles / f / k << " kcycles ("
-            << sSimCensus.mGroups / f << " groups, " << sSimCensus.mGroupsSkipped / f << " skipped as not visible), particles stepped " << sSimCensus.mStepped / f << ", records " << sSimCensus.mRecs / f << ", spawned " << sSimCensus.mSpawned / f
+            << sSimCensus.mGroups / f << " groups, " << sSimCensus.mGroupsSkipped / f << " skipped as not visible), particles stepped " << sSimCensus.mStepped / f << ", records " << sSimCensus.mRecs / f << " (free " << sSimCensus.mModeRecs[0] / f << ", follow " << sSimCensus.mModeRecs[1] / f << ", target linear " << sSimCensus.mModeRecs[2] / f << ", target position " << sSimCensus.mModeRecs[3] / f << ", bounce " << sSimCensus.mModeRecs[4] / f << "), spawned " << sSimCensus.mSpawned / f
             << "; share of the stepped particles: analytic (no wind / target / bounce / callback) " << 100.0 * sSimCensus.mAnalytic / st << "%, of those with nothing from the source either " << 100.0 * sSimCensus.mAnalyticSrc / st
             << "%; follow source " << 100.0 * sSimCensus.mFollowSrc / st << "%, wind " << 100.0 * sSimCensus.mWind / st << "%, target pos " << 100.0 * sSimCensus.mTargetPos / st << "%, target linear " << 100.0 * sSimCensus.mTargetLinear / st
             << "%, bounce " << 100.0 * sSimCensus.mBounce / st << "%, callback " << 100.0 * sSimCensus.mCallback / st << "%, ribbon " << 100.0 * sSimCensus.mRibbon / st << "% (with a parent " << 100.0 * sSimCensus.mParented / st
             << "%), follow velocity " << 100.0 * sSimCensus.mFollowVel / st << "%, interp colour " << 100.0 * sSimCensus.mInterpColor / st << "%, interp scale " << 100.0 * sSimCensus.mInterpScale / st << "%, emissive " << 100.0 * sSimCensus.mEmissive / st
             << "%; mean max age " << sSimCensus.mAgeSum / st / 1000.0 << " s" << LL_ENDL;
+        {
+            static const char* const names[5] = { "free flight", "follow source", "target linear", "target position", "bounce" };
+            std::string by_law;
+            for (int k = 0; k < 5; ++k)
+            {
+                if (sSimCensus.mModeN[k])
+                {
+                    by_law += llformat(" | %s: %llu steps, position difference largest %.4f m, rms %.4f m", names[k], (unsigned long long)sSimCensus.mModeN[k], sSimCensus.mModeMax[k], sqrt(sSimCensus.mModeSq[k] / (double)sSimCensus.mModeN[k]));
+                }
+            }
+            if (!by_law.empty())
+            {
+                LL_INFOS("Q1Census") << "closed form against the stepped state by law:" << by_law << LL_ENDL;
+            }
+        }
         if (sSimCensus.mCmpN)
         {
             LL_INFOS("Q1Census") << "closed form against the stepped state, " << sSimCensus.mCmpN << " particle steps compared: largest position difference " << sSimCensus.mCmpPos << " m (at age " << sSimCensus.mCmpPosAge << " s; "
