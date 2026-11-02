@@ -263,7 +263,6 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
     dirtySpatialGroup();
 
     S32 num_parts = mViewerPartGroupp->getCount();
-    LLFace *facep;
     LLSpatialGroup* group = drawable->getSpatialGroup();
     if (!group && num_parts)
     {
@@ -278,6 +277,7 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
 
     if (!num_parts)
     {
+        mVisible.clear();
         if (group && drawable->getNumFaces())
         {
             group->setState(LLSpatialGroup::GEOM_DIRTY);
@@ -292,6 +292,152 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
         return true;
     }
 
+    if (fs_gpu_particles_on() && getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && updateRows(drawable, num_parts))
+    {
+        mDrawable->movePartition();
+        LLPipeline::sCompiles++;
+        return true;
+    }
+    return updateFacesLegacy(drawable, num_parts);
+}
+
+// <FS> GPU particles stage 1b: the cuts of updateGeometry without a face a particle. False: a particle of the group shows the parcel media (its face takes the media texture): the quads path.
+bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
+{
+    F32 tot_area = 0;
+    F32 max_area = LLViewerPartSim::getMaxPartCount() * MAX_PARTICLE_AREA_SCALE;
+    F32 pixel_meter_ratio = LLViewerCamera::getInstance()->getPixelMeterRatio();
+    pixel_meter_ratio *= pixel_meter_ratio;
+
+    LLViewerPartSim::checkParticleCount(static_cast<U32>(mViewerPartGroupp->mParticles.size()));
+
+    mDepth = 0.f;
+    const LLVector3 camera_agent = getCameraPosition();
+    F32 max_scale = 0.f;
+    F32 drawn_area = 0.f;
+    static std::vector<LLViewerTexture*> textures;
+    textures.clear();
+    mVisible.clear();
+    LLViewerTexture* last_texture = nullptr;
+    const LLViewerPartGroup::part_list_t& list = mViewerPartGroupp->mParticles;
+    const S32 particles = (S32)list.size();
+    for (S32 i = 0; i < particles; i++)
+    {
+        const LLViewerPart* part = list[i];
+
+        max_scale = llmax(max_scale, part->mScale.mV[0], part->mScale.mV[1]);
+
+        if (part->mFlags & LLPartData::LL_PART_RIBBON_MASK)
+        {   //include ribbon segment length in scale
+            const LLVector3* pos_agent = NULL;
+            if (part->mParent)
+            {
+                pos_agent = &(part->mParent->mPosAgent);
+            }
+            else if (part->mPartSourcep.notNull())
+            {
+                pos_agent = &(part->mPartSourcep->mPosAgent);
+            }
+
+            if (pos_agent)
+            {
+                max_scale = llmax(max_scale, (*pos_agent - part->mPosAgent).length());
+            }
+        }
+
+        const LLVector3 at(part->mPosAgent - camera_agent);
+        const F32 camera_dist_squared = at.lengthSquared();
+        const F32 inv_camera_dist_squared = camera_dist_squared > 1.f ? 1.f / camera_dist_squared : 1.f;
+        const F32 area = part->mScale.mV[0] * part->mScale.mV[1] * inv_camera_dist_squared;
+        tot_area = llmax(tot_area, area);
+        if (tot_area > max_area)
+        {
+            break;
+        }
+
+        const F32 NEAR_PART_DIST_SQ = 5.f*5.f;  // Only discard particles > 5 m from the camera
+        const F32 MIN_PART_AREA = .005f*.005f;  // only less than 5 mm x 5 mm at 1 m from camera
+        if (camera_dist_squared > NEAR_PART_DIST_SQ && area < MIN_PART_AREA)
+        {
+            continue;
+        }
+
+        LLViewerTexture* texture = part->mImagep.get();
+        if (texture != last_texture)
+        {
+            if (texture && texture->hasParcelMedia())
+            {
+                return false;
+            }
+            bool known = false;
+            for (LLViewerTexture* t : textures)
+            {
+                if (t == texture)
+                {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known)
+            {
+                textures.push_back(texture);
+            }
+            last_texture = texture;
+        }
+        mVisible.push_back(i);
+        drawn_area = tot_area;
+    }
+    mPixelArea = drawn_area * pixel_meter_ratio;
+
+    //record max scale (used to stretch bounding box for visibility culling)
+    mScale.set(max_scale, max_scale, max_scale);
+
+    // the faces: one a distinct texture, so the texture priority loop sees the texture a few times, not once a particle
+    const S32 wanted = (S32)textures.size();
+    S32 have = drawable->getNumFaces();
+    if (wanted > have)
+    {
+        drawable->setNumFaces(wanted, NULL, getTEImage(0));
+    }
+    else if (have > 2 * wanted + 8)
+    {
+        drawable->setNumFaces(wanted, NULL, getTEImage(0));     // (the faces of the quads path, one a particle)
+    }
+    have = drawable->getNumFaces();
+    const F32 area_scale = 10.f; // scale area to increase priority a bit
+    for (S32 f = 0; f < have; ++f)
+    {
+        LLFace* facep = drawable->getFace(f);
+        if (!facep)
+        {
+            continue;
+        }
+        if (f >= wanted)
+        {
+            facep->setTexture((LLViewerTexture*)nullptr);
+            continue;
+        }
+        if (facep->getViewerObject() != this)
+        {
+            facep->setViewerObject(this);
+        }
+        if (facep->getTEOffset() != f)
+        {
+            facep->setTEOffset(f);
+        }
+        facep->setTexture(textures[f]);
+        facep->setVirtualSize(mPixelArea*area_scale);
+    }
+    mRowsMode = true;
+    return true;
+}
+
+// the quads path's faces: one a particle (as LL did)
+bool LLVOPartGroup::updateFacesLegacy(LLDrawable* drawable, S32 num_parts)
+{
+    mRowsMode = false;
+    mVisible.clear();
+    LLFace* facep;
     if (num_parts > drawable->getNumFaces())
     {
         drawable->setNumFacesFast(num_parts+num_parts/4, NULL, getTEImage(0));
@@ -814,7 +960,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
 // path did. A group with a ribbon particle keeps the quads path (false: nothing changed).
 bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
 {
-    struct Entry { F32 mDist; LLViewerPart* mPart; LLFace* mFace; };
+    struct Entry { F32 mDist; LLViewerPart* mPart; };
     static std::vector<Entry> entries;
     entries.clear();
     U32 ribbons = 0;
@@ -837,16 +983,18 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         {
             return false;
         }
+        if (!obj->mRowsMode)
+        {
+            return false;       // (a group with a drawable that has the quads path's faces: the quads path takes the whole group)
+        }
         obj->mDepth = 0.f;
         U32 count = 0;
-        const S32 faces = drawablep->getNumFaces();
         const S32 particles = (S32)parts->mParticles.size();
-        for (S32 j = 0; j < faces && j < particles; ++j)
+        for (const S32 j : obj->mVisible)
         {
-            LLFace* facep = drawablep->getFace(j);
-            if (!facep || !facep->hasGeometry())
+            if (j >= particles)
             {
-                continue;
+                continue;       // (the list is shorter than when updateGeometry made the visible list)
             }
             LLViewerPart* part = parts->mParticles[j];
             if (part->mFlags & LLPartData::LL_PART_RIBBON_MASK)
@@ -856,7 +1004,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
             const F32 dist = (part->mPosAgent - origin) * at_axis;
             obj->mDepth += dist;
             ++count;
-            entries.push_back({ dist, part, facep });
+            entries.push_back({ dist, part });
         }
         if (count)
         {
@@ -965,9 +1113,8 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
             write_row(part.mPosAgent, 0.f, ((part.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) && !part.mVelocity.isExactlyZero()) ? part.mVelocity : LLVector3(0.f, 0.f, 0.f), 0.5f * part.mScale.mV[0], 0.5f * part.mScale.mV[1], color, part.mGlow);
         }
 
-        LLFace* facep = entries[k].mFace;
-        LLViewerTexture* texture = facep->getTexture();
-        const bool fullbright = facep->isState(LLFace::FULLBRIGHT);
+        LLViewerTexture* texture = part.mImagep.get();
+        const bool fullbright = (part.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
         LLRender::eBlendFactor bf_src = (LLRender::eBlendFactor)part.mBlendFuncSource;
         LLRender::eBlendFactor bf_dst = (LLRender::eBlendFactor)part.mBlendFuncDest;
         const bool glow = part.mGlow.mV[3] != 0;
@@ -1008,6 +1155,11 @@ void LLParticlePartition::addGeometryCount(LLSpatialGroup* group, U32& vertex_co
         }
 
         LLAlphaObject* obj = (LLAlphaObject*) drawablep->getVObj().get();
+        LLVOPartGroup* part_group = static_cast<LLVOPartGroup*>(obj);
+        if (part_group->mRowsMode)
+        {
+            part_group->updateFacesLegacy(drawablep, part_group->getViewerPartGroup()->getCount());     // (a group of the quads path with a drawable that was made as rows: it gets its faces now)
+        }
         obj->mDepth = 0.f;
 
         U32 count = 0;
