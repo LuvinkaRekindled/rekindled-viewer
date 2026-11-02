@@ -103,6 +103,21 @@ struct LLViewerPartRecord
     U8 mBlendSrc = 0, mBlendDst = 0;
     LLPointer<LLViewerTexture> mImagep;
     LLPointer<LLViewerPartSource> mSourcep;
+    // the laws beyond the free flight (each with the source's position of the frame; the stepping did them one step at a time)
+    enum Mode : U8
+    {
+        FREE = 0,           // pos0 + vel0 * age + accel * age^2 / 2
+        FOLLOW,             // the source's position + vel0 * age + accel * age^2 / 2 (the stepping puts the particle at its source plus its offset each step: the offset is the free flight from zero)
+        TARGET_LINEAR,      // the source's position + age / max age of the way to the source's target
+        TARGET_POS          // the stepping's pull towards the target (velocity moves towards the speed that gets there in the time left) solved: the velocity error falls with (time left)^4
+    };
+    U8 mMode = FREE;
+    bool mBounce = false;   // bounces at the height of the floor (FREE: the source's height when the particle was made; FOLLOW: the source's): z mirrored, vertical speed * -0.75
+    F32 mFloorZ = 0.f;
+    LLVector3 mTarget0;     // TARGET_POS: the target when the particle was made (the particle keeps its place relative to a target that moves)
+
+    // position and velocity at the simulation clock `now`
+    void evaluate(F64 now, LLVector3& pos, LLVector3& vel) const;
 };
 
 // the stepping's interpolations as they are written there (start * (1 - f) + end * f, a channel at a time), so the closed form and the stepping agree to the last bit
@@ -148,7 +163,7 @@ public:
     // <FS> GPU particles stage 2: the particles that are functions of their age (mDeadAt: the clock after which each is gone, -1 = removed by its source's id)
     std::vector<LLViewerPartRecord> mRecords;
     std::vector<F64> mDeadAt;
-    bool addRecord(const LLViewerPart& part, const F32 desired_size);
+    bool addRecord(const LLViewerPart& part, const F32 desired_size, int mode);
     bool expireRecords();                   // true: some went
 
     const LLVector3 &getCenterAgent() const     { return mCenterAgent; }
@@ -233,7 +248,7 @@ public:
 
 protected:
     LLViewerPartGroup *createViewerPartGroup(const LLVector3 &pos_agent, const F32 desired_size, bool hud);
-    LLViewerPartGroup *put(LLViewerPart* part, bool as_record = false);
+    LLViewerPartGroup *put(LLViewerPart* part, bool as_record = false, int record_mode = 0);
 
     group_list_t mViewerPartGroups;
     source_list_t mViewerPartSources;
