@@ -23,7 +23,7 @@ How a generation shows: `BufferInfo::mEpoch` (other contents altogether: respeci
 
 ## Left for the next pass
 
-- **The remaining NaN-only flags** (0-14 a lap, whole vertices, epochs matching): not written by the volume fill (`LL_VK_GEOMCHECK` found none in any lap). Candidates: another fill path (trees, grass, terrain, avatar bodies). The warning now names the bad slots.
+- **The remaining NaN-only flags: found and fixed (2026-11-01).** The ray scene's whole-vertex NaN flags were the avatar body mesh buffers: `LLVOAvatar::updateMeshData` packs the parts into vertex buffers and the slots no part writes held heap garbage (1.5e25, 3e32; 2-9 vertices a buffer). A position scan at `LLVertexBuffer::flush_vbo` (`LL_VK_VBCHECK`, about 0.02 ms a frame) named the filler; the buffers are now zeroed when allocated, and a position that is not finite or beyond 1e6 is set to the origin at the flush (`LL_VK_VBFIX`) as a net for any other buffer. Flagged avatar buffers in a lap: 21 -> 0.
 
 ## Rule for new caches
 
