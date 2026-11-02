@@ -4971,6 +4971,8 @@ void LLPipeline::rebuildPriorityGroups()
     LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3 (a scope inside another does nothing: postSort and the shadow prep have their own)
     // census (LL_VK_ITEMCENSUS=1): the groups rebuilt here, by partition type: how many a frame and the time of their rebuildGeom
     static const bool q1_census = ItemCensus::on();
+    static std::unordered_map<const LLSpatialGroup*, U64> q1_last_frame;       // <FS> the frame each group was last rebuilt here
+    static U64 q1_again[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles_again[LLViewerRegion::NUM_PARTITIONS + 1] = {};
     static U64 q1_groups[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_frames = 0, q1_calls = 0;
     static U64 q1_av_groups = 0, q1_av_drawables = 0, q1_av_faces = 0, q1_av_rigged = 0, q1_av_texanim = 0, q1_av_avatars = 0, q1_av_flag[5] = {}, q1_av_dirty[4] = {}, q1_av_kind[2][7] = {};
     // Iterate through all drawables on the priority build queue,
@@ -5035,6 +5037,14 @@ void LLPipeline::rebuildPriorityGroups()
             const U32 part = group->getSpatialPartition() ? std::min<U32>(group->getSpatialPartition()->mPartitionType, LLViewerRegion::NUM_PARTITIONS) : LLViewerRegion::NUM_PARTITIONS;
             ++q1_groups[part];
             q1_cycles[part] += __rdtsc() - q1_t0;
+            // <FS> is a group rebuilt again in the same frame (by the next call of this function: the shadow passes and the main view each sort)?
+            U64& last = q1_last_frame[group];
+            if (last == (U64)gFrameCount)
+            {
+                ++q1_again[part];
+                q1_cycles_again[part] += __rdtsc() - q1_t0;
+            }
+            last = (U64)gFrameCount;
         }
         group->clearState(LLSpatialGroup::IN_BUILD_Q1);
     }
@@ -5051,6 +5061,16 @@ void LLPipeline::rebuildPriorityGroups()
             }
         }
         LL_INFOS("Q1Census") << "rebuildPriorityGroups per call over 2400 calls:" << line << LL_ENDL;
+        {
+            std::string again;
+            for (U32 k = 0; k <= LLViewerRegion::NUM_PARTITIONS; ++k)
+            {
+                if (q1_again[k]) { again += llformat(" | partition %u: %llu rebuilds of a group already rebuilt in the same frame (%.1f kcycles a call)", k, (unsigned long long)q1_again[k], (double)q1_cycles_again[k] / 2400.0 / 1000.0); }
+            }
+            LL_INFOS("Q1Census") << "rebuilt again in the same frame:" << (again.empty() ? std::string(" none") : again) << LL_ENDL;
+            memset(q1_again, 0, sizeof(q1_again));
+            memset(q1_cycles_again, 0, sizeof(q1_cycles_again));
+        }
         if (q1_av_groups)
         {
             const double g = (double)q1_av_groups;
