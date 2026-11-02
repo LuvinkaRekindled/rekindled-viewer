@@ -99,6 +99,14 @@ public:
     void setViewerPartGroup(LLViewerPartGroup *part_groupp)     { mViewerPartGroupp = part_groupp; }
     LLViewerPartGroup* getViewerPartGroup() { return mViewerPartGroupp; }
 
+    // <FS> GPU particles stage 1b (doc/vulkan/PLAN-gpu-particles.md): in rows mode the drawable has no face a particle: mVisible holds the indices of the particles that are drawn (after the size and
+    // budget cuts of updateGeometry), the faces are one a distinct texture (they carry the texture to the texture priority loop). A group the rows path cannot build gets its faces from
+    // updateFacesLegacy (the quads path).
+    bool updateRows(LLDrawable* drawable, S32 num_parts);
+    bool updateFacesLegacy(LLDrawable* drawable, S32 num_parts);
+    bool mRowsMode = false;
+    std::vector<S32> mVisible;
+
 protected:
     ~LLVOPartGroup();
 
