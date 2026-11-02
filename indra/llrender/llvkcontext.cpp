@@ -2476,6 +2476,16 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         return nullptr;
     }
     QueryPerformanceCounter(&t_end);
+    {
+        // <FS> LL_VK_SLOW_ALLOC_MS (default 20, 0 = off): a block that takes this long to create stalls the thread that creates it (the worker, in the middle of a frame): the GPU idles meanwhile and the frame's
+        // passes read as hundreds of ms long (2026-11-01: three frames of 270 ms, the GPU at 30-50%, 15 blocks created in 8 s when the camera turned to a side that had no structures yet)
+        static const double slow_ms = (double)(getenv("LL_VK_SLOW_ALLOC_MS") ? atoi(getenv("LL_VK_SLOW_ALLOC_MS")) : 20);
+        const double took_ms = 1000.0 * (double)(t_end.QuadPart - t_start.QuadPart) / (double)t_freq.QuadPart;
+        if (slow_ms > 0.0 && took_ms >= slow_ms)
+        {
+            LL_WARNS("Vulkan") << "a " << (block->mSize >> 20) << " MB buffer arena block took " << took_ms << " ms to create (" << (accel ? "acceleration structure" : "buffer") << (dedicated ? ", dedicated" : "") << ", frame " << mFrameNumber << ")" << LL_ENDL;
+        }
+    }
     block->mCreatedFrame = mFrameNumber;
     if (accel)
     {
