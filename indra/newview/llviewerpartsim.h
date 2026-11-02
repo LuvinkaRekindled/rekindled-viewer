@@ -176,6 +176,18 @@ public:
     struct ClassKey { LLPointer<LLViewerTexture> mTex; U8 mSrc = 0, mDst = 0; bool mFullbright = false; };
     std::vector<ClassKey> mClasses;
     U32 mClassCount[4] = {};
+    // G1 step 2: what the group's extents, texture priority and draws need without evaluating the records: how far each kind of record can be from where it starts (a ball round its spawn point,
+    // round its source for the follow source law, between the source and its target for the linear law, round the target for the pull), kept as grow-only aggregates and made again from the live
+    // records now and then
+    struct SrcAgg { F32 mFollowReach = 0.f, mTpReach = 0.f; bool mTl = false; };
+    std::vector<SrcAgg> mSrcAgg;            // parallel to mSources
+    LLVector3 mBoxLo, mBoxHi;               // the balls round the spawn points of the free flights (and the pull's)
+    bool mBoxValid = false;
+    F32 mMaxScale = 0.f;                    // the largest scale of any record
+    U32 mAggAge = 0;
+    void noteRecordReach(const LLViewerPartRecord& rec);
+    void rebuildAggregates();
+    bool pathBox(LLVector3& lo, LLVector3& hi) const;   // the box of the group's particles now (false: no records)
     LLPointer<LLVertexBuffer> mStore;
     U32 mStoreCap = 0;
     std::vector<U32> mDirtySlots;           // slots whose record is to be written to the store

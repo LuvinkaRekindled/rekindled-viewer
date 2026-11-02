@@ -515,6 +515,7 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
     {
         mDirtySlots.push_back((U32)mRecords.size());
     }
+    noteRecordReach(rec);
     mRecords.push_back(std::move(rec));
     ++LLViewerPartSim::sParticleCount;
     ++LLViewerPartSim::sRecordCount;
@@ -596,6 +597,113 @@ bool LLViewerPartGroup::syncStore()
     }
     mDirtySlots.clear();
     return true;
+}
+
+void LLViewerPartGroup::noteRecordReach(const LLViewerPartRecord& r)
+{
+    if (mSrcAgg.size() < mSources.size())
+    {
+        mSrcAgg.resize(mSources.size());
+    }
+    const F32 T = r.mMaxAge;
+    const F32 v = r.mVel0.length(), a = r.mAccel.length();
+    const F32 reach = v * T + 0.5f * a * T * T;
+    mMaxScale = llmax(mMaxScale, r.mStartScale.mV[0], r.mStartScale.mV[1], r.mEndScale.mV[0], r.mEndScale.mV[1]);
+    F32 ball = reach;
+    switch (r.mMode)
+    {
+    case LLViewerPartRecord::FOLLOW:
+        if (r.mSrcLocal < mSrcAgg.size())
+        {
+            mSrcAgg[r.mSrcLocal].mFollowReach = llmax(mSrcAgg[r.mSrcLocal].mFollowReach, reach);
+        }
+        return;
+    case LLViewerPartRecord::TARGET_LINEAR:
+        if (r.mSrcLocal < mSrcAgg.size())
+        {
+            mSrcAgg[r.mSrcLocal].mTl = true;
+        }
+        return;
+    case LLViewerPartRecord::TARGET_POS:
+        ball = (r.mTarget0 - r.mPos0).length() + v * T + a * T * T;
+        if (r.mSrcLocal < mSrcAgg.size())
+        {
+            mSrcAgg[r.mSrcLocal].mTpReach = llmax(mSrcAgg[r.mSrcLocal].mTpReach, ball);
+        }
+        break;
+    default:
+        break;
+    }
+    for (int k = 0; k < 3; ++k)
+    {
+        const F32 lo = r.mPos0.mV[k] - ball, hi = r.mPos0.mV[k] + ball;
+        if (!mBoxValid)
+        {
+            mBoxLo.mV[k] = lo;
+            mBoxHi.mV[k] = hi;
+        }
+        else
+        {
+            mBoxLo.mV[k] = llmin(mBoxLo.mV[k], lo);
+            mBoxHi.mV[k] = llmax(mBoxHi.mV[k], hi);
+        }
+    }
+    mBoxValid = true;
+}
+
+void LLViewerPartGroup::rebuildAggregates()
+{
+    mBoxValid = false;
+    mMaxScale = 0.f;
+    mSrcAgg.assign(mSources.size(), SrcAgg());
+    for (const LLViewerPartRecord& r : mRecords)
+    {
+        noteRecordReach(r);
+    }
+}
+
+bool LLViewerPartGroup::pathBox(LLVector3& lo, LLVector3& hi) const
+{
+    bool any = false;
+    auto merge = [&](const LLVector3& l, const LLVector3& h)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            lo.mV[k] = any ? llmin(lo.mV[k], l.mV[k]) : l.mV[k];
+            hi.mV[k] = any ? llmax(hi.mV[k], h.mV[k]) : h.mV[k];
+        }
+        any = true;
+    };
+    if (mBoxValid)
+    {
+        merge(mBoxLo, mBoxHi);
+    }
+    for (size_t k = 0; k < mSrcAgg.size() && k < mSources.size(); ++k)
+    {
+        const SrcAgg& g = mSrcAgg[k];
+        const LLViewerPartSource* s = mSources[k].get();
+        if (g.mFollowReach > 0.f)
+        {
+            const LLVector3 r(g.mFollowReach, g.mFollowReach, g.mFollowReach);
+            merge(s->mPosAgent - r, s->mPosAgent + r);
+        }
+        if (g.mTl)
+        {
+            LLVector3 l = s->mPosAgent, h = s->mPosAgent;
+            for (int c = 0; c < 3; ++c)
+            {
+                l.mV[c] = llmin(l.mV[c], s->mTargetPosAgent.mV[c]);
+                h.mV[c] = llmax(h.mV[c], s->mTargetPosAgent.mV[c]);
+            }
+            merge(l, h);
+        }
+        if (g.mTpReach > 0.f)
+        {
+            const LLVector3 r(g.mTpReach, g.mTpReach, g.mTpReach);
+            merge(s->mTargetPosAgent - r, s->mTargetPosAgent + r);
+        }
+    }
+    return any;
 }
 
 bool LLViewerPartGroup::expireRecords()
@@ -904,6 +1012,10 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     if (expireRecords())
     {
         changed = true;
+        if (mRecords.empty())
+        {
+            rebuildAggregates();        // (nothing left: the boxes start again)
+        }
     }
 
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch
