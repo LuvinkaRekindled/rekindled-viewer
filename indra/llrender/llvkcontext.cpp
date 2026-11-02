@@ -1222,7 +1222,7 @@ static void write_device_lost_dump()
         return;
     }
     char path[MAX_PATH + 64] = {};
-    snprintf(path, sizeof(path), "%s\\Firestorm_x64\\logs\\vk-device-lost-%lu.dmp", dir, (unsigned long)GetCurrentProcessId());
+    snprintf(path, sizeof(path), "%s\\Rekindled_x64\\logs\\vk-device-lost-%lu.dmp", dir, (unsigned long)GetCurrentProcessId());
     HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
     {
@@ -1480,7 +1480,7 @@ void Context::reportCheckpoints(const char* when)
                 if (GetEnvironmentVariableA("APPDATA", dir, sizeof(dir)) > 0)
                 {
                     char path[MAX_PATH + 64] = {};
-                    snprintf(path, sizeof(path), "%s\\Firestorm_x64\\logs\\gpu-fault-frame%llu.bin", dir, (unsigned long long)mFrameNumber);
+                    snprintf(path, sizeof(path), "%s\\Rekindled_x64\\logs\\gpu-fault-frame%llu.bin", dir, (unsigned long long)mFrameNumber);
                     if (FILE* f = fopen(path, "wb"))
                     {
                         fwrite(vendor_binary.data(), 1, vendor_binary.size(), f);
