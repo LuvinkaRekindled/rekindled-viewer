@@ -679,6 +679,7 @@ struct BlinkCapture
         std::vector<U8> mRGBA;
         std::vector<F32> mLuma;     // a mean a block
         std::vector<F32> mGreen;    // green minus the mean of red and blue, a mean a block
+        std::vector<F32> mRgb;      // the mean colour of a block (3 floats)
     };
     bool mOn = false, mChecked = false;
     U32 mW = 0, mH = 0, mSrcW = 0, mSrcH = 0;
@@ -688,6 +689,8 @@ struct BlinkCapture
     F32 mDrop = 0.25f;          // LL_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
     U32 mBlocks = 3;            // LL_VK_BLINK_BLOCKS: how many blocks must do it
     U32 mMaxSaved = 300;        // LL_VK_BLINK_MAX: how many blinks are written out
+    F32 mChange = 0.f;          // LL_VK_BLINK_CHANGE (0 = off): a block whose colour differs from the mean of the frames before and after by more than this (0 to 1, in any channel) for ONE frame, while those two agree, counts: a surface that shows another texture for a frame changes colour more than its brightness
+    U32 mMaxChanged = 0;
     U32 mCapW = CAP_W;          // LL_VK_BLINK_WIDTH: the width of the copy (320 to 1280, a multiple of the block size): a flash of a small surface needs more than 320
     U32 mMaxDark = 0, mMaxGreen = 0, mMaxBright = 0;       // the strongest changes seen since the last log line (how far the thresholds are from what happens)
     std::string mDir;
@@ -717,6 +720,7 @@ struct BlinkCapture
                 if (const char* v = getenv("LL_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
                 if (const char* v = getenv("LL_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
                 if (const char* v = getenv("LL_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("LL_VK_BLINK_CHANGE")) mChange = std::max(0.f, std::min(1.f, (F32)atof(v)));
                 if (const char* v = getenv("LL_VK_BLINK_WIDTH")) mCapW = (U32)std::max<S32>(320, std::min<S32>(1280, atoi(v))) / CELL * CELL;
                 CreateDirectoryA(mDir.c_str(), nullptr);
                 LL_INFOS("VkBlink") << "blink capture is ON (LL_VK_BLINK_CAPTURE): small copies of every frame, bad frames saved to " << mDir << " (a block " << (S32)(mDrop * 100.f) << "% darker for one frame, " << mBlocks << " blocks)" << LL_ENDL;
@@ -798,11 +802,12 @@ struct BlinkCapture
         const U32 bw = mW / CELL, bh = mH / CELL;
         d.mLuma.assign((size_t)bw * bh, 0.f);
         d.mGreen.assign((size_t)bw * bh, 0.f);
+        d.mRgb.assign((size_t)bw * bh * 3, 0.f);
         for (U32 by = 0; by < bh; ++by)
         {
             for (U32 bx = 0; bx < bw; ++bx)
             {
-                F32 l = 0.f, g = 0.f;
+                F32 l = 0.f, g = 0.f, cr = 0.f, cg = 0.f, cb = 0.f;
                 for (U32 y = 0; y < CELL; ++y)
                 {
                     const U8* px = d.mRGBA.data() + ((size_t)(by * CELL + y) * mW + bx * CELL) * 4;
@@ -810,11 +815,15 @@ struct BlinkCapture
                     {
                         const F32 r = px[0] / 255.f, gr = px[1] / 255.f, b = px[2] / 255.f;
                         l += 0.2126f * r + 0.7152f * gr + 0.0722f * b;
+                        cr += r; cg += gr; cb += b;
                         g += gr - 0.5f * (r + b);
                     }
                 }
                 d.mLuma[(size_t)by * bw + bx] = l / (CELL * CELL);
                 d.mGreen[(size_t)by * bw + bx] = g / (CELL * CELL);
+                d.mRgb[((size_t)by * bw + bx) * 3 + 0] = cr / (CELL * CELL);
+                d.mRgb[((size_t)by * bw + bx) * 3 + 1] = cg / (CELL * CELL);
+                d.mRgb[((size_t)by * bw + bx) * 3 + 2] = cb / (CELL * CELL);
             }
         }
     }
@@ -835,7 +844,7 @@ struct BlinkCapture
             return;
         }
         ++mChecks;
-        U32 dark = 0, green = 0, bright = 0;
+        U32 dark = 0, green = 0, bright = 0, changed = 0;
         const size_t n = b.mLuma.size();
         for (size_t k = 0; k < n; ++k)
         {
@@ -849,6 +858,20 @@ struct BlinkCapture
             {
                 ++bright;
             }
+            if (mChange > 0.f)
+            {
+                F32 worst = 0.f, apart = 0.f;
+                for (int ch = 0; ch < 3; ++ch)
+                {
+                    const F32 xa = a.mRgb[k * 3 + ch], xb = b.mRgb[k * 3 + ch], xc = c.mRgb[k * 3 + ch];
+                    worst = std::max(worst, std::fabs(xb - 0.5f * (xa + xc)));
+                    apart = std::max(apart, std::fabs(xa - xc));
+                }
+                if (worst > mChange && apart < 0.08f)
+                {
+                    ++changed;
+                }
+            }
             const F32 ga = a.mGreen[k], gb = b.mGreen[k], gc = c.mGreen[k];
             if (gb - std::max(ga, gc) > 0.12f && std::fabs(ga - gc) < 0.08f)
             {
@@ -858,7 +881,8 @@ struct BlinkCapture
         mMaxDark = std::max(mMaxDark, dark);
         mMaxGreen = std::max(mMaxGreen, green);
         mMaxBright = std::max(mMaxBright, bright);
-        if (dark < mBlocks && green < 4 && bright < mBlocks)
+        mMaxChanged = std::max(mMaxChanged, changed);
+        if (dark < mBlocks && green < 4 && bright < mBlocks && changed < mBlocks)
         {
             return;
         }
@@ -870,7 +894,7 @@ struct BlinkCapture
         mLastSaveFrame = b.mSeq;
         ++mSaved;
         char base[64];
-        snprintf(base, sizeof(base), "blink-%03llu-frame%llu-d%u-b%u-g%u", (unsigned long long)mSaved, (unsigned long long)b.mFrame, dark, bright, green);
+        snprintf(base, sizeof(base), "blink-%03llu-frame%llu-d%u-b%u-g%u-c%u", (unsigned long long)mSaved, (unsigned long long)b.mFrame, dark, bright, green, changed);
         const std::string stem = mDir + "\\" + base;
         writeBmp(stem + "-a-before.bmp", a.mRGBA.data(), mW, mH);
         writeBmp(stem + "-b-bad.bmp", b.mRGBA.data(), mW, mH);
@@ -886,7 +910,7 @@ struct BlinkCapture
             diff[i + 3] = 255;
         }
         writeBmp(stem + "-d-diff.bmp", diff.data(), mW, mH);
-        LL_INFOS("VkBlink") << "blink " << mSaved << " at frame " << b.mFrame << ": " << dark << " blocks dark, " << green << " blocks green, " << bright << " blocks bright (of " << n << "), saved " << base << LL_ENDL;
+        LL_INFOS("VkBlink") << "blink " << mSaved << " at frame " << b.mFrame << ": " << dark << " blocks dark, " << green << " blocks green, " << bright << " blocks bright, " << changed << " blocks changed colour (of " << n << "), saved " << base << LL_ENDL;
     }
 
     // frames the GPU has finished are read, oldest first
@@ -964,8 +988,8 @@ struct BlinkCapture
         ++mCaptured;
         if (mCaptured % 3000 == 0)
         {
-            LL_INFOS("VkBlink") << "blink capture: " << mCaptured << " frames copied, " << mSkippedBusy << " skipped (ring busy), " << mChecks << " checks (" << mGap << " skipped for a gap), the strongest block counts in the last 3000: dark " << mMaxDark << ", green " << mMaxGreen << ", bright " << mMaxBright << "; " << mTriggers << " blinks seen, " << mSaved << " saved" << LL_ENDL;
-            mMaxDark = mMaxGreen = mMaxBright = 0;
+            LL_INFOS("VkBlink") << "blink capture: " << mCaptured << " frames copied, " << mSkippedBusy << " skipped (ring busy), " << mChecks << " checks (" << mGap << " skipped for a gap), the strongest block counts in the last 3000: dark " << mMaxDark << ", green " << mMaxGreen << ", bright " << mMaxBright << ", changed colour " << mMaxChanged << "; " << mTriggers << " blinks seen, " << mSaved << " saved" << LL_ENDL;
+            mMaxDark = mMaxGreen = mMaxBright = mMaxChanged = 0;
         }
     }
 };
