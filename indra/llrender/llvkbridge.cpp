@@ -688,6 +688,7 @@ struct BlinkCapture
     F32 mDrop = 0.25f;          // LL_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
     U32 mBlocks = 3;            // LL_VK_BLINK_BLOCKS: how many blocks must do it
     U32 mMaxSaved = 300;        // LL_VK_BLINK_MAX: how many blinks are written out
+    U32 mCapW = CAP_W;          // LL_VK_BLINK_WIDTH: the width of the copy (320 to 1280, a multiple of the block size): a flash of a small surface needs more than 320
     U32 mMaxDark = 0, mMaxGreen = 0, mMaxBright = 0;       // the strongest changes seen since the last log line (how far the thresholds are from what happens)
     std::string mDir;
 
@@ -716,6 +717,7 @@ struct BlinkCapture
                 if (const char* v = getenv("LL_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
                 if (const char* v = getenv("LL_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
                 if (const char* v = getenv("LL_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("LL_VK_BLINK_WIDTH")) mCapW = (U32)std::max<S32>(320, std::min<S32>(1280, atoi(v))) / CELL * CELL;
                 CreateDirectoryA(mDir.c_str(), nullptr);
                 LL_INFOS("VkBlink") << "blink capture is ON (LL_VK_BLINK_CAPTURE): small copies of every frame, bad frames saved to " << mDir << " (a block " << (S32)(mDrop * 100.f) << "% darker for one frame, " << mBlocks << " blocks)" << LL_ENDL;
             }
@@ -745,8 +747,8 @@ struct BlinkCapture
         LLVk::Context& ctx = LLVk::Context::instance();
         mSrcW = src_w;
         mSrcH = src_h;
-        mW = CAP_W;
-        mH = std::max<U32>(CELL, ((U64)CAP_W * src_h / std::max<U32>(1, src_w) + CELL / 2) / CELL * CELL);
+        mW = mCapW;
+        mH = std::max<U32>(CELL, ((U64)mCapW * src_h / std::max<U32>(1, src_w) + CELL / 2) / CELL * CELL);
         for (Slot& s : mSlots)
         {
             if (!ctx.createImage2D(mW, mH, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, s.mImage)
