@@ -501,6 +501,13 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
 
 extern U32 gFrameCount;
 
+// <FS> GPU particles G1: LL_VK_GPU_PARTICLE_SORT=1 (with LL_VK_GPU_PARTICLE_EVAL, which it implies): the order of a record store is written by the GPU
+bool ll_particle_sort_on()
+{
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_SORT"); return v && atoi(v) != 0; }();
+    return on;
+}
+
 // <FS> S5a: what the alpha loop sent to the scene table (log tag VkScene, every 600 frames)
 static struct AlphaSceneStats
 {
@@ -565,6 +572,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         std::vector<const LLMatrix4*> mMatrixKeys;
         std::vector<U8> mBlob;
     };
+    if (ll_particle_sort_on() && !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && !depth_only && !rigged)
+    {
+        LLViewerPartSim::getInstance()->sortStores();       // G1: the GPU sorts the particle stores of the frame before the first main view alpha pass draws them
+    }
     static thread_local TransientBatch tr;
     tr.mEntries.clear();
     tr.mMatrices.clear();

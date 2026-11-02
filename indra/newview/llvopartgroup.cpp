@@ -268,9 +268,10 @@ static struct ParticleRebuildStats
 } sPartStats;
 
 // GPU particles G0: LL_VK_GPU_PARTICLE_EVAL=1 draws a group whose particles are all records from the group's record store: the shader evaluates them (default off)
+bool ll_particle_sort_on();
 static bool fs_gpu_particle_eval_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return (v && atoi(v) != 0) || ll_particle_sort_on(); }();
     return on;
 }
 
@@ -1267,6 +1268,34 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         // G0: the group's record store is the vertex buffer of the draws and its index data is this frame's order of the slots; the shader evaluates the records
         LLViewerPartGroup* parts = only_obj->getViewerPartGroup();
         LLVertexBuffer* store = parts->mStore.get();
+        if (ll_particle_sort_on())
+        {
+            // G1: the GPU writes the order (class, then back to front); the CPU only knows the classes' ranges from their live counts
+            group->mVertexBuffer = store;
+            LLSpatialGroup::drawmap_elem_t& class_draws = group->mDrawMap[mRenderPass];
+            U32 first = 0;
+            for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
+            {
+                const U32 cnt = parts->mClassCount[c];
+                if (!cnt)
+                {
+                    continue;
+                }
+                const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
+                LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), store, key.mFullbright);
+                run->mBlendFuncDst = (LLRender::eBlendFactor)key.mDst;
+                run->mBlendFuncSrc = (LLRender::eBlendFactor)key.mSrc;
+                run->mHasGlow = true;
+                run->mParticleRecords = true;
+                run->mPartSources = parts->mSources;
+                class_draws.push_back(run);
+                first += cnt;
+            }
+            lap(sPartStats.mRWrite);
+            sPartStats.mRowsParticles += n;
+            ++sPartStats.mGpuGroups;
+            return true;
+        }
         U16* order = (U16*)store->mapIndexBuffer(0, n);
         for (U32 k = 0; k < n; ++k)
         {

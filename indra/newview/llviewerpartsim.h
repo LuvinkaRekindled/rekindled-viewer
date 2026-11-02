@@ -112,6 +112,7 @@ struct LLViewerPartRecord
         TARGET_LINEAR,      // the source's position + age / max age of the way to the source's target
         TARGET_POS          // the stepping's pull towards the target (velocity moves towards the speed that gets there in the time left) solved: the velocity error falls with (time left)^4
     };
+    U8 mClass = 0;          // G1: the draw class of the group (texture, blend pair, fullbright) the record belongs to: the sort puts a class together, the draw is one a class
     U8 mSrcLocal = 0;       // G0: the number of the source in the group's list (mSources), what the shader's source table is indexed by
     U8 mMode = FREE;
     bool mBounce = false;   // bounces at the height of the floor (FREE: the source's height when the particle was made; FOLLOW: the source's): z mirrored, vertical speed * -0.75
@@ -171,6 +172,10 @@ public:
     // <FS> GPU particles G0: the records for the GPU. mStore: a vertex buffer with a record a slot (slot = the record's place in mRecords), its index data is the order of the slots of the frame
     // (written by LLParticlePartition::rebuildRows); mSources: the distinct sources of the records (at most 255; more and the group is drawn from rows).
     std::vector<LLPointer<LLViewerPartSource> > mSources;
+    // G1: up to four draw classes; the GPU sort orders the store by (class, distance back to front), the CPU knows each class's range from the live counts
+    struct ClassKey { LLPointer<LLViewerTexture> mTex; U8 mSrc = 0, mDst = 0; bool mFullbright = false; };
+    std::vector<ClassKey> mClasses;
+    U32 mClassCount[4] = {};
     LLPointer<LLVertexBuffer> mStore;
     U32 mStoreCap = 0;
     std::vector<U32> mDirtySlots;           // slots whose record is to be written to the store
@@ -216,6 +221,7 @@ public:
     void shift(const LLVector3 &offset);
 
     void updateSimulation();
+    void sortStores();                      // G1: one worker record a frame (kind 36): the GPU sorts the order of every record store (main view only)
 
     void addPartSource(LLPointer<LLViewerPartSource> sourcep);
 

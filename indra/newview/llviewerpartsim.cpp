@@ -36,6 +36,7 @@
 #include "llviewerpartsource.h"
 #include "llviewerregion.h"
 #include "llvopartgroup.h"
+#include "llvkbridge.h"
 #include "llworld.h"
 #include "llmutelist.h"
 #include "pipeline.h"
@@ -441,7 +442,7 @@ static void fs_fill_record(const LLViewerPart& part, int mode, LLViewerPartRecor
 // <FS> GPU particles stage 2: the same placement rules as addPart, the particle kept as a record (the caller deletes the LLViewerPart)
 bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, int mode)
 {
-    if (mHud || (part.mFlags & LLPartData::LL_PART_HUD))
+    if (mHud || (part.mFlags & LLPartData::LL_PART_HUD) || mRecords.size() >= 1024)       // (1024: what one workgroup of the GPU sort holds)
     {
         return false;
     }
@@ -461,6 +462,34 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
     LLViewerPartRecord rec;
     fs_fill_record(part, mode, rec);
     rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
+    {
+        // the draw class: texture, blend pair, fullbright (at most four in a group; more and the group is drawn from rows)
+        const bool fullbright = (rec.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
+        size_t c = 0;
+        while (c < mClasses.size() && !(mClasses[c].mTex == rec.mImagep && mClasses[c].mSrc == rec.mBlendSrc && mClasses[c].mDst == rec.mBlendDst && mClasses[c].mFullbright == fullbright))
+        {
+            ++c;
+        }
+        if (c == mClasses.size())
+        {
+            if (c >= 4)
+            {
+                mNoGpu = true;
+                c = 3;
+            }
+            else
+            {
+                ClassKey key;
+                key.mTex = rec.mImagep;
+                key.mSrc = rec.mBlendSrc;
+                key.mDst = rec.mBlendDst;
+                key.mFullbright = fullbright;
+                mClasses.push_back(key);
+            }
+        }
+        rec.mClass = (U8)c;
+        ++mClassCount[c];
+    }
     if (rec.mSourcep.notNull())
     {
         size_t k = 0;
@@ -526,7 +555,7 @@ static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const LLV
         *tc1++ = r.mEndScale;
         const U32 flags = (U32)ll_round(r.mStartGlow * 255.f) | ((U32)ll_round(r.mEndGlow * 255.f) << 8) | ((U32)r.mMode << 16) | (r.mBounce ? (1u << 18) : 0u)
             | ((r.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? (1u << 19) : 0u) | ((r.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? (1u << 20) : 0u)
-            | ((r.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) ? (1u << 21) : 0u) | ((U32)r.mSrcLocal << 24);
+            | ((r.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK) ? (1u << 21) : 0u) | ((U32)(r.mClass & 3) << 22) | ((U32)r.mSrcLocal << 24);
         const LLColor4U end_color = r.mEndColor;
         const U32 words[2] = { flags, *(const U32*)end_color.mV };
         LLVector2 raw;
@@ -579,6 +608,7 @@ bool LLViewerPartGroup::expireRecords()
         {
             mDeadAt[i] = mDeadAt.back();
             mDeadAt.pop_back();
+            --mClassCount[mRecords[i].mClass];
             if (i + 1 != mRecords.size())
             {
                 mRecords[i] = std::move(mRecords.back());
@@ -1070,6 +1100,92 @@ static bool fs_partsim_records_on()
         return (!rows || atoi(rows) != 0) && (!sim || atoi(sim) != 0);
     }();
     return on;
+}
+
+extern U32 gFrameCount;
+
+// <FS> GPU particles G1: the job list of the GPU sort (kind 36): for every record store of a group whose particles are all records, its buffers and offsets, its count and its place in the source table
+void LLViewerPartSim::sortStores()
+{
+    static U32 last_frame = ~0u;
+    static U64 calls = 0, sent = 0, groups_seen = 0, groups_sent = 0, not_pure = 0, no_store = 0;
+    ++calls;
+    if (calls % 600 == 1)
+    {
+        LL_INFOS("Q1Census") << "particle sort: sortStores entered " << calls << " times; frame " << gFrameCount << " last " << last_frame << ", render particles " << (int)gPipeline.sRenderParticles << ", render type " << (int)gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES) << LL_ENDL;
+    }
+    if (last_frame == gFrameCount || !gPipeline.sRenderParticles)       // (not the render type mask: it is the pool's own while the alpha pass runs)
+    {
+        return;
+    }
+    last_frame = gFrameCount;
+    static std::vector<U32> jobs;
+    static std::vector<F32> sources;
+    jobs.clear();
+    sources.clear();
+    const F64 now = sSimTime;
+    const F32 hi = (F32)now;
+    sources.insert(sources.end(), { hi, (F32)(now - (F64)hi), 0.f, 0.f });
+    U32 count = 0;
+    for (LLViewerPartGroup* g : mViewerPartGroups)
+    {
+        ++groups_seen;
+        if (g->mStore.isNull() || g->mRecords.empty() || g->mNoGpu || g->mHud || g->mRecords.size() > 1024)
+        {
+            ++no_store;
+            continue;
+        }
+        LLVOPartGroup* vo = g->mVOPartGroupp.get();
+        if (!vo || vo->isDead() || !vo->mPure)
+        {
+            ++not_pure;
+            continue;
+        }
+        ++groups_sent;
+        LLVertexBuffer* s = g->mStore.get();
+        jobs.push_back(s->getVertexBufferId());
+        jobs.push_back(s->getIndexBufferId());
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_NORMAL));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TANGENT));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_WEIGHT4));
+        jobs.push_back(s->getOffset(LLVertexBuffer::TYPE_TEXCOORD2));
+        jobs.push_back((U32)g->mRecords.size());
+        jobs.push_back((U32)((sources.size() - 4) / 8));
+        for (const LLPointer<LLViewerPartSource>& src : g->mSources)
+        {
+            sources.insert(sources.end(), { src->mPosAgent.mV[0], src->mPosAgent.mV[1], src->mPosAgent.mV[2], 0.f, src->mTargetPosAgent.mV[0], src->mTargetPosAgent.mV[1], src->mTargetPosAgent.mV[2], 0.f });
+        }
+        ++count;
+    }
+    if (!count)
+    {
+        static U64 none = 0;
+        if (++none % 600 == 1)
+        {
+            LL_INFOS("Q1Census") << "particle sort: no store to sort (" << none << " frames), groups seen " << groups_seen << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
+        }
+        return;
+    }
+    if (++sent % 600 == 1)
+    {
+        LL_INFOS("Q1Census") << "particle sort jobs sent: " << sent << " frames, " << calls << " calls from the alpha pass; groups seen " << groups_seen << ", sent " << groups_sent << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
+    }
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 36;
+    header.mEntries = count;
+    header.mParticleFloats = (U32)sources.size();
+    const LLVector3 at = camera->getAtAxis(), origin = camera->getOrigin();
+    for (int k = 0; k < 3; ++k)
+    {
+        header.mViewProj[k] = at.mV[k];
+        header.mViewProj[4 + k] = origin.mV[k];
+    }
+    static std::vector<U8> blob;
+    blob.resize(jobs.size() * 4 + sources.size() * 4);
+    memcpy(blob.data(), jobs.data(), jobs.size() * 4);
+    memcpy(blob.data() + jobs.size() * 4, sources.data(), sources.size() * 4);
+    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 void LLViewerPartSim::addPart(LLViewerPart* part)
