@@ -1,6 +1,6 @@
 # Rekindled Viewer: rebranding plan (2026-11-02)
 
-The project (this fork of Phoenix Firestorm, branch `native-vk`) is renamed **Rekindled Viewer**. Brand direction (the user): a blue and purple flame or spark, lettering to match. Hosting: a `rekindle` directory on sl-op.com with `start.html` as the viewer's start page once it is set up there (access and deploy flow: the `sl-op-hosting` note in the `D--SL` project memory and `D:\SL\README.md`; nothing is uploaded until the user says so).
+The project (this fork of Phoenix Firestorm, branch `native-vk`) is renamed **Rekindled Viewer**. Brand direction (the user): a blue and purple flame or spark, lettering to match. Hosting: a `rekindled` directory on sl-op.com with `start.html` as the viewer's start page once it is set up there (access and deploy flow: the `sl-op-hosting` note in the `D--SL` project memory and `D:\SL\README.md`; nothing is uploaded until the user says so).
 
 ## 1. The marks (first set, in `branding/rekindled/`)
 
@@ -21,7 +21,7 @@ To do for the assets once the direction is agreed: transparent PNGs for the logo
 
 1. **Marks** (this directory): agree the direction, then the final set and the raster/ICO/BMP exports.
 2. **Display branding, behind one change set:** the name in the title bar, About, splash and login, the icon (exe resource, installer, taskbar), installer text and bitmaps, strings and logo textures; the executable, the settings and cache folders and the channel stay as they are for now, so nothing breaks: settings, cache, logs, every launcher and lap script keep working.
-3. **Start page:** `https://sl-op.com/rekindle/start.html` on the brand, set as `ForceLoginURL` (a login page, not a browser home: it gets the login query parameters and can show news, release notes, the changes of the build). Deploy after the user's go.
+3. **Start page:** `https://sl-op.com/rekindled/start.html` on the brand, set as `ForceLoginURL` (a login page, not a browser home: it gets the login query parameters and can show news, release notes, the changes of the build). Deploy after the user's go.
 4. **Deep rename (decide later, a separate day):** the executable, settings / cache / log folders (with a one time migration from `Firestorm_x64`), the channel string, the installer file names, the update check, the CMake project names. Needs the channel decision below and a migration so no one loses settings.
 5. **Licence and attribution:** the viewer stays GPL/LGPL with its headers; About and the installer keep the credit to Linden Lab and the Phoenix Firestorm project; the Firestorm name and artwork are theirs and are removed from our builds (the trademark rule of the Phoenix project for modified builds).
 
@@ -30,8 +30,12 @@ To do for the assets once the direction is agreed: transparent PNGs for the logo
 1. **Direction of the marks** (colours, flame shape, the spark, the lettering): the user to look at `preview-sheet.png`.
 2. **Depth of the first rebrand:** display only (recommended), or the deep rename at once.
 3. **Channel name:** `Rekindled` (a clean break; the grid sees a new viewer; features gated on "Firestorm" need a look) or keep the Firestorm channel string until the deep rename.
-4. **Start page address:** `sl-op.com/rekindle/start.html` as said; whether it is a plain static page or reads a small JSON for news and release notes.
+4. **Start page address:** `sl-op.com/rekindled/start.html` as said; whether it is a plain static page or reads a small JSON for news and release notes.
 
 ## 5. Lettering on dark backgrounds (checked 2026-11-02)
 
 The first wordmark gradient (#1E6BFF, #5B4DFF, #B03CFF) has contrast ratios on a navy (#0E1026) background of 4.1 (blue), 3.5 (indigo, the middle of the word: "k i n") and 4.4 (violet); on dark grey (#1E1E1E) 3.7, 3.1 and 3.9; on white 4.6, 5.3 and 4.3. It is readable (the strokes are thick, above the 3:1 of large graphics) but the middle is dim on dark. A **dark background variant** with lighter stops (#4D8DFF, #8277FF, #C26BFF: 4.8 to 6.8 on the same backgrounds) is `rekindled-wordmark-dark.svg` / `rekindled-logo-dark.svg`; the flame mark needs no variant (large filled areas). Which of the two reads better (the vivid or the lighter) for the splash and the start page is the user's eye.
+
+## 6. Lettering decision (2026-11-02)
+
+The user: the capital R version looks good; the R and the lowercase r sat farther from the next letter than the others did (their ink is only at the top / the stem), so the gap after r is 14 and after R 16 instead of 28 (`branding/rekindled/make_wordmark.py` builds every wordmark and lockup). The brand wordmark is **"Rekindled"** (capital R): `rekindled-wordmark[-dark].svg`, `rekindled-logo[-dark].svg`; the lowercase "rekindled" is kept in `alt-lowercase/`; all caps was looked at and not taken (the spark over the I reads as a dotted I). The directory on sl-op.com is `rekindled`: `https://sl-op.com/rekindled/start.html` (the first notes said `rekindle`, a typo).
