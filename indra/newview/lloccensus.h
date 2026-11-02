@@ -42,7 +42,7 @@ namespace LLOccCensus
     inline long long sQpc0 = 0;
     inline U64 sTsc0 = 0;
     // the Hi-Z batches (world camera)
-    inline U64 sHizSends = 0, sHizRefused = 0, sHizBoxes = 0, sHizApplied = 0, sHizOccluded = 0, sHizLost = 0, sHizSuperseded = 0, sHizDead = 0;
+    inline U64 sHizSends = 0, sHizRefused = 0, sHizBoxes = 0, sHizApplied = 0, sHizOccluded = 0, sHizLost = 0, sHizSuperseded = 0, sHizDead = 0, sHizStale = 0;
     inline U64 sHizLag[AGES] = {};                  // frames from the send to the apply
     inline U64 sHizLod[16] = {};
     inline U64 sHizWhy[4] = {};                     // special cases: cut by the near plane (visible), off screen (occluded), beyond the far plane (visible), wholly behind the camera (occluded)

@@ -20,6 +20,7 @@ public:
     U32 mHizId = 0;             // the registry id (given when the target first has a box)
     U32 mHizSerial = 0;         // the batch whose result is awaited; 0 = none
     U32 mHizBatch = 0;          // the number of the batch the target was last added to (a target is in a batch once)
+    bool mHizOccludedOnce = false;  // <FS> the last verdict said occluded and was not applied: a target goes occluded on two agreeing verdicts and comes back on one (plan 8.38: one stale verdict costs nothing)
 };
 
 class LLHiz
