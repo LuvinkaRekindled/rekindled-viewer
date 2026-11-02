@@ -1430,6 +1430,73 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
     // the buffer is named in the record: nothing is bound for it
     if (end != 0)
     {
+        // <FS> LL_VK_VBCHECK (default on, 0 = off): the positions that are about to be flushed (the array at offset 0, 16 bytes a vertex) must be finite and not beyond 1e5: the ray scene builder's "bad range"
+        // warnings are whole NaN vertices that the volume fill does not write, and the stack here is the code that filled the buffer (every fill ends in an unmap). Logged with that stack (first 40).
+        static const bool vb_check = getenv("LL_VK_VBCHECK") == nullptr || atoi(getenv("LL_VK_VBCHECK")) != 0;
+        if (vb_check && target == BufferKind::Vertex && start < (U32)getNumVerts() * 16u)
+        {
+            const U32 pos_end = std::min<U32>(end, (U32)getNumVerts() * 16u - 1u);
+            const U32 first_v = (start + 15u) / 16u;
+            const U32 last_v = (pos_end + 1u) / 16u;        // (one past)
+            LARGE_INTEGER scan_t0;
+            QueryPerformanceCounter(&scan_t0);
+            U32 bad = 0, first_bad = ~0u, nan_comp = 0, inf_comp = 0, huge_comp = 0;
+            F32 first_vals[4] = {};
+            static const bool vb_fix = getenv("LL_VK_VBFIX") == nullptr || atoi(getenv("LL_VK_VBFIX")) != 0;
+            for (U32 v = first_v; v < last_v; ++v)
+            {
+                F32* p = (F32*)((U8*)data + (size_t)v * 16u - start);
+                if (!(p[0] > -1e5f && p[0] < 1e5f && p[1] > -1e5f && p[1] < 1e5f && p[2] > -1e5f && p[2] < 1e5f))
+                {
+                    if (!bad) { first_bad = v; memcpy(first_vals, p, sizeof(first_vals)); }
+                    ++bad;
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        if (p[c] != p[c]) { ++nan_comp; }
+                        else if (!(p[c] > -1e30f && p[c] < 1e30f)) { ++inf_comp; }
+                        else if (!(p[c] > -1e5f && p[c] < 1e5f)) { ++huge_comp; }
+                    }
+                    // <FS> LL_VK_VBFIX (default on, 0 = off): a vertex whose position is not finite or beyond 1e6 is set to the origin (a degenerate triangle) in what is sent: it would be a spike on the screen and a bad
+                    // structure in the ray scene; the UI's immediate mode buffers (mask 69) fill only x and y and are left alone
+                    if (vb_fix && mTypeMask != 69u && !(p[0] > -1e6f && p[0] < 1e6f && p[1] > -1e6f && p[1] < 1e6f && p[2] > -1e6f && p[2] < 1e6f))
+                    {
+                        p[0] = p[1] = p[2] = 0.f;
+                    }
+                }
+            }
+            {
+                // <FS> what the scan costs (reported every 10 s: the vertices scanned, the time, the flushes), to decide whether it stays on
+                static U64 scanned = 0, flushes = 0, scan_ticks = 0;
+                static LONGLONG report_at = 0;
+                LARGE_INTEGER scan_t1, freq;
+                QueryPerformanceCounter(&scan_t1);
+                QueryPerformanceFrequency(&freq);
+                scanned += (last_v > first_v) ? (last_v - first_v) : 0;
+                ++flushes;
+                scan_ticks += (U64)(scan_t1.QuadPart - scan_t0.QuadPart);
+                if (!report_at) { report_at = scan_t1.QuadPart; }
+                if (scan_t1.QuadPart - report_at >= 10 * freq.QuadPart)
+                {
+                    LL_INFOS("VertexCheck") << "position scan over the last 10 s: " << flushes << " flushes, " << scanned << " vertices, " << (double)scan_ticks * 1000.0 / (double)freq.QuadPart << " ms in all" << LL_ENDL;
+                    scanned = flushes = scan_ticks = 0;
+                    report_at = scan_t1.QuadPart;
+                }
+            }
+            if (bad)
+            {
+                // the UI's immediate mode buffers (LLRender::genBuffer: vertex, texcoord0, colour = mask 69) fill the positions' x and y only: the rest of the slot is not theirs to be checked, so they are counted apart
+                static U64 flagged = 0, flagged_ui = 0;
+                if (mTypeMask == 69u)
+                {
+                    ++flagged_ui;
+                }
+                else if (flagged++ < 40)
+                {
+                    LL_WARNS("VertexCheck") << "vertex buffer " << mVertexBufferId << " (" << getNumVerts() << " vertices, type mask " << mTypeMask << ") is flushed with " << bad << " bad positions of " << (last_v - first_v)
+                                            << " flushed (first at vertex " << first_bad << " = " << first_vals[0] << ", " << first_vals[1] << ", " << first_vals[2] << ", " << first_vals[3] << "; components: " << nan_comp << " NaN, " << inf_comp << " infinite, " << huge_comp << " huge; region bytes " << start << ".." << end << "); the code that filled it:\n" << LLVkAsync::stackHere(1, 14) << LL_ENDL;
+                }
+            }
+        }
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("buffer sub data");
         LL_PROFILE_ZONE_NUM(start);
         LL_PROFILE_ZONE_NUM(end);

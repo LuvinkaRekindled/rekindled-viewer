@@ -42,6 +42,8 @@ namespace LLVkAsync
     void syncCall(const std::function<void()>& fn);
     // <FS> LL_VK_SYNC_LOG (default on): the main thread's waits in syncCall are timed by the function that called it and reported every 10 s (VkSync); the symbolizer names an address
     void setSymbolizer(std::string (*fn)(const void*));
+    // <FS> the calling thread's stack as text, one function a line (the symbolizer above; addresses without it)
+    std::string stackHere(int skip, int frames);
     // bytes the worker has yet to replay (what the main thread has written and the worker has not taken): a syncCall waits for all of it
     unsigned long long backlogBytes();
 
