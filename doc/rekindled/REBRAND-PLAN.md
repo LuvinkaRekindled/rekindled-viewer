@@ -31,3 +31,7 @@ To do for the assets once the direction is agreed: transparent PNGs for the logo
 2. **Depth of the first rebrand:** display only (recommended), or the deep rename at once.
 3. **Channel name:** `Rekindled` (a clean break; the grid sees a new viewer; features gated on "Firestorm" need a look) or keep the Firestorm channel string until the deep rename.
 4. **Start page address:** `sl-op.com/rekindle/start.html` as said; whether it is a plain static page or reads a small JSON for news and release notes.
+
+## 5. Lettering on dark backgrounds (checked 2026-11-02)
+
+The first wordmark gradient (#1E6BFF, #5B4DFF, #B03CFF) has contrast ratios on a navy (#0E1026) background of 4.1 (blue), 3.5 (indigo, the middle of the word: "k i n") and 4.4 (violet); on dark grey (#1E1E1E) 3.7, 3.1 and 3.9; on white 4.6, 5.3 and 4.3. It is readable (the strokes are thick, above the 3:1 of large graphics) but the middle is dim on dark. A **dark background variant** with lighter stops (#4D8DFF, #8277FF, #C26BFF: 4.8 to 6.8 on the same backgrounds) is `rekindled-wordmark-dark.svg` / `rekindled-logo-dark.svg`; the flame mark needs no variant (large filled areas). Which of the two reads better (the vivid or the lighter) for the splash and the start page is the user's eye.
