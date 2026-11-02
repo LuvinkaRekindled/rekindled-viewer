@@ -39,6 +39,8 @@
 #endif
 
 #include "llwebrtc.h"
+#include "llwebrtc_winplayout.h" // <FS> Rekindled: voice playout through a media stream on Windows
+#include <cstdlib>
 // WebRTC Includes
 #ifdef WEBRTC_WIN
 #pragma warning(push)
@@ -192,6 +194,13 @@ public:
     explicit LLWebRTCAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner) : inner_(inner), tuning_(false)
     {
         RTC_CHECK(inner_);
+#if defined(_WIN32)
+        // <FS> Rekindled: LL_RTC_MEDIA_PLAYOUT=0 goes back to libwebrtc's own playout, which opens a
+        // communications stream (see llwebrtc_winplayout.h).
+        const char* v = std::getenv("LL_RTC_MEDIA_PLAYOUT");
+        mUseMedia     = !(v && v[0] == '0');
+        RTC_LOG(LS_INFO) << "voice playout through a media stream: " << (mUseMedia ? "on" : "off");
+#endif
     }
 
     // ----- AudioDeviceModule interface: we mostly forward to |inner_| -----
@@ -213,7 +222,14 @@ public:
     }
     bool    Initialized() const override { return inner_->Initialized(); }
 
-    int32_t ForceTerminate() { return inner_->Terminate(); }
+    int32_t ForceTerminate()
+    {
+#if defined(_WIN32)
+        mMediaPlayout.stop();
+        mPlayoutInitialized = false;
+#endif
+        return inner_->Terminate();
+    }
 
     // --- Device enumeration/selection (forward) ---
     int16_t PlayoutDevices() override { return inner_->PlayoutDevices(); }
@@ -226,22 +242,102 @@ public:
     {
         return inner_->RecordingDeviceName(index, name, guid);
     }
-    int32_t SetPlayoutDevice(uint16_t index) override { return inner_->SetPlayoutDevice(index); }
+    int32_t SetPlayoutDevice(uint16_t index) override
+    {
+#if defined(_WIN32)
+        char name[webrtc::kAdmMaxDeviceNameSize];
+        char guid[webrtc::kAdmMaxGuidSize];
+        mPlayoutEndpointId = (inner_->PlayoutDeviceName(index, name, guid) == 0) ? guid : std::string();
+#endif
+        return inner_->SetPlayoutDevice(index);
+    }
     int32_t SetRecordingDevice(uint16_t index) override { return inner_->SetRecordingDevice(index); }
 
     // Windows default/communications selectors, if your branch exposes them:
-    int32_t SetPlayoutDevice(WindowsDeviceType type) override { return inner_->SetPlayoutDevice(type); }
+    int32_t SetPlayoutDevice(WindowsDeviceType type) override
+    {
+#if defined(_WIN32)
+        mPlayoutEndpointId.clear(); // the default playback device (console role, not the communications one)
+#endif
+        return inner_->SetPlayoutDevice(type);
+    }
     int32_t SetRecordingDevice(WindowsDeviceType type) override { return inner_->SetRecordingDevice(type); }
 
     // --- Init/start/stop (forward) ---
-    int32_t InitPlayout() override { return inner_->InitPlayout(); }
-    bool    PlayoutIsInitialized() const override { return inner_->PlayoutIsInitialized(); }
+    int32_t InitPlayout() override
+    {
+#if defined(_WIN32)
+        if (mUseMedia)
+        {
+            mPlayoutInitialized = true;
+            return 0;
+        }
+#endif
+        return inner_->InitPlayout();
+    }
+    bool PlayoutIsInitialized() const override
+    {
+#if defined(_WIN32)
+        if (mUseMedia)
+        {
+            return mPlayoutInitialized;
+        }
+#endif
+        return inner_->PlayoutIsInitialized();
+    }
     int32_t StartPlayout() override {
         if (tuning_) return 0;  // For tuning, don't allow playout
+#if defined(_WIN32)
+        if (mUseMedia)
+        {
+            if (mMediaPlayout.running())
+            {
+                return 0;
+            }
+            // The voice engine's data is pulled from this thread through the same proxy transport the
+            // libwebrtc playout used.
+            const bool ok = mMediaPlayout.start(mPlayoutEndpointId,
+                [this](void* buffer, size_t frames)
+                {
+                    size_t  samples = 0;
+                    int64_t elapsed = 0;
+                    int64_t ntp     = 0;
+                    audio_transport_.NeedMorePlayData(frames, LLWinMediaPlayout::kChannels * sizeof(int16_t), LLWinMediaPlayout::kChannels,
+                                                      LLWinMediaPlayout::kRate, buffer, samples, &elapsed, &ntp);
+                });
+            if (!ok)
+            {
+                RTC_LOG(LS_WARNING) << "media playout failed to start, using the libwebrtc playout";
+                mUseMedia = false;
+                return inner_->StartPlayout();
+            }
+            return 0;
+        }
+#endif
         return inner_->StartPlayout();
     }
-    int32_t StopPlayout() override { return inner_->StopPlayout(); }
-    bool    Playing() const override { return inner_->Playing(); }
+    int32_t StopPlayout() override
+    {
+#if defined(_WIN32)
+        if (mUseMedia)
+        {
+            mMediaPlayout.stop();
+            mPlayoutInitialized = false;
+            return 0;
+        }
+#endif
+        return inner_->StopPlayout();
+    }
+    bool Playing() const override
+    {
+#if defined(_WIN32)
+        if (mUseMedia)
+        {
+            return mMediaPlayout.running();
+        }
+#endif
+        return inner_->Playing();
+    }
 
     int32_t InitRecording() override { return inner_->InitRecording(); }
     bool    RecordingIsInitialized() const override { return inner_->RecordingIsInitialized(); }
@@ -349,6 +445,12 @@ private:
     LLWebRTCAudioTransport                        audio_transport_;
 
     bool tuning_;
+#if defined(_WIN32)
+    LLWinMediaPlayout mMediaPlayout;
+    bool              mUseMedia           = true;
+    bool              mPlayoutInitialized = false;
+    std::string       mPlayoutEndpointId; // empty = the default playback device
+#endif
 };
 
 class LLCustomProcessorState
