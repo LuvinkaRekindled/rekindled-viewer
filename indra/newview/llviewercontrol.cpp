@@ -1077,6 +1077,14 @@ void handleOutputDeviceChanged(const LLSD& newvalue)
 }
 // </FS:Ansariel>
 
+void handleAudioHRTFChanged(const LLSD& newvalue)
+{
+    if (gAudiop)
+    {
+        gAudiop->setHRTF(newvalue.asBoolean());
+    }
+}
+
 // <FS:TS> FIRE-24081: Disable HiDPI by default and warn if set
 void handleRenderHiDPIChanged(const LLSD& newvalue)
 {
@@ -1584,6 +1592,7 @@ void settings_setup_listeners()
 
     // <FS:Ansariel> Output device selection
     setting_setup_signal_listener(gSavedSettings, "FSOutputDeviceUUID", handleOutputDeviceChanged);
+    setting_setup_signal_listener(gSavedSettings, "FSAudioHRTF", handleAudioHRTFChanged);
 
     // <FS:Ansariel> Optional small camera floater
     setting_setup_signal_listener(gSavedSettings, "FSUseSmallCameraFloater", handleSmallCameraFloaterChanged);

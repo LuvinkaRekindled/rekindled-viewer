@@ -198,6 +198,8 @@ public:
     typedef std::map<LLUUID, std::string> output_device_map_t;
     virtual output_device_map_t getDevices();
     virtual void setDevice(const LLUUID& device_uuid) { };
+    // Headphone 3D placement of world sounds (HRTF); only the OpenAL backend has it
+    virtual void setHRTF(bool enable) { };
 
     typedef boost::signals2::signal<void(output_device_map_t output_device_map)> output_device_list_changed_callback_t;
     boost::signals2::connection setOutputDeviceListChangedCallback(const output_device_list_changed_callback_t::slot_type& cb)

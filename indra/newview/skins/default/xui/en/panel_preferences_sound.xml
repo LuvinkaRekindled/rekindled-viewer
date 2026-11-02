@@ -779,6 +779,17 @@
              name="sound_output_device"
              top_delta="-5"
              right="-5" />
+            <check_box
+             control_name="FSAudioHRTF"
+             height="16"
+             initial_value="false"
+             label="Place sounds around the head on headphones (HRTF)"
+             layout="topleft"
+             left="4"
+             name="audio_hrtf"
+             tool_tip="Mono world sounds are placed in 3D around your head. Sounds a little quieter. Headphones only."
+             top_pad="8"
+             width="400" />
         </panel>
     </panel>
 
