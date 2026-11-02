@@ -183,8 +183,6 @@ public:
     U8   mShiny = 0;
     bool mFullbright = false;
     bool mHasGlow = false;
-    bool mParticleRecords = false;      // <FS> GPU particles G0: the buffer is a group's record store (a record a slot, the index data is the order of the slots); mPartSources: the sources its records name, in their numbering
-    std::vector<LLPointer<class LLViewerPartSource> > mPartSources;
     bool mParticleRows = false;         // <FS> GPU particles stage 1 (PLAN-gpu-particles.md): the buffer holds one row a particle (not four vertices), mOffset / mCount are 6 vertices a particle: the pull shaders expand each row to a quad
     // <FS> S7 B0 (doc/vulkan/S7-design.md section 13): the union of the extents of the faces this draw covers (agent space for a static drawable, the drawable's own space for an active one: the model
     // matrix maps it); only filled for volume faces while LL_VK_VISCENSUS is on (LLVolumeGeometryManager::registerFace)

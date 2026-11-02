@@ -94,3 +94,11 @@ Beach lap `g1e-partsort1`: 1,870-2,370 of 3,000 rebuilds with nothing evaluated 
 What changed on the way (all in `LL_VK_GPU_PARTICLE_SORT`, now default on, `=0` or `run-viewer-partscpu.bat` for the CPU path):
 - the compute pass now **evaluates each record once** (all the laws, the bounce, colour, scale, glow) and writes the stage 1 rows in sorted order into the group's row buffer (`mRows`); the draws are the stage 1 row draws (flags & 16), so the vertex shaders no longer need the record code (G0's `ll_record_corner` and the sources section of kind 32 are dead code now and go in the next cleanup);
 - a class draws its glow pass only if a record in it has a glow (`mClassGlow`): the class draws had `mHasGlow = true` for every class, a second draw over every particle; it did not show in the A/B (the alpha run zone is the same), but it was wasted work.
+
+## 13. Cleanup (2026-11-02): one GPU path
+
+Adam looked at the compute-rows version ("looks good"); the dead code of G0 is gone: the record evaluation and `ll_record_corner` of `alphaPullV.glsl` / `emissivePullV.glsl` (the vertex shaders read rows only again), the source table section of the kind 32 record and `GEO_PARTICLE_RECORDS`, `LLDrawInfo::mParticleRecords` / `mPartSources`, the CPU-order path of `rebuildRows` and the switch `LL_VK_GPU_PARTICLE_EVAL`. What is left: the record store (the compute pass's input), the sort pass (kind 36) and its rows, and the CPU rows path (`LL_VK_GPU_PARTICLE_SORT=0`, `run-viewer-partscpu.bat`) for groups that are not records only: stepped particles (wind, callbacks, ribbons), and a part group that shares its spatial group with another one (found while cleaning: such a group had lost its particles when the CPU stopped evaluating; the fast path now needs the group alone in its octree cell).
+
+Default lap `g1h-zonesoff1` (beach): 2,190-2,270 of 3,000 rebuilds drawn from the sort pass's rows with nothing evaluated on the CPU, 31 stores sorted a frame, no errors, 126 fps.
+
+Left, in order of size: the groups that share a spatial group (the CPU makes their rows: 16.7 kcycles for 84 particles) and groups with stepped particles; ribbons / wind / callbacks as records; the shader-side area guard of design 3.

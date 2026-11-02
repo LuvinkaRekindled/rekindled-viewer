@@ -47,7 +47,6 @@ struct LLPartEval
     F32 mDist = 0.f;                // along the camera's at axis
     LLColor4U mColor, mGlow, mPColor, mPGlow;
     LLViewerTexture* mTex = nullptr;
-    S32 mSlot = -1;                 // G0: the slot of the record in the group's store (-1: a stepped particle)
     S32 mIndex = 0;                 // the pick number: a place in the group's particle list, then in its records
     U8 mBlendSrc = 0, mBlendDst = 0;
     bool mFullbright = false;

@@ -276,13 +276,7 @@ static struct ParticleRebuildStats
     U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mFastGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
 
-// GPU particles G0: a group whose particles are all records is drawn from the group's record store, the shader evaluates them (default on since 2026-11-02; LL_VK_GPU_PARTICLE_EVAL=0 and LL_VK_GPU_PARTICLE_SORT=0 evaluate on the CPU)
 bool ll_particle_sort_on();
-static bool fs_gpu_particle_eval_on()
-{
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_EVAL"); return (!v || atoi(v) != 0) || ll_particle_sort_on(); }();
-    return on;
-}
 
 // GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
 static bool fs_gpu_particles_on()
@@ -298,8 +292,7 @@ static void fs_particle_stats_log()
     const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
     if (sPartStats.mGpuGroups)
     {
-        LL_INFOS("Q1Census") << "particle groups drawn from their record store (shader evaluation): " << sPartStats.mGpuGroups << " of " << sPartStats.mRows << " rebuilds (" << sPartStats.mFastGroups << " with nothing evaluated on the CPU); the others: more than one part group in the spatial group " << sPartStats.mNoMulti
-            << ", a ribbon " << sPartStats.mNoRibbon << ", not all records (stepped particles) or no store " << sPartStats.mNoImpure << LL_ENDL;
+        LL_INFOS("Q1Census") << "particle groups drawn from rows the sort pass wrote (nothing evaluated on the CPU): " << sPartStats.mFastGroups << " of " << sPartStats.mRows << " rebuilds" << LL_ENDL;
     }
     if (sPartStats.mCGroups)
     {
@@ -396,7 +389,23 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
     mPure = false;
     // G1 step 2: a group of records only, with the GPU sort on: nothing is evaluated here. The extents are the box of the group's path aggregates (and the sources' positions now), the texture
     // priority comes from the classes, the cuts (size, area) are the shader's
-    const bool fast_path = ll_particle_sort_on() && has_records && particles == 0 && !mViewerPartGroupp->mNoGpu && mViewerPartGroupp->syncStore();
+    bool alone = false;
+    if (ll_particle_sort_on() && has_records && particles == 0 && !mViewerPartGroupp->mNoGpu)
+    {
+        // (the draws of the sort pass are one buffer: a group alone in its spatial group; with another part group the CPU makes the rows of both and sorts them together)
+        LLSpatialGroup* sg = drawable->getSpatialGroup();
+        if (sg)
+        {
+            U32 live = 0;
+            for (LLSpatialGroup::element_iter it = sg->getDataBegin(); it != sg->getDataEnd(); ++it)
+            {
+                LLDrawable* d = (LLDrawable*)(*it)->getDrawable();
+                live += (d && !d->isDead()) ? 1 : 0;
+            }
+            alone = live == 1;
+        }
+    }
+    const bool fast_path = alone && mViewerPartGroupp->syncStore();
     bool fast_box = false;
     if (fast_path)
     {
@@ -618,7 +627,6 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             row.mBlendDst = rec.mBlendDst;
             row.mFullbright = (rec.mFlags & LLPartData::LL_PART_EMISSIVE_MASK) != 0;
             row.mIndex = particles + ri;
-            row.mSlot = ri;
             row.mDist = (pos - origin) * at_axis;
             if (rec.mFlags & LLPartData::LL_PART_FOLLOW_VELOCITY_MASK)
             {
@@ -631,7 +639,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         }
     }
     mPixelArea = drawn_area * pixel_meter_ratio;
-    if (fast_path || (fs_gpu_particle_eval_on() && has_records && particles == 0 && !stop && mViewerPartGroupp->syncStore()))
+    if (fast_path)
     {
         mPure = true;       // (the record store holds every particle of the group: the draws can read it)
     }
@@ -1395,62 +1403,6 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
 
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.mDist > b.mDist; });
     lap(sPartStats.mRSort);
-
-    if (fs_gpu_particle_eval_on() && !(live_drawables == 1 && only_obj && only_obj->mPure && ribbons == 0))
-    {
-        // (why a group is not drawn from its store)
-        if (live_drawables > 1) { ++sPartStats.mNoMulti; }
-        else if (ribbons) { ++sPartStats.mNoRibbon; }
-        else { ++sPartStats.mNoImpure; }
-    }
-    if (live_drawables == 1 && only_obj && only_obj->mPure && ribbons == 0)
-    {
-        // G0: the group's record store is the vertex buffer of the draws and its index data is this frame's order of the slots; the shader evaluates the records
-        LLViewerPartGroup* parts = only_obj->getViewerPartGroup();
-        LLVertexBuffer* store = parts->mStore.get();
-        if (ll_particle_sort_on())
-        {
-            // G1: the GPU writes the order (class, then back to front); the CPU only knows the classes' ranges from their live counts
-            fs_make_class_draws(group, parts, mRenderPass);
-            lap(sPartStats.mRWrite);
-            sPartStats.mRowsParticles += n;
-            ++sPartStats.mGpuGroups;
-            return true;
-        }
-        U16* order = (U16*)store->mapIndexBuffer(0, n);
-        for (U32 k = 0; k < n; ++k)
-        {
-            order[k] = (U16)entries[k].mRow->mSlot;
-        }
-        group->mVertexBuffer = store;
-        LLSpatialGroup::drawmap_elem_t& store_draws = group->mDrawMap[mRenderPass];
-        LLDrawInfo* run = nullptr;
-        for (U32 k = 0; k < n; ++k)
-        {
-            const LLPartEval& r = *entries[k].mRow;
-            LLViewerTexture* texture = r.mTex;
-            if (run && run->mTexture == texture && run->mFullbright == r.mFullbright && run->mBlendFuncDst == (LLRender::eBlendFactor)r.mBlendDst && run->mBlendFuncSrc == (LLRender::eBlendFactor)r.mBlendSrc)
-            {
-                run->mCount += 6;
-                run->mEnd = (U16)k;
-                run->mHasGlow = true;
-            }
-            else
-            {
-                run = new LLDrawInfo((U16)k, (U16)k, 6, 6 * k, texture, store, r.mFullbright);
-                run->mBlendFuncDst = (LLRender::eBlendFactor)r.mBlendDst;
-                run->mBlendFuncSrc = (LLRender::eBlendFactor)r.mBlendSrc;
-                run->mHasGlow = true;           // (the shader knows the glow of a record; a draw without glow adds nothing)
-                run->mParticleRecords = true;
-                run->mPartSources = parts->mSources;
-                store_draws.push_back(run);
-            }
-        }
-        lap(sPartStats.mRWrite);
-        sPartStats.mRowsParticles += n;
-        ++sPartStats.mGpuGroups;
-        return true;
-    }
 
     if (group->mVertexBuffer.isNull() || group->mVertexBuffer->getTypeMask() != LLVOPartGroup::VERTEX_DATA_MASK || group->mVertexBuffer->getNumVerts() < rows || group->mVertexBuffer->getNumIndices() < 6 * rows)
     {

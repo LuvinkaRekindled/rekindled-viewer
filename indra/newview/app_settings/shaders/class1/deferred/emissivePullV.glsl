@@ -108,18 +108,10 @@ uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
 uniform uvec2 ll_packet_texmats;
 
-// <FS> GPU particles (doc/vulkan/PLAN-gpu-particles.md, PLAN-gpu-particles-gpu-sort.md). Two kinds of particle draw, both 6 vertices a particle, the quad made here as LLVOPartGroup::getGeometry did on the CPU:
-// facing the camera, up = world up unless the particle follows its velocity; corners 0..3 are the old quad's vertices (up-left, down-left, up-right, down-right).
-//  flags & 16 (stage 1): one ROW a particle in the vertex arrays (positions: the centre in agent space, normals.xyz: the velocity of a follow-velocity particle or zero, texcoords: half width and half
-//    height, colours, emissive); a ribbon piece is two rows (w of the position 1 and 2).
-//  flags & 32 (G0): one RECORD a slot (the laws of LLViewerPartRecord, written by fs_store_write in llviewerpartsim.cpp); the index buffer holds the order of the slots, and the vertex is looked up through it.
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParticleSources { vec4 s[]; };      // s[0] = (now high, now low); a source k is s[1 + 2k] (position), s[2 + 2k] (target)
-uniform uvec2 ll_packet_sources;
-
-vec4 ll_rec_color = vec4(1.0);
-float ll_rec_glow = 0.0;
-bool ll_rec_is = false;
-
+// <FS> GPU particles (doc/vulkan/PLAN-gpu-particles.md): a draw with flags & 16 holds one ROW a particle in the vertex arrays (positions: the centre in agent space, normals.xyz: the velocity of a
+// follow-velocity particle or zero, texcoords: half width and half height, colours, emissive) and 6 vertices a particle; a ribbon piece is two rows (w of the position 1 and 2). The rows are written by
+// the CPU (a group that is not all records) or by the sort pass (particleSort kernel in llvkworker.cpp, evaluated and sorted on the GPU). The quad is made here as LLVOPartGroup::getGeometry did on the CPU:
+// facing the camera, up = world up unless the particle follows its velocity. Corners 0..3 are the old quad's vertices (up-left, down-left, up-right, down-right).
 vec3 ll_billboard(GeoMatrix m, vec3 center, vec3 vel, vec2 half_size, uint corner)
 {
     mat3 rot = mat3(m.mv);
@@ -150,151 +142,12 @@ vec3 ll_billboard(GeoMatrix m, vec3 center, vec3 vel, vec2 half_size, uint corne
     return center + d_eye * rot;                        // (back to agent space: the transpose of the rotation)
 }
 
-// the vertical motion above a floor at height 0 with the bounce of LLViewerPartRecord::evaluate (fs_bounce_z in llviewerpartsim.cpp): the flights between the bounces
-void ll_bounce_z(float z0, float v0, float a, float age, out float z_out, out float v_out)
-{
-    float z = z0, v = v0, left = age;
-    if (z < 0.0)
-    {
-        z = -z;
-        v *= -0.75;
-    }
-    for (int bounce = 0; bounce < 24; ++bounce)
-    {
-        float hit = -1.0;
-        if (a == 0.0)
-        {
-            if (v < 0.0)
-            {
-                hit = max(-z / v, 0.0);
-            }
-        }
-        else
-        {
-            float disc = v * v - 2.0 * a * z;
-            if (disc >= 0.0)
-            {
-                float root = sqrt(disc);
-                float t1 = (-v - root) / a, t2 = (-v + root) / a;
-                float lo = min(t1, t2), hi = max(t1, t2);
-                if (lo > -1e-7 && v + a * lo < 0.0)
-                {
-                    hit = max(lo, 0.0);
-                }
-                else if (hi > -1e-7 && v + a * hi < 0.0)
-                {
-                    hit = max(hi, 0.0);
-                }
-            }
-        }
-        if (hit < 0.0 || hit > left)
-        {
-            z_out = z + v * left + 0.5 * a * left * left;
-            v_out = v + a * left;
-            return;
-        }
-        v = (v + a * hit) * -0.75;
-        z = 0.0;
-        left -= hit;
-        if (abs(v) < 0.02 && a <= 0.0)
-        {
-            break;
-        }
-    }
-    z_out = 0.0;
-    v_out = 0.0;
-}
-
-// a record at the frame's clock: LLViewerPartRecord::evaluate, and the colour, scale and glow of the age; the corner of its quad
-vec3 ll_record_corner(GeoPacket pk, GeoMatrix m, uint slot, uint corner)
-{
-    vec4 a = GeoVec4(pk.positions).v[slot];             // pos0, t0 high
-    vec4 b = GeoVec4(pk.normals).v[slot];               // vel0, t0 low
-    vec4 c = GeoVec4(pk.tangents).v[slot];              // accel, max age
-    vec4 d = GeoVec4(pk.weights).v[slot];               // target at spawn, floor height
-    vec2 scale0 = GeoVec2(pk.texcoords).t[slot];
-    vec2 scale1 = GeoVec2(pk.texcoords1).t[slot];
-    uvec2 misc = floatBitsToUint(GeoVec2(pk.texcoords2).t[slot]);
-    vec4 color0 = unpackUnorm4x8(GeoWords(pk.colors).w[slot]);
-    vec4 color1 = unpackUnorm4x8(misc.y);
-    uint flags = misc.x;
-    uint mode = (flags >> 16) & 3u;
-    bool bounce = ((flags >> 18) & 1u) != 0u;
-
-    ParticleSources table = ParticleSources(ll_packet_sources);
-    vec4 clock = table.s[0];
-    float age = (clock.x - a.w) + (clock.y - b.w);
-    float max_age = c.w;
-    float frac = age / max_age;
-    bool alive = age >= 0.0 && age <= max_age;
-
-    vec3 pos0 = a.xyz, vel0 = b.xyz, acc = c.xyz;
-    vec3 src_pos = vec3(0.0), src_target = vec3(0.0);
-    if (mode != 0u)
-    {
-        uint k = pk.pad.y + (flags >> 24);
-        src_pos = table.s[1u + 2u * k].xyz;
-        src_target = table.s[2u + 2u * k].xyz;
-    }
-    vec3 pos, vel;
-    if (mode == 2u)
-    {
-        vec3 delta = src_target - src_pos;
-        pos = src_pos + delta * frac;
-        vel = delta;
-    }
-    else if (mode == 3u)
-    {
-        // the pull towards the target solved (LLViewerPartRecord::evaluate)
-        float r0 = max_age, r = max(max_age - age, 0.0);
-        float rho = r / r0, rho4 = rho * rho * rho * rho;
-        vec3 u0 = (d.xyz - pos0) / r0;
-        vec3 w0 = u0 - vel0;
-        vec3 cc = w0 + acc * (r0 / 3.0);
-        vec3 u = u0 + cc * (0.25 * (1.0 - rho4)) - acc * ((r0 - r) / 3.0);
-        vec3 w = cc * rho4 - acc * (r / 3.0);
-        pos = src_target - u * r;
-        vel = u - w;
-    }
-    else
-    {
-        vec3 base = (mode == 1u) ? src_pos : pos0;
-        pos = base + vel0 * age + acc * (0.5 * age * age);
-        vel = vel0 + acc * age;
-        if (bounce)
-        {
-            float floor_z = (mode == 1u) ? src_pos.z : d.w;
-            float z0 = (mode == 1u) ? 0.0 : pos0.z - d.w;
-            float z, v;
-            ll_bounce_z(z0, vel0.z, acc.z, age, z, v);
-            pos.z = floor_z + z;
-            vel.z = v;
-        }
-    }
-
-    vec2 scale = ((flags >> 20) & 1u) != 0u ? scale0 * (1.0 - frac) + frac * scale1 : scale0;
-    vec4 color = ((flags >> 19) & 1u) != 0u ? color0 * (1.0 - frac) + color1 * frac : color0;
-    float glow_start = float(flags & 255u) / 255.0, glow_end = float((flags >> 8) & 255u) / 255.0;
-    ll_rec_color = color;
-    ll_rec_glow = floor((glow_start + (glow_end - glow_start) * frac) * 255.0 + 0.5) / 255.0;
-    ll_rec_is = true;
-    vec3 follow = (((flags >> 21) & 1u) != 0u) ? vel : vec3(0.0);
-    vec2 half_size = alive ? 0.5 * scale : vec2(0.0);   // (a dead record draws a degenerate quad)
-    return ll_billboard(m, pos, follow, half_size, corner);
-}
-
 vec3 ll_particle_corner(GeoPacket pk, GeoMatrix m, out uint row, out uint corner)
 {
     uint pi = pk.first + uint(gl_VertexIndex);
     uint n = pi / 6u;
     uint c = pi - n * 6u;
     corner = (c == 0u) ? 0u : ((c == 1u || c == 3u) ? 1u : ((c == 2u || c == 5u) ? 2u : 3u));
-    if ((pk.flags & 32u) != 0u)
-    {
-        uint word = GeoWords(pk.indices).w[n >> 1];
-        row = ((n & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
-        return ll_record_corner(pk, m, row, corner);
-    }
     row = n;
     vec4 center4 = GeoVec4(pk.positions).v[row];
     vec3 center = center4.xyz;
@@ -329,7 +182,7 @@ void main()
 #ifdef HAS_SKIN
     const bool is_particle = false;
 #else
-    bool is_particle = (pk.flags & 48u) != 0u;
+    bool is_particle = (pk.flags & 16u) != 0u;
 #endif
     uint particle_corner = 0u;
 #if defined(HAS_SKIN) && defined(HAS_INDEXED_DRAW)
@@ -387,10 +240,6 @@ void main()
     emissive_address.x = uaddCarry(emissive_address.x, pk.emissiveOffset, carry);
     emissive_address.y += carry;
     vertex_color = unpackUnorm4x8(GeoWords(emissive_address).w[index]);
-    if (ll_rec_is)
-    {
-        vertex_color = vec4(0.0, 0.0, 0.0, ll_rec_glow);       // (a record: the glow of its age)
-    }
 
     uint tex_index = ((pk.flags & 1u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);
     uint pair = (tex_index < 2u) ? pk.slots.x : pk.slots.y;

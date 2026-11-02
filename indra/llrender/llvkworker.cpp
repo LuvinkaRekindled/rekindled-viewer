@@ -5020,18 +5020,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         {
             program->setInts("ll_packet_pbr", pbr_words, 2);
         }
-        if (h.mParticleFloats && program->hasUniform("ll_packet_sources"))
-        {
-            // G0: the particle source table (a (now) row, then a position and a target a source), after the PBR rows
-            Renderer::ScratchAlloc sources = r.allocVertexScratch(4 * (size_t)h.mParticleFloats);
-            if (sources.mPtr && sources.mAddress)
-            {
-                memcpy(sources.mPtr, pbr_src + 40 * (size_t)pbr_count, 4 * (size_t)h.mParticleFloats);
-                const U64 sources_address = (U64)sources.mAddress;
-                const S32 sources_words[2] = { (S32)(U32)sources_address, (S32)(U32)(sources_address >> 32) };
-                program->setInts("ll_packet_sources", sources_words, 2);
-            }
-        }
     }
 
     if (!prepare_draw(vi, used_cache))
