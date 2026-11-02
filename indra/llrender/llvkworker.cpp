@@ -9444,6 +9444,280 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+
+// <FS> GPU particles G1 (doc/vulkan/PLAN-gpu-particles-gpu-sort.md): the sort of the particle record stores. One workgroup a store (at most 1024 records): the position of each record at the frame's clock
+// (the laws of LLViewerPartRecord::evaluate, the bounce as a floor only: it is an order, not a picture), its key (class, then distance along the camera's at axis, back to front), a bitonic sort in shared
+// memory, and the order of the slots written 16 bits each to the store's index buffer. The draws read it (alphaPullV.glsl, ll_particle_corner, flags & 32).
+static const char* kParticleSortShader = R"GLSL(
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 256) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer V4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RW { uint r[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer WW { uint w[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { uint j[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Sources { vec4 s[]; };
+layout(push_constant) uniform PC { uvec2 jobs; uvec2 sources; vec4 at; vec4 origin; } pc;
+shared uint sKey[1024];
+shared uint sIdx[1024];
+
+uint sort_key(uint slot, uvec2 pa, uvec2 na, uvec2 ta, uvec2 wa, uvec2 ca, uint src_base)
+{
+    vec4 a = V4(pa).v[slot];
+    vec4 b = V4(na).v[slot];
+    vec4 c = V4(ta).v[slot];
+    vec4 d = V4(wa).v[slot];
+    uint flags = RW(ca).r[2u * slot];
+    uint cls = (flags >> 22) & 3u;
+    uint mode = (flags >> 16) & 3u;
+    bool bounce = ((flags >> 18) & 1u) != 0u;
+    Sources table = Sources(pc.sources);
+    vec4 clock = table.s[0];
+    float age = (clock.x - a.w) + (clock.y - b.w);
+    float max_age = c.w;
+    float frac = age / max_age;
+    vec3 pos0 = a.xyz, vel0 = b.xyz, acc = c.xyz;
+    vec3 src_pos = vec3(0.0), src_target = vec3(0.0);
+    if (mode != 0u)
+    {
+        uint k = src_base + (flags >> 24);
+        src_pos = table.s[1u + 2u * k].xyz;
+        src_target = table.s[2u + 2u * k].xyz;
+    }
+    vec3 pos;
+    if (mode == 2u)
+    {
+        pos = src_pos + (src_target - src_pos) * frac;
+    }
+    else if (mode == 3u)
+    {
+        float r0 = max_age, r = max(max_age - age, 0.0);
+        float rho = r / r0, rho4 = rho * rho * rho * rho;
+        vec3 u0 = (d.xyz - pos0) / r0;
+        vec3 w0 = u0 - vel0;
+        vec3 cc = w0 + acc * (r0 / 3.0);
+        vec3 u = u0 + cc * (0.25 * (1.0 - rho4)) - acc * ((r0 - r) / 3.0);
+        pos = src_target - u * r;
+    }
+    else
+    {
+        vec3 base = (mode == 1u) ? src_pos : pos0;
+        pos = base + vel0 * age + acc * (0.5 * age * age);
+        if (bounce)
+        {
+            float floor_z = (mode == 1u) ? src_pos.z : d.w;
+            pos.z = max(pos.z, floor_z);
+        }
+    }
+    float dist = dot(pos - pc.origin.xyz, pc.at.xyz);
+    uint u = floatBitsToUint(dist);
+    u ^= ((u >> 31) != 0u) ? 0xFFFFFFFFu : 0x80000000u;      // ascending with the distance
+    return (cls << 30) | ((~u) >> 2);                        // the class first, the far ones first
+}
+
+void main()
+{
+    uint job = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    Jobs J = Jobs(pc.jobs);
+    uint b = job * 16u;
+    uvec2 pa = uvec2(J.j[b + 0u], J.j[b + 1u]);
+    uvec2 na = uvec2(J.j[b + 2u], J.j[b + 3u]);
+    uvec2 ta = uvec2(J.j[b + 4u], J.j[b + 5u]);
+    uvec2 wa = uvec2(J.j[b + 6u], J.j[b + 7u]);
+    uvec2 ca = uvec2(J.j[b + 8u], J.j[b + 9u]);
+    uvec2 oa = uvec2(J.j[b + 10u], J.j[b + 11u]);
+    uint n = J.j[b + 12u];
+    uint src_base = J.j[b + 13u];
+    if (n > 1024u) return;
+    for (uint i = tid; i < 1024u; i += 256u)
+    {
+        sKey[i] = (i < n) ? sort_key(i, pa, na, ta, wa, ca, src_base) : 0xFFFFFFFFu;
+        sIdx[i] = i;
+    }
+    barrier();
+    for (uint k = 2u; k <= 1024u; k <<= 1)
+    {
+        for (uint j = k >> 1; j > 0u; j >>= 1)
+        {
+            for (uint i = tid; i < 1024u; i += 256u)
+            {
+                uint ixj = i ^ j;
+                if (ixj > i)
+                {
+                    bool up = (i & k) == 0u;
+                    uint ki = sKey[i], kj = sKey[ixj];
+                    if ((ki > kj) == up)
+                    {
+                        sKey[i] = kj;
+                        sKey[ixj] = ki;
+                        uint t = sIdx[i];
+                        sIdx[i] = sIdx[ixj];
+                        sIdx[ixj] = t;
+                    }
+                }
+            }
+            barrier();
+        }
+    }
+    WW outp = WW(oa);
+    for (uint p = tid; p < (n + 1u) / 2u; p += 256u)
+    {
+        uint lo = sIdx[2u * p];
+        uint hi = (2u * p + 1u < n) ? sIdx[2u * p + 1u] : 0u;
+        outp.w[p] = lo | (hi << 16);
+    }
+}
+)GLSL";
+
+struct ParticleSortState
+{
+    bool mTried = false, mReady = false;
+    VkPipelineLayout mLayout = VK_NULL_HANDLE;
+    VkPipeline mPipe = VK_NULL_HANDLE;
+    U64 mRecords = 0, mJobs = 0, mBad = 0, mLast = 0;
+};
+ParticleSortState sPartSort;
+
+bool part_sort_init()
+{
+    ParticleSortState& s = sPartSort;
+    if (s.mReady)
+    {
+        return true;
+    }
+    if (s.mTried)
+    {
+        return false;
+    }
+    s.mTried = true;
+    VkDevice dev = Context::instance().getDevice();
+    VkShaderModule mod = hiz_compile(kParticleSortShader, "particle sort");
+    if (mod == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 48 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.pName = "main";
+    pi.stage.module = mod;
+    pi.layout = s.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mPipe) != VK_SUCCESS)
+    {
+        return false;
+    }
+    s.mReady = true;
+    LL_INFOS("VkScene") << "particle sort pipeline ready" << LL_ENDL;
+    return true;
+}
+
+// kind 36: the jobs (8 words each: store vertex buffer, store index buffer, offsets of the normal, tangent, weight4 and texcoord2 arrays, record count, first source), then the source table
+// (mParticleFloats floats: a (now) row and 8 floats a source); mViewProj[0..2] = the camera's at axis, [4..6] its position
+void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    ParticleSortState& s = sPartSort;
+    ++s.mRecords;
+    if (!part_sort_init() || h.mEntries == 0)
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    Context& ctx = Context::instance();
+    const U32* in = (const U32*)blob;
+    const F32* sources_in = (const F32*)(blob + 32ull * h.mEntries);
+    Renderer::ScratchAlloc jobs = r.allocVertexScratch(64ull * h.mEntries);
+    Renderer::ScratchAlloc sources = r.allocVertexScratch(4ull * std::max<U32>(h.mParticleFloats, 4));
+    if (!jobs.mPtr || !jobs.mAddress || !sources.mPtr || !sources.mAddress)
+    {
+        ++s.mBad;
+        return;
+    }
+    memcpy(sources.mPtr, sources_in, 4ull * h.mParticleFloats);
+    U32* out = (U32*)jobs.mPtr;
+    static thread_local std::vector<U32> used;
+    used.clear();
+    const U64 frame_now = ctx.getFrameNumber();
+    U32 valid = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const U32* j = in + 8ull * i;
+        Buf* vb = packet_buffer(j[0]);
+        Buf* ib = packet_buffer(j[1]);
+        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
+        {
+            ++s.mBad;
+            continue;
+        }
+        const U64 pa = (U64)vb->mVk.mAddress, oa = (U64)ib->mVk.mAddress;
+        const U64 addr[5] = { pa, pa + j[2], pa + j[3], pa + j[4], pa + j[5] };
+        U32* o = out + 16ull * valid;
+        for (int k = 0; k < 5; ++k)
+        {
+            o[2 * k] = (U32)addr[k];
+            o[2 * k + 1] = (U32)(addr[k] >> 32);
+        }
+        o[10] = (U32)oa;
+        o[11] = (U32)(oa >> 32);
+        o[12] = j[6];
+        o[13] = j[7];
+        o[14] = o[15] = 0;
+        vb->mLastUseFrame = frame_now;
+        ib->mLastUseFrame = frame_now;
+        used.push_back(j[0]);
+        used.push_back(j[1]);
+        ++valid;
+    }
+    if (!valid)
+    {
+        return;
+    }
+    ensure_buffers_current(used, 0);
+    struct SortPc { U32 mJobs[2]; U32 mSources[2]; F32 mAt[4]; F32 mOrigin[4]; } pc;
+    static_assert(sizeof(SortPc) == 48, "particle sort push constants");
+    const U64 ja = (U64)jobs.mAddress, sa = (U64)sources.mAddress;
+    pc.mJobs[0] = (U32)ja; pc.mJobs[1] = (U32)(ja >> 32);
+    pc.mSources[0] = (U32)sa; pc.mSources[1] = (U32)(sa >> 32);
+    pc.mAt[0] = h.mViewProj[0]; pc.mAt[1] = h.mViewProj[1]; pc.mAt[2] = h.mViewProj[2]; pc.mAt[3] = 0.f;
+    pc.mOrigin[0] = h.mViewProj[4]; pc.mOrigin[1] = h.mViewProj[5]; pc.mOrigin[2] = h.mViewProj[6]; pc.mOrigin[3] = 0.f;
+    const VkPipeline pipe = s.mPipe;
+    const VkPipelineLayout layout = s.mLayout;
+    r.recordExternal({}, [&](VkCommandBuffer cmd) {
+        if (LLVkBridge::gPhaseTiming)
+        {
+            ctx.gpuStamp(Context::stampTag("particle sort"));
+        }
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, valid, 1, 1);
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+    s.mJobs += valid;
+    if (s.mRecords - s.mLast >= 600)
+    {
+        s.mLast = s.mRecords;
+        LL_INFOS("VkScene") << "particle sort over " << s.mRecords << " records: " << (double)s.mJobs / (double)s.mRecords << " stores a record, " << s.mBad << " refused" << LL_ENDL;
+    }
+}
+
 // <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
 static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
 static U64 sFragmentMissing = 0;
@@ -9639,6 +9913,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 35)
     {
         on_cull_rows(h, blob);       // <FS> S7 C1
+        return;
+    }
+    if (h.mKind == 36)
+    {
+        on_particle_sort(h, blob);   // <FS> GPU particles G1
         return;
     }
     if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)
