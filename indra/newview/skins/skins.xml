@@ -52,6 +52,28 @@
 
     <map>
       <key>name</key>
+      <string>Rekindled</string>
+      <key>folder</key>
+      <string>rekindled</string>
+      <key>themes</key>
+      <array>
+        <map>
+          <key>name</key>
+          <string>Dark</string>
+          <key>folder</key>
+          <string>dark</string>
+        </map>
+        <map>
+          <key>name</key>
+          <string>Grey</string>
+          <key>folder</key>
+          <string/>
+        </map>
+      </array>
+    </map>
+
+    <map>
+      <key>name</key>
       <string>Firestorm</string>
       <key>folder</key>
       <string>firestorm</string>
