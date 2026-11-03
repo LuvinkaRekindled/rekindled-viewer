@@ -4,9 +4,7 @@ include(Prebuilt)
 
 include_guard()
 
-# ND: Turn this off by default, the openal code in the viewer isn't very well maintained, seems
-# to have memory leaks, has no option to play music streams
-# It probably makes sense to to completely remove it
+# OpenAL Soft is the audio backend of the viewer (it replaced FMOD in Rekindled, doc/vulkan/PLAN-openal-replaces-fmod.md)
 
 set(USE_OPENAL ON CACHE BOOL "Enable OpenAL")
 

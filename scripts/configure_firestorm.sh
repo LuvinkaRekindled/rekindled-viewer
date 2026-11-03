@@ -15,7 +15,6 @@ FALSE=1
 #                  <string>-DADDRESS_SIZE:STRING=32</string>
 #                  <string>-DROOT_PROJECT_NAME:STRING=SecondLife</string>
 #                  <string>-DUSE_KDU=TRUE</string>
-#                  <string>-DFMODSTUDIO:BOOL=ON</string>
 #                  <string>-DOPENSIM:BOOL=ON</string>
 #                  <string>-DUSE_AVX_OPTIMIZATION:BOOL=OFF</string>
 #                  <string>-DUSE_AVX2_OPTIMIZATION:BOOL=OFF</string>
@@ -34,7 +33,6 @@ WANTS_PACKAGE=$FALSE
 WANTS_VELOPACK=$FALSE
 WANTS_VERSION=$FALSE
 WANTS_KDU=$FALSE
-WANTS_FMODSTUDIO=$FALSE
 WANTS_OPENSIM=$TRUE
 WANTS_SINGLEGRID=$FALSE
 WANTS_HAVOK=$FALSE
@@ -76,7 +74,6 @@ showUsage()
     echo "  --package                : Build installer"
     echo "  --velopack               : Build with velopack (Overrides --package)"
     echo "  --no-package             : Build without installer (Overrides --package)"
-    echo "  --fmodstudio             : Build with FMOD Studio"
     echo "  --opensim                : Build with OpenSim support (Disables Havok features)"
     echo "  --no-opensim             : Build without OpenSim support (Overrides --opensim)"
     echo "  --singlegrid <login_uri> : Build for single grid usage (Requires --opensim)"
@@ -101,7 +98,7 @@ getArgs()
 # $* = the options passed in from main
 {
     if [ $# -gt 0 ]; then
-      while getoptex "clean build config version package velopack no-package fmodstudio ninja vscode compiler-cache jobs: platform: kdu opensim no-opensim singlegrid: havok avx avx2 tracy lto crashreporting testbuild: help chan: btype:" "$@" ; do
+      while getoptex "clean build config version package velopack no-package ninja vscode compiler-cache jobs: platform: kdu opensim no-opensim singlegrid: havok avx avx2 tracy lto crashreporting testbuild: help chan: btype:" "$@" ; do
 
           #ensure options are valid
           if [  -z "$OPTOPT"  ] ; then
@@ -119,7 +116,6 @@ getArgs()
                           fi
                           ;;
           kdu)            WANTS_KDU=$TRUE;;
-          fmodstudio)     WANTS_FMODSTUDIO=$TRUE;;
           opensim)        WANTS_OPENSIM=$TRUE;;
           no-opensim)     WANTS_OPENSIM=$FALSE;;
           singlegrid)     WANTS_SINGLEGRID=$TRUE
@@ -314,7 +310,6 @@ fi
 echo -e "configure_firestorm.sh" > "$LOG"
 echo -e "       PLATFORM: $TARGET_PLATFORM"                                    | tee -a "$LOG"
 echo -e "            KDU: `b2a $WANTS_KDU`"                                    | tee -a "$LOG"
-echo -e "     FMODSTUDIO: `b2a $WANTS_FMODSTUDIO`"                             | tee -a "$LOG"
 echo -e "        OPENSIM: `b2a $WANTS_OPENSIM`"                                | tee -a "$LOG"
 if [ $WANTS_SINGLEGRID -eq $TRUE ] ; then
     echo -e "     SINGLEGRID: `b2a $WANTS_SINGLEGRID` ($SINGLEGRID_URI)"       | tee -a "$LOG"
@@ -458,11 +453,6 @@ if [ $WANTS_CONFIG -eq $TRUE ] ; then
     else
         KDU="-DUSE_KDU:BOOL=OFF"
     fi
-    if [ $WANTS_FMODSTUDIO -eq $TRUE ] ; then
-        FMODSTUDIO="-DUSE_FMODSTUDIO:BOOL=ON"
-    else
-        FMODSTUDIO="-DUSE_FMODSTUDIO:BOOL=OFF"
-    fi
     if [ $WANTS_OPENSIM -eq $TRUE ] ; then
         OPENSIM="-DOPENSIM:BOOL=ON"
     else
@@ -597,7 +587,7 @@ if [ $WANTS_CONFIG -eq $TRUE ] ; then
         fi
     fi
 
-    cmake -G "$TARGET" $CMAKE_ARCH ../indra $CHANNEL ${GITHASH} $FMODSTUDIO $KDU $OPENSIM $SINGLEGRID $HAVOK $AVX_OPTIMIZATION $AVX2_OPTIMIZATION $TRACY_PROFILER $LTO $TESTBUILD $PACKAGE $VELOPACK \
+    cmake -G "$TARGET" $CMAKE_ARCH ../indra $CHANNEL ${GITHASH} $KDU $OPENSIM $SINGLEGRID $HAVOK $AVX_OPTIMIZATION $AVX2_OPTIMIZATION $TRACY_PROFILER $LTO $TESTBUILD $PACKAGE $VELOPACK \
           $UNATTENDED -DLL_TESTS:BOOL=OFF -DADDRESS_SIZE:STRING=$AUTOBUILD_ADDRSIZE -DCMAKE_BUILD_TYPE:STRING=$BTYPE $CACHE_OPT \
           $CRASH_REPORTING -DVIEWER_SYMBOL_FILE:STRING="${VIEWER_SYMBOL_FILE:-}" $LL_ARGS_PASSTHRU ${VSCODE_FLAGS:-} | tee "$LOG"
     configure_status=${PIPESTATUS[0]}

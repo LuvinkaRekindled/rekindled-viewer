@@ -44,10 +44,6 @@
 #include "llviewermedia_streamingaudio.h"
 #include "llaudioengine.h"
 
-#ifdef LL_FMODSTUDIO
-# include "llaudioengine_fmodstudio.h"
-#endif
-
 #ifdef LL_OPENAL
 #include "llaudioengine_openal.h"
 #endif
@@ -1102,27 +1098,9 @@ bool idle_startup()
             delete gAudiop;
             gAudiop = NULL;
 
-            // Temporary switch while OpenAL replaces FMOD (PLAN-openal-replaces-fmod.md): LL_AUDIO_BACKEND=openal skips FMOD
-            const char* audio_backend = getenv("LL_AUDIO_BACKEND");
-            const bool want_openal = audio_backend && 0 == strcmp(audio_backend, "openal");
-
-#ifdef LL_FMODSTUDIO
-#if !LL_WINDOWS
-            if (NULL == getenv("LL_BAD_FMODSTUDIO_DRIVER") && !want_openal)
-#else
-            if (!want_openal)
-#endif // !LL_WINDOWS
-            {
-                gAudiop = (LLAudioEngine *) new LLAudioEngine_FMODSTUDIO(gSavedSettings.getBOOL("FMODProfilerEnable"), gSavedSettings.getU32("FMODResampleMethod"));
-            }
-#endif
-
 #ifdef LL_OPENAL
 #if !LL_WINDOWS
-            // if (NULL == getenv("LL_BAD_OPENAL_DRIVER"))
-            if (!gAudiop && NULL == getenv("LL_BAD_OPENAL_DRIVER"))
-#else
-            if (!gAudiop)
+            if (NULL == getenv("LL_BAD_OPENAL_DRIVER"))
 #endif // !LL_WINDOWS
             {
                 gAudiop = (LLAudioEngine *) new LLAudioEngine_OpenAL();
@@ -1131,13 +1109,8 @@ bool idle_startup()
 
             if (gAudiop)
             {
-#if LL_WINDOWS
-                // FMOD Studio and FMOD Ex on Windows needs the window handle to stop playing audio
-                // when window is minimized. JC
-                void* window_handle = (HWND)gViewerWindow->getPlatformWindow();
-#else
+                // OpenAL does not need the window handle
                 void* window_handle = NULL;
-#endif
                 if (gAudiop->init(window_handle, LLAppViewer::instance()->getSecondLifeTitle()))
                 {
                     if (false == gSavedSettings.getBOOL("UseMediaPluginsForStreamingAudio"))

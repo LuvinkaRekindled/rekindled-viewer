@@ -677,19 +677,10 @@ class Windows_x86_64_Manifest(ViewerManifest):
                 print (err.message)
                 print ("Skipping GLOD library (assumming linked statically)")
 
-            # Get fmodstudio dll if needed
-            # if self.args['fmodstudio'] == 'ON':
-            if self.args['fmodstudio'].lower() == 'on':
-                if(self.args['buildtype'].lower() == 'debug'):
-                    self.path("fmodL.dll")
-                else:
-                    self.path("fmod.dll")
-
             # if self.args['openal'] == 'ON':
             if self.args['openal'].lower() == 'on':
                 # Get openal dll
                 self.path("OpenAL32.dll")
-                self.path("alut.dll")
 
             # For textures
             self.path_optional("openjp2.dll")
@@ -1274,7 +1265,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                 # if self.args['openal'] == 'ON':
                     # for libfile in (
                                 # "libopenal.dylib",
-                                # "libalut.dylib",
                                 # ):
                         # self.path(libfile)
 
@@ -1431,19 +1421,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                                 # ):
                     # self.path2basename(relpkgdir, libfile)
 
-                # # Fmod studio dylibs (vary based on configuration)
-                # if self.args['fmodstudio'] == 'ON':
-                    # if self.args['configuration'].lower() == 'debug':
-                        # for libfile in (
-                                    # "libfmodL.dylib",
-                                    # ):
-                            # dylibs += path_optional(os.path.join(debpkgdir, libfile), libfile)
-                    # else:
-                        # for libfile in (
-                                    # "libfmod.dylib",
-                                    # ):
-                            # dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
-
                 # # our apps
                 # executable_path = {}
                 # embedded_apps = [ (os.path.join("llplugin", "slplugin"), "SLPlugin.app") ]
@@ -1510,7 +1487,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                 if self.args['openal'] == 'ON':
                     for libfile in (
                                 "libopenal.dylib",
-                                "libalut.dylib",
                                 ):
                         self.path(libfile)
 
@@ -1686,26 +1662,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                                 "libdiscord_partner_sdk.dylib",
                                 ):
                         self.path2basename(relpkgdir, libfile)
-
-                # Fmod studio dylibs (vary based on configuration)
-                # <FS:Beq> Fix intolerant processing of booleans
-                # if self.args['fmodstudio'].lower() == 'ON':
-                usefmod = self.args['fmodstudio'].lower()
-                print(f"debug: fmodstudio={usefmod}")
-                if usefmod == 'on':
-                    if self.args['buildtype'].lower() == 'debug':
-                        print("debug: fmodstudio is used in debug")
-                        for libfile in (
-                                    "libfmodL.dylib",
-                                    ):
-                            dylibs += path_optional(os.path.join(debpkgdir, libfile), libfile)
-                    else:
-                        print("debug: fmodstudio is used in release")
-                        for libfile in (
-                                    "libfmod.dylib",
-                                    ):
-                            print("debug: adding {} to dylibs for fmodstudio".format(path_optional(os.path.join(relpkgdir, libfile), libfile)))
-                            dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
 
                 print(f"debug: dylibs = {dylibs}")
 
@@ -1923,7 +1879,7 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                         plain_sign = glob.glob(resources + "llplugin/*.dylib")
 
                         # <FS:ND> Even though we got some dylibs in Resources signed by LL, we also got some there that are *NOT*
-                        # At least: fmod, growl, GLOD
+                        # At least: growl, GLOD
                         # We could selectively sign those, or repackage them and then sign them. For an easy clean sweet we just resign them al
                         plain_sign += glob.glob(resources + "*.dylib")
                         plain_sign += glob.glob(resources + "llplugin/lib/*.dylib")
@@ -2171,7 +2127,7 @@ class LinuxManifest(ViewerManifest):
 
         with self.prefix(dst="bin"):
             self.path( os.path.join(os.pardir,'build_data.json'), "build_data.json" )
-            self.path("firestorm-bin","do-not-directly-run-firestorm-bin")
+            self.path("rekindled-bin","do-not-directly-run-firestorm-bin")        # Rekindled: the executable target is rekindled-bin; the installed name stays what the wrapper script and the desktop files launch
             self.path("../linux_crash_logger/linux-crash-logger","linux-crash-logger.bin")
             self.path2basename("../llplugin/slplugin", "SLPlugin")
             #this copies over the python wrapper script, associated utilities and required libraries, see SL-321, SL-322 and SL-323
@@ -2258,7 +2214,6 @@ class LinuxManifest(ViewerManifest):
             self.path_optional("libfusion*.so*")
             self.path_optional("libdirect*.so*")
             self.path_optional("libopenjpeg.so*")
-            self.path("libalut.so*")
             #self.path("libpng15.so.15") #use provided libpng to workaround incompatible system versions on some distros
             #self.path("libpng15.so.15.13.0") #use provided libpng to workaround incompatible system versions on some distros
             #self.path("libpng15.so.15.1.0") #use provided libpng to workaround incompatible system versions on some distros
@@ -2388,7 +2343,6 @@ class Linux_i686_Manifest(LinuxManifest):
             self.path("libdirectfb-1.4.so.5")
             self.path("libfusion-1.4.so.5")
             self.path("libdirect-1.4.so.5*")
-            self.path("libalut.so*")
             self.path("libopenal.so*")
 
             # <FS:ND> Linking this breaks voice as stock openal.so does not have alcGetMixedBuffer
@@ -2424,16 +2378,6 @@ class Linux_i686_Manifest(LinuxManifest):
                 print("tcmalloc files not found, skipping")
                 pass
 
-            # if self.args['fmodstudio'] == 'ON':
-            if self.args['fmodstudio'].lower() == 'on':
-                try:
-                    self.path("libfmod.so")
-                    self.path("libfmod.so*")
-                    pass
-                except:
-                    print("Skipping libfmod.so - not found")
-                    pass
-
         # <FS:TJ> Keep Vivox only for OpenSim viewers
         if self.fs_is_opensim():
             # Vivox runtimes
@@ -2468,16 +2412,7 @@ class Linux_x86_64_Manifest(LinuxManifest):
             # <FS:TS> No, we don't need to dink with this. A usable library
             # is now in the slvoice package, and we need to just use it as is.
             # self.path("libopenal32.so", "libvivoxoal.so.1") # vivox's sdk expects this soname
-
-            # if self.args['fmodstudio'] == 'ON':
-            if self.args['fmodstudio'].lower() == 'on':
-                try:
-                    self.path("libfmod.so")
-                    self.path("libfmod.so*")
-                    pass
-                except:
-                    print ("Skipping libfmod.so - not found")
-                    pass
+            pass
 
         with self.prefix(dst="bin"):
             self.path2basename("../llplugin/slplugin", "SLPlugin")
@@ -2534,12 +2469,10 @@ if __name__ == "__main__":
     print(('%s \\\n%s' %
           (sys.executable,
            ' '.join((("'%s'" % arg) if ' ' in arg else arg) for arg in sys.argv))))
-    # fmodstudio and openal can be used simultaneously and controled by environment
     extra_arguments = [
         dict(name='bugsplat', description="""BugSplat database to which to post crashes,
              if BugSplat crash reporting is desired""", default=''),
         dict(name='discord', description="""Indication discord social sdk libraries are needed""", default='OFF'),
-        dict(name='fmodstudio', description="""Indication if fmod studio libraries are needed""", default='OFF'),
         dict(name='openal', description="""Indication openal libraries are needed""", default='OFF'),
         dict(name='tracy', description="""Indication tracy profiler is enabled""", default='OFF'),
         dict(name='velopack', description="""Use Velopack installer instead of NSIS""", default='OFF'),

@@ -20,7 +20,7 @@ on:
     - cron: '30 04 * * *' # Run every day at 4:30am UTC
 env:
   AUTOBUILD_VARIABLES_FILE: ${{github.workspace}}/build-variables/variables
-  EXTRA_ARGS: -DUSE_FMODSTUDIO=ON -DUSE_KDU=ON --crashreporting --lto
+  EXTRA_ARGS: -DUSE_KDU=ON --crashreporting --lto
   build_secrets_checkout: ${{github.workspace}}/signing
   XZ_DEFAULTS: -T0
   FS_RELEASE_TYPE: Unknown
@@ -301,7 +301,7 @@ jobs:
               echo "$most_recent_file"
             fi
           }
-          packages=("fmodstudio" "llphysicsextensions_tpv" "kdu")
+          packages=("llphysicsextensions_tpv" "kdu")
           for package in "${packages[@]}"; do
             package_file=$(find_most_recent_bundle $package ${{ env.platform }})
             full_package_path="${{ github.workspace }}${path_sep}${package_file}"
