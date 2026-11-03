@@ -20,7 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <intrin.h>
+#include "llvkplatform.h"
 #include <chrono>
 
 namespace ItemCensus

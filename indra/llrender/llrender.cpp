@@ -40,7 +40,7 @@
 #include "llvkasync.h"
 #endif
 #include "glm/gtc/type_ptr.hpp"
-#include <intrin.h>
+#include "llvkplatform.h"
 #include "llvkstate.h"
 #include "llrendermatrix.h"
 #include "llframetimer.h"

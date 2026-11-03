@@ -75,8 +75,15 @@ S64 file_time_seconds(const std::filesystem::file_time_type& t)
 }
 
 // std::filesystem paths from and to the viewer's UTF-8 strings (C++20 made u8string() a char8_t string)
+#if LL_WINDOWS
 std::filesystem::path fs_path(const std::string& utf8) { return std::filesystem::path(ll_convert_string_to_wide(utf8)); }
 std::string fs_string(const std::filesystem::path& p) { return ll_convert_wide_to_string(p.wstring()); }
+#else
+// on Linux the narrow path strings are UTF-8 already
+std::filesystem::path fs_path(const std::string& utf8) { return std::filesystem::path(utf8); }
+std::string fs_string(const std::filesystem::path& p) { return p.string(); }
+#define _fseeki64 fseeko64
+#endif
 
 const char* extension_of(U8 format) { return format == kFormatRaw ? ".dec" : ".dc7"; }
 }

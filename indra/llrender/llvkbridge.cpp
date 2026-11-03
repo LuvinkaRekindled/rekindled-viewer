@@ -69,7 +69,9 @@ void LLVkBridge::stopAsync() {}
 #else // LL_VULKAN
 
 #include "llrenderheaders.h"
+#if LL_WINDOWS
 #include <psapi.h>
+#endif
 #include "llvkcontext.h"
 #include "llvkupscale.h"
 #include "llvkdlssnr.h"
@@ -434,10 +436,10 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     if (sMirror.mWindow)
     {
         // presenting into the main window: nobody tells the swapchain when it is resized
-        RECT rc = {};
-        GetClientRect(sMirror.mWindow, &rc);
+        U32 client_w = 0, client_h = 0;
+        LLVk::windowClientSize(sMirror.mWindow, client_w, client_h);
         const LLVk::Swapchain& swap = sMirror.mSwapchain;
-        if (swap.isValid() ? ((U32)rc.right != swap.getExtent().width || (U32)rc.bottom != swap.getExtent().height) : (rc.right > 0 && rc.bottom > 0))
+        if (swap.isValid() ? (client_w != swap.getExtent().width || client_h != swap.getExtent().height) : (client_w > 0 && client_h > 0))
         {
             sMirror.mResized = true;
         }

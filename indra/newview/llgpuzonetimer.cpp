@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <deque>
 #include <thread>
-#include <windows.h>
+#include "llvkplatform.h"
+#if LL_WINDOWS
 #include <psapi.h>
+#endif
 #include <nmmintrin.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -227,6 +229,9 @@ namespace
 
     // The real core clock as the main thread sees it: 20000 crc32 steps, each waiting for the one before (3 cycles on Zen), timed with the same clock as the zones.
     // CallNtPowerInformation reports the nominal 4300 MHz and QueryThreadCycleTime counts at the fixed timestamp rate, so neither shows boost or a drop.
+#if !LL_WINDOWS
+    __attribute__((target("sse4.2")))        // the crc32 instruction (MSVC needs no target option)
+#endif
     double chain_ns_per_step()
     {
         const int steps = 20000;
@@ -277,6 +282,7 @@ namespace
         out += llformat(", main thread on logical cpu %u %.0f %%, %u %.0f %%, %u %.0f %% of the frames (cpus 0-15 %.0f %%, 16-31 %.0f %%), moved %.2f times a frame",
             top[0], 100.0 * sCoreHist[top[0]] / frames, top[1], 100.0 * sCoreHist[top[1]] / frames, top[2], 100.0 * sCoreHist[top[2]] / frames,
             100.0 * half[0] / frames, 100.0 * half[1] / frames, sCoreMoves / frames);
+#if LL_WINDOWS
         struct PowerInfo { ULONG Number, MaxMhz, CurrentMhz, MhzLimit, MaxIdleState, CurrentIdleState; };
         typedef LONG(WINAPI * CallNtPowerInformationFn)(int, PVOID, ULONG, PVOID, ULONG);
         static CallNtPowerInformationFn fn = nullptr;
@@ -304,6 +310,7 @@ namespace
             }
             out += llformat("; clocks at the report: mean %.0f MHz, lowest %.0f, highest %.0f (max %lu); on cpu %u %lu MHz", sum / n, lo, hi, info[0].MaxMhz, top[0], info[top[0] < n ? top[0] : 0].CurrentMhz);
         }
+#endif // LL_WINDOWS (the clocks through powrprof.dll)
         for (unsigned c = 0; c < 64; ++c) sCoreHist[c] = 0;
         sCoreMoves = 0;
         return out;
@@ -316,9 +323,16 @@ namespace
 
     unsigned long long thread_cycles()
     {
+#if LL_WINDOWS
         ULONG64 c = 0;
         QueryThreadCycleTime(GetCurrentThread(), &c);
         return (unsigned long long)c;
+#else
+        // the thread's CPU time in nanoseconds stands in for its cycles (calibrate_cycles measures cycles against wall time anyway)
+        timespec ts;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+        return (unsigned long long)ts.tv_sec * 1000000000ull + (unsigned long long)ts.tv_nsec;
+#endif
     }
 
     void calibrate_cycles()
@@ -615,6 +629,7 @@ void LLCpuZoneScope::frame()
     }
     {
         // the process's page faults a frame (soft faults count: memory handed back and taken again shows here), working set and private bytes
+#if LL_WINDOWS
         PROCESS_MEMORY_COUNTERS_EX pmc = {};
         static DWORD last_faults = 0;
         if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc)))
@@ -622,6 +637,24 @@ void LLCpuZoneScope::frame()
             blocked_text += llformat(", process page faults %.1f a frame, working set %.0f MB, private %.0f MB", (double)(pmc.PageFaultCount - last_faults) / frames, pmc.WorkingSetSize / 1048576.0, pmc.PrivateUsage / 1048576.0);
             last_faults = pmc.PageFaultCount;
         }
+#else
+        // page faults from getrusage, the resident size from /proc/self/statm
+        static long last_faults = 0;
+        rusage ru = {};
+        getrusage(RUSAGE_SELF, &ru);
+        long statm_size = 0, statm_resident = 0;
+        if (FILE* f = fopen("/proc/self/statm", "r"))
+        {
+            if (fscanf(f, "%ld %ld", &statm_size, &statm_resident) != 2)
+            {
+                statm_resident = 0;
+            }
+            fclose(f);
+        }
+        const long faults = ru.ru_minflt + ru.ru_majflt;
+        blocked_text += llformat(", process page faults %.1f a frame, resident %.0f MB", (double)(faults - last_faults) / frames, (double)statm_resident * (double)sysconf(_SC_PAGESIZE) / 1048576.0);
+        last_faults = faults;
+#endif
     }
     if (sCoreProbeOn)
     {
@@ -641,6 +674,7 @@ void LLCpuZoneScope::frame()
     sCpuFrames = 0;
 }
 
+#if LL_WINDOWS
 #include <mutex>
 #include <dbghelp.h>
 // <FS> the name of the function an address is in (DbgHelp, loaded here the way the hitch watcher does it), for censuses that count by call site (LL_VK_REBUILDCENSUS in LLPipeline::markRebuild)
@@ -1201,3 +1235,37 @@ namespace
         return true;
     }();
 }
+
+#else // Linux: the diagnostics below read the Windows debug help and process APIs; the entry points exist and do nothing, addresses are printed as numbers
+
+std::string fs_describe_address(const void* pc)
+{
+    return llformat("0x%llx", (unsigned long long)(uintptr_t)pc);
+}
+
+void HitchWatch::frame()
+{
+}
+
+void fs_growth_probe()
+{
+}
+
+std::string fs_describe_frame(const void* pc)
+{
+    return fs_describe_address(pc);
+}
+
+std::string fs_stack_here(int skip, int max_frames)
+{
+    void* frames[48] = {};
+    const USHORT n = CaptureStackBackTrace((DWORD)skip + 1, (DWORD)std::min(max_frames, 48), frames, nullptr);
+    std::string text;
+    for (USHORT i = 0; i < n; ++i)
+    {
+        text += llformat("  %s\n", fs_describe_address(frames[i]).c_str());
+    }
+    return text;
+}
+
+#endif // LL_WINDOWS

@@ -22,22 +22,31 @@
 #include <mutex>
 #include <vector>
 
-#include <windows.h>
+#include "llvkplatform.h"
 
 #define VK_NO_PROTOTYPES
+#if LL_WINDOWS
 #define VK_USE_PLATFORM_WIN32_KHR
+#endif
 #include <vulkan/vulkan.h>
 
 // the same VMA configuration must be used by every translation unit (llvkvma.cpp holds the implementation)
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #define VMA_VULKAN_VERSION 1003000
+#if defined(_MSC_VER)
 #pragma warning(push, 0)
+#endif
 #include "thirdparty/vk_mem_alloc.h"
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 
 namespace LLVk
 {
+
+// the size in pixels of the window the renderer presents into (Windows: the client rectangle, Linux: the SDL drawable size)
+bool windowClientSize(HWND window, U32& width, U32& height);
 
 // name of the program of the draw being recorded, for validation messages
 extern const char* gDebugProgram;

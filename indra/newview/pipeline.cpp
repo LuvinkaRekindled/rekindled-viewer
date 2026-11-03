@@ -2828,7 +2828,7 @@ bool LLPipeline::updateMovedListParallel(LLDrawable::drawable_vector_t& moved_li
     }
     LL_CPU_ZONE("pipeline: updateMovedList (parallel)");
 
-    typedef MovedAction Action;
+    typedef MovedAction Action __attribute__((unused));
     typedef MovedEnt Ent;
     typedef MovedLed Led;
     static std::vector<Ent> ents;
@@ -10767,7 +10767,7 @@ static const char* const kVisPassNames[] =
     "GLTF_GLOW", "GLTF_GLOW_RIGGED", "ALPHA", "ALPHA_RIGGED", "ALPHA_MASK", "ALPHA_MASK_RIGGED", "FULLBRIGHT_ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK_RIGGED", "ALPHA_INVISIBLE", "ALPHA_INVISIBLE_RIGGED",
     "GLTF_PBR", "GLTF_PBR_RIGGED", "GLTF_PBR_ALPHA_MASK", "GLTF_PBR_ALPHA_MASK_RIGGED",
 };
-static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) == (size_t)(LLRenderPass::NUM_RENDER_TYPES - LLDrawPool::NUM_POOL_TYPES), "pass names");
+static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) == (size_t)((int)LLRenderPass::NUM_RENDER_TYPES - (int)LLDrawPool::NUM_POOL_TYPES), "pass names");
 static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) <= (size_t)LLVisCensus::PASSES, "pass names");
 
 // alpha draws of a visible group: all of them, and the ones its fragment holds as table items

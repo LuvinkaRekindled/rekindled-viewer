@@ -2140,7 +2140,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     static U64 paced_frame = ~0ull;
     static U64 builds_this_frame = 0;
     {
-        const U32 slot = ctx.getFrameSlot();
+        const U32 slot = ctx.getFrameSlot() % Context::FRAMES_IN_FLIGHT;
         if (ctx.getFrameNumber() != paced_frame)
         {
             // first scene call of this frame: the frame that used this slot before has been timed when the slot was taken again

@@ -12,7 +12,7 @@
 
 #if defined(LL_VULKAN)
 
-#include <windows.h>
+#include "llvkplatform.h"
 
 #include <algorithm>
 #include <regex>
@@ -23,11 +23,15 @@
 #include <unordered_map>
 #include <sstream>
 
+#if defined(_MSC_VER)
 #pragma warning(push, 0)
+#endif
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#endif
 
 namespace LLVk
 {

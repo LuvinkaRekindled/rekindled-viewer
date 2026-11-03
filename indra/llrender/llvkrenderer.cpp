@@ -2479,7 +2479,7 @@ std::string Renderer::takePassReport(size_t frames)
 {
     static const char* const kEnd[PE_COUNT] = { "frame end", "target change", "layout barrier", "depth read-only flip", "external (DLSS)", "command buffer", "mid-frame flush", "row copy", "copy" };
     const double f = (double)std::max<size_t>(1, frames);
-    char buf[256];
+    char buf[512];
     std::string out;
     snprintf(buf, sizeof(buf), "render passes (worker) per frame: %.1f begun (%.1f began with a clear, %.1f depth only, %.1f with read-only depth, %.1f drew nothing), %.1f draws per pass; clears: %.1f before a pass (its load op), %.1f inside a pass; passes began after (what ended the pass before):",
              (double)mPassBegins / f, (double)mPassBeginsClear / f, (double)mPassBeginsDepthOnly / f, (double)mPassBeginsDepthRO / f, (double)mPassesEmpty / f,

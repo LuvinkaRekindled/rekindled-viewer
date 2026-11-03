@@ -233,7 +233,6 @@ namespace LLProfiler
     // </FS:Ansariel>
 #endif // LL_PROFILER
 
-#if LL_PROFILER_ENABLE_TRACY_OPENGL
 // <FS> Optional GPU zone timing in the viewer's own log: every GPU zone also reports its begin and
 // end to these hooks, which the viewer installs only while FSGpuZoneTimers is enabled.
 struct LLGpuZoneHooks
@@ -241,6 +240,8 @@ struct LLGpuZoneHooks
     inline static void (*sBegin)(const char* name) = nullptr;
     inline static void (*sEnd)() = nullptr;
 };
+
+#if LL_PROFILER_ENABLE_TRACY_OPENGL
 
 class LLGpuZoneScope
 {
@@ -277,9 +278,9 @@ private:
 #define LL_PROFILER_GPU_CONTEXT_NS(name, size)
 #define LL_PROFILER_GPU_CONTEXT_NAMED(...)
 #else
-#define LL_GPU_TIMER_ZONE(name)             (void)name;
-#define LL_PROFILE_GPU_ZONE(name)           (void)name;
-#define LL_PROFILE_GPU_ZONEC(name,color)    (void)name;(void)color;
+#define LL_GPU_TIMER_ZONE(name)             (void)(name);
+#define LL_PROFILE_GPU_ZONE(name)           (void)(name);
+#define LL_PROFILE_GPU_ZONEC(name,color)    (void)(name);(void)(color);
 #define LL_PROFILER_GPU_COLLECT
 #define LL_PROFILER_GPU_CONTEXT
 #define LL_PROFILER_GPU_CONTEXT_NAMED(name) (void)name;

@@ -29,6 +29,9 @@
 
 #include "linden_common.h"
 
+// <FS> native-vk: the renderer headers first: the X11 headers that SDL pulls in define None, Always, Bool ... as macros, which the renderer enums use as names
+#include "lldevicecaps.h"
+#include "llrender.h"
 #include "llwindowsdl.h"
 
 #include "llwindowcallbacks.h"
@@ -36,6 +39,7 @@
 
 #include "llerror.h"
 #include "lldevicecaps.h"
+#include "llvkbridge.h"      // <FS> native-vk: the main window is handed to Vulkan
 #include "llstring.h"
 #include "lldir.h"
 #include "llfindlocale.h"
@@ -110,7 +114,7 @@ Window LLWindowSDL::get_SDL_XWindowID(void)
     if (gWindowImplementation) {
         return gWindowImplementation->mSDL_XWindowID;
     }
-    return None;
+    return LL_X11_NONE;
 }
 
 //static
@@ -168,7 +172,7 @@ namespace
         else if (request.selection == XA_CLIPBOARD)
         {
             // Did not have what they wanted, so no property set
-            reply.property = None;
+            reply.property = LL_X11_NONE;
         }
         else
             return;
@@ -242,7 +246,7 @@ namespace
             }
         } while (!response && SDL_GetTicks() < end );
 
-        return response && xevent.xselection.property != None;
+        return response && xevent.xselection.property != LL_X11_NONE;
     }
 }
 
@@ -321,7 +325,7 @@ bool LLWindowSDL::getSelectionText(Atom selection, LLWString& text)
     maybe_lock_display();
 
     Window owner = XGetSelectionOwner(mSDL_Display, selection);
-    if (owner == None)
+    if (owner == LL_X11_NONE)
     {
         if (selection == XA_PRIMARY)
         {
@@ -414,7 +418,7 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     mPreeditor = nullptr;
 
 #if LL_X11
-    mSDL_XWindowID = None;
+    mSDL_XWindowID = LL_X11_NONE;
     mSDL_Display = NULL;
 #endif // LL_X11
 
@@ -712,7 +716,7 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
 
     mFullscreen = fullscreen;
 
-    int sdlflags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+    int sdlflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;     // <FS> native-vk: a Vulkan-capable window, no OpenGL context
 
     if( mFullscreen )
     {
@@ -722,61 +726,23 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
 
     mSDLFlags = sdlflags;
 
-    GLint redBits{8}, greenBits{8}, blueBits{8}, alphaBits{8};
-
-    GLint depthBits{(bits <= 16) ? 16 : 24}, stencilBits{8};
-
-    if (getenv("LL_GL_NO_STENCIL"))
-        stencilBits = 0;
-
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, alphaBits);
-    SDL_GL_SetAttribute(SDL_GL_RED_SIZE,   redBits);
-    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, greenBits);
-    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,  blueBits);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, depthBits );
-
-    // We need stencil support for a few (minor) things.
-    if (stencilBits)
-        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, stencilBits);
-
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-
-    if (mFSAASamples > 0)
-    {
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, mFSAASamples);
-    }
-
-    // <FS:Zi> Make shared context work on Linux for multithreaded OpenGL
-    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
     mWindow = SDL_CreateWindow( mWindowTitle.c_str(), SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, mSDLFlags );
 
-    if( mWindow )
+    if (mWindow)
     {
-        mContext = SDL_GL_CreateContext( mWindow );
-
-        if( mContext == 0 )
-        {
-            LL_WARNS() << "Cannot create GL context " << SDL_GetError() << LL_ENDL;
-            setupFailure("GL Context creation error creation error", "Error", OSMB_OK);
-            return false;
-        }
-
-        // FIRE-32559: This *should* work, but for some reason aftrer login vsync always acts as if it's disabled, so
-        // the flag will get set again later in void LLViewerWindow::setStartupComplete() -Zi
-        toggleVSync(enable_vsync);
-
-        mSurface = SDL_GetWindowSurface( mWindow );
+        // <FS> native-vk: the renderer presents into this window (Vulkan makes the surface through SDL); there is no OpenGL context
+        LLVkBridge::setMainWindow(mWindow);
     }
-
 
     if( mFullscreen )
     {
-        if (mSurface)
+        if (mWindow)
         {
+            int window_w = 0, window_h = 0;
+            SDL_GetWindowSize(mWindow, &window_w, &window_h);
             mFullscreen = true;
-            mFullscreenWidth = mSurface->w;
-            mFullscreenHeight = mSurface->h;
+            mFullscreenWidth = window_w;
+            mFullscreenHeight = window_h;
             mFullscreenRefresh = -1;
 
             LL_INFOS() << "Running at " << mFullscreenWidth
@@ -842,39 +808,6 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     // explicitly unsupported cards.
     //const char* RENDERER = (const char*) glGetString(GL_RENDERER);
 
-    SDL_GL_GetAttribute(SDL_GL_RED_SIZE, &redBits);
-    SDL_GL_GetAttribute(SDL_GL_GREEN_SIZE, &greenBits);
-    SDL_GL_GetAttribute(SDL_GL_BLUE_SIZE, &blueBits);
-    SDL_GL_GetAttribute(SDL_GL_ALPHA_SIZE, &alphaBits);
-    SDL_GL_GetAttribute(SDL_GL_DEPTH_SIZE, &depthBits);
-    SDL_GL_GetAttribute(SDL_GL_STENCIL_SIZE, &stencilBits);
-
-    LL_INFOS() << "GL buffer:" << LL_ENDL;
-    LL_INFOS() << "  Red Bits " << S32(redBits) << LL_ENDL;
-    LL_INFOS() << "  Green Bits " << S32(greenBits) << LL_ENDL;
-    LL_INFOS() << "  Blue Bits " << S32(blueBits) << LL_ENDL;
-    LL_INFOS() << "  Alpha Bits " << S32(alphaBits) << LL_ENDL;
-    LL_INFOS() << "  Depth Bits " << S32(depthBits) << LL_ENDL;
-    LL_INFOS() << "  Stencil Bits " << S32(stencilBits) << LL_ENDL;
-
-    GLint colorBits = redBits + greenBits + blueBits + alphaBits;
-    // fixme: actually, it's REALLY important for picking that we get at
-    // least 8 bits each of red,green,blue.  Alpha we can be a bit more
-    // relaxed about if we have to.
-    if (colorBits < 32)
-    {
-        close();
-        setupFailure(
-            "Second Life requires True Color (32-bit) to run in a window.\n"
-            "Please go to Control Panels -> Display -> Settings and\n"
-            "set the screen to 32-bit color.\n"
-            "Alternately, if you choose to run fullscreen, Second Life\n"
-            "will automatically adjust the screen each time it runs.",
-            "Error",
-            OSMB_OK);
-        return false;
-    }
-
 #if LL_X11
     /* Grab the window manager specific information */
     SDL_SysWMinfo info;
@@ -900,19 +833,11 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     }
 #endif // LL_X11
 
-    // clear screen to black right at the start so it doesn't look like a crash
-    glClearColor(0.0f, 0.0f, 0.0f ,1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    SDL_GL_SwapWindow(mWindow);
-
     // start text input immediately when IME is not enabled
     if (!mIMEEnabled)
     {
         SDL_StartTextInput();
     }
-
-    //make sure multisampling is disabled by default
-    glDisable(GL_MULTISAMPLE_ARB);
 
     // Don't need to get the current gamma, since there's a call that restores it to the system defaults.
     return true;
@@ -951,7 +876,7 @@ void LLWindowSDL::destroyContext()
     SDL_StopTextInput();
 #if LL_X11
     mSDL_Display = NULL;
-    mSDL_XWindowID = None;
+    mSDL_XWindowID = LL_X11_NONE;
     Lock_Display = NULL;
     Unlock_Display = NULL;
 #endif // LL_X11
@@ -1156,10 +1081,7 @@ bool LLWindowSDL::setSizeImpl(const LLCoordWindow size)
 
 void LLWindowSDL::swapBuffers()
 {
-    if (mWindow)
-    {
-        SDL_GL_SwapWindow( mWindow );
-    }
+    // <FS> native-vk: Vulkan presents the frame
 }
 
 U32 LLWindowSDL::getFSAASamples()
@@ -1310,7 +1232,7 @@ void LLWindowSDL::beforeDialog()
 {
     bool running_x11 = false;
 #if LL_X11
-    running_x11 = (mSDL_XWindowID != None);
+    running_x11 = (mSDL_XWindowID != LL_X11_NONE);
 #endif //LL_X11
 
     LL_INFOS() << "LLWindowSDL::beforeDialog()" << LL_ENDL;
@@ -1347,7 +1269,7 @@ void LLWindowSDL::afterDialog()
 {
     bool running_x11 = false;
 #if LL_X11
-    running_x11 = (mSDL_XWindowID != None);
+    running_x11 = (mSDL_XWindowID != LL_X11_NONE);
 #endif //LL_X11
 
     LL_INFOS() << "LLWindowSDL::afterDialog()" << LL_ENDL;
@@ -1417,7 +1339,7 @@ void LLWindowSDL::flashIcon(F32 seconds)
 
 bool LLWindowSDL::isClipboardTextAvailable()
 {
-    return mSDL_Display && XGetSelectionOwner(mSDL_Display, XA_CLIPBOARD) != None;
+    return mSDL_Display && XGetSelectionOwner(mSDL_Display, XA_CLIPBOARD) != LL_X11_NONE;
 }
 
 bool LLWindowSDL::pasteTextFromClipboard(LLWString &dst)
@@ -1602,7 +1524,7 @@ bool LLWindowSDL::SDLReallyCaptureInput(bool capture)
                 result = XGrabPointer(mSDL_Display, mSDL_XWindowID,
                               True, 0, GrabModeAsync,
                               GrabModeAsync,
-                              None, None, CurrentTime);
+                              LL_X11_NONE, LL_X11_NONE, CurrentTime);
                 maybe_unlock_display();
                 if (GrabSuccess == result)
                     newGrab = true;
@@ -2676,83 +2598,24 @@ std::vector<std::string> LLWindowSDL::getDynamicFallbackFontList()
 }
 
 // <FS:Zi> Make shared context work on Linux for multithreaded OpenGL
-class sharedContext
-{
-    public:
-        SDL_GLContext mContext;
-};
-
 void* LLWindowSDL::createSharedContext()
 {
-    sharedContext* sc = new sharedContext();
-    sc->mContext = SDL_GL_CreateContext(mWindow);
-    if (sc->mContext)
-    {
-        SDL_GL_SetSwapInterval(0);
-        SDL_GL_MakeCurrent(mWindow, mContext);
-
-        LLCoordScreen size;
-        if (getSize(&size))
-        {
-            // tickle window size to fix font going blocky on login screen since SDL 2.24.0
-            size.mX--;
-            setSize(size);
-            size.mX++;
-            setSize(size);
-        }
-
-        LL_DEBUGS() << "Creating shared OpenGL context successful!" << LL_ENDL;
-
-        return (void*)sc;
-    }
-
-    LL_WARNS() << "Creating shared OpenGL context failed!" << LL_ENDL;
-
-    return nullptr;
+    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (LLImageTexThread, LLVertexBuffer's) only start when they get
+    // a context from here, so a dummy token keeps them running (makeContextCurrent and destroySharedContext ignore it).
+    return (void*)1;
 }
 
 void LLWindowSDL::makeContextCurrent(void* context)
 {
-    LL_PROFILER_GPU_CONTEXT;
-    SDL_GL_MakeCurrent(mWindow, ((sharedContext*)context)->mContext);
 }
 
 void LLWindowSDL::destroySharedContext(void* context)
 {
-    sharedContext* sc = (sharedContext*)context;
-
-    SDL_GL_DeleteContext(sc->mContext);
-
-    delete sc;
 }
 
 void LLWindowSDL::toggleVSync(bool enable_vsync)
 {
-    if (enable_vsync)
-    {
-        // try adaptive vsync first (-1) and if that fails, try regular vsync (1)
-        if (SDL_GL_SetSwapInterval(-1) == -1)
-        {
-            LL_INFOS() << "Failed to enable adaptive vsync, trying regular vsync" << LL_ENDL;
-            if (SDL_GL_SetSwapInterval(1) == -1)
-            {
-                LL_WARNS() << "Failed to enable vsync" << LL_ENDL;
-            }
-            else
-            {
-                LL_DEBUGS() << "Vsync enabled" << LL_ENDL;
-            }
-        }
-        else
-        {
-            LL_DEBUGS() << "Adaptive vsync enabled" << LL_ENDL;
-        }
-    }
-    else
-    {
-        SDL_GL_SetSwapInterval(0);
-        LL_DEBUGS() << "Vsync disabled" << LL_ENDL;
-    }
+    // <FS> the present mode is the swapchain's (FSVkPresentMode)
 }
 // </FS:Zi>
 

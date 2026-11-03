@@ -31,7 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
-#include <intrin.h>
+#include "llvkplatform.h"
 
 #include "llrenderheaders.h"
 #include "llviewercontrol.h"

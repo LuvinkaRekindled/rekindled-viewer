@@ -1045,7 +1045,7 @@ Image* read_image(U32 fbo)
     return attachment_image(it->second.mColor[0]);         // reads come from colour attachment 0
 }
 
-Image* read_image()
+[[maybe_unused]] Image* read_image()
 {
     return read_image(gPassState.mDrawFbo);        // readbacks (glReadPixels) read the target that was last made current
 }

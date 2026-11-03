@@ -133,21 +133,41 @@ target_include_directories( llrender  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})
 option(USE_VULKAN "Build the experimental Vulkan backend" OFF)
 set(VULKAN_SDK_DIR "" CACHE PATH "Vulkan SDK root (headers are in Include/)")
 if (USE_VULKAN)
-  if (NOT VULKAN_SDK_DIR AND DEFINED ENV{VULKAN_SDK})
-    set(VULKAN_SDK_DIR "$ENV{VULKAN_SDK}")
+  if (WINDOWS)
+    if (NOT VULKAN_SDK_DIR AND DEFINED ENV{VULKAN_SDK})
+      set(VULKAN_SDK_DIR "$ENV{VULKAN_SDK}")
+    endif ()
+    if (NOT EXISTS "${VULKAN_SDK_DIR}/Include/vulkan/vulkan.h")
+      message(FATAL_ERROR "USE_VULKAN needs VULKAN_SDK_DIR to point at a Vulkan SDK (Include/vulkan/vulkan.h not found)")
+    endif ()
+    target_include_directories(llrender SYSTEM PRIVATE "${VULKAN_SDK_DIR}/Include")
+    target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
+    # glslang (GLSL -> SPIR-V) is linked statically; the viewer builds with the release CRT
+    target_link_libraries(llrender
+            "${VULKAN_SDK_DIR}/Lib/glslang.lib"
+            "${VULKAN_SDK_DIR}/Lib/glslang-default-resource-limits.lib"
+            "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools-opt.lib"
+            "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools.lib"
+            )
+  else ()
+    # Linux (WSL build, doc/vulkan/PLAN-linux-build.md): the distribution's Vulkan headers (libvulkan-dev, the loader is loaded at run time)
+    # and static glslang / SPIR-V (glslang-dev, spirv-tools-dev)
+    find_path(VULKAN_INCLUDE_DIR vulkan/vulkan.h)
+    if (NOT VULKAN_INCLUDE_DIR)
+      message(FATAL_ERROR "USE_VULKAN on Linux needs the Vulkan headers (libvulkan-dev)")
+    endif ()
+    set(llrender_glslang_libs "")
+    foreach (lib glslang-default-resource-limits glslang SPIRV SPIRV-Tools-opt SPIRV-Tools MachineIndependent GenericCodeGen OSDependent)
+      find_library(LLRENDER_LIB_${lib} NAMES ${lib})
+      if (NOT LLRENDER_LIB_${lib})
+        message(FATAL_ERROR "USE_VULKAN on Linux needs lib${lib}.a (glslang-dev, spirv-tools-dev)")
+      endif ()
+      list(APPEND llrender_glslang_libs "${LLRENDER_LIB_${lib}}")
+    endforeach ()
+    target_include_directories(llrender SYSTEM PRIVATE "${VULKAN_INCLUDE_DIR}")
+    target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
+    target_link_libraries(llrender ${llrender_glslang_libs} ${CMAKE_DL_LIBS})
   endif ()
-  if (NOT EXISTS "${VULKAN_SDK_DIR}/Include/vulkan/vulkan.h")
-    message(FATAL_ERROR "USE_VULKAN needs VULKAN_SDK_DIR to point at a Vulkan SDK (Include/vulkan/vulkan.h not found)")
-  endif ()
-  target_include_directories(llrender SYSTEM PRIVATE "${VULKAN_SDK_DIR}/Include")
-  target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
-  # glslang (GLSL -> SPIR-V) is linked statically; the viewer builds with the release CRT
-  target_link_libraries(llrender
-          "${VULKAN_SDK_DIR}/Lib/glslang.lib"
-          "${VULKAN_SDK_DIR}/Lib/glslang-default-resource-limits.lib"
-          "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools-opt.lib"
-          "${VULKAN_SDK_DIR}/Lib/SPIRV-Tools.lib"
-          )
   # NVIDIA DLSS (optional): the SDK is not part of the source tree; point DLSS_SDK_DIR at a clone of github.com/NVIDIA/DLSS (its DLSS folder)
   set(DLSS_SDK_DIR "<work>/DLSS/DLSS" CACHE PATH "NVIDIA DLSS SDK root (include/nvsdk_ngx_vk.h, lib/Windows_x86_64/x64)")
   if (EXISTS "${DLSS_SDK_DIR}/include/nvsdk_ngx_vk.h" AND EXISTS "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")

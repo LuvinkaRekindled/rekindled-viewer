@@ -28,6 +28,10 @@
 #include "llgpuzonetimer.h"
 
 #include "lldrawable.h"
+#if !LL_WINDOWS
+#include <sys/uio.h>
+#include <unistd.h>
+#endif
 #include "llattcensus.h"
 #include "llviewertexturerecs.h"
 #include <mutex>
@@ -211,6 +215,7 @@ namespace
     // the first word of the object, read under a handler (a freed block can be unmapped)
     bool read_first_word(const void* p, const void*& word)
     {
+#if LL_WINDOWS
         __try
         {
             word = *(const void* const*)p;
@@ -220,11 +225,18 @@ namespace
         {
             return false;
         }
+#else
+        // the kernel copies the word and reports a bad address instead of faulting
+        iovec local = { &word, sizeof(word) };
+        iovec remote = { const_cast<void*>(p), sizeof(word) };
+        return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == (ssize_t)sizeof(word);
+#endif
     }
 }
 
 bool fs_drawable_looks_live(const void* p)
 {
+#if LL_WINDOWS
     static const char* image_base = (const char*)GetModuleHandle(nullptr);
     static const size_t image_size = []()
     {
@@ -232,6 +244,13 @@ bool fs_drawable_looks_live(const void* p)
         const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(image_base + dos->e_lfanew);
         return (size_t)nt->OptionalHeader.SizeOfImage;
     }();
+#else
+    // the executable's own mapping: the linker's start and end symbols
+    extern char __executable_start;
+    extern char end;
+    static const char* image_base = &__executable_start;
+    static const size_t image_size = (size_t)(&end - &__executable_start);
+#endif
     const void* word = nullptr;
     if (!p || !read_first_word(p, word))
     {

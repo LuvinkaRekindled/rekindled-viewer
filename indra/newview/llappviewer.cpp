@@ -7305,7 +7305,7 @@ void LLAppViewer::pauseMainloopTimeout()
 
 // <FS> Main thread stall watch. The main loop names the part of the frame it is in through pingMainloopTimeout (Main:Display, Main:Idle, ...). A part that lasts 300 ms or more is logged when it
 // ends (which part, how long, what came next), and a small thread looks at the main thread once the part has lasted 400 ms (again at 1 s): it suspends it for a moment and logs the call
-// stack as module+offset addresses, which <work>esolve-addr.ps1 turns into functions and lines with the build's .pdb. Costs one clock read per ping.
+// stack as module+offset addresses, which <work>\resolve-addr.ps1 turns into functions and lines with the build's .pdb. Costs one clock read per ping.
 namespace
 {
 constexpr U64 STALL_LOG_US = 300000, STALL_SAMPLE_US = 400000, STALL_SAMPLE2_US = 1000000;

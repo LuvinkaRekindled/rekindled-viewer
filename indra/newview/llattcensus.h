@@ -10,7 +10,7 @@
 
 #include "stdtypes.h"
 #include <cstdlib>
-#include <intrin.h>
+#include "llvkplatform.h"
 
 class LLDrawable;
 class LLViewerObject;

@@ -12,8 +12,8 @@
 #include "llvkrenderer.h"
 #include "llvkworker.h"
 
-#include <windows.h>
-#include <intrin.h>
+#include "llvkplatform.h"
+#include "llvkplatform.h"
 #include <algorithm>
 #include <map>
 #include <mutex>
