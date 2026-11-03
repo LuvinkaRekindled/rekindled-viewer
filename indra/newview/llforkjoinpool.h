@@ -23,7 +23,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
-#include <intrin.h>
+#include "llvkplatform.h"
 #include <condition_variable>
 #include <functional>
 #include <memory>

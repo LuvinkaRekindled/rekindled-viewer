@@ -32,7 +32,9 @@ LL_VK_INSTANCE_FN(vkGetPhysicalDeviceSurfaceSupportKHR)
 LL_VK_INSTANCE_FN(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
 LL_VK_INSTANCE_FN(vkGetPhysicalDeviceSurfaceFormatsKHR)
 LL_VK_INSTANCE_FN(vkGetPhysicalDeviceSurfacePresentModesKHR)
+#if LL_WINDOWS
 LL_VK_INSTANCE_FN(vkCreateWin32SurfaceKHR)
+#endif
 
 // device level: lifetime, queues, sync
 LL_VK_DEVICE_FN(vkDestroyDevice)

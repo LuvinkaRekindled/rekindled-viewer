@@ -19,7 +19,7 @@
 #include <map>
 #include <vector>
 #include <cstring>
-#include <intrin.h>
+#include "llvkplatform.h"
 
 using namespace LLVk;
 

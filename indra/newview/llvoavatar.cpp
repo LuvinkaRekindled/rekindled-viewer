@@ -27,7 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 #include <mutex>
 #include <atomic>
-#include <intrin.h>      // <FS> _mm_pause (cleanJointMatricesOnce)
+#include "llvkplatform.h"
 #include "llgpuzonetimer.h"
 #include <chrono>
 

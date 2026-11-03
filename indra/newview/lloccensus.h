@@ -9,7 +9,7 @@
 
 #include "stdtypes.h"
 #include <cstdlib>
-#include <intrin.h>
+#include "llvkplatform.h"
 
 namespace LLOccCensus
 {

@@ -36,7 +36,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
-#include <windows.h>        // CaptureStackBackTrace
+#include "llvkplatform.h"
 #if defined(LL_VULKAN)
 #include "llvkasync.h"
 #include "llvkstate.h"

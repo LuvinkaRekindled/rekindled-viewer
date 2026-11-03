@@ -193,7 +193,7 @@ namespace LLVkAsync
     }
     inline const U8* drawBindingRead(const U8* p, DrawBinding& b)
     {
-        memcpy(&b, p, 3 * sizeof(U32));
+        memcpy((void*)&b, p, 3 * sizeof(U32));
         p += 3 * sizeof(U32);
         for (U32 i = 0; i < 16; ++i)
         {

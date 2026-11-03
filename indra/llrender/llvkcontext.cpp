@@ -18,8 +18,13 @@
 #include <unordered_map>
 #include <atomic>
 #include <cstdarg>
-#include <windows.h>
+#include "llvkplatform.h"
+#if LL_WINDOWS
 #include <dbghelp.h>
+#else
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_vulkan.h>
+#endif
 
 namespace LLVk
 {
@@ -35,6 +40,7 @@ bool gDeviceLost = false;
 namespace
 {
 
+#if LL_WINDOWS
 // LL_VK_AV_LOG=<file>: a vectored exception handler that writes the call stack (names from the PDB next to the exe) of the first access violations to the file, whichever module they
 // fault in. The driver's own crashes (nvoglv64.dll) left no trace in the viewer's log; the stack names the Vulkan call that was running.
 LONG CALLBACK av_stack_handler(PEXCEPTION_POINTERS ep)
@@ -138,6 +144,8 @@ LONG CALLBACK av_stack_handler(PEXCEPTION_POINTERS ep)
     CloseHandle(file);
     return EXCEPTION_CONTINUE_SEARCH;
 }
+
+#endif // LL_WINDOWS (the access violation stack handler)
 
 bool vk_ok(VkResult r, const char* what)
 {
@@ -479,10 +487,15 @@ Context& Context::instance()
 
 bool Context::loadLoader()
 {
-    mLoader = LoadLibraryA("vulkan-1.dll");
+#if LL_WINDOWS
+    const char* loader_name = "vulkan-1.dll";
+#else
+    const char* loader_name = "libvulkan.so.1";
+#endif
+    mLoader = LoadLibraryA(loader_name);
     if (!mLoader)
     {
-        LL_WARNS("Vulkan") << "vulkan-1.dll not found" << LL_ENDL;
+        LL_WARNS("Vulkan") << loader_name << " not found" << LL_ENDL;
         return false;
     }
     vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)GetProcAddress(mLoader, "vkGetInstanceProcAddr");
@@ -517,7 +530,31 @@ bool Context::createInstance()
     std::vector<VkExtensionProperties> available(count);
     vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data());
 
+#if LL_WINDOWS
     std::vector<const char*> wanted = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+#else
+    // the surface extensions the window system needs (SDL knows which: X11 or Wayland)
+    std::vector<const char*> wanted = { VK_KHR_SURFACE_EXTENSION_NAME };
+    {
+        unsigned sdl_count = 0;
+        if (mWindow && SDL_Vulkan_GetInstanceExtensions((SDL_Window*)mWindow, &sdl_count, nullptr) && sdl_count)
+        {
+            std::vector<const char*> sdl_names(sdl_count);
+            SDL_Vulkan_GetInstanceExtensions((SDL_Window*)mWindow, &sdl_count, sdl_names.data());
+            for (const char* n : sdl_names)
+            {
+                if (strcmp(n, VK_KHR_SURFACE_EXTENSION_NAME) != 0)
+                {
+                    wanted.push_back(n);
+                }
+            }
+        }
+        else
+        {
+            LL_WARNS("Vulkan") << "SDL did not name the Vulkan surface extensions: " << SDL_GetError() << LL_ENDL;
+        }
+    }
+#endif
     if (LLVkUpscale::requested())
     {
         LLVkUpscale::addInstanceExtensions(wanted);
@@ -592,10 +629,19 @@ bool Context::createInstance()
         }
     }
 
+#if LL_WINDOWS
     VkWin32SurfaceCreateInfoKHR sci = { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR };
     sci.hinstance = GetModuleHandleW(nullptr);
     sci.hwnd = mWindow;
     return vk_ok(vkCreateWin32SurfaceKHR(mInstance, &sci, nullptr, &mSurface), "vkCreateWin32SurfaceKHR");
+#else
+    if (!SDL_Vulkan_CreateSurface((SDL_Window*)mWindow, mInstance, &mSurface))
+    {
+        LL_WARNS("Vulkan") << "SDL_Vulkan_CreateSurface failed: " << SDL_GetError() << LL_ENDL;
+        return false;
+    }
+    return true;
+#endif
 }
 
 bool Context::pickDevice()
@@ -840,10 +886,12 @@ bool Context::pickDevice()
 
 bool Context::createDevice()
 {
+#if LL_WINDOWS
     if (GetEnvironmentVariableA("LL_VK_AV_LOG", nullptr, 0) > 0)
     {
         AddVectoredExceptionHandler(1, av_stack_handler);
     }
+#endif
     FeatureChain chain;
     // C6: ray tracing goes onto the device only when asked for and the device can do it. The extension structs of the vendor / later extensions stay out
     // (reported by pickDevice, not enabled): only what the first ray tracing steps use, which is what a device creation check should cover.
@@ -1199,6 +1247,7 @@ std::string Context::stampTagName(U32 tag)
     return tag < names.size() ? names[tag] : "?";
 }
 
+#if LL_WINDOWS
 // A device lost leaves through the viewer's own message box, not an exception, so Windows writes no dump: the process memory (the draw ring, the geometry table, the arena, the ray scene state) is
 // what a later look with the debugger needs. Private read / write memory only (the heaps and stacks, not the images or the mapped GPU memory): written once, after the report.
 static void write_device_lost_dump()
@@ -1242,6 +1291,10 @@ static void write_device_lost_dump()
     LL_WARNS("Vulkan") << "device lost: process dump " << (ok ? "written" : "FAILED") << " (" << (unsigned long long)(size.QuadPart >> 20) << " MB, "
                        << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count() << " ms): " << path << LL_ENDL;
 }
+
+#else
+static void write_device_lost_dump() {}         // Windows only: a process dump through dbghelp
+#endif
 
 void Context::reportDeviceLost()
 {
@@ -1394,6 +1447,27 @@ void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT
             }
         }
     }
+}
+
+// the size of the window's drawable area in pixels (what the swapchain has to match)
+bool windowClientSize(HWND window, U32& width, U32& height)
+{
+#if LL_WINDOWS
+    RECT rc = {};
+    if (!GetClientRect(window, &rc))
+    {
+        return false;
+    }
+    width = (U32)(rc.right - rc.left);
+    height = (U32)(rc.bottom - rc.top);
+    return true;
+#else
+    int w = 0, h = 0;
+    SDL_Vulkan_GetDrawableSize((SDL_Window*)window, &w, &h);
+    width = (U32)(w > 0 ? w : 0);
+    height = (U32)(h > 0 ? h : 0);
+    return w > 0 && h > 0;
+#endif
 }
 
 unsigned Context::flightThread()
@@ -3379,10 +3453,10 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
     VkExtent2D extent = caps.currentExtent;
     if (extent.width == 0xFFFFFFFFu)
     {
-        RECT rc;
-        GetClientRect(window, &rc);
-        extent.width = (U32)(rc.right - rc.left);
-        extent.height = (U32)(rc.bottom - rc.top);
+        U32 w = 0, h = 0;
+        windowClientSize(window, w, h);
+        extent.width = w;
+        extent.height = h;
     }
     // keep the old swapchain until the new one exists and hand it over (oldSwapchain): the compositor then switches over without showing a stale picture
     VkSwapchainKHR old_swapchain = mSwapchain;

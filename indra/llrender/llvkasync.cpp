@@ -24,9 +24,11 @@
 #include "lluniformcensus.h"
 #include "llvkpasscensus.h"
 
-#include <windows.h>
+#include "llvkplatform.h"
+#if LL_WINDOWS
 #include <synchapi.h>
 #include <dbghelp.h>
+#endif
 #include <atomic>
 #include <deque>
 #include <mutex>
@@ -34,11 +36,13 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
-#include <intrin.h>
+#include "llvkplatform.h"
 #include <vector>
 
+#if LL_WINDOWS
 #pragma comment(lib, "Synchronization.lib")
 #pragma comment(lib, "dbghelp.lib")
+#endif
 
 namespace LLVkWorker
 {
@@ -537,7 +541,7 @@ static U32 gPrepareFrame = 0;                       // S6.3: the producer frame 
 static U64 gFrameRefReads = 0, gFrameRefStale = 0;  // ... and the kind 22 / 29 records checked against it, and the ones from another frame
 static U32 gClosePresents = 0;
 static std::atomic<long long> sLastPresentTicks{ 0 };
-long long LLVkAsync::lastPresentTicks() { return sLastPresentTicks.load(std::memory_order_relaxed); }
+long long lastPresentTicks() { return sLastPresentTicks.load(std::memory_order_relaxed); }
 const PassInfo& currentPass() { return gPass; }
 
 void framebufferAttach(U32 fbo, U32 slot, U32 texture)
@@ -2328,7 +2332,7 @@ Blob read_blob(Reader& r, U8 flags)
     {
         b.mData = r.bytes(b.mSize);
     }
-    return std::move(b);
+    return b;
 }
 
 // plays the entries of a batch of loose uniform writes (see uniAppend) with the same calls the separate records make
@@ -2912,6 +2916,7 @@ void idleWait()
     gSleeping.store(0);
 }
 
+#if LL_WINDOWS
 LONG crash_filter(EXCEPTION_POINTERS* info)
 {
     // written with plain file calls: the process is about to die and the log system may not be safe to use
@@ -2981,11 +2986,13 @@ LONG crash_filter(EXCEPTION_POINTERS* info)
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+#endif // LL_WINDOWS
 
 void run_loop();
 
 DWORD WINAPI workerMain(LPVOID)
 {
+#if LL_WINDOWS
     __try
     {
         run_loop();
@@ -2993,6 +3000,9 @@ DWORD WINAPI workerMain(LPVOID)
     __except (crash_filter(GetExceptionInformation()))
     {
     }
+#else
+    run_loop();
+#endif
     return 0;
 }
 

@@ -626,7 +626,7 @@ bool unpack_bc7(const void *pBlock, color_rgba *pPixels)
 	case 6:
 		return unpack_bc7_mode6(data_chunks, pPixels);
 	default:
-		memset(pPixels, 0, sizeof(color_rgba) * 16);
+		memset((void*)pPixels, 0, sizeof(color_rgba) * 16);
 		break;
 	}
 

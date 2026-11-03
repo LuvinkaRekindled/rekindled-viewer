@@ -17,7 +17,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
-#include <intrin.h>
+#include "llvkplatform.h"
 namespace LLVk { struct Image; }
 #endif
 
