@@ -2220,11 +2220,11 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
             <key>archive</key>
             <map>
               <key>hash</key>
-              <string>8ad24fba1191c9cb0d2ab36e64b04b4648a99f43</string>
+              <string>b871082fac148d7274faa2cea0d26449ffb77b72</string>
               <key>hash_algorithm</key>
               <string>sha1</string>
               <key>url</key>
-              <string>https://github.com/secondlife/3p-openal-soft/releases/download/v1.24.2-r1/openal-1.24.2-r1-windows64-13245988487.tar.zst</string>
+              <string>file:///<work>/3p-openal-soft/openal-1.24.3-windows64-rk1.tar.zst</string>
             </map>
             <key>name</key>
             <string>windows64</string>
@@ -2237,7 +2237,7 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
         <key>copyright</key>
         <string>Copyright (C) 1999-2007 by authors.</string>
         <key>version</key>
-        <string>1.24.2-r1</string>
+        <string>1.24.3-rk1</string>
         <key>name</key>
         <string>openal</string>
         <key>description</key>
