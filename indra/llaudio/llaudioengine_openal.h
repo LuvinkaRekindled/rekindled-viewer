@@ -34,6 +34,11 @@
 #include "lllistener_openal.h"
 #include "llwindgen.h"
 #include "llatomic.h"
+#include "threadpool.h"
+
+#include <functional>
+#include <memory>
+#include <mutex>
 
 class LLAudioEngine_OpenAL : public LLAudioEngine
 {
@@ -58,11 +63,14 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         /*virtual*/ void updateWind(LLVector3 direction, F32 camera_altitude);
 
         // <FS:Ansariel> Output device selection
-        virtual output_device_map_t getDevices();
+        virtual output_device_map_t getDevices();     // the list the audio thread last read (a copy)
         virtual void setDevice(const LLUUID& device_uuid);
         virtual void setHRTF(bool enable);
         virtual void idle();
-        void changeDevice();
+        void changeDevice();                           // the audio thread
+        void enumerateDevices();                       // the audio thread, and init
+        void postAudio(std::function<void()> work);
+        void deviceListChanged();                      // the audio thread: read the list, follow the default, tell the main thread
         void setupDeviceEvents(ALCdevice* device);
         // </FS:Ansariel>
 
@@ -83,8 +91,16 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         LLUUID mSelectedDeviceUUID{};
         ALCdevice* mCurrentDevice{ nullptr };
         ALCcontext* mCurrentContext{ nullptr };
+        // The audio thread (PLAN-openal-replaces-fmod stage 2) owns the slow device calls: reopening the output
+        // (alcReopenDeviceSOFT), the HRTF reset (alcResetDeviceSOFT) and the device enumeration all run there, never on the main thread.
+        // mSelectedDeviceUUID, mHRTF and mHRTFApplied are only touched on that thread once it runs.
+        std::unique_ptr<LL::ThreadPool> mAudioThread;
+        std::mutex mPostMutex;
+        std::mutex mDeviceMutex;
+        output_device_map_t mDeviceCache;
         bool mHRTF{ false };
-        void applyHRTF();
+        int mHRTFApplied{ -1 };                        // -1 none yet, 0 off, 1 on
+        void applyHRTF(bool force);
 public:
         LLAtomicBool mDeviceListChanged{ false };
         // </FS:Ansariel>
