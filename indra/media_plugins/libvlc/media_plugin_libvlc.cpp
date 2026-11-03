@@ -71,6 +71,7 @@ private:
     void setVolumeVLC();
     void updateTitle(const char* title);
     void sendStreamMetadata();
+    void applyAudioDevice();
 
     static void* lock(void* data, void** p_pixels);
     static void unlock(void* data, void* id, void* const* raw_pixels);
@@ -105,6 +106,10 @@ private:
     std::atomic<bool> mMetaDirty{ false };  // the stream tags changed (set on a libvlc thread, sent from the idle message)
     std::string mSentArtist;
     std::string mSentTitle;
+
+    std::string mAudioDevice;               // the output device the viewer asked for (a device name; empty = the system default)
+    std::string mAppliedDeviceId;           // the device id this player was last moved to
+    std::atomic<bool> mDeviceDirty{ false };// the player started playing, or the device changed: move the output (done from the idle message)
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -255,6 +260,7 @@ void MediaPluginLibVLC::eventCallbacks(const libvlc_event_t* event, void* ptr)
         parent->mDuration = (float)(libvlc_media_get_duration(parent->mLibVLCMedia)) / 1000.0f;
         parent->mVlcStatus = STATUS_PLAYING;
         parent->setVolumeVLC();
+        parent->mDeviceDirty = true;   // the audio output exists now: it can be moved to the wanted device
         parent->setDurationDirty();
         break;
 
@@ -344,6 +350,7 @@ void MediaPluginLibVLC::playMedia()
         setStatus(STATUS_ERROR);
         return;
     }
+    mAppliedDeviceId.clear();
 
     // listen to events
     libvlc_event_manager_t* em = libvlc_media_player_event_manager(mLibVLCMediaPlayer);
@@ -487,6 +494,66 @@ void MediaPluginLibVLC::sendStreamMetadata()
     sendMessage(message);
 }
 
+// Moves the player's audio output to the device named by the viewer (OpenAL Soft's name for it is "OpenAL Soft on <Windows name>").
+// LibVLC lists its devices only once the audio output exists (playing), so this runs after the playing event.
+void MediaPluginLibVLC::applyAudioDevice()
+{
+    if (!mLibVLCMediaPlayer)
+    {
+        return;
+    }
+
+    std::string want = mAudioDevice;
+    const std::string prefix = "OpenAL Soft on ";
+    if (want.compare(0, prefix.size(), prefix) == 0)
+    {
+        want.erase(0, prefix.size());
+    }
+    auto lower = [](std::string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; };
+    want = lower(want);
+
+    libvlc_audio_output_device_t* list = libvlc_audio_output_device_enum(mLibVLCMediaPlayer);
+    if (!list)
+    {
+        return;     // this output cannot list its devices: leave it on the system default
+    }
+
+    const char* id = nullptr;
+    const char* partial = nullptr;
+    for (libvlc_audio_output_device_t* d = list; d; d = d->p_next)
+    {
+        const std::string desc = lower(d->psz_description ? d->psz_description : "");
+        if (want.empty())
+        {
+            if (d->psz_device && !d->psz_device[0])     // the default entry
+            {
+                id = d->psz_device;
+                break;
+            }
+        }
+        else if (desc == want)
+        {
+            id = d->psz_device;
+            break;
+        }
+        else if (!partial && !desc.empty() && (desc.find(want) != std::string::npos || want.find(desc) != std::string::npos))
+        {
+            partial = d->psz_device;
+        }
+    }
+    if (!id)
+    {
+        id = partial;
+    }
+
+    if (id && mAppliedDeviceId != id)
+    {
+        libvlc_audio_output_device_set(mLibVLCMediaPlayer, NULL, id);
+        mAppliedDeviceId = id;
+    }
+    libvlc_audio_output_device_list_release(list);
+}
+
 void MediaPluginLibVLC::setVolumeVLC()
 {
     if (mLibVLCMediaPlayer)
@@ -578,6 +645,10 @@ void MediaPluginLibVLC::receiveMessage(const char* message_string)
                 if (mMetaDirty.exchange(false))
                 {
                     sendStreamMetadata();
+                }
+                if (mDeviceDirty.exchange(false))
+                {
+                    applyAudioDevice();
                 }
                 setStatus(mVlcStatus);
             }
@@ -760,6 +831,12 @@ void MediaPluginLibVLC::receiveMessage(const char* message_string)
                 {
                     bool loop = message_in.getValueBoolean("loop");
                     mIsLooping = loop;
+                }
+                else if (message_name == "set_audio_device")
+                {
+                    // the viewer's output device (OpenAL), by name; the stream follows it
+                    mAudioDevice = message_in.getValue("device");
+                    mDeviceDirty = true;
                 }
                 else if (message_name == "set_volume")
                 {

@@ -48,6 +48,8 @@ class LLStreamingAudioInterface
     virtual std::string getURL() = 0;
     virtual bool supportsAdjustableBufferSizes(){return false;}
     virtual void setBufferSizes(U32 streambuffertime, U32 decodebuffertime){};
+    // The audio engine's output device by name (empty = the system default), for streams that play through another library (the VLC plugin).
+    virtual void setOutputDevice(const std::string& device) {}
 
     // These three are Firestorm additions and thus optional.
     using metadata_update_callback_t = boost::signals2::signal<void(const LLSD& metadata)>;

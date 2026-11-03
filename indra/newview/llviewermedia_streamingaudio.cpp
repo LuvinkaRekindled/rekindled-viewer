@@ -55,6 +55,10 @@ void LLStreamingAudio_MediaPlugins::start(const std::string& url)
     {
         mMediaPlugin = initializeMedia("audio/mpeg"); // assumes that whatever media implementation supports mp3 also supports vorbis.
         LL_INFOS() << "streaming audio mMediaPlugin is now " << mMediaPlugin << LL_ENDL;
+        if (mMediaPlugin)
+        {
+            mMediaPlugin->setAudioDevice(mOutputDevice);
+        }
     }
 
     if(!mMediaPlugin)
@@ -169,6 +173,15 @@ F32 LLStreamingAudio_MediaPlugins::getGain()
 std::string LLStreamingAudio_MediaPlugins::getURL()
 {
     return mURL;
+}
+
+void LLStreamingAudio_MediaPlugins::setOutputDevice(const std::string& device)
+{
+    mOutputDevice = device;
+    if (mMediaPlugin)
+    {
+        mMediaPlugin->setAudioDevice(device);
+    }
 }
 
 LLPluginClassMedia* LLStreamingAudio_MediaPlugins::initializeMedia(const std::string& media_type)

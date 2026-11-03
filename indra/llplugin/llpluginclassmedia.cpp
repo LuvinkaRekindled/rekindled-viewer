@@ -1642,6 +1642,13 @@ void LLPluginClassMedia::setVolume(float volume)
     }
 }
 
+void LLPluginClassMedia::setAudioDevice(const std::string& device)
+{
+    LLPluginMessage message(LLPLUGIN_MESSAGE_CLASS_MEDIA_TIME, "set_audio_device");
+    message.setValue("device", device);
+    sendMessage(message);
+}
+
 float LLPluginClassMedia::getVolume()
 {
     return mRequestedVolume;
