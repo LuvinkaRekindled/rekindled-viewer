@@ -35,6 +35,7 @@
 
 #include "llaudioengine_openal.h"
 #include "lllistener_openal.h"
+#include "llstreamingaudio.h"
 
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -537,6 +538,34 @@ bool LLAudioEngine_OpenAL::initWind()
     mWindBufSamples = llceil(mWindBufFreq * WIND_BUFFER_SIZE_SEC);
     mWindBufBytes = mWindBufSamples * 2 /*stereo*/ * sizeof(WIND_SAMPLE_T);
 
+    mWindCallback = false;
+    if (alIsExtensionPresent("AL_SOFT_callback_buffer"))
+    {
+        auto alBufferCallbackSOFT = (LPALBUFFERCALLBACKSOFT)alGetProcAddress("alBufferCallbackSOFT");
+        if (alBufferCallbackSOFT)
+        {
+            alGenBuffers(1, &mWindBuffer);
+            alBufferCallbackSOFT(mWindBuffer, AL_FORMAT_STEREO_FLOAT32, (ALsizei)mWindBufFreq, windCallback, this);
+            alSourcei(mWindSource, AL_BUFFER, (ALint)mWindBuffer);
+            alSourcei(mWindSource, AL_LOOPING, AL_FALSE);
+            alSource3f(mWindSource, AL_POSITION, 0.0, 0.0, 0.0);
+            alSource3f(mWindSource, AL_VELOCITY, 0.0, 0.0, 0.0);
+            alSourcef(mWindSource, AL_ROLLOFF_FACTOR, 0.0);
+            alSourcei(mWindSource, AL_SOURCE_RELATIVE, AL_TRUE);
+            if (alGetError() == AL_NO_ERROR)
+            {
+                mWindCallback = true;
+                alSourcePlay(mWindSource);
+                LL_INFOS() << "LLAudioEngine_OpenAL::initWind() wind plays from a callback buffer (mixer thread)" << LL_ENDL;
+                return true;
+            }
+            LL_WARNS() << "LLAudioEngine_OpenAL::initWind() callback buffer failed - using queued buffers" << LL_ENDL;
+            alSourcei(mWindSource, AL_BUFFER, 0);
+            alDeleteBuffers(1, &mWindBuffer);
+            mWindBuffer = AL_NONE;
+        }
+    }
+
     mWindBuf = new WIND_SAMPLE_T [mWindBufSamples * 2 /*stereo*/];
 
     if(mWindBuf==NULL)
@@ -558,8 +587,19 @@ void LLAudioEngine_OpenAL::cleanupWind()
     {
         // detach and delete all outstanding buffers on the wind source
         alSourceStop(mWindSource);
-        ALint processed;
-        alGetSourcei(mWindSource, AL_BUFFERS_PROCESSED, &processed);
+        if (mWindCallback)
+        {
+            // stopped: the mixer thread is out of the callback (alSourceStop returns once it has taken the change)
+            alSourcei(mWindSource, AL_BUFFER, 0);
+            alDeleteBuffers(1, &mWindBuffer);
+            mWindBuffer = AL_NONE;
+            mWindCallback = false;
+        }
+        ALint processed = 0;
+        if (mWindBuf)
+        {
+            alGetSourcei(mWindSource, AL_BUFFERS_PROCESSED, &processed);
+        }
         while (processed--)
         {
             ALuint buffer = AL_NONE;
@@ -580,6 +620,29 @@ void LLAudioEngine_OpenAL::cleanupWind()
     mWindGen = NULL;
 }
 
+// The mixer thread asks for samples (AL_SOFT_callback_buffer). Runs on OpenAL Soft's thread: no locks, no allocation, no AL calls.
+ALsizei AL_APIENTRY LLAudioEngine_OpenAL::windCallback(ALvoid* userptr, ALvoid* data, ALsizei bytes) noexcept
+{
+    return static_cast<LLAudioEngine_OpenAL*>(userptr)->generateWind(data, bytes);
+}
+
+ALsizei LLAudioEngine_OpenAL::generateWind(void* data, ALsizei bytes)
+{
+    LLWindGen<WIND_SAMPLE_T>* gen = mWindGen;
+    const ALsizei frame = (ALsizei)(2 * sizeof(WIND_SAMPLE_T));
+    const ALsizei samples = bytes / frame;
+    if (!gen || samples <= 0)
+    {
+        memset(data, 0, bytes);
+        return bytes;
+    }
+    gen->mTargetFreq = mWindTargetFreq.load(std::memory_order_relaxed);
+    gen->mTargetGain = mWindTargetGain.load(std::memory_order_relaxed);
+    gen->mTargetPanGainR = mWindTargetPanR.load(std::memory_order_relaxed);
+    gen->windGenerate(static_cast<WIND_SAMPLE_T*>(data), samples);
+    return samples * frame;
+}
+
 void LLAudioEngine_OpenAL::updateWind(LLVector3 wind_vec, F32 camera_altitude)
 {
     LLVector3 wind_pos;
@@ -590,7 +653,7 @@ void LLAudioEngine_OpenAL::updateWind(LLVector3 wind_vec, F32 camera_altitude)
     if (!mEnableWind)
         return;
 
-    if(!mWindBuf)
+    if (!mWindGen || (!mWindCallback && !mWindBuf))
         return;
 
     if (mWindUpdateTimer.checkExpirationAndReset(LL_WIND_UPDATE_INTERVAL))
@@ -605,6 +668,23 @@ void LLAudioEngine_OpenAL::updateWind(LLVector3 wind_vec, F32 camera_altitude)
         pitch = 1.0 + mapWindVecToPitch(wind_vec);
         center_freq = 80.0 * pow(pitch,2.5*(mapWindVecToGain(wind_vec)+1.0));
 
+        if (mWindCallback)
+        {
+            // three numbers for the mixer thread; the source was set up once
+            mWindTargetFreq = (F32)center_freq;
+            mWindTargetGain = (F32)mapWindVecToGain(wind_vec) * mMaxWindGain;
+            mWindTargetPanR = (F32)mapWindVecToPan(wind_vec);
+
+            // a device that went away stops the source: start it again
+            ALint state = AL_PLAYING;
+            alGetSourcei(mWindSource, AL_SOURCE_STATE, &state);
+            if (state != AL_PLAYING)
+            {
+                alSourcePlay(mWindSource);
+            }
+            return;
+        }
+
         mWindGen->mTargetFreq = (F32)center_freq;
         mWindGen->mTargetGain = (F32)mapWindVecToGain(wind_vec) * mMaxWindGain;
         mWindGen->mTargetPanGainR = (F32)mapWindVecToPan(wind_vec);
@@ -614,6 +694,11 @@ void LLAudioEngine_OpenAL::updateWind(LLVector3 wind_vec, F32 camera_altitude)
         alSource3f(mWindSource, AL_VELOCITY, 0.0, 0.0, 0.0);
         alSourcef(mWindSource, AL_ROLLOFF_FACTOR, 0.0);
         alSourcei(mWindSource, AL_SOURCE_RELATIVE, AL_TRUE);
+    }
+
+    if (mWindCallback)
+    {
+        return;
     }
 
     // ok lets make a wind buffer now
@@ -799,6 +884,11 @@ void LLAudioEngine_OpenAL::changeDevice()
     if (alcReopenDeviceSOFT(mCurrentDevice, device_name.has_value() ? device_name.value().c_str() : nullptr, nullptr))
     {
         alcMakeContextCurrent(mCurrentContext);
+        {
+            std::lock_guard<std::mutex> lock(mDeviceMutex);
+            mOpenDeviceName = device_name.value_or(std::string());
+        }
+        ++mDeviceGeneration;
         LL_INFOS() << "LLAudioEngine_OpenAL::changeDevice(): reopened in "
             << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - reopen_start).count() << " ms (audio thread)" << LL_ENDL;
         applyHRTF(true);
@@ -910,6 +1000,19 @@ void LLAudioEngine_OpenAL::setDevice(const LLUUID& device_uuid)
 
 void LLAudioEngine_OpenAL::idle()
 {
+    // the stream plays through the VLC plugin, not through OpenAL: tell it where the output went
+    LLStreamingAudioInterface* stream = getStreamingAudioImpl();
+    if (mStreamDeviceGeneration != mDeviceGeneration && stream)
+    {
+        mStreamDeviceGeneration = mDeviceGeneration;
+        std::string name;
+        {
+            std::lock_guard<std::mutex> lock(mDeviceMutex);
+            name = mOpenDeviceName;
+        }
+        stream->setOutputDevice(name);
+    }
+
 
     if (mDeviceListChanged)
     {

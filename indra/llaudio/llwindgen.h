@@ -164,10 +164,17 @@ private:
     F32 mCurrentFreq;
     F32 mCurrentPanGainR;
     F32 mLastSample;
+    U32 mRng = 2463534242u;     // xorshift32 state for the noise of the F32 generator (one per generator: it runs on the audio thread)
 };
 
 template<class T> inline const F32 LLWindGen<T>::getNextSample() { return (F32)rand() * (1.0f / (F32)(RAND_MAX / (U16_MAX / 8))) + (F32)(S16_MIN / 8); }
-template<> inline const F32 LLWindGen<F32>::getNextSample() { return ll_frand()-.5f; }
+template<> inline const F32 LLWindGen<F32>::getNextSample()
+{
+    mRng ^= mRng << 13;
+    mRng ^= mRng >> 17;
+    mRng ^= mRng << 5;
+    return (F32)(mRng >> 8) * (1.0f / 16777216.0f) - 0.5f;
+}
 template<class T> inline const F32 LLWindGen<T>::getClampedSample(bool clamp, F32 sample) { return clamp ? (F32)llclamp((S32)sample,(S32)S16_MIN,(S32)S16_MAX) : sample; }
 template<> inline const F32 LLWindGen<F32>::getClampedSample(bool clamp, F32 sample) { return sample; }
 

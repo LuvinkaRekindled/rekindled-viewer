@@ -49,6 +49,7 @@ class LLStreamingAudio_MediaPlugins : public LLStreamingAudioInterface
     /*virtual*/ void setGain(F32 vol);
     /*virtual*/ F32 getGain();
     /*virtual*/ std::string getURL();
+    /*virtual*/ void setOutputDevice(const std::string& device);
 
     // <FS:ND> For FS metadata extraction
     LLSD getCurrentMetadata() const noexcept { return mMetadata; }
@@ -70,6 +71,7 @@ private:
     // </FS:ND>
 
     F32 mGain;
+    std::string mOutputDevice;
 };
 
 

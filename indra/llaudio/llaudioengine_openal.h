@@ -36,6 +36,7 @@
 #include "llatomic.h"
 #include "threadpool.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -84,6 +85,17 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         ALuint mWindSource;
         int mNumEmptyWindALBuffers;
 
+        // The wind plays from an AL_SOFT_callback_buffer: the mixer thread asks for samples and the wind generator fills them there, so the main
+        // thread only hands over three numbers (no buffers to generate, queue and unqueue every frame). Without the extension (not OpenAL Soft)
+        // the old queued buffers are used.
+        bool mWindCallback{ false };
+        ALuint mWindBuffer{ AL_NONE };
+        std::atomic<float> mWindTargetGain{ 0.f };
+        std::atomic<float> mWindTargetFreq{ 100.f };
+        std::atomic<float> mWindTargetPanR{ 0.5f };
+        static ALsizei AL_APIENTRY windCallback(ALvoid* userptr, ALvoid* data, ALsizei bytes) noexcept;
+        ALsizei generateWind(void* data, ALsizei bytes);
+
         static const int MAX_NUM_WIND_BUFFERS = 80;
         static const float WIND_BUFFER_SIZE_SEC; // 1/20th sec
 
@@ -101,6 +113,9 @@ class LLAudioEngine_OpenAL : public LLAudioEngine
         bool mHRTF{ false };
         int mHRTFApplied{ -1 };                        // -1 none yet, 0 off, 1 on
         void applyHRTF(bool force);
+        std::string mOpenDeviceName;                   // the device the audio thread opened by name (empty = the system default); under mDeviceMutex
+        std::atomic<int> mDeviceGeneration{ 0 };       // up by one when the audio thread reopened the output
+        int mStreamDeviceGeneration{ 0 };              // the generation the stream was last told (main thread)
 public:
         LLAtomicBool mDeviceListChanged{ false };
         // </FS:Ansariel>

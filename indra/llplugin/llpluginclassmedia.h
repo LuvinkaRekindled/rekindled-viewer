@@ -337,6 +337,7 @@ public:
     void seek(float time);
     void setLoop(bool loop);
     void setVolume(float volume);
+    void setAudioDevice(const std::string& device);     // the output device by name (empty = the system default), for plugins that play sound themselves
     float getVolume();
 
     F64 getCurrentTime(void) const { return mCurrentTime; };
