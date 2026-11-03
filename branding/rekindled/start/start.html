@@ -46,14 +46,16 @@
     align-items: center;
     justify-content: center;
     gap: 14px 36px;
-    margin-top: 14px;
+    margin-top: 8px;
   }
+  .powered { margin-top: 18px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
   .credits a { display: inline-flex; align-items: center; }
   .credits img { height: 32px; width: auto; display: block; opacity: 0.9; }
   .credits a:hover img { opacity: 1; }
-  /* the Vulkan logo is dark red, so it sits on a light chip to stay legible on the dark page */
+  /* the Vulkan and OpenAL logos are dark red, so they sit on a light chip to stay legible on the dark page */
   .credits a.chip { background: #eef0ff; border-radius: 8px; padding: 6px 14px; }
   .credits a.chip img { height: 24px; opacity: 1; }
+  .credits a.chip img.openal { height: 34px; }
 </style>
 </head>
 <body>
@@ -62,8 +64,9 @@
 </main>
 <footer>
   <div>Based on <a href="https://www.firestormviewer.org/" target="_blank" rel="noopener">Firestorm Viewer</a></div>
+  <div class="powered">Powered by</div>
   <div class="credits">
-    <a href="https://www.fmod.com/" target="_blank" rel="noopener" title="FMOD Studio by Firelight Technologies"><img src="fmod-logo.png" alt="FMOD"></a>
+    <a class="chip" href="https://openal-soft.org/" target="_blank" rel="noopener" title="OpenAL Soft"><img class="openal" src="openal-logo.png" alt="OpenAL"></a>
     <a class="chip" href="https://vulkan.org/" target="_blank" rel="noopener" title="Vulkan"><img src="vulkan-logo.svg" alt="Vulkan"></a>
   </div>
 </footer>

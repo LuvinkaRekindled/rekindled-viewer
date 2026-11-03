@@ -29,6 +29,7 @@
 #include "lldir.h"
 #include "llfile.h"
 
+#include <chrono>
 #include <iterator>
 #include <vector>
 
@@ -109,6 +110,12 @@ bool LLAudioEngine_OpenAL::init(void* userdata, const std::string &app_title)
         << LL_ENDL;
 
     // <FS:Ansariel> Output device selection
+    enumerateDevices();
+    {
+        std::lock_guard<std::mutex> lock(mPostMutex);
+        mAudioThread = std::make_unique<LL::ThreadPool>("OpenALAudio", 1, 1024);
+        mAudioThread->start();
+    }
     setupDeviceEvents(device);
 
     return true;
@@ -156,6 +163,29 @@ void LLAudioEngine_OpenAL::allocateListener()
 // virtual
 void LLAudioEngine_OpenAL::shutdown()
 {
+    // the system event callback is global to OpenAL Soft and holds this engine: take it away first
+    if (mCurrentDevice && alcIsExtensionPresent(mCurrentDevice, "ALC_SOFT_system_events"))
+    {
+        auto alcEventCallbackSOFT = (LPALCEVENTCALLBACKSOFT)alcGetProcAddress(mCurrentDevice, "alcEventCallbackSOFT");
+        auto alcEventControlSOFT = (LPALCEVENTCONTROLSOFT)alcGetProcAddress(mCurrentDevice, "alcEventControlSOFT");
+        if (alcEventCallbackSOFT && alcEventControlSOFT)
+        {
+            ALCenum events[] = { ALC_EVENT_TYPE_DEVICE_ADDED_SOFT, ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT, ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT };
+            alcEventControlSOFT(3, events, AL_FALSE);
+            alcEventCallbackSOFT(nullptr, nullptr);
+        }
+    }
+
+    // no device call may run on the audio thread while the channels and the context are torn down
+    {
+        std::lock_guard<std::mutex> lock(mPostMutex);
+        if (mAudioThread)
+        {
+            mAudioThread->close();      // runs what is queued, then joins
+            mAudioThread.reset();
+        }
+    }
+
     LL_INFOS() << "About to LLAudioEngine::shutdown()" << LL_ENDL;
     LLAudioEngine::shutdown();
 
@@ -689,7 +719,7 @@ static void ALC_APIENTRY device_change_callback(ALCenum eventType, ALCenum devic
         if (deviceType == ALC_PLAYBACK_DEVICE_SOFT)
         {
             LL_INFOS() << "LLAudioEngine_OpenAL:: Playback device list changed" << LL_ENDL;
-            audio_engine->mDeviceListChanged = true;
+            audio_engine->postAudio([audio_engine]() { audio_engine->deviceListChanged(); });
             return;
         }
     }
@@ -697,7 +727,7 @@ static void ALC_APIENTRY device_change_callback(ALCenum eventType, ALCenum devic
     if (eventType == ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT)
     {
         LL_INFOS() << "LLAudioEngine_OpenAL:: Default playback device changed" << LL_ENDL;
-        audio_engine->mDeviceListChanged = true;
+        audio_engine->postAudio([audio_engine]() { audio_engine->deviceListChanged(); });
     }
 }
 
@@ -765,10 +795,13 @@ void LLAudioEngine_OpenAL::changeDevice()
         }
     }
 
+    const auto reopen_start = std::chrono::steady_clock::now();
     if (alcReopenDeviceSOFT(mCurrentDevice, device_name.has_value() ? device_name.value().c_str() : nullptr, nullptr))
     {
         alcMakeContextCurrent(mCurrentContext);
-        applyHRTF();
+        LL_INFOS() << "LLAudioEngine_OpenAL::changeDevice(): reopened in "
+            << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - reopen_start).count() << " ms (audio thread)" << LL_ENDL;
+        applyHRTF(true);
     }
     else
     {
@@ -778,14 +811,22 @@ void LLAudioEngine_OpenAL::changeDevice()
 
 void LLAudioEngine_OpenAL::setHRTF(bool enable)
 {
-    mHRTF = enable;
-    applyHRTF();
+    postAudio([this, enable]()
+    {
+        mHRTF = enable;
+        applyHRTF(false);
+    });
 }
 
 // OpenAL Soft turns HRTF on by itself for a headphone output; the setting decides (off by default)
-void LLAudioEngine_OpenAL::applyHRTF()
+void LLAudioEngine_OpenAL::applyHRTF(bool force)
 {
     if (!mCurrentDevice || !alcIsExtensionPresent(mCurrentDevice, "ALC_SOFT_HRTF"))
+    {
+        return;
+    }
+
+    if (!force && mHRTFApplied == (mHRTF ? 1 : 0))
     {
         return;
     }
@@ -803,6 +844,7 @@ void LLAudioEngine_OpenAL::applyHRTF()
         return;
     }
 
+    mHRTFApplied = mHRTF ? 1 : 0;
     ALCint status = 0;
     alcGetIntegerv(mCurrentDevice, ALC_HRTF_STATUS_SOFT, 1, &status);
     LL_INFOS() << "LLAudioEngine_OpenAL::applyHRTF(): requested " << (mHRTF ? "on" : "off") << ", HRTF status " << status
@@ -811,10 +853,33 @@ void LLAudioEngine_OpenAL::applyHRTF()
 
 LLAudioEngine_OpenAL::output_device_map_t LLAudioEngine_OpenAL::getDevices()
 {
+    std::lock_guard<std::mutex> lock(mDeviceMutex);
+    return mDeviceCache;
+}
+
+void LLAudioEngine_OpenAL::postAudio(std::function<void()> work)
+{
+    std::lock_guard<std::mutex> lock(mPostMutex);
+    if (mAudioThread)
+    {
+        mAudioThread->getQueue().post(std::move(work));
+    }
+}
+
+void LLAudioEngine_OpenAL::deviceListChanged()
+{
+    enumerateDevices();
+    changeDevice();
+    mDeviceListChanged = true;
+}
+
+// Reads the playback devices from OpenAL Soft (a call into the Windows audio service: audio thread, or init) and keeps them for getDevices()
+void LLAudioEngine_OpenAL::enumerateDevices()
+{
     if (!alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT"))
     {
-        LL_WARNS() << "LLAudioEngine_OpenAL::getDevices(): Cannot determine playback devices - OpenAL ALC_ENUMERATE_ALL_EXT extension missing" << LL_ENDL;
-        return{};
+        LL_WARNS() << "LLAudioEngine_OpenAL::enumerateDevices(): Cannot determine playback devices - OpenAL ALC_ENUMERATE_ALL_EXT extension missing" << LL_ENDL;
+        return;
     }
 
     const ALCchar* deviceList = alcGetString(nullptr, ALC_ALL_DEVICES_SPECIFIER);
@@ -830,21 +895,25 @@ LLAudioEngine_OpenAL::output_device_map_t LLAudioEngine_OpenAL::getDevices()
         nextDevice += strlen(nextDevice) + 1;
     }
 
-    return devices;
+    std::lock_guard<std::mutex> lock(mDeviceMutex);
+    mDeviceCache = std::move(devices);
 }
 
 void LLAudioEngine_OpenAL::setDevice(const LLUUID& device_uuid)
 {
-    mSelectedDeviceUUID = device_uuid;
-    changeDevice();
+    postAudio([this, device_uuid]()
+    {
+        mSelectedDeviceUUID = device_uuid;
+        changeDevice();
+    });
 }
 
 void LLAudioEngine_OpenAL::idle()
 {
+
     if (mDeviceListChanged)
     {
         mDeviceListChanged = false;
-        changeDevice();
         OnOutputDeviceListChanged(getDevices());
     }
 

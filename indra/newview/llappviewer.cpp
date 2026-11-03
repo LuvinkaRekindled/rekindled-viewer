@@ -6568,6 +6568,7 @@ void LLAppViewer::idle()
         {
             {
                 LLAudioStallTimer stall("audio_update_volume/listener/wind (before idle)");
+                LL_CPU_ZONE("audio: volume/listener/wind");
                 audio_update_volume(false);
                 audio_update_listener();
                 audio_update_wind(false);
