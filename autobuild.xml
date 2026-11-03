@@ -865,64 +865,6 @@
         <key>description</key>
         <string>Expat is an XML parser library written in C</string>
       </map>
-      <key>fmodstudio</key>
-      <map>
-        <key>platforms</key>
-        <map>
-          <key>darwin64</key>
-          <map>
-            <key>archive</key>
-            <map>
-              <key>hash</key>
-              <string>e474e018a7922d771eee789acf8d7182</string>
-              <key>hash_algorithm</key>
-              <string>md5</string>
-              <key>url</key>
-              <string>file:///opt/firestorm/fmodstudio-2.03.12-darwin64-260671926.tar.bz2</string>
-            </map>
-            <key>name</key>
-            <string>darwin64</string>
-          </map>
-          <key>linux64</key>
-          <map>
-            <key>archive</key>
-            <map>
-              <key>hash</key>
-              <string>f9c203d45f22e3b448653d2f652806d8</string>
-              <key>hash_algorithm</key>
-              <string>md5</string>
-              <key>url</key>
-              <string>file:///opt/firestorm/fmodstudio-2.03.12-linux64-260671925.tar.bz2</string>
-            </map>
-            <key>name</key>
-            <string>linux64</string>
-          </map>
-          <key>windows64</key>
-          <map>
-            <key>archive</key>
-            <map>
-              <key>hash</key>
-              <string>2b9a4903cb4413a09a4c2101e834d0d3</string>
-              <key>url</key>
-              <string>file:///c:/cygwin/opt/firestorm/fmodstudio-2.03.12-windows64-260671934.tar.bz2</string>
-            </map>
-            <key>name</key>
-            <string>windows64</string>
-          </map>
-        </map>
-        <key>license</key>
-        <string>fmod</string>
-        <key>license_file</key>
-        <string>LICENSES/fmodstudio.txt</string>
-        <key>copyright</key>
-        <string>FMOD Studio by Firelight Technologies Pty Ltd.</string>
-        <key>version</key>
-        <string>2.02.20</string>
-        <key>name</key>
-        <string>fmodstudio</string>
-        <key>description</key>
-        <string>FMOD Studio API</string>
-      </map>
       <key>freetype</key>
       <map>
         <key>platforms</key>
@@ -3672,7 +3614,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <array>
                   <string>--package</string>
                   <string>--platform darwin</string>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                 </array>
               </map>
@@ -3682,7 +3623,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <array>
                   <string>--platform darwin</string>
                   <string>--package</string>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                 </array>
               </map>
@@ -3721,7 +3661,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <key>options</key>
                 <array>
                   <string>--platform darwin</string>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                 </array>
               </map>
@@ -3731,7 +3670,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <array>
                   <string>--platform darwin</string>
                   <string>--kdu</string>
-                  <string>--fmodstudio</string>
                 </array>
               </map>
               <key>default</key>
@@ -3837,7 +3775,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <key>options</key>
                 <array>
                   <string>--kdu</string>
-                  <string>--fmodstudio</string>
                   <string>--platform linux</string>
                   <string>--package</string>
                 </array>
@@ -3885,7 +3822,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
                 <key>options</key>
                 <array>
                   <string>--kdu</string>
-                  <string>--fmodstudio</string>
                   <string>--platform linux</string>
                 </array>
               </map>
@@ -4083,7 +4019,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4093,7 +4028,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4135,7 +4069,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4145,7 +4078,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4162,7 +4094,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4172,7 +4103,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4187,7 +4117,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>
@@ -4197,7 +4126,6 @@ Copyright (c) 2012, 2014, 2015, 2016 nghttp2 contributors</string>
               <map>
                 <key>options</key>
                 <array>
-                  <string>--fmodstudio</string>
                   <string>--kdu</string>
                   <string>--version</string>
                   <string>--platform windows</string>

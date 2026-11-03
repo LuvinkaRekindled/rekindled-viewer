@@ -508,7 +508,7 @@ void LLProgressView::initLogos()
 
     temp_str += gDirUtilp->getDirDelimiter();
 
-    // Rekindled: the audio credit is OpenAL now (fmod_logo.png stays in the skin, unused)
+    // Rekindled: the audio credit is OpenAL
     // original image size is 250x135, kept in that ratio at the default height
     icon_width = 52;
     icon_height = default_height;

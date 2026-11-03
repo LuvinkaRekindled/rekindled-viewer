@@ -50,8 +50,6 @@
 #include "llvoavatarself.h"
 
 /////////////////////////////////////////////////////////
-const U32 FMODEX_DECODE_BUFFER_SIZE = 1000; // in milliseconds
-const U32 FMODEX_STREAM_BUFFER_SIZE = 7000; // in milliseconds
 
 LLViewerAudio::LLViewerAudio() :
     mDone(true),
@@ -130,10 +128,6 @@ void LLViewerAudio::startInternetStreamWithAutoFade(const std::string &streamURI
         {
             mFadeState = FADE_IN;
 
-            LLStreamingAudioInterface *stream = gAudiop->getStreamingAudioImpl();
-            if (stream && stream->supportsAdjustableBufferSizes())
-                stream->setBufferSizes(FMODEX_STREAM_BUFFER_SIZE, FMODEX_DECODE_BUFFER_SIZE);
-
             gAudiop->startInternetStream(mNextStreamURI);
         }
 
@@ -197,10 +191,6 @@ bool LLViewerAudio::onIdleUpdate()
                 if (gAudiop)
                 {
                     LL_DEBUGS("AudioEngine") << "Audio fade in: " << mNextStreamURI << LL_ENDL;
-                    LLStreamingAudioInterface *stream = gAudiop->getStreamingAudioImpl();
-                    if(stream && stream->supportsAdjustableBufferSizes())
-                        stream->setBufferSizes(FMODEX_STREAM_BUFFER_SIZE, FMODEX_DECODE_BUFFER_SIZE);
-
                     gAudiop->startInternetStream(mNextStreamURI);
                 }
 

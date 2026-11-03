@@ -179,11 +179,10 @@ SOLUTION:- You need to have a working installation of GStreamer 0.10; this
 The 'firestorm' script which launches Firestorm contains some
 configuration options for advanced troubleshooters.
 
-* AUDIO - Edit the 'secondlife' script and you will see these audio
-  options: LL_BAD_OPENAL_DRIVER, LL_BAD_FMODSTUDIO_DRIVER.
-  Firestorm tries to use OpenAL, FMODSTUDIO (PULSEAUDIO, ALSA)
-  audio drivers in this order; you may uncomment the corresponding LL_BAD_*
-  option to skip an audio driver which you believe may be causing you trouble.
+* AUDIO - Edit the 'secondlife' script and you will see this audio
+  option: LL_BAD_OPENAL_DRIVER. The viewer plays its sound through OpenAL;
+  you may uncomment the option to run without audio if the OpenAL driver is
+  causing you trouble.
 
 * OPENGL - For advanced troubleshooters, the LL_GL_BLACKLIST option lets
   you disable specific GL extensions, each of which is represented by a

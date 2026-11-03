@@ -19,7 +19,6 @@ if (USE_DISCORD)
   include(Discord)
 endif ()
 include(EXPAT)
-include(FMODSTUDIO)
 include(GLOD) # <FS:Beq/> restore GLOD
 include(Hunspell)
 include(JPEGEncoderBasic)
@@ -2405,17 +2404,9 @@ if (WINDOWS)
              )
     endif ()
 
-    if (TARGET ll::fmodstudio)
-      list(APPEND COPY_INPUT_DEPENDENCIES
-           ${SHARED_LIB_STAGING_DIR}/fmod.dll
-           #${SHARED_LIB_STAGING_DIR}/fmodL.dll # <FS:Ansariel> Doesn't exist
-          )
-    endif ()
-
     if (TARGET ll::openal)
       list(APPEND COPY_INPUT_DEPENDENCIES
            ${SHARED_LIB_STAGING_DIR}/OpenAL32.dll
-           ${SHARED_LIB_STAGING_DIR}/alut.dll
           )
     endif ()
 
@@ -2429,7 +2420,6 @@ if (WINDOWS)
         --artwork=${ARTWORK_DIR}
         "--bugsplat=${BUGSPLAT_DB}"
         "--discord=${USE_DISCORD}"
-        "--fmodstudio=${USE_FMODSTUDIO}"
         "--openal=${USE_OPENAL}"
         "--tracy=${USE_TRACY}"
         "--avx2=${USE_AVX2_OPTIMIZATION}"
@@ -2471,7 +2461,6 @@ if (WINDOWS)
             --artwork=${ARTWORK_DIR}
             "--bugsplat=${BUGSPLAT_DB}"
             "--discord=${USE_DISCORD}"
-            "--fmodstudio=${USE_FMODSTUDIO}"
             "--openal=${USE_OPENAL}"
             "--tracy=${USE_TRACY}"
             "--avx2=${USE_AVX2_OPTIMIZATION}"
@@ -2539,7 +2528,6 @@ if (WINDOWS)
               --artwork=${ARTWORK_DIR}
               "--bugsplat=${BUGSPLAT_DB}"
               "--discord=${USE_DISCORD}"
-              "--fmodstudio=${USE_FMODSTUDIO}"
               "--openal=${USE_OPENAL}"
               "--tracy=${USE_TRACY}"
               "--velopack=${USE_VELOPACK}"
@@ -2762,7 +2750,6 @@ if (LINUX)
         --artwork=${ARTWORK_DIR}
         "--bugsplat=${BUGSPLAT_DB}"
         "--discord=${USE_DISCORD}"
-        "--fmodstudio=${USE_FMODSTUDIO}"
         "--openal=${USE_OPENAL}"
         "--tracy=${USE_TRACY}"
         "--avx2=${USE_AVX2_OPTIMIZATION}"        
@@ -2791,7 +2778,6 @@ if (LINUX)
       --artwork=${ARTWORK_DIR}
       "--bugsplat=${BUGSPLAT_DB}"
       "--discord=${USE_DISCORD}"
-      "--fmodstudio=${USE_FMODSTUDIO}"
       "--openal=${USE_OPENAL}"
       "--tracy=${USE_TRACY}"
       "--avx2=${USE_AVX2_OPTIMIZATION}"      
@@ -2886,7 +2872,6 @@ if (DARWIN)
       --artwork=${ARTWORK_DIR}
       "--bugsplat=${BUGSPLAT_DB}"
       "--discord=${USE_DISCORD}"
-      "--fmodstudio=${USE_FMODSTUDIO}"
       "--openal=${USE_OPENAL}"
       "--tracy=${USE_TRACY}"
       "--avx2=${USE_AVX2_OPTIMIZATION}"      
@@ -2923,7 +2908,6 @@ if (DARWIN)
           "--bugsplat=${BUGSPLAT_DB}"
           --bundleid=${MACOSX_BUNDLE_GUI_IDENTIFIER}
           "--discord=${USE_DISCORD}"
-          "--fmodstudio=${USE_FMODSTUDIO}"
           "--openal=${USE_OPENAL}"
           "--tracy=${USE_TRACY}"
           "--avx2=${USE_AVX2_OPTIMIZATION}"          

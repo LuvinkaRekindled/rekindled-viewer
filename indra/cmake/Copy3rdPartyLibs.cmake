@@ -10,7 +10,6 @@ if (USE_DISCORD)
   include(Discord)
 endif ()
 include(OPENAL)
-include(FMODSTUDIO)
 
 # When we copy our dependent libraries, we almost always want to copy them to
 # both the Release and the RelWithDebInfo staging directories. This has
@@ -89,12 +88,6 @@ if(WINDOWS)
     endif ()
 
     set(release_files ${release_files} growl++.dll growl.dll )
-    if (TARGET ll::fmodstudio)
-        # fmodL is included for logging, only one should be picked by manifest
-        #set(release_files ${release_files} fmodL.dll)
-        set(release_files ${release_files} fmod.dll)
-    endif ()
-
     if (TARGET ll::openal)
         list(APPEND release_files openal32.dll)
     endif ()
@@ -206,11 +199,6 @@ elseif(DARWIN)
       list(APPEND release_files libdiscord_partner_sdk.dylib)
     endif ()
 
-    if (TARGET ll::fmodstudio)
-      set(debug_files ${debug_files} libfmodL.dylib)
-      set(release_files ${release_files} libfmod.dylib)
-    endif ()
-
     if (TARGET ll::openal)
       list(APPEND release_files libopenal.dylib)
     endif ()
@@ -277,11 +265,6 @@ elseif(LINUX)
                  libgobject-2.0.a
                  )
      endif()
-
-    if (TARGET ll::fmodstudio)
-      set(debug_files ${debug_files} "libfmodL.so")
-      set(release_files ${release_files} "libfmod.so")
-    endif ()
 
 else(WINDOWS)
     message(STATUS "WARNING: unrecognized platform for staging 3rd party libs, skipping...")

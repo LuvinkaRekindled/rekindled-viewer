@@ -2,8 +2,8 @@
  * @file llaudiostall.h
  * @brief Timer for calls of the audio code that run on the main thread: logs one line the moment a call takes longer than its limit
  *
- * The audio engine is called from the main loop (LLAudioEngine::idle and the audio_update_* calls before it) and it calls FMOD synchronously:
- * a sound load, a device change or an FMOD update that takes seconds is a frame that takes seconds. The cpu zones only show an average over a
+ * The audio engine is called from the main loop (LLAudioEngine::idle and the audio_update_* calls before it) and it calls the audio library synchronously:
+ * a sound load, a device change or a backend update that takes seconds is a frame that takes seconds. The cpu zones only show an average over a
  * window, so these timers name the call and the sound the moment it happens ("AudioStall" tag). doc/vulkan/PLAN-audio-main-thread.md.
  */
 

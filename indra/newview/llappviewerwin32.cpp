@@ -1478,8 +1478,8 @@ bool LLAppViewerWin32::initWindow()
         }
     }
     // <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
-    // Acccording to the FMOD spec, you are suppose to initalize COM on the thead that will talk to FMOD. IE the main thread.
-    // There is a coorisponding CoUninitialize in the shutdown code. Otherwise, FMOD will force the initalize with a warning, but does not clean up COM
+    // Initialize COM on the main thread (the audio and voice code talk to the Windows audio devices through it).
+    // There is a coorisponding CoUninitialize in the shutdown code.
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (SUCCEEDED(hr))
     {
