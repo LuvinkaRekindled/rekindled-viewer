@@ -909,15 +909,24 @@ bool Context::createDevice()
     vkGetPhysicalDeviceFeatures2(mPhysical, &chain.f2);
 
     const float priority = 1.f;
-    VkDeviceQueueCreateInfo qci = { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
-    qci.queueFamilyIndex = mQueueFamily;
-    qci.queueCount = 1;
-    qci.pQueuePriorities = &priority;
+    // <FS> E2: the ray scene work on the compute queue (LL_VK_RT_EARLY=3): needs the compute-only family and timeline semaphores, and ray tracing on
+    {
+        char b[8] = {};
+        mAsyncOn = rt_on && mCaps.mComputeFamily >= 0 && mCaps.mTimelineSemaphore && GetEnvironmentVariableA("LL_VK_RT_EARLY", b, sizeof(b)) > 0 && b[0] == '3';
+        LL_INFOS("Vulkan") << "E2 (ray scene on the compute queue): " << (mAsyncOn ? "on" : "off") << LL_ENDL;
+    }
+    VkDeviceQueueCreateInfo qcis[2] = { { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO }, { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO } };
+    qcis[0].queueFamilyIndex = mQueueFamily;
+    qcis[0].queueCount = 1;
+    qcis[0].pQueuePriorities = &priority;
+    qcis[1].queueFamilyIndex = (U32)std::max<S32>(mCaps.mComputeFamily, 0);
+    qcis[1].queueCount = 1;
+    qcis[1].pQueuePriorities = &priority;
 
     VkDeviceCreateInfo dci = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     dci.pNext = &chain.f2;     // enables every supported feature in the chain (all required ones are present)
-    dci.queueCreateInfoCount = 1;
-    dci.pQueueCreateInfos = &qci;
+    dci.queueCreateInfoCount = mAsyncOn ? 2 : 1;
+    dci.pQueueCreateInfos = qcis;
     std::vector<const char*> device_extensions(REQUIRED_DEVICE_EXTENSIONS, REQUIRED_DEVICE_EXTENSIONS + LL_ARRAY_SIZE(REQUIRED_DEVICE_EXTENSIONS));
     if (rt_on)
     {
@@ -1009,6 +1018,20 @@ bool Context::createDevice()
 #include "llvkfunctions.inl"
 
     vkGetDeviceQueue(mDevice, mQueueFamily, 0, &mQueue);
+    if (mAsyncOn)
+    {
+        vkGetDeviceQueue(mDevice, (U32)mCaps.mComputeFamily, 0, &mComputeQueue);
+        VkSemaphoreTypeCreateInfo ti = { VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO };
+        ti.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        ti.initialValue = 0;
+        VkSemaphoreCreateInfo si = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        si.pNext = &ti;
+        if (!mComputeQueue || !vk_ok(vkCreateSemaphore(mDevice, &si, nullptr, &mAsyncSem), "timeline semaphore"))
+        {
+            LL_WARNS("Vulkan") << "E2: no compute queue or timeline semaphore: off" << LL_ENDL;
+            mAsyncOn = false;
+        }
+    }
 
     VmaVulkanFunctions funcs = {};
     funcs.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
@@ -1055,6 +1078,31 @@ bool Context::createFrames()
         if (!vk_ok(vkAllocateCommandBuffers(mDevice, &ai, &f.mCmd), "vkAllocateCommandBuffers"))
         {
             return false;
+        }
+        f.mCmds[0] = f.mCmd;
+        if (mAsyncOn)
+        {
+            // the two further command buffers of the splits, and the compute pool and command buffer of the slot
+            ai.commandBufferCount = 2;
+            if (!vk_ok(vkAllocateCommandBuffers(mDevice, &ai, &f.mCmds[1]), "vkAllocateCommandBuffers (splits)"))
+            {
+                return false;
+            }
+            VkCommandPoolCreateInfo cpi = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+            cpi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            cpi.queueFamilyIndex = (U32)mCaps.mComputeFamily;
+            VkCommandBufferAllocateInfo cai = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            if (!vk_ok(vkCreateCommandPool(mDevice, &cpi, nullptr, &f.mComputePool), "vkCreateCommandPool (compute)"))
+            {
+                return false;
+            }
+            cai.commandPool = f.mComputePool;
+            cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cai.commandBufferCount = 1;
+            if (!vk_ok(vkAllocateCommandBuffers(mDevice, &cai, &f.mComputeCmd), "vkAllocateCommandBuffers (compute)"))
+            {
+                return false;
+            }
         }
         if (mCaps.mTimestampValidBits > 0)
         {
@@ -1119,6 +1167,7 @@ void Context::destroyFrameResources(Frame& f)
     }
     f.mStagingBlocks.clear();
     if (f.mTsPool) vkDestroyQueryPool(mDevice, f.mTsPool, nullptr);
+    if (f.mComputePool) vkDestroyCommandPool(mDevice, f.mComputePool, nullptr);
     if (f.mAcquire) vkDestroySemaphore(mDevice, f.mAcquire, nullptr);
     if (f.mFence) vkDestroyFence(mDevice, f.mFence, nullptr);
     if (f.mPool) vkDestroyCommandPool(mDevice, f.mPool, nullptr);
@@ -1151,6 +1200,11 @@ void Context::shutdown()
         mImmediateFence = VK_NULL_HANDLE;
         mImmediatePool = VK_NULL_HANDLE;
         mImmediateCmd = VK_NULL_HANDLE;
+        if (mAsyncSem)
+        {
+            vkDestroySemaphore(mDevice, mAsyncSem, nullptr);
+            mAsyncSem = VK_NULL_HANDLE;
+        }
         arenaShutdown();
         if (mAllocator)
         {
@@ -1781,7 +1835,7 @@ void Context::drawCheckpoint(U32 tag)
 
 void Context::gpuStamp(U32 tag)
 {
-    if (!mInFrame)
+    if (!mInFrame || mStampsOff)
     {
         return;
     }
@@ -1789,6 +1843,10 @@ void Context::gpuStamp(U32 tag)
     if ((tag & STAMP_DRAW) && f.mStampTags.size() + 512 >= MAX_GPU_STAMPS)
     {
         return;         // draw stamps leave room for the passes' own
+    }
+    if (mStampHook && !(tag & STAMP_DRAW))
+    {
+        mStampHook(tag);
     }
     if (mCaps.mCheckpoints && vkCmdSetCheckpointNV)
     {
@@ -2031,6 +2089,14 @@ VkCommandBuffer Context::beginFrame(bool wait)
     f.mStagingUsed = 0;
 
     vkResetCommandPool(mDevice, f.mPool, 0);
+    if (mAsyncOn)
+    {
+        f.mCmdIndex = 0;
+        f.mCmd = f.mCmds[0];
+        f.mWaitValue = 0;
+        f.mComputeDone = 0;
+        vkResetCommandPool(mDevice, f.mComputePool, 0);
+    }
 
     VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -2070,16 +2136,31 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
     VkCommandBufferSubmitInfo cbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
     cbi.commandBuffer = f.mCmd;
 
-    VkSemaphoreSubmitInfo wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-    wait.semaphore = wait_semaphore;
-    wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSemaphoreSubmitInfo waits[2] = { { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO }, { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO } };
+    U32 wait_count = 0;
+    if (wait_semaphore != VK_NULL_HANDLE)
+    {
+        waits[wait_count].semaphore = wait_semaphore;
+        waits[wait_count].stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        ++wait_count;
+    }
+    if (f.mWaitValue || f.mComputeDone)
+    {
+        // E2: the ray scene the compute queue builds for this frame (the lighting reads it); the last submit of the frame waits for the compute work even when the join was not reached
+        waits[wait_count].semaphore = mAsyncSem;
+        waits[wait_count].value = std::max(f.mWaitValue, f.mComputeDone);
+        waits[wait_count].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        ++wait_count;
+        f.mWaitValue = 0;
+        f.mComputeDone = 0;
+    }
     VkSemaphoreSubmitInfo signal = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     signal.semaphore = signal_semaphore;
     signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 
     VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-    si.waitSemaphoreInfoCount = wait_semaphore != VK_NULL_HANDLE ? 1 : 0;
-    si.pWaitSemaphoreInfos = &wait;
+    si.waitSemaphoreInfoCount = wait_count;
+    si.pWaitSemaphoreInfos = waits;
     si.commandBufferInfoCount = 1;
     si.pCommandBufferInfos = &cbi;
     si.signalSemaphoreInfoCount = signal_semaphore != VK_NULL_HANDLE ? 1 : 0;
@@ -2090,6 +2171,100 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
     mInFrame = false;
     mFrameSlot = (mFrameSlot + 1) % frameCount();
     ++mFrameNumber;
+}
+
+// <FS> E2: see the declarations in llvkcontext.h and doc/vulkan/PLAN-async-compute.md
+bool Context::splitFrame(bool signal, U64& value)
+{
+    value = 0;
+    if (!mAsyncOn || !mInFrame)
+    {
+        return false;
+    }
+    Frame& f = mFrames[mFrameSlot];
+    if (f.mCmdIndex + 1 >= 3)
+    {
+        return false;       // (the frame has only three command buffers)
+    }
+    vkEndCommandBuffer(f.mCmd);
+    VkCommandBufferSubmitInfo cbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+    cbi.commandBuffer = f.mCmd;
+    VkSemaphoreSubmitInfo sig = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+    VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;
+    if (signal)
+    {
+        value = ++mAsyncValue;
+        sig.semaphore = mAsyncSem;
+        sig.value = value;
+        sig.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        si.signalSemaphoreInfoCount = 1;
+        si.pSignalSemaphoreInfos = &sig;
+    }
+    // (the part waits for the previous values it was told to wait for: this part is cut before the wait is set)
+    const bool ok = vk_ok(vkQueueSubmit2(mQueue, 1, &si, VK_NULL_HANDLE), "split submit");
+    flight(FL_FRAME_SUBMIT, (unsigned long long)mFrameSlot, (unsigned long long)mFrameNumber, (unsigned long long)(uintptr_t)f.mCmd);
+    ++f.mCmdIndex;
+    f.mCmd = f.mCmds[f.mCmdIndex];
+    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(f.mCmd, &bi);
+    return ok;
+}
+
+VkCommandBuffer Context::beginCompute()
+{
+    if (!mAsyncOn || !mInFrame)
+    {
+        return VK_NULL_HANDLE;
+    }
+    Frame& f = mFrames[mFrameSlot];
+    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(f.mComputeCmd, &bi);
+    return f.mComputeCmd;
+}
+
+bool Context::submitCompute(VkCommandBuffer cmd, U64 wait_value, U64& signal_value)
+{
+    signal_value = 0;
+    if (!mAsyncOn || cmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo cbi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+    cbi.commandBuffer = cmd;
+    VkSemaphoreSubmitInfo wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+    VkSemaphoreSubmitInfo sig = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+    VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    if (wait_value)
+    {
+        wait.semaphore = mAsyncSem;
+        wait.value = wait_value;
+        wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        si.waitSemaphoreInfoCount = 1;
+        si.pWaitSemaphoreInfos = &wait;
+    }
+    signal_value = ++mAsyncValue;
+    sig.semaphore = mAsyncSem;
+    sig.value = signal_value;
+    sig.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;
+    si.signalSemaphoreInfoCount = 1;
+    si.pSignalSemaphoreInfos = &sig;
+    mFrames[mFrameSlot].mComputeDone = signal_value;
+    return vk_ok(vkQueueSubmit2(mComputeQueue, 1, &si, VK_NULL_HANDLE), "compute submit");
+}
+
+void Context::setNextSubmitWait(U64 value)
+{
+    if (mInFrame)
+    {
+        mFrames[mFrameSlot].mWaitValue = value;
+    }
 }
 
 bool Context::flushFrameAndWait()
@@ -2113,6 +2288,18 @@ bool Context::flushFrameAndWait()
     VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
     si.commandBufferInfoCount = 1;
     si.pCommandBufferInfos = &cbi;
+    VkSemaphoreSubmitInfo async_wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
+    if (f.mWaitValue || f.mComputeDone)
+    {
+        // E2: this part of the frame reads the scene the compute queue builds
+        async_wait.semaphore = mAsyncSem;
+        async_wait.value = std::max(f.mWaitValue, f.mComputeDone);
+        async_wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        si.waitSemaphoreInfoCount = 1;
+        si.pWaitSemaphoreInfos = &async_wait;
+        f.mWaitValue = 0;
+        f.mComputeDone = 0;
+    }
     vkResetFences(mDevice, 1, &mImmediateFence);
     bool ok = vk_ok(vkQueueSubmit2(mQueue, 1, &si, mImmediateFence), "flush submit")
         && vk_ok(vkWaitForFences(mDevice, 1, &mImmediateFence, VK_TRUE, 10ull * 1000 * 1000 * 1000), "flush wait");
@@ -2224,7 +2411,18 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
     {
         bi.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;      // every buffer can be read by address (render packets)
     }
-    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    const uint32_t async_families[2] = { mQueueFamily, (uint32_t)std::max<S32>(mCaps.mComputeFamily, 0) };
+    if (mAsyncOn)
+    {
+        // E2: the compute queue reads and writes what the ray scene builds read and write
+        bi.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bi.queueFamilyIndexCount = 2;
+        bi.pQueueFamilyIndices = async_families;
+    }
+    else
+    {
+        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
 
     VmaAllocationCreateInfo ai = {};
     switch (memory)
@@ -2510,7 +2708,7 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         }
     }
     const uint32_t families[2] = { mQueueFamily, (uint32_t)std::max<S32>(mCaps.mComputeFamily, 0) };
-    if (shared && mCaps.mComputeFamily >= 0)
+    if ((shared || mAsyncOn) && mCaps.mComputeFamily >= 0)
     {
         bi.sharingMode = VK_SHARING_MODE_CONCURRENT;
         bi.queueFamilyIndexCount = 2;

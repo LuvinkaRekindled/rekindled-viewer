@@ -32,7 +32,9 @@ S32 cullUse();             // culluse=0/1/2 (default -1: LL_VK_CULL_USE decides)
 S32 velIdx();              // velidx=0/1 (default 1): the avatar velocity record drawn indexed; 0 = the draw over the index list (A/B and fallback, to be removed)
 S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
 S32 texAnim();            // texanim=0/1/2 (default -1: the setting decides): texture animation by the CPU / by the vertex shader / CPU with the shader's twin compared
+S32 sunNoise();             // sunnoise=0/1/2 (default 1): 1 the noise of the sun rays moves every frame, 2 every 4th frame, 0 never
 S32 sunSelfShadow();       // sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = an avatar blocks fully, no start disc (a cost A/B within one lap)
+S32 sunPenRays();          // penrays=N (default 0 = 8): the rays of a pixel whose first sun ray met a close skinned surface
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)
 bool bodyRename();
 U32 skinPeriod(float distance);        // viewer frames between two new poses of an avatar this far from the eye (1 near, up to the skinperiod switch): the scene call skins an avatar no more often
@@ -133,7 +135,9 @@ void holdRange(const CasterRef& ref, U32 first, U32 count, int delta);
 
 // Builds what the casters noted since the last call need (a budget per call), then the top-level structure for this view: the instances are transformed into eye space
 // (view * model), the space the lighting shaders work in. Recorded into the current frame outside any render pass. view: 16 floats column-major.
-void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch = nullptr);
+void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch = nullptr, bool trailing_barrier = true);
+// the barrier that makes a scene built with trailing_barrier = false readable by the shaders that come after it (the lighting's ray queries)
+void sceneReadyBarrier();
 void setSnapshotScene(bool snapshot);       // the next scene call is a snapshot's render: the avatars' structures are built again, not refitted (a snapshot renders many times in a row, and refitted ones made some of them 0.5-2 s slow: the sun pass)
 void setDistanceScale(float scale);        // the factor of the far avatar rules for the next scene call (1 at the normal field of view)
 

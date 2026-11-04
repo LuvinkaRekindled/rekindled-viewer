@@ -297,6 +297,38 @@ U64 LLMeshOptimizer::simplifyU32(U32 *destination,
 }
 
 //static
+U64 LLMeshOptimizer::simplifyWithAttributes(U16 *destination,
+                                            const U16 *indices,
+                                            U64 index_count,
+                                            const F32 *vertex_positions,
+                                            U64 vertex_count,
+                                            U64 vertex_positions_stride,
+                                            const F32 *vertex_attributes,
+                                            U64 vertex_attributes_stride,
+                                            const F32 *attribute_weights,
+                                            U64 attribute_count,
+                                            F32 target_error,
+                                            bool lock_border)
+{
+    unsigned int options = meshopt_SimplifyErrorAbsolute | (lock_border ? meshopt_SimplifyLockBorder : 0);
+    return meshopt_simplifyWithAttributes<unsigned short>(destination,
+        indices,
+        index_count,
+        vertex_positions,
+        vertex_count,
+        vertex_positions_stride,
+        vertex_attributes,
+        vertex_attributes_stride,
+        attribute_weights,
+        attribute_count,
+        nullptr,
+        0,
+        target_error,
+        options,
+        nullptr);
+}
+
+//static
 U64 LLMeshOptimizer::simplify(U16 *destination,
                               const U16 *indices,
                               U64 index_count,

@@ -30,6 +30,7 @@
 #include "llviewerpartsim.h"
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <unordered_set>
 #include "llvkplatform.h"
 
@@ -137,7 +138,7 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         // stay in the program), 0 and 2 = a disc twice the sun's (the default), 3 / 4 = 4 / 8 times with more rays (the lightmap's blur softens the ground more than the sun disc alone does).
         const S32 alpha_sun = rrAlphaSunOld();
         static LLCachedControl<F32> rt_softness(gSavedSettings, "RenderRTShadowSoftness", 0.35f);
-        static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 2);
+        static LLCachedControl<S32> rt_samples(gSavedSettings, "RenderRTShadowSamples", 1);
         static LLStaticHashedString radius_s("rt_sun_radius"), samples_s("rt_sun_samples"), frame_s("rt_noise_frame");
         F32 scale = 2.f;                    // chosen by eye (the user, plaza: a logo on the floor next to the ground): twice the sun disc, 6 rays per sample setting
         static LLCachedControl<S32> alpha_rays(gSavedSettings, "RenderRTShadowAlphaRays", 1);
@@ -147,7 +148,10 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         else if (alpha_sun >= 5 && alpha_sun <= 8) { samples = alpha_sun == 5 ? 6 : (alpha_sun == 6 ? 3 : (alpha_sun == 7 ? 2 : 1)); }       // test (rr-debug.txt third number): the default disc with 6 / 3 / 2 rays, 8: ONE ray on the disc (a different point of it every frame, the upscaler averages)
         shader->uniform1f(radius_s, alpha_sun == 1 ? 0.f : tanf(llclamp(rt_softness() * scale, 0.f, 20.f) * DEG_TO_RAD));
         shader->uniform1i(samples_s, alpha_sun == 1 ? 1 : llclamp(samples, 1, 16));
-        shader->uniform1f(frame_s, LLPipeline::sDLSS ? (F32)(gPipeline.mJitterIndex % 64) : 0.f);
+        {
+            const S32 noise = LLVkBridge::rtSunNoise();     // rt-debug.txt sunnoise: 1 every frame (default), 2 every 4th frame, 0 a fixed pattern (the same key as the sun lightmap pass)
+            shader->uniform1f(frame_s, (LLPipeline::sDLSS && noise != 0) ? (F32)((noise == 2 ? (gPipeline.mJitterIndex / 4) : gPipeline.mJitterIndex) % 64) : 0.f);
+        }
         static LLCachedControl<F32> rt_lod_near(gSavedSettings, "RenderRTShadowAlphaLodNear", 4.f);
         static LLCachedControl<F32> rt_lod_far(gSavedSettings, "RenderRTShadowAlphaLodFar", 20.f);
         static LLStaticHashedString lod_s("rt_sun_lod");
@@ -160,6 +164,14 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         static LLStaticHashedString self_off_s("rt_sun_self_off");
         const S32 self = LLVkBridge::rtSunSelfShadow();
         shader->uniform1f(self_off_s, self == 0 ? 1.f : (self == 2 ? 2.f : 0.f));      // rt-debug.txt sunself=0: the avatar self shadow work off, 2: on with the full hair walk (same-lap cost A/Bs)
+        static LLStaticHashedString pen_rays_s("rt_sun_pen_rays");
+        {
+            // <FS> the rays of a pixel whose first ray met a close skinned surface (hair on the face): 2 while the upscaler accumulates the noise (laps of 2026-11-03: sun program -0.5 ms, rigged alpha -0.9 ms, the user: fine by eye),
+            // the shader's 8 without it (a snapshot, no upscaler). rt-debug.txt penrays=N overrides (8 = the old number)
+            extern bool gSnapshot;
+            const S32 pen = LLVkBridge::rtSunPenRays();
+            shader->uniform1i(pen_rays_s, pen > 0 ? pen : ((LLPipeline::sDLSS && !gSnapshot) ? 2 : 0));
+        }
     }
 
     if (LLPipeline::sRenderingHUDs)
@@ -515,6 +527,77 @@ static struct AlphaSceneStats
     U32 mLast = 0;
 } sAlphaScene;
 
+// item E (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rigged alpha draws of the world's colour pass (and its depth passes) draw a simplified index list when the avatar is far enough that the error of the
+// simplification is under half a pixel at its distance (a hair card with 100,000 triangles for a few hundred pixels). The lists are made on a background thread (item A's cache: ll_rigged_lod_lookup in
+// pipeline.cpp); until one is ready the draw's own list is used. LL_VK_RIGGEDLOD=1 starts it on, rt-debug.txt riggedlod=0/1 switches it live (a same-lap A/B).
+extern bool ll_rigged_lod_lookup(const LLDrawInfo* p, F32 error_m, U32& ib_name, U32& count);
+static bool rigged_lod_wanted(bool opaque)
+{
+    // (the alpha draws and the scene table's opaque rigged draws have a key each: riggedlod= and riggedlodopq=, so a lap can switch one of them)
+    static const bool env[2] = { []() { const char* e = getenv("LL_VK_RIGGEDLOD"); return !e || atoi(e) != 0; }(),         // on unless LL_VK_RIGGEDLOD=0 (the user judged the picture: fine, 2026-11-04)
+                                 []() { const char* e = getenv("LL_VK_RIGGEDLODOPQ"); return !e || atoi(e) != 0; }() };   // the opaque ones: on unless LL_VK_RIGGEDLODOPQ=0 (not judged yet)
+    static S32 live[2] = { -1, -1 };
+    static std::chrono::steady_clock::time_point last;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last >= std::chrono::milliseconds(500))
+    {
+        last = now;
+        S32 v[2] = { -1, -1 };
+        std::ifstream in("D:/claude/rt-debug.txt");
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.compare(0, 10, "riggedlod=") == 0)
+            {
+                v[0] = atoi(line.c_str() + 10);
+            }
+            else if (line.compare(0, 13, "riggedlodopq=") == 0)
+            {
+                v[1] = atoi(line.c_str() + 13);
+            }
+        }
+        live[0] = v[0];
+        live[1] = v[1];
+    }
+    const int i = opaque ? 1 : 0;
+    return live[i] >= 0 ? live[i] != 0 : env[i];
+}
+
+static bool rigged_lod_for(const LLDrawInfo* info, U32& ib_name, U32& count, bool opaque = false)
+{
+    ib_name = 0;
+    count = 0;
+    extern bool gSnapshot;
+    if (!rigged_lod_wanted(opaque) || gSnapshot || LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
+    {
+        return false;
+    }
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    if (camera->getZoomFactor() > 1.f)
+    {
+        return false;
+    }
+    LLVOAvatar* avatar = info->mAvatar.get();
+    if (!avatar || avatar->isSelf() || avatar->mDrawable.isNull())
+    {
+        return false;
+    }
+    const F32 distance = avatar->mDrawable->mDistanceWRTCamera - 1.5f;       // (to the nearest part of the avatar, not its centre)
+    if (distance < 3.f)
+    {
+        return false;
+    }
+    const F32 height = (F32)gViewerWindow->getWorldViewHeightRaw();
+    const F32 pixel = 2.f * distance * tanf(0.5f * camera->getView()) / llmax(height, 1.f);        // the world size of a pixel of the window at that distance
+    return ll_rigged_lod_lookup(info, 0.5f * pixel, ib_name, count);
+}
+
+// the scene table's opaque rigged items (pipeline.cpp, the frame record's palette bindings)
+bool ll_rigged_lod_opaque(const LLDrawInfo* info, U32& ib_name, U32& count)
+{
+    return rigged_lod_for(info, ib_name, count, true);
+}
+
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -552,9 +635,37 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         return dof_pass && (program == &gDeferredFullbrightMaskPullProgram || program == &gDeferredFullbrightMaskPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
     };
+    // item D1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the colour pass of the world draws the fullbright alpha draws with the lit program (ALPHA_UBER, the row's GEO_FULLBRIGHT flag), so a lit and a fullbright
+    // draw in the blend order are one run. LL_VK_ALPHAUBER=1 starts it on, rt-debug.txt alphauber=0/1 switches it live (a same-lap A/B).
+    static const bool uber_env = []() { const char* e = getenv("LL_VK_ALPHAUBER"); return !e || atoi(e) != 0; }();      // on unless LL_VK_ALPHAUBER=0 (the user judged the picture: fine, 2026-11-04)
+    static S32 uber_live = -1;
+    {
+        static std::chrono::steady_clock::time_point uber_last;
+        const auto uber_now = std::chrono::steady_clock::now();
+        if (uber_now - uber_last >= std::chrono::milliseconds(500))
+        {
+            uber_last = uber_now;
+            S32 v = -1;
+            std::ifstream in("D:/claude/rt-debug.txt");
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.compare(0, 10, "alphauber=") == 0)
+                {
+                    v = atoi(line.c_str() + 10);
+                }
+            }
+            uber_live = v;
+        }
+    }
+    const bool uber_ctx = (uber_live >= 0 ? uber_live != 0 : uber_env) && gAlphaUberReady && (!rigged || gAlphaUberSkinReady) && !depth_only && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender;
     // (the HUD draws all its plain draws with its fullbright program; the depth only passes draw lit and fullbright ones with the mask program)
     auto run_key = [&](U32 key) -> int
     {
+        if (uber_ctx && (key & 0xFF) == 1)
+        {
+            return (int)(key & ~0xFFu);         // a fullbright draw runs with the lit ones (the merged program)
+        }
         return (depth_only || LLPipeline::sRenderingHUDs) && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
     };
     static thread_local std::vector<LLShaderProgram*> primed_programs;
@@ -745,7 +856,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         if (rigged)
         {   // S5d: the palettes of this run's rigged items for the frame (the shared list: a skin once), bound to the items' rows before the run draws
-            struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+            struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (item E: the simplified list of the item this frame, 0 = its own)
             static thread_local std::vector<Binding> bindings;
             bindings.clear();
             LLVOAvatar* last_avatar = nullptr;
@@ -774,7 +885,12 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             last_joints = 0;
                         }
                     }
-                    bindings.push_back({ src.mHandle, src.mWire[src.mRank + k], last_offset, last_joints });
+                    U32 lod_ib = 0, lod_count = 0;
+                    if (last_offset != ~0u)
+                    {
+                        rigged_lod_for(info, lod_ib, lod_count);
+                    }
+                    bindings.push_back({ src.mHandle, src.mWire[src.mRank + k], last_offset, last_joints, lod_ib, lod_count });
                 }
             }
             ll_frame_palette_flush();
@@ -835,6 +951,42 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
     auto run_begin = [&](int key)
     {
+        // LL_VK_ALPHAKEYCENSUS=1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md item D): which keys the alpha runs have and how they follow each other. A run starts where the key of the next draw in the
+        // blend order differs (program, blend function pair, double sided, rigged): a transition that keeps the program only changes the blend or the culling, one that changes the program needs
+        // another pull program. Logged every 6000 runs.
+        static const bool key_census = getenv("LL_VK_ALPHAKEYCENSUS") != nullptr;
+        if (key_census)
+        {
+            static int prev = -1;
+            static U64 runs = 0, same_program = 0, other_program = 0, same_key = 0;
+            static std::map<int, U64> keys;
+            static std::map<std::pair<int, int>, U64> trans;
+            ++runs;
+            ++keys[key];
+            if (prev >= 0)
+            {
+                const bool same_prog = ((prev & 0xFF) == (key & 0xFF)) && (((prev >> 17) & 1) == ((key >> 17) & 1));
+                ++(prev == key ? same_key : (same_prog ? same_program : other_program));
+                ++trans[{ prev, key }];
+            }
+            prev = key;
+            if (runs % 6000 == 0)
+            {
+                auto name = [](int k) { return std::string("p") + std::to_string(k & 0xFF) + "/b" + std::to_string((k >> 8) & 0xFF) + ((k >> 16) & 1 ? "/ds" : "") + ((k >> 17) & 1 ? "/rig" : ""); };
+                std::vector<std::pair<U64, int>> topk;
+                for (const auto& kv : keys) topk.push_back({ kv.second, kv.first });
+                std::sort(topk.rbegin(), topk.rend());
+                std::vector<std::pair<U64, std::pair<int, int>>> topt;
+                for (const auto& kv : trans) topt.push_back({ kv.second, kv.first });
+                std::sort(topt.rbegin(), topt.rend());
+                std::string text = "alpha run keys over " + std::to_string(runs) + " runs: " + std::to_string(keys.size()) + " distinct keys; consecutive runs with the same key " + std::to_string(same_key)
+                    + ", the same program and another blend or side " + std::to_string(same_program) + ", another program " + std::to_string(other_program) + "; top keys:";
+                for (size_t k = 0; k < topk.size() && k < 8; ++k) text += " [" + name(topk[k].second) + " " + std::to_string(topk[k].first) + "]";
+                text += "; top transitions:";
+                for (size_t k = 0; k < topt.size() && k < 10; ++k) text += " [" + name(topt[k].second.first) + " > " + name(topt[k].second.second) + " " + std::to_string(topt[k].first) + "]";
+                LL_INFOS("VkScene") << text << LL_ENDL;
+            }
+        }
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_BEGIN);
         const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material, 18 PBR; the blend function pair id is in bits 8-15, bit 16: double sided, bit 17: rigged
         const bool skinned = ((key >> 17) & 1) != 0;
@@ -855,7 +1007,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         else
         {
-            pull = LLPipeline::sImpostorRender ? (skinned ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram);
+            pull = LLPipeline::sImpostorRender ? (skinned ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram)
+                : (uber_ctx ? (skinned ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram));
         }
         if (std::find(primed_programs.begin(), primed_programs.end(), pull) == primed_programs.end())
         {   // the first run of this program in this pass: its per pass uniforms (gamma, water planes, sun shadow settings, minimum alpha) for this view

@@ -510,6 +510,10 @@ public:
     void unbindReflectionProbes(LLShaderProgram& shader);
 
     void renderDeferredLighting();
+    void rtSceneEarly(int where);            // <FS> LL_VK_RT_EARLY: the ray scene is built before the G-buffer (see renderDeferredLighting for the wait)
+    bool mRtSceneEarly = false;
+    F32 mRtEarlyView[16] = {};      // the view matrix and distance scale the early scene was built with (a comparison at the lighting, LL_VK_RT_EARLY)
+    F32 mRtEarlyScale = 0.f;
 
     // apply atmospheric haze based on contents of color and depth buffer
     // should be called just before rendering water when camera is under water

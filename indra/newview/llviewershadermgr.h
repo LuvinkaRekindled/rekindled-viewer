@@ -244,6 +244,10 @@ extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render 
 extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
 extern bool                    gAlphaPullReady;
+extern LLShaderProgram         gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws fullbright alpha draws (ALPHA_UBER)
+extern LLShaderProgram         gDeferredAlphaUberPullSkinProgram;
+extern bool                    gAlphaUberReady;
+extern bool                    gAlphaUberSkinReady;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
 extern bool                    gTerrainPullReady;
 // <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none

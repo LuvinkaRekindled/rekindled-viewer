@@ -150,6 +150,22 @@ public:
         F32 target_error,
         bool sloppy,
         F32* result_error);
+    // <FS> Simplification that keeps vertices apart whose attributes differ (skin weights, normals, texture coordinates): as many indices as the ABSOLUTE position error allows
+    // (target_error in the units of the positions). positions: 3 floats per vertex (stride in bytes), attributes: attribute_count floats per vertex (stride in bytes), weights: one per attribute.
+    // lock_border keeps the borders of the mesh (open edges) where they are. Returns the amount of indices in destination (destination holds index_count).
+    static U64 simplifyWithAttributes(
+        U16 *destination,
+        const U16 *indices,
+        U64 index_count,
+        const F32 *vertex_positions,
+        U64 vertex_count,
+        U64 vertex_positions_stride,
+        const F32 *vertex_attributes,
+        U64 vertex_attributes_stride,
+        const F32 *attribute_weights,
+        U64 attribute_count,
+        F32 target_error,
+        bool lock_border);
 private:
 };
 

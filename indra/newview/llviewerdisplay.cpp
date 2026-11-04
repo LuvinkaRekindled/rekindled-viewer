@@ -1354,6 +1354,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gRender.setColorMask(true, true);
 
+        gPipeline.rtSceneEarly(1);      // <FS> LL_VK_RT_EARLY=1: the ray scene is built here (before the world pass) when the switch is on
+
         RenderPassScope world_pass;     // F3.5b: the world pass on the deferred screen target: begun here, ended after the render flush below
         {
         LL_CPU_ZONE("display: deferredScreen bind + clear");
@@ -1437,6 +1439,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
         (void)rt;
         { LL_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
+        gPipeline.rtSceneEarly(2);      // <FS> LL_VK_RT_EARLY=2: after the G-buffer (diagnostic)
 
         if (LLPipeline::sRenderDeferred)
         {

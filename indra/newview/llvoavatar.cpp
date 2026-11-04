@@ -32,6 +32,7 @@
 #include <chrono>
 
 #include "llvoavatar.h"
+#include <map>      // <FS> LL_VK_PALSTATS
 
 #include <stdio.h>
 #include <ctype.h>
@@ -12230,6 +12231,74 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         if (!entry.mHasPrev)
         {
             entry.mPrevGLMp = entry.mGLMp;
+        }
+        // LL_VK_PALSTATS=1: how much of the rigged palettes changes from one frame to the next (what a skinning cache could keep). Per palette (avatar and skin) and per joint matrix, exact and within 1e-4;
+        // per avatar: the avatars whose palettes are all unchanged. Logged every 600 frames in which a palette was computed.
+        {
+            static const bool pal_stats = getenv("LL_VK_PALSTATS") != nullptr;
+            if (pal_stats)
+            {
+                struct PalStats
+                {
+                    U32 mFrame = 0;
+                    std::map<const LLVOAvatar*, std::pair<U32, U32>> mAvatars;      // this frame: palettes with history, of them unchanged (within 1e-4)
+                    U64 mFrames = 0, mPalettes = 0, mNoHistory = 0, mSame = 0, mSameTol = 0, mJoints = 0, mJointsSame = 0, mJointsSameTol = 0, mAvatarSum = 0, mAvatarsSame = 0, mAvatarsWithHistory = 0;
+                };
+                static PalStats s;
+                if (s.mFrame != gFrameCount)
+                {
+                    for (const auto& kv : s.mAvatars)
+                    {
+                        ++s.mAvatarSum;
+                        if (kv.second.first)
+                        {
+                            ++s.mAvatarsWithHistory;
+                            s.mAvatarsSame += kv.second.first == kv.second.second ? 1 : 0;
+                        }
+                    }
+                    if (!s.mAvatars.empty() && ++s.mFrames >= 600)
+                    {
+                        const double f = (double)s.mFrames;
+                        LL_INFOS("VkPalStats") << "rigged palettes a frame " << (double)s.mPalettes / f << " (" << (double)s.mNoHistory / f << " without history), avatars " << (double)s.mAvatarSum / f
+                            << " (" << (double)s.mAvatarsWithHistory / f << " with history, " << (double)s.mAvatarsSame / f << " with every palette unchanged within 1e-4); palettes unchanged exactly "
+                            << (double)s.mSame / f << ", within 1e-4 " << (double)s.mSameTol / f << "; joint matrices a frame " << (double)s.mJoints / f << ", unchanged exactly " << (double)s.mJointsSame / f
+                            << ", within 1e-4 " << (double)s.mJointsSameTol / f << LL_ENDL;
+                        s.mFrames = s.mPalettes = s.mNoHistory = s.mSame = s.mSameTol = s.mJoints = s.mJointsSame = s.mJointsSameTol = s.mAvatarSum = s.mAvatarsSame = s.mAvatarsWithHistory = 0;
+                    }
+                    s.mAvatars.clear();
+                    s.mFrame = gFrameCount;
+                }
+                ++s.mPalettes;
+                auto& av = s.mAvatars[this];
+                if (!entry.mHasPrev)
+                {
+                    ++s.mNoHistory;
+                }
+                else
+                {
+                    bool all_same = true, all_tol = true;
+                    for (U32 i = 0; i < count; ++i)
+                    {
+                        const F32* a = &entry.mGLMp[(size_t)i * 12];
+                        const F32* b = &entry.mPrevGLMp[(size_t)i * 12];
+                        bool same = true, tol = true;
+                        for (U32 k = 0; k < 12; ++k)
+                        {
+                            same = same && a[k] == b[k];
+                            tol = tol && fabsf(a[k] - b[k]) < 1e-4f;
+                        }
+                        ++s.mJoints;
+                        s.mJointsSame += same ? 1 : 0;
+                        s.mJointsSameTol += tol ? 1 : 0;
+                        all_same = all_same && same;
+                        all_tol = all_tol && tol;
+                    }
+                    s.mSame += all_same ? 1 : 0;
+                    s.mSameTol += all_tol ? 1 : 0;
+                    ++av.first;
+                    av.second += all_tol ? 1 : 0;
+                }
+            }
         }
         {
             static std::atomic<U32> with_history{0}, without_history{0};

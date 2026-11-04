@@ -1598,8 +1598,38 @@ void Renderer::tracyEndPass()
 #endif
 }
 
+static bool frag_stats()
+{
+    static const bool on = getenv("LL_VK_FRAGSTATS") != nullptr;
+    return on;
+}
+
+// LL_VK_FRAGSTATS: the GPU time table switches its tag (a zone, a table draw type) inside a pass: the statistics query follows it, so the counts have the same rows as the times
+void Renderer::statSegment(U32 tag)
+{
+    if (!mRendering || mStatOpen < 0 || !mStatPool[mSlot] || mStatTag[mSlot].size() >= MAX_STAT_QUERIES || mStatTag[mSlot][(size_t)mStatOpen] == tag)
+    {
+        return;
+    }
+    const U64 pixels = mStatPixels[mSlot][(size_t)mStatOpen];
+    vkCmdEndQuery(mCmd, mStatPool[mSlot], (U32)mStatOpen);
+    mStatOpen = (S32)mStatTag[mSlot].size();
+    mStatTag[mSlot].push_back(tag);
+    mStatPixels[mSlot].push_back(pixels);
+    vkCmdBeginQuery(mCmd, mStatPool[mSlot], (U32)mStatOpen, 0);
+}
+
+static void stat_stamp_hook(U32 tag)
+{
+    Renderer::instance().statSegment(tag & ~Context::STAMP_DRAW);
+}
+
 bool Renderer::createQueryPools()
 {
+    if (frag_stats())
+    {
+        Context::instance().mStampHook = &stat_stamp_hook;
+    }
     VkDevice dev = Context::instance().getDevice();
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
@@ -1620,6 +1650,26 @@ bool Renderer::createQueryPools()
             return false;
         }
         vkResetQueryPool(dev, mTsPool[i], 0, MAX_TS_QUERIES);
+        if (frag_stats())
+        {
+            qi.queryType = VK_QUERY_TYPE_PIPELINE_STATISTICS;
+            qi.queryCount = MAX_STAT_QUERIES;
+            // the six values come back in the order of the bits: input vertices, input primitives (triangles), vertex shader runs, triangles into the clipper, triangles out of it
+            // (what the clipper and the fixed-function cull let through), fragment shader runs
+            qi.pipelineStatistics = VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES_BIT | VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT
+                                  | VK_QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS_BIT | VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT
+                                  | VK_QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES_BIT | VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
+            if (vkCreateQueryPool(dev, &qi, nullptr, &mStatPool[i]) != VK_SUCCESS)
+            {
+                mStatPool[i] = VK_NULL_HANDLE;
+                LL_WARNS("Vulkan") << "LL_VK_FRAGSTATS: the device has no pipeline statistics queries" << LL_ENDL;
+            }
+            else
+            {
+                vkResetQueryPool(dev, mStatPool[i], 0, MAX_STAT_QUERIES);
+            }
+            qi.pipelineStatistics = 0;
+        }
         mOccSerial[i].reserve(MAX_OCC_QUERIES);
         mOccBegun[i].reserve(MAX_OCC_QUERIES);
     }
@@ -1633,8 +1683,11 @@ void Renderer::destroyQueryPools()
     {
         if (mOccPool[i]) vkDestroyQueryPool(dev, mOccPool[i], nullptr);
         if (mTsPool[i]) vkDestroyQueryPool(dev, mTsPool[i], nullptr);
+        if (mStatPool[i]) vkDestroyQueryPool(dev, mStatPool[i], nullptr);
         mOccPool[i] = VK_NULL_HANDLE;
         mTsPool[i] = VK_NULL_HANDLE;
+        mStatPool[i] = VK_NULL_HANDLE;
+        mStatTag[i].clear(); mStatPixels[i].clear();
         mOccSerial[i].clear(); mOccBegun[i].clear(); mTsSerial[i].clear(); mTsIsEnd[i].clear();
     }
     mOccPending = mOccActive = -1;
@@ -1683,6 +1736,51 @@ void Renderer::harvestQueries(U32 slot)
         vkResetQueryPool(dev, mTsPool[slot], 0, n);
         mTsSerial[slot].clear();
         mTsIsEnd[slot].clear();
+    }
+    if (mStatPool[slot] && !mStatTag[slot].empty())
+    {
+        const U32 n = (U32)mStatTag[slot].size();
+        std::vector<U64> data((size_t)n * 7, 0);       // per query: the six values and the availability
+        vkGetQueryPoolResults(dev, mStatPool[slot], 0, n, data.size() * sizeof(U64), data.data(), 7 * sizeof(U64),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        for (U32 i = 0; i < n; ++i)
+        {
+            if (data[(size_t)i * 7 + 6])
+            {
+                StatSum& s = mStatSums[mStatTag[slot][i]];
+                s.mVertices += data[(size_t)i * 7];
+                s.mPrimitives += data[(size_t)i * 7 + 1];
+                s.mVsRuns += data[(size_t)i * 7 + 2];
+                s.mClipIn += data[(size_t)i * 7 + 3];
+                s.mClipOut += data[(size_t)i * 7 + 4];
+                s.mInvocations += data[(size_t)i * 7 + 5];
+                s.mPixels += mStatPixels[slot][i];
+                ++s.mPasses;
+            }
+        }
+        vkResetQueryPool(dev, mStatPool[slot], 0, n);
+        mStatTag[slot].clear();
+        mStatPixels[slot].clear();
+        if (++mStatFrames >= 600)
+        {
+            // one row per pass target or zone (the tag the GPU time table uses): segments a frame, input vertices, triangles, vertex shader runs (all a frame), vertex shader runs per triangle
+            // (the vertex cache: about 0.6 is good, 1.5 and up is poor), fragment shader runs a frame and per pixel of the pass
+            std::vector<std::pair<double, U32>> order;
+            for (const auto& kv : mStatSums) order.push_back({ (double)(kv.second.mVsRuns + kv.second.mInvocations), kv.first });
+            std::sort(order.rbegin(), order.rend());
+            LL_INFOS("VkFragStats") << "vertex and fragment work of " << mStatFrames << " frames by pass or zone (segments | input vertices | triangles | vertex runs | vertex runs per triangle | fragment runs | fragment runs per pixel | triangles into the clipper | share the clipper and cull dropped):" << LL_ENDL;
+            for (size_t k = 0; k < order.size() && k < 32; ++k)
+            {
+                const StatSum& s = mStatSums[order[k].second];
+                const double fr = (double)mStatFrames;
+                LL_INFOS("VkFragStats") << "  [" << Context::stampTagName(order[k].second) << "] " << (double)s.mPasses / fr << " | " << (U64)((double)s.mVertices / fr) << " | " << (U64)((double)s.mPrimitives / fr)
+                    << " | " << (U64)((double)s.mVsRuns / fr) << " | " << (s.mPrimitives ? (double)s.mVsRuns / (double)s.mPrimitives : 0.0) << " | " << (U64)((double)s.mInvocations / fr)
+                    << " | " << (s.mPixels ? (double)s.mInvocations / (double)s.mPixels : 0.0)
+                    << " | " << (U64)((double)s.mClipIn / fr) << " | " << (s.mClipIn ? 1.0 - (double)s.mClipOut / (double)s.mClipIn : 0.0) << LL_ENDL;
+            }
+            mStatSums.clear();
+            mStatFrames = 0;
+        }
     }
 }
 
@@ -1948,6 +2046,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     handlesBeginFrame(frame_slot);          // what the finished frames gave back is free again; this frame's map catches up with the changes since it last ran
     feedbackBeginFrame(frame_slot);         // the measurements the frame that used this slot copied out are read; the buffer starts again (not at a mid-frame flush: the frame goes on)
     mOccPending = mOccActive = -1;
+    mStatOpen = -1;
     mSlot = frame_slot;
     // buffer writes made between frames get their staging space now
     if (!mDeferredCopies.empty())
@@ -2068,6 +2167,11 @@ void Renderer::endRendering(PassEnd why)
         {
             vkCmdEndQuery(mCmd, mOccPool[mSlot], (U32)mOccActive);      // a query cannot outlive its render pass instance
             mOccActive = -1;
+        }
+        if (mStatOpen >= 0)
+        {
+            vkCmdEndQuery(mCmd, mStatPool[mSlot], (U32)mStatOpen);
+            mStatOpen = -1;
         }
         vkCmdEndRendering(mCmd);
         mRendering = false;
@@ -2668,6 +2772,13 @@ void Renderer::beginRenderingIfNeeded()
     mRendering = true;
     mPendingClear = 0;
     mInBegin = false;
+    if (mStatPool[mSlot] && mStatTag[mSlot].size() < MAX_STAT_QUERIES)
+    {
+        mStatOpen = (S32)mStatTag[mSlot].size();
+        mStatTag[mSlot].push_back(LLVkBridge::gPhaseTiming ? mBeginTag : mPassTag);       // (the tag the GPU time table charges the pass's first draws to)
+        mStatPixels[mSlot].push_back((U64)extent.width * extent.height);
+        vkCmdBeginQuery(mCmd, mStatPool[mSlot], (U32)mStatOpen, 0);
+    }
     if (mBeginSplit)
     {
         mBeginSplit = false;
@@ -4245,6 +4356,11 @@ U32 mipLevelCount(U32 width, U32 height)
 
 bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>>& images, const std::function<void(VkCommandBuffer)>& record)
 {
+    if (mComputeRedirect != VK_NULL_HANDLE)
+    {
+        record(mComputeRedirect);       // E2: the compute queue's command buffer: nothing of the graphics state is touched
+        return true;
+    }
     if (mCmd == VK_NULL_HANDLE)
     {
         return false;
@@ -4273,6 +4389,48 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     mRtBoundSet = VK_NULL_HANDLE;
     for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
     mAppliedSet0 = VK_NULL_HANDLE;
+    for (S32& v : mAppliedViewport) v = -1;
+    for (S32& v : mAppliedScissor) v = -1;
+    return true;
+}
+
+bool Renderer::splitFrame(bool signal, U64& value)
+{
+    value = 0;
+    Context& ctx = Context::instance();
+    if (!ctx.asyncOn() || mCmd == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    finishPassUse();
+    flushPendingClear();
+    endRendering(PE_EXTERNAL);
+    bindlessFlush();            // the descriptors queued so far are written before this part is submitted (the layout allows updating the unused ones while it runs)
+    if (!ctx.splitFrame(signal, value))
+    {
+        return false;
+    }
+    // a new command buffer: nothing is bound in it (what beginFrame and recordExternal clear for the same reason)
+    mCmd = ctx.getCommandBuffer();
+    mOccPending = mOccActive = -1;
+    mRendering = false;
+    mPendingClear = 0;
+    mStateApplied = false;
+    mAppliedColorCount = 0xFFFF;
+    mBoundPipeline = VK_NULL_HANDLE;
+    mBoundIndexBuffer = VK_NULL_HANDLE;
+    mUboKeyDirty = true;
+    mLastUboSet = VK_NULL_HANDLE;
+    mVertexInputDirty = true;
+    mSet0Bound = false;
+    if (mSet2Layout)
+    {
+        mBindlessBound = false;
+    }
+    mRtBoundSet = VK_NULL_HANDLE;
+    for (U32& o : mAppliedDynamicOffset) o = 0xFFFFFFFF;
+    mAppliedSet0 = VK_NULL_HANDLE;
+    mAppliedVertexInputValid = false;
     for (S32& v : mAppliedViewport) v = -1;
     for (S32& v : mAppliedScissor) v = -1;
     return true;
@@ -4733,8 +4891,152 @@ bool Renderer::flushBufferUpdates()
         dep.memoryBarrierCount = 1;
         dep.pMemoryBarriers = &before;
         vkCmdPipelineBarrier2(cmd, &dep);
+        // <FS> two copies of one batch that write overlapping ranges of a buffer must not run in either order (the validation layer's WRITE_AFTER_WRITE, 2026-11-03: the later update has to win).
+        // A barrier between them cost 6 ms of GPU time a frame (about 10 a frame), so the later copy is kept whole and the earlier one is cut to what the later ones do not write, on the CPU:
+        // the pieces never overlap and need no barrier. A batch with a fill in it keeps the barrier (a fill has to stay a multiple of 4 bytes).
+        bool batch_has_fill = false;
         for (const BufferCopy& c : mPendingCopies)
         {
+            batch_has_fill = batch_has_fill || c.mSrc == VK_NULL_HANDLE;
+        }
+        // LL_VK_COPY_TRIM=0: the copies go in as they were queued, with nothing ordering overlapping ones (how it was before 2026-11-03: a same-session A/B of the trimming)
+        static const bool trim_on = getenv("LL_VK_COPY_TRIM") == nullptr || atoi(getenv("LL_VK_COPY_TRIM")) != 0;
+        if (!trim_on)
+        {
+            for (const BufferCopy& c : mPendingCopies)
+            {
+                if (c.mSrc == VK_NULL_HANDLE)
+                {
+                    vkCmdFillBuffer(cmd, c.mDst, c.mDstOffset, c.mSize, (U32)c.mSrcOffset);
+                    continue;
+                }
+                VkBufferCopy region = { c.mSrcOffset, c.mDstOffset, c.mSize };
+                vkCmdCopyBuffer(cmd, c.mSrc, c.mDst, 1, &region);
+            }
+            batch_has_fill = false;
+        }
+        U32 trimmed = 0, dropped = 0;
+        if (trim_on && !batch_has_fill)
+        {
+            struct Piece { VkBuffer mDst, mSrc; VkDeviceSize mDstOffset, mSrcOffset, mSize; };
+            std::vector<Piece> pieces;
+            pieces.reserve(mPendingCopies.size());
+            std::unordered_map<VkBuffer, std::map<VkDeviceSize, VkDeviceSize>> covered;       // by destination: the ranges the later copies write (disjoint, sorted by start)
+            for (size_t i = mPendingCopies.size(); i-- > 0;)
+            {
+                const BufferCopy& c = mPendingCopies[i];
+                std::map<VkDeviceSize, VkDeviceSize>& cov = covered[c.mDst];
+                const VkDeviceSize lo = c.mDstOffset, hi = c.mDstOffset + c.mSize;
+                VkDeviceSize pos = lo;
+                {
+                    auto after = cov.upper_bound(lo);
+                    if (after != cov.begin())
+                    {
+                        auto before = std::prev(after);
+                        pos = std::max(pos, before->second);
+                    }
+                }
+                U32 emitted = 0;
+                while (pos < hi)
+                {
+                    auto next = cov.lower_bound(pos);
+                    const bool open = next == cov.end() || next->first >= hi;
+                    const VkDeviceSize gap_end = open ? hi : next->first;
+                    if (gap_end > pos)
+                    {
+                        pieces.push_back({ c.mDst, c.mSrc, pos, c.mSrcOffset + (pos - lo), gap_end - pos });
+                        ++emitted;
+                    }
+                    if (open)
+                    {
+                        break;
+                    }
+                    pos = std::max(gap_end, next->second);
+                }
+                if (!emitted)
+                {
+                    ++dropped;
+                }
+                else if (emitted > 1 || pieces.back().mSize != c.mSize)
+                {
+                    ++trimmed;
+                }
+                // this copy's range joins the covered ones (merged with what it touches)
+                VkDeviceSize mlo = lo, mhi = hi;
+                auto at = cov.upper_bound(mlo);
+                if (at != cov.begin())
+                {
+                    auto before = std::prev(at);
+                    if (before->second >= mlo)
+                    {
+                        mlo = before->first;
+                        mhi = std::max(mhi, before->second);
+                        at = cov.erase(before);
+                    }
+                }
+                while (at != cov.end() && at->first <= mhi)
+                {
+                    mhi = std::max(mhi, at->second);
+                    at = cov.erase(at);
+                }
+                cov[mlo] = mhi;
+            }
+            for (const Piece& p : pieces)
+            {
+                VkBufferCopy region = { p.mSrcOffset, p.mDstOffset, p.mSize };
+                vkCmdCopyBuffer(cmd, p.mSrc, p.mDst, 1, &region);
+            }
+            if (trimmed || dropped)
+            {
+                static U64 total_trimmed = 0, total_dropped = 0;
+                static U32 said = 0;
+                total_trimmed += trimmed;
+                total_dropped += dropped;
+                if (said++ < 20 || said % 2000 == 0)
+                {
+                    LL_INFOS("Vulkan") << "buffer updates: " << trimmed << " copies cut and " << dropped << " left out because later copies of the batch write the same bytes (batch of " << mPendingCopies.size() << "; "
+                                       << total_trimmed << " and " << total_dropped << " so far)" << LL_ENDL;
+                }
+            }
+        }
+        std::unordered_map<VkBuffer, std::map<VkDeviceSize, VkDeviceSize>> written;
+        U32 waw_barriers = 0;
+        for (const BufferCopy& c : mPendingCopies)
+        {
+            if (!trim_on || !batch_has_fill)
+            {
+                break;          // (the pieces above were recorded, or the copies went in as queued)
+            }
+            {
+                std::map<VkDeviceSize, VkDeviceSize>& iv = written[c.mDst];
+                const VkDeviceSize lo = c.mDstOffset, hi = c.mDstOffset + c.mSize;
+                bool overlap = false;
+                auto next = iv.lower_bound(lo);
+                if (next != iv.end() && next->first < hi)
+                {
+                    overlap = true;
+                }
+                if (!overlap && next != iv.begin())
+                {
+                    auto prev = std::prev(next);
+                    overlap = prev->second > lo;
+                }
+                if (overlap)
+                {
+                    VkMemoryBarrier2 copy_after_copy = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+                    copy_after_copy.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+                    copy_after_copy.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                    copy_after_copy.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+                    copy_after_copy.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                    VkDependencyInfo waw = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+                    waw.memoryBarrierCount = 1;
+                    waw.pMemoryBarriers = &copy_after_copy;
+                    vkCmdPipelineBarrier2(cmd, &waw);
+                    ++waw_barriers;
+                    written.clear();            // (the barrier orders everything written so far)
+                }
+                written[c.mDst][lo] = hi;
+            }
             if (c.mSrc == VK_NULL_HANDLE)
             {
                 vkCmdFillBuffer(cmd, c.mDst, c.mDstOffset, c.mSize, (U32)c.mSrcOffset);
@@ -4742,6 +5044,16 @@ bool Renderer::flushBufferUpdates()
             }
             VkBufferCopy region = { c.mSrcOffset, c.mDstOffset, c.mSize };
             vkCmdCopyBuffer(cmd, c.mSrc, c.mDst, 1, &region);
+        }
+        if (waw_barriers)
+        {
+            static U64 total = 0;
+            static U32 said = 0;
+            total += waw_barriers;
+            if (said++ < 20 || said % 1000 == 0)
+            {
+                LL_INFOS("Vulkan") << "buffer updates: " << waw_barriers << " copy to copy barrier(s) for overlapping writes of one buffer in a batch of " << mPendingCopies.size() << " (" << total << " so far)" << LL_ENDL;
+            }
         }
         VkMemoryBarrier2 after = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
         after.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;

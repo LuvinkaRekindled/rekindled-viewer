@@ -246,7 +246,8 @@ namespace LLVkBridge
         GEO_RIGGED = 2,             // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
         GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
         GEO_STRIP = 8,              // S6.6: the draw is a triangle strip (a record of one entry)
-        GEO_PARTICLE_ROWS = 16      // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
+        GEO_PARTICLE_ROWS = 16,     // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
+        GEO_FULLBRIGHT = 32         // item D1 (alpha runs): a fullbright alpha draw: the merged lit alpha program (ALPHA_UBER) skips the lighting for it
     };
     struct GeoEntry
     {
@@ -334,13 +335,15 @@ namespace LLVkBridge
     S32 rtCullUse();               // rt-debug.txt culluse=N (-1 = not set): LL_VK_CULL_USE live, a same-lap A/B of the main view's cull walk against the GPU verdict
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
+    S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all
     S32 rtSunSelfShadow();         // rt-debug.txt sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = off (an avatar blocks fully, no start disc), a same-lap cost A/B
+    S32 rtSunPenRays();            // rt-debug.txt penrays=N (default 0 = the shader's 8): the rays of a pixel whose first sun ray met a close skinned surface
     S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides
     bool rtBodyRename();
     U32 rtSkinPeriod(float distance);      // viewer frames between two poses the ray scene takes of an avatar this far from the eye (1 when ray tracing is off)
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
-    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; U32 mSnapshot = 0; };       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in; mSnapshot: a render of a snapshot, where the avatars' structures are built again and not refitted, see llvkrt.cpp)
+    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; U32 mSnapshot = 0; U32 mPhase = 0; U32 mAsync = 0; };       // (mPhase: 0 the whole call, 1 skin + builds + top level with no barrier after them, 2 only that barrier: LL_VK_RT_EARLY, doc/vulkan/PLAN-async-compute.md; mAsync: phase 1 on the compute queue, E2, LL_VK_RT_EARLY=3)       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in; mSnapshot: a render of a snapshot, where the avatars' structures are built again and not refitted, see llvkrt.cpp)
     void rtScene(const RtSceneArgs& args);
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
@@ -489,6 +492,9 @@ namespace LLVkWorker
         const void* mCpu = nullptr;          // the CPU's pointer to the data when it lives in host-written memory (valid until the buffer is written or freed), else null
     };
     bool getBufferInfo(unsigned int name, BufferInfo& out);
+    // <FS> what the ray scene's alpha test will read of a texture (the census of the alpha casters' textures in the ray scene log line): its size now, its levels and how many hold data
+    struct TextureInfo { unsigned mWidth = 0, mHeight = 0, mLevels = 0, mValidLevels = 0; bool mCompressed = false, mHasImage = false; };
+    bool getTextureInfo(unsigned int name, TextureInfo& out);
     // the GPU reads this buffer in the current frame (an acceleration structure build, a ray query shader): a CPU rewrite of a host-written range has to rename it first
     void markBufferUsed(unsigned int name);
     // records the queued writes of video-memory buffers (GPU copies) into the command stream now: the ray scene reads buffers by address (builds, skinning, alpha test), nothing else would flush them first

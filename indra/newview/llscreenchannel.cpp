@@ -184,10 +184,16 @@ void LLScreenChannelBase::init(S32 channel_left, S32 channel_right)
 void    LLScreenChannelBase::updateRect()
 {
     //const S32 CHANNEL_BOTTOM_PANEL_MARGIN = 35; // <FS:Ansariel> Keep custom bottom panel margin
-    S32 channel_top = getChannelRect().mTop;
+    LLRect channel_area = getChannelRect();
+    if (mChannelAlignment == CA_CENTRE && channel_area.getHeight() <= 0)
+    {
+        // <FS> before the world is up (the login screen) the floater snap region has no height: the centred channel (alerts) takes the whole window, or its toasts sit on the bottom edge
+        channel_area.setLeftTopAndSize(0, gViewerWindow->getWindowRectScaled().getHeight(), gViewerWindow->getWindowRectScaled().getWidth(), gViewerWindow->getWindowRectScaled().getHeight());
+    }
+    S32 channel_top = channel_area.mTop;
     // <FS:Ansariel> Keep custom bottom panel margin
     //S32 channel_bottom = getChannelRect().mBottom + CHANNEL_BOTTOM_PANEL_MARGIN;
-    S32 channel_bottom = getChannelRect().mBottom + gSavedSettings.getS32("ChannelBottomPanelMargin");
+    S32 channel_bottom = channel_area.mBottom + gSavedSettings.getS32("ChannelBottomPanelMargin");
     // </FS:Ansariel>
     S32 channel_left = getRect().mLeft;
     S32 channel_right = getRect().mRight;
@@ -775,10 +781,25 @@ void LLScreenChannel::showToastsCentre()
         }
 
         toast_rect = toast->getRect();
+        const LLRect before_rect = toast_rect;
         toast_rect.setLeftTopAndSize(getRect().mLeft - toast_rect.getWidth() / 2, bottom + toast_rect.getHeight() / 2 + gSavedSettings.getS32("ToastGap"), toast_rect.getWidth() ,toast_rect.getHeight());
         toast->setRect(toast_rect);
 
         toast->setVisible(true);
+        if (getParent())
+        {
+            // <FS> a centred toast (an alert) is drawn above everything else of its parent: the graphics init alert at the login screen was drawn under the login progress view (the logo) and held the input
+            // while nothing of it showed (2026-11-03)
+            getParent()->sendChildToFront(this);
+        }
+        {
+            // <FS> where a centred toast (an alert) is put, and what it sits in: the graphics init alert at the login screen was invisible and held the input (2026-11-03)
+            const LLRect window_rect = gViewerWindow->getWindowRectScaled();
+            LL_INFOS("AlertToast") << "centred toast: channel rect " << getRect().mLeft << "," << getRect().mBottom << " - " << getRect().mRight << "," << getRect().mTop << ", toast was " << before_rect.getWidth() << "x"
+                                   << before_rect.getHeight() << " at " << before_rect.mLeft << "," << before_rect.mBottom << ", now " << toast_rect.getWidth() << "x" << toast_rect.getHeight() << " at " << toast_rect.mLeft << ","
+                                   << toast_rect.mBottom << ", window " << window_rect.getWidth() << "x" << window_rect.getHeight() << ", toast visible " << toast->getVisible() << ", parent " << (toast->getParent() ? toast->getParent()->getName() : std::string("none"))
+                                   << ", channel visible " << getVisible() << ", channel parent " << (getParent() ? getParent()->getName() : std::string("none")) << LL_ENDL;
+        }
     }
 }
 

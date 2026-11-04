@@ -1222,9 +1222,19 @@ S32 LLVkBridge::rtTexAnim()
     return rtShadowMode() != 0 ? LLVk::Rt::texAnim() : -1;
 }
 
+S32 LLVkBridge::rtSunNoise()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunNoise() : 1;
+}
+
 S32 LLVkBridge::rtSunSelfShadow()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunSelfShadow() : 1;
+}
+
+S32 LLVkBridge::rtSunPenRays()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunPenRays() : 0;
 }
 
 S32 LLVkBridge::rtHitRays()
