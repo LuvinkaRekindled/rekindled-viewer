@@ -690,7 +690,19 @@ void main()
     vec3 additive;
     vec3 atten;
 
-    calcAtmosphericVarsLinear(pos.xyz, gb.normal, light_dir, sunlit, amblit, additive, atten);
+    // <FS> the sky and HDRI pixels do not use the atmospherics (their branches below copy a colour): the scattering is only worked out for the others
+    const bool sky_pixel = GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_HDRI) || GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_SKIP_ATMOS);
+    if (sky_pixel)
+    {
+        sunlit = vec3(0.5);
+        amblit = vec3(0.5);
+        additive = vec3(0.0);
+        atten = vec3(1.0);
+    }
+    else
+    {
+        calcAtmosphericVarsLinear(pos.xyz, gb.normal, light_dir, sunlit, amblit, additive, atten);
+    }
 
     if (classic_mode > 0)
         sunlit *= 1.35;

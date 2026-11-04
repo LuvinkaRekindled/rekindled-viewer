@@ -1368,11 +1368,25 @@ float sampleSpotShadow(vec3 pos, vec3 norm, int index, vec2 pos_screen)
             if (index == 0)
             {
                 lpos = shadow_matrix[4]*spos;
-                shadow += pcfSpotShadow(shadowMap4, lpos, 0.8, spos.xy)*w;
             }
             else
             {
                 lpos = shadow_matrix[5]*spos;
+            }
+            // <FS> only the pixels inside the projector's frustum read this value (spotLightF.glsl discards the rest before it looks at the lightmap): outside the shadow map there is nothing to look up
+            {
+                vec2 stc_xy = lpos.xy / lpos.w;
+                if (lpos.w <= 0.0 || stc_xy.x < -0.05 || stc_xy.x > 1.05 || stc_xy.y < -0.05 || stc_xy.y > 1.05)
+                {
+                    return 1.0;
+                }
+            }
+            if (index == 0)
+            {
+                shadow += pcfSpotShadow(shadowMap4, lpos, 0.8, spos.xy)*w;
+            }
+            else
+            {
                 shadow += pcfSpotShadow(shadowMap5, lpos, 0.8, spos.xy)*w;
             }
             weight += w;

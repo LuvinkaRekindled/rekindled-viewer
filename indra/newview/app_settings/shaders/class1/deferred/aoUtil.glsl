@@ -33,7 +33,6 @@ uniform float ssao_factor_inv;
 
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
-uniform int ao_samples;          // <FS> 4: half the taps, a different half on each frame (even and odd kernel entries) for the upscaler to average (set only when the AO noise moves with it); anything else: all 8
 uniform float ao_noise_frame;    // <FS> set by the sun lightmap pass (the frame of the jitter sequence, 0 without the upscaler): the noise lookup of the AO moves on every frame so that the upscaler averages it (the sun shadow's own noise, rt_noise_frame, moves only with ray traced shadows)
 
 vec2 getScreenCoordinateAo(vec2 screenpos)
@@ -76,24 +75,6 @@ vec2 getKern(int i)
 }
 
 //calculate decreases in ambient lighting when crowded out (SSAO)
-void aoAccumulate(int ki, vec2 pos_screen, vec2 noise_reflect, float scale, vec3 pos_world, vec3 norm, inout float angle_hidden, inout float points)
-{
-    vec2 samppos_screen = pos_screen + scale * reflect(getKern(ki), noise_reflect);
-    vec3 samppos_world = getPositionAo(samppos_screen).xyz;
-
-    vec3 diff = pos_world - samppos_world;
-    float dist2 = dot(diff, diff);
-
-    // assume each sample corresponds to an occluding sphere with constant radius, constant x-sectional area
-    // --> solid angle shrinking by the square of distance
-    float funky_val = (dot((samppos_world - 0.05*norm - pos_world), norm) > 0.0) ? 1.0 : 0.0;
-    angle_hidden = angle_hidden + funky_val * min(1.0/dist2, ssao_factor_inv);
-
-    // 'blocked' samples (significantly closer to camera relative to pos_world) are "no data", not "no occlusion"
-    float diffz_val = (diff.z > -1.0) ? 1.0 : 0.0;
-    points = points + diffz_val;
-}
-
 float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen)
 {
     float ret = 1.0;
@@ -108,21 +89,26 @@ float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen)
 
     float scale = min(ssao_radius / -pos_world.z, ssao_max_radius);
 
-    // it was found that keeping # of samples a constant was the fastest, probably due to compiler optimizations (unrolling?): the two loops each have a constant count
-    if (ao_samples == 4)
+    // it was found that keeping # of samples a constant was the fastest, probably due to compiler optimizations (unrolling?)
+    for (int i = 0; i < 8; i++)
     {
-        int odd = int(ao_noise_frame) & 1;
-        for (int i = 0; i < 4; i++)
-        {
-            aoAccumulate(2 * i + odd, pos_screen, noise_reflect, scale, pos_world, norm, angle_hidden, points);
-        }
-    }
-    else
-    {
-        for (int i = 0; i < 8; i++)
-        {
-            aoAccumulate(i, pos_screen, noise_reflect, scale, pos_world, norm, angle_hidden, points);
-        }
+        vec2 samppos_screen = pos_screen + scale * reflect(getKern(i), noise_reflect);
+        vec3 samppos_world = getPositionAo(samppos_screen).xyz;
+
+        vec3 diff = pos_world - samppos_world;
+        float dist2 = dot(diff, diff);
+
+        // assume each sample corresponds to an occluding sphere with constant radius, constant x-sectional area
+        // --> solid angle shrinking by the square of distance
+        //radius is somewhat arbitrary, can approx with just some constant k * 1 / dist^2
+        //(k should vary inversely with # of samples, but this is taken care of later)
+
+        float funky_val = (dot((samppos_world - 0.05*norm - pos_world), norm) > 0.0) ? 1.0 : 0.0;
+        angle_hidden = angle_hidden + funky_val * min(1.0/dist2, ssao_factor_inv);
+
+        // 'blocked' samples (significantly closer to camera relative to pos_world) are "no data", not "no occlusion"
+        float diffz_val = (diff.z > -1.0) ? 1.0 : 0.0;
+        points = points + diffz_val;
     }
 
     angle_hidden = min(ssao_factor*angle_hidden/points, 1.0);
