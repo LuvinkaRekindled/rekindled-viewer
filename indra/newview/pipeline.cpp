@@ -12874,36 +12874,76 @@ void ll_scene_geo_frame(LLCullResult* cull)
                         continue;
                     }
                     {
-                        // DIAGNOSTIC (the ear blink hunt, LL_VK_FLIPDIAG=1): a rigged item whose first joint matrix jumps between consecutive frames (a real animation moves a little)
-                        static const bool flip_diag = getenv("LL_VK_FLIPDIAG") != nullptr;      // (off unless LL_VK_FLIPDIAG is set: run-viewer-flipdiag.bat)
+                        // DIAGNOSTIC (the ear blink hunt, LL_VK_FLIPDIAG, run-viewer-flipdiag2.bat): a rigged item with a joint that moves by more than 0.1 m in a frame and by about the same in the opposite direction in the frame
+                        // after (the A, B, A of a blink; a real animation does not reverse that hard) is logged: the joint, both steps, the avatar, whether it sits, its update period, the item. LL_VK_FLIPDIAG=1 watches every
+                        // avatar, any other value is a part of an avatar's name (any case). At most 6 lines an item and 300 a session.
+                        static const char* flip_env = getenv("LL_VK_FLIPDIAG");
+                        static const std::string flip_name = [&]() { std::string n = flip_env ? flip_env : ""; for (char& c : n) { c = (char)tolower((unsigned char)c); } return n == "1" ? std::string() : n; }();
+                        static const bool flip_diag = flip_env != nullptr;
                         if (flip_diag)
                         {
-                            struct Last { F32 m[12]; U32 frame; };
+                            struct Last { std::vector<F32> m, d; U32 frame = 0; int logged = 0; };
                             static std::unordered_map<U64, Last> last;
-                            static U64 reported = 0;
-                            F32 now_m[12];
-                            if (ll_frame_palette_first_joint(b.mOffset, now_m))
+                            static int logged_total = 0;
+                            static std::vector<F32> now_m;
+                            if (logged_total < 300 && ll_frame_palette_copy(b.mOffset, b.mJoints, now_m))
                             {
                                 const U64 key = ((U64)handle << 32) | item.mWire;
-                                auto it = last.find(key);
-                                if (it != last.end() && it->second.frame + 1 == (U32)gFrameCount)
+                                Last& l = last[key];
+                                const size_t joints = now_m.size() / 12;
+                                const bool consecutive = l.frame != 0 && l.frame + 1 == (U32)gFrameCount && l.m.size() == now_m.size();
+                                std::vector<F32> d(joints * 3, 0.f);
+                                if (consecutive)
                                 {
-                                    F32 jump = 0.f;
-                                    for (int k = 0; k < 12; ++k) { jump = llmax(jump, fabsf(now_m[k] - it->second.m[k])); }
-                                    if (jump > 0.25f && (++reported <= 400 || reported % 100 == 0))
+                                    int worst = -1;
+                                    F32 worst_len = 0.f;
+                                    for (size_t j = 0; j < joints; ++j)
                                     {
-                                        const LLVOAvatar* av = item.mInfo->mAvatar.get();
+                                        for (int k = 0; k < 3; ++k) { d[j * 3 + k] = now_m[j * 12 + 3 + 4 * k] - l.m[j * 12 + 3 + 4 * k]; }
+                                        if (l.d.size() == d.size())
+                                        {
+                                            const F32* dn = &d[j * 3];
+                                            const F32* dp = &l.d[j * 3];
+                                            const F32 now_len = sqrtf(dn[0] * dn[0] + dn[1] * dn[1] + dn[2] * dn[2]);
+                                            const F32 prev_len = sqrtf(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]);
+                                            const F32 dot = dn[0] * dp[0] + dn[1] * dp[1] + dn[2] * dp[2];
+                                            if (now_len > 0.1f && prev_len > 0.1f && now_len < 3.f && prev_len < 3.f && dot < -0.5f * now_len * prev_len && llmin(now_len, prev_len) > worst_len)
+                                            {
+                                                worst = (int)j;
+                                                worst_len = llmin(now_len, prev_len);
+                                            }
+                                        }
+                                    }
+                                    if (worst >= 0 && gFrameCount > 600 && l.logged < 6)
+                                    {
+                                        LLVOAvatar* av = item.mInfo->mAvatar.get();
                                         const LLControlAvatar* cav = dynamic_cast<const LLControlAvatar*>(av);
-                                        const LLVOAvatar* host = cav ? const_cast<LLControlAvatar*>(cav)->getAttachedAvatar() : av;
-                                        LL_INFOS("FlipDiag") << "frame " << gFrameCount << ": rigged item handle " << handle << " wire " << item.mWire << " type " << item.mType << " jump " << jump << " avatar " << (av ? av->getFullname() : std::string("none"))
-                                            << " skin hash " << (item.mInfo->mSkinInfo ? item.mInfo->mSkinInfo->mHash : 0ull) << " joints " << b.mJoints << " offset " << b.mOffset << " tris " << item.mInfo->mCount / 3
-                                            << " control avatar " << (cav ? "yes" : "no") << " host " << (host ? host->getFullname() : std::string("none")) << " host sitting " << (host && const_cast<LLVOAvatar*>(host)->isSitting() ? 1 : 0)
-                                            << " model matrix " << (item.mInfo->mModelMatrix ? "yes" : "no") << " fullbright " << (item.mInfo->mFullbright ? 1 : 0) << " glow " << (item.mInfo->mHasGlow ? 1 : 0) << " prev " << it->second.m[3] << "," << it->second.m[7] << "," << it->second.m[11]
-                                            << " now " << now_m[3] << "," << now_m[7] << "," << now_m[11] << LL_ENDL;
+                                        LLVOAvatar* host = cav ? const_cast<LLControlAvatar*>(cav)->getAttachedAvatar() : av;
+                                        bool name_ok = flip_name.empty();
+                                        if (!name_ok && host)
+                                        {
+                                            std::string full = host->getFullname();
+                                            for (char& c : full) { c = (char)tolower((unsigned char)c); }
+                                            name_ok = full.find(flip_name) != std::string::npos;
+                                        }
+                                        if (name_ok)
+                                        {
+                                            ++l.logged;
+                                            ++logged_total;
+                                            LL_INFOS("FlipDiag") << "frame " << gFrameCount << " item " << handle << "/" << item.mWire << " type " << item.mType << " joint " << worst << " of " << joints << " step before " << l.d[worst * 3] << "," << l.d[worst * 3 + 1] << "," << l.d[worst * 3 + 2]
+                                                << " step now " << d[worst * 3] << "," << d[worst * 3 + 1] << "," << d[worst * 3 + 2] << " | avatar " << (av ? av->getFullname() : std::string("none")) << " control " << (cav ? 1 : 0) << " host " << (host ? host->getFullname() : std::string("none"))
+                                                << " sitting " << (host && host->isSitting() ? 1 : 0) << " update period " << (av ? av->getUpdatePeriod() : -1) << " impostor " << (av && av->isImpostor() ? 1 : 0) << " culled " << (av && av->isCulled() ? 1 : 0)
+                                                << " skin " << (item.mInfo->mSkinInfo ? item.mInfo->mSkinInfo->mHash : 0ull) << " tris " << item.mInfo->mCount / 3 << " fullbright " << (item.mInfo->mFullbright ? 1 : 0)
+                                                << " glow " << (item.mInfo->mHasGlow ? 1 : 0) << LL_ENDL;
+                                        }
                                     }
                                 }
-                                Last& l = last[key];
-                                memcpy(l.m, now_m, sizeof(l.m));
+                                else
+                                {
+                                    l.logged = 0;
+                                }
+                                l.m = now_m;
+                                l.d.swap(d);
                                 l.frame = (U32)gFrameCount;
                             }
                         }

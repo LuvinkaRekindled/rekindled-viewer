@@ -187,6 +187,13 @@ void LLControlAvatar::matchVolumeTransform()
                 }
                 attach->updateWorldPRSParent();
                 LLVector3 joint_pos = attach->getWorldPosition();
+                if (attached_av->hasPendingGroundSitHover())
+                {
+                    // <FS> the animated object of an avatar that sits on the ground: this runs in the object loop, before the avatar's deferred motion update has added its hover offset to the root (the post motion
+                    // step), so the attachment point is one hover offset too low here. The drawable's own update (LLDrawable::updateXform) reads it again with the offset in, but it does not run in a frame where the
+                    // drawable did not move: the skeleton's root then stayed one hover offset down for that frame, and the animated object blinked between the two heights.
+                    joint_pos.mV[VZ] += attached_av->getHoverOffset().mV[VZ];
+                }
                 LLQuaternion joint_rot = attach->getWorldRotation();
                 LLVector3 obj_pos = mRootVolp->mDrawable->getPosition();
                 LLQuaternion obj_rot = mRootVolp->mDrawable->getRotation();

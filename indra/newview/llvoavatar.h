@@ -1301,6 +1301,9 @@ public:
 public:
     void            sitDown(bool bSitting);
     bool            isSitting(){return mIsSitting;}
+    // <FS> true while this avatar's deferred motion update (the batched pose blend, completeDeferredMotionUpdate) has not made its post motion step yet, and that step is going to add the ground sit hover
+    // offset to the root (updateCharacterPostMotion): until then the skeleton is one hover offset below where the frame ends
+    bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
     void            sitOnObject(LLViewerObject *sit_object);
     void            getOffObject();
     void            revokePermissionsOnObject(LLViewerObject *sit_object);

@@ -96,6 +96,7 @@
 #include "llviewertexturelist.h"
 #include "llviewerwindow.h"
 #include "llvoavatarself.h"
+#include "llcontrolavatar.h"
 #include "llvograss.h"
 #include "llworld.h"
 #include "pipeline.h"
@@ -942,6 +943,20 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             {
                 LL_CPU_ZONE("display: updateGeom");
                 gPipeline.updateGeom(max_geom_update_time);
+            }
+            {
+                // <FS> an animated object has a skeleton of its own that is only fully updated every few frames (its update period), but its root follows the object every frame (LLControlAvatar::matchVolumeTransform, run by the
+                // drawable's update just above): all its joints are dirty from then on, and the first thread that asks for a joint matrix recomputes it and writes it. The palette job on the pool and the main thread ask
+                // at the same time: two threads writing one skeleton's matrices tear them, which showed as a few triangles of that attachment (and only that one) jumping. Cleaned here, on this thread, once the roots have moved.
+                LL_CPU_ZONE("display: clean animated object skeletons");
+                for (LLCharacter* character : LLCharacter::sInstances)
+                {
+                    LLControlAvatar* cav = dynamic_cast<LLControlAvatar*>(character);
+                    if (cav && !cav->isDead())
+                    {
+                        cav->cleanJointMatrices();
+                    }
+                }
             }
         }
 
