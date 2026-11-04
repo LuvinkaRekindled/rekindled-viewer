@@ -150,6 +150,8 @@ bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigg
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
 void ll_frame_palette_flush();
+// DIAGNOSTIC (the ear blink hunt): the 12 floats of the first joint of the palette at a float offset of this frame's shared list (false when the offset is not in the list)
+bool ll_frame_palette_first_joint(U32 offset, F32* out12);
 U64 ll_frame_palette_frame();       // the frame the list belongs to (a build made in another frame names offsets of another list)
 bool ll_palette_shared();           // LL_VK_PALETTE_SHARED (default 1; 0 = a palette copy in every record, as before), LL_VK_PALETTE_SHARED_AB=<s> alternates (marker "[phase] shared palettes now ON/off")
 bool ll_rigged_indexed();           // LL_VK_RIGGED_INDEXED=1: the rigged records are drawn indexed (kind 26, the shaders get HAS_INDEXED_DRAW), fixed for the run

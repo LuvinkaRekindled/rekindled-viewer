@@ -248,6 +248,10 @@ extern LLShaderProgram         gDeferredAlphaUberPullProgram;          // <FS> i
 extern LLShaderProgram         gDeferredAlphaUberPullSkinProgram;
 extern bool                    gAlphaUberReady;
 extern bool                    gAlphaUberSkinReady;
+extern LLShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws
+extern LLShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
+extern bool                    gAlphaUberMatReady;
+extern bool                    gAlphaUberMatSkinReady;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
 extern bool                    gTerrainPullReady;
 // <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none

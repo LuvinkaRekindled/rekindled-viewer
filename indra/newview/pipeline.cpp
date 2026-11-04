@@ -10168,6 +10168,11 @@ static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_ol
     {
         ac.mEntry.mFlags |= LLVkBridge::GEO_FULLBRIGHT;     // item D1: the merged lit alpha program draws this one without lighting
     }
+    if (served && !pbr && material)
+    {
+        // item D2: the merged program shades it as the materials blend shader does: which maps it has
+        ac.mEntry.mFlags |= LLVkBridge::GEO_MATERIAL | ((mmask & 0x8) ? LLVkBridge::GEO_NORMAL_MAP : 0u) | ((mmask & 0x4) ? LLVkBridge::GEO_SPEC_MAP : 0u);
+    }
     ac.mServed = served;
     ac.mWhy = served ? WHY_SERVED : why;
 }
@@ -12867,6 +12872,41 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     if (b.mOffset == ~0u)
                     {
                         continue;
+                    }
+                    {
+                        // DIAGNOSTIC (the ear blink hunt, LL_VK_FLIPDIAG=1): a rigged item whose first joint matrix jumps between consecutive frames (a real animation moves a little)
+                        static const bool flip_diag = getenv("LL_VK_FLIPDIAG") != nullptr;      // (off unless LL_VK_FLIPDIAG is set: run-viewer-flipdiag.bat)
+                        if (flip_diag)
+                        {
+                            struct Last { F32 m[12]; U32 frame; };
+                            static std::unordered_map<U64, Last> last;
+                            static U64 reported = 0;
+                            F32 now_m[12];
+                            if (ll_frame_palette_first_joint(b.mOffset, now_m))
+                            {
+                                const U64 key = ((U64)handle << 32) | item.mWire;
+                                auto it = last.find(key);
+                                if (it != last.end() && it->second.frame + 1 == (U32)gFrameCount)
+                                {
+                                    F32 jump = 0.f;
+                                    for (int k = 0; k < 12; ++k) { jump = llmax(jump, fabsf(now_m[k] - it->second.m[k])); }
+                                    if (jump > 0.25f && (++reported <= 400 || reported % 100 == 0))
+                                    {
+                                        const LLVOAvatar* av = item.mInfo->mAvatar.get();
+                                        const LLControlAvatar* cav = dynamic_cast<const LLControlAvatar*>(av);
+                                        const LLVOAvatar* host = cav ? const_cast<LLControlAvatar*>(cav)->getAttachedAvatar() : av;
+                                        LL_INFOS("FlipDiag") << "frame " << gFrameCount << ": rigged item handle " << handle << " wire " << item.mWire << " type " << item.mType << " jump " << jump << " avatar " << (av ? av->getFullname() : std::string("none"))
+                                            << " skin hash " << (item.mInfo->mSkinInfo ? item.mInfo->mSkinInfo->mHash : 0ull) << " joints " << b.mJoints << " offset " << b.mOffset << " tris " << item.mInfo->mCount / 3
+                                            << " control avatar " << (cav ? "yes" : "no") << " host " << (host ? host->getFullname() : std::string("none")) << " host sitting " << (host && const_cast<LLVOAvatar*>(host)->isSitting() ? 1 : 0)
+                                            << " model matrix " << (item.mInfo->mModelMatrix ? "yes" : "no") << " fullbright " << (item.mInfo->mFullbright ? 1 : 0) << " glow " << (item.mInfo->mHasGlow ? 1 : 0) << " prev " << it->second.m[3] << "," << it->second.m[7] << "," << it->second.m[11]
+                                            << " now " << now_m[3] << "," << now_m[7] << "," << now_m[11] << LL_ENDL;
+                                    }
+                                }
+                                Last& l = last[key];
+                                memcpy(l.m, now_m, sizeof(l.m));
+                                l.frame = (U32)gFrameCount;
+                            }
+                        }
                     }
                     ++asked;
                     tris_all += item.mInfo->mCount / 3;

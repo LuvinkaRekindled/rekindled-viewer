@@ -247,7 +247,10 @@ namespace LLVkBridge
         GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
         GEO_STRIP = 8,              // S6.6: the draw is a triangle strip (a record of one entry)
         GEO_PARTICLE_ROWS = 16,     // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
-        GEO_FULLBRIGHT = 32         // item D1 (alpha runs): a fullbright alpha draw: the merged lit alpha program (ALPHA_UBER) skips the lighting for it
+        GEO_FULLBRIGHT = 32,        // item D1 (alpha runs): a fullbright alpha draw: the merged lit alpha program (ALPHA_UBER) skips the lighting for it
+        GEO_MATERIAL = 64,          // item D2 (alpha runs): a material alpha draw: the merged program (ALPHA_UBER_MAT) shades it as the materials blend shader does
+        GEO_NORMAL_MAP = 128,       // ... with a normal map (the row's mapSlots low half)
+        GEO_SPEC_MAP = 256          // ... with a specular map (the row's mapSlots high half)
     };
     struct GeoEntry
     {

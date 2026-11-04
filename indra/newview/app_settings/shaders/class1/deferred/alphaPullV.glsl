@@ -190,6 +190,19 @@ flat out uint vary_slot;
 #ifdef ALPHA_UBER
 flat out uint vary_fullbright;       // item D1: 1 = the draw is a fullbright one (the merged lit alpha program skips the lighting)
 #endif
+#ifdef ALPHA_UBER_MAT
+// item D2: the merged program also draws the material alpha draws (materialPullV.glsl + the blend path of materialF.glsl): the row's flags say which (bit 6: a material, bit 7: its normal map, bit 8: its
+// specular map), the rest is what materialPullV passes on
+flat out uint vary_material;         // bit 0: a material draw, bit 1: with a normal map, bit 2: with a specular map
+out vec3 vary_tangent;
+out vec2 vary_texcoord1;
+out vec2 vary_texcoord2;
+flat out float vary_sign;
+flat out uint vary_slot_normal;
+flat out uint vary_slot_specular;
+flat out vec4 vary_specular;         // the specular colour (rgb) and glossiness (a)
+flat out vec2 vary_matparams;        // the environment intensity, the emissive brightness
+#endif
 #ifdef LL_MASK_CUTOFF
 flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw
 #endif
@@ -245,10 +258,11 @@ void main()
     {
         texcoord = vec2(((particle_corner & 2u) != 0u) ? 1.0 : 0.0, ((particle_corner & 1u) != 0u) ? 0.0 : 1.0);
     }
+    mat4 ll_tm = mat4(1.0);
     if (pk.pad.x != 0u)
     {
         // <FS> a texture animation's slot holds its parameters (llvktexanim.h): the matrix is made against the clock in slot 0
-        mat4 ll_tm = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
+        ll_tm = GeoTexMatrices(ll_packet_texmats).t[pk.pad.x];
         if (ll_tm[3][3] == 0.0) ll_tm = ll_texanim_core(ll_tm, GeoTexMatrices(ll_packet_texmats).t[0][0].yz);
         texcoord = (ll_tm * vec4(texcoord, 0.0, 1.0)).xy;
     }
@@ -277,6 +291,43 @@ void main()
     vary_slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
 #ifdef ALPHA_UBER
     vary_fullbright = ((pk.flags & 32u) != 0u) ? 1u : 0u;
+#endif
+#ifdef ALPHA_UBER_MAT
+    {
+        // item D2: what materialPullV.glsl passes on, for the draws that are materials (the others leave it, the fragment shader does not read it)
+        const uint mat_flags = (pk.flags >> 6u) & 7u;
+        vary_material = mat_flags;
+        vary_tangent = vec3(0.0, 0.0, 1.0);
+        vary_texcoord1 = vec2(0.0);
+        vary_texcoord2 = vec2(0.0);
+        vary_sign = 1.0;
+        vary_slot_normal = 0u;
+        vary_slot_specular = 0u;
+        vary_specular = vec4(0.0);
+        vary_matparams = vec2(0.0);
+        if ((mat_flags & 1u) != 0u)
+        {
+            vary_specular = pk.specular;
+            vary_matparams = vec2(pk.envIntensity, pk.brightness);
+            vary_slot_normal = pk.mapSlots & 0xFFFFu;
+            vary_slot_specular = pk.mapSlots >> 16;
+            if ((mat_flags & 2u) != 0u)
+            {
+                vec4 tangent = GeoVec4(pk.tangents).v[index];
+                vary_texcoord1 = (ll_tm * vec4(GeoVec2(pk.texcoords1).t[index], 0.0, 1.0)).xy;
+#ifdef HAS_SKIN
+                vary_tangent = normalize(mat3(m.mv) * (sm * tangent.xyz));
+#else
+                vary_tangent = normalize(mat3(m.n0.xyz, m.n1.xyz, m.n2.xyz) * tangent.xyz);
+#endif
+                vary_sign = tangent.w;
+            }
+            if ((mat_flags & 4u) != 0u)
+            {
+                vary_texcoord2 = (ll_tm * vec4(GeoVec2(pk.texcoords2).t[index], 0.0, 1.0)).xy;
+            }
+        }
+    }
 #endif
 #ifdef LL_MASK_CUTOFF
     minimum_alpha = pk.cutoff;
