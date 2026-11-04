@@ -32,9 +32,11 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 vec4 getPosition(vec2 pos_screen);
+float getDepth(vec2 pos_screen);
 vec4 getNorm(vec2 pos_screen);
 
 uniform sampler2D diffuseRect;     // <FS> last frame's shadow history (rg: shadow, depth; b: frames averaged) when RenderRTShadowAdaptiveRays asks, else the G-buffer albedo (unused)
+uniform int spot_shadow_mask;       // <FS> bit 0 / 1: the projector light with a shadow map in slot 0 / 1 exists this frame (pipeline.cpp, mShadowSpotLight). Only those lights read the lightmap's b / a channel (spotLightF.glsl proj_shadow_idx), so nothing is sampled for the others
 uniform float adapt_hist;            // 1: diffuseRect is the history
 #if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
 void rtSetAdaptCount(float c);      // (shadowUtil.glsl defines it only with the ray traced shadows)
@@ -47,6 +49,12 @@ float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen);
 void main()
 {
     vec2 pos_screen = vary_fragcoord.xy;
+    // <FS> a sky pixel (nothing drawn: the far plane) has no shadow or occlusion to work out: the soften pass takes its colour from the G-buffer and never reads the lightmap there
+    if (getDepth(pos_screen) >= 1.0)
+    {
+        frag_color = vec4(1.0);
+        return;
+    }
     vec4 pos  = getPosition(pos_screen);
     vec4 norm = getNorm(pos_screen);
 
@@ -60,8 +68,8 @@ void main()
     vec4 col;
     col.r = sampleDirectionalShadow(pos.xyz, norm.xyz, pos_screen);
     col.g = calcAmbientOcclusion(pos, norm.xyz, pos_screen);
-    col.b = sampleSpotShadow(pos.xyz, norm.xyz, 0, pos_screen);
-    col.a = sampleSpotShadow(pos.xyz, norm.xyz, 1, pos_screen);
+    col.b = (spot_shadow_mask & 1) != 0 ? sampleSpotShadow(pos.xyz, norm.xyz, 0, pos_screen) : 1.0;
+    col.a = (spot_shadow_mask & 2) != 0 ? sampleSpotShadow(pos.xyz, norm.xyz, 1, pos_screen) : 1.0;
 
     frag_color = clamp(col, vec4(0), vec4(1));
 }

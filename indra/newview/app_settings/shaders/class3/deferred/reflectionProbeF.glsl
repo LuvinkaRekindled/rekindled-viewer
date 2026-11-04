@@ -176,6 +176,14 @@ int getStartIndex(vec3 pos)
 #endif
 }
 
+// <FS> one past the last probe that can reach the depth bucket of pos (refBucket[].y, made in LLReflectionMapManager::updateUniforms from the sphere the loop below tests): the loop used to test every probe
+// from the start to the end of the whole list, and a pixel 10 m away rejected the ones that begin 50 m out one by one. The same probes are found, in the same order.
+int getEndIndex(vec3 pos)
+{
+    int idx = clamp(int(floor(-pos.z)), 0, 255);
+    return min(refBucket[idx].y, refmapCount);
+}
+
 // call before sampleRef
 // populate "probeIndex" with N probe indices that influence pos where N is REF_SAMPLE_COUNT
 void preProbeSample(vec3 pos)
@@ -183,9 +191,10 @@ void preProbeSample(vec3 pos)
 #if REFMAP_LEVEL > 0
 
     int start = getStartIndex(pos);
+    int end = getEndIndex(pos);
 
     // TODO: make some sort of structure that reduces the number of distance checks
-    for (int i = start; i < refmapCount; ++i)
+    for (int i = start; i < end; ++i)
     {
         // found an influencing probe
         if (shouldSampleProbe(i, pos))

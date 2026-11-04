@@ -1105,7 +1105,7 @@ void LLReflectionMapManager::updateUniforms()
     for (int i = 0; i < 256; ++i)
     {
         mProbeData.refBucket[i][0] = mReflectionProbeCount;
-        mProbeData.refBucket[i][1] = mReflectionProbeCount;
+        mProbeData.refBucket[i][1] = 0;     // (the end index: one past the last probe that reaches the bucket, filled in below)
         mProbeData.refBucket[i][2] = mReflectionProbeCount;
         mProbeData.refBucket[i][3] = mReflectionProbeCount;
         minDepth[i] = FLT_MAX;
@@ -1187,6 +1187,16 @@ void LLReflectionMapManager::updateUniforms()
             modelview.affineTransform(refmap->mOrigin, oa);
             mProbeData.refSphere[count].set(oa.getF32ptr());
             mProbeData.refSphere[count].mV[3] = refmap->mRadius;
+            if (refmap != mDefaultProbe)
+            {
+                // the buckets this probe's bounding sphere reaches, from the sphere the shader tests (after the live tracking above, so a probe object that moved this frame is not cut off by last frame's depth range)
+                const S32 end_min = llclamp(llfloor(-oa.getF32ptr()[2] - refmap->mRadius), 0, 255);
+                const S32 end_max = llclamp(llfloor(-oa.getF32ptr()[2] + refmap->mRadius), 0, 255);
+                for (S32 b = end_min; b <= end_max; ++b)
+                {
+                    mProbeData.refBucket[b][1] = llmax(mProbeData.refBucket[b][1], refmap->mProbeIndex + 1);
+                }
+            }
         }
 
         mProbeData.refIndex[count][0] = refmap->mCubeIndex;

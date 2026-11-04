@@ -69,6 +69,10 @@ Fix: alphaF.glsl calls preProbeSample + sampleProbeAmbient itself (classic mode 
 
 SSAO taps (aoUtil.glsl, uniform ao_samples, rt-debug.txt aosamples=4/8, LL_VK_AOSAMPLES=4): 4 taps a frame, alternating halves, only with the upscaler's moving AO noise; default 8, built, not lapped (the lap that should have measured it ended early).
 
+## 4j. Lighting passes: what was wasteful (2026-11-04, late)
+
+Switch-off diagnostics (one lap each, 15 s steps, no zone timers): sun lightmap pass: the two spot shadow lookups were 0.42 ms of the 1.46 ms full-screen group, the sun shadow 0.19, the AO 0.2 (4 instead of 8 AO taps changed nothing: removed); soften pass: 0.75 ms of which the probe lookup 0.2 (the G-buffer read and write floor 0.47), atmospherics 0.035. Fixes (all the same picture): the sun pass samples the spot shadow maps only for a projector light that has a shadow map (uniform spot_shadow_mask from mShadowSpotLight) and only for pixels inside that map's frustum (the spot light shader reads the value only inside its projector frustum), sky pixels (depth at the far plane) skip the lightmap work, the soften pass skips the atmospherics for sky and HDRI pixels, the probe list loop stops at the last probe that reaches the depth bucket (refBucket[].y, no measured gain, kept because the work was pure waste), the hero probe taps skip where their weight is 0, alphaF only asks for the ambient probe term. Lap: the full-screen group 1.34-1.46 -> 0.91 ms, GPU a frame 7.8-8.3 -> 7.6-7.7 ms, loop 9.8-9.9 ms (CPU limited: main thread and worker both at 100%).
+
 ## 5. Order and what each step is judged by
 1. A first (self-contained, GPU only, a viewer-side cache and a pool job; no worker change). Judged by G1-G4 above.
 2. C's measurement (cheap, no code in the draw path), then B (the larger change in the worker), then C's build.
