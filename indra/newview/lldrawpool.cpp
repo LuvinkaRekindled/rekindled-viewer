@@ -950,6 +950,17 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     return true;
 }
 
+bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
+{
+    std::lock_guard<std::mutex> lock(sFramePal.mMutex);
+    if (sFramePal.mFrame != gFrameCount || (size_t)offset + (size_t)joints * 12 > sFramePal.mData.size())
+    {
+        return false;
+    }
+    out.assign(sFramePal.mData.begin() + offset, sFramePal.mData.begin() + offset + (size_t)joints * 12);
+    return true;
+}
+
 bool ll_frame_palette_first_joint(U32 offset, F32* out12)
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
