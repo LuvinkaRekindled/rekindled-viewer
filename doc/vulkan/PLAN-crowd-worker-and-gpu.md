@@ -61,6 +61,14 @@ Result (noturn lap, key 0/1/0/1/0, 20 s each): 73% of the items got a list, tria
 
 **D2.** Kind 29 is 269 records a submit at 4.18 us (1.125 ms; with the phase/zone timers on, of the 3.5 us a record 0.18 is stamp+flight, 0.58 ranges and copy, 0.37 ranges loop, 0.36 uniforms, 0.31 prepare_draw+vertex input: none of it is the program change itself, so the cost is per record). The remaining program changes after D1 are mostly lit <-> material 13 (normal + spec map) and lit <-> material 5 (spec map), static and rigged. Fewer records by folding them into the merged program: about 150 of 269 a submit, so about 0.6-0.7 ms a frame of worker (D1 delivered 47% of its predicted saving; the plan's 2.3 ms was too high). The work: materialF (blend path, 445 lines, its own lighting) and alphaF are different shaders; the merged program holds both paths behind row flags (normal map / specular map), with the vertex side from materialPullV. Risk: register pressure on the GPU (A/B as for D1) and a bigger shader to keep identical in output.
 
+## 4i. The static alpha fragment shader: the probe call (2026-11-04, late)
+
+Diagnostic (a uniform alphadbg switched parts of alphaF.glsl off, one lap, 15 s steps, no zone timers: the zone timers load the main thread and drop the GPU to 50%, never use them for an A/B): static alpha runs 0.81-1.09 ms; without the sun shadow, the atmospherics or the 7 local lights no change; without the whole probe call 0.35 ms; with only the probe list (preProbeSample) or the list plus sampleProbeAmbient also 0.35 ms. So the cost was the rest of sampleReflectionProbesLegacy: the hero probe taps and the screen space reflection march it makes for a transparent surface whatever the glossiness, results alphaF never reads (it only uses the ambient term).
+
+Fix: alphaF.glsl calls preProbeSample + sampleProbeAmbient itself (classic mode 0 only; classic mode leaves the ambient term at amblit, as the legacy call does): the same value, no picture change. Lap after the change: static alpha runs 0.34 ms (was 0.8-1.1), rigged alpha runs 0.47 (was 0.55), GPU utilisation fell to about 79% (the GPU is no longer the limit at this spot). The probe-list end bound I tried first (refBucket.y, loop to the last probe that reaches the bucket) changed nothing and was removed. The materials blend variants (materialF.glsl) use the gloss and legacy terms, so they keep the full call; PBR alpha (pbralphaF.glsl) not looked at.
+
+SSAO taps (aoUtil.glsl, uniform ao_samples, rt-debug.txt aosamples=4/8, LL_VK_AOSAMPLES=4): 4 taps a frame, alternating halves, only with the upscaler's moving AO noise; default 8, built, not lapped (the lap that should have measured it ended early).
+
 ## 5. Order and what each step is judged by
 1. A first (self-contained, GPU only, a viewer-side cache and a pool job; no worker change). Judged by G1-G4 above.
 2. C's measurement (cheap, no code in the draw path), then B (the larger change in the worker), then C's build.

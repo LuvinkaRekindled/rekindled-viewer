@@ -728,6 +728,11 @@ uniform samplerCubeArray   heroProbes;
 
 void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
 {
+    // <FS> below this the weight is 0 (see the mix on glossiness below): the box or sphere weight and the cube map lookup of the tap changed nothing, for every pixel of every lit pass (2026-11-04)
+    if (glossiness <= 0.75)
+    {
+        return;
+    }
     float clipDist = dot(pos.xyz, clipPlane.xyz) + clipPlane.w;
     float w = 0;
     float dw = 0;
@@ -922,7 +927,10 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
 #endif
 
     tapHeroProbe(glossenv, pos, norm, glossiness);
-    tapHeroProbe(legacyenv, pos, norm, 1.0);
+    if (envIntensity > 0.0)
+    {
+        tapHeroProbe(legacyenv, pos, norm, 1.0);        // <FS> every caller uses the legacy environment term only with an environment intensity above 0 (applyLegacyEnv mixes it in by that intensity)
+    }
 
     glossenv = clamp(glossenv, vec3(0), vec3(10));
 }

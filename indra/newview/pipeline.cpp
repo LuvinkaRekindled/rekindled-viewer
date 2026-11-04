@@ -19469,6 +19469,32 @@ static F32 halton(U32 index, U32 base)
 // <FS> <work>/rt-debug.txt dlssq=N (default -1: the setting FSVkDLSSQuality decides): the DLSS quality changed live without touching the setting, so one lap can compare qualities in turn
 // (the key driver of the lap scripts, a same-lap A/B). Read here, by the viewer, once per half second: the ray scene's reader only runs with ray tracing on. Returns true when the value changed.
 static S32 sDlssqOverride = -1;
+
+// <FS> SSAO taps: 4 (a different half on each frame, for the upscaler's accumulation to average) or 8 (all). LL_VK_AOSAMPLES=4 starts it at 4; rt-debug.txt aosamples=4/8 switches it live (a same-lap A/B), read once per half second.
+// Only used when the AO noise moves with the upscaler (below): a fixed pattern with half the taps would show.
+static S32 ao_samples_wanted()
+{
+    static const S32 env = getenv("LL_VK_AOSAMPLES") ? atoi(getenv("LL_VK_AOSAMPLES")) : 8;
+    static S32 live = -1;
+    static std::chrono::steady_clock::time_point last;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last >= std::chrono::milliseconds(500))
+    {
+        last = now;
+        S32 v = -1;
+        std::ifstream in("<work>/rt-debug.txt");
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (line.compare(0, 10, "aosamples=") == 0)
+            {
+                v = atoi(line.c_str() + 10);
+            }
+        }
+        live = v;
+    }
+    return live > 0 ? live : env;
+}
 static bool pollDlssqOverride()
 {
     static std::chrono::steady_clock::time_point last;
@@ -23198,6 +23224,8 @@ void LLPipeline::renderDeferredLighting()
                     static const int ao_noise_mode = getenv("LL_VK_AO_NOISE") ? atoi(getenv("LL_VK_AO_NOISE")) : 1;
                     const bool ao_noise_moves = sDLSS && (ao_noise_mode == 1 || (ao_noise_mode == 2 && LLVkBridge::rtShadowMode()));
                     sun_shader.uniform1f(ao_frame_s, ao_noise_moves ? (F32)(mJitterIndex % 64) : 0.f);
+                    static LLStaticHashedString ao_samples_s("ao_samples");
+                    sun_shader.uniform1i(ao_samples_s, (ao_noise_moves && ao_samples_wanted() == 4) ? 4 : 8);
                 }
 
                 if (LLVkBridge::rtShadowMode())
