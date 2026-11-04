@@ -799,6 +799,11 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
         if (!fbPlainShaders()) extra_code_text[extra_code_count++] = strdup("    llFbNote(vary_slot, texcoord);\n");
         extra_code_text[extra_code_count++] = strdup("    return texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))], texcoord);\n");
         extra_code_text[extra_code_count++] = strdup("}\n");
+        if (defines->find("ALPHA_UBER_MAT") != defines->end())
+        {
+            // <FS> item D2: the merged alpha program also reads the normal and specular maps of a material draw from the table (the slots come from the vertex shader, declared in alphaF.glsl)
+            extra_code_text[extra_code_count++] = strdup(fbPlainShaders() ? "#define llFbTex(slot, uv) texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv)\n" : "vec4 llFbTex(uint slot, vec2 uv)\n{\n    llFbNote(slot, uv);\n    return texture(ll_bindless_textures[nonuniformEXT(LL_HM(slot))], uv);\n}\n");
+        }
     }
     else if (pull_material)
     {

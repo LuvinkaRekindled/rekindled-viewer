@@ -639,13 +639,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // draw in the blend order are one run. LL_VK_ALPHAUBER=1 starts it on, rt-debug.txt alphauber=0/1 switches it live (a same-lap A/B).
     static const bool uber_env = []() { const char* e = getenv("LL_VK_ALPHAUBER"); return !e || atoi(e) != 0; }();      // on unless LL_VK_ALPHAUBER=0 (the user judged the picture: fine, 2026-11-04)
     static S32 uber_live = -1;
+    // item D2: the merged program also draws the material alpha draws (the row's GEO_MATERIAL flags). LL_VK_ALPHAMAT=0 starts it off, rt-debug.txt alphamat=0/1 switches it live (a same-lap A/B against D1).
+    static const bool mat_env = []() { const char* e = getenv("LL_VK_ALPHAMAT"); return !e || atoi(e) != 0; }();
+    static S32 mat_live = -1;
     {
         static std::chrono::steady_clock::time_point uber_last;
         const auto uber_now = std::chrono::steady_clock::now();
         if (uber_now - uber_last >= std::chrono::milliseconds(500))
         {
             uber_last = uber_now;
-            S32 v = -1;
+            S32 v = -1, vm = -1;
             std::ifstream in("D:/claude/rt-debug.txt");
             std::string line;
             while (std::getline(in, line))
@@ -654,17 +657,27 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
                     v = atoi(line.c_str() + 10);
                 }
+                else if (line.compare(0, 9, "alphamat=") == 0)
+                {
+                    vm = atoi(line.c_str() + 9);
+                }
             }
             uber_live = v;
+            mat_live = vm;
         }
     }
     const bool uber_ctx = (uber_live >= 0 ? uber_live != 0 : uber_env) && gAlphaUberReady && (!rigged || gAlphaUberSkinReady) && !depth_only && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender;
     // (the HUD draws all its plain draws with its fullbright program; the depth only passes draw lit and fullbright ones with the mask program)
+    const bool mat_ctx = uber_ctx && (mat_live >= 0 ? mat_live != 0 : mat_env) && gAlphaUberMatReady && (!rigged || gAlphaUberMatSkinReady);
     auto run_key = [&](U32 key) -> int
     {
         if (uber_ctx && (key & 0xFF) == 1)
         {
             return (int)(key & ~0xFFu);         // a fullbright draw runs with the lit ones (the merged program)
+        }
+        if (mat_ctx && ((key & 0xFF) == 3 || (key & 0xFF) == 7 || (key & 0xFF) == 11 || (key & 0xFF) == 15))
+        {
+            return (int)(key & ~0xFFu);         // item D2: a material blend draw (the materials 1, 5, 9, 13: the program 2 + the mask) runs with the lit ones too
         }
         return (depth_only || LLPipeline::sRenderingHUDs) && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
     };
@@ -1008,7 +1021,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         else
         {
             pull = LLPipeline::sImpostorRender ? (skinned ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram)
-                : (uber_ctx ? (skinned ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram));
+                : (mat_ctx ? (skinned ? &gDeferredAlphaUberMatPullSkinProgram : &gDeferredAlphaUberMatPullProgram)
+                    : (uber_ctx ? (skinned ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram) : (skinned ? &gDeferredAlphaPullSkinProgram : &gDeferredAlphaPullProgram)));
         }
         if (std::find(primed_programs.begin(), primed_programs.end(), pull) == primed_programs.end())
         {   // the first run of this program in this pass: its per pass uniforms (gamma, water planes, sun shadow settings, minimum alpha) for this view

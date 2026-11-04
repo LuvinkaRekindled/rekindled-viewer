@@ -295,6 +295,10 @@ LLShaderProgram            gDeferredAlphaUberPullProgram;          // <FS> item 
 LLShaderProgram            gDeferredAlphaUberPullSkinProgram;
 bool                       gAlphaUberReady = false;
 bool                       gAlphaUberSkinReady = false;
+LLShaderProgram            gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws (ALPHA_UBER_MAT)
+LLShaderProgram            gDeferredAlphaUberMatPullSkinProgram;
+bool                       gAlphaUberMatReady = false;
+bool                       gAlphaUberMatSkinReady = false;
 bool                       gAlphaMaterialPullReady = false;
 LLShaderProgram            gDeferredPBRAlphaPullProgram;
 bool                       gAlphaPbrPullReady = false;
@@ -1473,6 +1477,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaUberPullProgram.unload();
         gDeferredAlphaUberPullSkinProgram.unload();
         gAlphaUberReady = gAlphaUberSkinReady = false;
+        gDeferredAlphaUberMatPullProgram.unload();
+        gDeferredAlphaUberMatPullSkinProgram.unload();
+        gAlphaUberMatReady = gAlphaUberMatSkinReady = false;
         gDeferredFullbrightPullProgram.unload();
         gDeferredFullbrightPullSkinProgram.unload();
         gFullbrightPullReady = false;
@@ -2639,6 +2646,65 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             else
             {
                 LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: lit and fullbright alpha runs stay separate" << LL_ENDL;
+                shader->unload();
+                break;
+            }
+        }
+    }
+
+    // <FS> item D2 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the same merged program with the material draws too (ALPHA_UBER_MAT: the row's GEO_MATERIAL flags, the blend path of materialF.glsl). Optional: without it
+    // the material runs are drawn by their own programs as before.
+    gAlphaUberMatReady = gAlphaUberMatSkinReady = false;
+    if (success && gAlphaUberReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaUberSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredAlphaUberMatPullSkinProgram : &gDeferredAlphaUberMatPullProgram;
+            shader->mName = skin ? "Deferred Alpha Uber Material Pull Skin Shader" : "Deferred Alpha Uber Material Pull Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesLighting = false;
+            shader->mFeatures.hasLighting = false;
+            shader->mFeatures.isAlphaLighting = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasShadows = use_sun_shadow;
+            shader->mFeatures.hasReflectionProbes = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("USE_VERTEX_COLOR", "1");
+            shader->addPermutation("HAS_ALPHA_MASK", "1");
+            shader->addPermutation("USE_INDEXED_TEX", "1");
+            if (use_sun_shadow && !alpha_noshadow())
+            {
+                shader->addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            shader->addPermutation("ALPHA_UBER", "1");
+            shader->addPermutation("ALPHA_UBER_MAT", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (shader->createShader())
+            {
+                shader->mFeatures.calculatesLighting = true;
+                shader->mFeatures.hasLighting = true;
+                (skin ? gAlphaUberMatSkinReady : gAlphaUberMatReady) = true;
+            }
+            else
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the material alpha runs stay separate" << LL_ENDL;
                 shader->unload();
                 break;
             }

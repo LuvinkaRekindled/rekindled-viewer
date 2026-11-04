@@ -1826,6 +1826,8 @@ void LLEnvironment::update(const LLViewerCamera * cam)
     gDeferredFullbrightAlphaPullProgram.mUniformsDirty = true;
     gDeferredAlphaUberPullProgram.mUniformsDirty = true;        // (item D1)
     gDeferredAlphaUberPullSkinProgram.mUniformsDirty = true;
+    gDeferredAlphaUberMatPullProgram.mUniformsDirty = true;     // (item D2)
+    gDeferredAlphaUberMatPullSkinProgram.mUniformsDirty = true;
     gDeferredFullbrightPullProgram.mUniformsDirty = true;       // (S6 X1)
     gDeferredFullbrightPullSkinProgram.mUniformsDirty = true;
     gDeferredFullbrightAlphaMaskPullProgram.mUniformsDirty = true;      // (S6 X3)

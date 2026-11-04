@@ -87,6 +87,23 @@ void calcAtmosphericVars(vec3 inPositionEye, vec3 light_dir, float ambFactor, ou
 
 void preProbeSample(vec3 pos);
 vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
+#ifdef ALPHA_UBER_MAT
+// item D2 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the material alpha draws, shaded as the blend path of materialF.glsl does (the same lighting, the same terms), chosen per draw by the flags the vertex shader
+// passes (alphaPullV.glsl). The code below is that path with its compile time choices (normal map, specular map) made at run time and its samplers read from the bindless table.
+flat in uint vary_material;
+in vec3 vary_tangent;
+in vec2 vary_texcoord1;
+in vec2 vary_texcoord2;
+flat in float vary_sign;
+flat in uint vary_slot_normal;
+flat in uint vary_slot_specular;
+flat in vec4 vary_specular;
+flat in vec2 vary_matparams;
+uniform sampler2D lightFunc;
+void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+void applyGlossEnv(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 norm);
+void applyLegacyEnv(inout vec3 color, vec3 legacyenv, vec4 spec, vec3 pos, vec3 norm, float envIntensity);
+#endif
 void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit_linear);
 
@@ -177,6 +194,240 @@ vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 diffuse, vec3 v, vec3 n, vec
     return col;
 }
 
+#ifdef ALPHA_UBER_MAT
+vec3 matPointLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spec, vec3 v, vec3 n, vec4 lp, vec3 ln, float la, float fa, float is_pointlight, inout float glare, float ambiance)
+{
+    // SL-14895 inverted attenuation work-around (as materialF.glsl)
+    float falloff_factor = (12.0 * fa) - 9.0;
+    float inverted_la = falloff_factor / la;
+
+    vec3 col = vec3(0);
+
+    vec3 lv = lp.xyz - v;
+    float dist = length(lv);
+    float da = 1.0;
+
+    dist /= inverted_la;
+
+    if (dist > 0.0 && inverted_la > 0.0)
+    {
+        lv = normalize(lv);
+
+        float dist_atten = clamp(1.0 - (dist - 1.0*(1.0 - fa)) / fa, 0.0, 1.0);
+        dist_atten *= dist_atten;
+        dist_atten *= 2.0f;
+
+        if (dist_atten <= 0.0)
+        {
+            return col;
+        }
+
+        float spot = max(dot(-ln, lv), is_pointlight);
+        da *= spot*spot; // GL_SPOT_EXPONENT=2
+
+        da *= dot(n, lv);
+
+        float lit = 0.0f;
+
+        float amb_da = ambiance;
+        if (da >= 0)
+        {
+            lit = clamp(da * dist_atten, 0.0, 1.0);
+            col = lit * light_col * diffuse;
+            amb_da += (da*0.5 + 0.5) * ambiance;
+        }
+        amb_da += (da*da*0.5 + 0.5) * ambiance;
+        amb_da *= dist_atten;
+        amb_da = min(amb_da, 1.0f - lit);
+
+        if (spec.a > 0.0)
+        {
+            vec3 h = normalize(lv + npos);
+            float nh = dot(n, h);
+            float nv = dot(n, npos);
+            float vh = dot(npos, h);
+            float sa = nh;
+            float fres = pow(1 - dot(h, npos), 5)*0.4 + 0.5;
+
+            float gtdenom = 2 * nh;
+            float gt = max(0, min(gtdenom * nv / vh, gtdenom * da / vh));
+
+            if (nh > 0.0)
+            {
+                float scol = fres*texture(lightFunc, vec2(nh, spec.a)).r*gt / (nh*da);
+                vec3 speccol = lit*scol*light_col.rgb*spec.rgb;
+                speccol = clamp(speccol, vec3(0), vec3(1));
+                col += speccol;
+
+                float cur_glare = max(speccol.r, speccol.g);
+                cur_glare = max(cur_glare, speccol.b);
+                glare = max(glare, speccol.r);
+                glare += max(cur_glare, 0.0);
+            }
+        }
+    }
+    float final_scale = 1.0;
+    if (classic_mode > 0)
+        final_scale = 0.9;
+    return max(col * final_scale, vec3(0.0, 0.0, 0.0));
+}
+
+// the blend path of materialF.glsl main()
+vec4 materialAlpha()
+{
+    // diffcol == diffuse map combined with vertex color
+    vec4 diffcol = diffuseLookup(vary_texcoord0.xy);
+    diffcol.rgb *= vertex_color.rgb;
+
+    // spec == specular map combined with specular color
+    vec4 spec;
+    if ((vary_material & 4u) != 0u)
+    {
+        spec = llFbTex(vary_slot_specular, vary_texcoord2.xy);
+        spec.rgb *= vary_specular.rgb;
+    }
+    else
+    {
+        spec = vec4(vary_specular.rgb, 1.0);
+    }
+    float env = vary_matparams.x * spec.a;
+    float glossiness = vary_specular.a;
+    vec3 norm;
+    if ((vary_material & 2u) != 0u)
+    {
+        vec4 vNt = llFbTex(vary_slot_normal, vary_texcoord1.xy);
+        glossiness *= vNt.a;
+        vNt.xyz = vNt.xyz * 2 - 1;
+        vec3 vN = vary_norm;
+        vec3 vT = vary_tangent.xyz;
+        vec3 vB = vary_sign * cross(vN, vT);
+        norm = normalize(vNt.x * vT + vNt.y * vB + vNt.z * vN);
+    }
+    else
+    {
+        norm = normalize(vary_norm);
+    }
+
+    float emissive = vary_matparams.y;
+
+    //forward rendering, output lit linear color
+    diffcol.rgb = srgb_to_linear(diffcol.rgb);
+    spec.rgb = srgb_to_linear(spec.rgb);
+    spec.a = glossiness; // pack glossiness into spec alpha for lighting functions
+
+    vec3 pos = vary_position;
+
+    float shadow = 1.0;
+#ifdef HAS_SUN_SHADOW
+    shadow = sampleDirectionalShadow(pos, norm, vary_texcoord0.xy);
+#endif
+
+    vec4 diffuse = diffcol;
+
+    vec3 color = vec3(0,0,0);
+
+    vec3 light_dir = (sun_up_factor == 1) ? sun_dir : moon_dir;
+
+    vec3 sunlit;
+    vec3 amblit;
+    vec3 additive;
+    vec3 atten;
+    calcAtmosphericVarsLinear(pos.xyz, norm.xyz, light_dir, sunlit, amblit, additive, atten);
+    if (classic_mode > 0)
+        sunlit *= 1.35;
+    vec3 sunlit_linear = sunlit;
+    vec3 amblit_linear = amblit;
+
+    vec3 ambenv = amblit;
+    vec3 glossenv;
+    vec3 legacyenv;
+    sampleReflectionProbesLegacy(ambenv, glossenv, legacyenv, pos.xy*0.5+0.5, pos.xyz, norm.xyz, glossiness, env, true, amblit_linear);
+
+    color = ambenv;
+
+    float da          = clamp(dot(norm.xyz, light_dir.xyz), 0.0, 1.0);
+    if (classic_mode > 0)
+    {
+        da = pow(da,1.2);
+        vec3 sun_contrib = vec3(min(da, shadow));
+
+        color.rgb = srgb_to_linear(color.rgb * 0.9 + linear_to_srgb(sun_contrib) * sunlit_linear * 0.7);
+        sunlit_linear = srgb_to_linear(sunlit_linear);
+    }
+    else
+    {
+        vec3 sun_contrib = min(da, shadow) * sunlit_linear;
+        color.rgb += sun_contrib;
+    }
+
+    color *= diffcol.rgb;
+
+    float glare = 0.0;
+
+    if (glossiness > 0.0)
+    {
+        vec3  lv = light_dir.xyz;
+        vec3  h, l, v = -normalize(pos.xyz);
+        float nh, nl, nv, vh, lightDist;
+        vec3 n = norm.xyz;
+        calcHalfVectors(lv, n, v, h, l, nh, nl, nv, vh, lightDist);
+
+        if (nl > 0.0 && nh > 0.0)
+        {
+            float lit = min(nl*6.0, 1.0);
+
+            float sa = nh;
+            float fres = pow(1 - vh, 5) * 0.4+0.5;
+            float gtdenom = 2 * nh;
+            float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
+
+            float scol = shadow*fres*texture(lightFunc, vec2(nh, glossiness)).r*gt/(nh*nl);
+            color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
+        }
+
+        // add radiance map
+        applyGlossEnv(color, glossenv, spec, pos.xyz, norm.xyz);
+    }
+
+    color = mix(color.rgb, diffcol.rgb, emissive);
+
+    if (env > 0.0)
+    {  // add environmentmap
+        applyLegacyEnv(color, legacyenv, spec, pos.xyz, norm.xyz, env);
+
+        float cur_glare = max(max(legacyenv.r, legacyenv.g), legacyenv.b);
+        cur_glare = clamp(cur_glare, 0, 1);
+        cur_glare *= env;
+        glare += cur_glare;
+    }
+
+    vec3 npos = normalize(-pos.xyz);
+    vec3 light = vec3(0, 0, 0);
+
+#define MAT_LIGHT_LOOP(i) light.rgb += matPointLight(light_diffuse[i].rgb, npos, diffuse.rgb, spec, pos.xyz, norm.xyz, light_position[i], light_direction[i].xyz, light_attenuation[i].x, light_attenuation[i].y, light_attenuation[i].z, glare, light_attenuation[i].w );
+
+    MAT_LIGHT_LOOP(1)
+    MAT_LIGHT_LOOP(2)
+    MAT_LIGHT_LOOP(3)
+    MAT_LIGHT_LOOP(4)
+    MAT_LIGHT_LOOP(5)
+    MAT_LIGHT_LOOP(6)
+    MAT_LIGHT_LOOP(7)
+
+    color += light;
+
+    color.rgb = applySkyAndWaterFog(pos.xyz, additive, atten, vec4(color, 1.0)).rgb;
+
+    glare *= 1.0-emissive;
+    glare = min(glare, 1.0);
+    float al = max(diffcol.a, glare) * vertex_color.a;
+    float final_scale = 1;
+    if (classic_mode > 0)
+        final_scale = 1.1;
+    return max(vec4(color * final_scale, al), vec4(0));
+}
+#endif
+
 void main()
 {
     mirrorClip(vary_position);
@@ -190,6 +441,13 @@ void main()
 #endif
     vec3 norm = vary_norm;
 
+#ifdef ALPHA_UBER_MAT
+    if ((vary_material & 1u) != 0u)
+    {
+        frag_color = materialAlpha();       // item D2: a material draw
+        return;
+    }
+#endif
 #ifdef ALPHA_UBER
     if (vary_fullbright != 0u)
     {
