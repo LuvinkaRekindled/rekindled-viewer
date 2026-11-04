@@ -291,6 +291,10 @@ bool                       gFullbrightMaskPullReady = false;
 bool                       gFullbrightMaskPullSkinReady = false;
 bool                       gFullbrightPullSkinReady = false;
 bool                       gAlphaPullReady = false;
+LLShaderProgram            gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws the fullbright alpha draws (alphaF.glsl with ALPHA_UBER)
+LLShaderProgram            gDeferredAlphaUberPullSkinProgram;
+bool                       gAlphaUberReady = false;
+bool                       gAlphaUberSkinReady = false;
 bool                       gAlphaMaterialPullReady = false;
 LLShaderProgram            gDeferredPBRAlphaPullProgram;
 bool                       gAlphaPbrPullReady = false;
@@ -1466,6 +1470,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullProgram.unload();
         gDeferredAlphaPullProgram.unload();
         gDeferredFullbrightAlphaPullProgram.unload();
+        gDeferredAlphaUberPullProgram.unload();
+        gDeferredAlphaUberPullSkinProgram.unload();
+        gAlphaUberReady = gAlphaUberSkinReady = false;
         gDeferredFullbrightPullProgram.unload();
         gDeferredFullbrightPullSkinProgram.unload();
         gFullbrightPullReady = false;
@@ -2576,6 +2583,64 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 LL_WARNS("ShadowPackets") << "the PBR alpha pull skin shader could not be made: rigged glTF blend objects will NOT be drawn" << LL_ENDL;
                 shader->unload();
+            }
+        }
+    }
+
+    // <FS> item D1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the lit alpha pull program with ALPHA_UBER, which also draws the fullbright alpha draws (the row's GEO_FULLBRIGHT flag), so that the runs of a lit
+    // and a fullbright draw in the blend order are one run. Static and rigged. Optional: without them the two programs are used as before.
+    gAlphaUberReady = gAlphaUberSkinReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram;
+            shader->mName = skin ? "Deferred Alpha Uber Pull Skin Shader" : "Deferred Alpha Uber Pull Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesLighting = false;
+            shader->mFeatures.hasLighting = false;
+            shader->mFeatures.isAlphaLighting = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasShadows = use_sun_shadow;
+            shader->mFeatures.hasReflectionProbes = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("USE_VERTEX_COLOR", "1");
+            shader->addPermutation("HAS_ALPHA_MASK", "1");
+            shader->addPermutation("USE_INDEXED_TEX", "1");
+            if (use_sun_shadow && !alpha_noshadow())
+            {
+                shader->addPermutation("HAS_SUN_SHADOW", "1");
+            }
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            shader->addPermutation("ALPHA_UBER", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            if (shader->createShader())
+            {
+                shader->mFeatures.calculatesLighting = true;        // (as the lit program: the hack that follows its createShader)
+                shader->mFeatures.hasLighting = true;
+                (skin ? gAlphaUberSkinReady : gAlphaUberReady) = true;
+            }
+            else
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: lit and fullbright alpha runs stay separate" << LL_ENDL;
+                shader->unload();
+                break;
             }
         }
     }

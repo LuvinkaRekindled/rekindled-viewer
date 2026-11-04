@@ -31,6 +31,7 @@
 #include "llboost.h"
 
 #include "lltoastalertpanel.h"
+#include "llviewerwindow.h"
 #include "llfontgl.h"
 #include "lltextbox.h"
 #include "llbutton.h"
@@ -213,10 +214,21 @@ LLToastAlertPanel::LLToastAlertPanel( LLNotificationPtr notification, bool modal
     LLTextBox * msg_box = LLUICtrlFactory::create<LLTextBox> (params);
     // Compute max allowable height for the dialog text, so we can allocate
     // space before wrapping the text to fit.
-    S32 max_allowed_msg_height =
-            gFloaterView->getRect().getHeight()
+    // <FS> an alert shown at start-up (the graphics init alert) is made before the window has a size: the floater view is 0 high, the maximum came out negative, the text box and the dialog got a
+    // negative height (455 x -8: a thin line under the logo that still held the input, 2026-11-03). The window's height, or a fixed one, stands in until the view has one.
+    S32 view_height = gFloaterView->getRect().getHeight();
+    if (view_height <= 0 && gViewerWindow)
+    {
+        view_height = gViewerWindow->getWindowRectScaled().getHeight();
+    }
+    if (view_height <= 0)
+    {
+        view_height = 768;
+    }
+    S32 max_allowed_msg_height = llmax(
+            view_height
             - LINE_HEIGHT           // title bar
-            - 3*VPAD - BTN_HEIGHT;
+            - 3*VPAD - BTN_HEIGHT, 3 * LINE_HEIGHT);
     // reshape to calculate real text width and height
     msg_box->reshape( MAX_ALLOWED_MSG_WIDTH, max_allowed_msg_height );
 

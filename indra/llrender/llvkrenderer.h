@@ -403,6 +403,10 @@ public:
     // Records work that is not a draw (an NGX call) into the current frame: puts each image in the layout it needs, ends the render pass, then runs
     // 'record'. Afterwards the images are in the layouts the callback leaves them in, which must be the ones asked for. False outside a frame.
     bool recordExternal(const std::vector<std::pair<Image*, VkImageLayout>>& images, const std::function<void(VkCommandBuffer)>& record);
+    // <FS> E2 (doc/vulkan/PLAN-async-compute.md): cuts the frame's graphics commands here (the part so far is submitted at once, value = the timeline value it signals when asked to), and while a compute
+    // command buffer is set, recordExternal records into that one and leaves the graphics state alone
+    bool splitFrame(bool signal, U64& value);
+    void setComputeRedirect(VkCommandBuffer cmd) { mComputeRedirect = cmd; }
     // a clear with nothing drawn after it still has to happen: begins (and leaves open) a pass for it
     void flushPendingClear();
 
@@ -430,6 +434,7 @@ public:
     void queryEnd();
     // writes a timestamp now; 'end' tells the harvest which half of an elapsed-time query it is
     bool queryTimestamp(U64 serial, bool end);
+    void statSegment(U32 tag);          // LL_VK_FRAGSTATS: the statistics query goes on under this GPU time tag
     void takeQueryResults(std::vector<QueryResult>& out);
     // <FS> what became of the occlusion queries since the last call: results with samples, results with none, queries whose draw never reached the GPU (reported as none)
     struct OccStats { U64 mPassed = 0, mNone = 0, mNeverDrawn = 0; };
@@ -589,6 +594,7 @@ private:
 
     // per frame
     VkCommandBuffer mCmd = VK_NULL_HANDLE;
+    VkCommandBuffer mComputeRedirect = VK_NULL_HANDLE;     // E2: recordExternal records into this one while it is set
     U32 mSlot = 0;
     U32 mRingUsed = 0;
     U32 mStateGen = 1;
@@ -720,6 +726,15 @@ private:
     std::vector<U8> mOccBegun[Context::FRAMES_IN_FLIGHT];
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
+    // LL_VK_FRAGSTATS=1 (with LL_VK_PHASES): the fragment shader invocations of every render pass, against its pixel count (the overdraw a forward renderer would pay for); logged every 600 frames
+    static constexpr U32 MAX_STAT_QUERIES = 2048;
+    VkQueryPool mStatPool[Context::FRAMES_IN_FLIGHT] = {};
+    std::vector<U32> mStatTag[Context::FRAMES_IN_FLIGHT];
+    std::vector<U64> mStatPixels[Context::FRAMES_IN_FLIGHT];
+    S32 mStatOpen = -1;                 // the statistics query begun inside the current pass
+    struct StatSum { U64 mInvocations = 0, mPixels = 0, mPasses = 0, mVertices = 0, mPrimitives = 0, mVsRuns = 0, mClipIn = 0, mClipOut = 0; };
+    std::map<U32, StatSum> mStatSums;
+    U32 mStatFrames = 0;
     U64 mModCount = 0, mFlushCount = 0;
     U64 mFlushWhy[6] = {};
     bool mRestarting = false;           // beginFrame is called by flushAndRestart: the frame goes on

@@ -750,6 +750,41 @@ namespace
         return t.QuadPart;
     }
 
+    // <FS> the stack walk of a thread the watcher has suspended: that thread can be in the middle of a prologue, an epilogue or a context switch, and RtlVirtualUnwind then reads memory that is not a
+    // stack (access violation in the watcher thread, which killed the viewer at the login of 2026-11-03: crash-stack-24784). The walk is fault proof, and the thread is always resumed.
+    static void hw_walk(CONTEXT& ctx, HwCap& cap)
+    {
+        __try
+        {
+            for (int i = 0; i < 20 && ctx.Rip; i++)
+            {
+                cap.mPc[cap.mCount++] = ctx.Rip;
+                DWORD64 base = 0;
+                PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
+                if (!fn)
+                {
+                    DWORD64 ret = 0;
+                    if (!ctx.Rsp || !ReadProcessMemory(GetCurrentProcess(), (const void*)ctx.Rsp, &ret, sizeof(ret), nullptr))
+                    {
+                        break;
+                    }
+                    ctx.Rip = ret;
+                    ctx.Rsp += 8;
+                }
+                else
+                {
+                    PVOID handler = nullptr;
+                    DWORD64 frame = 0;
+                    RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
+                }
+            }
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            // whatever was captured so far is kept
+        }
+    }
+
     void hw_capture(DWORD tid, HwCap& cap)
     {
         cap.mTid = tid;
@@ -766,28 +801,7 @@ namespace
             ctx.ContextFlags = CONTEXT_FULL;
             if (GetThreadContext(h, &ctx))
             {
-                for (int i = 0; i < 20 && ctx.Rip; i++)
-                {
-                    cap.mPc[cap.mCount++] = ctx.Rip;
-                    DWORD64 base = 0;
-                    PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
-                    if (!fn)
-                    {
-                        DWORD64 ret = 0;
-                        if (!ctx.Rsp || !ReadProcessMemory(GetCurrentProcess(), (const void*)ctx.Rsp, &ret, sizeof(ret), nullptr))
-                        {
-                            break;
-                        }
-                        ctx.Rip = ret;
-                        ctx.Rsp += 8;
-                    }
-                    else
-                    {
-                        PVOID handler = nullptr;
-                        DWORD64 frame = 0;
-                        RtlVirtualUnwind(UNW_FLAG_NHANDLER, base, ctx.Rip, fn, &ctx, &handler, &frame, nullptr);
-                    }
-                }
+                hw_walk(ctx, cap);
             }
             ResumeThread(h);
         }

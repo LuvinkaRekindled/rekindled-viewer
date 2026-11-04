@@ -299,6 +299,8 @@ struct DebugSwitches
     S32 mVelIdx = 1;                // live (velidx=0/1, default 1): the avatar velocity record drawn indexed (the hardware reads the indices: one vertex shader run per vertex, not per triangle corner); 0 = the draw over the index list, the A/B and the fallback until a week of use, then gone
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
+    S32 mSunNoise = 1;              // live (sunnoise=0/1/2, default 1): how the noise of the sun rays moves: 1 every frame (the upscaler averages it), 2 every 4th frame, 0 never (a fixed pattern)
+    S32 mPenRays = 0;               // live (penrays=N, default 0 = the shader's 8): the rays a pixel traces once its first ray met a close skinned surface (hair on the face, a hand on the shoulder), alpha and sun passes (a same-lap cost A/B)
     S32 mSunSelf = 1;               // live (sunself=0/1, default 1): the avatar self shadow work of 2026-10-28 (translucency floor, receiver probe, start disc); 0 = an avatar blocks fully and no disc, for a same-lap cost A/B
     S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
@@ -309,7 +311,8 @@ struct DebugSwitches
 };
 DebugSwitches sDbg;
 inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
-std::atomic<S32> sViewLive{0};
+std::atomic<S32> sViewLive{0}, sPenRaysLive{0};
+std::atomic<S32> sSunNoiseLive{1};
 std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1}, sSnapTestLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
 std::chrono::steady_clock::time_point sDbgRead;
@@ -382,6 +385,8 @@ void read_debug_switches()
                 else if (k == "glossyrt") d.mGlossyRt = (S32)v;
                 else if (k == "hitq") d.mHitQ = (S32)v;
                 else if (k == "sunself") d.mSunSelf = (S32)v;
+                else if (k == "penrays") d.mPenRays = (S32)v;
+                else if (k == "sunnoise") d.mSunNoise = (S32)v;
                 else if (k == "texanim") d.mTexAnim = (S32)v;
                 else if (k == "sunsamples") d.mSunSamples = (S32)v;
                 else if (k == "velidx") d.mVelIdx = (S32)v;
@@ -442,6 +447,16 @@ void read_debug_switches()
     sHitQLive.store(d.mHitQ, std::memory_order_relaxed);
     sHitRaysLive.store(d.mHitRays, std::memory_order_relaxed);
     sSunSelfLive.store(d.mSunSelf, std::memory_order_relaxed);
+    sPenRaysLive.store(d.mPenRays, std::memory_order_relaxed);
+    sSunNoiseLive.store(d.mSunNoise, std::memory_order_relaxed);
+    {
+        static S32 last_noise = -1;
+        if (d.mSunNoise != last_noise)
+        {
+            last_noise = d.mSunNoise;
+            LL_INFOS("VkRt") << "rt-debug.txt sunnoise=" << d.mSunNoise << " (1 the sun ray noise moves every frame, 2 every 4th frame, 0 never)" << LL_ENDL;
+        }
+    }
     sTexAnimLive.store(d.mTexAnim, std::memory_order_relaxed);
     sSunSamplesLive.store(d.mSunSamples, std::memory_order_relaxed);
     sVelIdxLive.store(d.mVelIdx, std::memory_order_relaxed);
@@ -1177,6 +1192,8 @@ S32 waterReflections() { return sWaterRtLive.load(std::memory_order_relaxed); }
 S32 hitQuality() { return sHitQLive.load(std::memory_order_relaxed); }
 S32 hitRays() { return sHitRaysLive.load(std::memory_order_relaxed); }
 S32 sunSelfShadow() { return sSunSelfLive.load(std::memory_order_relaxed); }
+S32 sunPenRays() { return sPenRaysLive.load(std::memory_order_relaxed); }
+S32 sunNoise() { return sSunNoiseLive.load(std::memory_order_relaxed); }
 S32 texAnim() { return sTexAnimLive.load(std::memory_order_relaxed); }
 S32 sunSamples() { return sSunSamplesLive.load(std::memory_order_relaxed); }
 S32 velIdx() { return sVelIdxLive.load(std::memory_order_relaxed); }
@@ -2080,7 +2097,40 @@ void setDistanceScale(float scale)
     sDistanceScale = scale > 0.f ? scale : 1.f;
 }
 
-void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch)
+// <FS> the byte offsets of the arrays that follow the positions in an alpha caster's vertex buffer: the positions fill [0, the first of them), so that is how many vertex slots really hold a position
+// (the bad range check counts every 16 bytes of the buffer as a vertex): an index at or past it reads another array as if it were a position
+static std::string alpha_array_note(const Group& g)
+{
+    if (g.mAlpha.empty())
+    {
+        return std::string();
+    }
+    const AlphaInfo& a = g.mAlpha[0];
+    U32 first = ~0u;
+    for (U32 off : { a.mTexcoordOffset, a.mColorOffset, a.mNormalOffset })
+    {
+        if (off)
+        {
+            first = std::min(first, off);
+        }
+    }
+    return "; the alpha arrays start at byte (texcoord " + std::to_string(a.mTexcoordOffset) + ", colour " + std::to_string(a.mColorOffset) + ", normal " + std::to_string(a.mNormalOffset) +
+           "), so the positions fill " + (first == ~0u ? std::string("?") : std::to_string(first / 16)) + " slots";
+}
+
+void sceneReadyBarrier()
+{
+    if (!active())
+    {
+        return;
+    }
+    Renderer::instance().recordExternal({}, [](VkCommandBuffer cmd) {
+        full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    });
+}
+
+void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefetch, bool trailing_barrier)
 {
     if (!sInit || sFailed)
     {
@@ -2721,7 +2771,27 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             QueryPerformanceCounter(&check_t0);
             const F32* pos = (const F32*)vi.mCpu;
             const U16* idx = (const U16*)ii.mCpu;
-            const U64 verts = vi.mSize / 16;
+            U64 verts = vi.mSize / 16;
+            // <FS> an alpha caster's positions fill only the start of its vertex buffer (the arrays after them start at the byte offsets its alpha record names): an index past that reads texcoords or
+            // colours as positions, and those values are often small enough to pass the coordinate check below (a spike or a block in the structure, 2026-11-03: 295 of 360 flagged ranges of a lap
+            // had their largest index past the positions). Such a range is flagged as out of range and left out until it is noted again (LL_VK_RT_POSLIMIT=0 turns it off).
+            static const bool pos_limit = getenv("LL_VK_RT_POSLIMIT") == nullptr || atoi(getenv("LL_VK_RT_POSLIMIT")) != 0;
+            if (pos_limit && g.mKey.mKind == 1 && !g.mAlpha.empty())
+            {
+                const AlphaInfo& ai = g.mAlpha[0];
+                U32 first_array = ~0u;
+                for (U32 off : { ai.mTexcoordOffset, ai.mColorOffset, ai.mNormalOffset })
+                {
+                    if (off)
+                    {
+                        first_array = std::min(first_array, off);
+                    }
+                }
+                if (first_array != ~0u)
+                {
+                    verts = std::min<U64>(verts, first_array / 16);
+                }
+            }
             std::vector<Range> kept;
             kept.reserve(want.size());
             // <FS> the ranges flagged so far (see the warning below): a range that passes the check after it was flagged has recovered
@@ -2804,6 +2874,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                                          << ii.mSize << " bytes) kind " << g.mKey.mKind << ", range first " << r.mFirst << " count " << r.mCount << ": " << out_of_range << " indices out of range (first "
                                          << first_bad_index << ", largest " << max_index << "), " << bad_coords << " bad coordinates (" << nans << " NaN, " << infs << " infinite, " << huge << " huge; e.g. " << sample[0] << ", " << sample[1] << ", " << sample[2] << "), bounds of the good ones (" << lo[0] << "," << lo[1] << "," << lo[2]
                                          << ")-(" << hi[0] << "," << hi[1] << "," << hi[2] << "); bad vertex slots " << (first_bad_vertex == ~0u ? std::string("none") : std::to_string(min_bad_vertex) + ".." + std::to_string(max_bad_vertex) + " (first " + std::to_string(first_bad_vertex) + ", named by index " + std::to_string(first_bad_k) + " of the range, of " + std::to_string(verts) + " slots)")
+                                         << alpha_array_note(g)
                                          << "; vb epoch " << vi.mEpoch << " version " << vi.mVersion << " moves " << vi.mMoves << (vi.mDevice ? " (device)" : " (host)")
                                          << ", ib epoch " << ii.mEpoch << " version " << ii.mVersion << " moves " << ii.mMoves << (ii.mDevice ? " (device)" : " (host)")
                                          << "; seen " << seen.mTimes << " time(s)" << (first_time ? "" : llformat(", last with vb epoch %llu version %llu, ib epoch %llu version %llu", seen.mVbEpoch, seen.mVbVersion, seen.mIbEpoch, seen.mIbVersion).c_str()) << LL_ENDL;
@@ -4883,8 +4954,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         ctx.gpuStamp(Context::stampTag("rt scene tlas"));
         vkCmdBuildAccelerationStructuresKHR(cmd, 1, &tinfo, tranges);
-        full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                     VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        if (trailing_barrier)
+        {
+            full_barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        }
     });
     if (!recorded)
     {
@@ -5014,6 +5088,161 @@ U64 structureBytes()
     return sBlasStorageBytes;
 }
 
+// <FS> what the alpha tests of the masked casters (tree leaves, hair cards) are made of, in the periodic report: a run whose leaf shadows come out weak should differ here from one that comes out right
+// (flags: 2 tree style, 64 a plain cut, 1 fullbright, 8 texcoords, 16 colours; no texture = the test reads white; cutoff buckets)
+static std::string alpha_census()
+{
+    U64 geoms = 0, tree = 0, cut = 0, dithered = 0, no_tex = 0, no_uv = 0, with_color = 0, cutoff[5] = {};
+    // the textures the alpha tests read: distinct names (tree style casters apart from the others), by the larger side of the image now
+    std::unordered_set<U32> tex_tree, tex_other;
+    std::unordered_map<U32, U32> tex_uses;        // how many alpha geometries name each texture (the biggest users are the plaza trees' leaves)
+    std::unordered_map<U32, U32> tex_uses_tree;   // the same for the tree style casters alone (the leaves)
+    std::map<std::string, U32> big_entries;       // the tree style alpha entries whose first texture is 1024 px or more, by what the alpha test is given (counted)
+    U64 range_n = 0, tri_total = 0, tri_bucket[5] = {};        // the ranges of the alpha casters: how many triangles they name (the level of detail they were noted with)
+    for (const auto& kv : sGroups)
+    {
+        const Group& g = kv.second;
+        if (g.mKey.mKind != 1 || g.mSkip)
+        {
+            continue;
+        }
+        for (const Range& rg : g.mRanges)
+        {
+            const U64 tris = rg.mCount / 3;
+            ++range_n;
+            tri_total += tris;
+            ++tri_bucket[tris <= 12 ? 0 : tris <= 60 ? 1 : tris <= 300 ? 2 : tris <= 1500 ? 3 : 4];
+        }
+        for (const AlphaInfo& a : g.mAlpha)
+        {
+            ++geoms;
+            if (a.mFlags & 2) ++tree; else if (a.mFlags & 64) ++cut; else ++dithered;
+            if (!a.mTextures[0]) ++no_tex;
+            for (U32 k = 0; k < 4; ++k)
+            {
+                if (a.mTextures[k])
+                {
+                    ((a.mFlags & 2) ? tex_tree : tex_other).insert(a.mTextures[k]);
+                    ++tex_uses[a.mTextures[k]];
+                    if (a.mFlags & 2)
+                    {
+                        ++tex_uses_tree[a.mTextures[k]];
+                    }
+                }
+            }
+            if ((a.mFlags & 2) && a.mTextures[0])
+            {
+                LLVkWorker::TextureInfo bi;
+                if (LLVkWorker::getTextureInfo(a.mTextures[0], bi) && bi.mHasImage && std::max(bi.mWidth, bi.mHeight) >= 1024)
+                {
+                    char key[200];
+                    snprintf(key, sizeof(key), "GL %u flags %u cutoff %.2f uv %.3f,%.3f,%.3f,%.3f,%.3f,%.3f tc %u col %u tex %u/%u/%u", a.mTextures[0], a.mFlags, a.mCutoff, a.mUv[0], a.mUv[1], a.mUv[2], a.mUv[3], a.mUv[4], a.mUv[5],
+                             a.mTexcoordOffset, a.mColorOffset, a.mTextures[1], a.mTextures[2], a.mTextures[3]);
+                    ++big_entries[key];
+                }
+            }
+            if (!(a.mFlags & 8)) ++no_uv;
+            if (a.mFlags & 16) ++with_color;
+            ++cutoff[a.mCutoff <= 0.f ? 0 : a.mCutoff < 0.2f ? 1 : a.mCutoff < 0.45f ? 2 : a.mCutoff < 0.55f ? 3 : 4];
+        }
+    }
+    auto sizes = [](const std::unordered_set<U32>& names, const char* label) {
+        U64 bucket[7] = {}, compressed = 0, partial = 0;      // no image, <=64, <=128, <=256, <=512, <=1024, more
+        for (U32 n : names)
+        {
+            LLVkWorker::TextureInfo ti;
+            if (!LLVkWorker::getTextureInfo(n, ti) || !ti.mHasImage)
+            {
+                ++bucket[0];
+                continue;
+            }
+            const unsigned side = std::max(ti.mWidth, ti.mHeight);
+            ++bucket[side <= 64 ? 1 : side <= 128 ? 2 : side <= 256 ? 3 : side <= 512 ? 4 : side <= 1024 ? 5 : 6];
+            compressed += ti.mCompressed;
+            partial += ti.mValidLevels < ti.mLevels;
+        }
+        char t[300];
+        snprintf(t, sizeof(t), ", %s textures %llu: no image %llu, <=64 %llu, <=128 %llu, <=256 %llu, <=512 %llu, <=1024 %llu, larger %llu; compressed %llu, levels not all filled %llu", label, (unsigned long long)names.size(),
+                 (unsigned long long)bucket[0], (unsigned long long)bucket[1], (unsigned long long)bucket[2], (unsigned long long)bucket[3], (unsigned long long)bucket[4], (unsigned long long)bucket[5], (unsigned long long)bucket[6],
+                 (unsigned long long)compressed, (unsigned long long)partial);
+        return std::string(t);
+    };
+    char b[420];
+    snprintf(b, sizeof(b), ", alpha census: %llu geometries, tree style %llu, plain cut %llu, dithered %llu, no texture %llu, no texcoords %llu, vertex colours %llu, cutoff 0: %llu <0.2: %llu <0.45: %llu ~0.5: %llu above: %llu",
+             (unsigned long long)geoms, (unsigned long long)tree, (unsigned long long)cut, (unsigned long long)dithered, (unsigned long long)no_tex, (unsigned long long)no_uv, (unsigned long long)with_color,
+             (unsigned long long)cutoff[0], (unsigned long long)cutoff[1], (unsigned long long)cutoff[2], (unsigned long long)cutoff[3], (unsigned long long)cutoff[4]);
+    char tr[260];
+    snprintf(tr, sizeof(tr), ", alpha ranges %llu name %llu triangles (average %.1f): <=12 %llu, <=60 %llu, <=300 %llu, <=1500 %llu, more %llu", (unsigned long long)range_n, (unsigned long long)tri_total,
+             range_n ? (double)tri_total / (double)range_n : 0.0, (unsigned long long)tri_bucket[0], (unsigned long long)tri_bucket[1], (unsigned long long)tri_bucket[2], (unsigned long long)tri_bucket[3], (unsigned long long)tri_bucket[4]);
+    std::string top = ", top alpha textures by geometries:";
+    {
+        std::vector<std::pair<U32, U32>> order;       // uses, name
+        for (const auto& kv : tex_uses)
+        {
+            order.push_back({ kv.second, kv.first });
+        }
+        std::sort(order.begin(), order.end(), [](const std::pair<U32, U32>& x, const std::pair<U32, U32>& y) { return x.first > y.first; });
+        for (size_t i = 0; i < order.size() && i < 6; ++i)
+        {
+            LLVkWorker::TextureInfo ti;
+            const bool have = LLVkWorker::getTextureInfo(order[i].second, ti) && ti.mHasImage;
+            char t[120];
+            snprintf(t, sizeof(t), " [%u uses: %s%u x %u, levels %u of %u%s]", order[i].first, have ? "" : "no image ", ti.mWidth, ti.mHeight, ti.mValidLevels, ti.mLevels, ti.mCompressed ? ", compressed" : "");
+            top += t;
+        }
+    }
+    std::string leaves = ", top tree style textures (GL name: uses, size, levels with data of all):";
+    {
+        std::vector<std::pair<U32, U32>> order;
+        for (const auto& kv : tex_uses_tree)
+        {
+            order.push_back({ kv.second, kv.first });
+        }
+        std::sort(order.begin(), order.end(), [](const std::pair<U32, U32>& x, const std::pair<U32, U32>& y) { return x.first != y.first ? x.first > y.first : x.second < y.second; });
+        for (size_t i = 0; i < order.size() && i < 10; ++i)
+        {
+            LLVkWorker::TextureInfo ti;
+            const bool have = LLVkWorker::getTextureInfo(order[i].second, ti) && ti.mHasImage;
+            char t[140];
+            snprintf(t, sizeof(t), " [%u: %u uses, %s%u x %u, %u of %u%s]", order[i].second, order[i].first, have ? "" : "no image ", ti.mWidth, ti.mHeight, ti.mValidLevels, ti.mLevels, ti.mCompressed ? ", compressed" : "");
+            leaves += t;
+        }
+    }
+    // every tree style texture of 512 pixels or more with what the GPU holds of it (GL name: size, levels with data of all): the leaf texture of a tree is found here by the GL name the viewer
+    // logs for it, and a run whose leaf shadows come out faint is compared with one that does not by the levels the alpha test can read
+    std::string big = ", tree style textures of 512 px or more (GL: size, levels with data of all):";
+    {
+        std::vector<U32> names(tex_tree.begin(), tex_tree.end());
+        std::sort(names.begin(), names.end());
+        size_t listed = 0;
+        for (U32 n : names)
+        {
+            LLVkWorker::TextureInfo ti;
+            if (!LLVkWorker::getTextureInfo(n, ti) || !ti.mHasImage || std::max(ti.mWidth, ti.mHeight) < 512 || listed >= 60)
+            {
+                continue;
+            }
+            ++listed;
+            char t[80];
+            snprintf(t, sizeof(t), " [%u: %ux%u, %u of %u%s]", n, ti.mWidth, ti.mHeight, ti.mValidLevels, ti.mLevels, ti.mCompressed ? " c" : "");
+            big += t;
+        }
+    }
+    std::string entries = ", tree style alpha entries on textures of 1024 px or more (" + std::to_string(big_entries.size()) + " kinds; count: what the alpha test is given):";
+    {
+        size_t listed = 0;
+        for (const auto& kv : big_entries)
+        {
+            if (listed++ >= 24)
+            {
+                break;
+            }
+            entries += " [" + std::to_string(kv.second) + "x " + kv.first + "]";
+        }
+    }
+    return std::string(b) + tr + top + leaves + big + entries + sizes(tex_tree, "tree style") + sizes(tex_other, "other alpha");
+}
+
 std::string report(double frames)
 {
     if (!sInit)
@@ -5082,6 +5311,7 @@ std::string report(double frames)
                  (double)s.mCompactBefore / 1048576.0, (double)s.mCompactAfter / 1048576.0, (unsigned long long)s.mCompactSkipped, (unsigned long long)s.mCompactFailed);
         text += cbuf;
     }
+    text += alpha_census();
     {
         char fbuf[400];
         snprintf(fbuf, sizeof(fbuf), ", far avatar triangle budget (%llu beyond %.0f m, %llu beyond %.0f m, %llu beyond %.0f m): avatars refit near %.2f mid %.2f far %.2f very far %.2f /frame, draws left out %.2f/frame, triangles left out %.0f/frame, kept in the far ones %.0f/frame",

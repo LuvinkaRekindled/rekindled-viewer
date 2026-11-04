@@ -247,6 +247,7 @@ public:
     static U32 drawStampTag(const std::string& text);   // the same for a draw description, with STAMP_DRAW set (looked up by hash; a full table gives a generic tag)
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
+    void (*mStampHook)(U32 tag) = nullptr;      // LL_VK_FRAGSTATS: called for every non-draw stamp (the renderer's statistics query changes its tag with the time table's)
     void drawCheckpoint(U32 tag);
     void checkpointOnly(U32 tag);       // an NV checkpoint named by a stamp tag, without a timestamp (work that is not a pass: uploads, copies)
     void serialCheckpoint(U64 serial);  // a checkpoint named by a draw's serial number (bit 62 set): see Renderer::noteDraw
@@ -382,13 +383,29 @@ public:
     // frame (same slot, same command buffer, swapchain semaphores untouched). Lets a readback see the frame's results.
     bool flushFrameAndWait();
 
+    // <FS> E2 (doc/vulkan/PLAN-async-compute.md, LL_VK_RT_EARLY=3): the ray scene work on the compute queue. A semaphore wait holds a whole submission, so the frame's graphics commands are cut into
+    // command buffers at the points where the queues meet. asyncOn() is true when the device has the compute queue and the timeline semaphore and the switch asked for it.
+    bool asyncOn() const { return mAsyncOn; }
+    // ends the current command buffer, submits it (signal: it also signals the next timeline value, which is returned in value, else 0) and carries on recording into the next one of the frame; false on failure
+    bool splitFrame(bool signal, U64& value);
+    VkCommandBuffer beginCompute();                                     // the slot's compute command buffer, begun
+    bool submitCompute(VkCommandBuffer cmd, U64 wait_value, U64& signal_value);
+    void setNextSubmitWait(U64 value);                                  // the next graphics submit of the frame waits for this timeline value before it starts
+    void suppressStamps(bool on) { mStampsOff = on; }                  // GPU stamps write into the graphics command buffer: off while the compute one is recorded
+
 private:
     Context() = default;
 
     struct Frame
     {
         VkCommandPool mPool = VK_NULL_HANDLE;
-        VkCommandBuffer mCmd = VK_NULL_HANDLE;
+        VkCommandBuffer mCmd = VK_NULL_HANDLE;          // the one being recorded (with E2 one of mCmds)
+        VkCommandBuffer mCmds[3] = {};                  // E2: the frame's command buffers, used in turn at the splits (mCmds[0] is the first mCmd)
+        U32 mCmdIndex = 0;
+        VkCommandPool mComputePool = VK_NULL_HANDLE;    // E2
+        VkCommandBuffer mComputeCmd = VK_NULL_HANDLE;
+        U64 mWaitValue = 0;                             // E2: the next graphics submit waits for this value of mAsyncSem
+        U64 mComputeDone = 0;                           // E2: the value the frame's compute work signals (the last submit waits for it when the join was not reached)
         VkFence mFence = VK_NULL_HANDLE;
         VkSemaphore mAcquire = VK_NULL_HANDLE;
         bool mSubmitted = false;
@@ -424,6 +441,11 @@ private:
     VkDevice mDevice = VK_NULL_HANDLE;
     VkQueue mQueue = VK_NULL_HANDLE;
     U32 mQueueFamily = 0;
+    VkQueue mComputeQueue = VK_NULL_HANDLE;     // E2
+    VkSemaphore mAsyncSem = VK_NULL_HANDLE;     // E2: a timeline semaphore, one value for every signal of the graphics splits and the compute submits
+    U64 mAsyncValue = 0;
+    bool mAsyncOn = false;
+    bool mStampsOff = false;
     VmaAllocator mAllocator = nullptr;
     Capabilities mCaps;
     VkCommandPool mImmediatePool = VK_NULL_HANDLE;

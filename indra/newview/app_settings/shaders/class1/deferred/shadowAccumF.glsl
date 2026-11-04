@@ -29,6 +29,7 @@ uniform vec2 render_res;
 uniform float history_len;          // frames at most that go into the average
 uniform float use_history;          // 0: nothing to reproject from (first frame, a pause, a resize)
 uniform float use_velocity;         // 1: the avatar velocity target is valid this frame
+uniform int spatial_mode;           // RenderRTShadowSpatial: 0 off, 1 the mean of 3 x 3 / 2 the mean of 5 x 5 of this frame's lightmap at a penumbra pixel, before it goes into the history; 3 = 2, and a pixel whose history had to be clamped (a shadow that moved) or has none takes a wider mean (9 x 9, every second pixel) of this frame alone, its count back at 1; 4 = the same with 13 x 13 (every third pixel)
 
 vec4 getPosition(vec2 pos_screen);
 
@@ -38,7 +39,38 @@ void main()
     vec4 cur = texture(lightMap, uv);
     vec3 p = getPosition(uv).xyz;
     float depth = -p.z;
-    float shadow = cur.r;
+    float cur_r = cur.r;                // this frame's sample (the mean of its window at a penumbra pixel when RenderRTShadowSpatial asks)
+    float mn = cur.r, mx = cur.r;       // the range of the 5 x 5 window: history outside it belongs to a shadow that was somewhere else
+    if ((use_history > 0.5 || spatial_mode > 0) && depth > 0.01 && depth < 1500.0)
+    {
+        vec2 texel = 1.0 / render_res;
+        float sum3 = 0.0, sum5 = 0.0, mn3 = cur.r, mx3 = cur.r;
+        for (int y = -2; y <= 2; ++y)
+        {
+            for (int x = -2; x <= 2; ++x)
+            {
+                float s = texture(lightMap, uv + vec2(float(x), float(y)) * texel).r;
+                mn = min(mn, s);
+                mx = max(mx, s);
+                sum5 += s;
+                if (abs(x) <= 1 && abs(y) <= 1)
+                {
+                    sum3 += s;
+                    mn3 = min(mn3, s);
+                    mx3 = max(mx3, s);
+                }
+            }
+        }
+        if (spatial_mode == 1 && mx3 - mn3 > 0.4)
+        {
+            cur_r = sum3 / 9.0;
+        }
+        else if (spatial_mode >= 2 && mx - mn > 0.4)
+        {
+            cur_r = sum5 / 25.0;
+        }
+    }
+    float shadow = cur_r;
     float count = 1.0;
 
     if (use_history > 0.5 && depth > 0.01 && depth < 1500.0)
@@ -64,22 +96,36 @@ void main()
             vec4 h = texture(diffuseRect, prev_uv);
             if (avatar || abs(h.g - expected) <= 0.02 * expected + 0.05)
             {
-                // the range of the current neighbourhood: history outside it belongs to a shadow that was somewhere else
-                vec2 texel = 1.0 / render_res;
-                float mn = cur.r, mx = cur.r;
-                for (int y = -1; y <= 1; ++y)
-                {
-                    for (int x = -1; x <= 1; ++x)
-                    {
-                        float s = texture(lightMap, uv + vec2(float(x), float(y)) * texel).r;
-                        mn = min(mn, s);
-                        mx = max(mx, s);
-                    }
-                }
                 float hist = clamp(h.r, mn - 0.03, mx + 0.03);
                 count = min(h.b + 1.0, history_len);
-                shadow = mix(hist, cur.r, 1.0 / count);
+                if (spatial_mode >= 3 && abs(hist - h.r) > 0.15)
+                {
+                    count = 1.0;                // the history belonged to a shadow that was somewhere else: this frame's sample alone (widened below)
+                }
+                shadow = mix(hist, cur_r, 1.0 / count);
             }
+        }
+    }
+
+    if (spatial_mode >= 3 && count <= 1.0 && depth > 0.01 && depth < 1500.0)
+    {
+        // <FS> a pixel with no usable history (a shadow that moved, an uncovered pixel): the sample of one frame, one ray, is a 0 or a 1, so the edge of a moving shadow came out sharp. A mean over 9 x 9 pixels
+        // (every second one: 25 taps) makes a soft edge from this frame alone; only the pixels of a moving edge pay for the taps.
+        vec2 texel = 1.0 / render_res;
+        float wsum = 0.0, wmn = cur.r, wmx = cur.r;
+        for (int y = -2; y <= 2; ++y)
+        {
+            for (int x = -2; x <= 2; ++x)
+            {
+                float w = texture(lightMap, uv + vec2(float(x), float(y)) * (spatial_mode == 4 ? 3.0 : 2.0) * texel).r;
+                wsum += w;
+                wmn = min(wmn, w);
+                wmx = max(wmx, w);
+            }
+        }
+        if (wmx - wmn > 0.4)
+        {
+            shadow = wsum / 25.0;
         }
     }
 

@@ -78,6 +78,13 @@ float getAmbientClamp();
 
 void mirrorClip(vec3 pos);
 
+#ifdef ALPHA_UBER
+// item D1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the program also draws the fullbright alpha draws (deferred/fullbrightF.glsl with IS_ALPHA), chosen per draw by the flag the vertex shader passes,
+// so the runs of a lit and a fullbright draw in the blend order are one run
+flat in uint vary_fullbright;
+void calcAtmosphericVars(vec3 inPositionEye, vec3 light_dir, float ambFactor, out vec3 sunlit, out vec3 amblit, out vec3 additive, out vec3 atten);
+#endif
+
 void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit_linear);
 
@@ -180,6 +187,30 @@ void main()
     waterClip(pos.xyz);
 #endif
     vec3 norm = vary_norm;
+
+#ifdef ALPHA_UBER
+    if (vary_fullbright != 0u)
+    {
+        // a fullbright alpha draw: as fullbrightF.glsl (IS_ALPHA, HAS_ALPHA_MASK): the texture times the vertex colour, the fog; no lighting
+        vec4 fb_color = diffuseLookup(vary_texcoord0.xy);
+        float fb_alpha = fb_color.a * vertex_color.a;
+        if (fb_alpha < minimum_alpha)
+        {
+            discard;
+        }
+        fb_color.rgb *= vertex_color.rgb;
+        fb_color.a = fb_alpha;
+        fb_color.rgb = srgb_to_linear(fb_color.rgb);
+        vec3 fb_sunlit;
+        vec3 fb_amblit;
+        vec3 fb_additive;
+        vec3 fb_atten;
+        calcAtmosphericVars(pos.xyz, vec3(0), 1.0, fb_sunlit, fb_amblit, fb_additive, fb_atten);
+        fb_color.rgb = applySkyAndWaterFog(pos.xyz, fb_additive, fb_atten, fb_color).rgb;
+        frag_color = max(fb_color, vec4(0));
+        return;
+    }
+#endif
 
     float shadow = 1.0f;
 

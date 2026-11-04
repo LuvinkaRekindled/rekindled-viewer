@@ -29,6 +29,7 @@
 #include <glslang/Public/ShaderLang.h>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/SPIRV/GlslangToSpv.h>
+#include <unordered_set>
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
@@ -845,6 +846,13 @@ static bool compileProgramUncached(const std::string& program_name, const std::v
                         {
                             if (!varyings.count(dc.mName))
                             {
+                                // <FS> a fragment input no vertex shader output of the program matches: it gets a location of its own and reads undefined values (the validation layer: "declared Input at
+                                // Location N but the previous stage has no Output declared there"). Named once per program and variable.
+                                static std::unordered_set<std::string> said;
+                                if (said.insert(program_name + "|" + dc.mName).second && said.size() <= 200)
+                                {
+                                    LL_WARNS("ShaderLoading") << "program '" << program_name << "': the fragment input '" << dc.mName << "' (" << d.mType << ") has no vertex shader output: it reads undefined values" << LL_ENDL;
+                                }
                                 varyings[dc.mName] = { next_varying, size };
                                 next_varying += size;
                             }

@@ -21,3 +21,8 @@ Everything compiles and links, `copy_l_viewer_manifest` stages `newview/packaged
 
 ## Next
 Run it under WSLg (`packaged/bin/do-not-directly-run-firestorm-bin` through the wrapper) and read the log: loader and surface creation, device pick, first frame. Then DLSS / FSR on Linux, a Linux crash handler, and the Mac manifest (`firestorm` naming in `viewer_manifest.py`).
+
+## Saved for later (Adam, 2026-11-03): a release build, then run it through WSL
+- **Release build:** the Linux build above is the ReleaseFS_open configuration with `-g`, so the executable is 3.2 GB (2.9 GB of it DWARF; the code is about 95 MB). A release build goes through `--package` (viewer_manifest strips the binaries) or `strip -S` after splitting the debug info with `objcopy --only-keep-debug` into a symbol file; expect about 100 MB for the executable and a few hundred MB for the tree.
+- **Running it in WSL:** WSLg works here (`DISPLAY=:0`, Wayland, a Pulse bridge for OpenAL). The only Vulkan device is lavapipe (`libvulkan_lvp.so`, software, CPU): there is no Vulkan driver over the D3D12 passthrough and NVIDIA ships none for WSL. Expect a few frames a second at best; the point is the startup log: loader, SDL surface creation, device pick (does lavapipe offer what the renderer insists on: Vulkan 1.3, descriptor indexing, timeline semaphores, buffer device address ...), shader compile, first frames. Launch `packaged/bin/do-not-directly-run-firestorm-bin` through the wrapper, with `LL_VK_VALIDATION=1` when a validation layer is installed (`vulkan-validationlayers`); read `~/.firestorm_x64/logs`-style log of the Rekindled settings directory.
+- A real GPU run needs a Linux machine or a dual boot (real performance, DLSS / FSR on Linux).

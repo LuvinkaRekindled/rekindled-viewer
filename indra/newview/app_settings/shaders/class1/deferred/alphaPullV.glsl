@@ -187,6 +187,9 @@ out vec2 vary_texcoord0;
 out vec3 vary_norm;
 #endif
 flat out uint vary_slot;
+#ifdef ALPHA_UBER
+flat out uint vary_fullbright;       // item D1: 1 = the draw is a fullbright one (the merged lit alpha program skips the lighting)
+#endif
 #ifdef LL_MASK_CUTOFF
 flat out float minimum_alpha;        // S6 X3: the alpha mask cutoff of the draw
 #endif
@@ -272,6 +275,9 @@ void main()
     uint tex_index = ((pk.flags & 1u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);
     uint pair = (tex_index < 2u) ? pk.slots.x : pk.slots.y;
     vary_slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+#ifdef ALPHA_UBER
+    vary_fullbright = ((pk.flags & 32u) != 0u) ? 1u : 0u;
+#endif
 #ifdef LL_MASK_CUTOFF
     minimum_alpha = pk.cutoff;
 #endif

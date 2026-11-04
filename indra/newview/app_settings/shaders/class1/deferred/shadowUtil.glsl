@@ -245,7 +245,14 @@ uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended su
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
-uniform float rt_sun_self_off;         // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say;
+uniform int rt_sun_adapt;              // <FS> RenderRTShadowAdaptiveRays (sun lightmap pass only): the rays of a pixel whose shadow history is short (a moving edge, an uncovered pixel); 0 = off
+float rt_adapt_count = 99.0;           // the history length of this pixel last frame (set by the sun lightmap shader, rtSetAdaptCount)
+void rtSetAdaptCount(float c)
+{
+    rt_adapt_count = c;
+}
+uniform int rt_sun_pen_rays;           // <FS> the rays of a pixel whose first sun ray met a close skinned surface (rt-debug.txt penrays=N); 0 (unset) = LL_RT_SUN_PENUMBRA_RAYS
+uniform float rt_sun_self_off;        // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say;
                                        //      2: on, but the soft walk through hair runs to the end instead of ending once the floor has the answer (sunself=2)
 
 // A ray whose origin or direction is NaN or infinite (a pixel whose eye space position was rebuilt from a zero or far-plane depth, a scene frame record not written yet) is undefined for a
@@ -1069,6 +1076,10 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 origin = pos + norm * ((rt_sun_alpha > 0.5 ? LL_RT_SUN_BIAS_ALPHA : LL_RT_SUN_BIAS) + 0.0006 * -pos.z) + light_dir * LL_RT_SUN_TMIN;
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
+    if (rt_sun_adapt > 1 && rt_sun_radius > 0.0 && rt_adapt_count < 4.0)
+    {
+        samples = clamp(max(samples, rt_sun_adapt), 1, 16);        // <FS> a short history: more rays now, so the edge of a moving shadow is soft from this frame alone
+    }
     if (rt_sun_lod.x > 0.0 && samples > 4)
     {
         // <FS> far from the camera the penumbra is a fraction of a pixel and the temporal upscaler averages the noise: fewer rays (the alpha pass traces for every blended pixel, in a crowd that is hair, clothes and
@@ -1102,23 +1113,46 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 t1 = normalize(cross(light_dir, abs(light_dir.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec3 t2 = cross(light_dir, t1);
     float lit = 0.0;
+    float lit0 = 0.0;                           // the first ray's answer (the pixel's own, on the sun's disc)
+    bool pen_mode = false;                      // the first ray met a close skinned surface: the other rays go to the wide disc and, when fewer than LL_RT_SUN_PENUMBRA_RAYS, stand for the full set (below)
     float skin_t = 0.0;                         // the distance of the close avatar surface the first ray met (0 = none): the other rays of the pixel get a wider disc (LL_RT_SUN_PENUMBRA)
     for (int i = 0; i < samples; ++i)
     {
         float radius = rt_sun_radius;
+        int ri = i;                             // the ray's place in the set it stands for
+        int den = samples;
         if (i > 0 && skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
         {
             radius = clamp(LL_RT_SUN_PENUMBRA / skin_t, rt_sun_radius, 0.35);
+            if (samples < LL_RT_SUN_PENUMBRA_RAYS)
+            {
+                // <FS> fewer wide rays than the reference set (rt_sun_pen_rays, 2 with the upscaler): each one stands for one of the reference set's wide rays, a different one every frame (the noise of the pixel's
+                // rotation picks it), so the frames the upscaler averages cover the same disc as the full set did; the weights are below
+                den = LL_RT_SUN_PENUMBRA_RAYS;
+                ri = min(1 + int(fract(rot * 1.8621 + float(i) * 0.381966) * float(LL_RT_SUN_PENUMBRA_RAYS - 1)), LL_RT_SUN_PENUMBRA_RAYS - 1);
+            }
         }
-        float r = sqrt((float(i) + 0.5) / float(samples)) * radius;
-        float phi = rot + float(i) * 2.3999632;
+        float r = sqrt((float(ri) + 0.5) / float(den)) * radius;
+        float phi = rot + float(ri) * 2.3999632;
+        if (samples == 1 && i == 0 && rt_sun_radius > 0.0)
+        {
+            // <FS> a lone ray (sunsamples 1, the alpha passes): its radius used to be fixed at 0.7 of the sun's disc and only its angle moved, so the frames the upscaler averages covered a ring of the sun, not the disc
+            // (a harder, banded penumbra). A point of the whole disc now, from a two dimensional low discrepancy sequence (the R2 sequence, a step of it per frame) added to a fixed per pixel offset: the same one ray,
+            // spread evenly over the disc by the frames the upscaler accumulates. rt_noise_frame is 0 without the upscaler: a fixed pattern per pixel, as before.
+            vec2 fc = gl_FragCoord.xy;
+            float h1 = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+            float h2 = fract(52.9829189 * fract(dot(fc.yx + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+            vec2 u = fract(vec2(h1, h2) + rt_noise_frame * vec2(0.7548776662, 0.5698402910));
+            r = sqrt(u.x) * radius;
+            phi = 6.2831853 * u.y;
+        }
         vec3 dir = normalize(light_dir + (t1 * cos(phi) + t2 * sin(phi)) * r);
         vec3 o = origin;
         if (LL_RT_SUN_SSS > 0.0 && self_on)
         {
             // the start disc: the same spiral as the sun's disc, turned so the two do not line up
-            float rs = sqrt((float(i) + 0.5) / float(samples)) * LL_RT_SUN_SSS;
-            float ps = rot + 1.0 + float(i) * 2.3999632;
+            float rs = sqrt((float(ri) + 0.5) / float(den)) * LL_RT_SUN_SSS;
+            float ps = rot + 1.0 + float(ri) * 2.3999632;
             o += (b1 * cos(ps) + b2 * sin(ps)) * rs;
         }
         float one = rtSunRayAt(o, dir, pos_screen, lod, -pos.z, strength);
@@ -1130,12 +1164,19 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
                 one = rtSunRayAt(o, dir, pos_screen, lod, -pos.z, strength);
             }
             skin_t = rt_near_skin_t;
+            lit0 = one;
             if (skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
             {
-                samples = clamp(max(samples, LL_RT_SUN_PENUMBRA_RAYS), 1, 16);
+                pen_mode = true;
+                samples = clamp(max(samples, rt_sun_pen_rays > 0 ? rt_sun_pen_rays : LL_RT_SUN_PENUMBRA_RAYS), 1, 16);
             }
         }
         lit += one;
+    }
+    if (pen_mode && samples > 1 && samples < LL_RT_SUN_PENUMBRA_RAYS)
+    {
+        // the first ray keeps its 1/8 of the answer and the wide rays share the other 7/8: the same average as the full set of rays, with the noise of fewer
+        return (lit0 + float(LL_RT_SUN_PENUMBRA_RAYS - 1) * (lit - lit0) / float(samples - 1)) / float(LL_RT_SUN_PENUMBRA_RAYS);
     }
     return lit / float(samples);
 }

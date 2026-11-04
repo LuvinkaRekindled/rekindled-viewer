@@ -818,16 +818,46 @@ bool grow_levels(Tex& t)
 
 // <FS> native-vk: a plain 2D texture that holds its whole mip chain gives up its top k levels: a new image with the levels below them (a copy, the old image released). The viewer shrinks a texture this way
 // (LLImageTex::scaleDown) instead of drawing it small into a target and copying that. False (nothing changed) when the texture does not hold all of its levels.
+// <FS> why drop_levels said no, counted (the "texture will be downscaled immediately after loading" warning fires about 5000 times a lap and 4800 of the drops were refused, 2026-11-03): 1 no levels
+// asked or no image, 2 not a plain 2D texture, 3 depth format, 4 compressed format, 5 the mip chain is not complete or not all levels hold data, 6 fewer levels than the drop, 7 no new image, 8 the copy failed
+static U64 sDropWhy[9] = {};
 bool drop_levels(Tex& t, U32 k)
 {
     using namespace LLVkFormat;
-    if (!k || !t.mImage.valid() || t.mDim != DIM_2D || t.mFormat.mDepth || t.mFormat.mCompressed)
+    if (!k || !t.mImage.valid())
     {
+        ++sDropWhy[1];
         return false;
     }
-    const U32 full = mipLevelCount(t.mWidth, t.mHeight);
-    if (t.mLevels < full || t.mValidLevels < t.mLevels || t.mLevels <= k)
+    if (t.mDim != DIM_2D)
     {
+        ++sDropWhy[2];
+        return false;
+    }
+    if (t.mFormat.mDepth)
+    {
+        ++sDropWhy[3];
+        return false;
+    }
+    static const bool drop_compressed = getenv("LL_VK_DROP_COMPRESSED") == nullptr || atoi(getenv("LL_VK_DROP_COMPRESSED")) != 0;       // 0: compressed textures are refused again (a same-session A/B)
+    if (t.mFormat.mCompressed && !drop_compressed)
+    {
+        ++sDropWhy[4];
+        return false;
+    }
+    // (a compressed texture drops its top levels the same way: whole levels are copied, so the block alignment of the copy holds at every level. It used to be refused here, and the viewer
+    // then shrank it by drawing it small into a target and copying that: about 5000 times a lap, 4893 of them compressed, 2026-11-03)
+    // <FS> a chain that holds only its first levels (the rest still to arrive, or never sent for a compressed texture: 3 of 8 filled is common) used to be refused whole, which was 3000 to 5000 refusals a
+    // lap once the compressed ones were accepted. What matters is that a level remains after the drop: the levels from k up are copied, the ones that held no data stay empty, and the new image is
+    // valid for as many levels as the old one had left.
+    if (t.mValidLevels <= k)
+    {
+        ++sDropWhy[5];
+        return false;
+    }
+    if (t.mLevels <= k)
+    {
+        ++sDropWhy[6];
         return false;
     }
     TextureDesc td;
@@ -838,18 +868,20 @@ bool drop_levels(Tex& t, U32 k)
     td.mMips = t.mLevels - k;
     td.mFormat = t.mFormat.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : t.mFormat.mSwizzle;
-    td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    if (LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+    td.mUsage = t.mFormat.mCompressed ? 0 : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;       // (a compressed format cannot be a colour attachment)
+    if (!t.mFormat.mCompressed && LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
     {
         td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
     Image fresh;
     if (!Renderer::instance().createTexture(td, fresh))
     {
+        ++sDropWhy[7];
         return false;
     }
     if (!Renderer::instance().copyMipLevels(t.mImage, k, fresh))
     {
+        ++sDropWhy[8];
         Context::instance().destroyImage(fresh);
         return false;
     }
@@ -857,8 +889,8 @@ bool drop_levels(Tex& t, U32 k)
     t.mImage = fresh;
     t.mWidth = td.mWidth;
     t.mHeight = td.mHeight;
+    t.mValidLevels = t.mValidLevels - k;
     t.mLevels = td.mMips;
-    t.mValidLevels = td.mMips;
     pin_touch(t);
     for (auto& kv : sGL.mTextures)
     {
@@ -2774,6 +2806,24 @@ void on_bufferRecycle(U32 name)
     }
 }
 
+bool getTextureInfo(unsigned int name, TextureInfo& out)
+{
+    out = TextureInfo();
+    auto it = sGL.mTextures.find(name);
+    if (it == sGL.mTextures.end())
+    {
+        return false;
+    }
+    const Tex& t = it->second;
+    out.mHasImage = t.mImage.valid();
+    out.mWidth = t.mWidth;
+    out.mHeight = t.mHeight;
+    out.mLevels = t.mLevels;
+    out.mValidLevels = t.mValidLevels;
+    out.mCompressed = t.mFormat.mCompressed;
+    return true;
+}
+
 bool getBufferInfo(unsigned int name, BufferInfo& out)
 {
     out = BufferInfo();
@@ -4560,8 +4610,33 @@ static U32 draw_packet_runs(Renderer& r, U32 entries, const U32* counts, const U
     return drawn;
 }
 
+// LL_VK_OPSTATS=1: where the worker's time of a kind 1 record goes: the entries (buffer and texture lookups, the table row), the state set-up (program, buffers current, bindless), the draws.
+// Logged every 600 calls with the entry count.
+static void alpha_split_note(int part, std::chrono::steady_clock::time_point since, U32 entries)
+{
+    static const bool census = getenv("LL_VK_OPSTATS") != nullptr;
+    if (!census)
+    {
+        return;
+    }
+    static U64 ns[3] = {}, calls = 0, total_entries = 0;
+    ns[part] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count();
+    if (part == 2)
+    {
+        total_entries += entries;
+        if (++calls % 600 == 0)
+        {
+            LL_INFOS("VkOps") << "kind 1 split over 600 calls (" << (double)total_entries / 600.0 << " entries a call): rows " << (double)ns[0] / 600.0 / 1000.0 << " us, state " << (double)ns[1] / 600.0 / 1000.0
+                << " us, draws " << (double)ns[2] / 600.0 / 1000.0 << " us a call; rows per entry " << (double)ns[0] / std::max<double>(1.0, (double)total_entries) << " ns" << LL_ENDL;
+            ns[0] = ns[1] = ns[2] = 0;
+            total_entries = 0;
+        }
+    }
+}
+
 static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
+    const auto split_t0 = std::chrono::steady_clock::now();
     struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
     static_assert(sizeof(AlphaGpu) == 80, "alpha packet entry");
     static thread_local VertexInput vi_cache;
@@ -4687,6 +4762,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         }
     }
     memcpy(models.mPtr, matrices, 64 * (size_t)h.mMatrices);
+    alpha_split_note(0, split_t0, 0);
+    const auto split_t1 = std::chrono::steady_clock::now();
 
     const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
@@ -4712,6 +4789,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
+    alpha_split_note(1, split_t1, 0);
+    const auto split_t2 = std::chrono::steady_clock::now();
 
 
     Renderer::ScratchAlloc commands;
@@ -4725,6 +4804,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
             first_index[i] = entries[i].mFirstIndex;
         }
         const U32 drawn = draw_packet_runs(r, h.mEntries, counts.data(), first_index.data(), alpha_index_buffers.data());
+        alpha_split_note(2, split_t2, h.mEntries);
         if (drawn)
         {
             if (sStatsEnabled)
@@ -5615,6 +5695,12 @@ struct ResFrag
     std::vector<LLVk::Rt::CasterRef> mAlphaRefs;
     std::vector<U32> mAlphaPairOf;
     std::vector<U8> mAlphaHeld;
+    // resident alpha masked casters the worker draws itself (LL_VK_ALPHARES, kinds 38 and 37): a row of the alpha table and a range of the index pool for each alpha entry
+    std::vector<U32> mAlphaSlot;            // the row (~0u: none)
+    std::vector<U32> mAlphaPoolFirst, mAlphaPoolCount;      // its indices in the pool
+    std::vector<U32> mAlphaPin, mAlphaPinName;              // 4 pins (and the names they were made for) per entry
+    U64 mAlphaPinEpoch = ~0ull;
+    bool mAlphaRes = false;
 };
 // one row per fragment, contiguous, for the sphere test of the ray notes (a sweep over 5,000 fragments must not touch their scattered nodes): centre in region space, radius, the region matrix slot
 struct ResCullItem { F32 mC[3]; F32 mR; U32 mSlot; U32 mId; ResFrag* mFrag; bool mHeld; bool mHasAlpha; };
@@ -5792,6 +5878,12 @@ static void res_register_pairs(ResFrag& f)
         sResPairByName.emplace(p.mIb, &p);
     }
 }
+
+// resident alpha masked casters (item B of doc/vulkan/PLAN-crowd-worker-and-gpu.md): defined further down
+static void alpha_res_release_frag(ResFrag& f);
+static void alpha_res_rows_pair(ResFrag& f, size_t pair_index);
+static void alpha_res_rows_all(ResFrag& f);
+static void alpha_res_entry_changed(ResFrag& f, size_t index);
 
 static void res_unregister_pairs(ResFrag& f)
 {
@@ -5994,6 +6086,7 @@ static void res_release(U32 id)
         res_leave(it->second);
         sRes.mCull[it->second.mCullIndex].mHeld = false;
     }
+    alpha_res_release_frag(it->second);
     res_unregister_pairs(it->second);
     const U64 frame = Context::instance().getFrameNumber();
     for (U32 slot : it->second.mSlots)
@@ -6109,6 +6202,7 @@ static void res_refresh(U64 frame)
             if (c == 1)
             {
                 res_write_entries(f, k);
+                alpha_res_rows_pair(f, k);
                 ++sRes.mRecheck;
             }
             if (p.mOk)
@@ -6121,6 +6215,10 @@ static void res_refresh(U64 frame)
             {
                 ++unresolved;
             }
+        }
+        if (f.mAlphaRes && f.mAlphaPinEpoch != sGeoPinEpoch)
+        {
+            alpha_res_rows_all(f);      // a pin of its textures got another bindless slot
         }
     }
     sRes.mUnresolved = unresolved;
@@ -6149,6 +6247,7 @@ static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8*
     {
         f = &found->second;
     }
+    alpha_res_release_frag(*f);
     res_unregister_pairs(*f);
     f->mAlpha.assign(entries, entries + h.mEntries);
     f->mAlphaRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
@@ -6212,6 +6311,7 @@ static void res_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
         {
             e.mFlags |= LLVkBridge::ALPHA_NOT_READY;
         }
+        alpha_res_entry_changed(f, index);
         if (!held)
         {
             continue;
@@ -6255,6 +6355,599 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
         }
     }
     memcpy(sRes.mMatrixCpu.data(), blob, 64 * (size_t)n);
+}
+
+// ---- <FS> resident alpha masked casters (item B of doc/vulkan/PLAN-crowd-worker-and-gpu.md) ----
+// The alpha masked static casters of resident fragments (kind 18 holds their entries, kind 19 their texture changes) are drawn by the worker from a table of its own, as the opaque ones are (kind 16):
+// a row of the packet shader's 80 byte entry per alpha entry, a bounding sphere each, a global index pool (the entries' indices copied there by kind 38, so one index buffer serves all of them), a compute
+// pass that tests every row against the cascade's planes and writes an indexed draw command per row, and one indirect indexed draw for the whole pass (kind 37). The textures of the rows are pinned
+// slots (permanent in every frame's descriptor set, as the scene geometry table's). The master copies are ordinary memory; a pass reads a copy made in the scratch of the frame that draws.
+namespace
+{
+struct AlphaRow { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
+static_assert(sizeof(AlphaRow) == 80, "resident alpha row");
+const U32 kAlphaRowCapacity = 32768;
+const U32 kAlphaPoolIndices = 4u * 1024u * 1024u;
+struct AlphaResState
+{
+    bool mReady = false, mFailed = false;
+    Buffer mPool;
+    U16* mPoolPtr = nullptr;
+    std::map<U32, U32> mFreeRanges;                         // first index -> count
+    struct RetiredRange { U32 mFirst, mCount; U64 mFrame; };
+    std::vector<RetiredRange> mRetiredRanges;
+    std::vector<AlphaRow> mRows;
+    std::vector<F32> mBounds;
+    U32 mHigh = 0;
+    std::vector<U32> mFreeSlots;
+    std::vector<std::pair<U32, U64>> mRetiredSlots;
+    U64 mVersion = 1, mCopyFrame = ~0ull, mCopyVersion = 0;
+    U32 mCopyN = 0;
+    Renderer::ScratchAlloc mCopyRows, mCopyBounds, mCopyMatrices;
+    U64 mMatFrame = ~0ull, mMatVersion = 0;
+    U64 mPasses = 0, mDrawnRows = 0, mReport = 0, mPoolFull = 0, mRowsFull = 0, mRowWrites = 0;
+} sAR;
+
+bool alpha_res_init()
+{
+    if (sAR.mReady)
+    {
+        return true;
+    }
+    if (sAR.mFailed)
+    {
+        return false;
+    }
+    sAR.mFailed = true;
+    Context& ctx = Context::instance();
+    const auto& caps = ctx.getCaps();
+    if (!caps.mBufferDeviceAddress || !caps.mMultiDrawIndirect || !caps.mDrawIndirectFirstInstance)
+    {
+        LL_WARNS("VkScene") << "resident alpha casters: the device lacks buffer addresses or first-instance indirect draws" << LL_ENDL;
+        return false;
+    }
+    if (!ctx.createBuffer((VkDeviceSize)2 * kAlphaPoolIndices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sAR.mPool) || !sAR.mPool.mMapped)
+    {
+        LL_WARNS("VkScene") << "resident alpha casters: the index pool could not be created" << LL_ENDL;
+        return false;
+    }
+    sAR.mPoolPtr = (U16*)sAR.mPool.mMapped;
+    sAR.mFreeRanges.clear();
+    sAR.mFreeRanges[0] = kAlphaPoolIndices;
+    sAR.mRows.assign(kAlphaRowCapacity, AlphaRow());
+    sAR.mBounds.assign(4ull * kAlphaRowCapacity, 0.f);
+    sAR.mFailed = false;
+    sAR.mReady = true;
+    LL_INFOS("VkScene") << "resident alpha casters: ready (" << kAlphaRowCapacity << " rows, an index pool of " << kAlphaPoolIndices << " indices)" << LL_ENDL;
+    return true;
+}
+
+void alpha_res_reclaim(U64 frame)
+{
+    const U64 lag = (U64)Context::frameCount() + 1;
+    size_t keep = 0;
+    for (size_t i = 0; i < sAR.mRetiredRanges.size(); ++i)
+    {
+        const AlphaResState::RetiredRange r = sAR.mRetiredRanges[i];
+        if (frame >= r.mFrame + lag)
+        {
+            // back to the free map, merged with its neighbours
+            auto next = sAR.mFreeRanges.lower_bound(r.mFirst);
+            U32 first = r.mFirst, count = r.mCount;
+            if (next != sAR.mFreeRanges.begin())
+            {
+                auto prev = std::prev(next);
+                if (prev->first + prev->second == first)
+                {
+                    first = prev->first;
+                    count += prev->second;
+                    sAR.mFreeRanges.erase(prev);
+                }
+            }
+            if (next != sAR.mFreeRanges.end() && first + count == next->first)
+            {
+                count += next->second;
+                sAR.mFreeRanges.erase(next);
+            }
+            sAR.mFreeRanges[first] = count;
+        }
+        else
+        {
+            sAR.mRetiredRanges[keep++] = r;
+        }
+    }
+    sAR.mRetiredRanges.resize(keep);
+    keep = 0;
+    for (size_t i = 0; i < sAR.mRetiredSlots.size(); ++i)
+    {
+        if (frame >= sAR.mRetiredSlots[i].second + lag)
+        {
+            sAR.mFreeSlots.push_back(sAR.mRetiredSlots[i].first);
+        }
+        else
+        {
+            sAR.mRetiredSlots[keep++] = sAR.mRetiredSlots[i];
+        }
+    }
+    sAR.mRetiredSlots.resize(keep);
+}
+
+U32 alpha_pool_alloc(U32 count)
+{
+    for (auto it = sAR.mFreeRanges.begin(); it != sAR.mFreeRanges.end(); ++it)
+    {
+        if (it->second >= count)
+        {
+            const U32 first = it->first, left = it->second - count;
+            sAR.mFreeRanges.erase(it);
+            if (left)
+            {
+                sAR.mFreeRanges[first + count] = left;
+            }
+            return first;
+        }
+    }
+    return ~0u;
+}
+
+// the pins of an entry's textures: acquired for the names it holds now (a pin of a texture the scene geometry also uses is counted as theirs, so a slot change bumps the epoch that rewrites the rows)
+void alpha_res_set_pins(ResFrag& f, size_t i)
+{
+    for (U32 t = 0; t < 4; ++t)
+    {
+        U32& pin = f.mAlphaPin[4 * i + t];
+        U32& name = f.mAlphaPinName[4 * i + t];
+        const U32 want = f.mAlpha[i].mTextures[t];
+        if (pin && name == want)
+        {
+            continue;
+        }
+        if (pin)
+        {
+            if (sPins[pin].mGeoRefs)
+            {
+                --sPins[pin].mGeoRefs;
+            }
+            rtPinRelease(pin);
+            pin = 0;
+        }
+        name = want;
+        if (want)
+        {
+            pin = rtPinAcquire(want);
+            if (pin)
+            {
+                ++sPins[pin].mGeoRefs;
+            }
+        }
+    }
+}
+
+void alpha_res_write_row(ResFrag& f, size_t i)
+{
+    if (i >= f.mAlphaSlot.size() || f.mAlphaSlot[i] == ~0u)
+    {
+        return;
+    }
+    const LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
+    AlphaRow& g = sAR.mRows[f.mAlphaSlot[i]];
+    ++sAR.mVersion;
+    ++sAR.mRowWrites;
+    ResPair& p = f.mPairs[f.mAlphaPairOf[i]];
+    if (!p.mOk || !p.mPvb || !p.mPvb->mVk.valid() || !p.mPvb->mVk.mAddress || (e.mFlags & LLVkBridge::ALPHA_RIGGED) || f.mAlphaPoolCount[i] == 0)
+    {
+        g.mCount = 0;
+        return;
+    }
+    memset(&g, 0, sizeof(g));
+    const U64 pa = (U64)p.mPvb->mVk.mAddress;
+    g.mPositions[0] = (U32)pa;
+    g.mPositions[1] = (U32)(pa >> 32);
+    if (e.mFlags & LLVkBridge::ALPHA_HAS_TEXCOORD)
+    {
+        const U64 a = pa + e.mTexcoordOffset;
+        g.mTexcoords[0] = (U32)a;
+        g.mTexcoords[1] = (U32)(a >> 32);
+    }
+    if (e.mFlags & LLVkBridge::ALPHA_HAS_COLOR)
+    {
+        const U64 a = pa + e.mColorOffset;
+        g.mColors[0] = (U32)a;
+        g.mColors[1] = (U32)(a >> 32);
+    }
+    g.mFirst = f.mAlphaPoolFirst[i];
+    g.mModel = e.mMatrix;
+    g.mFlags = e.mFlags;
+    U32 slot[4] = {};
+    for (U32 t = 0; t < 4; ++t)
+    {
+        const U32 pin = f.mAlphaPin[4 * i + t];
+        slot[t] = pin && pin < sPins.size() ? sPins[pin].mSlot : 0u;
+    }
+    g.mSlots[0] = slot[0] | (slot[1] << 16);
+    g.mSlots[1] = slot[2] | (slot[3] << 16);
+    g.mCutoff = e.mCutoff;
+    g.mCount = e.mIndexCount;           // last: a count of 0 is a culled row
+}
+} // namespace
+
+static U64 sAlphaRowCauses[3] = {};         // row writes by cause: a pair's buffers changed, a pin's slot changed (all rows of the fragment), a texture event (kind 19)
+static void alpha_res_rows_pair(ResFrag& f, size_t pair_index)
+{
+    if (!f.mAlphaRes)
+    {
+        return;
+    }
+    ++sAlphaRowCauses[0];
+    for (size_t i = 0; i < f.mAlpha.size(); ++i)
+    {
+        if (f.mAlphaPairOf[i] == pair_index)
+        {
+            alpha_res_write_row(f, i);
+        }
+    }
+}
+
+static void alpha_res_rows_all(ResFrag& f)
+{
+    ++sAlphaRowCauses[1];
+    f.mAlphaPinEpoch = sGeoPinEpoch;
+    for (size_t i = 0; i < f.mAlpha.size() && i < f.mAlphaSlot.size(); ++i)
+    {
+        alpha_res_write_row(f, i);
+    }
+}
+
+// kind 19 changed the names or the readiness of an entry's textures
+static void alpha_res_entry_changed(ResFrag& f, size_t index)
+{
+    if (!f.mAlphaRes || index >= f.mAlphaSlot.size())
+    {
+        return;
+    }
+    ++sAlphaRowCauses[2];
+    alpha_res_set_pins(f, index);
+    alpha_res_write_row(f, index);
+}
+
+static void alpha_res_release_frag(ResFrag& f)
+{
+    if (!f.mAlphaRes)
+    {
+        return;
+    }
+    const U64 frame = Context::instance().getFrameNumber();
+    ++sAR.mVersion;
+    for (size_t i = 0; i < f.mAlphaSlot.size(); ++i)
+    {
+        if (f.mAlphaSlot[i] != ~0u)
+        {
+            sAR.mRows[f.mAlphaSlot[i]].mCount = 0;
+            sAR.mRetiredSlots.push_back({ f.mAlphaSlot[i], frame });
+        }
+        if (f.mAlphaPoolCount[i])
+        {
+            sAR.mRetiredRanges.push_back({ f.mAlphaPoolFirst[i], f.mAlphaPoolCount[i], frame });
+        }
+        for (U32 t = 0; t < 4; ++t)
+        {
+            U32& pin = f.mAlphaPin[4 * i + t];
+            if (pin)
+            {
+                if (sPins[pin].mGeoRefs)
+                {
+                    --sPins[pin].mGeoRefs;
+                }
+                rtPinRelease(pin);
+                pin = 0;
+            }
+        }
+    }
+    f.mAlphaSlot.clear();
+    f.mAlphaPoolFirst.clear();
+    f.mAlphaPoolCount.clear();
+    f.mAlphaPin.clear();
+    f.mAlphaPinName.clear();
+    f.mAlphaRes = false;
+}
+
+// kind 38: the indices of a fragment's alpha entries (sent with kind 18, same order): per entry a count, then that many 16 bit indices (padded to a whole word). They are copied into the pool, the entries
+// get their rows.
+static void res_alpha_indices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    auto found = sRes.mFrags.find(h.mFragment);
+    if (found == sRes.mFrags.end() || !alpha_res_init())
+    {
+        return;
+    }
+    ResFrag& f = found->second;
+    if (h.mEntries != f.mAlpha.size())
+    {
+        return;
+    }
+    alpha_res_release_frag(f);
+    alpha_res_reclaim(Context::instance().getFrameNumber());
+    const size_t n = f.mAlpha.size();
+    f.mAlphaSlot.assign(n, ~0u);
+    f.mAlphaPoolFirst.assign(n, 0);
+    f.mAlphaPoolCount.assign(n, 0);
+    f.mAlphaPin.assign(4 * n, 0);
+    f.mAlphaPinName.assign(4 * n, 0);
+    f.mAlphaRes = true;
+    const U32* cursor = (const U32*)blob;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const U32 count = *cursor++;
+        const U16* indices = (const U16*)cursor;
+        cursor += (count + 1) / 2;
+        U32 slot;
+        if (!sAR.mFreeSlots.empty())
+        {
+            slot = sAR.mFreeSlots.back();
+            sAR.mFreeSlots.pop_back();
+        }
+        else if (sAR.mHigh < kAlphaRowCapacity)
+        {
+            slot = sAR.mHigh++;
+        }
+        else
+        {
+            if (sAR.mRowsFull++ == 0)
+            {
+                LL_WARNS("VkScene") << "resident alpha casters: the row table is full (" << kAlphaRowCapacity << "): the rest are drawn the old way" << LL_ENDL;
+            }
+            continue;
+        }
+        const U32 first = count ? alpha_pool_alloc(count) : ~0u;
+        if (count == 0 || first == ~0u)
+        {
+            if (count && sAR.mPoolFull++ == 0)
+            {
+                LL_WARNS("VkScene") << "resident alpha casters: the index pool is full: the rest are drawn the old way" << LL_ENDL;
+            }
+            sAR.mRows[slot].mCount = 0;
+            sAR.mRetiredSlots.push_back({ slot, Context::instance().getFrameNumber() });
+            continue;
+        }
+        memcpy(sAR.mPoolPtr + first, indices, (size_t)count * sizeof(U16));
+        f.mAlphaSlot[i] = slot;
+        f.mAlphaPoolFirst[i] = first;
+        f.mAlphaPoolCount[i] = count;
+        sAR.mRows[slot].mCount = 0;
+        memcpy(sAR.mBounds.data() + 4 * (size_t)slot, f.mBounds, 4 * sizeof(F32));
+        alpha_res_set_pins(f, i);
+    }
+    for (size_t k = 0; k < f.mPairs.size(); ++k)
+    {
+        res_pair_check(f.mPairs[k]);
+    }
+    alpha_res_rows_all(f);
+}
+
+namespace
+{
+const char* kAlphaCullShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 64) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Table { uint t[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Bounds { vec4 b[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Models { mat4 m[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Cmds { uint c[]; };
+layout(push_constant) uniform PC { uvec2 table; uvec2 bounds; uvec2 models; uvec2 params; uvec2 cmds; } pc;
+void main()
+{
+    Params p = Params(pc.params);
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= p.count) return;
+    Table tb = Table(pc.table);
+    Bounds bd = Bounds(pc.bounds);
+    Models md = Models(pc.models);
+    Cmds cm = Cmds(pc.cmds);
+    uint first = tb.t[i * 20u + 8u];
+    uint count = tb.t[i * 20u + 9u];
+    uint model = tb.t[i * 20u + 10u];
+    bool visible = count != 0u;
+    if (visible)
+    {
+        vec4 b = bd.b[i];
+        vec3 c = (md.m[model] * vec4(b.xyz, 1.0)).xyz;
+        for (uint k = 0u; k < p.planeCount; ++k)
+        {
+            if (dot(p.planes[k].xyz, c) + p.planes[k].w < -b.w) { visible = false; break; }
+        }
+    }
+    cm.c[i * 5u + 0u] = visible ? count : 0u;
+    cm.c[i * 5u + 1u] = visible ? 1u : 0u;
+    cm.c[i * 5u + 2u] = first;
+    cm.c[i * 5u + 3u] = 0u;
+    cm.c[i * 5u + 4u] = i;
+}
+)GLSL";
+struct AlphaCullPipe { VkShaderModule mModule = VK_NULL_HANDLE; VkPipelineLayout mLayout = VK_NULL_HANDLE; VkPipeline mPipe = VK_NULL_HANDLE; bool mTried = false; } sAlphaCullPipe;
+
+bool alpha_cull_pipeline()
+{
+    if (sAlphaCullPipe.mPipe != VK_NULL_HANDLE)
+    {
+        return true;
+    }
+    if (sAlphaCullPipe.mTried)
+    {
+        return false;
+    }
+    sAlphaCullPipe.mTried = true;
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return false;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { kAlphaCullShader };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("VkScene") << "resident alpha cull: compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("VkScene") << "resident alpha cull: link failed: " << program.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        LL_WARNS("VkScene") << "resident alpha cull: no SPIR-V: " << logger.getAllMessages() << LL_ENDL;
+        return false;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 40 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreateShaderModule(dev, &mi, nullptr, &sAlphaCullPipe.mModule) != VK_SUCCESS || vkCreatePipelineLayout(dev, &li, nullptr, &sAlphaCullPipe.mLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.module = sAlphaCullPipe.mModule;
+    pi.stage.pName = "main";
+    pi.layout = sAlphaCullPipe.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &sAlphaCullPipe.mPipe) != VK_SUCCESS)
+    {
+        sAlphaCullPipe.mPipe = VK_NULL_HANDLE;
+        return false;
+    }
+    LL_INFOS("VkScene") << "resident alpha cull pipeline ready" << LL_ENDL;
+    return true;
+}
+} // namespace
+
+void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+// kind 37: cull the resident alpha rows against the pass's planes on the GPU, then draw the survivors with one indirect indexed draw from the index pool (the packet program of kind 1 is bound by the viewer)
+static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (!sAR.mReady || sAR.mHigh == 0 || !alpha_cull_pipeline())
+    {
+        return;
+    }
+    Renderer& r = Renderer::instance();
+    Program* program = r.getProgram();
+    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    {
+        ++sStats.mNoProgram;
+        return;
+    }
+    const U64 frame_now = Context::instance().getFrameNumber();
+    res_refresh(frame_now);
+    alpha_res_reclaim(frame_now);
+    const U32 n = sAR.mHigh;
+    Renderer::ScratchAlloc params = r.allocVertexScratch(112);
+    Renderer::ScratchAlloc commands = r.allocVertexScratch(20ull * n);
+    if (!params.mPtr || !commands.mPtr || !params.mAddress || !commands.mAddress)
+    {
+        return;
+    }
+    if (sAR.mCopyFrame != frame_now || sAR.mCopyVersion != sAR.mVersion || sAR.mCopyN != n || !sAR.mCopyRows.mPtr)
+    {
+        Renderer::ScratchAlloc rows = r.allocVertexScratch(sizeof(AlphaRow) * (size_t)n);
+        Renderer::ScratchAlloc bounds = r.allocVertexScratch(16ull * n);
+        if (!rows.mPtr || !bounds.mPtr || !rows.mAddress || !bounds.mAddress)
+        {
+            return;
+        }
+        memcpy(rows.mPtr, sAR.mRows.data(), sizeof(AlphaRow) * (size_t)n);
+        memcpy(bounds.mPtr, sAR.mBounds.data(), 16ull * n);
+        sAR.mCopyRows = rows; sAR.mCopyBounds = bounds;
+        sAR.mCopyFrame = frame_now; sAR.mCopyVersion = sAR.mVersion; sAR.mCopyN = n;
+    }
+    if (sAR.mMatFrame != frame_now || sAR.mMatVersion != sRes.mVersion || !sAR.mCopyMatrices.mPtr)
+    {
+        Renderer::ScratchAlloc m = r.allocVertexScratch(64ull * kResMatrixSlots);
+        if (!m.mPtr || !m.mAddress)
+        {
+            return;
+        }
+        memcpy(m.mPtr, sRes.mM, 64ull * kResMatrixSlots);
+        sAR.mCopyMatrices = m;
+        sAR.mMatFrame = frame_now; sAR.mMatVersion = sRes.mVersion;
+    }
+    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
+    memcpy(params.mPtr, blob, 96);
+    ((U32*)params.mPtr)[24] = n;
+    ((U32*)params.mPtr)[25] = plane_count;
+    const U64 ta = (U64)sAR.mCopyRows.mAddress, ba = (U64)sAR.mCopyBounds.mAddress, ma = (U64)sAR.mCopyMatrices.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
+    const U32 push[10] = { (U32)ta, (U32)(ta >> 32), (U32)ba, (U32)(ba >> 32), (U32)ma, (U32)(ma >> 32), (U32)pa, (U32)(pa >> 32), (U32)ca, (U32)(ca >> 32) };
+    r.recordExternal({}, [&](VkCommandBuffer cmd) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sAlphaCullPipe.mPipe);
+        vkCmdPushConstants(cmd, sAlphaCullPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+        vkCmdDispatch(cmd, (n + 63) / 64, 1, 1);
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        mb.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+        mb.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+
+    static thread_local VertexInput vi_cache;
+    static thread_local std::vector<U32> used_cache;
+    VertexInput& vi = vi_cache;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used_cache.clear();
+    const S32 table_words[2] = { (S32)(U32)ta, (S32)(U32)(ta >> 32) };
+    const S32 models_words[2] = { (S32)(U32)ma, (S32)(U32)(ma >> 32) };
+    program->setInts("ll_packet_table", table_words, 2);
+    program->setInts("ll_packet_models", models_words, 2);
+    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    program->setFloats("ll_target_width", &h.mTargetWidth, 1);
+    if (program->hasUniform("shadow_alpha_indexed"))
+    {
+        const S32 flag = 1;
+        program->setInts("shadow_alpha_indexed", &flag, 1);
+    }
+    if (!prepare_draw(vi, used_cache))
+    {
+        return;
+    }
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.bindlessFlush();
+    r.setIndexBuffer(sAR.mPool.mBuffer, 0, VK_INDEX_TYPE_UINT16);
+    if (r.drawPacketsIndexed(nullptr, n, commands.mBuffer, commands.mOffset))
+    {
+        sDraws += n;
+        sDrawsTotal += n;
+    }
+    ++sAR.mPasses;
+    sAR.mDrawnRows += n;
+    if (sAR.mPasses - sAR.mReport >= 2400)
+    {
+        sAR.mReport = sAR.mPasses;
+        LL_INFOS("VkScene") << "resident alpha casters: " << n << " rows, " << sAR.mPasses << " passes drawn, row writes " << sAR.mRowWrites << " (calls: pair " << sAlphaRowCauses[0] << ", pin epoch " << sAlphaRowCauses[1]
+            << ", texture event " << sAlphaRowCauses[2] << "), pool full " << sAR.mPoolFull << ", rows full " << sAR.mRowsFull << LL_ENDL;
+    }
 }
 
 namespace
@@ -6793,6 +7486,8 @@ struct GeoFrag
     std::vector<U32> mPbrOfItem;                // S5c: per item, its PBR row + 1 (0 = none)
     std::vector<VkDrawIndexedIndirectCommand> mARCmds;      // S5d: the draws of its rigged alpha items (type 27), in item order: indexed, the count 0 until the viewer bound a palette this frame
     std::vector<U32> mARCount0, mARItem, mARItemCmd;        // ... their index counts, the item of each command, the command of each item (~0u: none)
+    std::vector<U32> mRLodIb, mRLodCount;                   // item E for the opaque rigged items: per command of mRCmds, the simplified list the viewer chose for this frame (GL name of its index buffer, its count); 0 = the item's own
+    std::vector<U32> mARLodIb, mARLodCount;                 // item E: per command, a simplified index list (the GL name of its index buffer, its count) the viewer chose for this frame; 0 = the item's own list
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     U32 mTypeFirst[kGeoTypes + 1] = {};
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
@@ -6852,7 +7547,8 @@ static struct GeoState
     Renderer::ScratchAlloc mRCommands;
     Renderer::ScratchAlloc mSTable;         // LL_VK_GEO_ROWCOPY: the rows of the static items of this frame (copies of the table's rows), the static commands index it
     Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
-    U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0;
+    U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0, mRLodCmds = 0, mRLodTris = 0, mRLodTrisFull = 0;       // (item E, opaque rigged: commands that drew a simplified list, their triangles, the same commands' own triangles)
+    std::vector<U32> mRLodNames;                                // the simplified lists the frame's rigged commands draw from (made current before the draws)
     F32 mRegionM[2048][16] = {};       // S4 C: slots 1-255 region matrices, 256-2047 the moving ones (the viewer sends the values of the slots the listed fragments use, every frame)
     U8 mHaveM[2048] = {};
     U32 mMaxSlot = 0;
@@ -7668,7 +8364,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     geo_reclaim(frame_now);
     const U32* handles = (const U32*)blob;
     const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
-    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)(matrices + h.mMatrices);       // S4 B: mPaletteFloats = how many
     auto t0 = std::chrono::steady_clock::now();
     // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
@@ -7759,6 +8455,13 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             continue;
         }
         const U32 cmd = f->mRItemCmd[b.mItem];
+        if (f->mRLodIb.size() != f->mRCmds.size())
+        {
+            f->mRLodIb.assign(f->mRCmds.size(), 0);
+            f->mRLodCount.assign(f->mRCmds.size(), 0);
+        }
+        f->mRLodIb[cmd] = b.mLodIb;
+        f->mRLodCount[cmd] = b.mLodCount;
         const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
         GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
         if (pal)
@@ -7866,6 +8569,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     sGeo.mRCommands = Renderer::ScratchAlloc();
     sGeo.mRTable = Renderer::ScratchAlloc();
+    sGeo.mRLodNames.clear();
     size_t rtotal = 0;
     for (const GeoFrag* f : listed)
     {
@@ -7891,7 +8595,35 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                     {
                         const GeoFrag::RRun& run = f->mRRuns[k];
                         memcpy(rout + cursor, f->mRCmds.data() + run.mFirst, run.mCount * sizeof(VkDrawIndexedIndirectCommand));
-                        sGeo.mRDraws[rt].push_back({ f->mPairs[run.mPair].mIb, cursor, run.mCount });
+                        // item E: a command whose item has a simplified list (its buffer on the GPU) draws that list: its own range of the command, split into draws by index buffer
+                        U32 seg = 0, seg_lod = 0;
+                        const bool lods = f->mRLodIb.size() == f->mRCmds.size();
+                        for (U32 c = 0; c < run.mCount; ++c)
+                        {
+                            U32 lod = 0;
+                            const U32 ci = run.mFirst + c;
+                            if (lods && f->mRLodIb[ci] && f->mRCmds[ci].indexCount)
+                            {
+                                Buf* lb = packet_buffer(f->mRLodIb[ci]);
+                                if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
+                                {
+                                    lod = f->mRLodIb[ci];
+                                    rout[cursor + c].indexCount = f->mRLodCount[ci];
+                                    rout[cursor + c].firstIndex = 0;
+                                    sGeo.mRLodNames.push_back(lod);
+                                    ++sGeo.mRLodCmds;
+                                    sGeo.mRLodTrisFull += f->mRCount0[ci] / 3;
+                                    sGeo.mRLodTris += f->mRLodCount[ci] / 3;
+                                }
+                            }
+                            if (c > 0 && lod != seg_lod)
+                            {
+                                sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg });
+                                seg = c;
+                            }
+                            seg_lod = lod;
+                        }
+                        sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, run.mCount - seg });
                         cursor += run.mCount;
                     }
                 }
@@ -7948,6 +8680,9 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             << s.mStaleSlot << " stale texture slots, " << s.mStaleCmd << " stale command lists | table: " << sGeo.mHigh << " slots used, " << sGeo.mFree.size() << " free, " << sGeo.mRetired.size()
             << " retired, " << sGeo.mFragCount << " fragments, " << s.mRetains << " retains, " << s.mReleases << " releases (" << s.mReleaseUnknown << " unknown), " << s.mOverflow << " overflows, "
             << s.mScratchFail << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
+        LL_INFOS("VkScene") << "scene geometry table, opaque rigged commands a frame " << (double)sGeo.mRCmdsFrame / n << ", of them drawing a simplified list " << (double)sGeo.mRLodCmds / n << " (triangles " << (double)sGeo.mRLodTrisFull / n
+            << " -> " << (double)sGeo.mRLodTris / n << " a frame)" << LL_ENDL;
+        sGeo.mRCmdsFrame = sGeo.mRLodCmds = sGeo.mRLodTris = sGeo.mRLodTrisFull = 0;
         if (timed)
         {
             LL_INFOS("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
@@ -8092,6 +8827,10 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
+    if (rigged_draw && !sGeo.mRLodNames.empty())
+    {
+        ensure_buffers_current(sGeo.mRLodNames, 0);          // item E: the simplified lists' data written by the main thread is recorded before the draws read it
+    }
     geo_flush_if_needed();
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
@@ -8172,6 +8911,46 @@ static struct AlphaPass
     F32 mVP[32] = {};
     Renderer::ScratchAlloc mModels, mTexmats;
 } sAlphaPass;
+
+// <FS> item C (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rows the runs of a frame draw are copies (the table is read by frames in flight). Each run used to copy its own into a scratch of its own, so the
+// table address the pull program reads changed with every run, which made its whole loose uniform block (about 2 KB) dirty and copied into the ring again for every run (about 1,100 copies and 1.9 MB a
+// frame in the crowd lap of 2026-11-04). Now the runs of a frame share one chunk: the rows are appended, the commands' first instance counts from the run's first row, and the address stays the same.
+// LL_VK_ALPHA_ROWCHUNK=0 goes back to a scratch for each run.
+static struct AlphaRowChunk
+{
+    Renderer::ScratchAlloc mAlloc;
+    U64 mFrame = ~0ull;
+    U32 mCapacity = 0, mUsed = 0;
+} sAlphaChunk;
+
+static bool alpha_rows_reserve(Renderer& r, U32 rows, U32& base, Renderer::ScratchAlloc& out)
+{
+    static const bool chunked = !(getenv("LL_VK_ALPHA_ROWCHUNK") && getenv("LL_VK_ALPHA_ROWCHUNK")[0] == '0');
+    if (!chunked)
+    {
+        base = 0;
+        out = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rows);
+        return out.mPtr && out.mAddress;
+    }
+    const U64 frame = Context::instance().getFrameNumber();
+    if (sAlphaChunk.mFrame != frame || !sAlphaChunk.mAlloc.mPtr || sAlphaChunk.mUsed + rows > sAlphaChunk.mCapacity)
+    {
+        const U32 capacity = std::max<U32>(4096u, rows);
+        Renderer::ScratchAlloc a = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)capacity);
+        if (!a.mPtr || !a.mAddress)
+        {
+            return false;
+        }
+        sAlphaChunk.mAlloc = a;
+        sAlphaChunk.mFrame = frame;
+        sAlphaChunk.mCapacity = capacity;
+        sAlphaChunk.mUsed = 0;
+    }
+    base = sAlphaChunk.mUsed;
+    sAlphaChunk.mUsed += rows;
+    out = sAlphaChunk.mAlloc;
+    return true;
+}
 
 void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -8327,29 +9106,52 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     Renderer::ScratchAlloc alpha_rows;
+    static thread_local std::vector<U32> lod_use;       // item E: per command of the record, the GL name of the simplified index buffer it draws from (0 = its own)
+    static thread_local std::vector<U32> lod_names;
     if (rigged_run)
     {
         VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
+        lod_use.assign(total, 0);
+        lod_names.clear();
+        size_t at_cmd = 0;
         for (const auto& t : todo)
         {
             const VkDrawIndexedIndirectCommand* src = t.first->mARCmds.data() + t.second.mFirst;
             memcpy(out, src, t.second.mCount * sizeof(VkDrawIndexedIndirectCommand));
+            const GeoFrag* lf = t.first;
             for (U32 k = 0; k < t.second.mCount; ++k)
             {
                 a.mZeroRigged += src[k].indexCount == 0 ? 1 : 0;       // (an item that draws nothing: no palette this frame, or its buffers are not usable; counted from the source: the scratch is write combined memory, a read of it costs about a microsecond)
+                const U32 c = t.second.mFirst + k;
+                if (src[k].indexCount && c < lf->mARLodIb.size() && lf->mARLodIb[c])
+                {
+                    Buf* lb = packet_buffer(lf->mARLodIb[c]);
+                    if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
+                    {
+                        out[k].indexCount = lf->mARLodCount[c];
+                        out[k].firstIndex = 0;
+                        lod_use[at_cmd + k] = lf->mARLodIb[c];
+                        lod_names.push_back(lf->mARLodIb[c]);
+                    }
+                }
             }
             out += t.second.mCount;
+            at_cmd += t.second.mCount;
+        }
+        if (!lod_names.empty())
+        {
+            ensure_buffers_current(lod_names, 0);          // (the lists' data written by the main thread is recorded before the draws read it)
         }
         // as the rigged G-buffer items: the rows the draw reads are copies made for this draw (the table is read by frames in flight)
-        alpha_rows = r.allocVertexScratch(sizeof(GeoGpuG) * total);
-        if (alpha_rows.mPtr && alpha_rows.mAddress)
+        U32 row_base = 0;
+        if (alpha_rows_reserve(r, (U32)total, row_base, alpha_rows))
         {
             VkDrawIndexedIndirectCommand* rc = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
-            GeoGpuG* rows = (GeoGpuG*)alpha_rows.mPtr;
+            GeoGpuG* rows = (GeoGpuG*)alpha_rows.mPtr + row_base;
             for (size_t i = 0; i < total; ++i)
             {
                 rows[i] = sGeo.mTCpu[rc[i].firstInstance];
-                rc[i].firstInstance = (U32)i;
+                rc[i].firstInstance = (U32)(row_base + i);
             }
         }
         else
@@ -8362,12 +9164,13 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)cmds.mPtr;
         GeoGpuG* static_rows = nullptr;
+        U32 static_base = 0;
         if (geo_rowcopy_on())
         {
-            alpha_rows = r.allocVertexScratch(sizeof(GeoGpuG) * total);        // as the rigged run: rows copied for this draw (LL_VK_GEO_ROWCOPY, see the switch)
-            if (alpha_rows.mPtr && alpha_rows.mAddress)
+            // as the rigged run: rows copied for this draw (LL_VK_GEO_ROWCOPY, see the switch), now into the frame's shared chunk
+            if (alpha_rows_reserve(r, (U32)total, static_base, alpha_rows))
             {
-                static_rows = (GeoGpuG*)alpha_rows.mPtr;
+                static_rows = (GeoGpuG*)alpha_rows.mPtr + static_base;
             }
             else
             {
@@ -8385,7 +9188,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 {
                     VkDrawIndirectCommand c = src[k];
                     static_rows[at + k] = sGeo.mTCpu[c.firstInstance];
-                    c.firstInstance = (U32)(at + k);
+                    c.firstInstance = (U32)(static_base + at + k);
                     out[k] = c;
                 }
             }
@@ -8466,12 +9269,13 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             while (k < t.second.mCount)
             {
                 const U32 pair = f->mPairOf[f->mARItem[t.second.mFirst + k]];
+                const U32 lod = lod_use[cursor + k];          // item E: the simplified list's buffer, 0 = the pair's own
                 U32 e = k + 1;
-                while (e < t.second.mCount && f->mPairOf[f->mARItem[t.second.mFirst + e]] == pair)
+                while (e < t.second.mCount && f->mPairOf[f->mARItem[t.second.mFirst + e]] == pair && lod_use[cursor + e] == lod)
                 {
                     ++e;
                 }
-                Buf* ib = packet_buffer(f->mPairs[pair].mIb);
+                Buf* ib = packet_buffer(lod ? lod : f->mPairs[pair].mIb);
                 if (ib && ib->mVk.valid())
                 {
                     r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
@@ -8615,7 +9419,7 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
     {
         return;
     }
-    struct Binding { U32 mHandle, mItem, mOffset, mJoints; };
+    struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)blob;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -8626,6 +9430,13 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
             continue;
         }
         const U32 cmd = f->mARItemCmd[b.mItem];
+        if (f->mARLodIb.size() != f->mARCmds.size())
+        {
+            f->mARLodIb.assign(f->mARCmds.size(), 0);
+            f->mARLodCount.assign(f->mARCmds.size(), 0);
+        }
+        f->mARLodIb[cmd] = b.mLodIb;
+        f->mARLodCount[cmd] = b.mLodCount;
         const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
         GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
         if (pal)
@@ -9987,11 +10798,54 @@ void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+// DIAGNOSTIC (never a setting): <work>/rt-debug.txt norigshadow=1 leaves the rigged casters (kinds 2 and 4: attachments and avatar bodies) out of the four sun cascades, so one lap can
+// read what they cost the GPU (a same-lap A/B with the key driver; the shadows of the avatars are missing while it is on). Read here once per half second: the ray scene's reader only runs with RT on.
+static bool rigged_shadow_skipped()
+{
+    static std::chrono::steady_clock::time_point last;
+    static bool skip = false;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last >= std::chrono::milliseconds(500))
+    {
+        last = now;
+        bool v = false;
+        if (FILE* f = fopen("<work>/rt-debug.txt", "rb"))
+        {
+            char line[256];
+            while (fgets(line, sizeof(line), f))
+            {
+                long long n = 0;
+                if (sscanf(line, "norigshadow=%lld", &n) == 1)
+                {
+                    v = n != 0;
+                }
+            }
+            fclose(f);
+        }
+        skip = v;
+    }
+    return skip;
+}
+
 void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
+    if ((h.mKind == 2 || h.mKind == 4) && h.mPass <= 3 && rigged_shadow_skipped())
+    {
+        return;
+    }
     if ((h.mKind >= 20 && h.mKind <= 24) || h.mKind == 29 || h.mKind == 31)
     {
         geo_dispatch(h, blob);      // <FS> S3 G2: the scene geometry table
+        return;
+    }
+    if (h.mKind == 37)
+    {
+        alpha_res_draw(h, blob);        // <FS> resident alpha casters of the pass (planes in the blob)
+        return;
+    }
+    if (h.mKind == 38)
+    {
+        res_alpha_indices(h, blob);     // <FS> the indices of a resident fragment's alpha entries
         return;
     }
     if (h.mKind >= 11 && h.mKind <= 19)
@@ -10392,11 +11246,48 @@ void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
     {
         return;
     }
+    // E2 (LL_VK_RT_EARLY=3): the value of the timeline semaphore at which the compute queue has built this frame's scene (0: nothing pending)
+    static U64 sAsyncScene = 0;
+    if (args.mPhase == 2)
+    {
+        if (sAsyncScene)
+        {
+            // the join: the graphics part so far is submitted and the next part (the lighting) waits for the compute queue
+            U64 unused = 0;
+            Renderer::instance().splitFrame(false, unused);
+            Context::instance().setNextSubmitWait(sAsyncScene);
+            sAsyncScene = 0;
+            return;
+        }
+        Rt::sceneReadyBarrier();        // LL_VK_RT_EARLY: the scene was built before the G-buffer; the lighting waits for it here
+        return;
+    }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
     res_ray_membership(Context::instance().getFrameNumber());
     Rt::setDistanceScale(args.mDistanceScale);
     Rt::setSnapshotScene(args.mSnapshot != 0);
-    Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch);
+    Context& ctx = Context::instance();
+    if (args.mPhase == 1 && args.mAsync && ctx.asyncOn())
+    {
+        // E2: what the frame recorded so far (the buffer writes the builds read included) is submitted now; the compute queue waits for it, builds, and signals; the lighting waits for that
+        U64 uploaded = 0;
+        if (Renderer::instance().splitFrame(true, uploaded))
+        {
+            VkCommandBuffer compute = ctx.beginCompute();
+            Renderer::instance().setComputeRedirect(compute);
+            ctx.suppressStamps(true);
+            Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch, false);
+            ctx.suppressStamps(false);
+            Renderer::instance().setComputeRedirect(VK_NULL_HANDLE);
+            U64 built = 0;
+            if (ctx.submitCompute(compute, uploaded, built))
+            {
+                sAsyncScene = built;
+            }
+            return;
+        }
+    }
+    Rt::buildScene(args.mView, [](U32 name) { return packet_texture_slot(Renderer::instance(), name); }, packet_texture_prefetch, args.mPhase != 1);
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -10560,6 +11451,8 @@ void after_frame()
                         os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
                     }
                     LL_INFOS("VkTexCopy") << os.str() << LL_ENDL;
+                    LL_INFOS("VkTexCopy") << "level drops refused by reason: no image " << sDropWhy[1] << ", not 2D " << sDropWhy[2] << ", depth " << sDropWhy[3] << ", compressed " << sDropWhy[4] << ", levels incomplete " << sDropWhy[5]
+                                          << ", fewer levels than the drop " << sDropWhy[6] << ", no new image " << sDropWhy[7] << ", copy failed " << sDropWhy[8] << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
             }

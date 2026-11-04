@@ -68,7 +68,14 @@ LLAlertHandler::~LLAlertHandler()
 //--------------------------------------------------------------------------
 void LLAlertHandler::initChannel()
 {
-    S32 channel_right_bound = gViewerWindow->getWorldViewRectScaled().getWidth() / 2;
+    // <FS> at the login screen the world view has no size yet: the channel was centred on x = 0, and an alert shown at start-up (the graphics init alert, 2026-11-03) sat half off the
+    // window, behind the start page, while it still held the input: nothing was clickable. The window's own width is there from the start.
+    S32 channel_width = gViewerWindow->getWorldViewRectScaled().getWidth();
+    if (channel_width <= 0)
+    {
+        channel_width = gViewerWindow->getWindowRectScaled().getWidth();
+    }
+    S32 channel_right_bound = channel_width / 2;
     mChannel.get()->init(channel_right_bound, channel_right_bound);
 }
 

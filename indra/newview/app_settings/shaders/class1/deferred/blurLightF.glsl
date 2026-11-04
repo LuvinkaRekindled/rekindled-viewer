@@ -35,6 +35,9 @@ uniform vec2 delta;
 uniform vec2 screen_res;
 uniform vec3 kern[4];
 uniform float kern_scale;
+uniform sampler2D emissiveRect;   // <FS> the avatar velocity target (a = 1 where an avatar wrote), bound only with sun_avatar_blur
+uniform float sun_avatar_blur;    // <FS> 0..1: how much of the blurred sun shadow an avatar pixel takes, whatever sun_passthrough says (RenderRTShadowDynamicBlur, RenderRTShadowDynamicBlurAmount: the leaf shadows slide over a moving avatar, the temporal average cannot hold them)
+uniform float sun_mask_only;      // <FS> 1: the blur is only there for the dynamic mask (RenderRTShadowDynamicBlur): every pixel outside the mask keeps all its channels (SSAO and spot shadows too) and costs no taps
 uniform float sun_passthrough;   // <FS> 1: the sun shadow channel (r) keeps its own value and only the SSAO (g) and the spot shadows are blurred (ray traced sun shadow with the upscaler on)
 
 in vec2 vary_fragcoord;
@@ -45,6 +48,11 @@ vec4 getNorm(vec2 pos_screen);
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
+    if (sun_mask_only > 0.5 && texture(emissiveRect, tc).a <= 0.5)
+    {
+        frag_color = texture(lightMap, tc);
+        return;
+    }
     vec4 norm = getNorm(tc);
     vec3 pos = getPosition(tc).xyz;
     vec4 ccol = texture(lightMap, tc).rgba;
@@ -107,7 +115,12 @@ void main()
     }
 
     col /= defined_weight.xyxx;
-    col.r = mix(col.r, ccol.r, sun_passthrough);
+    float sun_keep = sun_passthrough;
+    if (sun_avatar_blur > 0.0 && texture(emissiveRect, vary_fragcoord.xy).a > 0.5)
+    {
+        sun_keep = min(sun_keep, 1.0 - sun_avatar_blur);
+    }
+    col.r = mix(col.r, ccol.r, sun_keep);
     //col.y *= col.y;
 
     frag_color = max(col, vec4(0));
