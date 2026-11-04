@@ -85,6 +85,8 @@ flat in uint vary_fullbright;
 void calcAtmosphericVars(vec3 inPositionEye, vec3 light_dir, float ambFactor, out vec3 sunlit, out vec3 amblit, out vec3 additive, out vec3 atten);
 #endif
 
+void preProbeSample(vec3 pos);
+vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit);
 void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit_linear);
 
@@ -287,9 +289,14 @@ void main()
     vec3 amblit_linear = amblit;
 
     vec3 irradiance = amblit;
-    vec3 glossenv;
-    vec3 legacyenv;
-    sampleReflectionProbesLegacy(irradiance, glossenv, legacyenv, frag, pos.xyz, norm.xyz, 0.0, 0.0, true, amblit_linear);
+    // <FS> only the ambient part of sampleReflectionProbesLegacy: this shader uses nothing else it returns (no glossy or legacy environment term), and the rest of that call (the hero probe taps and the
+    // screen space reflection march, which it makes for a transparent surface whatever the glossiness) cost 0.7 ms of 1.1 for the static alpha runs of a crowd (rt-debug lap, 2026-11-04). Same value: the legacy
+    // call sets the ambient term to amblit, and, outside classic mode, to sampleProbeAmbient of the list preProbeSample makes.
+    if (classic_mode == 0)
+    {
+        preProbeSample(pos.xyz);
+        irradiance = sampleProbeAmbient(pos.xyz, norm.xyz, amblit_linear);
+    }
 
 
     float da = dot(norm.xyz, light_dir.xyz);
