@@ -119,13 +119,15 @@ void LLDrawable::init(bool new_entry)
 
     // mXform
     mParent = NULL;
-    mRenderType = 0;
-    mCurrentScale = LLVector3(1,1,1);
+    // <FS> C1a: the row (flags 0, radius 0, render type 0, scale 1,1,1) comes cleared from the table
+    mInstance = LLInstances::acquire(this);
+    if (!mInstance)
+    {
+        LL_ERRS() << "the instance table is full (" << LLInstances::kCapacity << " drawables)" << LL_ENDL;
+    }
     mDistanceWRTCamera = 0.0f;
-    mState     = 0;
 
     // mFaces
-    mRadius = 0.f;
     mGeneration = -1;
     mSpatialBridge = NULL;
 
@@ -298,7 +300,7 @@ void LLDrawable::destroy()
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) < 8)
         {
-            LL_WARNS("DrawableTrace") << "a drawable is freed while the moved list holds it (state " << (U32)mState << ", dead " << isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
+            LL_WARNS("DrawableTrace") << "a drawable is freed while the moved list holds it (state " << getState() << ", dead " << isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
         }
     }
     if (gDebugRender)
@@ -787,7 +789,7 @@ F32 LLDrawable::updateXform(bool undamped)
     LLQuaternion target_rot = mVObjp->getRotation();
     //scaling
     LLVector3 target_scale = mVObjp->getScale();
-    LLVector3 old_scale = mCurrentScale;
+    LLVector3 old_scale = getScale();
 
     // Damping
     F32 dist_squared = 0.f;
@@ -819,7 +821,7 @@ F32 LLDrawable::updateXform(bool undamped)
             // snap to final position (only if no target omega is applied)
             dist_squared = 0.0f;
             //set target scale here, because of dist_squared = 0.0f remove object from move list
-            mCurrentScale = target_scale;
+            setScale(target_scale);
 
             if (getVOVolume() && !isRoot())
             { //child prim snapping to some position, needs a rebuild
@@ -837,13 +839,13 @@ F32 LLDrawable::updateXform(bool undamped)
         //dist_squared += dist_vec_squared(old_scale, target_scale);
     }
 
-    const LLVector3 vec = mCurrentScale-target_scale;
+    const LLVector3 vec = getScale()-target_scale;
 
     //It's a very important on each cycle on Drawable::update form(), when object remained in move
     //, list update the CurrentScale member, because if do not do that, it remained in this list forever
     //or when the delta time between two frames a become a sufficiently large (due to interpolation)
     //for overcome the MIN_INTERPOLATE_DISTANCE_SQUARED.
-    mCurrentScale = target_scale;
+    setScale(target_scale);
 
     if (vec*vec > MIN_INTERPOLATE_DISTANCE_SQUARED)
     { //scale change requires immediate rebuild
@@ -896,10 +898,7 @@ F32 LLDrawable::updateXform(bool undamped)
 
 void LLDrawable::setRadius(F32 radius)
 {
-    if (mRadius != radius)
-    {
-        mRadius = radius;
-    }
+    LLInstances::row(mInstance).radius = radius;
 }
 
 void LLDrawable::moveUpdatePipeline(bool moved)
@@ -1470,8 +1469,8 @@ LLSpatialBridge::LLSpatialBridge(LLDrawable* root, bool render_by_group, U32 dat
     mDrawable = root;
     root->setSpatialBridge(this);
 
-    mRenderType = mDrawable->mRenderType;
-    mDrawableType = mDrawable->mRenderType;
+    setRenderType(mDrawable->getRenderType());
+    mDrawableType = mDrawable->getRenderType();
 
     mPartitionType = LLViewerRegion::PARTITION_VOLUME;
 
@@ -1572,7 +1571,7 @@ void LLSpatialBridge::updateSpatialExtents()
 
     LLVector4a diagonal;
     diagonal.setSub(newMax, newMin);
-    mRadius = diagonal.getLength3().getF32() * 0.5f;
+    setRadius(diagonal.getLength3().getF32() * 0.5f);
 
     LLVector4a& pos = getGroupPosition();
     pos.setAdd(newMin,newMax);

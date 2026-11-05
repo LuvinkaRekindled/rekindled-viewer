@@ -2362,7 +2362,10 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     {
         const AvOp& op = *op_ptr;
         // <FS> the recorded request names its drawable by a raw pointer, made on a pool thread and replayed here: one that was freed since is not touched (and a moved list entry made of it would dangle). Logged with the stack of its destruction.
-        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !fs_drawable_looks_live(op.mDrawable))
+        // C1a: the vtable test alone passes a drawable freed earlier in this very replay (its base class vtable stays in the freed block): a MOVED_BRIDGE op for a bridge that an earlier MOVE_PARTITION op of the same avatar
+        // just destroyed pushed it onto the moved bridge list as a counted pointer to freed memory (the stale entries of lap c1b-new1: "moved list entry 0 ... is not a live drawable", destroyed in the same frame by markDead
+        // < cleanupReferences). The instance row names its owner only while the drawable lives.
+        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !(fs_drawable_looks_live(op.mDrawable) && op.mDrawable->ownsInstanceRow()))
         {
             static std::atomic<int> logged{0};
             if (logged.fetch_add(1) < 8)
@@ -2682,7 +2685,8 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
         // (the slot is cleared in place: dropping the LLPointer would write the reference count of freed memory)
         if (const LLDrawable* raw = moved_list[cur].get())
         {
-            if (!fs_drawable_looks_live(raw))
+            // <FS> C1a: a destroyed drawable's instance row no longer names it (a vtable test alone passes a drawable that is mid-destruction or freed with its base class vtable still in place)
+            if (!fs_drawable_looks_live(raw) || !raw->ownsInstanceRow())
             {
                 static std::atomic<int> logged{0};
                 if (logged.fetch_add(1) < 8)
@@ -6680,7 +6684,7 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
 
     assertInitialized();
 
-    if (hasRenderType(drawablep->mRenderType))
+    if (hasRenderType(drawablep->getRenderType()))
     {
         if (!drawablep->isState(LLDrawable::INVISIBLE|LLDrawable::FORCE_INVISIBLE))
         {
