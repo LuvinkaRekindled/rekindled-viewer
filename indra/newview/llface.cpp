@@ -1414,7 +1414,11 @@ static void geom_check_report(const LLFace* face, const char* what, S32 face_ind
             }
         }
     }
-    LL_WARNS("GeomCheck") << what << ": face " << face_index << " of " << who << ": " << detail << " (" << total << " reports so far, " << seen.size() << " distinct)" << LL_ENDL;
+    // <FS> what the rebuild flags of the drawable were and where this ran (a face that kept the size of an older LOD: was REBUILD_VOLUME lost?)
+    std::string where = llformat(", drawable state 0x%08x (rebuild volume %d, position %d, in rebuild queue %d, dead %d), %s thread", face->getDrawable() ? face->getDrawable()->getState() : 0u,
+                                 face->getDrawable() ? (int)face->getDrawable()->isState(LLDrawable::REBUILD_VOLUME) : -1, face->getDrawable() ? (int)face->getDrawable()->isState(LLDrawable::REBUILD_POSITION) : -1,
+                                 face->getDrawable() ? (int)face->getDrawable()->isState(LLDrawable::IN_REBUILD_Q) : -1, face->getDrawable() ? (int)face->getDrawable()->isDead() : -1, on_main_thread() ? "main" : "worker");
+    LL_WARNS("GeomCheck") << what << ": face " << face_index << " of " << who << where << ": " << detail << " (" << total << " reports so far, " << seen.size() << " distinct)" << LL_ENDL;
 }
 
 static bool geom_coord_bad(F32 c)

@@ -931,7 +931,8 @@ void LLTexRetire::pump()
     {
         sLastLog = now;
         LL_INFOS("TexRetire") << "texture handles: resolutions that met a parked texture " << sResolvedParked.load() << ", handles of a gone texture (default image shown) " << LLTexRef::sDeadResolved.load()
-                              << "; material handles of a gone material (default material shown) " << LLGLTFMatRef::sDeadResolved.load() << LL_ENDL;
+                              << "; material handles of a gone material (default material shown) " << LLGLTFMatRef::sDeadResolved.load()
+                              << "; skin info handles of a gone skin info (draw skipped) " << LLSkinRef::sDeadResolved.load() << LL_ENDL;
         const LLInstances::Stats is = LLInstances::stats();
         const LLGroupRows::Stats gs = LLGroupRows::stats();
         LL_INFOS("InstanceRows") << "instance rows: live " << is.mLive << " (peak " << is.mPeak << "), quarantined " << is.mQuarantined << ", written while free " << is.mWrittenWhileFree

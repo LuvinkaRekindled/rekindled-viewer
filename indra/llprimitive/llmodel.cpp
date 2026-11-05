@@ -27,6 +27,7 @@
 #include "linden_common.h"
 
 #include "llmodel.h"
+#include "llretirelist.h"
 #include "llmemory.h"
 #include "llconvexdecomposition.h"
 #include "llsdserialize.h"
@@ -2465,4 +2466,39 @@ bool LLImportMaterial::operator<(const LLImportMaterial &rhs) const
     }
 
     return mFullbright < rhs.mFullbright;
+}
+
+
+// ---- <FS> C2.4c: the handle and the retire hook of LLMeshSkinInfo (llmodel.h)
+std::atomic<U64> LLSkinRef::sDeadResolved{0};
+
+LLMeshSkinInfo::~LLMeshSkinInfo()
+{
+    LLSkinHandles::release(mRenderHandle.v.load(std::memory_order_acquire));
+}
+
+U32 LLMeshSkinInfo::getRenderHandle() const
+{
+    U32 handle = mRenderHandle.v.load(std::memory_order_acquire);
+    if (handle)
+    {
+        return handle;
+    }
+    const U32 fresh = LLSkinHandles::acquire(const_cast<LLMeshSkinInfo*>(this));
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        LLSkinHandles::release(fresh);       // another thread asked first
+        return expected;
+    }
+    return fresh;
+}
+
+bool LLMeshSkinInfo::retireOnLastRef() const
+{
+    return LLRetireList::park(const_cast<LLMeshSkinInfo*>(this));
 }

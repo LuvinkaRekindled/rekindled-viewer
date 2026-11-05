@@ -159,7 +159,7 @@ public:
     const LLMatrix4* mModelMatrix = nullptr;
 
     LLPointer<LLVOAvatar> mAvatar = nullptr;
-    LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
+    LLSkinRef mSkinInfo;       // <FS> C2.4c: a handle (llmodel.h), not a counted pointer (<FS:Beq/> had made it a const pointer to be defensive about UAF with skinInfo during LocalMesh)
 
     // <FS> C2.4a: this was a counted LLPointer<LLMaterial> that was only ever tested for null (the batching test in registerFace, the materials pull program choice in the scene table): a flag, no lifetime to carry
     bool mHasMaterial = false;
