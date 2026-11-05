@@ -166,7 +166,7 @@ void fill(Rec& r, LLFace* f)
         const LLVector3 c = f->getPositionAgent();
         r.mCx = c.mV[0]; r.mCy = c.mV[1]; r.mCz = c.mV[2];
         LLVector4a size;
-        size.setSub(f->mExtents[1], f->mExtents[0]);
+        size.setSub(f->row().extents[1], f->row().extents[0]);
         size.mul(0.5f);
         r.mSizeSq = size.dot3(size).getF32();
         r.mSizeLen = size.getLength3().getF32();

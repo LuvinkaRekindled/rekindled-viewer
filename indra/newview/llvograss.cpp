@@ -460,15 +460,15 @@ void LLVOGrass::plantBlades()
         face->setSize(mNumBlades * 8, mNumBlades * 12);
         face->setVertexBuffer(NULL);
         face->setTEOffset(0);
-        face->mCenterLocal = mPosition + mRegionp->getOriginAgent();
+        face->row().centerLocal = mPosition + mRegionp->getOriginAgent();
         const LLVector4a* ext = mDrawable->getSpatialExtents();
-        face->mExtents[0] = ext[0];
-        face->mExtents[1] = ext[1];
+        face->row().extents[0] = ext[0];
+        face->row().extents[1] = ext[1];
         face->stampTextures();
     }
 
-    mDepth = (face->mCenterLocal - LLViewerCamera::getInstance()->getOrigin())*LLViewerCamera::getInstance()->getAtAxis();
-    mDrawable->setPosition(face->mCenterLocal);
+    mDepth = (face->row().centerLocal - LLViewerCamera::getInstance()->getOrigin())*LLViewerCamera::getInstance()->getAtAxis();
+    mDrawable->setPosition(face->row().centerLocal);
     mDrawable->movePartition();
     LLPipeline::sCompiles++;
 }
@@ -661,7 +661,7 @@ void LLGrassPartition::addGeometryCount(LLSpatialGroup* group, U32& vertex_count
             if ((facep->getGeomCount() + vertex_count) <= 65536)
             {
                 count++;
-                facep->mDistance = (facep->mCenterLocal - camera->getOrigin()) * camera->getAtAxis();
+                facep->mDistance = (facep->row().centerLocal - camera->getOrigin()) * camera->getAtAxis();
                 obj->mDepth += facep->mDistance;
 
                 mFaceList.push_back(facep);

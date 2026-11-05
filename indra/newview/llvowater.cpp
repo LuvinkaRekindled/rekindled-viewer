@@ -171,8 +171,8 @@ bool LLVOWater::updateGeometry(LLDrawable *drawable)
 
     LLVector3 position_agent;
     position_agent = getPositionAgent();
-    face->mCenterAgent = position_agent;
-    face->mCenterLocal = position_agent;
+    face->row().centerAgent = position_agent;
+    face->row().centerLocal = position_agent;
 
     S32 x, y;
     F32 step_x = getScale().mV[0] / size_x;

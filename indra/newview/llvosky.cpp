@@ -1035,7 +1035,7 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
 
             LLVector3 axis;
             axis.mV[curr_bit] = 1;
-            face->mCenterAgent = (F32)((side_dir << 1) - 1) * axis * HORIZON_DIST;
+            face->row().centerAgent = (F32)((side_dir << 1) - 1) * axis * HORIZON_DIST;
 
             vtx = side_dir << curr_bit;
             *(verticesp++)  = v_agent[vtx];
@@ -1444,7 +1444,7 @@ void LLVOSky::updateReflectionGeometry(LLDrawable *drawable, F32 H,
             }
             const LLVector3 draw_pos = 0.25 *
                 (v_refl_corner[0] + v_refl_corner[1] + v_refl_corner[2] + v_refl_corner[3]);
-            face->mCenterAgent = draw_pos;
+            face->row().centerAgent = draw_pos;
         }
         else
         {
@@ -1466,7 +1466,7 @@ void LLVOSky::updateReflectionGeometry(LLDrawable *drawable, F32 H,
 
             const LLVector3 draw_pos = 0.25 *
                 (v_refl_corner[0] + v_sprite_corner[1] + v_refl_corner[2] + v_sprite_corner[3]);
-            face->mCenterAgent = draw_pos;
+            face->row().centerAgent = draw_pos;
         }
 
         *(texCoordsp++) = TEX0tt;
@@ -1491,7 +1491,7 @@ void LLVOSky::updateReflectionGeometry(LLDrawable *drawable, F32 H,
         {
             const LLVector3 draw_pos = 0.25 *
                 (v_refl_corner[0] + v_refl_corner[1] + v_refl_corner[2] + v_refl_corner[3]);
-            face->mCenterAgent = draw_pos;
+            face->row().centerAgent = draw_pos;
         }
 
         const F32 raws_inv = 1.f/raws;

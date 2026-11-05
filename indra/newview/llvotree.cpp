@@ -530,8 +530,8 @@ bool LLVOTree::updateGeometry(LLDrawable *drawable)
         LLFace *face = drawable->getFace(0);
         if (!face) return true;
 
-        face->mCenterAgent = getPositionAgent();
-        face->mCenterLocal = face->mCenterAgent;
+        face->row().centerAgent = getPositionAgent();
+        face->row().centerLocal = face->row().centerAgent;
 
         for (lod = 0; lod < sMAX_NUM_TREE_LOD_LEVELS; lod++)
         {
@@ -1183,8 +1183,8 @@ void LLVOTree::updateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
         LLFace* facep = mDrawable->getFace(0);
         if (facep)
         {
-            facep->mExtents[0] = newMin;
-            facep->mExtents[1] = newMax;
+            facep->row().extents[0] = newMin;
+            facep->row().extents[1] = newMax;
             facep->stampTextures();
         }
     }

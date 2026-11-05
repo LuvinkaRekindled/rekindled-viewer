@@ -2197,7 +2197,7 @@ void renderBoundingBox(LLDrawable* drawable, bool set_color = true)
             LLFace* facep = drawable->getFace(i);
             if (facep)
             {
-                ext = facep->mExtents;
+                ext = facep->row().extents;
 
                 pos.setAdd(ext[0], ext[1]);
                 pos.mul(0.5f);
@@ -2958,10 +2958,10 @@ void renderTexturePriority(LLDrawable* drawable)
         //}
 
         LLVector4a center;
-        center.setAdd(facep->mExtents[1],facep->mExtents[0]);
+        center.setAdd(facep->row().extents[1],facep->row().extents[0]);
         center.mul(0.5f);
         LLVector4a size;
-        size.setSub(facep->mExtents[1],facep->mExtents[0]);
+        size.setSub(facep->row().extents[1],facep->row().extents[0]);
         size.mul(0.5f);
         size.add(LLVector4a(0.01f));
         drawBox(center, size);
@@ -2980,7 +2980,7 @@ void renderPoints(LLDrawable* drawablep)
             LLFace * face = drawablep->getFace(i);
             if (face)
             {
-                gRender.vertex3fv(face->mCenterLocal.mV);
+                gRender.vertex3fv(face->row().centerLocal.mV);
             }
         }
         gRender.end();

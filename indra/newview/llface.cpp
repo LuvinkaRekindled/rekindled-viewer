@@ -149,8 +149,8 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
     row().state      = GLOBAL;
     mDrawPoolp  = NULL;
     mPoolType = 0;
-    mCenterLocal = objp->getPosition();
-    mCenterAgent = drawablep->getPositionAgent();
+    row().centerLocal = objp->getPosition();
+    row().centerAgent = drawablep->getPositionAgent();
     mDistance   = 0.f;
 
     row().geomCount      = 0;
@@ -182,8 +182,8 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
     mImportanceToCamera = 0.f ;
     row().boundingSphereRadius = 0.0f ;
 
-    mTexExtents[0].set(0, 0);
-    mTexExtents[1].set(1, 1);
+    row().texExtents[0].set(0, 0);
+    row().texExtents[1].set(1, 1);
     mHasMedia = false ;
     mIsMediaAllowed = true;
 
@@ -566,11 +566,11 @@ void LLFace::updateCenterAgent()
     }
     if (mDrawablep->isActive())
     {
-        mCenterAgent = mCenterLocal * getRenderMatrix();
+        row().centerAgent = row().centerLocal * getRenderMatrix();
     }
     else
     {
-        mCenterAgent = mCenterLocal;
+        row().centerAgent = row().centerLocal;
     }
 }
 
@@ -931,23 +931,23 @@ bool LLFace::genVolumeBBoxes(const LLVolume &volume, S32 f,
         llassert(less_than_max_mag(face.mExtents[0]));
         llassert(less_than_max_mag(face.mExtents[1]));
 
-        matMulBoundBox(mat_vert, face.mExtents, mExtents);
+        matMulBoundBox(mat_vert, face.mExtents, row().extents);
 
         if (!mDrawablep->isActive())
         {   // Shift position for region
             LLVector4a offset;
             offset.load3(mDrawablep->getRegion()->getOriginAgent().mV);
-            mExtents[0].add(offset);
-            mExtents[1].add(offset);
+            row().extents[0].add(offset);
+            row().extents[1].add(offset);
         }
 
         LLVector4a t;
-        t.setAdd(mExtents[0],mExtents[1]);
+        t.setAdd(row().extents[0],row().extents[1]);
         t.mul(0.5f);
 
-        mCenterLocal.set(t.getF32ptr());
+        row().centerLocal.set(t.getF32ptr());
 
-        t.setSub(mExtents[1],mExtents[0]);
+        t.setSub(row().extents[1],row().extents[0]);
         row().boundingSphereRadius = t.getLength3().getF32()*0.5f;
 
         updateCenterAgent();
@@ -2513,17 +2513,17 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
     if (rebuild_tcoord)
     {
-        mTexExtents[0].setVec(0,0);
-        mTexExtents[1].setVec(1,1);
-        xform(mTexExtents[0], cos_ang, sin_ang, os, ot, ms, mt);
-        xform(mTexExtents[1], cos_ang, sin_ang, os, ot, ms, mt);
+        row().texExtents[0].setVec(0,0);
+        row().texExtents[1].setVec(1,1);
+        xform(row().texExtents[0], cos_ang, sin_ang, os, ot, ms, mt);
+        xform(row().texExtents[1], cos_ang, sin_ang, os, ot, ms, mt);
 
         F32 es = vf.mTexCoordExtents[1].mV[0] - vf.mTexCoordExtents[0].mV[0] ;
         F32 et = vf.mTexCoordExtents[1].mV[1] - vf.mTexCoordExtents[0].mV[1] ;
-        mTexExtents[0][0] *= es ;
-        mTexExtents[1][0] *= es ;
-        mTexExtents[0][1] *= et ;
-        mTexExtents[1][1] *= et ;
+        row().texExtents[0][0] *= es ;
+        row().texExtents[1][0] *= es ;
+        row().texExtents[0][1] *= et ;
+        row().texExtents[1][1] *= et ;
     }
 
 
@@ -2579,7 +2579,7 @@ F32 LLFace::getTextureVirtualSize()
     }
 
     //get area of circle in texture space
-    LLVector2 tdim = mTexExtents[1] - mTexExtents[0];
+    LLVector2 tdim = row().texExtents[1] - row().texExtents[0];
     F32 texel_area = (tdim * 0.5f).lengthSquared()*3.14159f;
     if (texel_area <= 0)
     {
@@ -2665,8 +2665,8 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
                 }
 
                 // calculate the world space bounding box of the face by combining the bounding boxes of all the joints
-                LLVector4a& minp = mRiggedExtents[0];
-                LLVector4a& maxp = mRiggedExtents[1];
+                LLVector4a& minp = row().riggedExtents[0];
+                LLVector4a& maxp = row().riggedExtents[1];
                 minp = LLVector4a(FLT_MAX, FLT_MAX, FLT_MAX);
                 maxp = LLVector4a(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
@@ -2702,14 +2702,14 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
         if (!hasRiggedExtents)
         {
             // no rigged extents, zero out bounding box and skip update
-            mRiggedExtents[0] = mRiggedExtents[1] = LLVector4a(0.f, 0.f, 0.f);
+            row().riggedExtents[0] = row().riggedExtents[1] = LLVector4a(0.f, 0.f, 0.f);
 
             return false;
         }
 
-        center.setAdd(mRiggedExtents[1], mRiggedExtents[0]);
+        center.setAdd(row().riggedExtents[1], row().riggedExtents[0]);
         center.mul(0.5f);
-        size.setSub(mRiggedExtents[1], mRiggedExtents[0]);
+        size.setSub(row().riggedExtents[1], row().riggedExtents[0]);
     }
     else if (mDrawablep && mVObjp.notNull() && mVObjp->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && mDrawablep->getSpatialGroup())
     { // use box of spatial group for particles (over approximates size, but we don't actually have a good size per particle)
@@ -2722,7 +2722,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     else
     {
         center.load3(getPositionAgent().mV);
-        size.setSub(mExtents[1], mExtents[0]);
+        size.setSub(row().extents[1], row().extents[0]);
     }
     size.mul(0.5f);
 
@@ -2986,11 +2986,11 @@ LLVector3 LLFace::getPositionAgent() const
 {
     if (mDrawablep->isStatic())
     {
-        return mCenterAgent;
+        return row().centerAgent;
     }
     else
     {
-        return mCenterLocal * getRenderMatrix();
+        return row().centerLocal * getRenderMatrix();
     }
 }
 

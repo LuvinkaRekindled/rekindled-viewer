@@ -1760,8 +1760,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                             for (F32 f : sc) { U32 bits; memcpy(&bits, &f, 4); why_te = (why_te ^ bits) * 1099511628211ull; }
                         }
                         const LLVector3 c = face->getPositionAgent();
-                        const F32 gv[9] = { c.mV[0], c.mV[1], c.mV[2], face->mExtents[0].getF32ptr()[0], face->mExtents[0].getF32ptr()[1], face->mExtents[0].getF32ptr()[2],
-                                            face->mExtents[1].getF32ptr()[0], face->mExtents[1].getF32ptr()[1], face->mExtents[1].getF32ptr()[2] };
+                        const F32 gv[9] = { c.mV[0], c.mV[1], c.mV[2], face->row().extents[0].getF32ptr()[0], face->row().extents[0].getF32ptr()[1], face->row().extents[0].getF32ptr()[2],
+                                            face->row().extents[1].getF32ptr()[0], face->row().extents[1].getF32ptr()[1], face->row().extents[1].getF32ptr()[2] };
                         for (F32 f : gv) { U32 bits; memcpy(&bits, &f, 4); why_geom = (why_geom ^ bits) * 1099511628211ull; }
                         const LLViewerObject* wo = face->getViewerObject();
                         why_kind = wo->isAttachment() ? 0 : (wo->isAvatar() ? 1 : ((wo->getPCode() == LL_PCODE_LEGACY_TREE || wo->getPCode() == LL_PCODE_LEGACY_GRASS) ? 2 : (wo->getPCode() == LL_PCODE_VOLUME ? 3 : 4)));

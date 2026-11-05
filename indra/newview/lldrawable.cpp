@@ -1069,9 +1069,9 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
                         (force_update || facep->isInAlphaPool()))
                     {
                         LLVector4a box;
-                        box.setSub(facep->mExtents[1], facep->mExtents[0]);
+                        box.setSub(facep->row().extents[1], facep->row().extents[0]);
                         box.mul(0.25f);
-                        LLVector3 v = (facep->mCenterLocal-camera.getOrigin());
+                        LLVector3 v = (facep->row().centerLocal-camera.getOrigin());
                         const LLVector3& at = camera.getAtAxis();
                         for (U32 j = 0; j < 3; j++)
                         {
@@ -1202,9 +1202,9 @@ void LLDrawable::shiftPos(const LLVector4a &shift_vector)
             LLFace *facep = getFace(i);
             if (facep)
             {
-                facep->mCenterAgent += LLVector3(shift_vector.getF32ptr());
-                facep->mExtents[0].add(shift_vector);
-                facep->mExtents[1].add(shift_vector);
+                facep->row().centerAgent += LLVector3(shift_vector.getF32ptr());
+                facep->row().extents[0].add(shift_vector);
+                facep->row().extents[1].add(shift_vector);
                 facep->stampTextures();
 
                 if (rebuild && facep->hasGeometry())

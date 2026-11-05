@@ -313,7 +313,7 @@ void LLVOSurfacePatch::updateMainGeometry(LLFace *facep,
 
     if (num_vertices > 0)
     {
-        facep->mCenterAgent = mPatchp->getPointAgent(8, 8);
+        facep->row().centerAgent = mPatchp->getPointAgent(8, 8);
 
         // Generate patch points first
         for (j = 0; j < vert_size; j++)
@@ -413,7 +413,7 @@ void LLVOSurfacePatch::updateNorthGeometry(LLFace *facep,
     {
         num_vertices = 2 * length + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(8, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(8, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
 
         // Main patch
         for (i = 0; i < length; i++)
@@ -461,7 +461,7 @@ void LLVOSurfacePatch::updateNorthGeometry(LLFace *facep,
         // North stride is longer (has less vertices)
         num_vertices = length + length/2 + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(7, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(7, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
 
         // Iterate through this patch's points
         for (i = 0; i < length; i++)
@@ -517,7 +517,7 @@ void LLVOSurfacePatch::updateNorthGeometry(LLFace *facep,
         half_length = length / 2;
         num_vertices = length + half_length + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(15, 7) + mPatchp->getPointAgent(16, 8))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(15, 7) + mPatchp->getPointAgent(16, 8))*0.5f;
 
         // Iterate through this patch's points
         for (i = 0; i < length; i+=2)
@@ -598,7 +598,7 @@ void LLVOSurfacePatch::updateEastGeometry(LLFace *facep,
     {
         num_vertices = 2 * length + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(8, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(8, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
 
         // Main patch
         for (i = 0; i < length; i++)
@@ -646,7 +646,7 @@ void LLVOSurfacePatch::updateEastGeometry(LLFace *facep,
         // East stride is longer (has less vertices)
         num_vertices = length + half_length + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(7, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(7, 15) + mPatchp->getPointAgent(8, 16))*0.5f;
 
         // Iterate through this patch's points
         for (i = 0; i < length; i++)
@@ -700,7 +700,7 @@ void LLVOSurfacePatch::updateEastGeometry(LLFace *facep,
         half_length = length / 2;
         num_vertices = length + length/2 + 1;
 
-        facep->mCenterAgent = (mPatchp->getPointAgent(15, 7) + mPatchp->getPointAgent(16, 8))*0.5f;
+        facep->row().centerAgent = (mPatchp->getPointAgent(15, 7) + mPatchp->getPointAgent(16, 8))*0.5f;
 
         // Iterate through this patch's points
         for (i = 0; i < length; i+=2)

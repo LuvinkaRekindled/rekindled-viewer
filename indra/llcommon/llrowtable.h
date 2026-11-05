@@ -19,6 +19,7 @@
 #include "stdtypes.h"
 #include "llframetimer.h"
 #include "llerror.h"
+#include "llmemory.h"       // ll_aligned_malloc_64
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -61,7 +62,8 @@ public:
         Row*& chunk = s.mChunks[id >> kChunkShift];
         if (!chunk)
         {
-            chunk = static_cast<Row*>(std::calloc(kChunkRows, sizeof(Row)));
+            chunk = static_cast<Row*>(ll_aligned_malloc_64(sizeof(Row) * kChunkRows));       // 64-byte aligned: a row of a multiple of 64 bytes starts on a cache line
+            if (chunk) std::memset(chunk, 0, sizeof(Row) * kChunkRows);
             if (!chunk)
             {
                 ++s.mFull;
