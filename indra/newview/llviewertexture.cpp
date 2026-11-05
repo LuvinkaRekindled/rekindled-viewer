@@ -854,8 +854,40 @@ LLViewerTexture::~LLViewerTexture()
 {
     // LL_DEBUGS("Avatar") << mID << LL_ENDL;
     LLTexRecs::textureGone(this);       // <FS> H6
+    if (const U32 handle = mRenderHandle.exchange(0))
+    {
+        LLTexHandles::release(handle);  // <FS> C2
+    }
     cleanup();
     sImageCount--;
+}
+
+// <FS> C2 (doc/vulkan/PLAN-clean-core.md)
+U32 LLViewerTexture::getRenderHandle()
+{
+    U32 handle = mRenderHandle.load(std::memory_order_acquire);
+    if (handle)
+    {
+        return handle;
+    }
+    const U32 fresh = LLTexHandles::acquire(this);
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (!mRenderHandle.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        LLTexHandles::release(fresh);       // another thread asked first
+        return expected;
+    }
+    return fresh;
+}
+
+// static
+LLViewerTexture* LLViewerTexture::fromRenderHandle(U32 handle)
+{
+    return LLTexHandles::resolve(handle);
 }
 
 // virtual

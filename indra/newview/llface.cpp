@@ -314,6 +314,25 @@ void LLFace::setTexture(U32 ch, LLViewerTexture* tex)
     }
 
     mTexture[ch] = tex ;
+
+    if (tex)
+    {
+        // <FS> C2 (doc/vulkan/PLAN-clean-core.md): every texture a face uses gets its handle, and the handle is checked to give the same texture back. Nothing else uses the handles yet;
+        // this exercises the table at the rate of the viewer's own face traffic and logs its figures (the first check, then every 50,000th).
+        static std::atomic<U64> sChecks{0}, sBad{0};
+        const U32 handle = tex->getRenderHandle();
+        if (handle && LLViewerTexture::fromRenderHandle(handle) != tex)
+        {
+            ++sBad;
+        }
+        const U64 n = ++sChecks;
+        if (n == 1 || n % 50000 == 0)
+        {
+            const LLTexHandles::Stats s = LLTexHandles::stats();
+            LL_INFOS("TexHandle") << "texture handles: " << n << " face uses checked, " << sBad.load() << " did not resolve to their texture; live " << s.mLive << ", peak " << s.mPeak
+                                  << ", slots used " << s.mNext << ", handed out " << s.mAcquired << ", table full " << s.mFull << LL_ENDL;
+        }
+    }
 }
 
 void LLFace::setTexture(LLViewerTexture* tex)
