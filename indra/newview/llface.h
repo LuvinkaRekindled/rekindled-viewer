@@ -27,6 +27,7 @@
 #ifndef LL_LLFACE_H
 #define LL_LLFACE_H
 
+#include "llfacetable.h"
 #include "llstrider.h"
 #include "llrender.h"
 #include "v2math.h"
@@ -84,19 +85,24 @@ public:
     LLFace(LLDrawable* drawablep, LLViewerObject* objp)
     {
         LL_PROFILE_ZONE_SCOPED;
+        mRowId = LLFaceRows::acquire(this);     // <FS> C3.1: a zeroed row: the geometry slice, the state, the colour ... (llfacetable.h)
+        if (!mRowId)
+        {
+            LL_ERRS() << "the face table is full (" << LLFaceRows::kCapacity << " faces)" << LL_ENDL;
+        }
         init(drawablep, objp);
     }
-    ~LLFace()  { destroy(); }
+    ~LLFace()  { destroy(); LLFaceRows::release(mRowId, 0); }
 
     const LLMatrix4& getWorldMatrix()   const   { return mVObjp->getWorldMatrix(mXform); }
     const LLMatrix4& getRenderMatrix() const;
-    U32             getIndicesCount()   const   { return mIndicesCount; };
-    S32             getIndicesStart()   const   { return mIndicesIndex; };
-    U16             getGeomCount()      const   { return mGeomCount; }      // vertex count for this face
-    U16             getGeomIndex()      const   { return mGeomIndex; }      // index into draw pool
-    U16             getGeomStart()      const   { return mGeomIndex; }      // index into draw pool
+    U32             getIndicesCount()   const   { return row().indicesCount; };
+    S32             getIndicesStart()   const   { return row().indicesIndex; };
+    U16             getGeomCount()      const   { return row().geomCount; }      // vertex count for this face
+    U16             getGeomIndex()      const   { return row().geomIndex; }      // index into draw pool
+    U16             getGeomStart()      const   { return row().geomIndex; }      // index into draw pool
     void            setTextureIndex(U8 index);
-    U8              getTextureIndex() const     { return mTextureIndex; }
+    U8              getTextureIndex() const     { return row().textureIndex; }
     void            setTexture(U32 ch, LLViewerTexture* tex);
     void            setTexture(LLViewerTexture* tex) ;
     void            setDiffuseMap(LLViewerTexture* tex);
@@ -106,7 +112,7 @@ public:
     void            switchTexture(U32 ch, LLViewerTexture* new_texture);
     void            dirtyTexture();
     LLXformMatrix*  getXform()          const   { return mXform; }
-    bool            hasGeometry()       const   { return mGeomCount > 0; }
+    bool            hasGeometry()       const   { return row().geomCount > 0; }
     LLVector3       getPositionAgent()  const;
     LLVector2       surfaceToTexture(LLVector2 surface_coord, const LLVector4a& position, const LLVector4a& normal);
     void            getPlanarProjectedParams(LLQuaternion* face_rot, LLVector3* face_pos, F32* scale) const;
@@ -115,10 +121,10 @@ public:
     bool            calcAlignedPlanarTE(const LLFace* align_to, LLVector2* st_offset,
                                         LLVector2* st_scale, F32* st_rot, LLRender::eTexIndex map = LLRender::DIFFUSE_MAP) const;
 
-    U32             getState()          const   { return mState; }
-    void            setState(U32 state)         { mState |= state; }
-    void            clearState(U32 state)       { mState &= ~state; }
-    bool            isState(U32 state)  const   { return (mState & state) != 0; }
+    U32             getState()          const   { return row().state; }
+    void            setState(U32 state)         { row().state |= state; }
+    void            clearState(U32 state)       { row().state &= ~state; }
+    bool            isState(U32 state)  const   { return (row().state & state) != 0; }
     void            setVirtualSize(F32 size) { mVSize = size; }
     void            setPixelArea(F32 area)  { mPixelArea = area; }
     F32             getVirtualSize() const { return mVSize; }
@@ -128,7 +134,7 @@ public:
     void            setIndexInTex(U32 ch, S32 index) { llassert(ch < LLRender::NUM_TEXTURE_CHANNELS); mIndexInTex[ch] = index; }
 
     void            setWorldMatrix(const LLMatrix4& mat);
-    const LLTextureEntry* getTextureEntry() const { return mVObjp ? mVObjp->getTE(mTEOffset) : nullptr; }
+    const LLTextureEntry* getTextureEntry() const { return mVObjp ? mVObjp->getTE(row().teOffset) : nullptr; }
 
     LLFacePool*     getPool()           const   { return mDrawPoolp; }
     U32             getPoolType()       const   { return mPoolType; }
@@ -141,7 +147,7 @@ public:
     LLViewerObject* getViewerObject()   const   { return mVObjp; }
     S32             getLOD()            const   { return mVObjp.notNull() ? mVObjp->getLOD() : 0; }
     void            setPoolType(U32 type)       { mPoolType = type; }
-    S32             getTEOffset()       const   { return mTEOffset; }
+    S32             getTEOffset()       const   { return row().teOffset; }
     LLViewerTexture*    getTexture(U32 ch = LLRender::DIFFUSE_MAP) const;
 
     void            setViewerObject(LLViewerObject* object);
@@ -155,7 +161,7 @@ public:
 
     void            setFaceColor(const LLColor4& color); // override material color
     void            unsetFaceColor(); // switch back to material color
-    const LLColor4& getFaceColor() const { return mFaceColor; }
+    const LLColor4& getFaceColor() const { return row().faceColor; }
 
 
     //for volumes
@@ -206,8 +212,8 @@ public:
 
     F32         getKey()                    const   { return mDistance; }
 
-    S32         getReferenceIndex()         const   { return mReferenceIndex; }
-    void        setReferenceIndex(const S32 index)  { mReferenceIndex = index; }
+    S32         getReferenceIndex()         const   { return row().referenceIndex; }
+    void        setReferenceIndex(const S32 index)  { row().referenceIndex = index; }
 
     bool        verify(const U32* indices_array = NULL) const;
     void        printDebugInfo() const;
@@ -290,22 +296,19 @@ public:
     U32 mLastTextureUpdate = 0;
     // <FS> the record of this face for each texture channel in LLTexRecs (0: none)
     U32 mRecIdx[LLRender::NUM_TEXTURE_CHANNELS] = {};
-    F32 getBoundingSphereRadius() const { return mBoundingSphereRadius; }
+    F32 getBoundingSphereRadius() const { return row().boundingSphereRadius; }
 
 private:
+    // <FS> C3.1: this face's row in the face table (llfacetable.h): the geometry slice (geomCount, geomIndex, indicesCount, indicesIndex), textureIndex, referenceIndex, state, faceColor, teOffset, boundingSphereRadius
+    U32 mRowId = 0;
+    LLFaceRow& row() const { return LLFaceRows::row(mRowId); }
+
     LLPointer<LLVertexBuffer> mVertexBuffer;
     LLPointer<LLVertexBuffer> mVertexBufferGLTF;
 
-    U32         mState;
     LLFacePool* mDrawPoolp;
     U32         mPoolType;
-    LLColor4    mFaceColor;         // overrides material color if state |= USE_FACE_COLOR
 
-    U16         mGeomCount;         // vertex count for this face
-    U16         mGeomIndex;         // starting index into mVertexBuffer's vertex array
-    U8          mTextureIndex;      // index of texture channel to use for pseudo-atlasing
-    U32         mIndicesCount;
-    U32         mIndicesIndex;      // index into mVertexBuffer's index array
     S32         mIndexInTex[LLRender::NUM_TEXTURE_CHANNELS];
 
     LLXformMatrix* mXform;
@@ -319,9 +322,7 @@ private:
     LLDrawable* mDrawablep;
     // LLViewerObject technically owns drawable, but also it should be strictly managed
     LLPointer<LLViewerObject> mVObjp;
-    S32         mTEOffset;
 
-    S32         mReferenceIndex;
     std::vector<S32> mRiggedIndex;
 
     // gFrameTimeSeconds when mPixelArea was last updated
@@ -338,7 +339,6 @@ private:
     //1.0: the most important.
     //based on the distance from the face to the view point and the angle from the face center to the view direction.
     F32         mImportanceToCamera ;
-    F32         mBoundingSphereRadius ;
     bool        mHasMedia ;
     bool        mIsMediaAllowed;
 

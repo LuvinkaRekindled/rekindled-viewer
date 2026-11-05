@@ -146,19 +146,19 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
     mLastSkinTime = gFrameTimeSeconds;
     mVSize = 0.f;
     mPixelArea = 16.f;
-    mState      = GLOBAL;
+    row().state      = GLOBAL;
     mDrawPoolp  = NULL;
     mPoolType = 0;
     mCenterLocal = objp->getPosition();
     mCenterAgent = drawablep->getPositionAgent();
     mDistance   = 0.f;
 
-    mGeomCount      = 0;
-    mGeomIndex      = 0;
-    mIndicesCount   = 0;
+    row().geomCount      = 0;
+    row().geomIndex      = 0;
+    row().indicesCount   = 0;
 
     //special value to indicate uninitialized position
-    mIndicesIndex   = 0xFFFFFFFF;
+    row().indicesIndex   = 0xFFFFFFFF;
 
     for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
     {
@@ -166,21 +166,21 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
         mTexture[i] = NULL;
     }
 
-    mTEOffset       = -1;
-    mTextureIndex = FACE_DO_NOT_BATCH_TEXTURES;
+    row().teOffset       = -1;
+    row().textureIndex = FACE_DO_NOT_BATCH_TEXTURES;
 
     setDrawable(drawablep);
     mVObjp = objp;
 
-    mReferenceIndex = -1;
+    row().referenceIndex = -1;
 
     mTextureMatrix = NULL;
     mDrawInfo = NULL;
 
-    mFaceColor = LLColor4(1,0,0,1);
+    row().faceColor = LLColor4(1,0,0,1);
 
     mImportanceToCamera = 0.f ;
-    mBoundingSphereRadius = 0.0f ;
+    row().boundingSphereRadius = 0.0f ;
 
     mTexExtents[0].set(0, 0);
     mTexExtents[1].set(1, 1);
@@ -272,7 +272,7 @@ void LLFace::setPool(LLFacePool* new_pool, LLViewerTexture *texturep)
                 gPipeline.markRebuild(mDrawablep, LLDrawable::REBUILD_ALL);
             }
         }
-        mGeomIndex = 0;
+        row().geomIndex = 0;
 
         // Add to new pool
         if (new_pool)
@@ -406,7 +406,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
     {
         if (getViewerObject())
         {
-            getViewerObject()->changeTEImage(mTEOffset, new_texture);
+            getViewerObject()->changeTEImage(row().teOffset, new_texture);
         }
     }
 
@@ -429,14 +429,14 @@ void LLFace::stampTextures()
 
 void LLFace::setTEOffset(const S32 te_offset)
 {
-    mTEOffset = te_offset;
+    row().teOffset = te_offset;
     stampTextures();
 }
 
 
 void LLFace::setFaceColor(const LLColor4& color)
 {
-    mFaceColor = color;
+    row().faceColor = color;
     setState(USE_FACE_COLOR);
 }
 
@@ -460,11 +460,11 @@ void LLFace::setSize(S32 num_vertices, S32 num_indices, bool align)
         num_vertices = (num_vertices + 0x3) & ~0x3;
     }
 
-    if (mGeomCount != num_vertices ||
-        mIndicesCount != num_indices)
+    if (row().geomCount != num_vertices ||
+        row().indicesCount != num_indices)
     {
-        mGeomCount    = num_vertices;
-        mIndicesCount = num_indices;
+        row().geomCount    = num_vertices;
+        row().indicesCount = num_indices;
         mVertexBuffer = NULL;
     }
 
@@ -473,20 +473,20 @@ void LLFace::setSize(S32 num_vertices, S32 num_indices, bool align)
 
 void LLFace::setGeomIndex(U16 idx)
 {
-    if (mGeomIndex != idx)
+    if (row().geomIndex != idx)
     {
-        mGeomIndex = idx;
+        row().geomIndex = idx;
         mVertexBuffer = NULL;
     }
 }
 
 void LLFace::setTextureIndex(U8 index)
 {
-    if (index != mTextureIndex)
+    if (index != row().textureIndex)
     {
-        mTextureIndex = index;
+        row().textureIndex = index;
 
-        if (mTextureIndex != FACE_DO_NOT_BATCH_TEXTURES)
+        if (row().textureIndex != FACE_DO_NOT_BATCH_TEXTURES)
         {
             mDrawablep->setState(LLDrawable::REBUILD_POSITION);
         }
@@ -502,9 +502,9 @@ void LLFace::setTextureIndex(U8 index)
 
 void LLFace::setIndicesIndex(S32 idx)
 {
-    if (mIndicesIndex != idx)
+    if (row().indicesIndex != idx)
     {
-        mIndicesIndex = idx;
+        row().indicesIndex = idx;
         mVertexBuffer = NULL;
     }
 }
@@ -523,14 +523,14 @@ U16 LLFace::getGeometryAvatar(
 {
     if (mVertexBuffer.notNull())
     {
-        mVertexBuffer->getVertexStrider      (vertices, mGeomIndex, mGeomCount);
-        mVertexBuffer->getNormalStrider      (normals, mGeomIndex, mGeomCount);
-        mVertexBuffer->getTexCoord0Strider    (tex_coords, mGeomIndex, mGeomCount);
-        mVertexBuffer->getWeightStrider(vertex_weights, mGeomIndex, mGeomCount);
-        mVertexBuffer->getClothWeightStrider(clothing_weights, mGeomIndex, mGeomCount);
+        mVertexBuffer->getVertexStrider      (vertices, row().geomIndex, row().geomCount);
+        mVertexBuffer->getNormalStrider      (normals, row().geomIndex, row().geomCount);
+        mVertexBuffer->getTexCoord0Strider    (tex_coords, row().geomIndex, row().geomCount);
+        mVertexBuffer->getWeightStrider(vertex_weights, row().geomIndex, row().geomCount);
+        mVertexBuffer->getClothWeightStrider(clothing_weights, row().geomIndex, row().geomCount);
     }
 
-    return mGeomIndex;
+    return row().geomIndex;
 }
 
 U16 LLFace::getGeometry(LLStrider<LLVector3> &vertices, LLStrider<LLVector3> &normals,
@@ -538,20 +538,20 @@ U16 LLFace::getGeometry(LLStrider<LLVector3> &vertices, LLStrider<LLVector3> &no
 {
     if (mVertexBuffer.notNull())
     {
-        mVertexBuffer->getVertexStrider(vertices,   mGeomIndex, mGeomCount);
+        mVertexBuffer->getVertexStrider(vertices,   row().geomIndex, row().geomCount);
         if (mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_NORMAL))
         {
-            mVertexBuffer->getNormalStrider(normals,    mGeomIndex, mGeomCount);
+            mVertexBuffer->getNormalStrider(normals,    row().geomIndex, row().geomCount);
         }
         if (mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
         {
-            mVertexBuffer->getTexCoord0Strider(tex_coords, mGeomIndex, mGeomCount);
+            mVertexBuffer->getTexCoord0Strider(tex_coords, row().geomIndex, row().geomCount);
         }
 
-        mVertexBuffer->getIndexStrider(indicesp, mIndicesIndex, mIndicesCount);
+        mVertexBuffer->getIndexStrider(indicesp, row().indicesIndex, row().indicesCount);
     }
 
-    return mGeomIndex;
+    return row().geomIndex;
 }
 
 void LLFace::updateCenterAgent()
@@ -591,7 +591,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
         return;
     }
 
-    if (mGeomCount > 0 && mIndicesCount > 0)
+    if (row().geomCount > 0 && row().indicesCount > 0)
     {
         gRender.getTexUnit(0)->bind(imagep);
 
@@ -656,7 +656,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
             if (vertex_buffer)
             {
                 vertex_buffer->setBuffer();
-                vertex_buffer->draw(LLRender::TRIANGLES, mIndicesCount, mIndicesIndex);
+                vertex_buffer->draw(LLRender::TRIANGLES, row().indicesCount, row().indicesIndex);
             }
         }
 
@@ -754,10 +754,10 @@ void LLFace::printDebugInfo() const
     LL_INFOS() << "State: " << getState() << LL_ENDL;
     LL_INFOS() << "Geom Index Data:" << LL_ENDL;
     LL_INFOS() << "--------------------" << LL_ENDL;
-    LL_INFOS() << "GI: " << mGeomIndex << " Count:" << mGeomCount << LL_ENDL;
+    LL_INFOS() << "GI: " << row().geomIndex << " Count:" << row().geomCount << LL_ENDL;
     LL_INFOS() << "Face Index Data:" << LL_ENDL;
     LL_INFOS() << "--------------------" << LL_ENDL;
-    LL_INFOS() << "II: " << mIndicesIndex << " Count:" << mIndicesCount << LL_ENDL;
+    LL_INFOS() << "II: " << row().indicesIndex << " Count:" << row().indicesCount << LL_ENDL;
     LL_INFOS() << LL_ENDL;
 
     if (poolp)
@@ -798,9 +798,9 @@ void LLFace::printDebugInfo() const
 
     LL_INFOS() << "Vertices:" << LL_ENDL;
     LL_INFOS() << "--------------------" << LL_ENDL;
-    for (S32 i = 0; i < mGeomCount; i++)
+    for (S32 i = 0; i < row().geomCount; i++)
     {
-        LL_INFOS() << mGeomIndex + i << ":" << poolp->getVertex(mGeomIndex + i) << LL_ENDL;
+        LL_INFOS() << row().geomIndex + i << ":" << poolp->getVertex(row().geomIndex + i) << LL_ENDL;
     }
     LL_INFOS() << LL_ENDL;
 #endif
@@ -948,7 +948,7 @@ bool LLFace::genVolumeBBoxes(const LLVolume &volume, S32 f,
         mCenterLocal.set(t.getF32ptr());
 
         t.setSub(mExtents[1],mExtents[0]);
-        mBoundingSphereRadius = t.getLength3().getF32()*0.5f;
+        row().boundingSphereRadius = t.getLength3().getF32()*0.5f;
 
         updateCenterAgent();
     }
@@ -980,7 +980,7 @@ LLVector2 LLFace::surfaceToTexture(LLVector2 surface_coord, const LLVector4a& po
     U8 texgen = tep->getTexGen();
     if (texgen != LLTextureEntry::TEX_GEN_DEFAULT)
     {
-        LLVector4a& center = *(mDrawablep->getVOVolume()->getVolume()->getVolumeFace(mTEOffset).mCenter);
+        LLVector4a& center = *(mDrawablep->getVOVolume()->getVolume()->getVolumeFace(row().teOffset).mCenter);
 
         LLVector4a volume_position;
         LLVector3 v_position(position.getF32ptr());
@@ -1039,13 +1039,13 @@ void LLFace::getPlanarProjectedParams(LLQuaternion* face_rot, LLVector3* face_po
         return;
     }
 
-    if( getViewerObject()->getVolume()->getNumVolumeFaces() <= mTEOffset )
+    if( getViewerObject()->getVolume()->getNumVolumeFaces() <= row().teOffset )
     {
-        LL_WARNS() << "No volume face" << (S32)mTEOffset << LL_ENDL;
+        LL_WARNS() << "No volume face" << (S32)row().teOffset << LL_ENDL;
         return;
     }
 
-    const LLVolumeFace& vf = getViewerObject()->getVolume()->getVolumeFace(mTEOffset);
+    const LLVolumeFace& vf = getViewerObject()->getVolume()->getVolumeFace(row().teOffset);
     if (! (vf.mNormals && vf.mTangents))
     {
         return;
@@ -1511,27 +1511,27 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
     // <FS:ND> The volume face vf can have more indices/vertices than this face. All striders below are aquired with a size of this face, but then written with num_verices/num_indices values,
     // thus overflowing the buffer when vf holds more data.
-    // We can either clamp num_* down like here, or aquire all striders not using the face size, but the size if vf (that is swapping out mGeomCount with num_vertices and mIndicesCout with num_indices
+    // We can either clamp num_* down like here, or aquire all striders not using the face size, but the size if vf (that is swapping out row().geomCount with num_vertices and mIndicesCout with num_indices
     // in all calls to nVertbuffer->get*Strider(...). Final solution is to just return false and be done with it.
     //
     // The correct poison of choice is debatable, either copying not all data of vf (clamping) or writing more data than this face claims to have (aquiring bigger striders). Returning will not display this face at all.
     //
     // clamping it is for now.
 
-    num_vertices = llclamp( num_vertices, (S32)0, (S32)mGeomCount );
-    num_indices = llclamp( num_indices, (S32)0, (S32)mIndicesCount );
+    num_vertices = llclamp( num_vertices, (S32)0, (S32)row().geomCount );
+    num_indices = llclamp( num_indices, (S32)0, (S32)row().indicesCount );
     // </FS:ND>
 
     if (mVertexBuffer.notNull())
     {
-        if (num_indices + mIndicesIndex > mVertexBuffer->getNumIndices())
+        if (num_indices + row().indicesIndex > mVertexBuffer->getNumIndices())
         {
             if (gDebugRender)
             {
                 LL_WARNS() << "Index buffer overflow!" << LL_ENDL;
-                LL_WARNS() << "Indices Count: " << mIndicesCount
+                LL_WARNS() << "Indices Count: " << row().indicesCount
                         << " VF Num Indices: " << num_indices
-                        << " Indices Index: " << mIndicesIndex
+                        << " Indices Index: " << row().indicesIndex
                         << " VB Num Indices: " << mVertexBuffer->getNumIndices() << LL_ENDL;
                 LL_WARNS()  << " Face Index: " << face_index
                         << " Pool Type: " << mPoolType << LL_ENDL;
@@ -1540,7 +1540,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
             return false;
         }
 
-        if (num_vertices + (U32)mGeomIndex > mVertexBuffer->getNumVerts())
+        if (num_vertices + (U32)row().geomIndex > mVertexBuffer->getNumVerts())
         {
             if (gDebugRender)
             {
@@ -1700,7 +1700,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
     if (full_rebuild)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - indices");
-        mVertexBuffer->getIndexStrider(indicesp, mIndicesIndex, mIndicesCount);
+        mVertexBuffer->getIndexStrider(indicesp, row().indicesIndex, row().indicesCount);
 
         volatile __m128i* dst = (__m128i*) indicesp.get();
         __m128i* src = (__m128i*) vf.mIndices;
@@ -1725,7 +1725,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         }
         if (geom_check_on())
         {
-            geom_check_indices(this, vf, face_index, num_vertices, num_indices, index_offset, (S32)mGeomCount);
+            geom_check_indices(this, vf, face_index, num_vertices, num_indices, index_offset, (S32)row().geomCount);
         }
     }
 
@@ -1976,7 +1976,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
             if (!do_bump)
             { //not bump mapped, might be able to do a cheap update
-                mVertexBuffer->getTexCoord0Strider(tex_coords0, mGeomIndex, mGeomCount);
+                mVertexBuffer->getTexCoord0Strider(tex_coords0, row().geomIndex, row().geomCount);
 
                 if (texgen != LLTextureEntry::TEX_GEN_PLANAR)
                 {
@@ -2121,13 +2121,13 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                     {
                         case 0:
                             xform_channel = XFORM_BLINNPHONG_COLOR;
-                            mVertexBuffer->getTexCoord0Strider(dst, mGeomIndex, mGeomCount);
+                            mVertexBuffer->getTexCoord0Strider(dst, row().geomIndex, row().geomCount);
                             break;
                         case 1:
                             xform_channel = XFORM_BLINNPHONG_NORMAL;
                             if (mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1))
                             {
-                                mVertexBuffer->getTexCoord1Strider(dst, mGeomIndex, mGeomCount);
+                                mVertexBuffer->getTexCoord1Strider(dst, row().geomIndex, row().geomCount);
                                 if (mat && !tex_anim)
                                 {
                                     r  = mat->getNormalRotation();
@@ -2148,7 +2148,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                             xform_channel = XFORM_BLINNPHONG_SPECULAR;
                             if (mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_TEXCOORD2))
                             {
-                                mVertexBuffer->getTexCoord2Strider(dst, mGeomIndex, mGeomCount);
+                                mVertexBuffer->getTexCoord2Strider(dst, row().geomIndex, row().geomCount);
                                 if (mat && !tex_anim)
                                 {
                                     r  = mat->getSpecularRotation();
@@ -2240,7 +2240,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                 if ((!mat && !gltf_mat) && do_bump)
                 {
                     LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("tgd - do bump");
-                    mVertexBuffer->getTexCoord1Strider(tex_coords1, mGeomIndex, mGeomCount);
+                    mVertexBuffer->getTexCoord1Strider(tex_coords1, row().geomIndex, row().geomCount);
 
                     mVObjp->getVolume()->genTangents(face_index);
 
@@ -2300,11 +2300,11 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
             llassert(num_vertices > 0);
 
-            mVertexBuffer->getVertexStrider(vert, mGeomIndex, mGeomCount);
+            mVertexBuffer->getVertexStrider(vert, row().geomIndex, row().geomCount);
 
 
             F32* dst = (F32*) vert.get();
-            F32* end_f32 = dst+mGeomCount*4;
+            F32* end_f32 = dst+row().geomCount*4;
 
             //_mm_prefetch((char*)dst, _MM_HINT_NTA);
             //_mm_prefetch((char*)src, _MM_HINT_NTA);
@@ -2317,7 +2317,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
 
             LLVector4a texIdx;
 
-            S32 index = mTextureIndex < FACE_DO_NOT_BATCH_TEXTURES ? mTextureIndex : 0;
+            S32 index = row().textureIndex < FACE_DO_NOT_BATCH_TEXTURES ? row().textureIndex : 0;
 
             F32 val = 0.f;
             S32* vp = (S32*) &val;
@@ -2360,7 +2360,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
             }
             if (geom_check_on())
             {
-                geom_check_positions(this, vf, face_index, num_vertices, (const F32*)vert.get(), (S32)mGeomCount);
+                geom_check_positions(this, vf, face_index, num_vertices, (const F32*)vert.get(), (S32)row().geomCount);
             }
         }
 
@@ -2368,7 +2368,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - normal");
 
-            mVertexBuffer->getNormalStrider(norm, mGeomIndex, mGeomCount);
+            mVertexBuffer->getNormalStrider(norm, row().geomIndex, row().geomCount);
             F32* normals = (F32*) norm.get();
             LLVector4a* src = vf.mNormals;
             LLVector4a* end = src+num_vertices;
@@ -2396,7 +2396,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         if (rebuild_tangent)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - tangent");
-            mVertexBuffer->getTangentStrider(tangent, mGeomIndex, mGeomCount);
+            mVertexBuffer->getTangentStrider(tangent, row().geomIndex, row().geomCount);
             F32* tangents = (F32*) tangent.get();
 
             mVObjp->getVolume()->genTangents(face_index);
@@ -2434,7 +2434,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         if (rebuild_weights && vf.mWeights)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - weight");
-            mVertexBuffer->getWeight4Strider(wght, mGeomIndex, mGeomCount);
+            mVertexBuffer->getWeight4Strider(wght, row().geomIndex, row().geomCount);
             // <FS:Ansariel> Vectorized Weight4Strider and ClothWeightStrider by Drake Arconis
             //F32* weights = (F32*) wght.get();
             //LLVector4a::memcpyNonAliased16(weights, (F32*) vf.mWeights, num_vertices*4*sizeof(F32));
@@ -2448,7 +2448,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         if (rebuild_color && mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_COLOR) )
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - color");
-            mVertexBuffer->getColorStrider(colors, mGeomIndex, mGeomCount);
+            mVertexBuffer->getColorStrider(colors, row().geomIndex, row().geomCount);
 
             LLVector4a src;
 
@@ -2475,7 +2475,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_FACE("getGeometryVolume - emissive");
             LLStrider<LLColor4U> emissive;
-            mVertexBuffer->getEmissiveStrider(emissive, mGeomIndex, mGeomCount);
+            mVertexBuffer->getEmissiveStrider(emissive, row().geomIndex, row().geomCount);
 
             const LLTextureEntry* tep = getTextureEntry();
             U8 glow = 0;
@@ -2650,7 +2650,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
             LLVolume* volume = mVObjp->getVolume();
             if (volume)
             {
-                LLVolumeFace& face = volume->getVolumeFace(mTEOffset);
+                LLVolumeFace& face = volume->getVolumeFace(row().teOffset);
 
                 auto& rigInfo = face.mJointRiggingInfoTab;
 
@@ -2775,7 +2775,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
         }
     }
 
-    if(dist < mBoundingSphereRadius) //camera is very close
+    if(dist < row().boundingSphereRadius) //camera is very close
     {
         cos_angle_to_view_dir = 1.0f ;
         mImportanceToCamera = 1.0f ;
@@ -2891,7 +2891,7 @@ bool LLFace::verify(const U32* indices_array) const
     }
 
     // First, check whether the face data fits within the pool's range.
-    if ((U32)(mGeomIndex + mGeomCount) > mVertexBuffer->getNumVerts())
+    if ((U32)(row().geomIndex + row().geomCount) > mVertexBuffer->getNumVerts())
     {
         ok = false;
         LL_INFOS() << "Face references invalid vertices!" << LL_ENDL;
@@ -2910,7 +2910,7 @@ bool LLFace::verify(const U32* indices_array) const
         LL_INFOS() << "Face has bogus indices count" << LL_ENDL;
     }
 
-    if (mIndicesIndex + mIndicesCount > mVertexBuffer->getNumIndices())
+    if (row().indicesIndex + row().indicesCount > mVertexBuffer->getNumIndices())
     {
         ok = false;
         LL_INFOS() << "Face references invalid indices!" << LL_ENDL;
@@ -2918,9 +2918,9 @@ bool LLFace::verify(const U32* indices_array) const
 
 #if 0
     S32 geom_start = getGeomStart();
-    S32 geom_count = mGeomCount;
+    S32 geom_count = row().geomCount;
 
-    const U32 *indicesp = indices_array ? indices_array + mIndicesIndex : getRawIndices();
+    const U32 *indicesp = indices_array ? indices_array + row().indicesIndex : getRawIndices();
 
     for (S32 i = 0; i < indices_count; i++)
     {
@@ -2965,21 +2965,21 @@ const LLMatrix4& LLFace::getRenderMatrix() const
 
 S32 LLFace::getColors(LLStrider<LLColor4U> &colors)
 {
-    if (!mGeomCount)
+    if (!row().geomCount)
     {
         return -1;
     }
 
-    // llassert(mGeomIndex >= 0);
-    mVertexBuffer->getColorStrider(colors, mGeomIndex, mGeomCount);
-    return mGeomIndex;
+    // llassert(row().geomIndex >= 0);
+    mVertexBuffer->getColorStrider(colors, row().geomIndex, row().geomCount);
+    return row().geomIndex;
 }
 
 S32 LLFace::getIndices(LLStrider<U16> &indicesp)
 {
-    mVertexBuffer->getIndexStrider(indicesp, mIndicesIndex, mIndicesCount);
+    mVertexBuffer->getIndexStrider(indicesp, row().indicesIndex, row().indicesCount);
     llassert(indicesp[0] != indicesp[1]);
-    return mIndicesIndex;
+    return row().indicesIndex;
 }
 
 LLVector3 LLFace::getPositionAgent() const
