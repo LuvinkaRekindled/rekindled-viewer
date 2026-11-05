@@ -19,6 +19,8 @@
 #ifndef LL_LLFORKJOINPOOL_H
 #define LL_LLFORKJOINPOOL_H
 
+#include "llthread.h"
+#include <string>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -91,6 +93,22 @@ public:
     // given up on after a second of waiting with every job claimed and none in flight (the state is logged; the report line prints both; 0 and 0 are the expectation)
     static inline std::atomic<unsigned> sMismatchRuns{ 0 }, sRecoveredRuns{ 0 }, sUnderflows{ 0 };
 
+    // <FS> LL_VK_POOL_LABELS=1 (C4 measurement, doc/vulkan/PLAN-clean-core.md): the time the jobs of each named family take on ALL threads of a batch (the workers and the launching thread), per frame, logged
+    // every 600 frames (reportLabels, called from the main loop). A launch names its family with runLabeled / launchLabeled (or a Label in scope); a batch launched without one is counted as "other".
+    // Wall time of each job (two clock reads a job: only while the switch is set). For a 4-core machine the total of the families is the number, not the main thread's wait zone.
+    struct Label
+    {
+        const char* mPrevious;
+        explicit Label(const char* name) { mPrevious = sCurrentLabel; sCurrentLabel = name; }
+        ~Label() { sCurrentLabel = mPrevious; }
+    };
+    static inline thread_local const char* sCurrentLabel = nullptr;
+    static bool labelsOn() { static const bool on = getenv("LL_VK_POOL_LABELS") != nullptr; return on; }
+    void runLabeled(const char* label, size_t count, const std::function<void(size_t)>& fn) { Label l(label); run(count, fn); }
+    Handle launchLabeled(const char* label, size_t count, const std::function<void(size_t)>& fn) { Label l(label); return launch(count, fn); }
+    // main thread, every frame: logs and resets the per-label accounting every 600 frames (a few lines: family, ms a frame on all threads, of it on the main thread, jobs and batches a frame)
+    static void reportLabels(unsigned frame_count);
+
     Handle launch(size_t count, const std::function<void(size_t)>& fn)
     {
         if (count == 0)
@@ -133,7 +151,12 @@ public:
         // (the join waits for that), so the function a successful claim reads is the claimed batch's own.
         const unsigned long long tag = (mSerial.fetch_add(1, std::memory_order_relaxed) + 1) & kTagMask;
         b.mFn = &fn;
+        b.mLabel = sCurrentLabel;
         b.mCount = count;
+        if (labelsOn())
+        {
+            labelStat(sCurrentLabel).mBatches.fetch_add(1, std::memory_order_relaxed);
+        }
         b.mRemaining.store(count, std::memory_order_relaxed);
         b.mExecuted.store(0, std::memory_order_relaxed);
         b.mClaim.store((tag << kTagShift) | ((unsigned long long)count << kCountShift), std::memory_order_release);
@@ -304,8 +327,39 @@ private:
         std::atomic<unsigned> mInFlight{ 0 };            // jobs being executed now
         std::atomic<bool> mActive{ false };              // the slot is taken (from launch to the end of the join)
         const std::function<void(size_t)>* mFn = nullptr;
+        const char* mLabel = nullptr;
         size_t mCount = 0;
     };
+
+    // the per-label accounting (LL_VK_POOL_LABELS): a few families, found by the address of their label string
+    struct LabelStat
+    {
+        std::atomic<const char*> mName{ nullptr };
+        std::atomic<unsigned long long> mNs{ 0 }, mNsMain{ 0 }, mJobs{ 0 }, mBatches{ 0 };
+    };
+    static constexpr int kLabelStats = 48;
+    static LabelStat* labelStats() { static LabelStat stats[kLabelStats]; return stats; }
+    static LabelStat& labelStat(const char* name)
+    {
+        LabelStat* stats = labelStats();
+        for (int i = 0; i < kLabelStats; ++i)
+        {
+            const char* have = stats[i].mName.load(std::memory_order_acquire);
+            if (have == name)
+            {
+                return stats[i];
+            }
+            if (!have)
+            {
+                const char* expected = nullptr;
+                if (stats[i].mName.compare_exchange_strong(expected, name, std::memory_order_acq_rel) || expected == name)
+                {
+                    return stats[i];
+                }
+            }
+        }
+        return stats[kLabelStats - 1];       // (never in practice)
+    }
 
     // claims and runs jobs of one batch until none is left to claim; true if it ran any
     bool drainBatch(Batch& b)
@@ -325,8 +379,25 @@ private:
             }
             // (the claim succeeded for the batch the word named, and its function is read only now: the slot is not used again before this job has finished)
             const std::function<void(size_t)>* fn = b.mFn;
+            const char* label = b.mLabel;
             b.mInFlight.fetch_add(1, std::memory_order_relaxed);
-            (*fn)(index);
+            if (labelsOn())
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                (*fn)(index);
+                const unsigned long long ns = (unsigned long long)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+                LabelStat& st = labelStat(label);
+                st.mNs.fetch_add(ns, std::memory_order_relaxed);
+                st.mJobs.fetch_add(1, std::memory_order_relaxed);
+                if (on_main_thread())
+                {
+                    st.mNsMain.fetch_add(ns, std::memory_order_relaxed);
+                }
+            }
+            else
+            {
+                (*fn)(index);
+            }
             b.mExecuted.fetch_add(1, std::memory_order_relaxed);
             b.mInFlight.fetch_sub(1, std::memory_order_relaxed);
             did = true;
@@ -518,5 +589,50 @@ private:
     std::atomic<unsigned long long> mGeneration{ 0 };
     std::atomic<bool> mStop{ false };
 };
+
+
+inline void LLForkJoinPool::reportLabels(unsigned frame_count)
+{
+    if (!labelsOn())
+    {
+        return;
+    }
+    static unsigned last_frame = 0;
+    static unsigned long long last_ns[kLabelStats] = {}, last_main[kLabelStats] = {}, last_jobs[kLabelStats] = {}, last_batches[kLabelStats] = {};
+    if (last_frame == 0)
+    {
+        last_frame = frame_count;
+        return;
+    }
+    if (frame_count - last_frame < 600)
+    {
+        return;
+    }
+    const double frames = (double)(frame_count - last_frame);
+    last_frame = frame_count;
+    LabelStat* stats = labelStats();
+    double total = 0.0, total_main = 0.0;
+    std::string lines;
+    for (int i = 0; i < kLabelStats; ++i)
+    {
+        const char* name = stats[i].mName.load(std::memory_order_acquire);
+        if (!name && !stats[i].mNs.load())
+        {
+            continue;
+        }
+        const unsigned long long ns = stats[i].mNs.load(), nm = stats[i].mNsMain.load(), jb = stats[i].mJobs.load(), bt = stats[i].mBatches.load();
+        const double ms = (double)(ns - last_ns[i]) / 1e6 / frames, mm = (double)(nm - last_main[i]) / 1e6 / frames;
+        char buf[200];
+        snprintf(buf, sizeof(buf), " | %s %.3f (main %.3f, %.1f jobs, %.2f batches)", name ? name : "other", ms, mm, (double)(jb - last_jobs[i]) / frames, (double)(bt - last_batches[i]) / frames);
+        if (ms > 0.0005)
+        {
+            lines += buf;
+        }
+        total += ms;
+        total_main += mm;
+        last_ns[i] = ns; last_main[i] = nm; last_jobs[i] = jb; last_batches[i] = bt;
+    }
+    LL_INFOS("PoolLabels") << "pool job time per frame over " << frames << " frames (ms on all threads, of it on the main thread): total " << total << " (main " << total_main << ")" << lines << LL_ENDL;
+}
 
 #endif // LL_LLFORKJOINPOOL_H

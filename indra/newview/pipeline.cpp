@@ -2974,7 +2974,7 @@ bool LLPipeline::updateMovedListParallel(LLDrawable::drawable_vector_t& moved_li
             sSortSink = saved_sort;
             LLFace::sStampSink = saved_stamps;
         };
-        pool->run(job_leds.size(), job);
+        pool->runLabeled("avatar attachment ledger", job_leds.size(), job);
     }
     else
     {
@@ -4392,7 +4392,7 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
     else
     {
         LL_CPU_ZONE("updateCull: partition cull jobs (wait for the pool)");
-        pool->run(work.size(), job);
+        pool->runLabeled("updateCull: partition cull", work.size(), job);
     }
 
     // the results in the order of the units, the ledgers applied in the same order
@@ -5884,7 +5884,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             }
         }
     };
-    { LL_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->run(first.size(), first_job); }
+    { LL_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->runLabeled("stateSort: compute 1", first.size(), first_job); }
 
     // what the first loop found, in chunk order: the visible drawables and bridges, and the groups that a bridge's own cull (LLSpatialBridge::setVisible) added to the lists
     for (SortChunk& chunk : first)
@@ -6003,7 +6003,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             }
         }
     };
-    { LL_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->run(second.size(), second_job); }
+    { LL_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->runLabeled("stateSort: compute 2", second.size(), second_job); }
 
     // ---- serial: the visible groups the bridges' culls added (the third loop of the serial sort goes over the whole list, these at its end)
     std::vector<SortDelta> ledger_y;
@@ -7406,7 +7406,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         }
                     }
                 };
-                { LL_CPU_ZONE("postSort: render map job (wait for the pool)"); pool->run(chunks.size(), map_job); }
+                { LL_CPU_ZONE("postSort: render map job (wait for the pool)"); pool->runLabeled("postSort: render map (main view)", chunks.size(), map_job); }
                 {
                     LL_CPU_ZONE("postSort: render map join");
                     const bool alpha_pool = hasRenderType(LLDrawPool::POOL_ALPHA);
@@ -8487,7 +8487,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     if (!work.empty())
     {
         LL_CPU_ZONE("shadow prep: cull job (wait for the pool)");
-        pool->run(work.size(), job);
+        pool->runLabeled("shadow prep: cull job (serial split)", work.size(), job);
     }
     // the results of each cascade, in the order of the serial walk
     LL_CPU_ZONE("shadow prep: cull split merge");
@@ -20033,7 +20033,7 @@ void LLPipeline::beginAvatarVelocity()
         {
             velocity_prepare(sVelWork, (F32)mAvatarVelocityMap.getHeight());
             sVelFn = [](size_t) { build_velocity_rigged(sVelWork); };
-            sVelHandle = pool->launch(1, sVelFn);
+            sVelHandle = pool->launchLabeled("avatar velocity job", 1, sVelFn);
             sVelLaunched = true;
         }
     }
@@ -26583,7 +26583,7 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
     if (!sPcUnits.empty())
     {
         LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)");
-        pool->run(sPcUnits.size(), job);
+        pool->runLabeled("shadow prep: point cloud units", sPcUnits.size(), job);
     }
     for (const PcUnit& unit : sPcUnits)
     {
@@ -27069,7 +27069,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 {
                     clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
                 };
-                { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->run((size_t)cloud_count, cloud_job); }
+                { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->runLabeled("shadow prep: point cloud jobs", (size_t)cloud_count, cloud_job); }
             }
             cloud_lap.mark(PH_POINT_CLOUD);
         }
@@ -27768,7 +27768,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
             else
             {
-                LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->run(pending.size(), cull_job);
+                LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->runLabeled("shadow prep: cull job", pending.size(), cull_job);
             }
             {
                 // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
@@ -27797,7 +27797,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
                 const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
                 const auto mark_wall0 = std::chrono::steady_clock::now();
-                if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->run(chunks.size(), mark_job); }
+                if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->runLabeled("shadow prep: mark job", chunks.size(), mark_job); }
                 LL_CPU_ZONE("shadow prep: merge mark chunks");
                 for (MarkChunk& c : chunks)
                 {
@@ -27947,7 +27947,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 for (size_t p = 0; p < pending.size(); ++p)
                 {
                     map_fns[p] = [&map_job, base = first[p]](size_t c) { map_job(base + c); };
-                    handles[p] = prep_pool->launch(first[p + 1] - first[p], map_fns[p]);
+                    handles[p] = prep_pool->launchLabeled("shadow prep: render map job", first[p + 1] - first[p], map_fns[p]);
                 }
                 for (size_t p = 0; p < pending.size(); ++p)
                 {
@@ -27972,7 +27972,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
             else
             {
-                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->run(map_chunks.size(), map_job); }
+                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
                 { LL_CPU_ZONE("shadow prep: merge render map chunks");
                 for (MapChunk& c : map_chunks)
                 {

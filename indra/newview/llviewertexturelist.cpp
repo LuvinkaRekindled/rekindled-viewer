@@ -2739,7 +2739,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                 }
             }
         };
-        pre_pool->run(chunks, job);
+        pre_pool->runLabeled("textures: priority pre-pass", chunks, job);
         sPreCandidates += candidates.load();
         sPreComputed += computed.load();
         sPreEntries += entries.size();
