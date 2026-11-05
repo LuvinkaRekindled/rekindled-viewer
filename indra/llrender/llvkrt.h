@@ -80,6 +80,7 @@ struct SkinCaster
     U32 mWeightOffset = 0;              // byte offset of the weight4 array in the vertex buffer
     U32 mJoints = 0;
     U64 mPalette = 0;
+    const F32* mPaletteCpu = nullptr;   // <FS> the same palette in the frame's host memory, when the worker knows it (the skin catcher's snapshot: was the data there when the job was made?)
     const F32* mModel = nullptr;        // 16 floats column-major, null = identity
     U32 mPass = 0;
     F32 mAvatarPos[3] = {};             // where the avatar is (the probe of the skinned data compares with it)

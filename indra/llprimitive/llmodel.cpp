@@ -1668,6 +1668,32 @@ LLMeshSkinInfo::LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& skin) :
     fromLLSD(skin);
 }
 
+// <FS> a bind matrix an asset carries that no skinning can use: not finite, an element beyond 1e4, a translation beyond 10 km, or a rotation block whose largest element is under 1e-4. The bounds are wide on purpose:
+// rigs exported at centimetre or millimetre scale carry 100 or 1000 in these matrices and are fine (bounds of 100 and 0.01 flagged 407 meshes of a crowd and deformed their avatars, 2026-11-04). Some rigs ship
+// such matrices for joints the mesh hardly uses (2026-11-04: three meshes of one avatar, 1e20 and 1e34 and zeros for mWristLeft, mHipRight and mAnkleLeft); a vertex with a leftover weight
+// of a fraction of a percent on such a joint lands 1e17 metres away: in the draw a couple of thin triangles nobody sees, in a ray traced shadow a spike across the scene.
+static bool fs_bind_matrix_sane(const LLMatrix4& m)
+{
+    F32 rot = 0.f;
+    for (U32 j = 0; j < 4; ++j)
+    {
+        for (U32 k = 0; k < 4; ++k)
+        {
+            const F32 v = m.mMatrix[j][k];
+            if (!std::isfinite(v) || fabsf(v) > 1.0e4f)
+            {
+                return false;
+            }
+            if (j < 3 && k < 3)
+            {
+                rot = llmax(rot, fabsf(v));
+            }
+        }
+    }
+    const F32 tx = m.mMatrix[3][0], ty = m.mMatrix[3][1], tz = m.mMatrix[3][2];
+    return rot > 1.0e-4f && tx * tx + ty * ty + tz * tz < 1.0e8f;      // (a rotation block whose largest element is under a ten-thousandth is not a rotation at any unit scale: the near-zero matrices of 2026-11-04)
+}
+
 void LLMeshSkinInfo::fromLLSD(LLSD& skin)
 {
     if (skin.has("joint_names"))
@@ -1679,6 +1705,8 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
         }
     }
 
+    std::string bad_inverse_binds;
+    U32 bad_inverse_bind_count = 0;
     if (skin.has("inverse_bind_matrix"))
     {
         for (U32 i = 0; i < skin["inverse_bind_matrix"].size(); ++i)
@@ -1691,8 +1719,20 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                     mat.mMatrix[j][k] = (F32)skin["inverse_bind_matrix"][i][j*4+k].asReal();
                 }
             }
+            if (!fs_bind_matrix_sane(mat))
+            {
+                // the identity: the vertices weighted to this joint follow the joint from where they are (close to right for a joint the mesh hardly uses, and never a spike)
+                bad_inverse_binds += (bad_inverse_bind_count < 8 ? std::string(bad_inverse_binds.empty() ? "" : ", ") + (i < mJointNames.size() ? mJointNames[i] : std::to_string(i)) : std::string());
+                ++bad_inverse_bind_count;
+                mat.setIdentity();
+            }
 
             mInvBindMatrix.push_back(LLMatrix4a(mat));
+        }
+        if (bad_inverse_bind_count)
+        {
+            LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": " << bad_inverse_bind_count << " of " << mInvBindMatrix.size() << " inverse bind matrices in the asset cannot be used (not finite, out of range or degenerate): "
+                                 << bad_inverse_binds << (bad_inverse_bind_count > 8 ? ", ..." : "") << "; the identity stands in for them" << LL_ENDL;
         }
 
         if (mJointNames.size() != mInvBindMatrix.size())
@@ -1728,6 +1768,13 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                 {
                     mat.mMatrix[j][k] = (F32)skin["alt_inverse_bind_matrix"][i][j*4+k].asReal();
                 }
+            }
+            if (!fs_bind_matrix_sane(mat))
+            {
+                // an alternate bind matrix is a joint position override: one that cannot be used means the mesh's overrides are not trusted at all (none applied), not a joint at the origin
+                LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": alternate bind matrix " << i << (i < mJointNames.size() ? " (" + mJointNames[i] + ")" : std::string()) << " in the asset cannot be used (not finite, out of range or degenerate): the mesh's joint position overrides are dropped" << LL_ENDL;
+                mAlternateBindMatrix.clear();
+                break;
             }
 
             mAlternateBindMatrix.push_back(LLMatrix4a(mat));

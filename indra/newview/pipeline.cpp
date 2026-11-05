@@ -9239,6 +9239,7 @@ struct LLSceneFragment
 {
     U32 mId = 0;
     U32 mSerial = 0;
+    LLSpatialGroup* mGroup = nullptr;                   // <FS> the group it was made for (the group frees its fragment before it goes): its mDrawMapSerial against mSerial says whether the draw infos the items point at still exist
     bool mSent = false;                                 // the worker has it (RETAIN sent)
     struct BufferRef { const LLVertexBuffer* mBuffer; U32 mVertex, mIndex; };
     std::vector<BufferRef> mBuffers;                    // the buffers its entries name, with the ids they had
@@ -9793,6 +9794,25 @@ struct GeoBindJob
     U64 mFrame = ~0ull;
 };
 static std::shared_ptr<GeoBindJob> sBindJob;
+
+// <FS> a fragment whose serial is behind its group's draw map points at draw infos that are gone (the group's map was cleared and filled again without the fragment being made again): reading
+// them gave the palette code a dead draw info's skin pointer, and the skin info behind it was freed and its memory reused (2026-11-04: garbage inverse bind matrices, the same address for minutes,
+// while the mesh repository held a different object for the mesh). Such a fragment's rigged items are skipped by the palette consumers; the first sightings are logged with both serials.
+static U64 sFragStaleSkips = 0;
+static bool scene_fragment_behind(const LLSceneFragment* f)
+{
+    if (!f->mGroup || f->mSerial == f->mGroup->mDrawMapSerial)
+    {
+        return false;
+    }
+    ++sFragStaleSkips;
+    if (sFragStaleSkips <= 20 || sFragStaleSkips % 500 == 0)
+    {
+        LL_WARNS("FragStale") << "fragment " << f->mId << " is behind its group: fragment serial " << f->mSerial << ", group draw map serial " << f->mGroup->mDrawMapSerial << ", " << f->mGeo.size() << " items ("
+                              << f->mGeoRigged.size() << " rigged), resident " << f->mResident << ", group dead " << f->mGroup->isDead() << "; its rigged items are skipped (" << sFragStaleSkips << " so far)" << LL_ENDL;
+    }
+    return true;
+}
 
 // S4 B / C: the draw infos of a pass type of the MAIN view, for the passes that are not drawn by the scene table but need to know the draws (the avatar motion vectors, the ray scene's naming of rigged
 // casters): the render map, and, where postSort left a type of a group out because the table serves all of it, those items of the group's fragment (the render map no longer holds them)
@@ -10791,6 +10811,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     f = group->mSceneFragment = new LLSceneFragment();
     f->mId = sNextFragmentId++;
     f->mSerial = group->mDrawMapSerial;
+    f->mGroup = group;
     scene_fragment_fill(group, *f);
     ++sFragStats.mBuilt;
     group->mGeoHandle = 0;
@@ -12655,7 +12676,7 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
     for (U32 handle : cull->mGeoHandles)
     {
         const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-        if (!f)
+        if (!f || scene_fragment_behind(f))
         {
             continue;
         }
@@ -12814,7 +12835,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         for (U32 handle : handles)
         {
             LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f || f->mGeoRigged.empty())
+            if (!f || f->mGeoRigged.empty() || scene_fragment_behind(f))
             {
                 continue;
             }
@@ -23272,12 +23293,13 @@ void LLPipeline::renderDeferredLighting()
                                               (F32)deferred_light_target->getHeight());
 
                 {
-                    // <FS> the noise of the SSAO (aoUtil.glsl, its own uniform: the cascade shadow's PCF rotation must not move) moves every frame whenever the upscaler is there to average it, not only with ray traced shadows: without this the pattern stays where it is on the screen,
-                    // the upscaler cannot average it, and it shows as speckles that look projected onto a moving avatar (2026-11-01). With it the lightmap blur is not needed with the upscaler (RenderShadowBlurWithDLSS).
+                    // <FS> the noise of the SSAO (aoUtil.glsl, its own uniform: the cascade shadow's PCF rotation never moves). It moves every frame only with the ray traced sun shadows under the upscaler, where the
+                    // lightmap blur is left out and the shadow history and the upscaler average the pattern. With the cascade (legacy) shadows the pattern stays where it is and the lightmap blur smooths it, as it
+                    // always did: a pattern that moves is a temporal cover that the cascades were never designed for (2026-11-01 moved it for the cascades too; taken back 2026-11-04, the user: no RT rules in the legacy shadows).
                     static LLStaticHashedString ao_frame_s("ao_noise_frame");
-                    // LL_VK_AO_NOISE: 1 (default) the AO noise moves with the upscaler whatever the shadows are; 2 only with ray traced shadows (how it was before 2026-11-01); 0 never (a fixed pattern)
+                    // LL_VK_AO_NOISE: 1 (default) the AO noise moves only with ray traced shadows under the upscaler; 2 with the upscaler whatever the shadows are (2026-11-01 to 11-04); 0 never (a fixed pattern)
                     static const int ao_noise_mode = getenv("LL_VK_AO_NOISE") ? atoi(getenv("LL_VK_AO_NOISE")) : 1;
-                    const bool ao_noise_moves = sDLSS && (ao_noise_mode == 1 || (ao_noise_mode == 2 && LLVkBridge::rtShadowMode()));
+                    const bool ao_noise_moves = sDLSS && (ao_noise_mode == 2 || (ao_noise_mode == 1 && LLVkBridge::rtShadowMode()));
                     sun_shader.uniform1f(ao_frame_s, ao_noise_moves ? (F32)(mJitterIndex % 64) : 0.f);
                     // <FS> only a projector light that has a shadow map reads the lightmap's spot shadow channels: the pass used to sample both spot shadow maps for every pixel whether there was such a light or not (0.4 ms of GPU in a crowd with none)
                     static LLStaticHashedString spot_mask_s("spot_shadow_mask");
@@ -26679,6 +26701,20 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     glm::mat4 saved_proj = get_current_projection();
     glm::mat4 saved_view = get_current_modelview();
     glm::mat4 inv_view = glm::inverse(saved_view);
+    // <FS> the cascades are fitted to the camera's frustum (updateFrustumPlanes unprojects the viewport's corners with the current projection). With the upscaler on, the current projection is this
+    // frame's jittered one (LLViewerCamera::setPerspective shifts the image by a fraction of a render pixel every frame): the frustum corners, the point cloud and the fit made from them moved by that
+    // fraction every frame, so the shadow maps' texel grid shifted in the world while the camera stood still. An alpha cut-out caster (leaves) is rasterised into the map differently at every grid position,
+    // and its shadow flickered (DLSS off: the same only while the camera moves, with the fit following it). The fit reads the unjittered projection; the scene keeps its jitter (saved_proj is what is put back),
+    // and the maps are rendered with the fit's own matrices as before. 2026-11-04
+    const glm::mat4 fit_proj = LLViewerCamera::getScreenProjection();
+    {
+        static bool logged_fit = false;
+        if (!logged_fit && !gCubeSnapshot && fit_proj != saved_proj)
+        {
+            logged_fit = true;
+            LL_INFOS("ShadowPrep") << "sun shadow cascades: fitted to the unjittered camera projection (the scene's projection carries the upscaler's jitter)" << LL_ENDL;
+        }
+    }
 
     glm::mat4 view[6];
     glm::mat4 proj[6];
@@ -26960,7 +26996,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             PhaseLap cloud_lap;
             set_current_modelview(saved_view);
-            set_current_projection(saved_proj);
+            set_current_projection(fit_proj);           // <FS> the fit's projection, without the upscaler's jitter (see fit_proj)
             const S32 cloud_count = llmin<S32>(4, RenderShadowSplits + 1);
             clouds.resize(4);
             for (S32 j = 0; j < cloud_count; ++j)
@@ -27064,9 +27100,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0+j);
             PhaseLap pass1_lap;
 
-            //restore render matrices
+            //restore render matrices (the fit's projection: without the upscaler's jitter, see fit_proj)
             set_current_modelview(saved_view);
-            set_current_projection(saved_proj);
+            set_current_projection(fit_proj);
 
             LLVector3 eye = camera.getOrigin();
             llassert(eye.isFinite());

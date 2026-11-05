@@ -33,7 +33,7 @@ uniform float ssao_factor_inv;
 
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
-uniform float ao_noise_frame;    // <FS> set by the sun lightmap pass (the frame of the jitter sequence, 0 without the upscaler): the noise lookup of the AO moves on every frame so that the upscaler averages it (the sun shadow's own noise, rt_noise_frame, moves only with ray traced shadows)
+uniform float ao_noise_frame;    // <FS> set by the sun lightmap pass: the frame of the jitter sequence with the ray traced sun shadows under the upscaler (the lightmap blur is left out there and the shadow history and the upscaler average the pattern), 0 otherwise: with the cascade shadows the pattern stays put and the lightmap blur smooths it
 
 vec2 getScreenCoordinateAo(vec2 screenpos)
 {
@@ -79,8 +79,8 @@ float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen)
 {
     float ret = 1.0;
     vec3 pos_world = pos.xyz;
-    // <FS> the lookup moves by whole texels from frame to frame (a golden ratio sequence, 64 frames long): the same pattern every frame is a fixed grain that nothing averages (the lightmap blur that
-    // used to smooth it is left out when the upscaler is on); with a pattern that changes the upscaler's accumulation turns it into a smooth value
+    // <FS> with ray traced shadows under the upscaler the lookup moves by whole texels from frame to frame (a golden ratio sequence, 64 frames long): the lightmap blur that smooths the grain is left out
+    // there, and a pattern that changes is what the upscaler's accumulation turns into a smooth value. ao_noise_frame is 0 with the cascade shadows: the same pattern every frame, blurred as it always was
     vec2 noise_shift = floor(fract(ao_noise_frame * vec2(0.7548776662, 0.5698402910)) * 128.0) / 128.0;
     vec2 noise_reflect = texture(noiseMap, pos_screen.xy * (screen_res / 128) + noise_shift).xy;
 

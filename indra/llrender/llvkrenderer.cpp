@@ -93,6 +93,7 @@ const U32 DUMMY_UBO_BYTES = 64 * 1024;
 static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
 
 const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
+const U32 PALETTE_RING_BYTES = 8u * 1024 * 1024;        // <FS> a slot of the palette ring (a frame's rigged palettes: a few MB in a crowd)
 const U32 VERTEX_OVERFLOW_CHUNK_BYTES = 32u * 1024 * 1024;      // F3.1: see mVertexOverflow
 const U32 VERTEX_OVERFLOW_MAX_CHUNKS = 8;
 
@@ -1267,6 +1268,14 @@ bool Renderer::init()
             return false;
         }
     }
+    for (U32 i = 0; i < Context::frameCount() + 2 && i < PALETTE_RING_SLOTS; ++i)
+    {
+        // <FS> the palette ring (see the header): read by address from the skinning pass and the rigged draws
+        if (!ctx.createBuffer(PALETTE_RING_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, mPaletteRing[i]))
+        {
+            return false;
+        }
+    }
     ctx.addAddressDescriber([this](unsigned long long at) -> std::string
     {
         auto close_to = [at](const Buffer& b, unsigned long long& offset) -> bool
@@ -1903,6 +1912,11 @@ void Renderer::shutdown()
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
             b = Buffer();
         }
+        for (Buffer& b : mPaletteRing)
+        {
+            if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
+            b = Buffer();
+        }
         for (Buffer& b : mVertexRing)
         {
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
@@ -2071,6 +2085,8 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     if (!mRestarting || sRingEpochOff)
     {
         mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
+        mPaletteSlot = (U32)(Context::instance().getFrameNumber() % (U64)(Context::frameCount() + 2));      // <FS> the palette ring: one slot per frame, round frameCount() + 2 of them
+        mPaletteRingUsed = 0;
         if (mOverflowChunk || mOverflowUsed)
         {
             mOverflowIdle = 0;
@@ -3278,6 +3294,29 @@ Renderer::ScratchAlloc Renderer::allocVertexScratch(VkDeviceSize size)
     a.mPtr = (U8*)mVertexRing[mSlot].mMapped + start;
     a.mAddress = mVertexRing[mSlot].mAddress ? mVertexRing[mSlot].mAddress + start : 0;
     return a;
+}
+
+// <FS> the palette ring (see the header): a slot's memory is not written again until the frame that could last read it is done. Full (or missing): the vertex ring as before, counted
+Renderer::ScratchAlloc Renderer::allocPaletteScratch(VkDeviceSize size)
+{
+    const U32 slot = mPaletteSlot;
+    const U32 start = (mPaletteRingUsed + 15) / 16 * 16;
+    if (slot < PALETTE_RING_SLOTS && mPaletteRing[slot].valid() && start + size <= PALETTE_RING_BYTES)
+    {
+        mPaletteRingUsed = start + (U32)size;
+        ScratchAlloc a;
+        a.mBuffer = mPaletteRing[slot].mBuffer;
+        a.mOffset = start;
+        a.mPtr = (U8*)mPaletteRing[slot].mMapped + start;
+        a.mAddress = mPaletteRing[slot].mAddress ? mPaletteRing[slot].mAddress + start : 0;
+        return a;
+    }
+    ++mPaletteFallbacks;
+    if (mPaletteFallbacks <= 20 || mPaletteFallbacks % 1000 == 0)
+    {
+        LL_WARNS("Vulkan") << "palette scratch ring full or missing: a palette of " << size << " bytes went to the vertex ring, whose memory is only safe for this frame (" << mPaletteFallbacks << " so far)" << LL_ENDL;
+    }
+    return allocVertexScratch(size);
 }
 
 U32 Renderer::allocUniform(U32 size)

@@ -27,6 +27,8 @@
 #include "llviewerprecompiledheaders.h"
 #include <mutex>
 #include <atomic>
+#include "llthread.h"            // <FS> on_main_thread() (the palette catcher)
+#include <sstream>
 #include "llvkplatform.h"
 #include "llgpuzonetimer.h"
 #include <chrono>
@@ -12226,6 +12228,132 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             mp[idx + 11] = m[14];
         }
 
+        // <FS> the palette catcher (2026-11-04: spike shadows from random avatars with ray traced shadows, and the jumping triangles of an animated attachment): the draw and the ray scene's
+        // skinning both read this palette, so a joint matrix that is not finite, or whose translation lies farther than kPaletteReach from the avatar, is logged with what says where it came
+        // from (the avatar, whether it is an animated object, whether it sits, the thread, the joint, the frame). Nothing is changed here: what the picture shows lines up with the line.
+        // The ray scene has its own catcher over the skinned vertices (llvkrt.cpp, "skin catcher").
+        static std::atomic<U32> palette_flagged{0};
+        if ((gFrameCount & 3u) == 0u)       // every fourth frame: a persistent fault is caught all the same, and the scan of every joint of every palette stays off the frame's budget
+        {
+            static std::atomic<U32> palette_checked{0};
+            ++palette_checked;
+            constexpr F32 kPaletteReach = 48.f;
+            const LLVector3 at = getRenderPosition();
+            U32 bad_joint = ~0u;
+            F32 bad_t[3] = { 0.f, 0.f, 0.f };
+            F32 worst = 0.f;
+            bool non_finite = false;
+            for (U32 i = 0; i < count; ++i)
+            {
+                const F32* row = mp + i * 12;
+                bool finite = true;
+                for (U32 k = 0; k < 12; ++k)
+                {
+                    finite = finite && std::isfinite(row[k]);
+                }
+                const F32 tx = row[3], ty = row[7], tz = row[11];
+                const F32 d = finite ? sqrtf((tx - at.mV[0]) * (tx - at.mV[0]) + (ty - at.mV[1]) * (ty - at.mV[1]) + (tz - at.mV[2]) * (tz - at.mV[2])) : 0.f;
+                if (!finite || d > kPaletteReach)
+                {
+                    if (bad_joint == ~0u || !finite || d > worst)
+                    {
+                        bad_joint = i;
+                        bad_t[0] = tx; bad_t[1] = ty; bad_t[2] = tz;
+                        worst = d;
+                        non_finite = non_finite || !finite;
+                    }
+                }
+            }
+            if (bad_joint != ~0u)
+            {
+                const U32 n = ++palette_flagged;
+                if (n <= 60 || n % 200 == 0)
+                {
+                    // which joint of the skeleton, what it holds, where its chain goes, and whether anything in the skeleton has an absurd scale or position (2026-11-04: the bad palettes of one
+                    // avatar were the same three skin joints on every frame, one all zeros and two enormous: a scale of zero or of millions somewhere in the chain, from the avatar's own data)
+                    std::ostringstream detail;
+                    const S32 joint_num = skin->mJointNums.size() > bad_joint ? skin->mJointNums[bad_joint] : -1;
+                    LLJoint* joint = getJoint(joint_num);
+                    detail << "; skin joint '" << (skin->mJointNames.size() > bad_joint ? skin->mJointNames[bad_joint] : std::string("?")) << "' num " << joint_num
+                           << (joint_num < 0 ? " (not found)" : joint_num < mNumBones ? " (bone)" : joint_num < mNumBones + mNumCollisionVolumes ? " (collision volume)" : " (attachment point)");
+                    if (skin->mInvBindMatrix.size() > bad_joint)
+                    {
+                        const LLVector4a& t = skin->mInvBindMatrix[bad_joint].getTranslation();
+                        detail << "; inverse bind translation (" << t[0] << ", " << t[1] << ", " << t[2] << ")";
+                    }
+                    if (skin->mAlternateBindMatrix.size() > bad_joint)
+                    {
+                        const LLVector4a& t = skin->mAlternateBindMatrix[bad_joint].getTranslation();
+                        detail << "; alternate bind translation (" << t[0] << ", " << t[1] << ", " << t[2] << ")";
+                    }
+                    {
+                        // the skin info (2026-11-04: the joints were fine, the inverse bind matrices were garbage that drifted: constant data read from memory someone else owns?)
+                        const LLMeshSkinInfo* live = gMeshRepo.getSkinInfo(skin->mMeshID);
+                        detail << "; skin info " << (const void*)skin << " refs " << skin->getNumRefs() << " mesh " << skin->mMeshID << " names " << skin->mJointNames.size() << " inverse binds " << skin->mInvBindMatrix.size()
+                               << " alternate binds " << skin->mAlternateBindMatrix.size() << "; the mesh repository's current skin info for that mesh: " << (live == skin ? "the same object" : live ? "a DIFFERENT object" : "none");
+                        if (!skin->mInvBindMatrix.empty())
+                        {
+                            const LLVector4a& t0 = skin->mInvBindMatrix[0].getTranslation();
+                            detail << "; inverse bind 0 translation (" << t0[0] << ", " << t0[1] << ", " << t0[2] << ")";
+                        }
+                    }
+                    if (joint)
+                    {
+                        detail << "; joint '" << joint->getName() << "' position " << joint->getPosition() << " scale " << joint->getScale() << " world " << joint->getWorldPosition()
+                               << " dirty 0x" << std::hex << joint->mDirtyFlags << std::dec << (joint->mUpdateXform ? "" : " (no xform update)");
+                        LLVector3 ov;
+                        LLUUID mesh;
+                        if (joint->hasAttachmentPosOverride(ov, mesh))
+                        {
+                            detail << "; position override " << ov << " from mesh " << mesh;
+                        }
+                        if (joint->hasAttachmentScaleOverride(ov, mesh))
+                        {
+                            detail << "; scale override " << ov << " from mesh " << mesh;
+                        }
+                        detail << "; chain:";
+                        int depth = 0;
+                        for (LLJoint* pj = joint->getParent(); pj && depth < 12; pj = pj->getParent(), ++depth)
+                        {
+                            detail << " " << pj->getName() << " scale " << pj->getScale();
+                        }
+                    }
+                    detail << "; skeleton joints off:";
+                    U32 off = 0;
+                    auto note_off = [&](LLJoint* j)
+                    {
+                        if (!j)
+                        {
+                            return;
+                        }
+                        const LLVector3& sc = j->getScale();
+                        const LLVector3& po = j->getPosition();
+                        bool odd = !sc.isFinite() || !po.isFinite();
+                        for (int k = 0; k < 3 && !odd; ++k)
+                        {
+                            odd = sc.mV[k] < 1e-3f || sc.mV[k] > 1e3f || fabsf(po.mV[k]) > 100.f;
+                        }
+                        if (odd && off++ < 8)
+                        {
+                            detail << " " << j->getName() << " (pos " << po << " scale " << sc << ")";
+                        }
+                    };
+                    for (LLAvatarJoint* j : mSkeleton)
+                    {
+                        note_off(j);
+                    }
+                    for (S32 i = 0; i < mNumCollisionVolumes; ++i)
+                    {
+                        note_off(&mCollisionVolumes[i]);
+                    }
+                    detail << (off ? "" : " none") << "; rez status " << getRezzedStatus() << (isFullyLoaded() ? ", fully loaded" : ", loading");
+                    LL_WARNS("PaletteCatch") << "bad rigged palette: frame " << gFrameCount << ", avatar " << getFullname() << " " << getID() << (isControlAvatar() ? " (animated object)" : "")
+                                             << (isSitting() ? " (sitting)" : "") << " at " << at << ", skin " << hash << " with " << count << " joints: joint " << bad_joint << (non_finite ? " NOT FINITE," : "")
+                                             << " translation (" << bad_t[0] << ", " << bad_t[1] << ", " << bad_t[2] << ") " << worst << " m from the avatar; on the "
+                                             << (on_main_thread() ? "main thread" : "pool thread") << "; " << n << " flagged of " << (U32)palette_checked << " palettes" << detail.str() << LL_ENDL;
+                }
+            }
+        }
         // <FS> motion vectors: a history from last frame is only usable when the joint count is the same (the skin changed otherwise)
         entry.mHasPrev = had_last_frame && entry.mPrevGLMp.size() == entry.mGLMp.size();
         if (!entry.mHasPrev)
@@ -12306,7 +12434,7 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             const U32 total = with_history + without_history;
             if (total % 20000 == 0)
             {
-                LL_INFOS("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame)" << LL_ENDL;
+                LL_INFOS("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame); flagged by the palette catcher " << (U32)palette_flagged << LL_ENDL;
             }
         }
     }

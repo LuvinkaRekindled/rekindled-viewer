@@ -4213,6 +4213,45 @@ static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const 
     note_rt_caster(pass, vb, ib, vbuf, ibuf, first, count, matrix_id, kind, model, nullptr, ref);
 }
 
+// <FS> skin catcher: the palettes of a frame live in scratch memory the worker wrote (the shared list's segments, or a packet's own list); the device address a job reads is paired here with
+// the host pointer of the same bytes, so the scene call can look at what the CPU side held when it made the job (a job whose vertices went to the origin: was the palette zero on the CPU too,
+// or did the GPU read something else?). A ring of the frame's allocations; a lookup only answers for this frame.
+struct PalCpu { U64 mAddress; U32 mBytes; const U8* mPtr; U64 mFrame; };
+static std::vector<PalCpu> sPalCpu;
+static void palette_cpu_register(U64 address, U32 bytes, const void* ptr)
+{
+    if (!address || !ptr || !bytes)
+    {
+        return;
+    }
+    if (sPalCpu.size() >= 4096)
+    {
+        sPalCpu.erase(sPalCpu.begin(), sPalCpu.begin() + 2048);
+    }
+    sPalCpu.push_back({ address, bytes, (const U8*)ptr, Context::instance().getFrameNumber() });
+}
+static const F32* palette_cpu_of(U64 address, U32 bytes)
+{
+    const U64 frame = Context::instance().getFrameNumber();
+    for (size_t k = sPalCpu.size(); k-- > 0; )
+    {
+        const PalCpu& r = sPalCpu[k];
+        if (r.mFrame != frame)
+        {
+            if (r.mFrame < frame)
+            {
+                break;                  // older entries only from here on
+            }
+            continue;
+        }
+        if (address >= r.mAddress && address + bytes <= r.mAddress + r.mBytes)
+        {
+            return (const F32*)(r.mPtr + (address - r.mAddress));
+        }
+    }
+    return nullptr;
+}
+
 // a rigged caster draw for the ray scene: skinned on the GPU into a copy of its vertices (Rt::noteSkinned)
 static void note_rt_skinned(U32 pass, const LLVkBridge::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
@@ -4228,6 +4267,7 @@ static void note_rt_skinned(U32 pass, const LLVkBridge::ShadowSkinEntry& e, cons
     c.mWeightOffset = e.mWeightOffset;
     c.mJoints = e.mJoints;
     c.mPalette = palette_address;
+    c.mPaletteCpu = palette_cpu_of(palette_address, 48u * e.mJoints);
     c.mModel = model;
     c.mPass = pass;
     memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
@@ -4278,6 +4318,7 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkBridge::ShadowAlphaEntry& 
     c.mWeightOffset = e.mWeightOffset;
     c.mJoints = e.mJoints;
     c.mPalette = palette_address;
+    c.mPaletteCpu = palette_cpu_of(palette_address, 48u * e.mJoints);
     c.mModel = model;
     c.mPass = pass;
     memcpy(c.mAvatarPos, e.mAvatarPos, sizeof(c.mAvatarPos));
@@ -4360,13 +4401,14 @@ static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U
     {
         return;
     }
-    Renderer::ScratchAlloc a = Renderer::instance().allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+    Renderer::ScratchAlloc a = Renderer::instance().allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
     if (!a.mPtr || !a.mAddress)
     {
         return;
     }
     memcpy(a.mPtr, blob, 4 * (size_t)h.mPaletteFloats);
     gFrameState.mPalSegs.push_back({ h.mFragment, h.mPaletteFloats, (U64)a.mAddress });
+    palette_cpu_register((U64)a.mAddress, 4u * h.mPaletteFloats, a.mPtr);        // (the skin catcher's snapshot)
     Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)a.mAddress, (unsigned long long)h.mPass);
 }
 
@@ -4386,7 +4428,8 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     Renderer::ScratchAlloc palettes;
     if (!shared_palettes)
     {
-        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
+        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
         if (!palettes.mPtr || !palettes.mAddress)
         {
             return;
@@ -4466,7 +4509,8 @@ static void on_body_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     Renderer::ScratchAlloc palettes;
     if (h.mPaletteFloats)
     {
-        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);       // the memory of the frame: the scene call of this frame reads it
+        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
+        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)       // the memory of the frame: the scene call of this frame reads it
         if (!palettes.mPtr || !palettes.mAddress)
         {
             return;
@@ -4671,7 +4715,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     Renderer::ScratchAlloc palettes;
     if (h.mPaletteFloats)
     {
-        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
+        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
         if (!palettes.mPtr || !palettes.mAddress)
         {
             return;
@@ -4917,7 +4962,8 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     Renderer::ScratchAlloc palettes;
     if (own_palettes)
     {
-        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
+        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
     }
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (own_palettes && (!palettes.mPtr || !palettes.mAddress)))
     {
@@ -5231,7 +5277,8 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     Renderer::ScratchAlloc palettes;
     if (!shared_palettes)
     {
-        palettes = r.allocVertexScratch(4 * (size_t)h.mPaletteFloats);
+        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
+        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
     }
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (!shared_palettes && (!palettes.mPtr || !palettes.mAddress)))
     {

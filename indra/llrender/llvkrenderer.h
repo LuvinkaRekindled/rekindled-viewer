@@ -310,6 +310,7 @@ public:
     // per-frame host-visible scratch memory usable as vertex or index data (reset every frame)
     struct ScratchAlloc { VkBuffer mBuffer = VK_NULL_HANDLE; VkDeviceSize mOffset = 0; void* mPtr = nullptr; VkDeviceAddress mAddress = 0; };
     ScratchAlloc allocVertexScratch(VkDeviceSize size);
+    ScratchAlloc allocPaletteScratch(VkDeviceSize size);       // <FS> memory the ray scene may read up to two frames later (see mPaletteRing)
     void setIndexBuffer(VkBuffer buffer, VkDeviceSize offset, VkIndexType type) { mIndexBuffer = buffer; mIndexOffset = offset; mIndexType = type; }
     void setTexture(U32 unit, Image* image, VkSampler sampler);
 
@@ -691,6 +692,14 @@ private:
     bool mAppliedVertexInputValid = false;
     Buffer mVertexRing[Context::FRAMES_IN_FLIGHT];
     U32 mVertexRingUsed = 0;
+    // <FS> the palettes of the rigged draws go to a ring of their own with frameCount() + 2 slots: the ray scene may skin a draw with a palette noted up to two frames earlier, and a slot of the
+    // vertex ring starts again as soon as the frame that begins has waited for the fence of the frame three before it, while the GPU may still be on the frame after that one, reading the
+    // palette (2026-11-04: skinned vertices went wherever the new bytes said, spikes from avatars named only by a far cascade, worst at a high frame rate). A palette ring slot is used again
+    // only by the frame frameCount() + 2 later, which has waited for the fence of the last frame that could still read it.
+    static const U32 PALETTE_RING_SLOTS = Context::FRAMES_IN_FLIGHT + 2;
+    Buffer mPaletteRing[PALETTE_RING_SLOTS];
+    U32 mPaletteRingUsed = 0, mPaletteSlot = 0;
+    U64 mPaletteFallbacks = 0;              // palettes that had to go to the vertex ring (the palette ring was full)
     // F3.1: chunks that carry the vertex scratch when the ring is full (immediate mode draws its vertices there: a debug draw of every bounding box needs far more than the ring); reused each time a slot
     // comes round, released after a long time without use. The cursor is reset with the ring.
     std::vector<Buffer> mVertexOverflow[Context::FRAMES_IN_FLIGHT];
