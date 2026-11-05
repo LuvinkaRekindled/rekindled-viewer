@@ -165,7 +165,7 @@ public:
     bool mHasMaterial = false;
 
     // PBR material parameters
-    LLPointer<LLFetchedGLTFMaterial> mGLTFMaterial;
+    LLGLTFMatRef mGLTFMaterial;        // <FS> C2.4: a handle (llfetchedgltfmaterial.h), not a counted pointer
 
     LLVector4 mSpecColor = LLVector4(1.f, 1.f, 1.f, 0.5f); // XYZ = Specular RGB, W = Specular Exponent
 

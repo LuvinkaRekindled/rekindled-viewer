@@ -17,6 +17,10 @@
  * allocated when the first row of the chunk is handed out (a table for 1M drawables costs what is used) and never move. It is built in place when the row is handed out and destroyed when it is
  * given back. It is a separate array from the 32-byte row because the two are read at different times (flags, radius, type: most loops; the transform: the move and matrix code).
  *
+ * A released row is not reused at once: it waits kQuarantineFrames frames in a quarantine, where it reads "dead" (flags = what the owner chose, no owner). A stale pointer to a destroyed drawable (the
+ * moved list, the avatar ledger and others have held one) would otherwise write into the row of an unrelated live drawable that was handed the same row (its flags, its transform), where it used to write
+ * into dead memory. When a row leaves the quarantine its flags are checked against what release left (a stale setState shows): a mismatch is counted and logged (channel InstanceRows).
+ *
  * Independent of the viewer classes on purpose (the instance data must be reusable by a native renderer): only plain types.
  */
 
@@ -27,6 +31,9 @@
 #include "v3math.h"
 #include "xform.h"
 #include <new>
+#include "llframetimer.h"
+#include "llerror.h"
+#include <deque>
 #include <mutex>
 #include <vector>
 #include <cstdlib>
@@ -36,6 +43,7 @@ class LLInstances
 {
 public:
     static constexpr U32 kCapacity = 1u << 20;      // ~1M drawables; 32 MB of address space, committed as touched
+    static constexpr U32 kQuarantineFrames = 8;     // frames a released row waits before it can be handed out again
 
     struct Row
     {
@@ -62,6 +70,7 @@ public:
     {
         State& s = state();
         std::lock_guard<std::mutex> lock(s.mMutex);
+        reclaim(s);
         U32 idx;
         if (!s.mFree.empty())
         {
@@ -110,7 +119,8 @@ public:
         Row& r = sRows[idx];
         r.flags = flags_on_release;
         r.owner = nullptr;
-        s.mFree.push_back(idx);
+        s.mCanary = flags_on_release;
+        s.mQuarantine.push_back({ idx, LLFrameTimer::getFrameCount() });
         if (s.mLive) --s.mLive;
     }
 
@@ -120,12 +130,12 @@ public:
         return idx && idx < kCapacity && sRows[idx].owner == owner;
     }
 
-    struct Stats { U32 mLive, mPeak, mNext; U64 mAcquired, mFull; };
+    struct Stats { U32 mLive, mPeak, mNext; U64 mAcquired, mFull; U32 mQuarantined; U64 mWrittenWhileFree; };
     static Stats stats()
     {
         State& s = state();
         std::lock_guard<std::mutex> lock(s.mMutex);
-        return { s.mLive, s.mPeak, s.mNext, s.mAcquired, s.mFull };
+        return { s.mLive, s.mPeak, s.mNext, s.mAcquired, s.mFull, (U32)s.mQuarantine.size(), s.mWritten };
     }
 
 private:
@@ -136,6 +146,10 @@ private:
         U32 mNext = 1;
         U32 mLive = 0, mPeak = 0;
         U64 mAcquired = 0, mFull = 0;
+        struct Released { U32 mIdx; U32 mFrame; };
+        std::deque<Released> mQuarantine;       // oldest first
+        U32 mCanary = 0;                        // the flags release left
+        U64 mWritten = 0;                       // rows that changed while they were free (a stale pointer wrote)
         State()
         {
             sRows = static_cast<Row*>(std::calloc(kCapacity, sizeof(Row)));
@@ -146,6 +160,25 @@ private:
     {
         static State* s = new State;                // (intentionally never destroyed: drawables released during exit must still find it)
         return *s;
+    }
+    // rows that waited long enough go to the free list (called with the lock held)
+    static void reclaim(State& s)
+    {
+        const U32 now = LLFrameTimer::getFrameCount();
+        while (!s.mQuarantine.empty() && now - s.mQuarantine.front().mFrame >= kQuarantineFrames)
+        {
+            const U32 idx = s.mQuarantine.front().mIdx;
+            s.mQuarantine.pop_front();
+            const Row& r = sRows[idx];
+            if (r.flags != s.mCanary || r.owner != nullptr)
+            {
+                if (++s.mWritten <= 20)
+                {
+                    LL_WARNS("InstanceRows") << "instance row " << idx << " changed while it was free: flags " << r.flags << " (left " << s.mCanary << "), owner " << r.owner << " (a stale pointer to a destroyed drawable wrote); " << s.mWritten << " so far" << LL_ENDL;
+                }
+            }
+            s.mFree.push_back(idx);
+        }
     }
 };
 
