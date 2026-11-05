@@ -26480,6 +26480,7 @@ struct PcUnit
 {
     S32 mCascade;
     LLSpatialPartition* mPart;
+    size_t mRec;            // <FS> C4.3: the (cascade, partition) record the unit belongs to (sPcRecs)
     bool mTask;
     LLViewerOctreeCull::SplitTask mSplit;
     LLVector4a mMin, mMax;
@@ -26487,6 +26488,51 @@ struct PcUnit
     float mUs;
 };
 std::vector<PcUnit> sPcUnits;
+}
+
+// <FS> C4.3 (doc/vulkan/PLAN-clean-core.md): the result of a (cascade, partition) walk is RETAINED and used again while nothing it depends on has changed: the cascade camera's frustum (the agent planes, the
+// plane count, the corner distance, the origin: what the culler reads), the partition (its id: the address of a destroyed partition can be reused) and the partition's change epoch (a group went dirty, was rebounded,
+// destroyed or reparented, shifted: llvieweroctree.cpp). Valid only while occlusion is off (the prep's state): the walk's early fail reads occlusion states that the epoch does not track. Anything else runs the
+// same walk as before: exact by construction. LL_VK_PC_RETAIN_VERIFY=1 walks as well and compares the retained result with it (PcRetain warnings).
+namespace
+{
+struct PcCacheEntry
+{
+    U32 mPartId = 0;
+    U32 mEpoch = 0;
+    F32 mSig[32] = {};
+    F32 mMin[4] = {}, mMax[4] = {};
+    bool mEmpty = true;
+    bool mValid = false;
+};
+std::unordered_map<U64, PcCacheEntry> sPcCache;       // key: partition id * 4 + cascade
+struct PcRec                                          // one (cascade, partition): its own accumulator, the units it was split into are merged here
+{
+    S32 mCascade;
+    LLSpatialPartition* mPart;
+    U64 mKey;
+    U32 mEpoch;
+    LLVector4a mMin, mMax;
+    bool mEmpty;
+    bool mHit;
+};
+std::vector<PcRec> sPcRecs;
+struct PcRetainStats { U64 mHit = 0, mMiss = 0, mOcclusion = 0, mVerified = 0, mMismatch = 0; } sPcRetain;
+
+void pc_signature(LLCamera& cam, F32* out)
+{
+    int k = 0;
+    for (U32 i = 0; i < 7; ++i)
+    {
+        const LLPlane& p = cam.getAgentPlane(i);
+        out[k++] = p[0]; out[k++] = p[1]; out[k++] = p[2]; out[k++] = p[3];
+    }
+    out[k++] = (F32)cam.getPlaneCount();
+    out[k++] = cam.mFrustumCornerDist;
+    const LLVector3& o = cam.getOrigin();
+    out[k++] = o.mV[0]; out[k++] = o.mV[1]; out[k++] = o.mV[2];
+    while (k < 32) { out[k++] = 0.f; }
+}
 }
 
 static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S32 count, LLVector3* mins, LLVector3* maxs, bool* empty)
@@ -26516,19 +26562,91 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
     }
     static const double split_cost = getenv("LL_VK_PC_SPLIT_US") ? atof(getenv("LL_VK_PC_SPLIT_US")) : 60.0;
     static const double node_split = getenv("LL_VK_PC_NODE_US") ? atof(getenv("LL_VK_PC_NODE_US")) : 40.0;
+    static const bool retain_verify = getenv("LL_VK_PC_RETAIN_VERIFY") != nullptr;
+    const bool retain = !LLPipeline::useOcclusion();
+    F32 sig[4][32];
+    for (S32 j = 0; j < count; ++j)
+    {
+        pc_signature(*cams[j], sig[j]);
+    }
     std::unordered_map<U64, float> now_us;          // what the walks cost this time (the top levels here and the jobs together), by partition and cascade
     sPcUnits.clear();
+    sPcRecs.clear();
+    if (sPcCache.size() > 4096) sPcCache.clear();
     for (S32 j = 0; j < count; ++j)
     {
         for (LLSpatialPartition* part : parts)
         {
             const U64 key = ((U64)(uintptr_t)part << 2) | (U64)j;
+            const U64 ckey = ((U64)part->mId << 2) | (U64)j;
+            PcRec rec;
+            rec.mCascade = j;
+            rec.mPart = part;
+            rec.mKey = ckey;
+            rec.mEpoch = part->mEpoch.load(std::memory_order_acquire);
+            rec.mMin.splat(X);
+            rec.mMax.splat(-X);
+            rec.mEmpty = true;
+            rec.mHit = false;
+            if (retain)
+            {
+                auto it = sPcCache.find(ckey);
+                if (it != sPcCache.end() && it->second.mValid && it->second.mPartId == part->mId && it->second.mEpoch == rec.mEpoch && memcmp(it->second.mSig, sig[j], sizeof(sig[j])) == 0)
+                {
+                    rec.mMin.loadua(it->second.mMin);
+                    rec.mMax.loadua(it->second.mMax);
+                    rec.mEmpty = it->second.mEmpty;
+                    rec.mHit = true;
+                    ++sPcRetain.mHit;
+                    if (retain_verify)
+                    {
+                        // the same walk, whole and serial: the retained result must equal it
+                        LLVector4a vmin, vmax;
+                        vmin.splat(X);
+                        vmax.splat(-X);
+                        bool vempty = true;
+                        part->visibleExtentsWhole(*cams[j], vmin, vmax, vempty);
+                        ++sPcRetain.mVerified;
+                        alignas(16) F32 a[4], b[4], c[4], d[4];
+                        rec.mMin.store4a(a); vmin.store4a(b); rec.mMax.store4a(c); vmax.store4a(d);
+                        const bool same = (vempty == rec.mEmpty) && (vempty || (!memcmp(a, b, 12) && !memcmp(c, d, 12)));
+                        if (!same)
+                        {
+                            if (++sPcRetain.mMismatch <= 6)
+                            {
+                                LL_WARNS("PcRetain") << "retained point cloud differs from the walk: cascade " << j << " partition type " << part->mPartitionType << " epoch " << rec.mEpoch << ": retained "
+                                    << (rec.mEmpty ? "empty" : "") << " min (" << a[0] << ", " << a[1] << ", " << a[2] << ") max (" << c[0] << ", " << c[1] << ", " << c[2] << ") walk "
+                                    << (vempty ? "empty" : "") << " min (" << b[0] << ", " << b[1] << ", " << b[2] << ") max (" << d[0] << ", " << d[1] << ", " << d[2] << ")" << LL_ENDL;
+                            }
+                            rec.mMin = vmin;        // (the walk's result is the one used)
+                            rec.mMax = vmax;
+                            rec.mEmpty = vempty;
+                            rec.mHit = false;       // (and it is retained again below)
+                        }
+                    }
+                }
+                if (!rec.mHit)
+                {
+                    ++sPcRetain.mMiss;
+                }
+            }
+            else
+            {
+                ++sPcRetain.mOcclusion;
+            }
+            const size_t rec_index = sPcRecs.size();
+            sPcRecs.push_back(rec);
+            if (rec.mHit)
+            {
+                continue;
+            }
+            PcRec& r = sPcRecs.back();
             auto cost = sPcCostUs.find(key);
             if (cost != sPcCostUs.end() && cost->second > split_cost)
             {
                 const auto w0 = std::chrono::steady_clock::now();
                 const OctreeNode* root = part->mOctree;
-                part->visibleExtentsSplit(*cams[j], cmin[j], cmax[j], cempty[j], 8, [&](const OctreeNode* n)
+                part->visibleExtentsSplit(*cams[j], r.mMin, r.mMax, r.mEmpty, 8, [&](const OctreeNode* n)
                 {
                     if (n == root)
                     {
@@ -26541,6 +26659,7 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
                     PcUnit unit;
                     unit.mCascade = j;
                     unit.mPart = part;
+                    unit.mRec = rec_index;
                     unit.mTask = true;
                     unit.mSplit = task;
                     unit.mMin.splat(X);
@@ -26556,6 +26675,7 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
                 PcUnit unit;
                 unit.mCascade = j;
                 unit.mPart = part;
+                unit.mRec = rec_index;
                 unit.mTask = false;
                 unit.mSplit = { nullptr, 0 };
                 unit.mMin.splat(X);
@@ -26588,14 +26708,36 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
     for (const PcUnit& unit : sPcUnits)
     {
         const S32 j = unit.mCascade;
-        cmin[j].setMin(cmin[j], unit.mMin);
-        cmax[j].setMax(cmax[j], unit.mMax);
-        cempty[j] = cempty[j] && unit.mEmpty;
+        PcRec& r = sPcRecs[unit.mRec];
+        r.mMin.setMin(r.mMin, unit.mMin);
+        r.mMax.setMax(r.mMax, unit.mMax);
+        r.mEmpty = r.mEmpty && unit.mEmpty;
         now_us[((U64)(uintptr_t)unit.mPart << 2) | (U64)j] += unit.mUs;
         if (unit.mTask)
         {
             float& c = sPcNodeUs[((U64)(uintptr_t)unit.mSplit.mNode << 2) | (U64)j];
             c = c > 0.f ? c * 0.7f + unit.mUs * 0.3f : unit.mUs;
+        }
+    }
+    for (PcRec& r : sPcRecs)
+    {
+        const S32 j = r.mCascade;
+        cmin[j].setMin(cmin[j], r.mMin);
+        cmax[j].setMax(cmax[j], r.mMax);
+        cempty[j] = cempty[j] && r.mEmpty;
+        if (retain && !r.mHit)
+        {
+            PcCacheEntry& e = sPcCache[r.mKey];
+            e.mPartId = r.mPart->mId;
+            e.mEpoch = r.mEpoch;            // (read before the walk: a change during it makes the next frame a miss)
+            memcpy(e.mSig, sig[j], sizeof(e.mSig));
+            alignas(16) F32 tmp_min[4], tmp_max[4];
+            r.mMin.store4a(tmp_min);
+            r.mMax.store4a(tmp_max);
+            memcpy(e.mMin, tmp_min, sizeof(tmp_min));
+            memcpy(e.mMax, tmp_max, sizeof(tmp_max));
+            e.mEmpty = r.mEmpty;
+            e.mValid = true;
         }
     }
     for (const auto& entry : now_us)
@@ -26610,6 +26752,14 @@ static void visible_extents_split(LLForkJoinPool* pool, LLCamera* const* cams, S
         mins[j].set(cmin[j].getF32ptr());
         maxs[j].set(cmax[j].getF32ptr());
         empty[j] = cempty[j];
+    }
+    static U32 sPcCalls = 0;
+    if (++sPcCalls % 600 == 0)
+    {
+        LL_INFOS("PcRetain") << "point cloud retained per frame over 600 frames: hits " << (double)sPcRetain.mHit / 600.0 << ", walks " << (double)sPcRetain.mMiss / 600.0 << ", not retained (occlusion on) "
+                             << (double)sPcRetain.mOcclusion / 600.0 << (retain_verify ? ", verified " : "") << (retain_verify ? std::to_string(sPcRetain.mVerified) : std::string())
+                             << (retain_verify ? ", MISMATCHES " : "") << (retain_verify ? std::to_string(sPcRetain.mMismatch) : std::string()) << LL_ENDL;
+        sPcRetain.mHit = sPcRetain.mMiss = sPcRetain.mOcclusion = 0;
     }
 }
 

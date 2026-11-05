@@ -400,6 +400,7 @@ void LLSpatialGroup::expandExtents(const LLVector4a* addingExtents, const LLXfor
     row().bounds[0].mul(0.5f);
     row().bounds[1].setSub(row().extents[0], row().extents[1]);
     row().bounds[1].mul(0.5f);
+    bumpPartitionEpoch();               // <FS> C4.3
 }
 
 bool LLSpatialGroup::addObject(LLDrawable *drawablep)
@@ -592,6 +593,7 @@ void LLSpatialGroup::shift(const LLVector4a &offset)
     row().objectBounds[0].add(offset);
     row().objectExtents[0].add(offset);
     row().objectExtents[1].add(offset);
+    bumpPartitionEpoch();               // <FS> C4.3
 
     if (!getSpatialPartition()->mRenderByGroup &&
         getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_TREE &&
