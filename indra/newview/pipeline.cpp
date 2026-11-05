@@ -2627,7 +2627,7 @@ void LLPipeline::wakeGroups()
         }
         static const size_t per_frame = getenv("LL_VK_WAKE_PER_FRAME") ? (size_t)atoi(getenv("LL_VK_WAKE_PER_FRAME")) : 48;
         const size_t n = std::min(per_frame, mWakeQ.size());
-        std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->mDistance < b->mDistance; });
+        std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->row().distance < b->row().distance; });
         now.assign(mWakeQ.begin(), mWakeQ.begin() + n);
         mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
     }
@@ -5528,7 +5528,7 @@ static void sort_journal_group(LLSpatialGroup* group)
 {
     if (sSortJournal)
     {
-        sSortJournal->mGroups.push_back({ group, group->mLastUpdateDistance });
+        sSortJournal->mGroups.push_back({ group, group->row().lastUpdateDistance });
     }
 }
 
@@ -5655,7 +5655,7 @@ void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger
     }
     for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it)
     {
-        it->mGroup->mLastUpdateDistance = it->mDistance;
+        it->mGroup->row().lastUpdateDistance = it->mDistance;
     }
 
     ledger_b.clear();
@@ -5942,14 +5942,14 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
                 if (last_group && last_group != group && last_group->changeLOD())
                 {
                     sort_journal_group(last_group);
-                    last_group->mLastUpdateDistance = last_group->mDistance;
+                    last_group->row().lastUpdateDistance = last_group->row().distance;
                 }
                 last_group = group;
             }
             if (last_group && last_group->changeLOD())
             {
                 sort_journal_group(last_group);
-                last_group->mLastUpdateDistance = last_group->mDistance;
+                last_group->row().lastUpdateDistance = last_group->row().distance;
             }
         }
         sSortJournal = saved_journal;
@@ -6140,10 +6140,10 @@ void LLPipeline::sortDryRun(const View& view, bool parallel, void* result_ptr)
         for (const auto& g : journal.mGroups) groups.push_back(g.mGroup);
         std::sort(groups.begin(), groups.end());
         groups.erase(std::unique(groups.begin(), groups.end()), groups.end());
-        for (LLSpatialGroup* g : groups) out.mFinalGroups.push_back({ g, g->mLastUpdateDistance });
+        for (LLSpatialGroup* g : groups) out.mFinalGroups.push_back({ g, g->row().lastUpdateDistance });
     }
     for (auto it = journal.mVols.rbegin(); it != journal.mVols.rend(); ++it) it->mVol->restoreLODState(it->mState);
-    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it) it->mGroup->mLastUpdateDistance = it->mDistance;
+    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it) it->mGroup->row().lastUpdateDistance = it->mDistance;
 }
 
 // LL_VK_SORT_SPLIT=4: the compute on this thread against the compute on the pool, on the same input; then the sort runs as before (the frame is made by the old loops)
@@ -6324,7 +6324,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
                 last_group != group && last_group->changeLOD())
             {
-                sort_journal_group(last_group); last_group->mLastUpdateDistance = last_group->mDistance;
+                sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance;
             }
             if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
 
@@ -6334,7 +6334,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
             last_group && last_group->changeLOD())
         {
-            sort_journal_group(last_group); last_group->mLastUpdateDistance = last_group->mDistance;
+            sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance;
         }
     }
     {
@@ -6613,7 +6613,7 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
         if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
         { //avoid redundant stateSort calls
             sort_journal_group(group);
-            group->mLastUpdateDistance = group->mDistance;
+            group->row().lastUpdateDistance = group->row().distance;
         }
     }
 }
@@ -6670,7 +6670,7 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     if (drawablep->isAvatar())
     { //don't draw avatars beyond render distance or if we don't have a spatial group.
         if ((drawablep->getSpatialGroup() == NULL) ||
-            (drawablep->getSpatialGroup()->mDistance > LLVOAvatar::sRenderDistance))
+            (drawablep->getSpatialGroup()->row().distance > LLVOAvatar::sRenderDistance))
         {
             return;
         }
@@ -7311,7 +7311,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         LLSpatialGroup* group = *i;
                         if (group->isDead()
                             || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
                         {
                             continue;
                         }
@@ -7347,7 +7347,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         LLSpatialGroup* group = visible_groups[gi];
                         if (group->isDead()
                             || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
                         {
                             continue;
                         }
@@ -7471,7 +7471,7 @@ void LLPipeline::postSort(LLCamera &camera)
 
         if ((LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
             (RenderAutoHideSurfaceAreaLimit > 0.f &&
-             group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+             group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
         {
             continue;
         }
@@ -8691,7 +8691,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
                 continue;
             }
             if (RenderAutoHideSurfaceAreaLimit > 0.f &&
-                group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f))
+                group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f))
             {
                 continue;
             }
@@ -10909,7 +10909,7 @@ void ll_vis_census_items(LLCamera& camera)
             continue;
         }
         if ((LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
-            (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+            (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
         {
             continue;
         }
@@ -12140,7 +12140,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
     for (size_t gi = 0; gi < group_count; ++gi)
     {
         LLSpatialGroup* group = group_list[gi];
-        if (group->isDead() || (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f)))
+        if (group->isDead() || (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
         {
             continue;
         }
@@ -14621,7 +14621,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         }
 
         if (RenderAutoHideSurfaceAreaLimit > 0.f &&
-            group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->mObjectBoxSize, 10.f))
+            group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f))
         {
             continue;
         }

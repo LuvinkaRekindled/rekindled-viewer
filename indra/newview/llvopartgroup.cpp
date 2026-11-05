@@ -1186,8 +1186,8 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
 
     if (group->changeLOD())
     {
-        group->mLastUpdateDistance = group->mDistance;
-        group->mLastUpdateViewAngle = group->mViewAngle;
+        group->row().lastUpdateDistance = group->row().distance;
+        group->row().lastUpdateViewAngle = group->row().viewAngle;
     }
 
     const unsigned long long ps_t0 = __rdtsc();
@@ -1197,7 +1197,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     }
     if (mPartitionType == LLViewerRegion::PARTITION_PARTICLE && fs_gpu_particles_on() && rebuildRows(group))
     {
-        group->mLastUpdateTime = gFrameTimeSeconds;
+        group->row().lastUpdateTime = gFrameTimeSeconds;
         group->clearState(LLSpatialGroup::GEOM_DIRTY);
         sPartStats.mRowsCycles += __rdtsc() - ps_t0;
         ++sPartStats.mRows;
@@ -1271,7 +1271,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
         group->mBufferMap.clear();
     }
 
-    group->mLastUpdateTime = gFrameTimeSeconds;
+    group->row().lastUpdateTime = gFrameTimeSeconds;
     group->clearState(LLSpatialGroup::GEOM_DIRTY);
     sPartStats.mTotal += __rdtsc() - ps_t0;
     if (++sPartStats.mRebuilds % 3000 == 0)
@@ -1370,8 +1370,8 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         group->mBuilt = 1.f;
         if (group->changeLOD())
         {
-            group->mLastUpdateDistance = group->mDistance;
-            group->mLastUpdateViewAngle = group->mViewAngle;
+            group->row().lastUpdateDistance = group->row().distance;
+            group->row().lastUpdateViewAngle = group->row().viewAngle;
         }
         LLVector3 lo, hi;
         if (parts->pathBox(lo, hi))
@@ -1397,8 +1397,8 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     group->mBuilt = 1.f;
     if (group->changeLOD())
     {
-        group->mLastUpdateDistance = group->mDistance;
-        group->mLastUpdateViewAngle = group->mViewAngle;
+        group->row().lastUpdateDistance = group->row().distance;
+        group->row().lastUpdateViewAngle = group->row().viewAngle;
     }
 
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.mDist > b.mDist; });

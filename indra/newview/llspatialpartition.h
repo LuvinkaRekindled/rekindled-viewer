@@ -282,7 +282,7 @@ public:
     {
         bool operator()(const LLSpatialGroup* const& lhs, const LLSpatialGroup* const& rhs)
         {
-            return lhs->mDistance > rhs->mDistance;
+            return lhs->row().distance > rhs->row().distance;
         }
     };
 
@@ -298,7 +298,7 @@ public:
     {
         bool operator()(const LLSpatialGroup* const& lhs, const LLSpatialGroup* const& rhs)
         {
-            return lhs->mDepth > rhs->mDepth;
+            return lhs->row().depth > rhs->row().depth;
         }
     };
 
@@ -390,9 +390,6 @@ public:
     virtual void rebound();
 
 public:
-    LL_ALIGN_16(LLVector4a mViewAngle);
-    LL_ALIGN_16(LLVector4a mLastUpdateViewAngle);
-
 protected:
     virtual ~LLSpatialGroup();
 
@@ -416,18 +413,11 @@ public:
     bridge_list_t mBridgeList;
     buffer_map_t mBufferMap; //used by volume buffers to attempt to reuse vertex buffers
 
-    F32 mObjectBoxSize; //cached mObjectBounds[1].getLength3()
     U32 mGeometryBytes; //used by volumes to track how many bytes of geometry data are in this node
     F32 mSurfaceArea; //used by volumes to track estimated surface area of geometry in this node
     F32 mBuilt;
 
-    F32 mDistance;
-    F32 mDepth;
-    F32 mLastUpdateDistance;
-    F32 mLastUpdateTime;
-
-    F32 mPixelArea;
-    F32 mRadius;
+    // <FS> C1b.2: distance, depth, lastUpdateDistance, lastUpdateTime, pixelArea, radius, objectBoxSize, viewAngle and lastUpdateViewAngle are in this group's row (row().distance ...)
 
     //used by LLVOAVatar to set render order in alpha draw pool to preserve legacy render order behavior
     LLVOAvatar* mAvatarp = nullptr;
