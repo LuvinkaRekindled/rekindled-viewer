@@ -34,6 +34,7 @@
 #include "llavatarref.h"
 #include "llgrouptable.h"
 #include "llfacetable.h"
+#include "llmatrixtable.h"
 
 // Library includes
 #include "llmath.h"
@@ -939,9 +940,11 @@ void LLTexRetire::pump()
         const LLInstances::Stats is = LLInstances::stats();
         const LLGroupRows::Stats gs = LLGroupRows::stats();
         const LLFaceRows::Stats fs = LLFaceRows::stats();
+        const LLMatrixRows::Stats ms = LLMatrixRows::stats();
         LL_INFOS("InstanceRows") << "instance rows: live " << is.mLive << " (peak " << is.mPeak << "), quarantined " << is.mQuarantined << ", written while free " << is.mWrittenWhileFree
                                  << "; group rows: live " << gs.mLive << " (peak " << gs.mPeak << "), quarantined " << gs.mQuarantined << ", written while free " << gs.mWrittenWhileFree
-                                 << "; face rows: live " << fs.mLive << " (peak " << fs.mPeak << "), quarantined " << fs.mQuarantined << ", written while free " << fs.mWrittenWhileFree << LL_ENDL;
+                                 << "; face rows: live " << fs.mLive << " (peak " << fs.mPeak << "), quarantined " << fs.mQuarantined << ", written while free " << fs.mWrittenWhileFree
+                                 << "; texture matrices: live " << ms.mLive << " (peak " << ms.mPeak << "), quarantined " << ms.mQuarantined << ", written while free " << ms.mWrittenWhileFree << LL_ENDL;
     }
 }
 

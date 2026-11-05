@@ -28,6 +28,7 @@
 
 #include "lldrawable.h" // lldrawable needs to be included before llface
 #include "llface.h"
+#include "llmatrixtable.h"
 
 static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetable.h) has one slot per texture channel");   // <FS> C3.3
 #include "llviewertextureanim.h"
@@ -223,7 +224,7 @@ void LLFace::destroy()
 
     if (mTextureMatrix)
     {
-        delete mTextureMatrix;
+        LLMatrixTable::free(mTextureMatrix);       // <FS> C3.4: a matrix of the matrix table (llmatrixtable.h): its row is quarantined, a stale pointer still reads it
         mTextureMatrix = NULL;
 
         if (mDrawablep)
