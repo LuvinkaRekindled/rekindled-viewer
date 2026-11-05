@@ -147,9 +147,11 @@ public:
     U32 mCount = 0;
     U32 mOffset = 0;
 
-    LLPointer<LLViewerTexture>     mTexture;
-    LLPointer<LLViewerTexture> mSpecularMap;
-    LLPointer<LLViewerTexture> mNormalMap;
+    // <FS> C2.3 (doc/vulkan/PLAN-clean-core.md section 7): handles, not counted pointers (LLTexRef, llviewertexture.h): the draw info owns no texture; the faces and the texture lists keep it alive and the retire list
+    // keeps it intact for the frames in flight
+    LLTexRef     mTexture;
+    LLTexRef mSpecularMap;
+    LLTexRef mNormalMap;
 
     const LLMatrix4* mSpecularMapMatrix = nullptr;
     const LLMatrix4* mNormalMapMatrix = nullptr;
@@ -167,7 +169,7 @@ public:
 
     LLVector4 mSpecColor = LLVector4(1.f, 1.f, 1.f, 0.5f); // XYZ = Specular RGB, W = Specular Exponent
 
-    std::vector<LLPointer<LLViewerTexture> > mTextureList;
+    std::vector<LLTexRef> mTextureList;     // <FS> C2.3: handles
 
     LLUUID mMaterialID; // id of LLGLTFMaterial or LLMaterial applied to this draw info
 

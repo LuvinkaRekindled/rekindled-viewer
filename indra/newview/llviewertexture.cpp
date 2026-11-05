@@ -898,6 +898,17 @@ LLViewerTexture* LLViewerTexture::fromRenderHandle(U32 handle)
     return tex;
 }
 
+// ---- <FS> C2.3: LLTexRef (llviewertexture.h)
+std::atomic<U64> LLTexRef::sDeadResolved{0};
+
+// static
+LLViewerTexture* LLTexRef::deadTexture()
+{
+    ++sDeadResolved;
+    LLViewerTexture* tex = LLViewerFetchedTexture::sDefaultImagep.get();
+    return tex ? tex : LLViewerFetchedTexture::sWhiteImagep.get();
+}
+
 // ---- <FS> C2.2: the retire list (see the declaration in llviewertexture.h)
 std::atomic<U64> LLTexRetire::sResolvedParked{0};
 
@@ -993,7 +1004,7 @@ void LLTexRetire::pump()
         size_t waiting;
         { std::lock_guard<std::mutex> lock(sRetireMutex); waiting = sParked.size(); }
         LL_INFOS("TexRetire") << "texture retire list: parked " << sParkedTotal.load() << ", destroyed " << sDestroyedTotal.load() << ", count rose again " << sRevivedTotal.load()
-                              << ", waiting " << waiting << " (peak " << sParkedPeak << "), handle resolutions that met a parked texture " << sResolvedParked.load() << ", age " << retire_frames() << " frames" << LL_ENDL;
+                              << ", waiting " << waiting << " (peak " << sParkedPeak << "), handle resolutions that met a parked texture " << sResolvedParked.load() << ", handles of a gone texture (default image shown) " << LLTexRef::sDeadResolved.load() << ", age " << retire_frames() << " frames" << LL_ENDL;
     }
 }
 

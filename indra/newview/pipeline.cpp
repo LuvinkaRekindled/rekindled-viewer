@@ -8819,7 +8819,7 @@ static bool rt_textures_ready(const LLDrawInfo& p, bool batch_textures)
     bool ready = true;
     if (batch_textures && p.mTextureList.size() > 1)
     {
-        for (const LLPointer<LLViewerTexture>& t : p.mTextureList)
+        for (const LLTexRef& t : p.mTextureList)      // <FS> C2.3: handles
         {
             ready = ready && rt_texture_ready(t.get());
         }
