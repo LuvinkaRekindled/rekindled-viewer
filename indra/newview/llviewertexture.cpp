@@ -33,6 +33,7 @@
 #include "llinstancetable.h"
 #include "llavatarref.h"
 #include "llgrouptable.h"
+#include "llfacetable.h"
 
 // Library includes
 #include "llmath.h"
@@ -937,8 +938,10 @@ void LLTexRetire::pump()
                               << "; avatar handles of a gone avatar (draw skipped) " << LLAvatarRef::sDeadResolved.load() << LL_ENDL;
         const LLInstances::Stats is = LLInstances::stats();
         const LLGroupRows::Stats gs = LLGroupRows::stats();
+        const LLFaceRows::Stats fs = LLFaceRows::stats();
         LL_INFOS("InstanceRows") << "instance rows: live " << is.mLive << " (peak " << is.mPeak << "), quarantined " << is.mQuarantined << ", written while free " << is.mWrittenWhileFree
-                                 << "; group rows: live " << gs.mLive << " (peak " << gs.mPeak << "), quarantined " << gs.mQuarantined << ", written while free " << gs.mWrittenWhileFree << LL_ENDL;
+                                 << "; group rows: live " << gs.mLive << " (peak " << gs.mPeak << "), quarantined " << gs.mQuarantined << ", written while free " << gs.mWrittenWhileFree
+                                 << "; face rows: live " << fs.mLive << " (peak " << fs.mPeak << "), quarantined " << fs.mQuarantined << ", written while free " << fs.mWrittenWhileFree << LL_ENDL;
     }
 }
 
