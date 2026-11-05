@@ -33,6 +33,11 @@ S32 velIdx();              // velidx=0/1 (default 1): the avatar velocity record
 S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
 S32 texAnim();            // texanim=0/1/2 (default -1: the setting decides): texture animation by the CPU / by the vertex shader / CPU with the shader's twin compared
 S32 sunNoise();             // sunnoise=0/1/2 (default 1): 1 the noise of the sun rays moves every frame, 2 every 4th frame, 0 never
+S32 sunCentre();            // suncentre=0/1 (default 1): one deterministic sun ray at the disc's centre, history / noise motion / sun blur off; 0 = the stochastic disc ray and its covers
+S32 sunFilter();            // sunfilter=0/1 (default 1): the penumbra filter sized by the blocker distance runs on the centre ray's shadow
+S32 sunPenMax();            // penmax=N (default 8): the filter's widest penumbra half-width in render pixels
+S32 sunPenLod();            // penlod=N (default 1): a bias in mip levels on the filter taps' level
+S32 sunStrength();          // sunstrength=N percent (default 65): the avatar self shadow's translucency floor with the centre ray
 S32 sunSelfShadow();       // sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = an avatar blocks fully, no start disc (a cost A/B within one lap)
 S32 sunPenRays();          // penrays=N (default 0 = 8): the rays of a pixel whose first sun ray met a close skinned surface
 S32 debugView();        // view=N: the material debug view mode to show (0 = the setting RenderRTMaterialDebug)

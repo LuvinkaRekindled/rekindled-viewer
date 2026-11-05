@@ -339,6 +339,11 @@ namespace LLVkBridge
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all
+    S32 rtSunCentre();             // rt-debug.txt suncentre=0/1 (default 1): the sun lightmap pass traces one deterministic ray at the sun disc's centre; the shadow history, the noise motion and the sun blur are off with it
+    S32 rtSunFilter();             // rt-debug.txt sunfilter=0/1 (default 1): the penumbra filter sized by the blocker distance runs on the centre ray's shadow (rtShadowFilterF.glsl)
+    S32 rtSunPenMax();             // rt-debug.txt penmax=N (default 8): that filter's widest penumbra half-width in render pixels
+    S32 rtSunPenLod();             // rt-debug.txt penlod=N (default 1): a bias in mip levels on that filter's taps (1 = each tap averages twice the footprint)
+    S32 rtSunStrength();           // rt-debug.txt sunstrength=N percent (default 65): with the centre ray, the most light an avatar's own close surfaces block on that avatar
     S32 rtSunSelfShadow();         // rt-debug.txt sunself=0/1 (default 1): the translucent, soft avatar self shadows of the sun; 0 = off (an avatar blocks fully, no start disc), a same-lap cost A/B
     S32 rtSunPenRays();            // rt-debug.txt penrays=N (default 0 = the shader's 8): the rays of a pixel whose first sun ray met a close skinned surface
     S32 rtDebugView();      // rt-debug.txt view=N: the ray scene material debug view mode to show, 0 = the setting RenderRTMaterialDebug decides

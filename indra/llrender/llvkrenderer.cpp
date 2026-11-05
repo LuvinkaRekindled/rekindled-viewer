@@ -426,7 +426,12 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         if (mInfo.mSamplers.empty()) ++sNoSamplers;
         if (!mInfo.mSamplers.empty())
         {
-            LL_INFOS("VkShader") << "program '" << mName << "': " << (mBindless ? "texture handles" : "NO TEXTURES") << ", " << mInfo.mSamplers.size() << " samplers" << LL_ENDL;
+            std::string outputs;
+            for (const std::string& o : mInfo.mOutputs)
+            {
+                outputs += (outputs.empty() ? "" : ", ") + o;
+            }
+            LL_INFOS("VkShader") << "program '" << mName << "': " << (mBindless ? "texture handles" : "NO TEXTURES") << ", " << mInfo.mSamplers.size() << " samplers, outputs: " << outputs << LL_ENDL;
         }
         if (sPrograms % 50 == 0)
         {

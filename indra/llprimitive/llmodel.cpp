@@ -1668,20 +1668,22 @@ LLMeshSkinInfo::LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& skin) :
     fromLLSD(skin);
 }
 
-// <FS> a bind matrix an asset carries that no skinning can use: not finite, an element beyond 1e4, a translation beyond 10 km, or a rotation block whose largest element is under 1e-4. The bounds are wide on purpose:
+// <FS> a bind matrix an asset carries that no skinning can use: not finite, an element beyond 1e4 or a nonzero one under 1e-30, a translation beyond 10 km, or a rotation block whose largest element is under 1e-4. The bounds are wide on purpose:
 // rigs exported at centimetre or millimetre scale carry 100 or 1000 in these matrices and are fine (bounds of 100 and 0.01 flagged 407 meshes of a crowd and deformed their avatars, 2026-11-04). Some rigs ship
 // such matrices for joints the mesh hardly uses (2026-11-04: three meshes of one avatar, 1e20 and 1e34 and zeros for mWristLeft, mHipRight and mAnkleLeft); a vertex with a leftover weight
 // of a fraction of a percent on such a joint lands 1e17 metres away: in the draw a couple of thin triangles nobody sees, in a ray traced shadow a spike across the scene.
-static bool fs_bind_matrix_sane(const LLMatrix4& m)
+static bool fs_bind_matrix_sane(const LLMatrix4& m, const char** why)
 {
+    *why = "";
     F32 rot = 0.f;
     for (U32 j = 0; j < 4; ++j)
     {
         for (U32 k = 0; k < 4; ++k)
         {
             const F32 v = m.mMatrix[j][k];
-            if (!std::isfinite(v) || fabsf(v) > 1.0e4f)
+            if (!std::isfinite(v) || fabsf(v) > 1.0e4f || (v != 0.f && fabsf(v) < 1.0e-30f))
             {
+                *why = !std::isfinite(v) ? "not finite" : (fabsf(v) > 1.0e4f ? "an element beyond 1e4" : "bit garbage under 1e-30");       // (no exporter writes 1e-38: a broken eye joint, 2026-11-04)
                 return false;
             }
             if (j < 3 && k < 3)
@@ -1691,7 +1693,20 @@ static bool fs_bind_matrix_sane(const LLMatrix4& m)
         }
     }
     const F32 tx = m.mMatrix[3][0], ty = m.mMatrix[3][1], tz = m.mMatrix[3][2];
-    return rot > 1.0e-4f && tx * tx + ty * ty + tz * tz < 1.0e8f;      // (a rotation block whose largest element is under a ten-thousandth is not a rotation at any unit scale: the near-zero matrices of 2026-11-04)
+    // the translation bound is absolute and wide (10 km): a bound relative to the rotation block's scale flagged real rigs whose block carries a small scale (avatars deformed, 2026-11-04 late)
+    if (!(rot > 1.0e-4f))
+    {
+        *why = "a rotation block of zeros";          // (not a rotation at any unit scale)
+        return false;
+    }
+    if (!(tx * tx + ty * ty + tz * tz < 1.0e8f))
+    {
+        *why = "a translation beyond 10 km";
+        return false;
+    }
+    // NOT a shape test: a 2026-11-04 attempt (rows of about one length, near perpendicular) flagged 3261 meshes of one crowd and deformed avatars; bind matrices legitimately carry
+    // non-uniform scale and shear. Only values no skinning can use are caught here (above); plausible-size garbage in an asset is left to the skin catchers (llvkrt.cpp, llvoavatar.cpp).
+    return true;
 }
 
 void LLMeshSkinInfo::fromLLSD(LLSD& skin)
@@ -1719,10 +1734,11 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                     mat.mMatrix[j][k] = (F32)skin["inverse_bind_matrix"][i][j*4+k].asReal();
                 }
             }
-            if (!fs_bind_matrix_sane(mat))
+            const char* why = "";
+            if (!fs_bind_matrix_sane(mat, &why))
             {
                 // the identity: the vertices weighted to this joint follow the joint from where they are (close to right for a joint the mesh hardly uses, and never a spike)
-                bad_inverse_binds += (bad_inverse_bind_count < 8 ? std::string(bad_inverse_binds.empty() ? "" : ", ") + (i < mJointNames.size() ? mJointNames[i] : std::to_string(i)) : std::string());
+                bad_inverse_binds += (bad_inverse_bind_count < 8 ? std::string(bad_inverse_binds.empty() ? "" : ", ") + (i < mJointNames.size() ? mJointNames[i] : std::to_string(i)) + " (" + why + ")" : std::string());
                 ++bad_inverse_bind_count;
                 mat.setIdentity();
             }
@@ -1769,10 +1785,11 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                     mat.mMatrix[j][k] = (F32)skin["alt_inverse_bind_matrix"][i][j*4+k].asReal();
                 }
             }
-            if (!fs_bind_matrix_sane(mat))
+            const char* why = "";
+            if (!fs_bind_matrix_sane(mat, &why))
             {
                 // an alternate bind matrix is a joint position override: one that cannot be used means the mesh's overrides are not trusted at all (none applied), not a joint at the origin
-                LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": alternate bind matrix " << i << (i < mJointNames.size() ? " (" + mJointNames[i] + ")" : std::string()) << " in the asset cannot be used (not finite, out of range or degenerate): the mesh's joint position overrides are dropped" << LL_ENDL;
+                LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": alternate bind matrix " << i << (i < mJointNames.size() ? " (" + mJointNames[i] + ")" : std::string()) << " in the asset cannot be used (" << why << "): the mesh's joint position overrides are dropped" << LL_ENDL;
                 mAlternateBindMatrix.clear();
                 break;
             }

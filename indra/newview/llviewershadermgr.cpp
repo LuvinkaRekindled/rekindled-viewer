@@ -372,6 +372,8 @@ LLShaderProgram            gAvatarBodyVelocityProgram;     // <FS> avatar motion
 LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLShaderProgram            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
+LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
+LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
 LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
@@ -1565,6 +1567,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarVelocityPullProgram.unload();
         gObjectVelocityPullProgram.unload();
         gShadowAccumProgram.unload();
+        gRtShadowFilterProgram.unload();
+        gRtShadowPrepProgram.unload();
         gRRGuidesProgram.unload();
         gRRReflMotionProgram.unload();
         gRRHitDistProgram.unload();
@@ -2183,6 +2187,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSunProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", ShaderStage::Vertex));
         gDeferredSunProgram.mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
         gDeferredSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        // <FS> a program's own files are compiled with its mDefines: the global map (LL_RT_SHADOWS, SUN_SHADOW, see attribs above) reaches only the shared utility files. The sun lightmap shader
+        // needs the ray traced mode in its own text for its second output (the blocker distance, PLAN-rt-shadow-penumbra.md step 1) and the adaptive-rays hook, which an `#if` on the global
+        // define had left out until 2026-11-04
+        gDeferredSunProgram.clearPermutations();
+        if (const U32 rt_mode = LLVkBridge::rtShadowMode())
+        {
+            gDeferredSunProgram.addPermutation("LL_RT_SHADOWS", std::to_string(rt_mode));
+        }
 
         add_common_permutations(&gDeferredSunProgram);
 
@@ -3936,6 +3948,32 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the shadow accumulation program did not compile: ray shadows are not accumulated" << LL_ENDL;
         }
 
+        // <FS> the penumbra filter of the ray traced sun shadow (PLAN-rt-shadow-penumbra.md step 2b): two separable passes over the lightmap's sun channel, sized by the blocker distance map
+        gRtShadowFilterProgram.mName = "RT Shadow Penumbra Filter";
+        gRtShadowFilterProgram.mFeatures.isDeferred = true;
+        gRtShadowFilterProgram.mShaderFiles.clear();
+        gRtShadowFilterProgram.clearPermutations();
+        gRtShadowFilterProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
+        gRtShadowFilterProgram.mShaderFiles.push_back(make_pair("deferred/rtShadowFilterF.glsl", ShaderStage::Fragment));
+        gRtShadowFilterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gRtShadowFilterProgram);
+        if (!gRtShadowFilterProgram.createShader())
+        {
+            LL_WARNS("VkRt") << "the RT shadow penumbra filter did not compile: the centre ray's shadow stays hard" << LL_ENDL;
+        }
+        gRtShadowPrepProgram.mName = "RT Shadow Penumbra Prep";
+        gRtShadowPrepProgram.mFeatures.isDeferred = true;
+        gRtShadowPrepProgram.mShaderFiles.clear();
+        gRtShadowPrepProgram.clearPermutations();
+        gRtShadowPrepProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
+        gRtShadowPrepProgram.mShaderFiles.push_back(make_pair("deferred/rtShadowPrepF.glsl", ShaderStage::Fragment));
+        gRtShadowPrepProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gRtShadowPrepProgram);
+        if (!gRtShadowPrepProgram.createShader())
+        {
+            LL_WARNS("VkRt") << "the RT shadow penumbra prep pass did not compile: the centre ray's shadow stays hard" << LL_ENDL;
+        }
+
         gRRGuidesProgram.mName = "Ray Reconstruction Guides";
         gRRGuidesProgram.mFeatures.isDeferred = true;
         gRRGuidesProgram.mFeatures.hasFullGBuffer = true;
@@ -3996,7 +4034,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the avatar velocity debug program did not compile" << LL_ENDL;
         }
 
-        if (LLVkBridge::rtShadowMode() && getenv("LL_VK_RT_MATERIALS") && getenv("LL_VK_RT_MATERIALS")[0] == '1')
+        // <FS> made whenever the ray traced shadows are on: its mode 17 (the blocker distance, PLAN-rt-shadow-penumbra.md) needs no material table; the material modes 1-16 do, and
+        // visualizeRtMaterials keeps them out of reach when the table is not there (their table reads would go through a zero address)
+        if (LLVkBridge::rtShadowMode())
         {
             gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
             gRtMaterialDebugProgram.mFeatures.isDeferred = true;
