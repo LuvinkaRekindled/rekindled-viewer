@@ -340,7 +340,6 @@ extern LLShaderProgram         gAvatarVelocityProgram;
 extern LLShaderProgram         gAvatarBodyVelocityProgram;
 extern LLShaderProgram         gAvatarVelocityPullProgram;
 extern LLShaderProgram         gObjectVelocityPullProgram;
-extern LLShaderProgram         gShadowAccumProgram;
 extern LLShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
 extern LLShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
 extern LLShaderProgram         gRRGuidesProgram;

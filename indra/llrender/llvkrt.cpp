@@ -99,7 +99,8 @@ VkDeviceSize sPinOffset = 0;                                // where the pin tab
 VkDeviceSize sGeomBytes = kGeomBytesBase, sRegionBytes = kGeomBytesBase;
 U32 sMaxRecords = 0, sTableCalls = kCalls;
 constexpr F32 kSkinLogReach = 16.f;                         // <FS> skin catcher: a skinned vertex farther than this from its avatar is counted and logged (not dropped: that is kSkinReach's job); whole attachments are smaller than this
-constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
+constexpr F32 kSkinReach = 32.f;                             // metres from the avatar's position: skinned vertices farther away are garbage and are left out (32 since 2026-11-05: a prim is at most 64 m, so nothing on an
+                                                             // avatar reaches farther than its radius; 300 let a shifted-but-plausible bind matrix send a vertex 233 m out, a spike no parse rule can catch; live key skinreach)
 constexpr size_t kAvatarBuilds = 16;                        // structure builds of avatars per scene call beyond the groups' limit (the jobs list is reserved for both)
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
 constexpr U32 kSkinChunkVerts = 128;                        // vertices per workgroup (one chunk table entry)
@@ -304,8 +305,6 @@ struct DebugSwitches
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
     S32 mSunNoise = 1;              // live (sunnoise=0/1/2, default 1): how the noise of the sun rays moves: 1 every frame (the upscaler averages it), 2 every 4th frame, 0 never (a fixed pattern)
-    S32 mSunCentre = 1;             // live (suncentre=0/1, default 1): the sun lightmap pass traces one deterministic ray at the sun disc's centre and the history / noise motion / sun blur are off
-                                    // (PLAN-rt-shadow-penumbra.md step 2); 0 = the stochastic disc ray with its covers, for a same-lap A/B until the covers are deleted
     S32 mSunFilter = 1;             // live (sunfilter=0/1, default 1): with the centre ray, the penumbra filter sized by the blocker distance (rtShadowFilterF.glsl) runs on the sun channel; 0 = the hard shadow as traced
     S32 mPenMax = 8;                // live (penmax=N, default 8, Adam's choice by eye 2026-11-05): the filter's widest penumbra half-width in render pixels
     S32 mPenLod = 1;                // live (penlod=N, default 1, Adam's choice by eye 2026-11-05): a bias in mip levels on the filter taps' level (1 = each tap averages twice the footprint, -1 half)
@@ -323,7 +322,6 @@ DebugSwitches sDbg;
 inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
 std::atomic<S32> sViewLive{0}, sPenRaysLive{0};
 std::atomic<S32> sSunNoiseLive{1};
-std::atomic<S32> sSunCentreLive{1};
 std::atomic<S32> sSunFilterLive{1}, sPenMaxLive{8}, sPenLodLive{1}, sSunStrengthLive{65};
 std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1}, sSnapTestLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
@@ -399,7 +397,6 @@ void read_debug_switches()
                 else if (k == "sunself") d.mSunSelf = (S32)v;
                 else if (k == "penrays") d.mPenRays = (S32)v;
                 else if (k == "sunnoise") d.mSunNoise = (S32)v;
-                else if (k == "suncentre") d.mSunCentre = (S32)v;
                 else if (k == "sunfilter") d.mSunFilter = (S32)v;
                 else if (k == "penmax") d.mPenMax = (S32)v;
                 else if (k == "penlod") d.mPenLod = (S32)v;
@@ -475,7 +472,6 @@ void read_debug_switches()
             LL_INFOS("VkRt") << "rt-debug.txt sunnoise=" << d.mSunNoise << " (1 the sun ray noise moves every frame, 2 every 4th frame, 0 never)" << LL_ENDL;
         }
     }
-    sSunCentreLive.store(d.mSunCentre, std::memory_order_relaxed);
     sSunFilterLive.store(d.mSunFilter, std::memory_order_relaxed);
     sPenMaxLive.store(d.mPenMax, std::memory_order_relaxed);
     sPenLodLive.store(d.mPenLod, std::memory_order_relaxed);
@@ -487,14 +483,6 @@ void read_debug_switches()
             last_filter = d.mSunFilter; last_penmax = d.mPenMax; last_penlod = d.mPenLod; last_strength = d.mSunStrength;
             LL_INFOS("VkRt") << "rt-debug.txt sunfilter=" << d.mSunFilter << " penmax=" << d.mPenMax << " penlod=" << d.mPenLod << " sunstrength=" << d.mSunStrength
                              << " (the penumbra filter of the centre ray's shadow, its widest half-width in pixels, the taps' mip level bias, the avatar self shadow's translucency floor in percent)" << LL_ENDL;
-        }
-    }
-    {
-        static S32 last_centre = -1;
-        if (d.mSunCentre != last_centre)
-        {
-            last_centre = d.mSunCentre;
-            LL_INFOS("VkRt") << "rt-debug.txt suncentre=" << d.mSunCentre << " (1 one deterministic sun ray at the disc's centre, history / noise motion / sun blur off; 0 the stochastic disc ray with its covers)" << LL_ENDL;
         }
     }
     sTexAnimLive.store(d.mTexAnim, std::memory_order_relaxed);
@@ -1273,7 +1261,6 @@ S32 hitRays() { return sHitRaysLive.load(std::memory_order_relaxed); }
 S32 sunSelfShadow() { return sSunSelfLive.load(std::memory_order_relaxed); }
 S32 sunPenRays() { return sPenRaysLive.load(std::memory_order_relaxed); }
 S32 sunNoise() { return sSunNoiseLive.load(std::memory_order_relaxed); }
-S32 sunCentre() { return sSunCentreLive.load(std::memory_order_relaxed); }
 S32 sunFilter() { return sSunFilterLive.load(std::memory_order_relaxed); }
 S32 sunPenMax() { return sPenMaxLive.load(std::memory_order_relaxed); }
 S32 sunPenLod() { return sPenLodLive.load(std::memory_order_relaxed); }

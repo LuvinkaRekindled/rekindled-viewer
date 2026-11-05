@@ -41,12 +41,7 @@ vec4 getPosition(vec2 pos_screen);
 float getDepth(vec2 pos_screen);
 vec4 getNorm(vec2 pos_screen);
 
-uniform sampler2D diffuseRect;     // <FS> last frame's shadow history (rg: shadow, depth; b: frames averaged) when RenderRTShadowAdaptiveRays asks, else the G-buffer albedo (unused)
 uniform int spot_shadow_mask;       // <FS> bit 0 / 1: the projector light with a shadow map in slot 0 / 1 exists this frame (pipeline.cpp, mShadowSpotLight). Only those lights read the lightmap's b / a channel (spotLightF.glsl proj_shadow_idx), so nothing is sampled for the others
-uniform float adapt_hist;            // 1: diffuseRect is the history
-#if defined(LL_RT_SHADOWS)
-void rtSetAdaptCount(float c);      // (shadowUtil.glsl defines it only with the ray traced shadows)
-#endif
 
 float sampleDirectionalShadow(vec3 shadow_pos, vec3 norm, vec2 pos_screen);
 float sampleSpotShadow(vec3 shadow_pos, vec3 norm, int index, vec2 pos_screen);
@@ -67,12 +62,6 @@ void main()
     vec4 pos  = getPosition(pos_screen);
     vec4 norm = getNorm(pos_screen);
 
-#if defined(LL_RT_SHADOWS)
-    if (adapt_hist > 0.5)
-    {
-        rtSetAdaptCount(texture(diffuseRect, pos_screen).b);
-    }
-#endif
 
     vec4 col;
     col.r = sampleDirectionalShadow(pos.xyz, norm.xyz, pos_screen);

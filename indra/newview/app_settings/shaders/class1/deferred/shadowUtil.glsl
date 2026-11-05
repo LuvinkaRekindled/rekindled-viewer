@@ -254,16 +254,8 @@ uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended su
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
-uniform int rt_sun_centre;             // <FS> sun lightmap pass only (rt-debug.txt suncentre, default 1): one deterministic ray at the centre of the sun's disc, no disc point, no start disc, no per-frame pattern
-uniform float rt_sun_strength;         // <FS> sun lightmap pass only, with the centre ray (rt-debug.txt sunstrength, percent, default 65): the most light an avatar's own close surfaces may block on that avatar
+uniform float rt_sun_strength;         // <FS> sun lightmap pass only (rt-debug.txt sunstrength, percent, default 65): the most light an avatar's own close surfaces may block on that avatar
                                        // (the translucency floor of 2026-10-28; the cone of wide rays that replaced it on 11-01 let rays escape the hair shell sideways, which no filter on the result can do)
-                                       // (PLAN-rt-shadow-penumbra.md: the penumbra comes from the filter sized by the blocker distance instead; the history, the noise motion and the sun blur are off with it)
-uniform int rt_sun_adapt;              // <FS> RenderRTShadowAdaptiveRays (sun lightmap pass only): the rays of a pixel whose shadow history is short (a moving edge, an uncovered pixel); 0 = off
-float rt_adapt_count = 99.0;           // the history length of this pixel last frame (set by the sun lightmap shader, rtSetAdaptCount)
-void rtSetAdaptCount(float c)
-{
-    rt_adapt_count = c;
-}
 uniform int rt_sun_pen_rays;           // <FS> the rays of a pixel whose first sun ray met a close skinned surface (rt-debug.txt penrays=N); 0 (unset) = LL_RT_SUN_PENUMBRA_RAYS
 uniform float rt_sun_self_off;        // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say;
                                        //      2: on, but the soft walk through hair runs to the end instead of ending once the floor has the answer (sunself=2)
@@ -1097,10 +1089,6 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 origin = pos + norm * ((rt_sun_alpha > 0.5 ? LL_RT_SUN_BIAS_ALPHA : LL_RT_SUN_BIAS) + 0.0006 * -pos.z) + light_dir * LL_RT_SUN_TMIN;
     float lod = clamp(0.5 * log2(max(-pos.z, 1.0)) - 1.0, 0.0, 4.0);
     int samples = (rt_sun_radius > 0.0) ? clamp(rt_sun_samples, 1, 16) : 1;
-    if (rt_sun_adapt > 1 && rt_sun_radius > 0.0 && rt_adapt_count < 4.0)
-    {
-        samples = clamp(max(samples, rt_sun_adapt), 1, 16);        // <FS> a short history: more rays now, so the edge of a moving shadow is soft from this frame alone
-    }
     if (rt_sun_lod.x > 0.0 && samples > 4)
     {
         // <FS> far from the camera the penumbra is a fraction of a pixel and the temporal upscaler averages the noise: fewer rays (the alpha pass traces for every blended pixel, in a crowd that is hair, clothes and
@@ -1116,11 +1104,12 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 b2 = cross(norm, b1);
     const bool self_on = rt_sun_self_off < 0.5 || rt_sun_self_off > 1.5;      // 1 = off; 2 = on with the full hair walk (the early exit of rtShadowRaySoftS off)
     float strength = self_on ? LL_RT_SUN_ALPHA_STRENGTH : 1.0;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
-    if (rt_sun_centre != 0)
+    if (rt_sun_alpha < 0.5)
     {
-        // <FS> ONE ray at the disc's centre: the same answer every frame for a still scene, so there is nothing to average over frames (no history, no noise motion, no blur of the sun channel:
-        // pipeline.cpp switches them off with this mode). The soft walk through masked and blended cards stays (its coverage products are deterministic too), as do the translucency and the
-        // receiver probe of the avatar self shadow. The penumbra is the filter's job, sized by this ray's blocker distance (rt_sun_blocker_t -> the lightmap's second attachment).
+        // <FS> every pass but the alpha ones (the sun lightmap pass above all; PLAN-rt-shadow-penumbra.md): ONE ray at the disc's centre, the same answer every frame for a still scene, so there is
+        // nothing to average over frames (the history, the noise motion and the blur of the sun channel are gone, 2026-11-05). The soft walk through masked and blended cards stays (its coverage
+        // products are deterministic too), as do the translucency and the receiver probe of the avatar self shadow. The penumbra is the filter's job, sized by this ray's blocker distance
+        // (rt_sun_blocker_t -> the lightmap's second attachment). The alpha passes (hair, glass) keep the disc rays below until they get a treatment of their own (PLAN-rt-hair-shadows.md).
         // The translucency floor stands in for the wide rays of the cone (hair over the scalp and the skin: the old wide rays escaped the hair shell sideways and lit the layer under it)
         if (self_on && rt_sun_strength > 0.0)
         {

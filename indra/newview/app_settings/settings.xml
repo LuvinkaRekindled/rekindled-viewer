@@ -2711,32 +2711,10 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>RenderRTShadowDynamicBlur</key>
-    <map>
-      <key>Comment</key>
-      <string>Ray traced sun shadows with DLSS: blur the sun shadow on the pixels of avatars (also the ones that stand still), their attachments and moving objects only (the still world keeps its crisp, accumulated shadow). The leaf shadows of trees slide over a moving avatar, which the frame to frame average cannot hold, so their edges flicker; the depth aware lightmap blur (RenderShadowBlurSize) smooths them there. Costs the blur pass (about 0.2 ms). Applies at once.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>RenderRTShadowDynamicBlurAmount</key>
-    <map>
-      <key>Comment</key>
-      <string>How much of the blurred sun shadow an avatar pixel takes when RenderRTShadowDynamicBlur is on: 1 all of it (leaf shadows nearly wash out), 0.5 half, 0 none. Applies at once.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>F32</string>
-      <key>Value</key>
-      <real>0.5</real>
-    </map>
     <key>RenderShadowBlurWithDLSS</key>
     <map>
       <key>Comment</key>
-      <string>With ray traced sun shadows and the upscaler on (DLSS), the two pass blur of the sun shadow / SSAO lightmap (RenderShadowBlurSize) is left out: the ray traced shadow is accumulated over frames and denoised by the upscaler. true: the blur runs there too (it leaves the ray traced sun shadow channel alone and blurs the SSAO and the spot shadows). With the cascade (legacy) shadows the blur always runs, whether DLSS is on or not.</string>
+      <string>With ray traced sun shadows and the upscaler on (DLSS), the two pass blur of the SSAO lightmap (RenderShadowBlurSize) is left out: the ray traced sun shadow has its penumbra from the blocker distance filter and the upscaler averages the SSAO noise. true: the blur runs there too, for the SSAO and the spot shadows (the ray traced sun shadow channel is never blurred). With the cascade (legacy) shadows the blur always runs, whether DLSS is on or not. Costs about 0.35 ms of GPU (2026-11-05).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -13239,17 +13217,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <integer>0</integer>
   </map>
 
-  <key>RenderRTShadowAccumulate</key>
-  <map>
-    <key>Comment</key>
-    <string>Ray traced sun shadows (with DLSS): average the shadow over the last frames, found again through the camera and avatar motion, so that one or two rays per pixel look smooth. See RenderRTShadowHistory.</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>Boolean</string>
-    <key>Value</key>
-    <integer>1</integer>
-  </map>
   <key>RenderRTMaterialDebug</key>
   <map>
     <key>Comment</key>
@@ -13260,39 +13227,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <string>S32</string>
     <key>Value</key>
     <integer>1</integer>
-  </map>
-  <key>RenderRTShadowSpatial</key>
-  <map>
-    <key>Comment</key>
-    <string>Ray traced sun shadows, with the upscaler: at a penumbra pixel (lit and shadowed pixels in its window this frame) the new sample is the mean of the window, so one ray per pixel (RenderRTShadowSamples 1) acts like 9 or 25 at the edge before it goes into the history. 0 = off, 1 = 3 x 3, 2 = 5 x 5, 3 = 5 x 5 and a wider mean (9 x 9, every second pixel) of this frame alone where the history had to be clamped or is missing, so the edge of a moving shadow stays soft; 4 = the same with 13 x 13 (every third pixel). The edge gets about one pixel softer. 2 since 2026-11-03 (Adam: 1 made the noise more apparent, 2 was best).</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>S32</string>
-    <key>Value</key>
-    <integer>2</integer>
-  </map>
-  <key>RenderRTShadowAdaptiveRays</key>
-  <map>
-    <key>Comment</key>
-    <string>Ray traced sun shadows, with the upscaler: the rays a pixel traces when its shadow history is short (the edge of a moving shadow, a pixel just uncovered), where RenderRTShadowSpatial is 3 or 4 (they set the history count back to 1 at such pixels). 0 = off (RenderRTShadowSamples everywhere). 4 to 8 gives a moving edge about the softness of a still one; only the pixels along moving edges pay (2026-11-03).</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>S32</string>
-    <key>Value</key>
-    <integer>0</integer>
-  </map>
-  <key>RenderRTShadowHistory</key>
-  <map>
-    <key>Comment</key>
-    <string>Ray traced sun shadows: the most frames that go into the average (2 to 32). Longer is smoother and slower to follow a shadow that changes. 24 since 2026-11-03, with one sun ray per pixel (RenderRTShadowSamples 1) and the penumbra mean (RenderRTShadowSpatial 2): Adam saw no trailing behind fast dancing at 16 and no noise left at 24.</string>
-    <key>Persist</key>
-    <integer>1</integer>
-    <key>Type</key>
-    <string>S32</string>
-    <key>Value</key>
-    <integer>24</integer>
   </map>
   <key>RenderRTShadowSoftness</key>
   <map>
@@ -13308,7 +13242,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderRTShadowSamples</key>
   <map>
     <key>Comment</key>
-    <string>Ray traced sun shadows: rays per pixel towards the sun's disc when RenderRTShadowSoftness is above 0 (1 to 16). 1 since 2026-11-03: one ray at a different point of the whole disc each frame, averaged by the upscaler and the shadow history (RenderRTShadowHistory), about 0.5 ms of GPU less than 2. The sun lightmap blur smooths what is left of the noise.</string>
+    <string>Ray traced sun shadows on alpha blended surfaces (hair, glass): rays per pixel towards the sun's disc when RenderRTShadowSoftness is above 0 (1 to 16), used with RenderRTShadowAlphaRays. The sun lightmap pass itself traces one deterministic ray at the disc's centre and gets its penumbra from the blocker distance filter (PLAN-rt-shadow-penumbra.md, 2026-11-05), so this no longer applies to it.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

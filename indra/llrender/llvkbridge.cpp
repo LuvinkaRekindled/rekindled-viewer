@@ -1227,11 +1227,6 @@ S32 LLVkBridge::rtSunNoise()
     return rtShadowMode() != 0 ? LLVk::Rt::sunNoise() : 1;
 }
 
-S32 LLVkBridge::rtSunCentre()
-{
-    return rtShadowMode() != 0 ? LLVk::Rt::sunCentre() : 0;
-}
-
 S32 LLVkBridge::rtSunFilter()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunFilter() : 0;
