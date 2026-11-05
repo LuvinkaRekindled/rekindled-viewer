@@ -54,6 +54,9 @@
 #include "llviewercontrol.h"
 #include "pipeline.h"
 #include "llappviewer.h"
+#include <deque>        // <FS> C2.2
+#include <mutex>
+#include <chrono>
 #include "llface.h"
 #include "llviewercamera.h"
 #include "lltextureentry.h"
@@ -887,7 +890,132 @@ U32 LLViewerTexture::getRenderHandle()
 // static
 LLViewerTexture* LLViewerTexture::fromRenderHandle(U32 handle)
 {
-    return LLTexHandles::resolve(handle);
+    LLViewerTexture* tex = LLTexHandles::resolve(handle);
+    if (tex && tex->mParked.load(std::memory_order_relaxed))
+    {
+        ++LLTexRetire::sResolvedParked;
+    }
+    return tex;
+}
+
+// ---- <FS> C2.2: the retire list (see the declaration in llviewertexture.h)
+std::atomic<U64> LLTexRetire::sResolvedParked{0};
+
+namespace
+{
+    struct ParkedTexture { LLViewerTexture* mTex; U64 mFrame; };
+    std::mutex sRetireMutex;
+    std::deque<ParkedTexture> sParked;              // oldest first
+    std::atomic<bool> sRetireStopped{false};
+    std::atomic<U64> sParkedTotal{0}, sDestroyedTotal{0}, sRevivedTotal{0};
+    U32 sParkedPeak = 0;
+    bool retire_enabled()
+    {
+        static const bool on = []() { const char* e = getenv("LL_VK_TEX_RETIRE"); return !(e && e[0] == '0'); }();
+        return on;
+    }
+    U64 retire_frames()
+    {
+        static const U64 n = []() { const char* e = getenv("LL_VK_TEX_RETIRE_FRAMES"); const int v = e ? atoi(e) : 4; return (U64)(v < 1 ? 1 : v); }();
+        return n;
+    }
+    // the main thread destroys what is due: a texture whose count rose again meanwhile is left alone
+    void retire_destroy(LLViewerTexture* tex)
+    {
+        tex->mParked.store(false, std::memory_order_release);
+        if (tex->getNumRefs() == 0)
+        {
+            tex->destroyRetired();
+            ++sDestroyedTotal;
+        }
+        else
+        {
+            ++sRevivedTotal;
+        }
+    }
+}
+
+bool LLViewerTexture::retireOnLastRef() const
+{
+    return LLTexRetire::park(const_cast<LLViewerTexture*>(this));
+}
+
+// static
+bool LLTexRetire::park(LLViewerTexture* tex)
+{
+    if (!retire_enabled() || sRetireStopped.load(std::memory_order_acquire) || !on_main_thread())
+    {
+        return false;       // deleted at once, as before
+    }
+    if (tex->mParked.exchange(true, std::memory_order_acq_rel))
+    {
+        return true;        // already waiting in the list
+    }
+    tex->onRetire();
+    {
+        std::lock_guard<std::mutex> lock(sRetireMutex);
+        sParked.push_back({ tex, LLFrameTimer::getFrameCount() });
+        if (sParked.size() > sParkedPeak) sParkedPeak = (U32)sParked.size();
+    }
+    ++sParkedTotal;
+    return true;
+}
+
+// static
+void LLTexRetire::pump()
+{
+    const U64 now = LLFrameTimer::getFrameCount();
+    const auto t0 = std::chrono::steady_clock::now();
+    U32 destroyed = 0;
+    for (;;)
+    {
+        LLViewerTexture* tex = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(sRetireMutex);
+            if (sParked.empty() || now - sParked.front().mFrame < retire_frames())
+            {
+                break;
+            }
+            tex = sParked.front().mTex;
+            sParked.pop_front();
+        }
+        retire_destroy(tex);
+        // a time budget: a teleport can release thousands of textures at once; the rest wait for the next frame
+        if ((++destroyed & 15) == 0 && std::chrono::steady_clock::now() - t0 > std::chrono::microseconds(1500))
+        {
+            break;
+        }
+    }
+    static U64 sLastLog = 0;
+    if (now - sLastLog >= 3600)
+    {
+        sLastLog = now;
+        size_t waiting;
+        { std::lock_guard<std::mutex> lock(sRetireMutex); waiting = sParked.size(); }
+        LL_INFOS("TexRetire") << "texture retire list: parked " << sParkedTotal.load() << ", destroyed " << sDestroyedTotal.load() << ", count rose again " << sRevivedTotal.load()
+                              << ", waiting " << waiting << " (peak " << sParkedPeak << "), handle resolutions that met a parked texture " << sResolvedParked.load() << ", age " << retire_frames() << " frames" << LL_ENDL;
+    }
+}
+
+// static
+void LLTexRetire::shutdown()
+{
+    sRetireStopped.store(true, std::memory_order_release);
+    for (;;)
+    {
+        LLViewerTexture* tex = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(sRetireMutex);
+            if (sParked.empty())
+            {
+                break;
+            }
+            tex = sParked.front().mTex;
+            sParked.pop_front();
+        }
+        retire_destroy(tex);
+    }
+    LL_INFOS("TexRetire") << "texture retire list at shutdown: parked " << sParkedTotal.load() << ", destroyed " << sDestroyedTotal.load() << ", count rose again " << sRevivedTotal.load() << LL_ENDL;
 }
 
 // virtual
@@ -1417,6 +1545,20 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mForceCallbackFetch = false;
 
     mFTType = FTT_UNKNOWN;
+}
+
+// <FS> C2.2: let go of what a new texture of the same id would collide with, at the moment the texture is parked (the destructor repeats it: both are no-ops the second time)
+void LLViewerFetchedTexture::onRetire()
+{
+    if (mHasFetcher && LLAppViewer::getTextureFetch())
+    {
+        LLAppViewer::getTextureFetch()->deleteRequest(getID(), true);
+        mHasFetcher = false;
+    }
+    if (mListState != 0)
+    {
+        gTextureList.idxRemove(this);
+    }
 }
 
 LLViewerFetchedTexture::~LLViewerFetchedTexture()

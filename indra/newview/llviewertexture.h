@@ -98,6 +98,19 @@ class LLTextureBar;
 class LLViewerTexture;
 using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handles of viewer textures (llhandletable.h)
 
+// <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): the retire list. A texture whose last counted reference goes is not deleted at once: it is parked here and destroyed a few frames later,
+// so that anything that still READS it through a handle (the render map, the packet builders, the render worker, a few frames behind the main thread) finds it intact. What must not wait
+// for the list (the fetch request, the texture lists) is done when the texture is parked (onRetire). A parked texture whose reference count rose again in the meantime is left alone.
+// LL_VK_TEX_RETIRE=0 deletes at once as before; LL_VK_TEX_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
+class LLTexRetire
+{
+public:
+    static bool park(LLViewerTexture* tex);         // from the last unref; false: not parked, the caller deletes
+    static void pump();                              // main thread, every frame: destroy what is old enough (with a time budget)
+    static void shutdown();                          // main thread: destroy everything parked and park no more
+    static std::atomic<U64> sResolvedParked;         // handle resolutions that returned a parked texture (the reads the list exists for)
+};
+
 class LLViewerTexture : public LLBaseTexture
 {
 public:
@@ -250,6 +263,10 @@ public:
     U32 getRenderHandle();
     static LLViewerTexture* fromRenderHandle(U32 handle);
     std::atomic<U32> mRenderHandle{0};
+    // <FS> C2.2: the last unref parks the texture in the retire list (LLTexRetire); onRetire is what must happen at that moment, not later
+    /*virtual*/ bool retireOnLastRef() const override;
+    virtual void onRetire() {}
+    mutable std::atomic<bool> mParked{false};
     void wakeForList() const;
     void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
     void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }
@@ -328,6 +345,7 @@ class LLViewerFetchedTexture : public LLViewerTexture
 protected:
     /*virtual*/ ~LLViewerFetchedTexture();
 public:
+    /*virtual*/ void onRetire() override;        // <FS> C2.2: the fetch request and the texture lists are let go when the texture is parked, not when it is destroyed (a new texture of the same id may be asked for meanwhile)
     LLViewerFetchedTexture(const LLUUID& id, FTType f_type, const LLHost& host = LLHost(), bool usemipmaps = true);
     LLViewerFetchedTexture(const LLImageRaw* raw, FTType f_type, bool usemipmaps);
     LLViewerFetchedTexture(const std::string& url, FTType f_type, const LLUUID& id, bool usemipmaps = true);
