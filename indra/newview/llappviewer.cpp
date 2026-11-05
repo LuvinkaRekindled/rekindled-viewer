@@ -28,6 +28,7 @@
 #include "llgpuzonetimer.h"
 
 #include "llappviewer.h"
+#include "llretirelist.h"
 
 // Viewer includes
 #include "llversioninfo.h"
@@ -2194,6 +2195,9 @@ bool LLAppViewer::cleanup()
     }
     velopack_cleanup();
 #endif
+
+    // <FS> C2.4d: avatars parked in the retire list are destroyed now and no more are parked: their destructors need the systems that the cleanup below shuts down
+    LLRetireList::stopKind(3);
 
     //ditch LLVOAvatarSelf instance
     gAgentAvatarp = NULL;

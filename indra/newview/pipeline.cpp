@@ -13994,7 +13994,8 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                 e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                 e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
                 {
-                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
+                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
                     e.mAvatarPos[0] = avatar_position.mV[0];
                     e.mAvatarPos[1] = avatar_position.mV[1];
                     e.mAvatarPos[2] = avatar_position.mV[2];
@@ -18737,7 +18738,8 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                     e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
                     {
-                        const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                        const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
+                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
                         e.mAvatarPos[0] = avatar_position.mV[0];
                         e.mAvatarPos[1] = avatar_position.mV[1];
                         e.mAvatarPos[2] = avatar_position.mV[2];
@@ -22659,7 +22661,7 @@ static void rt_name_rigged_main_view()
                 {
                     LLDrawInfo* params = *i;
                     LLCullResult::increment_iterator(i, end);
-                    if (params->mAvatar && params->mAvatar->isSelf())
+                    if (params->mAvatar.isSelf())
                     {
                         ++draws;
                         tris += params->mCount / 3;
@@ -22704,7 +22706,7 @@ static void rt_name_rigged_main_view()
                 {
                     return;
                 }
-                if (pose_census)
+                if (pose_census && params->mAvatar.get() && params->mSkinInfo.get())
                 {
                     const LLVOAvatar::MatrixPaletteCache& mpc = params->mAvatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
                     auto best = pose_best.find(params->mAvatar.get());
@@ -22723,7 +22725,8 @@ static void rt_name_rigged_main_view()
                 e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
                 e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
                 {
-                    const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                    const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
+                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
                     e.mAvatarPos[0] = avatar_position.mV[0];
                     e.mAvatarPos[1] = avatar_position.mV[1];
                     e.mAvatarPos[2] = avatar_position.mV[2];
@@ -22836,7 +22839,7 @@ static void rt_name_rigged_main_view()
         static U32 sRtNameWhy[9] = {};
         auto note_why = [&](LLDrawInfo* params, U32 why)
         {
-            if (params->mAvatar && params->mAvatar->isSelf())
+            if (params->mAvatar.isSelf())
             {
                 ++sRtNameWhy[why];
             }
@@ -22882,7 +22885,8 @@ static void rt_name_rigged_main_view()
             e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
             e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
             {
-                const LLVector3 avatar_position = params->mAvatar->getRenderPosition();
+                const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
+                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
                 e.mAvatarPos[0] = avatar_position.mV[0];
                 e.mAvatarPos[1] = avatar_position.mV[1];
                 e.mAvatarPos[2] = avatar_position.mV[2];
@@ -23018,7 +23022,7 @@ static void rt_name_rigged_main_view()
                             if (blend_log)
                             {
                                 ++n_draws;
-                                if (p->mAvatar->isSelf())
+                                if (p->mAvatar.isSelf())
                                 {
                                     ++n_self;
                                     self_tris += p->mCount / 3;

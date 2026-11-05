@@ -34,6 +34,8 @@
 #include <chrono>
 
 #include "llvoavatar.h"
+#include "llretirelist.h"
+#include "llavatarref.h"
 #include <map>      // <FS> LL_VK_PALSTATS
 
 #include <stdio.h>
@@ -922,6 +924,7 @@ void LLVOAvatar::debugAvatarRezTime(std::string notification_name, std::string c
 //------------------------------------------------------------------------
 LLVOAvatar::~LLVOAvatar()
 {
+    LLAvatarHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4d: handles of this avatar stop resolving
     sInstances.remove(this);
 
     if (!mFullyLoaded)
@@ -14791,3 +14794,33 @@ void LLVOAvatar::setIsUsingServerBakes(bool newval)
     appearance_version_param->setWeight(newval ? 1.0f : 0.0f, false);
 }
 // </FS:Ansariel> [Legacy Bake]
+
+
+// ---- <FS> C2.4d: the handle and the retire hook of the avatar (llavatarref.h)
+U32 LLVOAvatar::getRenderHandle()
+{
+    U32 handle = mRenderHandle.v.load(std::memory_order_acquire);
+    if (handle)
+    {
+        return handle;
+    }
+    const U32 fresh = LLAvatarHandles::acquire(this);
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        LLAvatarHandles::release(fresh);       // another thread asked first
+        return expected;
+    }
+    return fresh;
+}
+
+bool LLVOAvatar::retireOnLastRef() const
+{
+    return LLRetireList::park(const_cast<LLVOAvatar*>(this));
+}
+
+std::atomic<U64> LLAvatarRef::sDeadResolved{0};

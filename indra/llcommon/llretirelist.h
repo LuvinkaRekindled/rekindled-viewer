@@ -28,13 +28,14 @@
 class LLRetireList
 {
 public:
-    static constexpr U32 kKinds = 4;            // retireKind() values (0 texture, 1 glTF material, 2 mesh skin info, 3 free)
+    static constexpr U32 kKinds = 4;            // retireKind() values (0 texture, 1 glTF material, 2 mesh skin info, 3 avatar)
 
     // from the last unref (any thread); false: not parked, the caller deletes
     static bool park(LLThreadSafeRefCount* obj)
     {
         State& s = state();
-        if (!s.mEnabled || s.mStopped.load(std::memory_order_acquire) || !on_main_thread())
+        const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
+        if (!s.mEnabled || s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
         {
             return false;
         }
@@ -43,14 +44,61 @@ public:
             return true;                        // already waiting in the list
         }
         obj->onRetire();
-        const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
         {
             std::lock_guard<std::mutex> lock(s.mMutex);
-            s.mParked.push_back({ obj, LLFrameTimer::getFrameCount() });
+            s.mParked.push_back({ obj, nullptr, LLFrameTimer::getFrameCount() });
             if (s.mParked.size() > s.mPeak) s.mPeak = (U32)s.mParked.size();
         }
         ++s.mParkedTotal[kind];
         return true;
+    }
+
+    // the same for an object with the plain count (LLRefCount: not thread safe, so only ever on the main thread)
+    static bool park(LLRefCount* obj)
+    {
+        State& s = state();
+        const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
+        if (!s.mEnabled || s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
+        {
+            return false;
+        }
+        if (obj->mParked)
+        {
+            return true;                        // already waiting in the list
+        }
+        obj->mParked = true;
+        obj->onRetire();
+        {
+            std::lock_guard<std::mutex> lock(s.mMutex);
+            s.mParked.push_back({ nullptr, obj, LLFrameTimer::getFrameCount() });
+            if (s.mParked.size() > s.mPeak) s.mPeak = (U32)s.mParked.size();
+        }
+        ++s.mParkedTotal[kind];
+        return true;
+    }
+
+    // main thread: destroy every parked object of this kind and park no more of it (from here its last unref deletes at once, as before). For a kind whose destructors need systems that are shut down
+    // before the list is (the avatar: it unregisters from lists, uses the pipeline).
+    static void stopKind(U32 kind)
+    {
+        State& s = state();
+        if (kind >= kKinds) return;
+        s.mKindStopped[kind].store(true, std::memory_order_release);
+        std::deque<Parked> keep;
+        std::deque<Parked> mine;
+        {
+            std::lock_guard<std::mutex> lock(s.mMutex);
+            for (const Parked& p : s.mParked)
+            {
+                const U32 k = p.mTs ? p.mTs->retireKind() : p.mPlain->retireKind();
+                (k == kind ? mine : keep).push_back(p);
+            }
+            s.mParked.swap(keep);
+        }
+        for (const Parked& p : mine)
+        {
+            destroy(s, p);
+        }
     }
 
     // main thread, every frame: destroy what is old enough (a time budget of 1.5 ms; the rest waits for the next frame)
@@ -62,17 +110,17 @@ public:
         U32 destroyed = 0;
         for (;;)
         {
-            LLThreadSafeRefCount* obj = nullptr;
+            Parked item{};
             {
                 std::lock_guard<std::mutex> lock(s.mMutex);
                 if (s.mParked.empty() || now - s.mParked.front().mFrame < s.mFrames)
                 {
                     break;
                 }
-                obj = s.mParked.front().mObj;
+                item = s.mParked.front();
                 s.mParked.pop_front();
             }
-            destroy(s, obj);
+            destroy(s, item);
             if ((++destroyed & 15) == 0 && std::chrono::steady_clock::now() - t0 > std::chrono::microseconds(1500))
             {
                 break;
@@ -83,7 +131,7 @@ public:
             s.mLastLog = now;
             size_t waiting;
             { std::lock_guard<std::mutex> lock(s.mMutex); waiting = s.mParked.size(); }
-            LL_INFOS("Retire") << "retire list: parked " << totals(s.mParkedTotal) << " (textures " << s.mParkedTotal[0] << ", materials " << s.mParkedTotal[1] << ", skin infos " << s.mParkedTotal[2] << "), destroyed " << totals(s.mDestroyedTotal)
+            LL_INFOS("Retire") << "retire list: parked " << totals(s.mParkedTotal) << " (textures " << s.mParkedTotal[0] << ", materials " << s.mParkedTotal[1] << ", skin infos " << s.mParkedTotal[2] << ", avatars " << s.mParkedTotal[3] << "), destroyed " << totals(s.mDestroyedTotal)
                                << ", count rose again " << totals(s.mRevivedTotal) << ", waiting " << waiting << " (peak " << s.mPeak << "), age " << s.mFrames << " frames" << LL_ENDL;
         }
     }
@@ -95,28 +143,29 @@ public:
         s.mStopped.store(true, std::memory_order_release);
         for (;;)
         {
-            LLThreadSafeRefCount* obj = nullptr;
+            Parked item{};
             {
                 std::lock_guard<std::mutex> lock(s.mMutex);
                 if (s.mParked.empty())
                 {
                     break;
                 }
-                obj = s.mParked.front().mObj;
+                item = s.mParked.front();
                 s.mParked.pop_front();
             }
-            destroy(s, obj);
+            destroy(s, item);
         }
         LL_INFOS("Retire") << "retire list at shutdown: parked " << totals(s.mParkedTotal) << ", destroyed " << totals(s.mDestroyedTotal) << ", count rose again " << totals(s.mRevivedTotal) << LL_ENDL;
     }
 
 private:
-    struct Parked { LLThreadSafeRefCount* mObj; U64 mFrame; };
+    struct Parked { LLThreadSafeRefCount* mTs; LLRefCount* mPlain; U64 mFrame; };
     struct State
     {
         std::mutex mMutex;
         std::deque<Parked> mParked;             // oldest first
         std::atomic<bool> mStopped{ false };
+        std::atomic<bool> mKindStopped[kKinds] = {};
         std::atomic<U64> mParkedTotal[kKinds] = {}, mDestroyedTotal[kKinds] = {}, mRevivedTotal[kKinds] = {};
         U32 mPeak = 0;
         U64 mLastLog = 0;
@@ -145,18 +194,23 @@ private:
         return t;
     }
     // the main thread destroys what is due: an object whose count rose again meanwhile is left alone
-    static void destroy(State& s, LLThreadSafeRefCount* obj)
+    static void destroy(State& s, const Parked& item)
     {
-        const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
-        obj->mParked.store(false, std::memory_order_release);
-        if (obj->getNumRefs() == 0)
+        if (item.mTs)
         {
-            obj->destroyRetired();
-            ++s.mDestroyedTotal[kind];
+            LLThreadSafeRefCount* obj = item.mTs;
+            const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
+            obj->mParked.store(false, std::memory_order_release);
+            if (obj->getNumRefs() == 0) { obj->destroyRetired(); ++s.mDestroyedTotal[kind]; }
+            else { ++s.mRevivedTotal[kind]; }
         }
         else
         {
-            ++s.mRevivedTotal[kind];
+            LLRefCount* obj = item.mPlain;
+            const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
+            obj->mParked = false;
+            if (obj->getNumRefs() == 0) { obj->destroyRetired(); ++s.mDestroyedTotal[kind]; }
+            else { ++s.mRevivedTotal[kind]; }
         }
     }
 };

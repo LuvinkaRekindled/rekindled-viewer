@@ -1788,7 +1788,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
-    if (!avatar)
+    if (!avatar || !skinInfo)       // <FS> C2.4c/d: a gone avatar or skin info (handles) reads as null: the draw is skipped
     {
         return false;
     }
@@ -1818,7 +1818,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     llassert(skinInfo);
     llassert(LLShaderProgram::sCurBoundShaderPtr);
 
-    if (!avatar)
+    if (!avatar || !skinInfo)       // <FS> C2.4c/d: a gone avatar or skin info (handles) reads as null: the draw is skipped
     {
         return false;
     }
@@ -1855,7 +1855,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     llassert(skinInfo);
     llassert(LLShaderProgram::sCurBoundShaderPtr);
 
-    if (!avatar)
+    if (!avatar || !skinInfo)       // <FS> C2.4c/d: a gone avatar or skin info (handles) reads as null: the draw is skipped
     {
         return false;
     }
