@@ -6956,7 +6956,20 @@ void LLVOAvatar::updateVisibility()
 
     mVisible = visible;
 
-    mVisibilityPreference = visible ? getPixelArea() : 0;
+    // <FS> the visibility rank (RenderAvatarMaxNonImpostors picks the first of it as full avatars, the rest are impostors updating every 32 to 64 frames) is by screen size, so in a crowd a standing
+    // avatar at 18 m lost to dancers at 30 m and played as a slideshow until the camera zoomed in (the user, 2026-11-05). Within FSImpostorNearDistance the rank is by distance ahead of everyone else:
+    // nobody that near is an impostor unless more than the cap are that near, and then the farthest of them are. Beyond it the screen size decides as before.
+    static LLCachedControl<F32> near_distance(gSavedSettings, "FSImpostorNearDistance", 25.f);
+    F32 preference = visible ? getPixelArea() : 0.f;
+    if (visible && !isSelf() && near_distance > 0.f && mDrawable.notNull())
+    {
+        const F32 distance = mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale();
+        if (distance < near_distance)
+        {
+            preference = 1.0e12f + (near_distance - distance) * 1.0e6f;      // above any pixel area, nearest first
+        }
+    }
+    mVisibilityPreference = preference;
 }
 
 // private

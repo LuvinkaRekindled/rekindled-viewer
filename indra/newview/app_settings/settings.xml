@@ -2766,6 +2766,17 @@
       <key>Value</key>
       <real>0</real>
     </map>
+    <key>FSImpostorNearDistance</key>
+    <map>
+      <key>Comment</key>
+      <string>Avatars within this many metres rank ahead of everyone else for the full avatar slots (RenderAvatarMaxNonImpostors), nearest first, instead of by screen size: none of them is an impostor unless more than the cap are that near, and then the farthest of them are. Beyond it the screen size orders the rest as before. 0 = screen size only. The camera zoom counts (a zoomed in view is nearer). 25 since 2026-11-05 (the user: a standing avatar at 18 m played as a slideshow behind dancers at 30 m in a crowd of 77).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>25</real>
+    </map>
     <key>FSImpostorMaxDistance</key>
     <map>
       <key>Comment</key>
