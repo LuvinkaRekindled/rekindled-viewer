@@ -38,6 +38,8 @@
 #include "httpcommon.h"
 #include "workqueue.h"
 #include "gltf/common.h"
+#include "llhandletable.h"      // <FS> C2
+#include <atomic>
 
 #include <map>
 #include <list>
@@ -92,6 +94,9 @@ public:
 };
 
 class LLTextureBar;
+
+class LLViewerTexture;
+using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handles of viewer textures (llhandletable.h)
 
 class LLViewerTexture : public LLBaseTexture
 {
@@ -240,6 +245,11 @@ public:
     bool mExpired = false;         // <FS> LL_VK_TEX_EXPIRY=2 (EXPIRY-design.md section 11): released to its smallest level because nothing in view needed it while memory was short; the priority pass keeps its wanted size at 0 until a camera accepts a group of its faces again
     U32 mExpiredAtFrame = 0;
     U32 mRecSlot = 0;       // <FS> its slot in LLTexRecs (generation << 24 | index; 0: none)
+    // <FS> C2 (doc/vulkan/PLAN-clean-core.md): a stable handle that render-side data (faces, draw infos, rows) can hold instead of a counted pointer; made on the first ask, given back in the destructor.
+    // LLTexHandles::resolve(handle) gives this texture back from any thread while it lives, nullptr after. 0 = none yet (or the table is full)
+    U32 getRenderHandle();
+    static LLViewerTexture* fromRenderHandle(U32 handle);
+    std::atomic<U32> mRenderHandle{0};
     void wakeForList() const;
     void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
     void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }
