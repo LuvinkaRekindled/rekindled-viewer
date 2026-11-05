@@ -26,6 +26,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llfetchedgltfmaterial.h"
+#include "llretirelist.h"
 
 #include "llviewertexturelist.h"
 #include "llavatarappearancedefines.h"
@@ -46,7 +47,43 @@ LLFetchedGLTFMaterial::LLFetchedGLTFMaterial()
 
 LLFetchedGLTFMaterial::~LLFetchedGLTFMaterial()
 {
+    LLGLTFMatHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4
+}
 
+// <FS> C2.4
+U32 LLFetchedGLTFMaterial::getRenderHandle()
+{
+    U32 handle = mRenderHandle.v.load(std::memory_order_acquire);
+    if (handle)
+    {
+        return handle;
+    }
+    const U32 fresh = LLGLTFMatHandles::acquire(this);
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        LLGLTFMatHandles::release(fresh);       // another thread asked first
+        return expected;
+    }
+    return fresh;
+}
+
+bool LLFetchedGLTFMaterial::retireOnLastRef() const
+{
+    return LLRetireList::park(const_cast<LLFetchedGLTFMaterial*>(this));
+}
+
+std::atomic<U64> LLGLTFMatRef::sDeadResolved{0};
+
+// static
+LLFetchedGLTFMaterial* LLGLTFMatRef::deadMaterial()
+{
+    ++sDeadResolved;
+    return &LLFetchedGLTFMaterial::sDefault;
 }
 
 LLFetchedGLTFMaterial& LLFetchedGLTFMaterial::operator=(const LLFetchedGLTFMaterial& rhs)

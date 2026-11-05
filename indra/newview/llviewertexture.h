@@ -102,12 +102,12 @@ using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handl
 // so that anything that still READS it through a handle (the render map, the packet builders, the render worker, a few frames behind the main thread) finds it intact. What must not wait
 // for the list (the fetch request, the texture lists) is done when the texture is parked (onRetire). A parked texture whose reference count rose again in the meantime is left alone.
 // LL_VK_TEX_RETIRE=0 deletes at once as before; LL_VK_TEX_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
+// <FS> C2.4: the list itself is generic now (llcommon/llretirelist.h, LLRetireList, shared with the glTF materials); this is what is texture specific: the pump and the shutdown call it, the counter and the log line are ours
 class LLTexRetire
 {
 public:
-    static bool park(LLViewerTexture* tex);         // from the last unref; false: not parked, the caller deletes
-    static void pump();                              // main thread, every frame: destroy what is old enough (with a time budget)
-    static void shutdown();                          // main thread: destroy everything parked and park no more
+    static void pump();                              // main thread, every frame: LLRetireList::pump() and the texture handle log
+    static void shutdown();                          // main thread: LLRetireList::shutdown()
     static std::atomic<U64> sResolvedParked;         // handle resolutions that returned a parked texture (the reads the list exists for)
 };
 
@@ -265,8 +265,6 @@ public:
     std::atomic<U32> mRenderHandle{0};
     // <FS> C2.2: the last unref parks the texture in the retire list (LLTexRetire); onRetire is what must happen at that moment, not later
     /*virtual*/ bool retireOnLastRef() const override;
-    virtual void onRetire() {}
-    mutable std::atomic<bool> mParked{false};
     void wakeForList() const;
     void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
     void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }

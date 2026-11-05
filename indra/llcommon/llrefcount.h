@@ -28,6 +28,7 @@
 
 #include <boost/intrusive_ptr.hpp>
 #include "llatomic.h"
+#include <atomic>
 
 class LLMutex;
 
@@ -125,6 +126,11 @@ public:
     // <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): an object that render-side data may still READ through a handle for a few frames after its last owner let go can take itself into a retire
     // list instead of being deleted at once (return true: unref() then does not delete; the list calls destroyRetired() when the frames that could read it are over). Default: delete as before.
     virtual bool retireOnLastRef() const { return false; }
+    // the hooks of the retire list (llretirelist.h): onRetire() runs on the main thread when the object is parked (what must not wait for the destruction), retireKind() is its kind for the list's
+    // counters (0 texture, 1 glTF material), mParked is set while it waits in the list
+    virtual void onRetire() {}
+    virtual U32 retireKind() const { return 0; }
+    mutable std::atomic<bool> mParked{ false };
     void destroyRetired() const
     {
         llassert(mRef.CurrentValue() == 0);

@@ -20,6 +20,9 @@
 
 #include "stdtypes.h"
 #include "llvector4a.h"
+#include "llframetimer.h"
+#include "llerror.h"
+#include <deque>
 #include <mutex>
 #include <vector>
 #include <cstdlib>
@@ -30,6 +33,7 @@ class LLGroupRows
 public:
     static constexpr U32 kCameras = 9;                      // LLViewerCamera::NUM_CAMERAS (static_assert in llvieweroctree.cpp)
     static constexpr U32 kCapacity = 1u << 19;              // 524,288 groups
+    static constexpr U32 kQuarantineFrames = 8;             // frames a released row waits before it can be handed out again (a stale pointer to a destroyed group must not write into a live group's row)
     static constexpr U32 kChunkShift = 10;
     static constexpr U32 kChunkRows = 1u << kChunkShift;
     static constexpr U32 kChunks = kCapacity >> kChunkShift;
@@ -69,6 +73,7 @@ public:
     {
         State& s = state();
         std::lock_guard<std::mutex> lock(s.mMutex);
+        reclaim(s);
         U32 id;
         if (!s.mFree.empty())
         {
@@ -112,7 +117,8 @@ public:
         Row& r = row(id);
         r.owner = nullptr;
         r.state = state_on_release;
-        s.mFree.push_back(id);
+        s.mCanary = state_on_release;
+        s.mQuarantine.push_back({ id, LLFrameTimer::getFrameCount() });
         if (s.mLive) --s.mLive;
     }
 
@@ -121,12 +127,12 @@ public:
         return id && id < kCapacity && sChunks[id >> kChunkShift] && row(id).owner == owner;
     }
 
-    struct Stats { U32 mLive, mPeak, mNext; U64 mAcquired, mFull; };
+    struct Stats { U32 mLive, mPeak, mNext; U64 mAcquired, mFull; U32 mQuarantined; U64 mWrittenWhileFree; };
     static Stats stats()
     {
         State& s = state();
         std::lock_guard<std::mutex> lock(s.mMutex);
-        return { s.mLive, s.mPeak, s.mNext, s.mAcquired, s.mFull };
+        return { s.mLive, s.mPeak, s.mNext, s.mAcquired, s.mFull, (U32)s.mQuarantine.size(), s.mWritten };
     }
 
 private:
@@ -137,6 +143,10 @@ private:
         U32 mNext = 1;
         U32 mLive = 0, mPeak = 0;
         U64 mAcquired = 0, mFull = 0;
+        struct Released { U32 mId; U32 mFrame; };
+        std::deque<Released> mQuarantine;       // oldest first
+        U32 mCanary = 0;                        // the state release left
+        U64 mWritten = 0;                       // rows that changed while they were free
         State()
         {
             sChunks = static_cast<Row**>(std::calloc(kChunks, sizeof(Row*)));
@@ -146,6 +156,24 @@ private:
     {
         static State* s = new State;                // (intentionally never destroyed: groups released during exit must still find it)
         return *s;
+    }
+    static void reclaim(State& s)
+    {
+        const U32 now = LLFrameTimer::getFrameCount();
+        while (!s.mQuarantine.empty() && now - s.mQuarantine.front().mFrame >= kQuarantineFrames)
+        {
+            const U32 id = s.mQuarantine.front().mId;
+            s.mQuarantine.pop_front();
+            const Row& r = row(id);
+            if (r.state != s.mCanary || r.owner != nullptr)
+            {
+                if (++s.mWritten <= 20)
+                {
+                    LL_WARNS("GroupRows") << "group row " << id << " changed while it was free: state " << r.state << " (left " << s.mCanary << "), owner " << r.owner << " (a stale pointer to a destroyed group wrote); " << s.mWritten << " so far" << LL_ENDL;
+                }
+            }
+            s.mFree.push_back(id);
+        }
     }
 };
 
