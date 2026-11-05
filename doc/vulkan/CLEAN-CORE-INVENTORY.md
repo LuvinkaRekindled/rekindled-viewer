@@ -63,3 +63,19 @@ Reading: the UI / tools surface is small and mostly face iteration, texture get/
 1. **C2 on faces and draw infos only** (the smallest mechanical step: texture ids and a material handle on LLFace/LLDrawInfo, resolved at the few places that need the object; compare the draw info lists against the old ones). CORRECTION: this does NOT make the parallel group rebuild possible again: the counts are already atomic (plan 8.8-8.9, no cost) and what stops a parallel rebuild is registerFace's order dependence. C2 is pure structure (prerequisite for C3/C5), no measurable gain by itself. Size from the census: about 470 use sites in about 15 files (mTexture 93, mTextureList 57, mSpecularMap/mNormalMap 29 each, mMaterial 35, mGLTFMaterial 45, mAvatar 106, mSkinInfo 81), mostly render core and the geometry generators.
 2. **C1 for drawables:** transform + extents + flags in rows, LLDrawable accessors inline over the row; the cull and sort jobs read rows; check = identical cull lists in order (the split checks already do this).
 3. **Compiler-assisted census** before each step: make the target members private/const, let the compiler list every touching site, count them per file category, then change the sites in one pass.
+
+## 6. C1 census (2026-11-05, text census, nothing changed)
+
+The plan said "the view prep jobs (cull, sort) read rows". The census says that sentence belongs to the **group**, not the drawable.
+
+**What the cull reads.** llvieweroctree.cpp touches no drawable field. The walk reads the octree group: bounds / object bounds / extents (4 x 2 LLVector4a, 128 bytes), the state word, the per-camera visible stamps (mVisible[cam]) and occlusion state (mOcclusionState[cam]), and the entry's extents. Per-view write fields on the group (mDistance, mDepth, mRadius, mViewAngle) are the shared-write hazard of section 3.2.
+
+**Drawable surface (C1a).**
+- mXform is the only public datum: 51 text sites (lldrawable 13+9 in the header, llviewerobject 12 which are mostly the object's own xform, llvoavatar 5, llviewerjointattachment 5, llface.h 3, the manipulators / select manager 4), plus getXform() 27 sites (llvoavatar 12). Small.
+- Flags (mState), radius, scale, render type are already private behind accessors. isState / setState / clearState have 422 call sites in 55 files, but all go through five inline functions, so moving the flag word into a column is a change of five bodies.
+- mDistanceWRTCamera: 29 sites in 11 files (the per-view datum; leaves the row).
+- Consumers of drawable rows today: updateMove / the moved list (main thread), rebuild, attachments, and the model matrices the draw infos point at. Nothing in the cull or sort.
+
+**Group surface (C1b).** getBounds 25, getObjectBounds 6, getExtents 10, getObjectExtents 6, mOcclusionState 19, isOcclusionState 44, mVisible[] 6, getOctreeNode 20, group mDistance/mDepth/mRadius around 200 hits mixed with other classes. A flat group column set (bounds, state, stamps by camera) is where a cull job gets contiguous reads.
+
+**Conclusion.** C1a (drawable columns) is cheap to do and has no cull consumer; its consumers are the moved list and, later, the GPU instance buffer (C4: a moved object writes one row instead of re-uploading its draws' matrices). C1b (group columns) is what the cull and the sort read. Order proposed: C1b first, then C1a when C4 gives it a reader.
