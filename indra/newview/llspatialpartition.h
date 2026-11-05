@@ -340,7 +340,7 @@ public:
 
     void setState(U32 state, S32 mode);
     void clearState(U32 state, S32 mode);
-    void clearState(U32 state)     {mState &= ~state;}
+    void clearState(U32 state)     {row().state &= ~state;}
 
     LLSpatialGroup* getParent();
 
@@ -359,7 +359,7 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       {mState |= state;}
+    void setState(U32 state)       {row().state |= state;}
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 

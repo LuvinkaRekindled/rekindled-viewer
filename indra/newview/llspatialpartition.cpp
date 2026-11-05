@@ -184,9 +184,9 @@ void LLSpatialGroup::validate()
     sg_assert(!isDead());
 
     LLVector4a myMin;
-    myMin.setSub(mBounds[0], mBounds[1]);
+    myMin.setSub(row().bounds[0], row().bounds[1]);
     LLVector4a myMax;
-    myMax.setAdd(mBounds[0], mBounds[1]);
+    myMax.setAdd(row().bounds[0], row().bounds[1]);
 
     validateDrawMap();
 
@@ -218,8 +218,8 @@ void LLSpatialGroup::validate()
         group->validate();
 
         //ensure all children are enclosed in this node
-        LLVector4a center = group->mBounds[0];
-        LLVector4a size = group->mBounds[1];
+        LLVector4a center = group->row().bounds[0];
+        LLVector4a size = group->row().bounds[1];
 
         LLVector4a min;
         min.setSub(center, size);
@@ -370,8 +370,8 @@ void LLSpatialGroup::expandExtents(const LLVector4a* addingExtents, const LLXfor
     // New extents (to be expanded)
     LLVector3 extents[] =
     {
-        LLVector3(mExtents[0].getF32ptr()),
-        LLVector3(mExtents[1].getF32ptr())
+        LLVector3(row().extents[0].getF32ptr()),
+        LLVector3(row().extents[1].getF32ptr())
     };
 
     LLQuaternion backwardRotation = ~currentTransform.getWorldRotation();
@@ -392,14 +392,14 @@ void LLSpatialGroup::expandExtents(const LLVector4a* addingExtents, const LLXfor
     }
 
     // Set new expanded extents
-    mExtents[0].load3(extents[0].mV);
-    mExtents[1].load3(extents[1].mV);
+    row().extents[0].load3(extents[0].mV);
+    row().extents[1].load3(extents[1].mV);
 
     // Calculate new center and size
-    mBounds[0].setAdd(mExtents[0], mExtents[1]);
-    mBounds[0].mul(0.5f);
-    mBounds[1].setSub(mExtents[0], mExtents[1]);
-    mBounds[1].mul(0.5f);
+    row().bounds[0].setAdd(row().extents[0], row().extents[1]);
+    row().bounds[0].mul(0.5f);
+    row().bounds[1].setSub(row().extents[0], row().extents[1]);
+    row().bounds[1].mul(0.5f);
 }
 
 bool LLSpatialGroup::addObject(LLDrawable *drawablep)
@@ -586,12 +586,12 @@ void LLSpatialGroup::shift(const LLVector4a &offset)
     t.add(offset);
     mOctreeNode->setCenter(t);
     mOctreeNode->updateMinMax();
-    mBounds[0].add(offset);
-    mExtents[0].add(offset);
-    mExtents[1].add(offset);
-    mObjectBounds[0].add(offset);
-    mObjectExtents[0].add(offset);
-    mObjectExtents[1].add(offset);
+    row().bounds[0].add(offset);
+    row().extents[0].add(offset);
+    row().extents[1].add(offset);
+    row().objectBounds[0].add(offset);
+    row().objectExtents[0].add(offset);
+    row().objectExtents[1].add(offset);
 
     if (!getSpatialPartition()->mRenderByGroup &&
         getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_TREE &&
@@ -650,7 +650,7 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
     }
     else
     {
-        mState |= state;
+        row().state |= state;
     }
 }
 
@@ -699,7 +699,7 @@ void LLSpatialGroup::clearState(U32 state, S32 mode)
     }
     else
     {
-        mState &= ~state;
+        row().state &= ~state;
     }
 }
 
@@ -758,7 +758,7 @@ void LLSpatialGroup::updateDistance(LLCamera &camera)
 #endif
     if (!isEmpty())
     {
-        mRadius = getSpatialPartition()->mRenderByGroup ? mObjectBounds[1].getLength3().getF32() :
+        mRadius = getSpatialPartition()->mRenderByGroup ? row().objectBounds[1].getLength3().getF32() :
                         (F32) mOctreeNode->getSize().getLength3().getF32();
         mDistance = getSpatialPartition()->calcDistance(this, camera);
         mPixelArea = getSpatialPartition()->calcPixelArea(this, camera);
@@ -773,7 +773,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
     LLVector4a origin;
     origin.load3(camera.getOrigin().mV);
 
-    eye.setSub(group->mObjectBounds[0], origin);
+    eye.setSub(group->row().objectBounds[0], origin);
 
     F32 dist = 0.f;
 
@@ -816,7 +816,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
         LLVector4a t = ata;
         //front of bounding box
         t.mul(0.25f);
-        t.mul(group->mObjectBounds[1]);
+        t.mul(group->row().objectBounds[1]);
         v.sub(t);
 
         group->mDepth = v.dot3(ata).getF32();
@@ -846,7 +846,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
 
 F32 LLSpatialPartition::calcPixelArea(LLSpatialGroup* group, LLCamera& camera)
 {
-    return LLPipeline::calcPixelArea(group->mObjectBounds[0], group->mObjectBounds[1], camera);
+    return LLPipeline::calcPixelArea(group->row().objectBounds[0], group->row().objectBounds[1], camera);
 }
 
 F32 LLSpatialGroup::getUpdateUrgency() const
@@ -858,7 +858,7 @@ F32 LLSpatialGroup::getUpdateUrgency() const
     else
     {
         F32 time = gFrameTimeSeconds-mLastUpdateTime+4.f;
-        return time + (mObjectBounds[1].dot3(mObjectBounds[1]).getF32()+1.f)/mDistance;
+        return time + (row().objectBounds[1].dot3(row().objectBounds[1]).getF32()+1.f)/mDistance;
     }
 }
 
@@ -3778,7 +3778,7 @@ public:
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
             temp[i] = mInheritedMask[i];
-            mInheritedMask[i] |= group->mOcclusionState[i] & LLSpatialGroup::OCCLUDED;
+            mInheritedMask[i] |= group->row().occlusion[i] & LLSpatialGroup::OCCLUDED;
         }
 
         for (U32 i = 0; i < node->getChildCount(); i++)
@@ -3799,7 +3799,7 @@ public:
 
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
-            if (mInheritedMask[i] && !(group->mOcclusionState[i] & mInheritedMask[i]))
+            if (mInheritedMask[i] && !(group->row().occlusion[i] & mInheritedMask[i]))
             {
                 LL_ERRS() << "Spatial group failed inherited mask test." << LL_ENDL;
             }
@@ -3920,10 +3920,10 @@ void LLSpatialGroup::drawObjectBox(LLColor4 col)
 {
     gRender.diffuseColor4fv(col.mV);
     LLVector4a size;
-    size = mObjectBounds[1];
+    size = row().objectBounds[1];
     size.mul(1.01f);
     size.add(LLVector4a(0.001f));
-    drawBox(mObjectBounds[0], size);
+    drawBox(row().objectBounds[0], size);
 }
 
 bool LLSpatialPartition::isHUDPartition()

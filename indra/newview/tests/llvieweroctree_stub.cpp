@@ -61,8 +61,8 @@ BOOL LLOcclusionCullingGroup::isRecentlyVisible() const { return FALSE; }
 BOOL LLOcclusionCullingGroup::isAnyRecentlyVisible() const { return FALSE; }
 
 
-LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node) : mOctreeNode(node) {}
-LLViewerOctreeGroup::~LLViewerOctreeGroup() = default;
+LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node) : mOctreeNode(node) { mRowId = LLGroupRows::acquire(this); }
+LLViewerOctreeGroup::~LLViewerOctreeGroup() { LLGroupRows::release(mRowId, DEAD); }
 
 LLViewerOctreeEntryData::LLViewerOctreeEntryData(LLViewerOctreeEntry::eEntryDataType_t) {}
 LLViewerOctreeEntryData::~LLViewerOctreeEntryData() = default;

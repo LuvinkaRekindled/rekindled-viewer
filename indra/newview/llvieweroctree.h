@@ -39,6 +39,7 @@
 #include "llquaternion.h"
 #include "lloctree.h"
 #include "llviewercamera.h"
+#include "llgrouptable.h"       // <FS> C1b: the group's boxes, state word and per-camera stamps are one row of the group table
 #include "llhiz.h"
 #include "llvkbridge.h"
 
@@ -205,10 +206,8 @@ public:
     typedef OctreeNode::element_list element_list;
 
     LLViewerOctreeGroup(OctreeNode* node);
-    LLViewerOctreeGroup(const LLViewerOctreeGroup& rhs)
-    {
-        *this = rhs;
-    }
+    LLViewerOctreeGroup(const LLViewerOctreeGroup& rhs) = delete;       // <FS> C1b: a copy would share the row
+    LLViewerOctreeGroup& operator=(const LLViewerOctreeGroup& rhs) = delete;
 
     bool removeFromGroup(LLViewerOctreeEntryData* data);
     bool removeFromGroup(LLViewerOctreeEntry* entry);
@@ -221,15 +220,20 @@ public:
     void setVisible();
     bool isVisible() const;
     virtual bool isRecentlyVisible() const;
-    S32  getVisible(LLViewerCamera::eCameraID id) const {return mVisible[id];}
-    S32  getAnyVisible() const {return mAnyVisible;}
+    S32  getVisible(LLViewerCamera::eCameraID id) const {return row().visible[id];}
+    S32  getAnyVisible() const {return row().anyVisible;}
     bool isEmpty() const { return mOctreeNode->isEmpty(); }
 
-    U32  getState()                {return mState; }
-    bool isDirty() const           {return mState & DIRTY;}
-    bool hasState(U32 state) const {return mState & state;}
-    void setState(U32 state)       {mState |= state;}
-    void clearState(U32 state)     {mState &= ~state;}
+    U32  getState()                {return row().state; }
+    bool isDirty() const           {return row().state & DIRTY;}
+    bool hasState(U32 state) const {return row().state & state;}
+    void setState(U32 state)       {row().state |= state;}
+    void clearState(U32 state)     {row().state &= ~state;}
+
+    // <FS> C1b: this group's row in the group table (what getBounds / getExtents / the stamps read)
+    LLGroupRows::Row&   row() const { return LLGroupRows::row(mRowId); }
+    U32                 getRowId() const { return mRowId; }
+    bool                ownsRow() const { return LLGroupRows::ownedBy(mRowId, this); }
 
     //LISTENER FUNCTIONS
     virtual void handleInsertion(const TreeNode* node, LLViewerOctreeEntry* obj);
@@ -243,10 +247,10 @@ public:
     OctreeNode*          getOctreeNode() {return mOctreeNode;}
     LLViewerOctreeGroup* getParent();
 
-    const LLVector4a* getBounds() const        {return mBounds;}
-    const LLVector4a* getExtents() const       {return mExtents;}
-    const LLVector4a* getObjectBounds() const  {return mObjectBounds;}
-    const LLVector4a* getObjectExtents() const {return mObjectExtents;}
+    const LLVector4a* getBounds() const        {return row().bounds;}
+    const LLVector4a* getExtents() const       {return row().extents;}
+    const LLVector4a* getObjectBounds() const  {return row().objectBounds;}
+    const LLVector4a* getObjectExtents() const {return row().objectExtents;}
 
     //octree wrappers to make code more readable
     element_iter getDataBegin() { return mOctreeNode->getDataBegin(); }
@@ -260,16 +264,8 @@ private:
     virtual bool boundObjects(bool empty, LLVector4a& minOut, LLVector4a& maxOut);
 
 protected:
-    U32         mState;
+    U32         mRowId = 0;     // <FS> C1b: the row of this group in the group table (bounds, object bounds, extents, object extents, state, visible stamps, occlusion state, LOD hash)
     OctreeNode* mOctreeNode;
-
-    LL_ALIGN_16(LLVector4a mBounds[2]);        // bounding box (center, size) of this node and all its children (tight fit to objects)
-    LL_ALIGN_16(LLVector4a mObjectBounds[2]);  // bounding box (center, size) of objects in this node
-    LL_ALIGN_16(LLVector4a mExtents[2]);       // extents (min, max) of this node and all its children
-    LL_ALIGN_16(LLVector4a mObjectExtents[2]); // extents (min, max) of objects in this node
-
-    S32         mAnyVisible; //latest visible to any camera
-    S32         mVisible[LLViewerCamera::NUM_CAMERAS];
 
 public:
     // <FS> S7 C1 (LL_VK_CULL_SHADOW, llcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
@@ -306,10 +302,8 @@ protected:
 
 public:
     LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctreePartition* part);
-    LLOcclusionCullingGroup(const LLOcclusionCullingGroup& rhs) : LLViewerOctreeGroup(rhs)
-    {
-        *this = rhs;
-    }
+    LLOcclusionCullingGroup(const LLOcclusionCullingGroup& rhs) = delete;       // <FS> C1b
+    LLOcclusionCullingGroup& operator=(const LLOcclusionCullingGroup& rhs) = delete;
 
     void setOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
     void clearOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
@@ -319,8 +313,8 @@ public:
     void hizInvalidate() { mHizStale = true; }  // the group changed (an object was added): the verdict awaited, if any, is out of date
     bool hizNeedsMainThread() const { return mHizStale && isHizAwaiting(); }   // <FS> checkOcclusion would clear the occlusion state of the subtree (the parallel stateSort leaves such a sort to the main thread)
     virtual void hizResult(bool occluded);
-    bool isOcclusionState(U32 state) const { return mOcclusionState[LLViewerCamera::sCurCameraID] & state; }
-    U32  getOcclusionState() const { return mOcclusionState[LLViewerCamera::sCurCameraID];}
+    bool isOcclusionState(U32 state) const { return row().occlusion[LLViewerCamera::sCurCameraID] & state; }
+    U32  getOcclusionState() const { return row().occlusion[LLViewerCamera::sCurCameraID];}
 
     bool needsUpdate();
 
@@ -335,10 +329,6 @@ private:
     bool earlyFail(LLCamera* camera, const LLVector4a* bounds);
 
 protected:
-    U32         mOcclusionState[LLViewerCamera::NUM_CAMERAS];
-
-    S32         mLODHash;
-
     LLViewerOctreePartition* mSpatialPartition;
     bool                     mHizStale = false;
 };//LL_ALIGN_POSTFIX(16);
