@@ -386,7 +386,7 @@ void LLTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
     sMain[idx] = Rec();
     sMain[idx].mSlot = slot;
     sFaceOf[idx] = face;
-    face->mRecIdx[ch] = idx;
+    face->row().recIdx[ch] = idx;
     ++sStats.mRecords;
     mark_dirty(idx);
     note_stamp(slot);
@@ -398,12 +398,12 @@ void LLTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
     {
         return;
     }
-    const U32 idx = face->mRecIdx[ch];
+    const U32 idx = face->row().recIdx[ch];
     if (!idx || idx >= sMain.size())
     {
         return;
     }
-    face->mRecIdx[ch] = 0;
+    face->row().recIdx[ch] = 0;
     sMain[idx].mFlags = 0;          // the worker is told with the next batch
     sFaceOf[idx] = nullptr;
     note_stamp(sMain[idx].mSlot);
@@ -420,9 +420,9 @@ void LLTexRecs::faceChanged(LLFace* face)
     ++sStats.mFaceChangedCalls;
     for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
     {
-        if (face->mRecIdx[ch])
+        if (face->row().recIdx[ch])
         {
-            mark_dirty(face->mRecIdx[ch]);
+            mark_dirty(face->row().recIdx[ch]);
         }
     }
 }
@@ -451,7 +451,7 @@ void LLTexRecs::groupOcclusion(LLSpatialGroup* group, bool occluded)
             }
             for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
             {
-                const U32 idx = face->mRecIdx[ch];
+                const U32 idx = face->row().recIdx[ch];
                 if (idx && idx < sMain.size() && sFaceOf[idx] == face && !(sMain[idx].mFlags & F_VOLATILE))
                 {
                     const bool was = (sMain[idx].mFlags & F_OCCLUDED) != 0;

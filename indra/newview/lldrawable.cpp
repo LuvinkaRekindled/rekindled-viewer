@@ -1077,7 +1077,7 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
                         {
                             v.mV[j] -= box[j] * at.mV[j];
                         }
-                        facep->mDistance = v * camera.getAtAxis();
+                        facep->row().distance = v * camera.getAtAxis();
                     }
                 }
             }

@@ -1729,17 +1729,17 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                         stamp_volatile = true;        // its position comes from something that moves without telling the texture
                     }
 
-                    if ((gFrameCount - face->mLastTextureUpdate) > 10)
+                    if ((gFrameCount - face->row().lastTextureUpdate) > 10)
                     { // only call calcPixelArea at most once every 10 frames for a given face
                         // this helps eliminate redundant calls to calcPixelArea for faces that have multiple textures
                         // assigned to them, such as is the case with GLTF materials or Blinn-Phong materials
-                        face->mInFrustum = face->calcPixelArea(cos_angle_to_view_dir, radius);
-                        face->mLastTextureUpdate = gFrameCount;
+                        face->row().inFrustum = face->calcPixelArea(cos_angle_to_view_dir, radius);
+                        face->row().lastTextureUpdate = gFrameCount;
                     }
 
                     F32 vsize = face->getPixelArea();
 
-                    on_screen |= face->mInFrustum;
+                    on_screen |= face->row().inFrustum;
 
                     // Scale desired texture resolution higher or lower depending on texture scale
                     //
@@ -1773,16 +1773,16 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
                     // apply bias to offscreen faces all the time, but only to onscreen faces when bias is large
                     // use mImportanceToCamera to make bias switch a bit more gradual
-                    if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 1.9f + face->mImportanceToCamera / 2.f)
+                    if (!face->row().inFrustum || LLViewerTexture::sDesiredDiscardBias > 1.9f + face->row().importanceToCamera / 2.f)
                     {
                         vsize /= bias;
                     }
 
                     // boost resolution of textures that are important to the camera
-                    if (face->mInFrustum)
+                    if (face->row().inFrustum)
                     {
                         static LLCachedControl<F32> texture_camera_boost(gSavedSettings, "TextureCameraBoost", 8.f);
-                        vsize *= llmax(face->mImportanceToCamera*texture_camera_boost, 1.f);
+                        vsize *= llmax(face->row().importanceToCamera*texture_camera_boost, 1.f);
                     }
 
                     max_vsize = llmax(max_vsize, vsize);
@@ -2652,7 +2652,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                             // a face that is due a pixel area refresh is claimed (0xFFFFFFFF in mLastTextureUpdate while it is worked out; to everyone else that reads as "being done") by exactly one job;
                             // a texture whose face another job has claimed is left to the main thread, where the face is fresh by then. A rigged face whose rig table needs an update (a write to the volume
                             // face, which meshes share) is left to the main thread too.
-                            std::atomic_ref<U32> stamp_of_face(face->mLastTextureUpdate);
+                            std::atomic_ref<U32> stamp_of_face(face->row().lastTextureUpdate);
                             U32 last = stamp_of_face.load(std::memory_order_acquire);
                             if (last == 0xFFFFFFFFu)
                             {
@@ -2679,26 +2679,26 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                                     return false;
                                 }
                                 F32 area_radius, area_cos;
-                                face->mInFrustum = face->calcPixelArea(area_cos, area_radius);
+                                face->row().inFrustum = face->calcPixelArea(area_cos, area_radius);
                                 stamp_of_face.store(gFrameCount, std::memory_order_release);
                             }
                         }
                         F32 vsize = face->getPixelArea();
-                        on_screen |= face->mInFrustum;
+                        on_screen |= face->row().inFrustum;
                         S32 te_offset = face->getTEOffset();
                         LLViewerObject* objp = face->getViewerObject();
                         const LLTextureEntry* te = (te_offset < 0 || te_offset >= objp->getNumTEs()) ? nullptr : objp->getTE(te_offset);
                         F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
                         min_scale = llclamp(min_scale * min_scale, scale_min, scale_max);
                         vsize /= min_scale;
-                        if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 1.9f + face->mImportanceToCamera / 2.f)
+                        if (!face->row().inFrustum || LLViewerTexture::sDesiredDiscardBias > 1.9f + face->row().importanceToCamera / 2.f)
                         {
                             vsize /= bias;
                         }
-                        if (face->mInFrustum)
+                        if (face->row().inFrustum)
                         {
                             static LLCachedControl<F32> texture_camera_boost(gSavedSettings, "TextureCameraBoost", 8.f);
-                            vsize *= llmax(face->mImportanceToCamera * texture_camera_boost, 1.f);
+                            vsize *= llmax(face->row().importanceToCamera * texture_camera_boost, 1.f);
                         }
                         max_vsize = llmax(max_vsize, vsize);
                         if (max_vsize >= LLViewerFetchedTexture::sMaxVirtualSize

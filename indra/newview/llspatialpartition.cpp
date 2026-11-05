@@ -1957,7 +1957,7 @@ void renderOctree(LLSpatialGroup* group)
                     {
                         LLVOVolume* vol = drawable->getVOVolume();
 
-                        if (gFrameTimeSeconds - face->mLastUpdateTime < 0.5f)
+                        if (gFrameTimeSeconds - face->row().lastUpdateTime < 0.5f)
                         {
                             if (vol && vol->isShrinkWrapped())
                             {
@@ -1968,7 +1968,7 @@ void renderOctree(LLSpatialGroup* group)
                                 gRender.diffuseColor4f(0, 1, 0, group->mBuilt);
                             }
                         }
-                        else if (gFrameTimeSeconds - face->mLastMoveTime < 0.5f)
+                        else if (gFrameTimeSeconds - face->row().lastMoveTime < 0.5f)
                         {
                             if (vol && vol->isShrinkWrapped())
                             {

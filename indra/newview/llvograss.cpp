@@ -661,8 +661,8 @@ void LLGrassPartition::addGeometryCount(LLSpatialGroup* group, U32& vertex_count
             if ((facep->getGeomCount() + vertex_count) <= 65536)
             {
                 count++;
-                facep->mDistance = (facep->row().centerLocal - camera->getOrigin()) * camera->getAtAxis();
-                obj->mDepth += facep->mDistance;
+                facep->row().distance = (facep->row().centerLocal - camera->getOrigin()) * camera->getAtAxis();
+                obj->mDepth += facep->row().distance;
 
                 mFaceList.push_back(facep);
                 vertex_count += facep->getGeomCount();
