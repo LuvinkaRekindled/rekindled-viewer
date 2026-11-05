@@ -28,6 +28,8 @@
 #ifndef LL_VOAVATAR_H
 #define LL_VOAVATAR_H
 
+#include "llhandletable.h"
+#include <atomic>
 #include <atomic>
 #include <map>
 #include <deque>
@@ -85,6 +87,9 @@ extern U32 gFrameCount;
 // LLVOAvatar
 //
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class LLVOAvatar;
+using LLAvatarHandles = LLHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (llhandletable.h)
+
 class LLVOAvatar :
     public LLAvatarAppearance,
     public LLViewerObject,
@@ -117,6 +122,22 @@ public:
     static void applyCloudColor();
     // </FS:TP>
     virtual void        initInstance(); // Called after construction to initialize the class.
+
+protected:
+public:
+    // <FS> C2.4d (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLAvatarRef, llavatarref.h) and the retire list (llcommon/llretirelist.h, kind 3): the last owner letting go
+    // parks the avatar for a few frames, so a draw info that still reads it through its handle finds it intact
+    U32 getRenderHandle();
+    /*virtual*/ bool retireOnLastRef() const override;
+    /*virtual*/ U32 retireKind() const override { return 3; }
+    struct RenderHandle
+    {
+        std::atomic<U32> v{0};
+        RenderHandle() = default;
+        RenderHandle(const RenderHandle&) {}
+        RenderHandle& operator=(const RenderHandle&) { return *this; }
+    };
+    RenderHandle mRenderHandle;
 
 protected:
     virtual             ~LLVOAvatar();

@@ -41,6 +41,7 @@
 #include "llviewercamera.h"
 #include "llvector4a.h"
 #include "llvoavatar.h"
+#include "llavatarref.h"
 #include "llfetchedgltfmaterial.h"
 
 //<FS:Beq> needed to resolve render_hull dep
@@ -158,7 +159,7 @@ public:
     const LLMatrix4* mTextureMatrix = nullptr;
     const LLMatrix4* mModelMatrix = nullptr;
 
-    LLPointer<LLVOAvatar> mAvatar = nullptr;
+    LLAvatarRef mAvatar;       // <FS> C2.4d: a handle (llavatarref.h), not a counted pointer
     LLSkinRef mSkinInfo;       // <FS> C2.4c: a handle (llmodel.h), not a counted pointer (<FS:Beq/> had made it a const pointer to be defensive about UAF with skinInfo during LocalMesh)
 
     // <FS> C2.4a: this was a counted LLPointer<LLMaterial> that was only ever tested for null (the batching test in registerFace, the materials pull program choice in the scene table): a flag, no lifetime to carry

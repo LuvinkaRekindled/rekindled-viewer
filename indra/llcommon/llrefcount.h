@@ -64,12 +64,29 @@ public:
         llassert(mRef > 0); // ref count below 1, likely corrupted
         if (0 == --mRef)
         {
+            if (retireOnLastRef())      // <FS> C2.4d: parked in the retire list (llretirelist.h): the count stays 0, the list destroys it later or it is revived
+            {
+                return 0;
+            }
             mRef = LL_REFCOUNT_FREE; // set to nonsense yet recognizable value to aid in debugging
             delete this;
             return 0;
         }
         return mRef;
     }
+
+    // <FS> C2.4d: the hooks of the retire list for the plain (not thread safe) count, as on LLThreadSafeRefCount: only the main thread parks (the count is not atomic), only a class that overrides
+    // retireOnLastRef() takes part (the avatar); mParked is set while it waits in the list
+    virtual bool retireOnLastRef() const { return false; }
+    virtual void onRetire() {}
+    virtual U32 retireKind() const { return 0; }
+    void destroyRetired() const
+    {
+        llassert(mRef == 0);
+        mRef = LL_REFCOUNT_FREE;
+        delete this;
+    }
+    mutable bool mParked = false;
 
     //NOTE: when passing around a const LLRefCount object, this can return different results
     // at different types, since mRef is mutable
