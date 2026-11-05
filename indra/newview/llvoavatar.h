@@ -651,6 +651,10 @@ public:
     U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)
     U64         mRtNameChecked = ~0ull;         // the frame mRtNameDue was decided in
     bool        mRtNameDue = true;
+    bool        mRtWasLoaded = false;           // <FS> this avatar has been fully loaded at least once: the ray scene's loading gate (rt_avatar_kind, kind 64) is for the first load only. isFullyLoaded()
+                                                // flips back to false for a second whenever a texture or attachment arrives later (updateIsFullyLoaded resets the timer), and every such flip stopped the
+                                                // naming: the ray scene kept the avatar's LAST skinned pose for up to 8 frames while the drawn body moved on, then jumped (2026-11-05, Adam: a new
+                                                // avatar "blinking their last frames", lit and shadowed copies out of step)
 private:
     bool        mDeferredDetailedUpdate = false;
 
@@ -1017,6 +1021,7 @@ public:
         std::vector<F32> mPrevGLMp;
         bool mHasPrev = false;
         bool mComputed = false;     // mFrame is only meaningful after the first computation (the constructor sets it to "last frame")
+        bool mBadBindNamed = false; // <FS> the wearer of a mesh whose inverse bind matrices the parse refused was logged once (MeshSkin)
 
         // <FS> the avatar frame record (view prep rework): what the avatar velocity pass works out for this palette once a frame (the frame it was worked out in, and the answer), kept here instead of in
         // maps made again every frame. Written by that pass only.
