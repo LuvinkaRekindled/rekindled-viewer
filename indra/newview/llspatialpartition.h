@@ -142,7 +142,7 @@ public:
     // return mSkinHash->mHash, or 0 if mSkinHash is null
     U64 getSkinHash();
 
-    LLPointer<LLVertexBuffer> mVertexBuffer;
+    LLVBRef mVertexBuffer;     // <FS> C3.5: a handle (llvertexbuffer.h), not a counted pointer
     U16 mStart = 0;
     U16 mEnd = 0;
     U32 mCount = 0;

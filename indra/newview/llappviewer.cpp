@@ -2198,6 +2198,7 @@ bool LLAppViewer::cleanup()
 
     // <FS> C2.4d: avatars parked in the retire list are destroyed now and no more are parked: their destructors need the systems that the cleanup below shuts down
     LLRetireList::stopKind(3);
+    LLRetireList::stopKind(4);       // <FS> C3.5: the vertex buffers too (their destructors release GPU buffers: before the renderer is shut down)
 
     //ditch LLVOAvatarSelf instance
     gAgentAvatarp = NULL;

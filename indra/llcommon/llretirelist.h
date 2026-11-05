@@ -28,7 +28,7 @@
 class LLRetireList
 {
 public:
-    static constexpr U32 kKinds = 4;            // retireKind() values (0 texture, 1 glTF material, 2 mesh skin info, 3 avatar)
+    static constexpr U32 kKinds = 8;            // retireKind() values (0 texture, 1 glTF material, 2 mesh skin info, 3 avatar, 4 vertex buffer; 5-7 free)
 
     // from the last unref (any thread); false: not parked, the caller deletes
     static bool park(LLThreadSafeRefCount* obj)
@@ -131,7 +131,7 @@ public:
             s.mLastLog = now;
             size_t waiting;
             { std::lock_guard<std::mutex> lock(s.mMutex); waiting = s.mParked.size(); }
-            LL_INFOS("Retire") << "retire list: parked " << totals(s.mParkedTotal) << " (textures " << s.mParkedTotal[0] << ", materials " << s.mParkedTotal[1] << ", skin infos " << s.mParkedTotal[2] << ", avatars " << s.mParkedTotal[3] << "), destroyed " << totals(s.mDestroyedTotal)
+            LL_INFOS("Retire") << "retire list: parked " << totals(s.mParkedTotal) << " (textures " << s.mParkedTotal[0] << ", materials " << s.mParkedTotal[1] << ", skin infos " << s.mParkedTotal[2] << ", avatars " << s.mParkedTotal[3] << ", vertex buffers " << s.mParkedTotal[4] << "), destroyed " << totals(s.mDestroyedTotal)
                                << ", count rose again " << totals(s.mRevivedTotal) << ", waiting " << waiting << " (peak " << s.mPeak << "), age " << s.mFrames << " frames" << LL_ENDL;
         }
     }
