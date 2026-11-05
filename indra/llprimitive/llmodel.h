@@ -27,6 +27,9 @@
 #ifndef LL_LLMODEL_H
 #define LL_LLMODEL_H
 
+#include "llhandletable.h"
+#include <atomic>
+#include <type_traits>
 #include "llpointer.h"
 #include "llvolume.h"
 #include "v4math.h"
@@ -42,6 +45,9 @@ class domMesh;
 
 #define MAX_MODEL_FACES 8
 
+class LLMeshSkinInfo;
+using LLSkinHandles = LLHandleTable<LLMeshSkinInfo>;       // <FS> C2.4c: the handles of mesh skin infos (llhandletable.h)
+
 LL_ALIGN_PREFIX(16)
 class LLMeshSkinInfo : public LLAssetRefCount
 {
@@ -50,10 +56,26 @@ public:
     LLMeshSkinInfo();
     LLMeshSkinInfo(LLSD& data);
     LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& data);
+    virtual ~LLMeshSkinInfo();
+    // <FS> C2.4c (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLSkinRef), and the retire list (llcommon/llretirelist.h): the last owner letting go parks the skin info for a
+    // few frames, so a draw info that still reads it through its handle finds it intact (the LocalMesh use-after-free of earlier sessions was a draw info outliving its skin info)
+    U32 getRenderHandle() const;
+    /*virtual*/ bool retireOnLastRef() const override;
+    /*virtual*/ U32 retireKind() const override { return 2; }
     void fromLLSD(LLSD& data);
     LLSD asLLSD(bool include_joints, bool lock_scale_if_joint_position) const;
     void updateHash();
     U32 sizeBytes() const;
+
+    // a copy of a skin info is a new object: it starts with no handle, and assigning one to another keeps the target's own
+    struct RenderHandle
+    {
+        std::atomic<U32> v{0};
+        RenderHandle() = default;
+        RenderHandle(const RenderHandle&) {}
+        RenderHandle& operator=(const RenderHandle&) { return *this; }
+    };
+    mutable RenderHandle mRenderHandle;
 
     LLUUID mMeshID;
     std::vector<std::string> mJointNames;
@@ -76,6 +98,43 @@ public:
     bool mJointNumsInitialized;
     U64 mHash = 0;
 } LL_ALIGN_POSTFIX(16);
+
+// <FS> C2.4c: a skin info reference that is a handle, not a counted pointer (the skin counterpart of LLTexRef and LLGLTFMatRef). It holds no reference count and owns nothing: the owners (the volume, the
+// faces, the mesh repository) keep the skin info alive and the retire list keeps it intact for the frames that could still read it after the last owner let go. get() resolves the handle each time and
+// answers nullptr for a skin info that is gone; isNull() / notNull() / explicit bool are dead-aware (a draw whose skin info is gone reads as "no skin": the callers already skip those), and get() counts
+// the resolutions that found a gone skin info (sDeadResolved: in a healthy run it stays 0).
+class LLSkinRef
+{
+public:
+    LLSkinRef() = default;
+    LLSkinRef(std::nullptr_t) {}
+    LLSkinRef(const LLMeshSkinInfo* skin) : mHandle(skin ? skin->getRenderHandle() : 0) {}
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
+    LLSkinRef(const P& p) : LLSkinRef(static_cast<const LLMeshSkinInfo*>(p.get())) {}
+    LLSkinRef& operator=(const LLMeshSkinInfo* skin) { mHandle = skin ? skin->getRenderHandle() : 0; return *this; }
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
+    LLSkinRef& operator=(const P& p) { return *this = static_cast<const LLMeshSkinInfo*>(p.get()); }
+
+    const LLMeshSkinInfo* get() const
+    {
+        if (!mHandle) return nullptr;
+        const LLMeshSkinInfo* skin = LLSkinHandles::resolve(mHandle);
+        if (!skin) ++sDeadResolved;
+        return skin;
+    }
+    operator const LLMeshSkinInfo*() const { return get(); }
+    const LLMeshSkinInfo* operator->() const { return get(); }
+    const LLMeshSkinInfo& operator*() const { return *get(); }
+    bool isNull() const { return !mHandle || !LLSkinHandles::resolve(mHandle); }
+    bool notNull() const { return !isNull(); }
+    explicit operator bool() const { return notNull(); }
+    U32 handle() const { return mHandle; }
+
+    static std::atomic<U64> sDeadResolved;     // resolutions of a handle whose skin info was gone
+private:
+    U32 mHandle = 0;
+};
+
 
 LL_ALIGN_PREFIX(16)
 class LLModel : public LLVolume
