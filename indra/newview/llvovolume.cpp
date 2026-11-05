@@ -30,6 +30,7 @@
 #include "llgpuzonetimer.h"
 
 #include "llvovolume.h"
+#include "llmatrixtable.h"
 
 #include <sstream>
 
@@ -439,7 +440,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                         if (facep && facep->mTextureMatrix)
                         {
                             // delete or reset
-                            delete facep->mTextureMatrix;
+                            LLMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
                             facep->mTextureMatrix = NULL;
                         }
                     }
@@ -645,7 +646,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                     if (facep && facep->mTextureMatrix)
                     {
                         // delete or reset
-                        delete facep->mTextureMatrix;
+                        LLMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
                         facep->mTextureMatrix = NULL;
                     }
                 }
@@ -827,7 +828,7 @@ void LLVOVolume::animateTextures()
 
                 if (!facep->mTextureMatrix)
                 {
-                    facep->mTextureMatrix = new LLMatrix4();
+                    facep->mTextureMatrix = LLMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
                     if (facep->getVirtualSize() > MIN_TEX_ANIM_SIZE)
                     {
                         // Fix the one edge case missed in
@@ -1085,7 +1086,7 @@ void LLVOVolume::animateTexturesGpu()
         LLVkTexAnim::makeParams(params, src);
         if (!facep->mTextureMatrix)
         {
-            facep->mTextureMatrix = new LLMatrix4();
+            facep->mTextureMatrix = LLMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
             if (!small)
             {
                 // the one edge case of LLVOVolume::updateTextureVirtualSize when the matrix is not yet present (as animateTextures)
