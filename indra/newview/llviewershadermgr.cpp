@@ -371,7 +371,6 @@ LLShaderProgram            gAvatarVelocityProgram;         // <FS> avatar motion
 LLShaderProgram            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
 LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
-LLShaderProgram            gShadowAccumProgram;            // <FS> temporal accumulation of the ray traced sun shadow
 LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
@@ -1566,7 +1565,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarBodyVelocityProgram.unload();
         gAvatarVelocityPullProgram.unload();
         gObjectVelocityPullProgram.unload();
-        gShadowAccumProgram.unload();
         gRtShadowFilterProgram.unload();
         gRtShadowPrepProgram.unload();
         gRRGuidesProgram.unload();
@@ -3933,19 +3931,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gAvatarBodyVelocityProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the avatar velocity program (body) did not compile: no avatar motion vectors" << LL_ENDL;
-        }
-
-        gShadowAccumProgram.mName = "Shadow Accumulation";
-        gShadowAccumProgram.mFeatures.isDeferred = true;
-        gShadowAccumProgram.mShaderFiles.clear();
-        gShadowAccumProgram.clearPermutations();
-        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gShadowAccumProgram.mShaderFiles.push_back(make_pair("deferred/shadowAccumF.glsl", ShaderStage::Fragment));
-        gShadowAccumProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gShadowAccumProgram);
-        if (!gShadowAccumProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the shadow accumulation program did not compile: ray shadows are not accumulated" << LL_ENDL;
         }
 
         // <FS> the penumbra filter of the ray traced sun shadow (PLAN-rt-shadow-penumbra.md step 2b): two separable passes over the lightmap's sun channel, sized by the blocker distance map
