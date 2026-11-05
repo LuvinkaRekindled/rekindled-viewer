@@ -237,7 +237,7 @@ void LLSprite::updateFace(LLFace &face)
     }
 
     face.getVertexBuffer()->unmapBuffer();
-    face.mCenterAgent = mPosition;
+    face.row().centerAgent = mPosition;
 }
 
 void LLSprite::setPosition(const LLVector3 &position)

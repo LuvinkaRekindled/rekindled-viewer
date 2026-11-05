@@ -2018,7 +2018,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
                             {
                                 LLVector4a center, size;
 
-                                LLVector4a* extents = facep->mRiggedExtents;
+                                LLVector4a* extents = facep->row().riggedExtents;
 
                                 center.setAdd(extents[0], extents[1]);
                                 center.mul(0.5f);

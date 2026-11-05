@@ -1251,7 +1251,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
     for (S32 i = 0; i < num_faces; i++)
     {
         LLFace* face = mDrawable->getFace(i);
-        if (!face || face->mExtents[0].equals3(face->mExtents[1])) continue;
+        if (!face || face->row().extents[0].equals3(face->row().extents[1])) continue;
         const LLTextureEntry *te = face->getTextureEntry();
         if (!te) continue;
 
@@ -2401,14 +2401,14 @@ bool LLVOVolume::genBBoxes(bool force_global, bool should_update_octree_bounds)
         {
             if (!any_valid_boxes)
             {
-                min = face->mExtents[0];
-                max = face->mExtents[1];
+                min = face->row().extents[0];
+                max = face->row().extents[1];
                 any_valid_boxes = true;
             }
             else
             {
-                min.setMin(min, face->mExtents[0]);
-                max.setMax(max, face->mExtents[1]);
+                min.setMin(min, face->row().extents[0]);
+                max.setMax(max, face->row().extents[1]);
             }
         }
     }
@@ -5961,8 +5961,8 @@ static void visCensusExtents(LLDrawInfo& info, const LLFace& face)
     {
         return;
     }
-    const LLVector4a& lo = face.mExtents[0];
-    const LLVector4a& hi = face.mExtents[1];
+    const LLVector4a& lo = face.row().extents[0];
+    const LLVector4a& hi = face.row().extents[1];
     const F32* a = lo.getF32ptr();
     const F32* b = hi.getF32ptr();
     if (!(a[0] <= b[0] && a[1] <= b[1] && a[2] <= b[2]) || fabsf(a[0]) > 1.0e7f || fabsf(b[0]) > 1.0e7f || fabsf(a[1]) > 1.0e7f || fabsf(b[1]) > 1.0e7f || fabsf(a[2]) > 1.0e7f || fabsf(b[2]) > 1.0e7f)

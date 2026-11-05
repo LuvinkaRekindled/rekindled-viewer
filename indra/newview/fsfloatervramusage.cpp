@@ -291,7 +291,7 @@ void FSFloaterVRAMUsage::calcFaceSize(LLFace* aFace, S32& aW, S32& aH)
         return;
 
     LLVector4a size;
-    size.setSub(aFace->mExtents[1], aFace->mExtents[0]);
+    size.setSub(aFace->row().extents[1], aFace->row().extents[0]);
 
     S32 cmX = static_cast<S32>(size[0] * 100);
     S32 cmY = static_cast<S32>(size[1] * 100);

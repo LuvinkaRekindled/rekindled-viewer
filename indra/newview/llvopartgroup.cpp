@@ -803,7 +803,7 @@ bool LLVOPartGroup::updateFacesLegacy(LLDrawable* drawable, S32 num_parts)
             facep->clearState(LLFace::FULLBRIGHT);
         }
 
-        facep->mCenterLocal = part->mPosAgent;
+        facep->row().centerLocal = part->mPosAgent;
         facep->setFaceColor(part->mColor);
         facep->setTexture(part->mImagep);
 
@@ -1553,7 +1553,7 @@ void LLParticlePartition::addGeometryCount(LLSpatialGroup* group, U32& vertex_co
             index_count += facep->getIndicesCount();
 
             count++;
-            facep->mDistance = (facep->mCenterLocal - camera->getOrigin()) * camera->getAtAxis();
+            facep->mDistance = (facep->row().centerLocal - camera->getOrigin()) * camera->getAtAxis();
             obj->mDepth += facep->mDistance;
 
             mFaceList.push_back(facep);

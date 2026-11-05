@@ -254,12 +254,9 @@ public:
     bool isInAlphaPool() const;
 public: //aligned members
 
-    // bounding box of face in drawable space
-    LLVector4a      mExtents[2];
-
-    // cached bounding box of rigged face in world space
-    // calculated on-demand by LLFace::calcPixelArea and may not be up-to-date
-    LLVector4a  mRiggedExtents[2] = { LLVector4a(0,0,0), LLVector4a(0,0,0) };
+    // <FS> C3.2: the bounds group (row().extents, row().riggedExtents, row().centerLocal, row().centerAgent, row().texExtents) is in the face's row: row().extents[2] (bounding box of the face in drawable space), row().riggedExtents[2]
+    // (cached bounding box of a rigged face in world space, calculated on demand by calcPixelArea, may be stale), row().centerLocal, row().centerAgent, row().texExtents[2]
+    LLFaceRow& row() const { return LLFaceRows::row(mRowId); }
 
 private:
     friend class LLViewerTextureList;
@@ -272,10 +269,7 @@ public:
 
 public:
 
-    LLVector3       mCenterLocal;
-    LLVector3       mCenterAgent;
 
-    LLVector2       mTexExtents[2];
     F32             mDistance;
     F32         mLastUpdateTime;
     F32         mLastSkinTime;
@@ -301,7 +295,6 @@ public:
 private:
     // <FS> C3.1: this face's row in the face table (llfacetable.h): the geometry slice (geomCount, geomIndex, indicesCount, indicesIndex), textureIndex, referenceIndex, state, faceColor, teOffset, boundingSphereRadius
     U32 mRowId = 0;
-    LLFaceRow& row() const { return LLFaceRows::row(mRowId); }
 
     LLPointer<LLVertexBuffer> mVertexBuffer;
     LLPointer<LLVertexBuffer> mVertexBufferGLTF;
