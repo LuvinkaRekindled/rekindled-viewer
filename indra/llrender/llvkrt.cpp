@@ -305,6 +305,7 @@ struct DebugSwitches
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
     S32 mSunNoise = 1;              // live (sunnoise=0/1/2, default 1): how the noise of the sun rays moves: 1 every frame (the upscaler averages it), 2 every 4th frame, 0 never (a fixed pattern)
+    S32 mRtEarly = -1;              // live (rtearly=0/1/3, default -1: LL_VK_RT_EARLY decides): where the ray scene is built, 0 at the lighting, 1 before the G-buffer on the graphics queue, 3 before it on the compute queue (E2: needs LL_VK_RT_EARLY=3 at start-up, which sets the queue up); a same-session A/B
     S32 mSunFilter = 1;             // live (sunfilter=0/1, default 1): with the centre ray, the penumbra filter sized by the blocker distance (rtShadowFilterF.glsl) runs on the sun channel; 0 = the hard shadow as traced
     S32 mPenMax = 8;                // live (penmax=N, default 8, the user's choice by eye 2026-11-05): the filter's widest penumbra half-width in render pixels
     S32 mPenLod = 1;                // live (penlod=N, default 1, the user's choice by eye 2026-11-05): a bias in mip levels on the filter taps' level (1 = each tap averages twice the footprint, -1 half)
@@ -322,6 +323,7 @@ DebugSwitches sDbg;
 inline bool pins_wanted() { return sPinsInit || (sMatsInit && sDbg.mMats); }       // the records hold pin indices
 std::atomic<S32> sViewLive{0}, sPenRaysLive{0};
 std::atomic<S32> sSunNoiseLive{1};
+std::atomic<S32> sRtEarlyLive{-1};
 std::atomic<S32> sSunFilterLive{1}, sPenMaxLive{8}, sPenLodLive{1}, sSunStrengthLive{65};
 std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1}, sSnapTestLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
@@ -397,6 +399,7 @@ void read_debug_switches()
                 else if (k == "sunself") d.mSunSelf = (S32)v;
                 else if (k == "penrays") d.mPenRays = (S32)v;
                 else if (k == "sunnoise") d.mSunNoise = (S32)v;
+                else if (k == "rtearly") d.mRtEarly = (S32)v;
                 else if (k == "sunfilter") d.mSunFilter = (S32)v;
                 else if (k == "penmax") d.mPenMax = (S32)v;
                 else if (k == "penlod") d.mPenLod = (S32)v;
@@ -470,6 +473,15 @@ void read_debug_switches()
         {
             last_noise = d.mSunNoise;
             LL_INFOS("VkRt") << "rt-debug.txt sunnoise=" << d.mSunNoise << " (1 the sun ray noise moves every frame, 2 every 4th frame, 0 never)" << LL_ENDL;
+        }
+    }
+    sRtEarlyLive.store(d.mRtEarly, std::memory_order_relaxed);
+    {
+        static S32 last_early = -99;
+        if (d.mRtEarly != last_early)
+        {
+            last_early = d.mRtEarly;
+            LL_INFOS("VkRt") << "rt-debug.txt rtearly=" << d.mRtEarly << " (-1 LL_VK_RT_EARLY decides, 0 scene built at the lighting, 1 before the G-buffer, 3 before it on the compute queue)" << LL_ENDL;
         }
     }
     sSunFilterLive.store(d.mSunFilter, std::memory_order_relaxed);
@@ -1262,6 +1274,7 @@ S32 sunSelfShadow() { return sSunSelfLive.load(std::memory_order_relaxed); }
 S32 sunPenRays() { return sPenRaysLive.load(std::memory_order_relaxed); }
 S32 sunNoise() { return sSunNoiseLive.load(std::memory_order_relaxed); }
 S32 sunFilter() { return sSunFilterLive.load(std::memory_order_relaxed); }
+S32 rtEarly() { return sRtEarlyLive.load(std::memory_order_relaxed); }
 S32 sunPenMax() { return sPenMaxLive.load(std::memory_order_relaxed); }
 S32 sunPenLod() { return sPenLodLive.load(std::memory_order_relaxed); }
 S32 sunStrength() { return sSunStrengthLive.load(std::memory_order_relaxed); }
