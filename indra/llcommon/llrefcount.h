@@ -115,8 +115,20 @@ public:
             // It is technically possible for a vanilla pointer to mess this up, or another thread to
             // jump in, find this object, create another smart pointer and end up dangling, but if
             // the code is that bad and not thread-safe, it's trouble already.
-            delete this;
+            if (!retireOnLastRef())     // <FS> C2.2
+            {
+                delete this;
+            }
         }
+    }
+
+    // <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): an object that render-side data may still READ through a handle for a few frames after its last owner let go can take itself into a retire
+    // list instead of being deleted at once (return true: unref() then does not delete; the list calls destroyRetired() when the frames that could read it are over). Default: delete as before.
+    virtual bool retireOnLastRef() const { return false; }
+    void destroyRetired() const
+    {
+        llassert(mRef.CurrentValue() == 0);
+        delete this;
     }
 
     S32 getNumRefs() const

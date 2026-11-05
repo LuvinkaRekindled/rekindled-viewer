@@ -2701,6 +2701,8 @@ bool LLAppViewer::cleanup()
 
     LL_INFOS() << "Cleaning up Media and Textures" << LL_ENDL;
 
+    LLTexRetire::shutdown();        // <FS> C2.2: the retire list is emptied and stops parking: from here a texture whose last reference goes is deleted at once, as before
+
     //Note:
     //SUBSYSTEM_CLEANUP(LLViewerMedia) has to be put before gTextureList.shutdown()
     //because some new image might be generated during cleaning up media. --bao

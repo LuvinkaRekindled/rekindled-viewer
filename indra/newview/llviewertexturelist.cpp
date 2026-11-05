@@ -1449,6 +1449,7 @@ void LLViewerTextureList::expiryCount()
 void LLViewerTextureList::updateImages(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    LLTexRetire::pump();        // <FS> C2.2: destroy the textures parked long enough
     expiryCount();
     {
         static U32 calls = 0;
