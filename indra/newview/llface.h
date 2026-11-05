@@ -125,10 +125,10 @@ public:
     void            setState(U32 state)         { row().state |= state; }
     void            clearState(U32 state)       { row().state &= ~state; }
     bool            isState(U32 state)  const   { return (row().state & state) != 0; }
-    void            setVirtualSize(F32 size) { mVSize = size; }
-    void            setPixelArea(F32 area)  { mPixelArea = area; }
-    F32             getVirtualSize() const { return mVSize; }
-    F32             getPixelArea() const { return mPixelArea; }
+    void            setVirtualSize(F32 size) { row().vSize = size; }
+    void            setPixelArea(F32 area)  { row().pixelArea = area; }
+    F32             getVirtualSize() const { return row().vSize; }
+    F32             getPixelArea() const { return row().pixelArea; }
 
     S32             getIndexInTex(U32 ch) const      { llassert(ch < LLRender::NUM_TEXTURE_CHANNELS); return mIndexInTex[ch]; }
     void            setIndexInTex(U32 ch, S32 index) { llassert(ch < LLRender::NUM_TEXTURE_CHANNELS); mIndexInTex[ch] = index; }
@@ -210,7 +210,7 @@ public:
     void        renderSelected(LLViewerTexture *image, const LLColor4 &color);
     void        renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wireframe_selection, bool bRenderHiddenSelections, bool shader);
 
-    F32         getKey()                    const   { return mDistance; }
+    F32         getKey()                    const   { return row().distance; }
 
     S32         getReferenceIndex()         const   { return row().referenceIndex; }
     void        setReferenceIndex(const S32 index)  { row().referenceIndex = index; }
@@ -225,11 +225,11 @@ public:
     F32         getTextureVirtualSize() ;
     void        resetVirtualSize();
 
-    void        setHasMedia(bool has_media)  { mHasMedia = has_media ;}
+    void        setHasMedia(bool has_media)  { row().hasMedia = has_media ;}
     bool        hasMedia() const ;
 
-    void        setMediaAllowed(bool is_media_allowed)  { mIsMediaAllowed = is_media_allowed; }
-    bool        isMediaAllowed() const { return mIsMediaAllowed; }
+    void        setMediaAllowed(bool is_media_allowed)  { row().isMediaAllowed = is_media_allowed; }
+    bool        isMediaAllowed() const { return row().isMediaAllowed; }
 
     bool        switchTexture() ;
 
@@ -247,8 +247,8 @@ public:
     // used to preserve draw order of faces that are batched together.
     // Allows content creators to manipulate linked sets and face ordering
     // for consistent alpha sorting results, particularly for rigged attachments
-    void setDrawOrderIndex(U32 index) { mDrawOrderIndex = index; }
-    U32 getDrawOrderIndex() const { return mDrawOrderIndex; }
+    void setDrawOrderIndex(U32 index) { row().drawOrderIndex = index; }
+    U32 getDrawOrderIndex() const { return row().drawOrderIndex; }
 
     // return true if this face is in an alpha draw pool
     bool isInAlphaPool() const;
@@ -270,10 +270,6 @@ public:
 public:
 
 
-    F32             mDistance;
-    F32         mLastUpdateTime;
-    F32         mLastSkinTime;
-    F32         mLastMoveTime;
     LLMatrix4*  mTextureMatrix;
     LLMatrix4*  mSpecMapMatrix;
     LLMatrix4*  mNormalMapMatrix;
@@ -285,11 +281,8 @@ public:
     U64 getSkinHash();
 
     // true if face was recently in the main camera frustum according to LLViewerTextureList updates
-    bool mInFrustum = false;
     // value of gFrameCount the last time the face was touched by LLViewerTextureList::updateImageDecodePriority
-    U32 mLastTextureUpdate = 0;
     // <FS> the record of this face for each texture channel in LLTexRecs (0: none)
-    U32 mRecIdx[LLRender::NUM_TEXTURE_CHANNELS] = {};
     F32 getBoundingSphereRadius() const { return row().boundingSphereRadius; }
 
 private:
@@ -318,24 +311,17 @@ private:
 
     std::vector<S32> mRiggedIndex;
 
-    // gFrameTimeSeconds when mPixelArea was last updated
-    F32         mLastPixelAreaUpdate = 0.f;
+    // gFrameTimeSeconds when row().pixelArea was last updated
 
-    // virtual size of face in texture area  (mPixelArea adjusted by texture repeats)
+    // virtual size of face in texture area  (row().pixelArea adjusted by texture repeats)
     // used to determine desired resolution of texture
-    F32         mVSize;
 
     // pixel area face covers on screen
-    F32         mPixelArea;
 
     //importance factor, in the range [0, 1.0].
     //1.0: the most important.
     //based on the distance from the face to the view point and the angle from the face center to the view direction.
-    F32         mImportanceToCamera ;
-    bool        mHasMedia ;
-    bool        mIsMediaAllowed;
 
-    U32 mDrawOrderIndex = 0; // see setDrawOrderIndex
 
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
     mutable bool                       mShowDiffTexture;
@@ -350,7 +336,7 @@ public:
     {
         bool operator()(const LLFace* const& lhs, const LLFace* const& rhs)
         {
-            return !lhs || (rhs && (lhs->mDistance > rhs->mDistance)); // farthest = first
+            return !lhs || (rhs && (lhs->row().distance > rhs->row().distance)); // farthest = first
         }
     };
 
@@ -405,7 +391,7 @@ public:
         bool operator()(const LLFace* const& lhs, const LLFace* const& rhs)
         {
             return lhs->getTexture() == rhs->getTexture() ?
-                lhs->mLastUpdateTime < rhs->mLastUpdateTime :
+                lhs->row().lastUpdateTime < rhs->row().lastUpdateTime :
                 lhs->getTexture() < rhs->getTexture();
         }
     };

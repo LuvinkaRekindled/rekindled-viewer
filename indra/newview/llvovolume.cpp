@@ -6769,7 +6769,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
                     {
                         if (drawablep->isState(LLDrawable::REBUILD_VOLUME))
                         {
-                            facep->mLastUpdateTime = gFrameTimeSeconds;
+                            facep->row().lastUpdateTime = gFrameTimeSeconds;
                         }
 
                         if (te)

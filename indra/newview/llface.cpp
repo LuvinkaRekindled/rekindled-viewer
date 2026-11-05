@@ -28,6 +28,8 @@
 
 #include "lldrawable.h" // lldrawable needs to be included before llface
 #include "llface.h"
+
+static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetable.h) has one slot per texture channel");   // <FS> C3.3
 #include "llviewertextureanim.h"
 
 #include "llviewercontrol.h"
@@ -141,17 +143,17 @@ void planarProjection(LLVector2 &tc, const LLVector4a& normal,
 void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;
-    mLastUpdateTime = gFrameTimeSeconds;
-    mLastMoveTime = 0.f;
-    mLastSkinTime = gFrameTimeSeconds;
-    mVSize = 0.f;
-    mPixelArea = 16.f;
+    row().lastUpdateTime = gFrameTimeSeconds;
+    row().lastMoveTime = 0.f;
+    row().lastSkinTime = gFrameTimeSeconds;
+    row().vSize = 0.f;
+    row().pixelArea = 16.f;
     row().state      = GLOBAL;
     mDrawPoolp  = NULL;
     mPoolType = 0;
     row().centerLocal = objp->getPosition();
     row().centerAgent = drawablep->getPositionAgent();
-    mDistance   = 0.f;
+    row().distance   = 0.f;
 
     row().geomCount      = 0;
     row().geomIndex      = 0;
@@ -179,13 +181,13 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
 
     row().faceColor = LLColor4(1,0,0,1);
 
-    mImportanceToCamera = 0.f ;
+    row().importanceToCamera = 0.f ;
     row().boundingSphereRadius = 0.0f ;
 
     row().texExtents[0].set(0, 0);
     row().texExtents[1].set(1, 1);
-    mHasMedia = false ;
-    mIsMediaAllowed = true;
+    row().hasMedia = false ;
+    row().isMediaAllowed = true;
 
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
     mShowDiffTexture = true;
@@ -416,7 +418,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
 
 void LLFace::stampTextures()
 {
-    mLastPixelAreaUpdate = 0.f;     // the size read by the texture priority is refreshed at most every 0.1 s (calcPixelArea): after a change the next evaluation must not read the old one
+    row().lastPixelAreaUpdate = 0.f;     // the size read by the texture priority is refreshed at most every 0.1 s (calcPixelArea): after a change the next evaluation must not read the old one
     LLTexRecs::faceChanged(this);   // <FS> H6: its record is filled again
     for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
     {
@@ -1262,11 +1264,11 @@ void LLFace::updateRebuildFlags()
 {
     if (mDrawablep->isState(LLDrawable::REBUILD_VOLUME))
     { //this rebuild is zero overhead (direct consequence of some change that affects this face)
-        mLastUpdateTime = gFrameTimeSeconds;
+        row().lastUpdateTime = gFrameTimeSeconds;
     }
     else
     { //this rebuild is overhead (side effect of some change that does not affect this face)
-        mLastMoveTime = gFrameTimeSeconds;
+        row().lastMoveTime = gFrameTimeSeconds;
     }
 }
 
@@ -2542,7 +2544,7 @@ void LLFace::renderIndexed()
 //check if the face has a media
 bool LLFace::hasMedia() const
 {
-    if(mHasMedia)
+    if(row().hasMedia)
     {
         return true ;
     }
@@ -2560,7 +2562,7 @@ const F32 LEAST_IMPORTANCE_FOR_LARGE_IMAGE = 0.3f ;
 void LLFace::resetVirtualSize()
 {
     setVirtualSize(0.f);
-    mImportanceToCamera = 0.f;
+    row().importanceToCamera = 0.f;
 }
 
 F32 LLFace::getTextureVirtualSize()
@@ -2572,7 +2574,7 @@ F32 LLFace::getTextureVirtualSize()
     bool in_frustum = calcPixelArea(cos_angle_to_view_dir, radius);
 
 
-    if (mPixelArea < F_ALMOST_ZERO || !in_frustum)
+    if (row().pixelArea < F_ALMOST_ZERO || !in_frustum)
     {
         setVirtualSize(0.f) ;
         return 0.f;
@@ -2591,19 +2593,19 @@ F32 LLFace::getTextureVirtualSize()
     if (mVObjp->isSculpted() && texel_area > 1.f)
     {
         //sculpts can break assumptions about texel area
-        face_area = mPixelArea;
+        face_area = row().pixelArea;
     }
     else
     {
         //apply texel area to face area to get accurate ratio
         //face_area /= llclamp(texel_area, 1.f/64.f, 16.f);
-        face_area =  mPixelArea / llclamp(texel_area, 0.015625f, 128.f);
+        face_area =  row().pixelArea / llclamp(texel_area, 0.015625f, 128.f);
     }
 
-    face_area = LLFace::adjustPixelArea(mImportanceToCamera, face_area);
+    face_area = LLFace::adjustPixelArea(row().importanceToCamera, face_area);
     if(face_area > LLViewerTexture::sMinLargeImageSize) //if is large image, shrink face_area by considering the partial overlapping.
     {
-        if(mImportanceToCamera > LEAST_IMPORTANCE_FOR_LARGE_IMAGE && mTexture[LLRender::DIFFUSE_MAP].notNull() && mTexture[LLRender::DIFFUSE_MAP]->isLargeImage())
+        if(row().importanceToCamera > LEAST_IMPORTANCE_FOR_LARGE_IMAGE && mTexture[LLRender::DIFFUSE_MAP].notNull() && mTexture[LLRender::DIFFUSE_MAP]->isLargeImage())
         {
             face_area *= adjustPartialOverlapPixelArea(cos_angle_to_view_dir, radius );
         }
@@ -2627,7 +2629,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     // </FS>
     // this is an expensive operation and the result is valid (enough) for several frames
     // don't update every frame
-    if (gFrameTimeSeconds - mLastPixelAreaUpdate < PIXEL_AREA_UPDATE_PERIOD)
+    if (gFrameTimeSeconds - row().lastPixelAreaUpdate < PIXEL_AREA_UPDATE_PERIOD)
     {
         return true;
     }
@@ -2742,10 +2744,10 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     //get area of circle around node
     F32 app_angle = atanf((F32) sqrt(size_squared) / dist);
     radius = app_angle*LLDrawable::sCurPixelAngle;
-    mPixelArea = radius*radius * 3.14159f;
+    row().pixelArea = radius*radius * 3.14159f;
 
     // remember last update time, add 10% noise to avoid all faces updating at the same time
-    mLastPixelAreaUpdate = gFrameTimeSeconds + ll_frand() * PIXEL_AREA_UPDATE_PERIOD * 0.1f;
+    row().lastPixelAreaUpdate = gFrameTimeSeconds + ll_frand() * PIXEL_AREA_UPDATE_PERIOD * 0.1f;
 
     LLVector4a x_axis;
     x_axis.load3(camera->getXAxis().mV);
@@ -2756,7 +2758,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     {
         if(!camera->AABBInFrustum(center, size))
         {
-            mImportanceToCamera = 0.f ;
+            row().importanceToCamera = 0.f ;
             return false ;
         }
         if(cos_angle_to_view_dir > camera->getCosHalfFov()) //the center is within the view frustum
@@ -2778,11 +2780,11 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     if(dist < row().boundingSphereRadius) //camera is very close
     {
         cos_angle_to_view_dir = 1.0f ;
-        mImportanceToCamera = 1.0f ;
+        row().importanceToCamera = 1.0f ;
     }
     else
     {
-        mImportanceToCamera = LLFace::calcImportanceToCamera(cos_angle_to_view_dir, dist) ;
+        row().importanceToCamera = LLFace::calcImportanceToCamera(cos_angle_to_view_dir, dist) ;
     }
 
     return true ;
