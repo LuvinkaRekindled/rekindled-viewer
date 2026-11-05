@@ -94,6 +94,15 @@ float pcfSpotShadow(sampler2DShadow shadowMap, vec4 stc, float bias_scale, vec2 
 }
 
 #if defined(SUN_SHADOW) && defined(LL_RT_SHADOWS)
+// <FS> PLAN-rt-shadow-penumbra.md step 1: the distance along a sun ray to the nearest thing that blocks it (an opaque hit, or a card that covers at least half), 0 = nothing. rtShadowRay and
+// rtShadowRaySoftS set rt_blocker_t for the ray they trace; rtSunShadowCore keeps the CENTRE ray's value in rt_sun_blocker_t, which the sun lightmap pass writes to its second attachment. The
+// penumbra at the receiver is this distance times twice the tangent of the sun's angular radius; a filter sized by it is the plan's next step (the noise of the random disc rays goes with it).
+float rt_blocker_t = 0.0;
+float rt_sun_blocker_t = 0.0;
+float rtSunBlockerT()
+{
+    return rt_sun_blocker_t;
+}
 // <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
@@ -245,6 +254,10 @@ uniform float rt_sun_alpha;            // <FS> 1 in the alpha passes (blended su
 uniform float rt_sun_maxdist;          // <FS> metres: a blended (alpha) pixel farther than this is lit without a shadow ray (set by the alpha passes; 0 = no limit, every other shader)
 uniform vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
 uniform float rt_noise_frame;
+uniform int rt_sun_centre;             // <FS> sun lightmap pass only (rt-debug.txt suncentre, default 1): one deterministic ray at the centre of the sun's disc, no disc point, no start disc, no per-frame pattern
+uniform float rt_sun_strength;         // <FS> sun lightmap pass only, with the centre ray (rt-debug.txt sunstrength, percent, default 65): the most light an avatar's own close surfaces may block on that avatar
+                                       // (the translucency floor of 2026-10-28; the cone of wide rays that replaced it on 11-01 let rays escape the hair shell sideways, which no filter on the result can do)
+                                       // (PLAN-rt-shadow-penumbra.md: the penumbra comes from the filter sized by the blocker distance instead; the history, the noise motion and the sun blur are off with it)
 uniform int rt_sun_adapt;              // <FS> RenderRTShadowAdaptiveRays (sun lightmap pass only): the rays of a pixel whose shadow history is short (a moving edge, an uncovered pixel); 0 = off
 float rt_adapt_count = 99.0;           // the history length of this pixel last frame (set by the sun lightmap shader, rtSetAdaptCount)
 void rtSetAdaptCount(float c)
@@ -318,11 +331,13 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
             }
         }
     }
-    if (capped && rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    const bool blocked = rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+    rt_blocker_t = blocked ? rayQueryGetIntersectionTEXT(rq, true) : 0.0;
+    if (capped && !blocked)
     {
         return LL_RT_CAPPED_RESULT;
     }
-    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+    return blocked ? 0.0 : 1.0;
 }
 
 float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
@@ -377,6 +392,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         return 1.0;
     }
     rt_near_skin_t = 0.0;
+    rt_blocker_t = 0.0;
     float transmit = 1.0;                       // the light that gets past everything but close skinned avatar surfaces
     float skin = 1.0;                           // the light that gets past the close skinned avatar surfaces: their product, but never less than the floor (a cap on the TOTAL, a lock of hair is dozens of cards)
                                                 // (the floor 1 - strength fades to 0 between LL_RT_SUN_SELF_NEAR0 and LL_RT_SUN_SELF_NEAR of the NEAREST of those surfaces, rt_near_skin_t: the first occluder decides
@@ -414,6 +430,10 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
                 const float t_cand = rayQueryGetIntersectionTEXT(rq, false);
                 const bool close = t_cand < LL_RT_SUN_SELF_NEAR;
                 const float cover = rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
+                if (cover >= 0.5)
+                {
+                    rt_blocker_t = (rt_blocker_t == 0.0) ? t_cand : min(rt_blocker_t, t_cand);      // a card that covers at least half is a blocker for the penumbra's distance
+                }
                 if (skinned && close)
                 {
                     skin *= 1.0 - cover;
@@ -455,6 +475,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         }
         // a solid hit: a close skinned avatar surface is translucent too (only when there is a floor to apply), anything else blocks
         const float t_hit = rayQueryGetIntersectionTEXT(rq, true);
+        rt_blocker_t = (rt_blocker_t == 0.0) ? t_hit : min(rt_blocker_t, t_hit);
         const uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
         const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
 #if LL_RT_SUN_DEBUG == 0
@@ -1095,6 +1116,39 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     vec3 b2 = cross(norm, b1);
     const bool self_on = rt_sun_self_off < 0.5 || rt_sun_self_off > 1.5;      // 1 = off; 2 = on with the full hair walk (the early exit of rtShadowRaySoftS off)
     float strength = self_on ? LL_RT_SUN_ALPHA_STRENGTH : 1.0;  // this pixel's: 1 (avatar surfaces block fully) once the probe says the receiver is not an avatar
+    if (rt_sun_centre != 0)
+    {
+        // <FS> ONE ray at the disc's centre: the same answer every frame for a still scene, so there is nothing to average over frames (no history, no noise motion, no blur of the sun channel:
+        // pipeline.cpp switches them off with this mode). The soft walk through masked and blended cards stays (its coverage products are deterministic too), as do the translucency and the
+        // receiver probe of the avatar self shadow. The penumbra is the filter's job, sized by this ray's blocker distance (rt_sun_blocker_t -> the lightmap's second attachment).
+        // The translucency floor stands in for the wide rays of the cone (hair over the scalp and the skin: the old wide rays escaped the hair shell sideways and lit the layer under it)
+        if (self_on && rt_sun_strength > 0.0)
+        {
+            strength = min(strength, rt_sun_strength);
+        }
+        float one = rtSunRayAt(origin, light_dir, pos_screen, lod, -pos.z, strength);
+        if (strength < 1.0 && rt_near_skin_t > 0.0 && LL_RT_SUN_SELF_RECV > 0.0 && !rtReceiverIsAvatar(pos, norm))
+        {
+            one = rtSunRayAt(origin, light_dir, pos_screen, lod, -pos.z, 1.0);
+        }
+        float t_b = rt_blocker_t;
+        if (t_b > 0.0 && rt_sun_radius > 0.0)
+        {
+            // the two receiver-side softenings of the avatar self shadow, as the blocker distance that gives the filter the same width (the filter's half-width is t x rt_sun_radius):
+            // the avatar cone (LL_RT_SUN_PENUMBRA: a close skinned blocker at skin_t gives a penumbra half-width of 8 mm on the skin, at most 0.35 skin_t, where the other rays of the pixel used to go to a
+            // wider disc) and the 4 mm start disc (LL_RT_SUN_SSS: skin scatters the light it receives a few millimetres sideways, a floor on the width of every blocked receiver when the self shadow work is on)
+            if (rt_near_skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
+            {
+                t_b = max(t_b, min(LL_RT_SUN_PENUMBRA, 0.35 * rt_near_skin_t) / rt_sun_radius);
+            }
+            if (LL_RT_SUN_SSS > 0.0 && self_on)
+            {
+                t_b = max(t_b, LL_RT_SUN_SSS / rt_sun_radius);
+            }
+        }
+        rt_sun_blocker_t = t_b;
+        return one;
+    }
     if (samples == 1 && rt_sun_radius <= 0.0)
     {
         vec3 o = origin;
@@ -1107,6 +1161,7 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
         {
             one = rtSunRayAt(o, light_dir, pos_screen, lod, -pos.z, 1.0);
         }
+        rt_sun_blocker_t = rt_blocker_t;
         return one;
     }
     // a frame of tangents for the sun's disc and a golden angle spiral
@@ -1165,6 +1220,7 @@ float rtSunShadowCore(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
             }
             skin_t = rt_near_skin_t;
             lit0 = one;
+            rt_sun_blocker_t = rt_blocker_t;        // the centre ray's blocker (the first ray of the pixel is the one on the disc's centre: ri 0 of the spiral, or the R2 point of a lone ray)
             if (skin_t > 0.0 && LL_RT_SUN_PENUMBRA > 0.0)
             {
                 pen_mode = true;

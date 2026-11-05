@@ -1026,6 +1026,32 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     // </FS:Beq>
     { //only need mRT->deferredLight for shadows OR ssao OR dof OR fxaa
         if (!mRT->deferredLight.allocate(resX, resY, screenFormat)) return false;
+        // <FS> ray traced shadows (PLAN-rt-shadow-penumbra.md step 1): the sun pass also writes the blocker distance of its centre ray, to a second attachment of the lightmap; it is copied right after
+        // the pass into mRtBlocker, since the passes that rewrite the lightmap later (the history's copy, the blur) write attachment 0 only and leave attachment 1 undefined
+        if (LLVkBridge::rtShadowMode() && !gCubeSnapshot)      // (the main view's buffers only: the reflection probes' sun pass has one output, and mRtBlocker is one target)
+        {
+            if (!mRT->deferredLight.addColorAttachment(TexelFormat::R16F) || !mRtBlocker.allocate(resX, resY, TexelFormat::R16F))
+            {
+                mRtBlocker.release();
+            }
+            if (!mRtShadowTemp.allocate(resX, resY, screenFormat))      // the penumbra filter's output, the lightmap's format
+            {
+                mRtShadowTemp.release();
+            }
+            if (!mRtSunHard.allocate(resX, resY, TexelFormat::RGBA16F, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO))    // the hard sun shadow, the half-width and the blocker mask with their mip chain, generated at the end of the prep pass
+            {
+                mRtSunHard.release();
+            }
+        }
+        else if (!gCubeSnapshot)
+        {
+            mRtBlocker.release();
+            mRtShadowTemp.release();
+            mRtSunHard.release();
+        }
+        if (!gCubeSnapshot)
+        LL_INFOS("VkRt") << "rt blocker distance: screen buffers " << resX << "x" << resY << ", ray traced shadows " << LLVkBridge::rtShadowMode() << ", lightmap attachments " << mRT->deferredLight.getNumTextures()
+                         << ", blocker target " << (mRtBlocker.isComplete() ? "complete" : "none") << LL_ENDL;
         if (sDLSS && LLVkBridge::rtShadowMode())
         {
             for (LLRenderTarget& t : mShadowAccum)
@@ -1532,6 +1558,9 @@ void LLPipeline::releaseScreenBuffers()
     mAvatarVelocityMap.release();
     mShadowAccum[0].release();
     mShadowAccum[1].release();
+    mRtBlocker.release();
+    mRtShadowTemp.release();
+    mRtSunHard.release();
     mUpscaledMap.release();
     mNROutput.release();
     mNROutputRender.release();
@@ -14240,6 +14269,40 @@ static U64 sSlTicket = 0, sSlNotWorth = 0, sSlQueued = 0, sSlUnready = 0;
 // results from the thread: kept with their entry, the buffer is made here (a few a frame)
 static void shadow_lod_pump()
 {
+    // <FS> the sweep of the cache runs here, every 600 frames, whatever the shadow mode: it used to run inside shadow_lod_apply, which the cascades call and the ray traced shadows never do, so with
+    // ray tracing on no entry was ever evicted while the main view's lookup kept adding them, and every entry pins its source vertex buffer (mOwner): the buffers of killed avatars' attachments
+    // stayed alive for good and the viewer grew by gigabytes an hour in a crowd (2026-11-04, "vertex buffers 7 GB"). An entry goes when its draw was not seen for 20 seconds or when the cache is
+    // the last holder of its buffer (the object is gone).
+    {
+        static U32 last_sweep = 0;
+        if (gFrameCount - last_sweep >= 600)
+        {
+            last_sweep = gFrameCount;
+            U32 gone_unused = 0, gone_last_holder = 0;
+            U64 freed_bytes = 0;
+            for (auto it = sSlCache.begin(); it != sSlCache.end();)
+            {
+                const bool last_holder = it->second.mOwner.notNull() && it->second.mOwner->getNumRefs() <= 1;
+                if (gFrameCount - it->second.mUsed > 1200 || last_holder)
+                {
+                    freed_bytes += (it->second.mOwner.notNull() ? it->second.mOwner->getSize() : 0) + (it->second.mIndexVb.notNull() ? it->second.mIndexVb->getIndicesSize() : 0);
+                    gone_unused += last_holder ? 0 : 1;
+                    gone_last_holder += last_holder ? 1 : 0;
+                    it = sSlCache.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+            static U32 sweeps = 0;
+            if (++sweeps % 10 == 1 || gone_last_holder + gone_unused > 500)
+            {
+                LL_INFOS("ShadowLod") << "shadow caster LOD cache sweep: " << gone_unused << " entries unused for 20 s and " << gone_last_holder << " whose buffer only the cache still held went (about " << (freed_bytes >> 20)
+                                      << " MB of buffers released), " << sSlCache.size() << " entries stay" << LL_ENDL;
+            }
+        }
+    }
     std::vector<ShadowLodResult> done;
     {
         std::lock_guard<std::mutex> lock(sSlThread->mMutex);
@@ -14473,18 +14536,7 @@ static bool shadow_lod_apply(U32 pass, const std::vector<LLDrawInfo*>& draws, st
 
     if (++calls % 2400 == 0)
     {
-        // the cache keeps nothing for buffers only it still holds, nor for draws not seen for 20 seconds
-        for (auto it = sSlCache.begin(); it != sSlCache.end();)
-        {
-            if (gFrameCount - it->second.mUsed > 1200 || it->second.mOwner->getNumRefs() <= 1)
-            {
-                it = sSlCache.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
+        // (the cache's sweep is in shadow_lod_pump now: it has to run with ray traced shadows too, which never come here)
         LL_INFOS("ShadowLod") << "shadow caster LOD: " << calls << " cascade passes, entries patched " << patched << " (triangles " << tris_before << " -> " << tris_after << "), queued " << sSlQueued
             << ", waiting for a snapshot slot " << sSlUnready << ", not worth it " << sSlNotWorth << ", cache " << sSlCache.size() << ", pending buffers " << sSlPending.size() << LL_ENDL;
         patched = tris_before = tris_after = 0;
@@ -20289,7 +20341,17 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
     RenderPassScope pass(*dst);
     bindDeferredShader(gRtMaterialDebugProgram);
     const S32 live_view = LLVkBridge::rtDebugView();        // rt-debug.txt view=N overrides the setting (changed while running, no restart)
-    gRtMaterialDebugProgram.uniform1i(mode_s, llclamp(live_view > 0 ? live_view : (S32)mode, 1, 16));
+    const S32 asked = llclamp(live_view > 0 ? live_view : (S32)mode, 1, 18);
+    const S32 shown = (LLVkBridge::rtMaterialsAvailable() || asked >= 17) ? asked : 17;       // without the material table (LL_VK_RT_MATERIALS) only the blocker distance views exist
+    gRtMaterialDebugProgram.uniform1i(mode_s, shown);
+    if (shown == 18 && mRT->deferredLight.getNumTextures() >= 2)
+    {
+        gRtMaterialDebugProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &mRT->deferredLight, false, LLTexUnit::TFO_POINT, 1);      // mode 18: the lightmap's attachment 1 itself
+    }
+    else if (mRtBlocker.isComplete())
+    {
+        gRtMaterialDebugProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &mRtBlocker, false, LLTexUnit::TFO_POINT, 0);      // mode 17: the blocker distance (PLAN-rt-shadow-penumbra.md step 1)
+    }
     {
         LLRenderState::BlendScope blend(false);
         LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
@@ -20309,7 +20371,8 @@ LLRenderTarget* LLPipeline::accumulateSunShadow(LLRenderTarget* light)
     static LLCachedControl<bool> enabled(gSavedSettings, "RenderRTShadowAccumulate", true);
     static LLCachedControl<S32> history_setting(gSavedSettings, "RenderRTShadowHistory", 24);
     static LLCachedControl<S32> spatial_setting(gSavedSettings, "RenderRTShadowSpatial", 2);
-    if (!enabled || !sDLSS || (rayReconstructionActive() && rrDebugMode() != 6) || !LLVkBridge::rtShadowMode() || gCubeSnapshot || gSnapshot || !gShadowAccumProgram.isComplete() || !light->isComplete()
+    // (no history with the deterministic centre ray, rt-debug.txt suncentre: a still scene gives the same shadow every frame, there is nothing to accumulate; PLAN-rt-shadow-penumbra.md)
+    if (!enabled || !sDLSS || LLVkBridge::rtSunCentre() != 0 || (rayReconstructionActive() && rrDebugMode() != 6) || !LLVkBridge::rtShadowMode() || gCubeSnapshot || gSnapshot || !gShadowAccumProgram.isComplete() || !light->isComplete()
         || !mShadowAccum[0].isComplete() || !mShadowAccum[1].isComplete() || mShadowAccum[0].getNumTextures() < 2 || mShadowAccum[1].getNumTextures() < 2
         || mShadowAccum[0].getWidth() != light->getWidth() || mShadowAccum[0].getHeight() != light->getHeight())
     {
@@ -21771,7 +21834,8 @@ void LLPipeline::renderFinalize()
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
     const S32 rr_dbg = (rr_done || rr_denoised) ? rrDebugMode() : 0;
-    const S32 visualization = (rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : (rr_dbg == 8 ? 13 : RenderBufferVisualization);
+    // <FS> rt-debug.txt view=N shows the ray scene's debug view by itself (no RenderBufferVisualization 9 needed): a live switch while the viewer runs
+    const S32 visualization = (LLVkBridge::rtDebugView() > 0 && LLVkBridge::rtShadowMode()) ? 9 : ((rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : (rr_dbg == 8 ? 13 : RenderBufferVisualization));
     if (visualization > -1)
     {
         switch (visualization)
@@ -23315,10 +23379,15 @@ void LLPipeline::renderDeferredLighting()
                     sun_shader.uniform1f(radius_s, tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD));
                     const S32 live_samples = LLVkBridge::rtSunSamples();         // rt-debug.txt sunsamples=N overrides the setting while it is set (a same-lap A/B)
                     sun_shader.uniform1i(samples_s, llclamp(live_samples > 0 ? live_samples : rt_samples(), 1, 16));
-                    // the noise changes every frame when the upscaler is there to accumulate it, else it stays put and the blur alone smooths it
+                    // <FS> PLAN-rt-shadow-penumbra.md: one deterministic ray at the sun disc's centre (rt-debug.txt suncentre, default 1); the disc radius and the sample count are then not read by the shader
+                    const bool sun_centre = LLVkBridge::rtSunCentre() != 0;
+                    static LLStaticHashedString centre_s("rt_sun_centre"), strength_s("rt_sun_strength");
+                    sun_shader.uniform1i(centre_s, sun_centre ? 1 : 0);
+                    sun_shader.uniform1f(strength_s, sun_centre ? llclamp(LLVkBridge::rtSunStrength(), 1, 100) / 100.f : 0.f);      // the translucency floor of the avatar self shadow (rt-debug.txt sunstrength)
+                    // the noise changes every frame when the upscaler is there to accumulate it, else it stays put and the blur alone smooths it (no noise at all with the centre ray)
                     {
                         const S32 noise = LLVkBridge::rtSunNoise();        // rt-debug.txt sunnoise: 1 every frame (default), 2 every 4th frame, 0 a fixed pattern
-                        sun_shader.uniform1f(frame_s, (sDLSS && noise != 0) ? (F32)((noise == 2 ? (mJitterIndex / 4) : mJitterIndex) % 64) : 0.f);
+                        sun_shader.uniform1f(frame_s, (sDLSS && noise != 0 && !sun_centre) ? (F32)((noise == 2 ? (mJitterIndex / 4) : mJitterIndex) % 64) : 0.f);
                     }
                     {
                         // <FS> RenderRTShadowAdaptiveRays: where last frame's shadow history is short (a moving edge, an uncovered pixel; the history pass sets the count back to 1 at RenderRTShadowSpatial 3 and 4), the sun pass traces more rays
@@ -23326,7 +23395,7 @@ void LLPipeline::renderDeferredLighting()
                         static LLCachedControl<S32> spatial_mode_setting(gSavedSettings, "RenderRTShadowSpatial", 2);
                         static LLCachedControl<bool> accumulate_setting(gSavedSettings, "RenderRTShadowAccumulate", true);
                         static LLStaticHashedString adapt_s("rt_sun_adapt"), adapt_hist_s("adapt_hist");
-                        const bool adapt_on = adapt_setting() >= 2 && spatial_mode_setting() >= 3 && accumulate_setting() && sDLSS && !gCubeSnapshot && !gSnapshot
+                        const bool adapt_on = adapt_setting() >= 2 && spatial_mode_setting() >= 3 && accumulate_setting() && sDLSS && !gCubeSnapshot && !gSnapshot && !sun_centre
                             && mShadowAccumFrame == LLFrameTimer::getFrameCount() && mShadowAccum[mShadowAccumIndex].isComplete() && mShadowAccum[mShadowAccumIndex].getNumTextures() >= 2;
                         if (adapt_on)
                         {
@@ -23352,7 +23421,83 @@ void LLPipeline::renderDeferredLighting()
             }
         }
 
-        LLRenderTarget* accumulated = nullptr;
+        if (LLVkBridge::rtShadowMode() && !gCubeSnapshot && mRtBlocker.isComplete() && deferred_light_target->getNumTextures() >= 2)
+        {
+            // <FS> the blocker distance the sun pass wrote (attachment 1) goes to its own target now: the history's copy and the blur rewrite the lightmap below with one output and leave attachment 1 undefined
+            LL_PROFILE_GPU_ZONE("rt blocker copy");
+            {
+                static bool logged_copy = false;
+                if (!logged_copy)
+                {
+                    logged_copy = true;
+                    LL_INFOS("VkRt") << "rt blocker distance: the first copy of the lightmap's attachment 1 into the blocker target runs (frame " << gFrameCount << ")" << LL_ENDL;
+                }
+            }
+            RenderPassScope pass(mRtBlocker);
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false);
+            gCopyProgram.bind();
+            deferred_light_target->bindTexture(1, 0, LLTexUnit::TFO_POINT);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+
+        LLRenderTarget* penumbra = nullptr;        // <FS> the lightmap with the penumbra filter applied to its sun channel (mRtShadowTemp), where the history's result used to go
+        if (LLVkBridge::rtShadowMode() && !gCubeSnapshot && LLVkBridge::rtSunCentre() != 0 && LLVkBridge::rtSunFilter() != 0 && mRtBlocker.isComplete() && mRtShadowTemp.isComplete()
+            && mRtSunHard.isComplete() && gRtShadowFilterProgram.isComplete() && gRtShadowPrepProgram.isComplete() && RenderDeferredSSAO)
+        {
+            // <FS> PLAN-rt-shadow-penumbra.md step 2b: the penumbra of the centre ray's hard shadow, sized per pixel by the blocker distance (rtShadowFilterF.glsl): one 2D pass (a blocker
+            // search disc, then a filter disc of that width) into mRtShadowTemp, which then stands where the history's result stood (the blur reads it with the sun channel passed through, or the
+            // copy puts it back into the lightmap). Replaces the history, the noise motion and the blur of the sun channel. rt-debug.txt sunfilter=0 leaves the shadow hard.
+            LL_PROFILE_GPU_ZONE("rt shadow penumbra");
+            static LLCachedControl<F32> rt_softness(gSavedSettings, "RenderRTShadowSoftness", 0.35f);
+            static LLStaticHashedString tan_s("pen_tan"), focal_s("pen_focal"), max_s("pen_max"), lod_s("pen_lod");
+            const F32 pen_tan = tanf(llclamp(rt_softness(), 0.f, 5.f) * DEG_TO_RAD);
+            const F32 focal = 0.5f * (F32)deferred_light_target->getHeight() / tanf(llmax(LLViewerCamera::getInstance()->getView(), 0.01f) * 0.5f);
+            const F32 pen_max = (F32)llclamp(LLVkBridge::rtSunPenMax(), 1, 64);
+            {
+                static bool logged = false;
+                if (!logged)
+                {
+                    logged = true;
+                    LL_INFOS("VkRt") << "rt shadow penumbra filter: first run, sun radius tan " << pen_tan << ", focal " << focal << " px, widest half-width " << pen_max << " px, lightmap "
+                                     << deferred_light_target->getWidth() << "x" << deferred_light_target->getHeight() << LL_ENDL;
+                }
+            }
+            LLRenderState::DepthReadOnlyScope filter_depth_read_only(true);      // both passes sample the depth (getPosition), as the lightmap blur does
+            {
+                // the hard sun channel, each pixel's half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl): the mip chain is generated when this pass ends (TMG_AUTO),
+                // each level the box average of the one below, so the filter's one read at the window's level is the blocker search over every pixel of the window
+                LL_PROFILE_GPU_ZONE("rt sun hard mips");
+                RenderPassScope rp(mRtSunHard);
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(false, false);
+                bindDeferredShader(gRtShadowPrepProgram, deferred_light_target);
+                gRtShadowPrepProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRtBlocker, false, LLTexUnit::TFO_POINT, 0);
+                gRtShadowPrepProgram.uniform1f(tan_s, pen_tan);
+                gRtShadowPrepProgram.uniform1f(focal_s, focal);
+                gRtShadowPrepProgram.uniform1f(max_s, pen_max);
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                unbindDeferredShader(gRtShadowPrepProgram);
+            }
+            {
+                RenderPassScope rp(mRtShadowTemp);
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(false, false);
+                bindDeferredShader(gRtShadowFilterProgram, deferred_light_target);
+                gRtShadowFilterProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRtSunHard, false, LLTexUnit::TFO_TRILINEAR, 0);         // the prep target's mip chain (diffuseRect): the blocker search in one read, the taps at the level of their spacing
+                gRtShadowFilterProgram.uniform1f(lod_s, (F32)llclamp(LLVkBridge::rtSunPenLod(), -4, 6));
+                gRtShadowFilterProgram.uniform1f(max_s, pen_max);
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                unbindDeferredShader(gRtShadowFilterProgram);
+            }
+            penumbra = &mRtShadowTemp;
+        }
+
+        LLRenderTarget* accumulated = penumbra;
+        if (!penumbra)
         {
             LL_CPU_ZONE("lighting: accumulate sun shadow");
             accumulated = (RenderDeferredSSAO && !gCubeSnapshot) ? accumulateSunShadow(deferred_light_target) : nullptr;       // <FS> the blur reads the accumulated sun shadow when there is one
@@ -23365,14 +23510,15 @@ void LLPipeline::renderDeferredLighting()
         // (RenderShadowBlurWithDLSS keeps it, blurring only the SSAO and the spot shadows: sun_passthrough); with the cascade shadows it runs whether the upscaler is on or not (2026-11-01, the user)
         static LLCachedControl<bool> rt_avatar_blur(gSavedSettings, "RenderRTShadowDynamicBlur", false);
         static LLCachedControl<F32> rt_avatar_blur_amount(gSavedSettings, "RenderRTShadowDynamicBlurAmount", 0.5f);
-        const bool avatar_blur = rt_avatar_blur && sDLSS && LLVkBridge::rtShadowMode() && mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();     // <FS> the avatar pixels only, see blurLightF.glsl
+        const bool sun_centre = LLVkBridge::rtSunCentre() != 0;     // <FS> the deterministic centre ray (rt-debug.txt suncentre): no cover touches the sun channel, the filter sized by the blocker distance is its penumbra
+        const bool avatar_blur = rt_avatar_blur && sDLSS && LLVkBridge::rtShadowMode() && !sun_centre && mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();     // <FS> the avatar pixels only, see blurLightF.glsl
         {
             static int last_state = -1;
-            const int state = (int)rt_avatar_blur * 100 + (int)sDLSS * 10 + (int)(LLVkBridge::rtShadowMode() != 0) + (int)mAvatarVelocityDrawn * 1000 + (int)mAvatarVelocityMap.isComplete() * 10000 + (int)avatar_blur * 100000;
+            const int state = (int)rt_avatar_blur * 100 + (int)sDLSS * 10 + (int)(LLVkBridge::rtShadowMode() != 0) + (int)mAvatarVelocityDrawn * 1000 + (int)mAvatarVelocityMap.isComplete() * 10000 + (int)avatar_blur * 100000 + (int)sun_centre * 1000000;
             if (state != last_state && !gCubeSnapshot)
             {
                 last_state = state;
-                LL_INFOS("VkRt") << "avatar sun blur: setting " << (bool)rt_avatar_blur << ", DLSS " << (bool)sDLSS << ", RT shadows " << (LLVkBridge::rtShadowMode() != 0) << ", velocity drawn " << mAvatarVelocityDrawn
+                LL_INFOS("VkRt") << "avatar sun blur: setting " << (bool)rt_avatar_blur << ", DLSS " << (bool)sDLSS << ", RT shadows " << (LLVkBridge::rtShadowMode() != 0) << ", centre ray " << sun_centre << ", velocity drawn " << mAvatarVelocityDrawn
                                  << ", velocity map complete " << mAvatarVelocityMap.isComplete() << " -> the blur runs on avatar pixels: " << avatar_blur << LL_ENDL;
             }
         }
@@ -23425,7 +23571,7 @@ void LLPipeline::renderDeferredLighting()
 
             // <FS> a ray traced sun shadow with the upscaler on is accumulated over frames and denoised by the upscaler: the blur leaves that channel alone (it still smooths the SSAO, which the upscaler cannot
             // average on a moving avatar). Without the upscaler the blur is what smooths the ray traced shadow, as before.
-            const F32 sun_passthrough = (sDLSS && LLVkBridge::rtShadowMode()) ? 1.f : 0.f;
+            const F32 sun_passthrough = (LLVkBridge::rtShadowMode() && (sDLSS || sun_centre)) ? 1.f : 0.f;      // (the centre ray's shadow is never blurred, upscaler or not)
             gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
             {
                 static LLStaticHashedString avatar_blur_s("sun_avatar_blur");

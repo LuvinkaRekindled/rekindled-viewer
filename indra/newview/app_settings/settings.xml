@@ -13297,13 +13297,13 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderRTShadowSoftness</key>
   <map>
     <key>Comment</key>
-    <string>Ray traced sun shadows (LL_VK_RT_SHADOWS): angular radius of the sun's disc in degrees. The penumbra of a shadow grows with the distance between caster and receiver. 0 = hard shadows (one ray). The real sun is 0.27.</string>
+    <string>Ray traced sun shadows (LL_VK_RT_SHADOWS): angular radius of the sun's disc in degrees. The penumbra of a shadow grows with the distance between caster and receiver (the filter sized by the blocker distance, PLAN-rt-shadow-penumbra.md; its pixel cap is rt-debug.txt penmax). 0 = hard shadows. The real sun is 0.27; 0.3 since 2026-11-05 (the user, by eye, with penmax 8 and penlod 1).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>F32</string>
     <key>Value</key>
-    <real>0.4</real>
+    <real>0.3</real>
   </map>
   <key>RenderRTShadowSamples</key>
   <map>

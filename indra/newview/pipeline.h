@@ -208,6 +208,9 @@ public:
     LLRenderTarget          mAvatarVelocityMap;
     // <FS> temporal accumulation of the ray traced sun shadow (shadowAccumF.glsl): two targets of two attachments (0 = lightmap shaped, 1 = history), used in turn
     LLRenderTarget          mShadowAccum[2];
+    LLRenderTarget          mRtSunHard;                         // <FS> the centre ray's hard sun shadow alone, with a mip chain (R16F): the penumbra filter's taps read the level of their spacing
+    LLRenderTarget          mRtShadowTemp;                      // <FS> PLAN-rt-shadow-penumbra.md step 2b: the penumbra filter's horizontal pass writes here, the vertical one reads it and writes the lightmap
+    LLRenderTarget          mRtBlocker;                         // <FS> PLAN-rt-shadow-penumbra.md step 1: the blocker distance of the sun lightmap's centre ray (R16F, copied from the lightmap's attachment 1 right after the sun pass)
     U32                     mShadowAccumIndex = 0;              // the target written last
     U32                     mShadowAccumFrame = 0;              // the frame it was written in (+1; 0 = never)
     LLRenderTarget*         accumulateSunShadow(LLRenderTarget* light);     // null: not done, the blur reads the plain lightmap

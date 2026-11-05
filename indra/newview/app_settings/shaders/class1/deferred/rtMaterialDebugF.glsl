@@ -30,6 +30,7 @@ in vec2 vary_fragcoord;
 uniform sampler2D diffuseRect;
 uniform sampler2D emissiveRect;
 uniform int rt_debug_mode;
+uniform sampler2D lightMap;     // <FS> mode 17: the blocker distance of the sun lightmap's centre ray (mRtBlocker, pipeline.cpp)
 
 vec4 getPosition(vec2 pos_screen);
 vec4 getNorm(vec2 screenpos);
@@ -194,6 +195,25 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
 void main()
 {
     vec2 uv = vary_fragcoord;
+    if (rt_debug_mode == 17 || rt_debug_mode == 18)
+    {
+        // 17: the blocker distance the sun pass wrote (PLAN-rt-shadow-penumbra.md step 1), from mRtBlocker; 18: the same read straight from the lightmap's attachment 1 (the copy left out).
+        // Black where the centre ray met nothing (0), a quarter grey for a blocker at the surface, brighter with the distance, white at 20 m and beyond; a value that is not finite shows magenta
+        float t = texture(lightMap, uv).r;
+        if (isnan(t) || isinf(t))
+        {
+            frag_color = vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        else if (t == 1.0)
+        {
+            frag_color = vec4(1.0, 0.0, 0.0, 1.0);      // exactly the clear value: nothing was written here (a real blocker at exactly 1.000 m is as good as never)
+        }
+        else
+        {
+            frag_color = vec4(vec3(t > 0.0 ? mix(0.25, 1.0, clamp(t / 20.0, 0.0, 1.0)) : 0.0), 1.0);
+        }
+        return;
+    }
     vec3 ref = texture(diffuseRect, uv).rgb;
     vec3 pos = getPosition(uv).xyz;
     float depth = length(pos);

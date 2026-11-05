@@ -1227,6 +1227,31 @@ S32 LLVkBridge::rtSunNoise()
     return rtShadowMode() != 0 ? LLVk::Rt::sunNoise() : 1;
 }
 
+S32 LLVkBridge::rtSunCentre()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunCentre() : 0;
+}
+
+S32 LLVkBridge::rtSunFilter()
+{
+    return rtShadowMode() != 0 ? LLVk::Rt::sunFilter() : 0;
+}
+
+S32 LLVkBridge::rtSunPenMax()
+{
+    return LLVk::Rt::sunPenMax();
+}
+
+S32 LLVkBridge::rtSunPenLod()
+{
+    return LLVk::Rt::sunPenLod();
+}
+
+S32 LLVkBridge::rtSunStrength()
+{
+    return LLVk::Rt::sunStrength();
+}
+
 S32 LLVkBridge::rtSunSelfShadow()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunSelfShadow() : 1;
