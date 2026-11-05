@@ -42,6 +42,7 @@
 #include "llrect.h"
 #include "llappviewer.h" // for gFrameTimeSeconds
 #include "llvieweroctree.h"
+#include "llinstancetable.h"   // <FS> C1a: the drawable's flag word, radius, scale and render type are columns of the instance table
 #include <unordered_set>
 
 class LLCamera;
@@ -96,8 +97,8 @@ public:
     const LLVector3&      getPosition() const           { return mXform.getPosition(); }
     const LLVector3&      getWorldPosition() const      { return mXform.getPositionW(); }
     const LLVector3       getPositionAgent() const;
-    const LLVector3&      getScale() const              { return mCurrentScale; }
-    void                  setScale(const LLVector3& scale) { mCurrentScale = scale; }
+    const LLVector3&      getScale() const              { return LLInstances::row(mInstance).scale; }
+    void                  setScale(const LLVector3& scale) { LLInstances::row(mInstance).scale = scale; }
     const LLQuaternion&   getWorldRotation() const      { return mXform.getWorldRotation(); }
     const LLQuaternion&   getRotation() const           { return mXform.getRotation(); }
     F32                   getIntensity() const          { return llmin(mXform.getScale().mV[0], 4.f); }
@@ -106,10 +107,13 @@ public:
     void  getMinMax(LLVector3& min,LLVector3& max) const { mXform.getMinMax(min,max); }
     LLXformMatrix*      getXform() { return &mXform; }
 
-    U32                 getState()           const { return mState; }
-    bool                isState   (U32 bits) const { return ((mState & bits) != 0); }
-    void                setState  (U32 bits)       { mState |= bits; }
-    void                clearState(U32 bits)       { mState &= ~bits; }
+    // <FS> C1a: the state word is a column of the instance table (row mInstance)
+    U32                 getState()           const { return LLInstances::row(mInstance).flags; }
+    bool                isState   (U32 bits) const { return ((LLInstances::row(mInstance).flags & bits) != 0); }
+    void                setState  (U32 bits)       { LLInstances::row(mInstance).flags |= bits; }
+    void                clearState(U32 bits)       { LLInstances::row(mInstance).flags &= ~bits; }
+    U32                 getInstance()        const { return mInstance; }
+    bool                ownsInstanceRow()    const { return LLInstances::ownedBy(mInstance, this); }   // false for a pointer to a destroyed drawable
 
     bool                isAvatar()  const           { return mVObjp.notNull() && mVObjp->isAvatar(); }
     bool                isRoot() const              { return !mParent || mParent->isAvatar(); }
@@ -177,7 +181,7 @@ public:
 
     void setGroup(LLViewerOctreeGroup* group);
     void setRadius(const F32 radius);
-    F32 getRadius() const                       { return mRadius; }
+    F32 getRadius() const                       { return LLInstances::row(mInstance).radius; }
     F32 getVisibilityRadius() const;
 
     void updateUVMinMax();  // Updates the cache of sun space bounding box.
@@ -186,9 +190,9 @@ public:
     virtual void updateSpatialExtents();
     virtual void updateBinRadius();
 
-    void setRenderType(S32 type)                { mRenderType = type; }
-    bool isRenderType(S32 type)                 { return mRenderType == type; }
-    S32  getRenderType()                        { return mRenderType; }
+    void setRenderType(S32 type)                { LLInstances::row(mInstance).renderType = type; }
+    bool isRenderType(S32 type)                 { return LLInstances::row(mInstance).renderType == type; }
+    S32  getRenderType()                        { return LLInstances::row(mInstance).renderType; }
 
     // Debugging methods
     S32 findReferences(LLDrawable *drawablep); // Not const because of @#$! iterators...
@@ -205,7 +209,7 @@ public:
     static void cleanupDeadDrawables();
 
 protected:
-    ~LLDrawable() { destroy(); }
+    ~LLDrawable() { destroy(); LLInstances::release(mInstance, DEAD); }   // <FS> C1a: the row goes back after destroy() (which still reads the state)
     void moveUpdatePipeline(bool moved);
     void updatePartition();
     bool updateMoveDamped();
@@ -296,16 +300,12 @@ public:
     static F32 sCurPixelAngle; //current pixels per radian
 
 private:
-    U32             mState;
-    S32             mRenderType;
+    U32             mInstance;      // <FS> C1a: this drawable's row in the instance table (flags, radius, render type, scale)
     LLPointer<LLViewerObject> mVObjp;
     face_list_t     mFaces;
     LLPointer<LLDrawable> mSpatialBridge;
 
-    F32             mRadius;
     S32             mGeneration;
-
-    LLVector3       mCurrentScale;
 
     static U32 sNumZombieDrawables;
     static std::vector<LLPointer<LLDrawable> > sDeadList;
