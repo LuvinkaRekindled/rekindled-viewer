@@ -6387,10 +6387,10 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
 
     if (group->changeLOD())
     {
-        group->mLastUpdateDistance = group->mDistance;
+        group->row().lastUpdateDistance = group->row().distance;
     }
 
-    group->mLastUpdateViewAngle = group->mViewAngle;
+    group->row().lastUpdateViewAngle = group->row().viewAngle;
 
     if (!group->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
     {
@@ -6434,7 +6434,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
 
     //cache object box size since it might be used for determining visibility
     const LLVector4a* bounds = group->getObjectBounds();
-    group->mObjectBoxSize = bounds[1].getLength3().getF32();
+    group->row().objectBoxSize = bounds[1].getLength3().getF32();
 
     group->clearDrawMap();
 
@@ -6958,7 +6958,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
         }
     }
 
-    group->mLastUpdateTime = gFrameTimeSeconds;
+    group->row().lastUpdateTime = gFrameTimeSeconds;
     group->mBuilt = 1.f;
     group->clearState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY);
 }

@@ -480,8 +480,8 @@ void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
 
     if (group->changeLOD())
     {
-        group->mLastUpdateDistance = group->mDistance;
-        group->mLastUpdateViewAngle = group->mViewAngle;
+        group->row().lastUpdateDistance = group->row().distance;
+        group->row().lastUpdateViewAngle = group->row().viewAngle;
     }
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
@@ -525,7 +525,7 @@ void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
         group->mBufferMap.clear();
     }
 
-    group->mLastUpdateTime = gFrameTimeSeconds;
+    group->row().lastUpdateTime = gFrameTimeSeconds;
     group->clearState(LLSpatialGroup::GEOM_DIRTY);
 }
 
@@ -708,22 +708,25 @@ void LLSpatialGroup::clearState(U32 state, S32 mode)
 //======================================
 
 LLSpatialGroup::LLSpatialGroup(OctreeNode* node, LLSpatialPartition* part) : LLOcclusionCullingGroup(node, part),
-    mObjectBoxSize(1.f),
     mGeometryBytes(0),
     mSurfaceArea(0.f),
     mBuilt(0.f),
-    mVertexBuffer(NULL),
-    mDistance(0.f),
-    mDepth(0.f),
-    mLastUpdateDistance(-1.f),
-    mLastUpdateTime(gFrameTimeSeconds)
+    mVertexBuffer(NULL)
 {
     ll_assert_aligned(this,16);
 
     sNodeCount++;
 
-    mViewAngle.splat(0.f);
-    mLastUpdateViewAngle.splat(-1.f);
+    {   // <FS> C1b.2: the view caches are in the row (a new row is zeroed)
+        LLGroupRows::Row& r = row();
+        r.objectBoxSize = 1.f;
+        r.distance = 0.f;
+        r.depth = 0.f;
+        r.lastUpdateDistance = -1.f;
+        r.lastUpdateTime = gFrameTimeSeconds;
+        r.viewAngle.splat(0.f);
+        r.lastUpdateViewAngle.splat(-1.f);
+    }
 
     sg_assert(mOctreeNode->getListenerCount() == 0);
     setState(SG_INITIAL_STATE_MASK);
@@ -732,8 +735,8 @@ LLSpatialGroup::LLSpatialGroup(OctreeNode* node, LLSpatialPartition* part) : LLO
     // let the reflection map manager know about this spatial group
     mReflectionProbe = gPipeline.mReflectionMapManager.registerSpatialGroup(this);
 
-    mRadius = 1;
-    mPixelArea = 1024.f;
+    row().radius = 1;
+    row().pixelArea = 1024.f;
 }
 
 void LLSpatialGroup::updateDistance(LLCamera &camera)
@@ -758,10 +761,10 @@ void LLSpatialGroup::updateDistance(LLCamera &camera)
 #endif
     if (!isEmpty())
     {
-        mRadius = getSpatialPartition()->mRenderByGroup ? row().objectBounds[1].getLength3().getF32() :
+        row().radius = getSpatialPartition()->mRenderByGroup ? row().objectBounds[1].getLength3().getF32() :
                         (F32) mOctreeNode->getSize().getLength3().getF32();
-        mDistance = getSpatialPartition()->calcDistance(this, camera);
-        mPixelArea = getSpatialPartition()->calcPixelArea(this, camera);
+        row().distance = getSpatialPartition()->calcDistance(this, camera);
+        row().pixelArea = getSpatialPartition()->calcPixelArea(this, camera);
     }
 }
 
@@ -791,12 +794,12 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
                 LLVector4a view_angle = eye;
 
                 LLVector4a diff;
-                diff.setSub(view_angle, group->mLastUpdateViewAngle);
+                diff.setSub(view_angle, group->row().lastUpdateViewAngle);
 
                 if (diff.getLength3().getF32() > 0.64f)
                 {
-                    group->mViewAngle = view_angle;
-                    group->mLastUpdateViewAngle = view_angle;
+                    group->row().viewAngle = view_angle;
+                    group->row().lastUpdateViewAngle = view_angle;
                     //for occasional alpha sorting within the group
                     //NOTE: If there is a trivial way to detect that alpha sorting here would not change the render order,
                     //not setting this node to dirty would be a very good thing
@@ -819,7 +822,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
         t.mul(group->row().objectBounds[1]);
         v.sub(t);
 
-        group->mDepth = v.dot3(ata).getF32();
+        group->row().depth = v.dot3(ata).getF32();
     }
     else
     {
@@ -857,8 +860,8 @@ F32 LLSpatialGroup::getUpdateUrgency() const
     }
     else
     {
-        F32 time = gFrameTimeSeconds-mLastUpdateTime+4.f;
-        return time + (row().objectBounds[1].dot3(row().objectBounds[1]).getF32()+1.f)/mDistance;
+        F32 time = gFrameTimeSeconds-row().lastUpdateTime+4.f;
+        return time + (row().objectBounds[1].dot3(row().objectBounds[1]).getF32()+1.f)/row().distance;
     }
 }
 
@@ -874,7 +877,7 @@ bool LLSpatialGroup::changeLOD()
 
     if (getSpatialPartition()->mSlopRatio > 0.f)
     {
-        F32 ratio = (mDistance - mLastUpdateDistance)/(llmax(mLastUpdateDistance, mRadius));
+        F32 ratio = (row().distance - row().lastUpdateDistance)/(llmax(row().lastUpdateDistance, row().radius));
 
         // MAINT-8264 - this check is not robust if it needs to work
         // for bounding boxes much larger than the actual enclosed
@@ -1009,7 +1012,7 @@ void LLSpatialGroup::destroyGLState(bool keep_occlusion)
         gPipeline.markRebuild(this);
     }
 
-    mLastUpdateTime = gFrameTimeSeconds;
+    row().lastUpdateTime = gFrameTimeSeconds;
     mVertexBuffer = NULL;
     mBufferMap.clear();
 
