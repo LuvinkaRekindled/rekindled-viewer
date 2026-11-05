@@ -161,8 +161,8 @@ public:
     LLPointer<LLVOAvatar> mAvatar = nullptr;
     LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 
-    // Material pointer here is likely for debugging only and are immaterial (zing!)
-    LLPointer<LLMaterial> mMaterial;
+    // <FS> C2.4a: this was a counted LLPointer<LLMaterial> that was only ever tested for null (the batching test in registerFace, the materials pull program choice in the scene table): a flag, no lifetime to carry
+    bool mHasMaterial = false;
 
     // PBR material parameters
     LLPointer<LLFetchedGLTFMaterial> mGLTFMaterial;
