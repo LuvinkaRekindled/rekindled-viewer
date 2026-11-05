@@ -466,20 +466,21 @@ LLViewerOctreeGroup::~LLViewerOctreeGroup()
     {
         LLCullShadow::forget(this);         // <FS> S7 C1b: the slot is freed
     }
+    LLGroupRows::release(mRowId, DEAD);     // <FS> C1b: the row goes back (a stale pointer to this group reads "dead")
 }
 
 LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node)
-:   mOctreeNode(node),
-    mAnyVisible(0),
-    mState(CLEAN)
+:   mOctreeNode(node)
 {
-    LLVector4a tmp;
-    tmp.splat(0.f);
-    mExtents[0] = mExtents[1] = mObjectBounds[0] = mObjectBounds[1] =
-        mObjectExtents[0] = mObjectExtents[1] = tmp;
+    mRowId = LLGroupRows::acquire(this);    // <FS> C1b: a cleared row: stamps 0, state CLEAN, boxes 0
+    if (!mRowId)
+    {
+        LL_ERRS() << "the group table is full (" << LLGroupRows::kCapacity << " groups)" << LL_ENDL;
+    }
+    static_assert(LLGroupRows::kCameras == LLViewerCamera::NUM_CAMERAS, "the group row holds one stamp per camera");
 
-    mBounds[0] = node->getCenter();
-    mBounds[1] = node->getSize();
+    row().bounds[0] = node->getCenter();
+    row().bounds[1] = node->getSize();
 
     mOctreeNode->addListener(this);
     if (LLCullShadow::sOn)
@@ -580,10 +581,10 @@ void LLViewerOctreeGroup::rebound()
         group->rebound();
 
         //copy single child's bounding box
-        mBounds[0] = group->mBounds[0];
-        mBounds[1] = group->mBounds[1];
-        mExtents[0] = group->mExtents[0];
-        mExtents[1] = group->mExtents[1];
+        row().bounds[0] = group->row().bounds[0];
+        row().bounds[1] = group->row().bounds[1];
+        row().extents[0] = group->row().extents[0];
+        row().extents[1] = group->row().extents[1];
 
         if (LLCullShadow::sOn && !group->hasState(SKIP_FRUSTUM_CHECK))
         {
@@ -593,14 +594,14 @@ void LLViewerOctreeGroup::rebound()
     }
     else if (mOctreeNode->getChildCount() == 0)
     { //copy object bounding box if this is a leaf
-        boundObjects(true, mExtents[0], mExtents[1]);
-        mBounds[0] = mObjectBounds[0];
-        mBounds[1] = mObjectBounds[1];
+        boundObjects(true, row().extents[0], row().extents[1]);
+        row().bounds[0] = row().objectBounds[0];
+        row().bounds[1] = row().objectBounds[1];
     }
     else
     {
-        LLVector4a& newMin = mExtents[0];
-        LLVector4a& newMax = mExtents[1];
+        LLVector4a& newMin = row().extents[0];
+        LLVector4a& newMax = row().extents[1];
         LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) mOctreeNode->getChild(0)->getListener(0);
         if (LLCullShadow::sOn && group->hasState(SKIP_FRUSTUM_CHECK))
         {
@@ -609,8 +610,8 @@ void LLViewerOctreeGroup::rebound()
         group->clearState(SKIP_FRUSTUM_CHECK);
         group->rebound();
         //initialize to first child
-        newMin = group->mExtents[0];
-        newMax = group->mExtents[1];
+        newMin = group->row().extents[0];
+        newMax = group->row().extents[1];
 
         //first, rebound children
         for (U32 i = 1; i < mOctreeNode->getChildCount(); i++)
@@ -622,8 +623,8 @@ void LLViewerOctreeGroup::rebound()
             }
             group->clearState(SKIP_FRUSTUM_CHECK);
             group->rebound();
-            const LLVector4a& max = group->mExtents[1];
-            const LLVector4a& min = group->mExtents[0];
+            const LLVector4a& max = group->row().extents[1];
+            const LLVector4a& min = group->row().extents[0];
 
             newMax.setMax(newMax, max);
             newMin.setMin(newMin, min);
@@ -631,10 +632,10 @@ void LLViewerOctreeGroup::rebound()
 
         boundObjects(false, newMin, newMax);
 
-        mBounds[0].setAdd(newMin, newMax);
-        mBounds[0].mul(0.5f);
-        mBounds[1].setSub(newMax, newMin);
-        mBounds[1].mul(0.5f);
+        row().bounds[0].setAdd(newMin, newMax);
+        row().bounds[0].mul(0.5f);
+        row().bounds[1].setSub(newMax, newMin);
+        row().bounds[1].mul(0.5f);
     }
 
     clearState(DIRTY);
@@ -761,8 +762,8 @@ bool LLViewerOctreeGroup::boundObjects(bool empty, LLVector4a& minOut, LLVector4
         return false;
     }
 
-    LLVector4a& newMin = mObjectExtents[0];
-    LLVector4a& newMax = mObjectExtents[1];
+    LLVector4a& newMin = row().objectExtents[0];
+    LLVector4a& newMax = row().objectExtents[1];
 
     if (hasState(OBJECT_DIRTY))
     { //calculate new bounding box
@@ -785,10 +786,10 @@ bool LLViewerOctreeGroup::boundObjects(bool empty, LLVector4a& minOut, LLVector4
             update_min_max(newMin, newMax, minMax[1]);
         }
 
-        mObjectBounds[0].setAdd(newMin, newMax);
-        mObjectBounds[0].mul(0.5f);
-        mObjectBounds[1].setSub(newMax, newMin);
-        mObjectBounds[1].mul(0.5f);
+        row().objectBounds[0].setAdd(newMin, newMax);
+        row().objectBounds[0].mul(0.5f);
+        row().objectBounds[1].setSub(newMax, newMin);
+        row().objectBounds[1].mul(0.5f);
     }
 
     if (empty)
@@ -808,7 +809,7 @@ bool LLViewerOctreeGroup::boundObjects(bool empty, LLVector4a& minOut, LLVector4
 //virtual
 bool LLViewerOctreeGroup::isVisible() const
 {
-    return mVisible[LLViewerCamera::sCurCameraID] >= LLViewerOctreeEntryData::getCurrentFrame();
+    return row().visible[LLViewerCamera::sCurCameraID] >= LLViewerOctreeEntryData::getCurrentFrame();
 }
 
 //virtual
@@ -819,11 +820,11 @@ bool LLViewerOctreeGroup::isRecentlyVisible() const
 
 void LLViewerOctreeGroup::setVisible()
 {
-    mVisible[LLViewerCamera::sCurCameraID] = LLViewerOctreeEntryData::getCurrentFrame();
+    row().visible[LLViewerCamera::sCurCameraID] = LLViewerOctreeEntryData::getCurrentFrame();
 
     if(LLViewerCamera::sCurCameraID < LLViewerCamera::CAMERA_WATER0)
     {
-        mAnyVisible = LLViewerOctreeEntryData::getCurrentFrame();
+        row().anyVisible = LLViewerOctreeEntryData::getCurrentFrame();
     }
 }
 
@@ -1142,15 +1143,15 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
     mSpatialPartition(part)
 {
     part->mLODSeed = (part->mLODSeed+1)%part->mLODPeriod;
-    mLODHash = part->mLODSeed;
+    row().lodHash = part->mLODSeed;
 
     OctreeNode* oct_parent = node->getOctParent();
     LLOcclusionCullingGroup* parent = oct_parent ? (LLOcclusionCullingGroup*) oct_parent->getListener(0) : NULL;
 
     for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
     {
-        mOcclusionState[i] = parent ? SG_STATE_INHERIT_MASK & parent->mOcclusionState[i] : 0;
-        mVisible[i] = 0;
+        row().occlusion[i] = parent ? SG_STATE_INHERIT_MASK & parent->row().occlusion[i] : 0;
+        row().visible[i] = 0;
     }
 }
 
@@ -1160,19 +1161,19 @@ LLOcclusionCullingGroup::~LLOcclusionCullingGroup()
 
 bool LLOcclusionCullingGroup::needsUpdate()
 {
-    return LLDrawable::getCurrentFrame() % mSpatialPartition->mLODPeriod == mLODHash;
+    return LLDrawable::getCurrentFrame() % mSpatialPartition->mLODPeriod == row().lodHash;
 }
 
 bool LLOcclusionCullingGroup::isRecentlyVisible() const
 {
     const S32 MIN_VIS_FRAME_RANGE = 2;
-    return (LLDrawable::getCurrentFrame() - mVisible[LLViewerCamera::sCurCameraID]) < MIN_VIS_FRAME_RANGE ;
+    return (LLDrawable::getCurrentFrame() - row().visible[LLViewerCamera::sCurCameraID]) < MIN_VIS_FRAME_RANGE ;
 }
 
 bool LLOcclusionCullingGroup::isAnyRecentlyVisible() const
 {
     const S32 MIN_VIS_FRAME_RANGE = 2;
-    return (LLDrawable::getCurrentFrame() - mAnyVisible) < MIN_VIS_FRAME_RANGE ;
+    return (LLDrawable::getCurrentFrame() - row().anyVisible) < MIN_VIS_FRAME_RANGE ;
 }
 
 //virtual
@@ -1201,15 +1202,15 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             add(sNumObjectsOccluded, 1);
         }
-        if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(mOcclusionState[LLViewerCamera::sCurCameraID] & OCCLUDED))
+        if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
-        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
         }
-        mOcclusionState[LLViewerCamera::sCurCameraID] |= state;
+        row().occlusion[LLViewerCamera::sCurCameraID] |= state;
         break;
 
     case STATE_MODE_DIFF:
@@ -1229,17 +1230,17 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         break;
 
     case STATE_MODE_ALL_CAMERAS:
-        if (LLCullShadow::sOn && (state & OCCLUDED) && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (LLCullShadow::sOn && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
-        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && !(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6
         }
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
-            mOcclusionState[i] |= state;
+            row().occlusion[i] |= state;
         }
         break;
 
@@ -1289,16 +1290,16 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             {
                 add(sNumObjectsUnoccluded, 1);
             }
-            if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (mOcclusionState[LLViewerCamera::sCurCameraID] & OCCLUDED))
+            if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
             }
-            if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6: it came into view: its textures are looked at again
                 LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
-            mOcclusionState[LLViewerCamera::sCurCameraID] &= ~state;
+            row().occlusion[LLViewerCamera::sCurCameraID] &= ~state;
             break;
 
         case STATE_MODE_DIFF:
@@ -1318,18 +1319,18 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             break;
 
         case STATE_MODE_ALL_CAMERAS:
-            if (LLCullShadow::sOn && (state & OCCLUDED) && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            if (LLCullShadow::sOn && (state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
             }
-            if (mSpatialPartition && (state & OCCLUDED) && (mOcclusionState[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            if (mSpatialPartition && (state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6
                 LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {
-                mOcclusionState[i] &= ~state;
+                row().occlusion[i] &= ~state;
             }
             break;
 
@@ -1417,10 +1418,10 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     {
         return;
     }
-    //move mBounds to the agent space if necessary
+    //move row().bounds to the agent space if necessary
     LLVector4a bounds[2];
-    bounds[0] = mBounds[0];
-    bounds[1] = mBounds[1];
+    bounds[0] = row().bounds[0];
+    bounds[1] = row().bounds[1];
     if (shift != NULL)
     {
         bounds[0].add(*shift);
@@ -1663,17 +1664,17 @@ void LLViewerOctreeCull::traverseTask(const SplitTask& task)
 
 S32 LLViewerOctreeCull::AABBInFrustumNoFarClipGroupBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInFrustumNoFarClip(group->mBounds[0], group->mBounds[1]);
+    return mCamera->AABBInFrustumNoFarClip(group->row().bounds[0], group->row().bounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBSphereIntersectGroupExtents(const LLViewerOctreeGroup* group)
 {
-    return AABBSphereIntersect(group->mExtents[0], group->mExtents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
+    return AABBSphereIntersect(group->row().extents[0], group->row().extents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
 }
 
 S32 LLViewerOctreeCull::AABBInFrustumGroupBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInFrustum(group->mBounds[0], group->mBounds[1]);
+    return mCamera->AABBInFrustum(group->row().bounds[0], group->row().bounds[1]);
 }
 //------------------------------------------
 
@@ -1681,17 +1682,17 @@ S32 LLViewerOctreeCull::AABBInFrustumGroupBounds(const LLViewerOctreeGroup* grou
 //agent space object set culling
 S32 LLViewerOctreeCull::AABBInFrustumNoFarClipObjectBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInFrustumNoFarClip(group->mObjectBounds[0], group->mObjectBounds[1]);
+    return mCamera->AABBInFrustumNoFarClip(group->row().objectBounds[0], group->row().objectBounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBSphereIntersectObjectExtents(const LLViewerOctreeGroup* group)
 {
-    return AABBSphereIntersect(group->mObjectExtents[0], group->mObjectExtents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
+    return AABBSphereIntersect(group->row().objectExtents[0], group->row().objectExtents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
 }
 
 S32 LLViewerOctreeCull::AABBInFrustumObjectBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInFrustum(group->mObjectBounds[0], group->mObjectBounds[1]);
+    return mCamera->AABBInFrustum(group->row().objectBounds[0], group->row().objectBounds[1]);
 }
 //------------------------------------------
 
@@ -1699,17 +1700,17 @@ S32 LLViewerOctreeCull::AABBInFrustumObjectBounds(const LLViewerOctreeGroup* gro
 //local regional space group culling
 S32 LLViewerOctreeCull::AABBInRegionFrustumNoFarClipGroupBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInRegionFrustumNoFarClip(group->mBounds[0], group->mBounds[1]);
+    return mCamera->AABBInRegionFrustumNoFarClip(group->row().bounds[0], group->row().bounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBInRegionFrustumGroupBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInRegionFrustum(group->mBounds[0], group->mBounds[1]);
+    return mCamera->AABBInRegionFrustum(group->row().bounds[0], group->row().bounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBRegionSphereIntersectGroupExtents(const LLViewerOctreeGroup* group, const LLVector3& shift)
 {
-    return AABBSphereIntersect(group->mExtents[0], group->mExtents[1], mCamera->getOrigin() - shift, mCamera->mFrustumCornerDist);
+    return AABBSphereIntersect(group->row().extents[0], group->row().extents[1], mCamera->getOrigin() - shift, mCamera->mFrustumCornerDist);
 }
 //------------------------------------------
 
@@ -1717,17 +1718,17 @@ S32 LLViewerOctreeCull::AABBRegionSphereIntersectGroupExtents(const LLViewerOctr
 //local regional space object culling
 S32 LLViewerOctreeCull::AABBInRegionFrustumObjectBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInRegionFrustum(group->mObjectBounds[0], group->mObjectBounds[1]);
+    return mCamera->AABBInRegionFrustum(group->row().objectBounds[0], group->row().objectBounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBInRegionFrustumNoFarClipObjectBounds(const LLViewerOctreeGroup* group)
 {
-    return mCamera->AABBInRegionFrustumNoFarClip(group->mObjectBounds[0], group->mObjectBounds[1]);
+    return mCamera->AABBInRegionFrustumNoFarClip(group->row().objectBounds[0], group->row().objectBounds[1]);
 }
 
 S32 LLViewerOctreeCull::AABBRegionSphereIntersectObjectExtents(const LLViewerOctreeGroup* group, const LLVector3& shift)
 {
-    return AABBSphereIntersect(group->mObjectExtents[0], group->mObjectExtents[1], mCamera->getOrigin() - shift, mCamera->mFrustumCornerDist);
+    return AABBSphereIntersect(group->row().objectExtents[0], group->row().objectExtents[1], mCamera->getOrigin() - shift, mCamera->mFrustumCornerDist);
 }
 //------------------------------------------
 //check if the objects projection large enough

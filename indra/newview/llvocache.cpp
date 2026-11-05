@@ -747,7 +747,7 @@ void LLVOCacheEntry::updateParentBoundingInfo(const LLVOCacheEntry* child)
 //-------------------------------------------------------------------
 LLVOCacheGroup::~LLVOCacheGroup()
 {
-    if(mOcclusionState[LLViewerCamera::CAMERA_WORLD] & ACTIVE_OCCLUSION)
+    if(row().occlusion[LLViewerCamera::CAMERA_WORLD] & ACTIVE_OCCLUSION)
     {
         ((LLVOCachePartition*)mSpatialPartition)->removeOccluder(this);
     }
