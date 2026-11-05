@@ -23131,8 +23131,21 @@ static void rt_name_rigged_main_view()
 void LLPipeline::rtSceneEarly(int where)
 {
     // LL_VK_RT_EARLY=1: before the world pass (the G-buffer); =2: after it, before the avatar velocity pass (a diagnostic: where the scene must be built for the foliage casters to be in it)
-    static const int mode = []() { const char* e = getenv("LL_VK_RT_EARLY"); const int v = e ? atoi(e) : 0; LL_INFOS("VkRt") << "LL_VK_RT_EARLY " << v << (v == 1 ? ": the ray scene is built before the G-buffer" : (v == 2 ? ": the ray scene is built after the G-buffer, waited for at the lighting" : ": off, the ray scene is built at the lighting")) << LL_ENDL; return v == 3 ? 1 : v; }();       // (3 = 1 with the early scene on the compute queue, E2)
-    static const bool async = []() { const char* e = getenv("LL_VK_RT_EARLY"); return e && e[0] == '3'; }();
+    static const int env_mode = []() { const char* e = getenv("LL_VK_RT_EARLY"); const int v = e && e[0] ? atoi(e) : 3; LL_INFOS("VkRt") << "LL_VK_RT_EARLY " << v << (e && e[0] ? "" : " (default)") << (v == 1 ? ": the ray scene is built before the G-buffer" : (v == 2 ? ": the ray scene is built after the G-buffer, waited for at the lighting" : (v == 3 ? ": the ray scene is built before the G-buffer on the compute queue" : ": off, the ray scene is built at the lighting"))) << LL_ENDL; return v; }();
+    // rt-debug.txt rtearly=0/1/3 (live, -1 = the environment variable decides): a same-session A/B. 3 needs the compute queue, which only exists when LL_VK_RT_EARLY=3 was set at start-up; without it 3 runs as 1.
+    const int live = LLVkBridge::rtEarly();
+    const int want = live >= 0 ? live : env_mode;
+    const bool async = want == 3 && env_mode == 3;
+    const int mode = want == 3 ? 1 : want;       // (3 = 1 with the early scene on the compute queue, E2)
+    if (where == 1)
+    {
+        static int last_want = -99;
+        if (want != last_want)
+        {
+            last_want = want;
+            LL_INFOS("VkRt") << "ray scene build mode " << want << (want == 3 ? (async ? " (compute queue)" : " (no compute queue: runs as 1)") : "") << " from frame " << gFrameCount << LL_ENDL;
+        }
+    }
     if (mode != where)
     {
         return;

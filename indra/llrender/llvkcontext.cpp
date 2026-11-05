@@ -909,10 +909,11 @@ bool Context::createDevice()
     vkGetPhysicalDeviceFeatures2(mPhysical, &chain.f2);
 
     const float priority = 1.f;
-    // <FS> E2: the ray scene work on the compute queue (LL_VK_RT_EARLY=3): needs the compute-only family and timeline semaphores, and ray tracing on
+    // <FS> E2: the ray scene work on the compute queue (LL_VK_RT_EARLY=3, the default since 2026-11-05: 0.35 ms of GPU a frame less than building at the lighting, same-session A/B): needs the compute-only
+    // family and timeline semaphores, and ray tracing on; LL_VK_RT_EARLY=0 / 1 / 2 turn it off (the live key rtearly= in rt-debug.txt picks the build point of each frame while it is set up)
     {
         char b[8] = {};
-        mAsyncOn = rt_on && mCaps.mComputeFamily >= 0 && mCaps.mTimelineSemaphore && GetEnvironmentVariableA("LL_VK_RT_EARLY", b, sizeof(b)) > 0 && b[0] == '3';
+        mAsyncOn = rt_on && mCaps.mComputeFamily >= 0 && mCaps.mTimelineSemaphore && (GetEnvironmentVariableA("LL_VK_RT_EARLY", b, sizeof(b)) == 0 || b[0] == '3');
         LL_INFOS("Vulkan") << "E2 (ray scene on the compute queue): " << (mAsyncOn ? "on" : "off") << LL_ENDL;
     }
     VkDeviceQueueCreateInfo qcis[2] = { { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO }, { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO } };
