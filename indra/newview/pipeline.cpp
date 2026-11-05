@@ -10118,7 +10118,7 @@ static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_ol
 {
     const LLVertexBuffer* vb = p->mVertexBuffer.get();
     // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
-    const bool material = !LLPipeline::sRenderingHUDs && p->mMaterial.notNull();
+    const bool material = !LLPipeline::sRenderingHUDs && p->mHasMaterial;
     const U32 mmask = p->mShaderMask;
     const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
     const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;

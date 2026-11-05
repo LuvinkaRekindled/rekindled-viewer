@@ -6188,7 +6188,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
 
     if (index < FACE_DO_NOT_BATCH_TEXTURES && idx >= 0)
     {
-        if (mat || gltf_mat || draw_vec[idx]->mMaterial)
+        if (mat || gltf_mat || draw_vec[idx]->mHasMaterial)
         { //can't batch textures when materials are present (yet)
             batchable = false;
         }
@@ -6278,7 +6278,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         draw_info->mSpecColor = specColor;
         draw_info->mEnvIntensity = spec;
         draw_info->mSpecularMap = NULL;
-        draw_info->mMaterial = mat;
+        draw_info->mHasMaterial = (mat != nullptr);
         draw_info->mGLTFMaterial = gltf_mat;
         draw_info->mShaderMask = shader_mask;
         draw_info->mAvatar = facep->mAvatar;
