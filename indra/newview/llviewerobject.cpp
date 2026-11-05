@@ -1092,7 +1092,7 @@ bool LLViewerObject::setDrawableParent(LLDrawable* parentp)
         return false;
     }
 
-    bool ret = mDrawable->mXform.setParent(parentp ? &parentp->mXform : NULL);
+    bool ret = mDrawable->xform().setParent(parentp ? &parentp->xform() : NULL);
     if(!ret)
     {
         return false ;
@@ -4949,8 +4949,8 @@ void LLViewerObject::setPositionAbsoluteGlobal( const LLVector3d &pos_global, bo
         LLVector3 new_pos = mRegionp->getPosRegionFromGlobal(pos_global);
         if (isRootEdit())
         {
-            new_pos -= mDrawable->mXform.getParent()->getWorldPosition();
-            LLQuaternion world_rotation = mDrawable->mXform.getParent()->getWorldRotation();
+            new_pos -= mDrawable->xform().getParent()->getWorldPosition();
+            LLQuaternion world_rotation = mDrawable->xform().getParent()->getWorldRotation();
             new_pos = new_pos * ~world_rotation;
         }
         else
@@ -5014,9 +5014,9 @@ void LLViewerObject::setPositionGlobal(const LLVector3d &pos_global, bool damped
         if (isRootEdit())
         {
             LLVector3 newPos = mRegionp->getPosRegionFromGlobal(pos_global);
-            newPos = newPos - mDrawable->mXform.getParent()->getWorldPosition();
+            newPos = newPos - mDrawable->xform().getParent()->getWorldPosition();
 
-            LLQuaternion invWorldRotation = mDrawable->mXform.getParent()->getWorldRotation();
+            LLQuaternion invWorldRotation = mDrawable->xform().getParent()->getWorldRotation();
             invWorldRotation.transQuat();
 
             newPos = newPos * invWorldRotation;
@@ -5026,7 +5026,7 @@ void LLViewerObject::setPositionGlobal(const LLVector3d &pos_global, bool damped
         {
             // assumes parent is root editable (root of attachment)
             LLVector3 newPos = mRegionp->getPosRegionFromGlobal(pos_global);
-            newPos = newPos - mDrawable->mXform.getParent()->getWorldPosition();
+            newPos = newPos - mDrawable->xform().getParent()->getWorldPosition();
             LLVector3 delta_pos = newPos - getPosition();
 
             LLQuaternion invRotation = mDrawable->getRotation();
@@ -5036,8 +5036,8 @@ void LLViewerObject::setPositionGlobal(const LLVector3d &pos_global, bool damped
 
             // *FIX: is this right?  Shouldn't we be calling the
             // LLViewerObject version of setPosition?
-            LLVector3 old_pos = mDrawable->mXform.getParent()->getPosition();
-            mDrawable->mXform.getParent()->setPosition(old_pos + delta_pos);
+            LLVector3 old_pos = mDrawable->xform().getParent()->getPosition();
+            mDrawable->xform().getParent()->setPosition(old_pos + delta_pos);
             setChanged(TRANSLATED | SILHOUETTE);
         }
         if (mParent && ((LLViewerObject*)mParent)->isAvatar())
@@ -7625,8 +7625,8 @@ void LLViewerObject::resetChildrenRotationAndPosition(const std::vector<LLQuater
                 LLVector3 reset_pos = (positions[index] - offset) * inv_rotation ;
                 LLQuaternion reset_rot = rotations[index] * inv_rotation ;
 
-                ((LLVOAvatar*)childp)->mDrawable->mXform.setPosition(reset_pos);
-                ((LLVOAvatar*)childp)->mDrawable->mXform.setRotation(reset_rot) ;
+                ((LLVOAvatar*)childp)->mDrawable->xform().setPosition(reset_pos);
+                ((LLVOAvatar*)childp)->mDrawable->xform().setRotation(reset_rot) ;
 
                 ((LLVOAvatar*)childp)->mDrawable->getVObj()->setPosition(reset_pos, true);
                 ((LLVOAvatar*)childp)->mDrawable->getVObj()->setRotation(reset_rot, true) ;
@@ -7683,9 +7683,9 @@ void LLViewerObject::resetChildrenPosition(const LLVector3& offset, bool simplif
             {
                 if(!skip_avatar_child)
                 {
-                    LLVector3 reset_pos = ((LLVOAvatar*)childp)->mDrawable->mXform.getPosition() + child_offset ;
+                    LLVector3 reset_pos = ((LLVOAvatar*)childp)->mDrawable->xform().getPosition() + child_offset ;
 
-                    ((LLVOAvatar*)childp)->mDrawable->mXform.setPosition(reset_pos);
+                    ((LLVOAvatar*)childp)->mDrawable->xform().setPosition(reset_pos);
                     ((LLVOAvatar*)childp)->mDrawable->getVObj()->setPosition(reset_pos);
                     LLManip::rebuild(childp);
                 }

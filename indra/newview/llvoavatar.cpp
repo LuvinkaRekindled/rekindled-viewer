@@ -9966,14 +9966,14 @@ void LLVOAvatar::sitOnObject(LLViewerObject *sit_object)
     LLVector3 rel_pos = getRenderPosition() - obj_pos;
     rel_pos.rotVec(inv_obj_rot);
 
-    mDrawable->mXform.setPosition(rel_pos);
-    mDrawable->mXform.setRotation(mDrawable->getWorldRotation() * inv_obj_rot);
+    mDrawable->xform().setPosition(rel_pos);
+    mDrawable->xform().setRotation(mDrawable->getWorldRotation() * inv_obj_rot);
 
     gPipeline.markMoved(mDrawable, true);
     // Notice that removing sitDown() from here causes avatars sitting on
     // objects to be not rendered for new arrivals. See EXT-6835 and EXT-1655.
     sitDown(true);
-    mRoot->getXform()->setParent(&sit_object->mDrawable->mXform); // LLVOAvatar::sitOnObject
+    mRoot->getXform()->setParent(&sit_object->mDrawable->xform()); // LLVOAvatar::sitOnObject
     // SL-315
     mRoot->setPosition(getPosition());
     mRoot->updateWorldMatrixChildren();
@@ -10026,8 +10026,8 @@ void LLVOAvatar::getOffObject()
     }
 
     // set *local* position based on last *world* position, since we're unparenting the avatar
-    mDrawable->mXform.setPosition(cur_position_world);
-    mDrawable->mXform.setRotation(cur_rotation_world);
+    mDrawable->xform().setPosition(cur_position_world);
+    mDrawable->xform().setRotation(cur_rotation_world);
 
     gPipeline.markMoved(mDrawable, true);
 

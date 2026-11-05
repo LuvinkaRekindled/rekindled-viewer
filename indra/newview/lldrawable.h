@@ -91,21 +91,24 @@ public:
     const LLViewerObject *getVObj() const                         { return mVObjp; }
     LLVOVolume* getVOVolume() const; // cast mVObjp tp LLVOVolume if OK
 
-    const LLMatrix4&      getWorldMatrix() const        { return mXform.getWorldMatrix(); }
+    const LLMatrix4&      getWorldMatrix() const        { return xform().getWorldMatrix(); }
     const LLMatrix4&      getRenderMatrix() const;
     void                  setPosition(LLVector3 v) const { }
-    const LLVector3&      getPosition() const           { return mXform.getPosition(); }
-    const LLVector3&      getWorldPosition() const      { return mXform.getPositionW(); }
+    const LLVector3&      getPosition() const           { return xform().getPosition(); }
+    const LLVector3&      getWorldPosition() const      { return xform().getPositionW(); }
     const LLVector3       getPositionAgent() const;
     const LLVector3&      getScale() const              { return LLInstances::row(mInstance).scale; }
     void                  setScale(const LLVector3& scale) { LLInstances::row(mInstance).scale = scale; }
-    const LLQuaternion&   getWorldRotation() const      { return mXform.getWorldRotation(); }
-    const LLQuaternion&   getRotation() const           { return mXform.getRotation(); }
-    F32                   getIntensity() const          { return llmin(mXform.getScale().mV[0], 4.f); }
+    const LLQuaternion&   getWorldRotation() const      { return xform().getWorldRotation(); }
+    const LLQuaternion&   getRotation() const           { return xform().getRotation(); }
+    F32                   getIntensity() const          { return llmin(xform().getScale().mV[0], 4.f); }
     S32                   getLOD() const                { return mVObjp ? mVObjp->getLOD() : 1; }
 
-    void  getMinMax(LLVector3& min,LLVector3& max) const { mXform.getMinMax(min,max); }
-    LLXformMatrix*      getXform() { return &mXform; }
+    void  getMinMax(LLVector3& min,LLVector3& max) const { xform().getMinMax(min,max); }
+    // <FS> C1a.2: the transform is the second part of the drawable's row in the instance table
+    LLXformMatrix&      xform()       { return LLInstances::xform(mInstance); }
+    const LLXformMatrix& xform() const { return LLInstances::xform(mInstance); }
+    LLXformMatrix*      getXform() { return &LLInstances::xform(mInstance); }
 
     // <FS> C1a: the state word is a column of the instance table (row mInstance)
     U32                 getState()           const { return LLInstances::row(mInstance).flags; }
@@ -286,8 +289,6 @@ public:
     } EDrawableFlags;
 
 public:
-    LLXformMatrix       mXform;
-
     // vis data
     LLPointer<LLDrawable> mParent;
 

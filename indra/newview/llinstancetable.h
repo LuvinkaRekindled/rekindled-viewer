@@ -13,6 +13,10 @@
  * (a drawable gets its row when it is made and gives it back when it is destroyed). A recycled row is cleared by acquire(). A released row keeps a state the owner chose (flags_on_release) so a
  * stale pointer to a destroyed owner reads "dead", as the freed object's own memory used to, and its owner field is cleared so ownedBy() tells a stale pointer from the live owner.
  *
+ * The transform (an LLXformMatrix: position, rotation, scale, world position and rotation, parent link, world matrix, bounds; about 190 bytes) is the second part of the row, in chunks of 4096 that are
+ * allocated when the first row of the chunk is handed out (a table for 1M drawables costs what is used) and never move. It is built in place when the row is handed out and destroyed when it is
+ * given back. It is a separate array from the 32-byte row because the two are read at different times (flags, radius, type: most loops; the transform: the move and matrix code).
+ *
  * Independent of the viewer classes on purpose (the instance data must be reusable by a native renderer): only plain types.
  */
 
@@ -21,6 +25,8 @@
 
 #include "stdtypes.h"
 #include "v3math.h"
+#include "xform.h"
+#include <new>
 #include <mutex>
 #include <vector>
 #include <cstdlib>
@@ -43,7 +49,13 @@ public:
 
     inline static Row* sRows = nullptr;
 
+    static constexpr U32 kXformChunkShift = 12;
+    static constexpr U32 kXformChunkRows = 1u << kXformChunkShift;
+    static constexpr U32 kXformChunks = kCapacity >> kXformChunkShift;
+    inline static LLXformMatrix** sXformChunks = nullptr;      // kXformChunks pointers (null until the first row of the chunk is handed out)
+
     static Row& row(U32 idx) { return sRows[idx]; }
+    static LLXformMatrix& xform(U32 idx) { return sXformChunks[idx >> kXformChunkShift][idx & (kXformChunkRows - 1)]; }
 
     // a row for a new owner, cleared (flags 0, radius 0, render type 0, scale 1,1,1). Row 0 is never handed out. 0 = the table is full (the caller must treat that as fatal).
     static U32 acquire(const void* owner)
@@ -65,6 +77,18 @@ public:
             ++s.mFull;
             return 0;
         }
+        LLXformMatrix*& chunk = sXformChunks[idx >> kXformChunkShift];
+        if (!chunk)
+        {
+            chunk = static_cast<LLXformMatrix*>(std::malloc(sizeof(LLXformMatrix) * kXformChunkRows));
+            if (!chunk)
+            {
+                ++s.mFull;
+                s.mFree.push_back(idx);
+                return 0;
+            }
+        }
+        new (&chunk[idx & (kXformChunkRows - 1)]) LLXformMatrix();
         Row& r = sRows[idx];
         r.flags = 0;
         r.radius = 0.f;
@@ -82,6 +106,7 @@ public:
         if (!idx || idx >= kCapacity) return;
         State& s = state();
         std::lock_guard<std::mutex> lock(s.mMutex);
+        xform(idx).~LLXformMatrix();
         Row& r = sRows[idx];
         r.flags = flags_on_release;
         r.owner = nullptr;
@@ -114,6 +139,7 @@ private:
         State()
         {
             sRows = static_cast<Row*>(std::calloc(kCapacity, sizeof(Row)));
+            sXformChunks = static_cast<LLXformMatrix**>(std::calloc(kXformChunks, sizeof(LLXformMatrix*)));
         }
     };
     static State& state()

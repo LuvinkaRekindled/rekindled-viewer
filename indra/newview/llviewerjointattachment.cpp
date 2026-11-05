@@ -117,7 +117,7 @@ void LLViewerJointAttachment::setupDrawable(LLViewerObject *object)
         object->mDrawable->makeStatic(false);
     }
 
-    object->mDrawable->mXform.setParent(getXform()); // LLViewerJointAttachment::lazyAttach
+    object->mDrawable->xform().setParent(getXform()); // LLViewerJointAttachment::lazyAttach
     object->mDrawable->makeActive();
     LLVector3 current_pos = object->getRenderPosition();
     LLQuaternion current_rot = object->getRenderRotation();
@@ -128,8 +128,8 @@ void LLViewerJointAttachment::setupDrawable(LLViewerObject *object)
 
     current_rot = current_rot * attachment_pt_inv_rot;
 
-    object->mDrawable->mXform.setPosition(current_pos);
-    object->mDrawable->mXform.setRotation(current_rot);
+    object->mDrawable->xform().setPosition(current_pos);
+    object->mDrawable->xform().setRotation(current_rot);
     gPipeline.markMoved(object->mDrawable);
     gPipeline.markTextured(object->mDrawable); // face may need to change draw pool to/from POOL_HUD
 
@@ -281,8 +281,8 @@ void LLViewerJointAttachment::removeObject(LLViewerObject *object)
         LLVector3 cur_position = object->getRenderPosition();
         LLQuaternion cur_rotation = object->getRenderRotation();
 
-        object->mDrawable->mXform.setPosition(cur_position);
-        object->mDrawable->mXform.setRotation(cur_rotation);
+        object->mDrawable->xform().setPosition(cur_position);
+        object->mDrawable->xform().setRotation(cur_rotation);
         gPipeline.markMoved(object->mDrawable, true);
         gPipeline.markTextured(object->mDrawable); // face may need to change draw pool to/from POOL_HUD
 
