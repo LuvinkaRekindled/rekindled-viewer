@@ -27872,10 +27872,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
                 // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
                 // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
-                // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes. LL_VK_CASCADE_SKIP_STATIC=0
-                // pushes them as before (the A/B).
-                static const bool cascade_skip_static = !getenv("LL_VK_CASCADE_SKIP_STATIC") || atoi(getenv("LL_VK_CASCADE_SKIP_STATIC")) != 0;
-                const bool raster_skip = cascade_skip_static && shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
+                // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
+                // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
+                const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
                 sViewJobsSkipStatic.store(view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
                                           std::memory_order_relaxed);
             }
