@@ -98,6 +98,7 @@ bool sPinsInit = false;
 VkDeviceSize sPinOffset = 0;                                // where the pin table is in a call's region (after the geometry records, or after the material table)
 VkDeviceSize sGeomBytes = kGeomBytesBase, sRegionBytes = kGeomBytesBase;
 U32 sMaxRecords = 0, sTableCalls = kCalls;
+constexpr F32 kSkinLogReach = 16.f;                         // <FS> skin catcher: a skinned vertex farther than this from its avatar is counted and logged (not dropped: that is kSkinReach's job); whole attachments are smaller than this
 constexpr F32 kSkinReach = 300.f;                            // metres from the avatar's position: skinned vertices farther away are garbage and are left out
 constexpr size_t kAvatarBuilds = 16;                        // structure builds of avatars per scene call beyond the groups' limit (the jobs list is reserved for both)
 constexpr U32 kMaxSkinJobs = 2048;                          // compute skinning jobs per scene call
@@ -214,6 +215,7 @@ struct Stats
     U64 mCeilingHeld = 0;                // new structures held back by the acceleration structure memory ceiling
     U64 mScenes = 0, mBuilds = 0, mRefits = 0, mPrimsBuilt = 0, mPrimsRefit = 0, mDeferred = 0, mNoData = 0, mAlphaStructs = 0, mTableFull = 0, mFailed = 0, mEvicted = 0, mInstances = 0, mCasters = 0;
     U64 mSkinJobs = 0, mSkinVerts = 0, mSkinFailed = 0, mAvatars = 0, mSkinOver = 0, mSkinThrottled = 0;
+    U64 mSkinFlagged = 0, mSkinForced = 0;      // <FS> skin catcher: jobs whose skinned vertices left the avatar (beyond kSkinLogReach or the guard), avatar structures rebuilt because of it
     U64 mKindRefit[7] = {}, mKindTris[7] = {};      // avatar structures refit by what the viewer says the avatar is: animated object, impostor, own, jelly doll, invisible, too slow, still loading; and their triangles
     U64 mFarAvatars[4] = {}, mFarDropDraws = 0, mFarDropTris = 0, mFarKeptTris = 0;       // far avatar triangle budget: avatars refit by tier (near, far, very far), draws and triangles left out, triangles kept
     U64 mAvatarInstances = 0, mAvatarStale = 0, mAvatarStaleFrames = 0, mAvatarStaleMax = 0;
@@ -281,6 +283,8 @@ struct DebugSwitches
     bool mInstDump = false;            // live (instdump=1): the instance list (structure address, translation, mask) of the next 40 scene calls goes into <work>/rt-instances.log; 0 re-arms it
     U64 mGroupHold = 0;                // live (grouphold=N), TEST BRIDGE (off: it leaves ghosts behind moving objects): frames a caster group seen by a pass stays in the scene when that pass rendered without naming it (0: only the casters named in the frame stay). The proper fix is a pass id per hero probe face
     bool mSkinProbe = false;        // about every 90 scene calls: run the skin jobs again on their own, read a few results back and log their bounding boxes
+    bool mSkinSnap = false;         // live (skinsnap=1): the skin catcher also keeps the first and last joint of every job's palette and the first source vertex as the CPU side held them, read from upload memory
+                                    // (uncached: tens of thousands of reads a frame on the worker, the GPU waits for it; the 2026-11-04 diagnosis is done, so off unless asked for)
     bool mRigged = true;            // rigged opaque casters (avatar attachments) in the scene, skinned by the compute pass
     bool mSizeProbe = false;        // log what the new group structures would need with other build flags (no behaviour change)
     bool mCompact = false;          // static structures are compacted: built with ALLOW_COMPACTION, the size asked for, copied into a smaller allocation a few frames later
@@ -406,6 +410,7 @@ void read_debug_switches()
                 else if (k == "sizeprobe") d.mSizeProbe = v != 0;
                 else if (k == "rigged") d.mRigged = v != 0;
                 else if (k == "skinprobe") d.mSkinProbe = v != 0;
+                else if (k == "skinsnap") d.mSkinSnap = v != 0;
                 else if (k == "avlog") d.mAvatarLog = v != 0;
                 else if (k == "avatarkeep") d.mAvatarKeepOff = v != 0;
                 else if (k == "instdump") d.mInstDump = v != 0;
@@ -471,7 +476,8 @@ void read_debug_switches()
 struct SkinDraw
 {
     U32 mVb = 0, mIb = 0, mFirst = 0, mCount = 0, mVertexFirst = 0, mVertexCount = 0, mSkinId = 0, mWeightOffset = 0, mJoints = 0;
-    U64 mPalette = 0;                   // this frame's palette (memory of the frame; valid in the frame it was named)
+    U64 mPalette = 0;                   // the palette of its latest note (in the renderer's palette ring: valid for the frames the ray scene may still skin with it)
+    const F32* mPaletteCpu = nullptr;   // <FS> the same palette in host memory, when known (valid in the frame it was named; the skin catcher's snapshot)
     F32 mModel[16] = {};
     bool mHasModel = false;
     U32 mKind = 0;                      // 0 opaque, 1 alpha masked
@@ -499,6 +505,8 @@ struct Avatar
     F32 mPos[3] = {};                   // where the avatar is (named by its body meshes)
     bool mHasPos = false;
     bool mSelf = false;                 // the viewer's own avatar
+    bool mForceBuild = false;           // <FS> skin catcher: the last skinning of this avatar sent vertices away from it; the structure is built again, not refitted (a refit keeps the boxes of the bad build)
+    U64 mForcedTag = 0;                 // frame of the latest forced build (at most one every 120 frames: an avatar whose palette is bad on every frame would be built on every frame)
     U32 mAvatarKind = 0;                // as SkinCaster::mAvatarKind
     U32 mSlotClears = 0;                // debug (avlog): how often a new draw took the slot of a dead one (the structure is then rebuilt)
     U32 mExcl[8] = {};                  // debug (avlog): why draws were left out of the structure in the last pass: dead, never named, named too long ago, never skinned, no output, keep off, buffer changed, bad range
@@ -524,6 +532,25 @@ Tlas sTlas[Context::FRAMES_IN_FLIGHT];
 // are followed by the shader), and the GPU faults or hangs. Such a pass is given this scene: no occluders, everything lit.
 Tlas sNullTlas;
 Buffer sScratch;
+// <FS> skin catcher (2026-11-04: shadow spikes from random avatars, each with a lag spike): the skinning pass counts, per job, the vertices that land farther than kSkinLogReach from the avatar and the
+// ones beyond the guard (clamped). The counts of a frame slot's scene call are read at the slot's next use (its fence was waited for when the frame began), logged with what the job was skinning
+// (avatar, skin, kind, mode, joints, palette address), and the avatar's structure is built again instead of refitted. One flagged frame names the avatar and the pass.
+struct SkinFlagMeta
+{
+    U32 mAvatarId = 0, mSkinId = 0, mKind = 0, mMode = 0, mJoints = 0, mCount = 0;
+    F32 mPos[3] = {};
+    U64 mPalette = 0;
+    // the snapshot taken when the job was made: the palette as the CPU side held it (joints that were all zeros, joints with a value that is not finite, the first joint's translation) and the
+    // first source vertex when the vertex buffer is host visible
+    U32 mPalCpu = 0, mPalZero = 0, mPalBad = 0;
+    F32 mPalT[3] = {};
+    const F32* mPalPtr = nullptr;       // the palette's host bytes (the scratch ring stays mapped): read again at the readback to see whether they changed under the GPU
+    U32 mSrcCpu = 0;
+    F32 mSrc0[3] = {};
+};
+constexpr VkDeviceSize kSkinFlagBytes = 8ull * kMaxSkinJobs;        // two counters a job
+Buffer sSkinFlags[Context::FRAMES_IN_FLIGHT];                       // kCalls regions of kSkinFlagBytes
+std::vector<SkinFlagMeta> sSkinFlagMeta[Context::FRAMES_IN_FLIGHT][kCalls];
 // The casters of the shadow passes. Far cascades are rendered only every few frames (FSShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
 // frame names are not all there is. A pass that rendered this frame contributes exactly the casters it named (a moving object must not leave copies of its earlier positions);
 // the casters of a pass that did not render stay, as its cached shadow map stays, until it renders again or for a few frames at most.
@@ -987,7 +1014,8 @@ struct Job { uvec2 src; uvec2 weights; uvec2 palette; uvec2 dst; uint first; uin
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Jobs { Job j[]; };
 struct Chunk { uint job; uint offset; };
 layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer Chunks { Chunk c[]; };
-layout(push_constant) uniform Push { uvec2 jobs; uvec2 chunks; } pc;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Counters { uint c[]; };
+layout(push_constant) uniform Push { uvec2 jobs; uvec2 chunks; uvec2 counters; float log_reach; uint pad; } pc;
 void main()
 {
     Chunk ch = Chunks(pc.chunks).c[gl_WorkGroupID.x];
@@ -1068,6 +1096,22 @@ void main()
             world = vec3(uintBitsToFloat(0x7fc00000u));
         }
     }
+    if ((pc.counters.x | pc.counters.y) != 0u)
+    {
+        // the skin catcher's counters: [2 * job] vertices farther than log_reach from the guard's centre (kept as they are), [2 * job + 1] vertices beyond the guard (clamped or NaN above)
+        if (bad)
+        {
+            atomicAdd(Counters(pc.counters).c[ch.job * 2u + 1u], 1u);
+        }
+        else if (job.guard.w > 0.0 && pc.log_reach > 0.0)
+        {
+            vec3 dl = world - job.guard.xyz;
+            if (dot(dl, dl) > pc.log_reach * pc.log_reach)
+            {
+                atomicAdd(Counters(pc.counters).c[ch.job * 2u], 1u);
+            }
+        }
+    }
     OutVec4(job.dst).v[v] = vec4(world, source.w);       // w: the texture index of masked draws
     if (with_normals)
     {
@@ -1136,7 +1180,7 @@ bool ensure_skin_pipeline()
     VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
     mi.codeSize = spirv.size() * sizeof(unsigned int);
     mi.pCode = spirv.data();
-    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 16 };
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 32 };        // jobs, chunks, the skin catcher's counters, its reach
     VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     li.pushConstantRangeCount = 1;
     li.pPushConstantRanges = &pcr;
@@ -1536,6 +1580,14 @@ void shutdown()
             sCompactPool[i] = VK_NULL_HANDLE;
         }
         sCompactPending[i].clear();
+        if (sSkinFlags[i].valid())
+        {
+            ctx.destroyBuffer(sSkinFlags[i]);
+        }
+        for (U32 c = 0; c < kCalls; ++c)
+        {
+            sSkinFlagMeta[i][c].clear();
+        }
     }
     if (sPool)
     {
@@ -1985,6 +2037,7 @@ void noteSkinned(const SkinCaster& c)
                 // first note of this frame (the cascades name a draw once each): this frame's palette and where the buffers are now
                 d.mNotedTag = tag;
                 d.mPalette = c.mPalette;
+                d.mPaletteCpu = c.mPaletteCpu;
                 d.mJoints = c.mJoints;
                 d.mVi = c.mVi;
                 d.mIi = c.mIi;
@@ -2033,6 +2086,7 @@ void noteSkinned(const SkinCaster& c)
     d.mWeightOffset = c.mWeightOffset;
     d.mJoints = c.mJoints;
     d.mPalette = c.mPalette;
+    d.mPaletteCpu = c.mPaletteCpu;
     d.mVi = c.mVi;
     d.mIi = c.mIi;
     d.mNotedTag = tag;
@@ -2363,6 +2417,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     std::vector<SkinJob> skin_jobs;
     std::vector<SkinChunk> skin_chunks;
     std::vector<SkinDraw*> skin_job_draws;      // the draw behind each job (null for the skin test copies), for the probe
+    std::vector<SkinFlagMeta> skin_flag_meta;   // <FS> skin catcher: what each job skins (kept for the slot's next use, when its counters are read)
     const bool skin_on = sDbg.mSkinTest && ensure_skin_pipeline();
     U64 tris_budget = max_tris;
     LLVkWorker::BufferInfo vi, ii;
@@ -3079,6 +3134,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             const U32 ji = (U32)skin_jobs.size();
             skin_jobs.push_back(jobs.back().mSkin);
             skin_job_draws.push_back(nullptr);
+            skin_flag_meta.push_back(SkinFlagMeta());
             for (U32 off = 0; off < jobs.back().mSkin.mCount; off += kSkinChunkVerts)
             {
                 skin_chunks.push_back({ ji, off });
@@ -3365,6 +3421,13 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             sig.push_back(h);
         }
         bool need_build = b.mAs == VK_NULL_HANDLE || sig != a.mSig || b.mRefits >= skin_refit_limit || sDbg.mNoRefit == 1 || sDbg.mNoRefit == 2 || (sSnapshotScene && sDbg.mSnapRebuild) || b.mFastBuild != sDbg.mSkinFast;
+        if (a.mForceBuild)
+        {
+            // <FS> skin catcher: the last skinning sent vertices away from the avatar; a refit would keep the boxes of that build
+            need_build = true;
+            a.mForceBuild = false;
+            ++sStats.mSkinForced;
+        }
         bool alloc_failed = false;
         for (SkinDraw* d : cur)
         {
@@ -3401,6 +3464,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         {
             LLVkWorker::markBufferUsed(d->mVb);         // the compute pass and the build read them when the GPU gets here
             LLVkWorker::markBufferUsed(d->mIb);
+            // (a draw noted up to two frames ago is skinned with the palette of that note: the palette ring of the renderer keeps a frame's palettes until the last frame that could read them is
+            // done, see Renderer::allocPaletteScratch; 2026-11-04, the spikes from avatars named only by a far cascade)
             if (d->mNotedTag != 0 && d->mNotedTag + 2 >= av_tag && d->mSkinnedTag != av_tag)
             {
                 d->mSkinnedTag = av_tag;
@@ -3446,6 +3511,47 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 }
                 skin_jobs.push_back(sj);
                 skin_job_draws.push_back(d);
+                {
+                    SkinFlagMeta meta;
+                    meta.mAvatarId = a.mKey.mVb;
+                    meta.mSkinId = d->mSkinId;
+                    meta.mKind = d->mKind;
+                    meta.mMode = d->mMode;
+                    meta.mJoints = d->mJoints;
+                    meta.mCount = d->mVertexCount;
+                    memcpy(meta.mPos, d->mAvatarPos, sizeof(meta.mPos));
+                    meta.mPalette = d->mPalette;
+                    if (sDbg.mSkinSnap && d->mPaletteCpu && d->mJoints)
+                    {
+                        // (the palette sits in upload memory, which the CPU reads uncached: the first and the last joint only, 24 floats, not the whole palette; and only with skinsnap=1)
+                        meta.mPalCpu = 1;
+                        meta.mPalPtr = d->mPaletteCpu;
+                        for (U32 jn : { 0u, d->mJoints - 1u })
+                        {
+                            const F32* row = d->mPaletteCpu + 12 * jn;
+                            bool zero = true, finite = true;
+                            for (U32 k = 0; k < 12; ++k)
+                            {
+                                zero = zero && row[k] == 0.f;
+                                finite = finite && std::isfinite(row[k]);
+                            }
+                            meta.mPalZero += zero ? 1u : 0u;
+                            meta.mPalBad += finite ? 0u : 1u;
+                        }
+                        meta.mPalT[0] = d->mPaletteCpu[3];
+                        meta.mPalT[1] = d->mPaletteCpu[7];
+                        meta.mPalT[2] = d->mPaletteCpu[11];
+                    }
+                    if (sDbg.mSkinSnap && d->mVi.mCpu && ((U64)d->mVertexFirst + 1) * 16 <= d->mVi.mSize)
+                    {
+                        meta.mSrcCpu = 1;
+                        const F32* v = (const F32*)d->mVi.mCpu + 4 * (size_t)d->mVertexFirst;
+                        meta.mSrc0[0] = v[0];
+                        meta.mSrc0[1] = v[1];
+                        meta.mSrc0[2] = v[2];
+                    }
+                    skin_flag_meta.push_back(meta);
+                }
                 for (U32 off = 0; off < d->mVertexCount; off += kSkinChunkVerts)
                 {
                     skin_chunks.push_back({ ji, off });
@@ -4550,7 +4656,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         }
         if (sInstCalls % 1200 == 0)
         {
-            LL_INFOS("VkRt") << "instance deltas: " << (double)sInstRowsWritten / (double)sInstCalls << " of " << inst_base << " instances written per call, " << sInstMismatch << " verify mismatches" << LL_ENDL;
+            LL_INFOS("VkRt") << "instance deltas: " << (double)sInstRowsWritten / (double)sInstCalls << " of " << inst_base << " instances written per call, " << sInstMismatch << " verify mismatches"
+                             << "; skin catcher flagged " << sStats.mSkinFlagged << ", forced builds " << sStats.mSkinForced << LL_ENDL;
         }
     }
     else if (!instances.empty())
@@ -4644,9 +4751,69 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             r.mRefs.push_back(inst.accelerationStructureReference);
         }
     }
+    // <FS> skin catcher: the counters this frame slot's scene call wrote at its last use are read now (the slot's fence was waited for when the frame began), then the region is cleared for this call
+    VkDeviceAddress skin_flags_address = 0;
+    {
+        const U32 slot = ctx.getFrameSlot();
+        Buffer& flags = sSkinFlags[slot];
+        if (!flags.valid())
+        {
+            if (ctx.createBuffer(kSkinFlagBytes * kCalls, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, flags) && flags.mMapped)
+            {
+                memset(flags.mMapped, 0, (size_t)(kSkinFlagBytes * kCalls));
+            }
+            else if (flags.valid())
+            {
+                ctx.destroyBuffer(flags);
+                flags = Buffer();
+            }
+        }
+        if (flags.valid() && flags.mMapped && flags.mAddress && call < kCalls)
+        {
+            U32* counters = (U32*)((U8*)flags.mMapped + (size_t)call * kSkinFlagBytes);
+            std::vector<SkinFlagMeta>& meta = sSkinFlagMeta[slot][call];
+            for (size_t ji = 0; ji < meta.size() && ji < kMaxSkinJobs; ++ji)
+            {
+                const U32 far_count = counters[2 * ji], beyond = counters[2 * ji + 1];
+                if ((far_count | beyond) == 0u || meta[ji].mAvatarId == 0)
+                {
+                    continue;
+                }
+                ++sStats.mSkinFlagged;
+                auto ait = sAvatars.find(meta[ji].mAvatarId);
+                if (ait != sAvatars.end() && frame_now >= ait->second.mForcedTag + 120)
+                {
+                    ait->second.mForceBuild = true;
+                    ait->second.mForcedTag = frame_now;
+                }
+                static U32 logged = 0;
+                ++logged;
+                if (logged <= 60 || logged % 100 == 0)
+                {
+                    const SkinFlagMeta& m = meta[ji];
+                    LL_WARNS("SkinCatch") << "skin catcher: a skinning job of frame " << (frame_now - Context::FRAMES_IN_FLIGHT) << " (slot " << slot << ", call " << call << ") sent vertices away from avatar " << m.mAvatarId
+                                          << " (skin " << m.mSkinId << ", kind " << m.mKind << ", mode " << m.mMode << ", " << m.mJoints << " joints, " << m.mCount << " vertices, at " << m.mPos[0] << "," << m.mPos[1] << "," << m.mPos[2]
+                                          << ", palette 0x" << std::hex << m.mPalette << std::dec << "): " << far_count << " beyond " << kSkinLogReach << " m, " << beyond << " beyond the guard (" << sDbg.mSkinReach
+                                          << " m, " << (sDbg.mSkinCollapse ? "collapsed onto the avatar" : "made NaN") << "); its structure is built again, not refitted; " << sStats.mSkinFlagged << " flagged so far"
+                                          << "; CPU palette when the job was made: " << (m.mPalCpu ? (std::to_string(m.mPalZero) + " of the first and last joint all zeros, " + std::to_string(m.mPalBad) + " not finite, joint 0 translation ("
+                                                                                                        + std::to_string(m.mPalT[0]) + ", " + std::to_string(m.mPalT[1]) + ", " + std::to_string(m.mPalT[2]) + "); the same bytes now ("
+                                                                                                        + std::to_string(m.mPalPtr[3]) + ", " + std::to_string(m.mPalPtr[7]) + ", " + std::to_string(m.mPalPtr[11]) + ")"
+                                                                                                        + ((m.mPalPtr[3] != m.mPalT[0] || m.mPalPtr[7] != m.mPalT[1] || m.mPalPtr[11] != m.mPalT[2]) ? " CHANGED since" : " unchanged")) : std::string("not taken (rt-debug.txt skinsnap=1 takes it)"))
+                                          << "; source vertex 0: " << (m.mSrcCpu ? ("(" + std::to_string(m.mSrc0[0]) + ", " + std::to_string(m.mSrc0[1]) + ", " + std::to_string(m.mSrc0[2]) + ")") : std::string("not host visible")) << LL_ENDL;
+                }
+            }
+            memset(counters, 0, (size_t)kSkinFlagBytes);
+            meta.clear();
+            skin_flags_address = flags.mAddress + (VkDeviceAddress)call * kSkinFlagBytes;
+        }
+    }
     VkDeviceAddress skin_jobs_address = 0, skin_chunks_address = 0;
     if (!skin_chunks.empty())
     {
+        if (skin_flags_address != 0)
+        {
+            sSkinFlagMeta[ctx.getFrameSlot()][call] = skin_flag_meta;        // what this call's counters will be about
+        }
         U8* base = (U8*)tlas.mSkin.mMapped + (size_t)call * kSkinBytes;
         memcpy(base, skin_jobs.data(), sizeof(SkinJob) * skin_jobs.size());
         memcpy(base + kSkinJobBytes, skin_chunks.data(), sizeof(SkinChunk) * skin_chunks.size());
@@ -4749,7 +4916,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             const VkDeviceAddress pj = skin_jobs_address, pc = skin_chunks_address;
             const bool ok = ctx.immediateSubmit([&](VkCommandBuffer cmd) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sSkinPipe.mPipe);
-                const U32 push[4] = { (U32)pj, (U32)(pj >> 32), (U32)pc, (U32)(pc >> 32) };
+                const U32 push[8] = { (U32)pj, (U32)(pj >> 32), (U32)pc, (U32)(pc >> 32), 0u, 0u, 0u, 0u };      // (no skin catcher counters: the probe's dispatch is a repeat)
                 vkCmdPushConstants(cmd, sSkinPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
                 vkCmdDispatch(cmd, (U32)skin_chunks.size(), 1, 1);
                 full_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -4905,7 +5072,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             // the compute pass writes the vertices the builds below read (and the alpha test reads later): one dispatch, every job of the call
             ctx.gpuStamp(Context::stampTag("rt scene skin"));        // a fault between this stamp and "rt scene builds" is in the skinning dispatch
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sSkinPipe.mPipe);
-            const U32 push[4] = { (U32)skin_jobs_address, (U32)(skin_jobs_address >> 32), (U32)skin_chunks_address, (U32)(skin_chunks_address >> 32) };
+            U32 push[8] = { (U32)skin_jobs_address, (U32)(skin_jobs_address >> 32), (U32)skin_chunks_address, (U32)(skin_chunks_address >> 32), (U32)skin_flags_address, (U32)(skin_flags_address >> 32), 0u, 0u };
+            memcpy(&push[6], &kSkinLogReach, sizeof(F32));      // the skin catcher's counters and reach
             vkCmdPushConstants(cmd, sSkinPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
             vkCmdDispatch(cmd, (U32)skin_chunks.size(), 1, 1);
             full_barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
