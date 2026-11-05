@@ -30,6 +30,7 @@
 #include "llsys.h"
 #include <mutex>
 #include "llvertexbuffer.h"
+#include "llretirelist.h"
 // #include "llrender.h"
 #include "llrenderheaders.h"
 #if defined(LL_VULKAN)
@@ -1140,6 +1141,7 @@ U32 LLVertexBuffer::calcVertexSize(const U32& typemask)
 //virtual
 LLVertexBuffer::~LLVertexBuffer()
 {
+    LLVBHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C3.5: handles of this buffer stop resolving
     delete mVkBindCache;
     if (mMapped)
     { // is on the mapped buffer list but doesn't need to be flushed
@@ -2041,3 +2043,41 @@ void LLVertexBuffer::setIndexData(const U32* data, U32 offset, U32 count)
 
 
 
+
+
+// ---- <FS> C3.5: the handle, the retire hook and the stand-in of the vertex buffer (llvertexbuffer.h)
+std::atomic<U64> LLVBRef::sDeadResolved{0};
+
+U32 LLVertexBuffer::getRenderHandle() const
+{
+    U32 handle = mRenderHandle.v.load(std::memory_order_acquire);
+    if (handle)
+    {
+        return handle;
+    }
+    const U32 fresh = LLVBHandles::acquire(const_cast<LLVertexBuffer*>(this));
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        LLVBHandles::release(fresh);       // another thread asked first
+        return expected;
+    }
+    return fresh;
+}
+
+bool LLVertexBuffer::retireOnLastRef() const
+{
+    return LLRetireList::park(const_cast<LLVertexBuffer*>(this));
+}
+
+// static
+LLVertexBuffer* LLVBRef::deadBuffer()
+{
+    ++sDeadResolved;
+    static LLVertexBuffer* dead = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX);       // (never destroyed; never allocated: no GPU buffer, id 0)
+    return dead;
+}
