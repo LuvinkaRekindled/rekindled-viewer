@@ -771,9 +771,9 @@ F32 LLDrawable::updateXform(bool undamped)
     bool damped = !undamped;
 
     // Position
-    const LLVector3 old_pos(mXform.getPosition());
+    const LLVector3 old_pos(xform().getPosition());
     LLVector3 target_pos;
-    if (mXform.isRoot())
+    if (xform().isRoot())
     {
         // get root position in your agent's region
         target_pos = mVObjp->getPositionAgent();
@@ -785,7 +785,7 @@ F32 LLDrawable::updateXform(bool undamped)
     }
 
     // Rotation
-    const LLQuaternion old_rot(mXform.getRotation());
+    const LLQuaternion old_rot(xform().getRotation());
     LLQuaternion target_rot = mVObjp->getRotation();
     //scaling
     LLVector3 target_scale = mVObjp->getScale();
@@ -876,10 +876,10 @@ F32 LLDrawable::updateXform(bool undamped)
     }
 
     // Update
-    mXform.setPosition(target_pos);
-    mXform.setRotation(target_rot);
-    mXform.setScale(LLVector3(1,1,1)); //no scale in drawable transforms (IT'S A RULE!)
-    mXform.updateMatrix();
+    xform().setPosition(target_pos);
+    xform().setRotation(target_rot);
+    xform().setScale(LLVector3(1,1,1)); //no scale in drawable transforms (IT'S A RULE!)
+    xform().updateMatrix();
     if (isRoot() && mVObjp->isAnimatedObject())
     {
         LLControlAvatar* cav = mVObjp->getControlAvatar();
@@ -1174,14 +1174,14 @@ void LLDrawable::shiftPos(const LLVector4a &shift_vector)
 
     if (mParent)
     {
-        mXform.setPosition(mVObjp->getPosition());
+        xform().setPosition(mVObjp->getPosition());
     }
     else
     {
-        mXform.setPosition(mVObjp->getPositionAgent());
+        xform().setPosition(mVObjp->getPositionAgent());
     }
 
-    mXform.updateMatrix();
+    xform().updateMatrix();
 
     if (isStatic())
     {
@@ -1230,8 +1230,8 @@ void LLDrawable::shiftPos(const LLVector4a &shift_vector)
 
 const LLVector3& LLDrawable::getBounds(LLVector3& min, LLVector3& max) const
 {
-    mXform.getMinMax(min,max);
-    return mXform.getPositionW();
+    xform().getMinMax(min,max);
+    return xform().getPositionW();
 }
 
 void LLDrawable::updateSpatialExtents()

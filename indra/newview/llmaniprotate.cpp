@@ -629,7 +629,7 @@ void LLManipRotate::drag( S32 x, S32 y )
 
                 if (object->getParent() && object->mDrawable.notNull())
                 {
-                    LLQuaternion invParentRotation = object->mDrawable->mXform.getParent()->getWorldRotation();
+                    LLQuaternion invParentRotation = object->mDrawable->xform().getParent()->getWorldRotation();
                     invParentRotation.transQuat();
 
                     object->setRotation(new_rot * invParentRotation, damped);

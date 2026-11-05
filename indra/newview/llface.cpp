@@ -448,7 +448,7 @@ void LLFace::unsetFaceColor()
 void LLFace::setDrawable(LLDrawable *drawable)
 {
     mDrawablep  = drawable;
-    mXform      = &drawable->mXform;
+    mXform      = &drawable->xform();
     stampTextures();
 }
 

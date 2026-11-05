@@ -716,7 +716,7 @@ bool LLManipTranslate::handleHover(S32 x, S32 y, MASK mask)
                 // handle attachments in local space
                 if (object->isAttachment() && object->mDrawable.notNull())
                 {
-                    LLXform* object_xform_parent = object->mDrawable->mXform.getParent();
+                    LLXform* object_xform_parent = object->mDrawable->xform().getParent();
                     if (object_xform_parent)
                     {
                         // calculate local version of relative move
