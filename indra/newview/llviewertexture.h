@@ -332,6 +332,41 @@ enum FTType
 
 const std::string& fttype_to_string(const FTType& fttype);
 
+// <FS> C2.3 (doc/vulkan/PLAN-clean-core.md section 7): a texture reference that is a handle, not a counted pointer. It holds no reference count and owns nothing: the texture's owners (the faces, the
+// texture lists) keep it alive, and the retire list (LLTexRetire) keeps it intact for the frames that could still read it after the last owner let go. It reads like the LLPointer it replaces
+// (get(), ->, *, conversion to a pointer, isNull / notNull, comparison through the pointer); get() resolves the handle each time. A handle whose texture is gone answers the default image (never
+// nullptr while a texture was assigned), and counts it (sDeadResolved, logged with the retire list): in a healthy run it stays 0.
+class LLTexRef
+{
+public:
+    LLTexRef() = default;
+    LLTexRef(std::nullptr_t) {}
+    LLTexRef(LLViewerTexture* tex) : mHandle(tex ? tex->getRenderHandle() : 0) {}
+    template <class U, class = std::enable_if_t<std::is_base_of<LLViewerTexture, U>::value>>
+    LLTexRef(const LLPointer<U>& p) : LLTexRef(static_cast<LLViewerTexture*>(p.get())) {}
+    LLTexRef& operator=(LLViewerTexture* tex) { mHandle = tex ? tex->getRenderHandle() : 0; return *this; }
+    template <class U, class = std::enable_if_t<std::is_base_of<LLViewerTexture, U>::value>>
+    LLTexRef& operator=(const LLPointer<U>& p) { return *this = static_cast<LLViewerTexture*>(p.get()); }
+
+    LLViewerTexture* get() const
+    {
+        if (!mHandle) return nullptr;
+        LLViewerTexture* tex = LLTexHandles::resolve(mHandle);
+        return tex ? tex : deadTexture();
+    }
+    operator LLViewerTexture*() const { return get(); }
+    LLViewerTexture* operator->() const { return get(); }
+    LLViewerTexture& operator*() const { return *get(); }
+    bool isNull() const { return mHandle == 0; }
+    bool notNull() const { return mHandle != 0; }
+    U32 handle() const { return mHandle; }
+
+    static std::atomic<U64> sDeadResolved;     // resolutions of a handle whose texture was gone (answered with the default image)
+private:
+    static LLViewerTexture* deadTexture();
+    U32 mHandle = 0;
+};
+
 //
 //textures are managed in gTextureList.
 //raw image data is fetched from remote or local cache
