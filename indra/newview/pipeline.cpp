@@ -22657,7 +22657,13 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
     if (appearance == LLVOAvatar::AOA_JELLYDOLL) kind |= 8;
     if (appearance == LLVOAvatar::AOA_INVISIBLE) kind |= 16;
     if (avatar->isTooSlow()) kind |= 32;
-    if (!avatar->isFullyLoaded() && LLVkBridge::rtLoadingGates()) kind |= 64;      // still loading in: nothing is traced for it until it is (its shape and textures are not final)
+    // still loading in for the FIRST time: nothing is traced for it until it is (its shape and textures are not final). Once it has been loaded, a later flip of isFullyLoaded() (a texture or an
+    // attachment arriving resets its timer for a second) does not take it out of the scene again: that left the ray scene with its last skinned pose while the body moved on (LLVOAvatar::mRtWasLoaded)
+    if (avatar->isFullyLoaded())
+    {
+        avatar->mRtWasLoaded = true;
+    }
+    if (!avatar->mRtWasLoaded && LLVkBridge::rtLoadingGates()) kind |= 64;
     return kind;
 }
 

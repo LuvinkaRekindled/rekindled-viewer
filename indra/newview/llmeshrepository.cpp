@@ -48,6 +48,8 @@
 #include "llsd.h"
 #include "llsdutil_math.h"
 #include "llsdserialize.h"
+#include <fstream>
+#include <iomanip>
 #include "llthread.h"
 #include "llfilesystem.h"
 #include "llviewercontrol.h"
@@ -2567,6 +2569,38 @@ bool LLMeshRepoThread::skinInfoReceived(const LLUUID& mesh_id, U8* data, S32 dat
     {
         LLPointer<LLMeshSkinInfo> info = nullptr;
         info = new LLMeshSkinInfo(mesh_id, skin);
+
+        if (info->mBadBindCount > 0)
+        {
+            // <FS> the raw skin block of an asset whose inverse bind matrices the parse refused, exactly as it came (compressed, before the inflate), the inflated LLSD as this viewer read it, and the
+            // matrices as parsed, into D:\claude\meshdump: a parser of another make (Python) reads the raw bytes and says whether the values are in the asset or made by this viewer (2026-11-05, the user:
+            // four avatars with garbage bind matrices that never showed before is not content). Off the main thread (the repository thread), a few KB per mesh, once per parse.
+            static const std::string dir = "D:\\claude\\meshdump";
+            LLFile::mkdir(dir);
+            const std::string base = dir + "\\" + mesh_id.asString();
+            {
+                std::ofstream raw(base + ".skin.z", std::ios::binary | std::ios::trunc);
+                raw.write((const char*)data, data_size);
+            }
+            {
+                std::ofstream xml(base + ".skin.xml", std::ios::trunc);
+                LLSDSerialize::toPrettyXML(skin, xml);
+            }
+            {
+                std::ofstream txt(base + ".skin.txt", std::ios::trunc);
+                txt << "mesh " << mesh_id << " joints " << info->mJointNames.size() << " inverse bind " << info->mInvBindMatrix.size() << " refused " << info->mBadBindCount << "\n";
+                for (size_t i = 0; i < info->mJointNames.size() && i < skin["inverse_bind_matrix"].size(); ++i)
+                {
+                    txt << i << " " << info->mJointNames[i];
+                    for (U32 k = 0; k < 16; ++k)
+                    {
+                        txt << " " << std::setprecision(9) << skin["inverse_bind_matrix"][i][k].asReal();
+                    }
+                    txt << "\n";
+                }
+            }
+            LL_WARNS("MeshSkin") << "mesh " << mesh_id << ": raw skin block (" << data_size << " bytes compressed) dumped to " << base << ".skin.z for the reference parse" << LL_ENDL;
+        }
 
         if (isAgentAvatarValid() && gAgentAvatarp->mInitFlags != 0)
         { // joint numbers are consistent inside LLVOAvatar and animations, but inconsistent inside meshes,

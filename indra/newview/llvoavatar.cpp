@@ -12194,6 +12194,13 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         }
         entry.mFrame = gFrameCount;
         entry.mComputed = true;
+        if (skin->mBadBindCount > 0 && !entry.mBadBindNamed)
+        {
+            // <FS> once per avatar and mesh: who wears a mesh whose inverse bind matrices the parse refused (the identity stands in, so nothing else ever names the wearer; MeshSkin, 2026-11-05)
+            entry.mBadBindNamed = true;
+            LL_WARNS("MeshSkin") << "avatar " << getFullname() << " " << getID() << " wears mesh " << skin->mMeshID << " with " << skin->mBadBindCount << " of " << skin->mInvBindMatrix.size()
+                                 << " inverse bind matrices refused at the parse (the identity stands in); joints " << skin->mJointNames.size() << LL_ENDL;
+        }
 
         //build matrix palette
         U32 count = LLSkinningUtil::getMeshJointCount(skin);

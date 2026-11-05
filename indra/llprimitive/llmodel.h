@@ -72,6 +72,7 @@ public:
     float mPelvisOffset;
     bool mLockScaleIfJointPosition;
     bool mInvalidJointsScrubbed;
+    U32 mBadBindCount = 0;          // <FS> inverse bind matrices of the asset that fs_bind_matrix_sane refused at the parse (the identity stands in); the repository dumps such an asset's raw skin block for the reference parse (MeshSkin)
     bool mJointNumsInitialized;
     U64 mHash = 0;
 } LL_ALIGN_POSTFIX(16);

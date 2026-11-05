@@ -1745,6 +1745,7 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
 
             mInvBindMatrix.push_back(LLMatrix4a(mat));
         }
+        mBadBindCount = bad_inverse_bind_count;
         if (bad_inverse_bind_count)
         {
             LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": " << bad_inverse_bind_count << " of " << mInvBindMatrix.size() << " inverse bind matrices in the asset cannot be used (not finite, out of range or degenerate): "
