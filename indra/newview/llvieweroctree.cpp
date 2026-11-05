@@ -529,6 +529,14 @@ bool LLViewerOctreeGroup::removeFromGroup(LLViewerOctreeEntry* entry)
     return true;
 }
 
+void LLViewerOctreeGroup::bumpPartitionEpoch() const
+{
+    if (LLViewerOctreePartition* part = getOctreePartition())
+    {
+        part->mEpoch.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 //virtual
 void LLViewerOctreeGroup::unbound()
 {
@@ -539,6 +547,7 @@ void LLViewerOctreeGroup::unbound()
     }
 
     setState(DIRTY);
+    bumpPartitionEpoch();               // <FS> C4.3
     if (LLCullShadow::sOn)
     {
         LLCullShadow::touch(this);          // <FS> S7 C1b: the bounds will change at the next rebound
@@ -557,6 +566,7 @@ void LLViewerOctreeGroup::unbound()
             }
 
             group->setState(DIRTY);
+            group->bumpPartitionEpoch();    // <FS> C4.3
             if (LLCullShadow::sOn)
             {
                 LLCullShadow::touch(group);
@@ -639,6 +649,7 @@ void LLViewerOctreeGroup::rebound()
     }
 
     clearState(DIRTY);
+    bumpPartitionEpoch();               // <FS> C4.3: the bounds are new (a result computed while this group was stale must not be kept under the final epoch)
 
     return;
 }
@@ -668,6 +679,7 @@ void LLViewerOctreeGroup::handleDestruction(const TreeNode* node)
         return;
     }
     setState(DEAD);
+    bumpPartitionEpoch();               // <FS> C4.3
     if (LLCullShadow::sOn)
     {
         LLCullShadow::touch(this);          // <FS> S7 C1b: the row shows it dead until the slot is freed
@@ -720,6 +732,7 @@ void LLViewerOctreeGroup::handleChildRemoval(const OctreeNode* parent, const Oct
 //virtual
 void LLViewerOctreeGroup::handleParentChange(const OctreeNode* node)
 {
+    bumpPartitionEpoch();               // <FS> C4.3
     if (LLCullShadow::sOn)
     {
         LLCullShadow::touch(this);          // <FS> S7 C1b: the row names the parent
@@ -1552,6 +1565,8 @@ LLViewerOctreePartition::LLViewerOctreePartition() :
     center.splat(0.f);
     size.splat(1.f);
 
+    static std::atomic<U32> sNextPartitionId{ 0 };
+    mId = ++sNextPartitionId;           // <FS> C4.3
     mOctree = new OctreeRoot(center,size, NULL);
 }
 

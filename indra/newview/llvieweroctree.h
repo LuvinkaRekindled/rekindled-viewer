@@ -27,6 +27,7 @@
 #ifndef LL_VIEWEROCTREE_H
 #define LL_VIEWEROCTREE_H
 
+#include <atomic>
 #include <functional>
 #include <vector>
 #include <map>
@@ -245,6 +246,11 @@ public:
     virtual void handleParentChange(const OctreeNode* node);        // <FS> S7 C1b
 
     OctreeNode*          getOctreeNode() {return mOctreeNode;}
+
+    // <FS> C4.3: the partition this group belongs to (nullptr for a plain group), and the bump of its change epoch: a change of this group's bounds, state or place in the tree that a result retained
+    // for the partition (the cascades' visible extents) must not outlive. Bumped when a group goes dirty (unbound), when it is rebounded, on destruction, on a parent change, by shift and expandExtents.
+    virtual LLViewerOctreePartition* getOctreePartition() const { return nullptr; }
+    void bumpPartitionEpoch() const;
     LLViewerOctreeGroup* getParent();
 
     const LLVector4a* getBounds() const        {return row().bounds;}
@@ -302,6 +308,7 @@ protected:
 
 public:
     LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctreePartition* part);
+    /*virtual*/ LLViewerOctreePartition* getOctreePartition() const override { return mSpatialPartition; }       // <FS> C4.3
     LLOcclusionCullingGroup(const LLOcclusionCullingGroup& rhs) = delete;       // <FS> C1b
     LLOcclusionCullingGroup& operator=(const LLOcclusionCullingGroup& rhs) = delete;
 
@@ -355,6 +362,10 @@ public:
     bool             mOcclusionEnabled; // if true, occlusion culling is performed
     U32              mLODSeed;
     U32              mLODPeriod;    //number of frames between LOD updates for a given spatial group (staggered by mLODSeed)
+    // <FS> C4.3: a number that is never used by another partition (a retained result is keyed on it: the address of a destroyed partition can be reused) and the partition's change epoch (see
+    // LLViewerOctreeGroup::bumpPartitionEpoch)
+    U32              mId = 0;
+    std::atomic<U32> mEpoch{ 0 };
 };
 
 class LLViewerOctreeCull : public OctreeTraveler
