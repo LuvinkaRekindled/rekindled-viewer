@@ -1184,7 +1184,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         {
             batch[index]->runDeferredMotionBlend();
         };
-        pool->run(batch.size(), blend);
+        pool->runLabeled("avatar motion batch", batch.size(), blend);
 
         // <FS> view rework A2 (LL_VK_AV_PARALLEL=1): the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
@@ -1206,7 +1206,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
                 const std::function<void(size_t)> att_job = [](size_t index) { jobs[index]->runAttachmentJob(); };
                 // (asked here, on this thread: getObjectCount() cleans the selection's node list)
                 LLVOAvatar::sAttachmentSelectedForJobs = (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment()) ? 1 : 0;
-                pool->run(jobs.size(), att_job);
+                pool->runLabeled("avatar attachments", jobs.size(), att_job);
                 LLVOAvatar::sAttachmentSelectedForJobs = -1;
                 job_total += jobs.size();
             }

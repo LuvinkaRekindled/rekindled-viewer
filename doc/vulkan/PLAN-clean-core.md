@@ -155,3 +155,18 @@ Not started; the list so far, collected while building C1-C4, so it starts from 
 - **The references that stayed counted:** owners (faces, groups, drawables) keep counted pointers by design; check that no counted pointer is still copied on a hot path or from a pool thread (LLRefCount is not atomic).
 - **Per-frame walks that survived C4/C5:** whatever the census still finds (updateCull, the distance / LOD work of static drawables, the avatar motion batch 0.6-0.7 ms, gObjectList.update 0.94 ms); every one measured by its zone AND by the pool's cycles.
 - **Controls to keep:** the laps with the same-session exe swap (A B A B) for every claim of "cheaper", scene counts (avatars, objects) beside every loop time, <work>\warn-diff.py on every lap, <work>\fix-members.py for compiler-guided moves.
+
+**C4 measurement 3: what the walks cost on ALL threads (2026-11-05, lap c4p-poollabels1, RT off, DLSS, mode poollabels = LL_VK_POOL_LABELS=1 with no counter that changes a path; the pool's jobs timed per family: wall time of each job on the workers AND on the launching thread, per frame, 600 frame windows; the instrumentation is in llforkjoinpool.h (labels on a batch, runLabeled / launchLabeled at the 18 launch sites, reportLabels from the retire pump), off unless the switch is set).** Pool job time a frame, ms on all threads (of it on the main thread), 61-64 avatars:
+| family | still 1 | turn | still 2 |
+|---|---|---|---|
+| **all families** | **5.40 (0.66)** | **9.74 (1.51)** | **6.67 (0.84)** |
+| avatar motion batch | 1.76 (0.22) | 1.31 (0.15) | 1.88 (0.24) |
+| shadow prep: render map job | 0.64 (0.08) | 1.59 (0.20) | 0.86 (0.11) |
+| updateCull: partition cull | 0.63 (0.08) | 1.56 (0.19) | 0.83 (0.10) |
+| shadow prep: point cloud units | 0.55 (0.07) | 0.62 (0.08) | 0.63 (0.08) |
+| stateSort: compute 1 + 2 | 0.51 (0.06) | 0.89 (0.11) | 0.65 (0.09) |
+| shadow prep: mark job | 0.19 (0.03) | 0.50 (0.06) | 0.26 (0.04) |
+| avatar velocity job | 0.19 (0.01) | 0.36 (0.35) | 0.26 (0.01) |
+| avatar attachments | 0.17 (0.02) | 0.11 (0.02) | 0.22 (0.03) |
+| textures: priority pre-pass | 0.17 (0.02) | 0.64 (0.08) | 0.22 (0.03) |
+The walk family (updateCull's partition cull, stateSort's two computes, the cascades' render map, mark and point cloud jobs): **about 2.5 ms a frame of CPU in a still, about 5.2 in a turn: 46% and 53% of the pool's job time**, against the 0.8 ms the main thread shows for them: on a 4-core machine this is the number that counts, and it is why the walks are worth removing although the main-thread gain is modest. Order by size for C4: (1) the cascades' walk: render map 0.64 + point cloud 0.55 + mark 0.19 = 1.38 ms (still) / 2.7 (turn); (2) updateCull's partition cull 0.63 / 1.56; (3) stateSort's computes 0.51 / 0.89. Not a walk, and the biggest single family: the avatar motion batch, 1.3-1.9 ms a frame of CPU for 64-76 avatars (animation and skinning updates: an item for the sweep, section 8, and the object model's next target). Left out of the table: the main view's own render map chunks (they did not run on the pool in this lap: the parallel map is off when a zone timer or census is active; the label is in place), the cascade cull job (under 0.0005 ms a frame: the cull split does it).

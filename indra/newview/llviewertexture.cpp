@@ -29,6 +29,7 @@
 
 #include "llviewertexture.h"
 #include "llretirelist.h"
+#include "llforkjoinpool.h"
 #include "llfetchedgltfmaterial.h"
 #include "llinstancetable.h"
 #include "llavatarref.h"
@@ -928,6 +929,7 @@ bool LLViewerTexture::retireOnLastRef() const
 void LLTexRetire::pump()
 {
     LLRetireList::pump();
+    LLForkJoinPool::reportLabels(LLFrameTimer::getFrameCount());       // <FS> LL_VK_POOL_LABELS: the pool job time a frame by family (llforkjoinpool.h)
     static U64 sLastLog = 0;
     const U64 now = LLFrameTimer::getFrameCount();
     if (now - sLastLog >= 3600)

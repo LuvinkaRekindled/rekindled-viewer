@@ -7598,7 +7598,7 @@ void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<Fi
             prepareBatch(tasks[k]);
         }
         const std::function<void(size_t)> job = [&](size_t j) { fillBatch(tasks[parallel[j]]); };
-        pool->run(parallel.size(), job);
+        pool->runLabeled("group rebuild: fills (1)", parallel.size(), job);
         for (FillTask& task : tasks)
         {
             if (task.mSerialOnly)
@@ -7701,7 +7701,7 @@ void LLRebuildBatch::flush()
     if (pool && parallel.size() >= 2)
     {
         const std::function<void(size_t)> job = [&](size_t j) { parallel[j].first->fillBatch(*parallel[j].second); };
-        pool->run(parallel.size(), job);
+        pool->runLabeled("group rebuild: fills (2)", parallel.size(), job);
     }
     else
     {
