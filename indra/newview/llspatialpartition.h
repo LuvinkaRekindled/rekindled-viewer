@@ -476,6 +476,15 @@ public:
     // <FS> stage 3a: cull(camera) in pieces (see LLViewerOctreeCull::traverseTop); the main view only (no shadow culler)
     void cullSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
     void cullTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
+    // <FS> C4.5 S1a (LL_VK_VISSET=2): the membership the main view's cull gives this partition, worked out again by a walk of the same verdicts that changes nothing (no stamp, no list, no queue): the groups the cull would
+    // list (drawable groups, visible groups) and per visited node the mRes it was entered with and what happened to it. The root is rebounded by the caller.
+    struct CullCollect
+    {
+        struct NodeInfo { S8 mEntryRes = 0; U8 mOutcome = 0; U8 mMember = 0; };      // outcome: 1 dropped as occluded, 2 outside the frustum, 3 passed; member: 0 no, 1 drawable group, 2 visible group
+        std::vector<LLSpatialGroup*> mDrawable, mVisible;
+        std::unordered_map<const void*, NodeInfo> mNodes;
+    };
+    void collectCull(LLCamera& camera, CullCollect& out);
     // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullSplit and cullTask cut the main cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
     // on its own thread, before any of these run: rebound() writes); empty is cleared when the walk found a visible group.
     // <FS> the cascades' cull (LL_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
