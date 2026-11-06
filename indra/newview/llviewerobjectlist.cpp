@@ -1169,10 +1169,36 @@ namespace
 {
 // Runs the deferred pose blend of every avatar in the batch, in parallel when
 // that is worth it, then finishes their idle updates on the calling thread.
+// <FS> LL_VK_AVCLASS=1 (a census, off by default): who is in the avatar motion batch and what each kind costs. Class: 0 the own avatar, 1 visible in the main view, 2 not visible in the main view but marked visible by another view
+// (a shadow cascade), 3 visible in none; +4 when only the skeleton's matrices are worked out (a hidden avatar: no pose blend). Per class a frame: avatars, the blend time (on all threads), the completion time (main thread).
+struct AvClassCensus
+{
+    std::atomic<U64> mBlendNs[8];
+    U64 mCount[8] = {}, mCompleteNs[8] = {}, mFar[8] = {}, mBatches = 0;
+    AvClassCensus() { for (auto& b : mBlendNs) { b.store(0); } }
+};
+AvClassCensus gAvClass;
+
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     const auto batch_start = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+
+    static const bool av_class = getenv("LL_VK_AVCLASS") != nullptr;
+    static std::vector<U8> av_cls;
+    if (av_class)
+    {
+        av_cls.resize(batch.size());
+        for (size_t i = 0; i < batch.size(); ++i)
+        {
+            LLVOAvatar* a = batch[i].get();
+            U8 c = a->isSelf() ? 0 : a->isVisible() ? 1 : (a->mDrawable.notNull() && a->mDrawable->isVisible()) ? 2 : 3;
+            if (a->isMatricesOnlyDeferred()) { c += 4; }
+            av_cls[i] = c;
+            ++gAvClass.mCount[c];
+            if (a->mDrawable.notNull() && a->mDrawable->mDistanceWRTCamera > 60.f) { ++gAvClass.mFar[c]; }
+        }
+    }
 
     LLForkJoinPool* pool = LLForkJoinPool::shared();
 
@@ -1182,6 +1208,13 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("parallel motion blend");
         const std::function<void(size_t)> blend = [&batch](size_t index)
         {
+            if (av_class)
+            {
+                const auto t0 = std::chrono::steady_clock::now();
+                batch[index]->runDeferredMotionBlend();
+                gAvClass.mBlendNs[av_cls[index]].fetch_add((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
+                return;
+            }
             batch[index]->runDeferredMotionBlend();
         };
         pool->runLabeled("avatar motion batch", batch.size(), blend);
@@ -1226,9 +1259,41 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
 
     const auto blend_end = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-    for (LLPointer<LLVOAvatar>& avatar : batch)
+    if (av_class)
     {
-        avatar->completeDeferredMotionUpdate();
+        for (size_t i = 0; i < batch.size(); ++i)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            batch[i]->completeDeferredMotionUpdate();
+            gAvClass.mCompleteNs[av_cls[i]] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+        }
+        if (++gAvClass.mBatches % 600 == 0)
+        {
+            static const char* const names[8] = { "own avatar", "visible in the main view", "visible only in another view", "visible in no view", "own avatar (matrices only)", "main view (matrices only)", "other view (matrices only)", "no view (matrices only)" };
+            const double n = (double)gAvClass.mBatches;
+            std::string text;
+            double blend_all = 0.0, complete_all = 0.0;
+            for (int c = 0; c < 8; ++c)
+            {
+                const double blend = (double)gAvClass.mBlendNs[c].exchange(0) / 1.0e6 / n, complete = (double)gAvClass.mCompleteNs[c] / 1.0e6 / n;
+                blend_all += blend;
+                complete_all += complete;
+                if (gAvClass.mCount[c])
+                {
+                    text += llformat(" | %s: %.1f avatars (%.1f beyond 60 m), blend %.3f ms on all threads, completion %.3f ms on the main thread", names[c], (double)gAvClass.mCount[c] / n, (double)gAvClass.mFar[c] / n, blend, complete);
+                }
+                gAvClass.mCount[c] = gAvClass.mCompleteNs[c] = gAvClass.mFar[c] = 0;
+            }
+            LL_INFOS("AvClass") << "avatar motion batch per frame over " << gAvClass.mBatches << " batches: blend " << blend_all << " ms, completion " << complete_all << " ms" << text << LL_ENDL;
+            gAvClass.mBatches = 0;
+        }
+    }
+    else
+    {
+        for (LLPointer<LLVOAvatar>& avatar : batch)
+        {
+            avatar->completeDeferredMotionUpdate();
+        }
     }
     if (gFSAvTimersOn)
     {

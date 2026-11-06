@@ -893,6 +893,7 @@ private:
 public:
     static void cullAvatarsByPixelArea();
     bool        isCulled() const { return mCulled; }
+    bool        isMatricesOnlyDeferred() const { return mDeferredMatricesOnly; }     // <FS> LL_VK_AVCLASS census: a hidden avatar whose batch entry only works out the skeleton matrices
 private:
     bool        mCulled;
 
