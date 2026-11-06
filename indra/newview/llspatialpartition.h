@@ -189,7 +189,6 @@ public:
     U8   mShiny = 0;
     bool mFullbright = false;
     bool mHasGlow = false;
-    bool mParticleRows = false;         // <FS> GPU particles stage 1 (PLAN-gpu-particles.md): the buffer holds one row a particle (not four vertices), mOffset / mCount are 6 vertices a particle: the pull shaders expand each row to a quad
     // <FS> S7 B0 (doc/vulkan/S7-design.md section 13): the union of the extents of the faces this draw covers (agent space for a static drawable, the drawable's own space for an active one: the model
     // matrix maps it); only filled for volume faces while LL_VK_VISCENSUS is on (LLVolumeGeometryManager::registerFace)
     LLVector4a mExtents[2];
@@ -261,6 +260,18 @@ public:
 };
 
 class LLSpatialGroup;
+// <FS> C5 J2: one draw of a particle group: a run of rows of the group's row buffer (the GPU particle path, PLAN-gpu-particles.md) with one texture and blend state. A particle group keeps these instead of draw
+// infos: the alpha pass makes its entries from them directly (ll_particle_transient), nothing is allocated per rebuild or classified per draw
+struct LLParticleRun
+{
+    LLPointer<LLViewerTexture> mTexture;
+    U32 mFirst = 0;                     // the first row
+    U32 mRows = 0;                      // how many rows (6 vertices each, made by the pull shader)
+    U8 mBlendSrc = 0, mBlendDst = 0;    // LLRender::eBlendFactor
+    bool mFullbright = false;
+    bool mGlow = false;                 // a particle in the run glows: the glow pass draws it
+};
+
 // <FS> C4.1: the groups that have (or had, until the next prune) a state bit the rebuild loops of the shadow preparation look for (MESH_DIRTY, GEOM_DIRTY, NEW_DRAWINFO), kept as they are set, so that those loops
 // ask the few groups instead of reading the state word of every visible group of every cascade
 namespace LLDirtyGroups
@@ -411,6 +422,7 @@ protected:
 public:
     LLPointer<LLVertexBuffer> mVertexBuffer;
     draw_map_t mDrawMap;
+    std::vector<LLParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mDrawMap[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
     // <FS> S1 phase 0 (doc/vulkan/PLAN-retained-records.md): bumped whenever the draw infos are cleared (every creation of draw infos follows a clear), so the same serial on two frames
     // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
     U32 mDrawMapSerial = 1;

@@ -10,6 +10,8 @@
 
 class LLDrawInfo;
 class LLViewerTexture;
+class LLVertexBuffer;
+struct LLParticleRun;
 
 struct LLAlphaTransient
 {
@@ -23,5 +25,8 @@ struct LLAlphaTransient
 
 // pipeline.cpp: can the table's pull programs draw this draw as a transient entry (the same conditions as a fragment item), and if so its entry, key, textures and values
 bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaTransient& out);
+
+// C5 J2: the same for a run of a particle group (rows of the group's buffer); false = not drawn
+bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* rows, bool depth_only, LLAlphaTransient& out);
 
 #endif

@@ -1183,10 +1183,6 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
         }
     }
     e.mCutoff = params.mAlphaMaskCutoff;        // S6 X3: (the alpha masked passes without materials read it from the row too)
-    if (params.mParticleRows)
-    {
-        e.mFlags |= LLVkBridge::GEO_NO_INDEX | LLVkBridge::GEO_PARTICLE_ROWS;       // (the shader makes the corners from gl_VertexIndex: no index buffer is read)
-    }
     return true;
 }
 

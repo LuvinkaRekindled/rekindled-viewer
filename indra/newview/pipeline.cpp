@@ -11376,34 +11376,92 @@ static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_ol
     ac.mWhy = served ? WHY_SERVED : why;
 }
 
-// S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
 static U64 sAlphaWhyTr[WHY_COUNT] = {};
+
+// the pull program of the context this pass draws in must exist (HUD: fullbright / glTF; impostor render: lit / mask; depth only passes: mask); the old path draws the rest
+static bool alpha_transient_context_ok(U32 pkey, bool rigged, bool depth_only)
+{
+    bool have = true;
+    if (LLPipeline::sRenderingHUDs)
+    {
+        have = pkey == 18 ? (gAlphaHudPbrReady && !rigged) : (pkey < 2 && gAlphaHudPullReady && !rigged);
+    }
+    else if (depth_only)
+    {
+        have = pkey >= 2 || gAlphaMaskPullReady;
+    }
+    else if (LLPipeline::sImpostorRender)
+    {
+        have = pkey == 0 ? gAlphaImpostorPullReady : (pkey == 1 ? gAlphaMaskPullReady : true);
+    }
+    return have;
+}
+
+// C5 J2: a run of a particle group (rows of the group's buffer) as a transient entry: what ll_alpha_transient gives for the draw info the run replaces (a plain blend draw, one texture, no model or texture matrix, the
+// pull shaders make the quads from the rows: GEO_NO_INDEX | GEO_PARTICLE_ROWS)
+bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* vb, bool depth_only, LLAlphaTransient& out)
+{
+    const U32 blend_id = alpha_blend_id((int)run.mBlendSrc, (int)run.mBlendDst);
+    const U32 key = (run.mFullbright ? 1u : 0u) | (blend_id == ~0u ? 0u : blend_id << 8);
+    const bool served = run.mRows && blend_id != ~0u && vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16
+        && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0
+        && vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) && vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && vb->hasDataType(LLVertexBuffer::TYPE_COLOR)
+        && (((run.mFullbright ? 2 : 1) & scene_alpha_only()) != 0)
+        && alpha_transient_context_ok(key & 0xFF, false, depth_only);
+    if (!served)
+    {
+        static bool warned = false;
+        if (run.mRows && !warned)
+        {
+            warned = true;
+            LL_WARNS("VkScene") << "[S5g] a particle run the table cannot draw is not drawn (logged once)" << LL_ENDL;
+        }
+        return false;
+    }
+    LLVkBridge::GeoEntry& e = out.mEntry;
+    e = {};
+    e.mVertexBuffer = vb->getVertexBufferId();
+    e.mIndexBuffer = vb->getIndexBufferId();
+    e.mFirstIndex = 6 * run.mFirst;
+    e.mIndexCount = 6 * run.mRows;
+    e.mNormalOffset = vb->getOffset(LLVertexBuffer::TYPE_NORMAL);
+    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    if (vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+    {
+        e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);
+    }
+    e.mFlags |= LLVkBridge::GEO_ONE_TEXTURE | LLVkBridge::GEO_NO_INDEX | LLVkBridge::GEO_PARTICLE_ROWS;
+    e.mCutoff = 0.5f;           // (LLDrawInfo's default)
+    out.mPbr = false;
+    out.mUseTexMatrix = false;
+    for (int k = 0; k < 6; ++k)
+    {
+        out.mTextures[k] = nullptr;
+    }
+    if (run.mTexture.notNull())
+    {
+        out.mTextures[0] = run.mTexture.get();
+        e.mTextures[0] = 1;
+    }
+    if (run.mFullbright)
+    {
+        e.mFlags |= LLVkBridge::GEO_FULLBRIGHT;     // item D1: the merged lit alpha program draws this one without lighting
+    }
+    out.mKey = key;
+    ++sAlphaWhyTr[WHY_SERVED];
+    return true;
+}
+
+// S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
 bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaTransient& out)
 {
     AlphaClass ac;
     alpha_classify(draw, rigged, true, false, ac);
-    if (ac.mServed)
+    if (ac.mServed && !alpha_transient_context_ok(ac.mKey & 0xFF, rigged, depth_only))
     {
-        // the pull program of the context this pass draws in must exist (HUD: fullbright / glTF; impostor render: lit / mask; depth only passes: mask); the old path draws the rest
-        const U32 pkey = ac.mKey & 0xFF;
-        bool have = true;
-        if (LLPipeline::sRenderingHUDs)
-        {
-            have = pkey == 18 ? (gAlphaHudPbrReady && !rigged) : (pkey < 2 && gAlphaHudPullReady && !rigged);
-        }
-        else if (depth_only)
-        {
-            have = pkey >= 2 || gAlphaMaskPullReady;
-        }
-        else if (LLPipeline::sImpostorRender)
-        {
-            have = pkey == 0 ? gAlphaImpostorPullReady : (pkey == 1 ? gAlphaMaskPullReady : true);
-        }
-        if (!have)
-        {
-            ac.mServed = false;
-            ac.mWhy = WHY_PBR;       // (counted with "glTF blend not ready": a program of the context is missing)
-        }
+        ac.mServed = false;
+        ac.mWhy = WHY_PBR;       // (counted with "glTF blend not ready": a program of the context is missing)
     }
     ++sAlphaWhyTr[ac.mWhy];
     if (!ac.mServed)
@@ -19869,13 +19927,7 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    // <FS> a rows-mode particle group (GPU particles) holds one row a particle in its buffer, not vertex positions: the pull shaders make the quads. Named as a caster (the blended pass) it was
-    // a structure built from rows read as positions in the ray scene (the bad range flags of 2026-11-03: indices past the "positions", the index counts in steps of 6, a buffer rewritten every
-    // frame under an index buffer that never changes) and junk quads in the raster alpha shadow. Particles do not cast shadows.
-    if (p.mParticleRows)
-    {
-        return false;
-    }
+    // (a rows-mode particle group has no draw infos any more: its draws are LLParticleRun, which are not casters: the rows are not vertex positions, see 2026-11-03's bad range flags)
     if (!p.mCount || rigged != (p.mAvatar != nullptr) || (p.mGLTFMaterial && !allow_gltf) || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
     {
@@ -19897,10 +19949,6 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
 static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
-    if (p.mParticleRows)
-    {
-        return 6;       // (not a caster: nothing is counted, see shadow_alpha_packet_ok)
-    }
     if (p.mGLTFMaterial)
     {
         return 1;

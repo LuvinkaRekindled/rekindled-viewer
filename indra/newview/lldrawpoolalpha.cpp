@@ -271,7 +271,7 @@ bool LLDrawPoolAlpha::hasStaticAlpha()
     for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
     {
         LLSpatialGroup* group = *i;
-        if (group && !group->isDead() && !group->mDrawMap[LLRenderPass::PASS_ALPHA].empty())
+        if (group && !group->isDead() && (!group->mDrawMap[LLRenderPass::PASS_ALPHA].empty() || !group->mParticleRuns.empty()))
         {
             return true;
         }
@@ -794,7 +794,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending_key = -1;
     };
     // an entry for the draw (its GL names made now: the old bind marks a texture in use, regenerates a deleted one and applies its sampler options, prepareFast does the same)
-    auto tr_add = [&](const LLAlphaTransient& t, const LLDrawInfo& draw)
+    auto tr_add = [&](const LLAlphaTransient& t, const LLDrawInfo* draw_p)       // (draw_p null = a particle run: no model or texture matrix, never rigged)
     {
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_ADD);
         ItemCensus::add(ItemCensus::ALPHA_TR_ADD, tr_rigged ? 1 : 0);
@@ -803,8 +803,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             tr_matrix(nullptr);         // matrix 0: the view alone
         }
         LLVkBridge::GeoEntry e = t.mEntry;
-        if (tr_rigged)
+        if (tr_rigged && draw_p)
         {
+            const LLDrawInfo& draw = *draw_p;
             U32 offset = 0, joints = 0;
             if (!ll_frame_palette(draw.mAvatar.get(), draw.mSkinInfo.get(), offset, joints))
             {
@@ -818,10 +819,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             *fields[k] = t.mTextures[k] ? gRender.getTexUnit(0)->prepareFast(t.mTextures[k]) : 0u;
         }
-        e.mMatrix = draw.mModelMatrix ? tr_matrix(draw.mModelMatrix) : 0u;
-        if (t.mUseTexMatrix && draw.mTextureMatrix)
+        e.mMatrix = (draw_p && draw_p->mModelMatrix) ? tr_matrix(draw_p->mModelMatrix) : 0u;
+        if (draw_p && t.mUseTexMatrix && draw_p->mTextureMatrix)
         {
-            tr.mTexmats.insert(tr.mTexmats.end(), (const F32*)draw.mTextureMatrix->mMatrix, (const F32*)draw.mTextureMatrix->mMatrix + 16);
+            tr.mTexmats.insert(tr.mTexmats.end(), (const F32*)draw_p->mTextureMatrix->mMatrix, (const F32*)draw_p->mTextureMatrix->mMatrix + 16);
             e.mPad3 = (U32)(tr.mTexmats.size() / 16);
         }
         if (t.mPbr)
@@ -833,6 +834,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     };
     // S5f F3: the glow second draw of the transient draws, per group by class (as glow_range for the fragment items): the draws, built again as entries at the glow pass
     static thread_local std::vector<LLDrawInfo*> glow_draws[3];
+    static thread_local std::vector<const LLParticleRun*> glow_particle_runs;       // C5 J2: the particle runs with a glow (plain class), of the group in hand; glow_particle_rows: their group's buffer
+    const LLVertexBuffer* glow_particle_rows = nullptr;
     auto run_flush = [&]()
     {
         tr_flush();
@@ -1164,6 +1167,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 glow_src[cls].clear();
                 glow_draws[cls].clear();
             }
+            glow_particle_runs.clear();
 
             bool is_particle_or_hud_particle = group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_PARTICLE
                                                       || group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_HUD_PARTICLE;
@@ -1194,6 +1198,39 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             LLRenderState::CullScope cull(false, disable_cull);
 
             LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
+
+            // C5 J2: a particle group's draws are runs of rows (no draw infos): transient entries made from the runs, in the sorted order
+            if (!rigged && is_particle_or_hud_particle && !group->mParticleRuns.empty())
+            {
+                if (transient_ok)
+                {
+                    glow_particle_rows = group->mVertexBuffer.get();
+                    for (const LLParticleRun& run : group->mParticleRuns)
+                    {
+                        LLAlphaTransient transient;
+                        if (!ll_particle_transient(run, group->mVertexBuffer.get(), depth_only, transient))
+                        {
+                            ++sAlphaScene.mDropped;
+                            continue;
+                        }
+                        const int key = run_key(transient.mKey) | (1 << 18);        // (particle groups draw with culling off)
+                        if (pending_key != key || !pending.empty())
+                        {
+                            run_flush();
+                            run_begin(key);
+                        }
+                        tr_add(transient, nullptr);
+                        if (glow_pass && run.mGlow && group->mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE) && glow_plain_table)
+                        {
+                            glow_particle_runs.push_back(&run);
+                        }
+                    }
+                }
+                else
+                {
+                    sAlphaScene.mDropped += (U32)group->mParticleRuns.size();
+                }
+            }
 
             const bool plan_direct = group_plan && plan.mDirect;
             U32 glow_at = 0;
@@ -1289,8 +1326,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             run_flush();
                             run_begin(key);
                         }
-                        tr_add(transient, params);
-                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE) && (!params.mParticleRows || params.mHasGlow))        // (a particle draw without glow adds nothing to the alpha)
+                        tr_add(transient, &params);
+                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
                         {
                             const bool pbr_draw = params.mGLTFMaterial.notNull();
                             if (pbr_draw ? glow_pbr_table : glow_plain_table)
@@ -1308,7 +1345,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // render emissive faces into alpha channel for bloom effects (the glow second draw of the group's draws, from the table: one run a class)
             if (glow_pass)
             {
-                const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty() || !glow_draws[0].empty() || !glow_draws[1].empty() || !glow_draws[2].empty();
+                const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty() || !glow_draws[0].empty() || !glow_draws[1].empty() || !glow_draws[2].empty() || !glow_particle_runs.empty();
                 if (glow_served)
                 {
                     run_flush();
@@ -1324,7 +1361,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     for (int cls = 0; cls < 3; ++cls)
                     {
                         LLShaderProgram* glow_program = cls == 0 ? (rigged ? &gDeferredEmissivePullSkinProgram : &gDeferredEmissivePullProgram) : (rigged ? &gPBRGlowPullSkinProgram : &gPBRGlowPullProgram);
-                        if (!glow_draws[cls].empty())
+                        if (!glow_draws[cls].empty() || (cls == 0 && !glow_particle_runs.empty()))
                         {   // the transient draws' glow: entries made again, one record
                             glow_program->bind();
                             pending_key = (cls == 2 ? (1 << 16) : 0) | (is_particle_or_hud_particle ? (1 << 18) : 0);       // (a particle group draws with culling off, its glow too)
@@ -1333,8 +1370,20 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                                 LLAlphaTransient glow_transient;
                                 if (ll_alpha_transient(glow_draw, rigged, false, glow_transient))
                                 {
-                                    tr_add(glow_transient, *glow_draw);
+                                    tr_add(glow_transient, glow_draw);
                                 }
+                            }
+                            if (cls == 0)
+                            {
+                                for (const LLParticleRun* glow_run : glow_particle_runs)
+                                {
+                                    LLAlphaTransient glow_transient;
+                                    if (ll_particle_transient(*glow_run, glow_particle_rows, false, glow_transient))
+                                    {
+                                        tr_add(glow_transient, nullptr);
+                                    }
+                                }
+                                glow_particle_runs.clear();
                             }
                             if (rigged)
                             {   // (the rigged glow draws with depth writes off, as the old rigged glow passes; the static glow draws with the pass's own depth state, which writes none: a glow quad that wrote depth would hide whatever is drawn behind it after, wherever its fragments are invisible)
