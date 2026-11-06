@@ -8726,6 +8726,19 @@ void LLPipeline::postSort(LLCamera &camera)
         }
     }
 
+    if (sCull->mLazyTypes && view.isMainWorldSort() && !gCubeSnapshot)
+    {
+        // C5 J4: the lists of the types without a table kind are made now, from the groups' draw maps as they are at the end of postSort (the pools ask later in the frame: a group rebuilt in between
+        // would show draw infos whose buffers are not filled yet)
+        for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+        {
+            if (!sCull->mLazyDone[type] && !sCull->mLazyGroups[type].empty())
+            {
+                sCull->materializeLazy(type);
+            }
+        }
+    }
+
     {
         // <FS> C5 census (LL_VK_RMCENSUS=1): what the main view's render map holds when postSort is done, by pass type: draw infos, indices, and how many of them belong to an avatar (rigged) or are
         // from a group whose fragment the table does not hold
@@ -15747,6 +15760,13 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 }
 
 // worker: the render map of the cascade (the loop in postSort)
+// C5 J3: LL_VK_ALPHA_FRAG 1 (default) the alpha casters of groups whose fragment names them (and the worker does not hold yet) are made from the fragments, not from the render map's draw infos; 0 = as before, 2 = both, compared
+static int alpha_frag_mode()
+{
+    static const int mode = getenv("LL_VK_ALPHA_FRAG") ? atoi(getenv("LL_VK_ALPHA_FRAG")) : 1;
+    return mode;
+}
+
 // C4.1: LL_VK_MAP_PLAN 1 (default) the render map job skips a group whose last walk pushed nothing and whose inputs are the same, 0 walks every group, 2 walks them all and compares with the answer
 static int map_plan_mode()
 {
@@ -15826,21 +15846,23 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             {
                 mix(f->mSerial | ((U64)(f->mResident ? 1 : 0) << 32) | ((U64)(f->mAlphaResSent ? 1 : 0) << 33) | ((U64)f->mAlpha.size() << 34));
             }
-            plan_key &= ~15ull;
+            plan_key &= ~31ull;
             const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
-            if ((plan & 1) && (plan & ~15ull) == plan_key && plan_mode == 1)
+            if ((plan & 1) && (plan & ~31ull) == plan_key && plan_mode == 1)
             {
                 // nothing to push, as the last walk found: the group's alpha entries still go on the alpha lists
                 ++n_plan_skipped;
                 if (plan & 8) { ++n_resident; }
                 if (plan & 2) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); } }
                 if (plan & 4) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); } }
+                if (plan & 16) { local.mAlphaFragGroups.push_back(group); }
                 continue;
             }
         }
         const size_t plan_cull_mark = local.mSceneGroups.size();
         U64 plan_pushed = 0;
         U64 plan_avatar_skips = 0;
+        bool plan_frag = false;
         if (scene_resident_on() && !group->mDrawMap.empty())
         {
             // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
@@ -15882,14 +15904,27 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                     continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                 }
 
-                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first) && alpha_info_resident(*info, group))
+                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first))
                 {
-                    if (skip_alpha == 1)
+                    if (alpha_info_resident(*info, group))
                     {
-                        ++n_alpha_skipped;
-                        continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
+                        if (skip_alpha == 1)
+                        {
+                            ++n_alpha_skipped;
+                            continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
+                        }
+                        ++n_alpha_would;
                     }
-                    ++n_alpha_would;
+                    else if (alpha_frag_mode() && info->mAlphaInFragment && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
+                    {
+                        // C5 J3: the group's fragment names this caster and the worker does not hold it yet: renderShadow makes the entry from the fragment (mode 2 also pushes the draw info, to compare)
+                        plan_frag = true;
+                        if (alpha_frag_mode() == 1)
+                        {
+                            ++n_alpha_skipped;
+                            continue;
+                        }
+                    }
                 }
 
                 ++plan_pushed;
@@ -15927,6 +15962,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
             }
         }
+        if (plan_frag)
+        {
+            local.mAlphaFragGroups.push_back(group);
+        }
         if (plan_mode)
         {
             const bool empty = plan_pushed == 0 && plan_avatar_skips == 0 && local.mSceneGroups.size() == plan_cull_mark;
@@ -15935,7 +15974,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 // verify: a group the answer said was empty has pushed nothing now
                 static std::atomic<U64> checked{ 0 }, wrong{ 0 };
                 const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
-                if ((plan & 1) && (plan & ~15ull) == plan_key)
+                if ((plan & 1) && (plan & ~31ull) == plan_key)
                 {
                     ++checked;
                     if (!empty && ++wrong <= 8)
@@ -15946,7 +15985,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
             const LLSceneFragment* f = group->mSceneFragment;
             const bool resident = scene_resident_on() && !group->mDrawMap.empty() && f && f->mSerial == group->mDrawMapSerial && f->mResident;
-            group->mMapPlan.store(plan_key | (empty ? 1ull : 0ull) | (plan_alpha ? 2ull : 0ull) | (plan_rigged_alpha ? 4ull : 0ull) | (resident ? 8ull : 0ull), std::memory_order_relaxed);
+            group->mMapPlan.store(plan_key | (empty ? 1ull : 0ull) | (plan_alpha ? 2ull : 0ull) | (plan_rigged_alpha ? 4ull : 0ull) | (resident ? 8ull : 0ull) | (plan_frag ? 16ull : 0ull), std::memory_order_relaxed);
         }
     }
     sViewJobs.mJobs.fetch_add(1, std::memory_order_relaxed);
@@ -20180,6 +20219,105 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             e.mUv[3] = 1.f;
             f.mAlpha.push_back(e);
         }
+    }
+}
+
+// C5 J3: the entries of the alpha casters the fragments of the given groups name (the groups' fragments are current and the worker does not hold their alpha entries yet), made like the builder's: the matrices as raw
+// values numbered in this record, the textures as numbers into the build's texture list. verify = compare with the builder's entries of the same draws (the caller did not leave them out) instead of adding
+static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::vector<LLSpatialGroup*>& groups, bool verify)
+{
+    std::unordered_map<const LLMatrix4*, U32> matrix_numbers;
+    std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
+    std::unordered_map<U64, const LLVkBridge::ShadowAlphaEntry*> builder_by_key;
+    if (verify)
+    {
+        for (const LLVkBridge::ShadowAlphaEntry& e : b.mEntries)
+        {
+            builder_by_key[alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount)] = &e;
+        }
+    }
+    static U64 checked = 0, missing = 0, differ = 0, groups_seen = 0;
+    std::vector<LLVkBridge::ShadowAlphaEntry> added;
+    for (LLSpatialGroup* group : groups)
+    {
+        if (group->isDead())
+        {
+            continue;
+        }
+        const LLSceneFragment* f = group->mSceneFragment;
+        if (!f || f->mSerial != group->mDrawMapSerial || f->mAlphaResSent)
+        {
+            continue;
+        }
+        ++groups_seen;
+        for (const LLVkBridge::ShadowAlphaEntry& e : f->mAlpha)
+        {
+            LLVkBridge::ShadowAlphaEntry ne = e;
+            const LLMatrix4* matrix = e.mMatrix ? f->mMatrices[e.mMatrix - 1] : nullptr;
+            const LLViewerTexture* tex[4] = {};
+            for (int t = 0; t < 4; ++t)
+            {
+                tex[t] = e.mTextures[t] ? f->mTexLocal[e.mTextures[t] - 1].get() : nullptr;
+            }
+            if (verify)
+            {
+                ++checked;
+                auto found = builder_by_key.find(alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount));
+                if (found == builder_by_key.end())
+                {
+                    if (++missing <= 6) { LL_WARNS("VkScene") << "alpha fragment verify: the builder has no entry for a fragment caster (vb " << e.mVertexBuffer << ")" << LL_ENDL; }
+                    continue;
+                }
+                const LLVkBridge::ShadowAlphaEntry& be = *found->second;
+                bool same = be.mFlags == e.mFlags && be.mCutoff == e.mCutoff && be.mMatrixId == e.mMatrixId && (be.mMatrix != 0) == (matrix != nullptr);
+                if (same && matrix)
+                {
+                    same = memcmp(b.mMatrices.data() + 16 * (size_t)be.mMatrix, matrix->mMatrix, 64) == 0;
+                }
+                for (int t = 0; t < 4 && same; ++t)
+                {
+                    same = (be.mTextures[t] ? b.mTextures[be.mTextures[t] - 1] : nullptr) == tex[t];
+                }
+                if (!same && ++differ <= 6)
+                {
+                    LL_WARNS("VkScene") << "alpha fragment verify: a fragment caster differs from the builder's entry (flags " << e.mFlags << "/" << be.mFlags << ", matrix id " << e.mMatrixId << "/" << be.mMatrixId << ")" << LL_ENDL;
+                }
+                continue;
+            }
+            ne.mMatrix = 0;
+            if (matrix)
+            {
+                auto it = matrix_numbers.find(matrix);
+                if (it == matrix_numbers.end())
+                {
+                    it = matrix_numbers.emplace(matrix, (U32)(b.mMatrices.size() / 16)).first;
+                    const F32* m = (const F32*)matrix->mMatrix;
+                    b.mMatrices.insert(b.mMatrices.end(), m, m + 16);
+                }
+                ne.mMatrix = it->second;
+            }
+            for (int t = 0; t < 4; ++t)
+            {
+                if (!tex[t])
+                {
+                    ne.mTextures[t] = 0;
+                    continue;
+                }
+                auto it = texture_numbers.find(tex[t]);
+                if (it == texture_numbers.end())
+                {
+                    b.mTextures.push_back(const_cast<LLViewerTexture*>(tex[t]));
+                    it = texture_numbers.emplace(tex[t], (U32)b.mTextures.size()).first;
+                }
+                ne.mTextures[t] = it->second;
+            }
+            added.push_back(ne);
+        }
+    }
+    b.mEntries.insert(b.mEntries.end(), added.begin(), added.end());
+    if (verify && (checked % 3000) < 40 && checked)
+    {
+        LL_INFOS("VkScene") << "alpha fragment verify: " << checked << " fragment casters compared, " << missing << " missing in the builder's entries, " << differ << " differ (" << groups_seen << " groups)" << LL_ENDL;
     }
 }
 
@@ -27039,6 +27177,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
+        if (!rigged && !rt_skip && alpha_frag_mode() && !result.mAlphaFragGroups.empty())
+        {
+            append_fragment_alpha(*build_owned, result.mAlphaFragGroups, alpha_frag_mode() == 2);
+        }
         finish_shadow_alpha(*build_owned);
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent
         const bool res_raster = !rt_skip && !rigged && alpha_res_wanted() && sResidentPassRan;
@@ -29378,7 +29520,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
                 // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
                 static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
-                sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted()) ? alpha_mode : 0, std::memory_order_relaxed);
+                sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
             }
             // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
             // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
@@ -29429,6 +29571,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     into.pushRiggedAlphaGroup(*g);
                 }
                 into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
+                into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
                 if (!from.mGeoOwner.empty())
                 {
                     into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
