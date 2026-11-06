@@ -7800,10 +7800,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
-        if (items[i].mType == kGeoAlphaType || items[i].mType == kGeoAlphaRiggedType)
-        {
-            f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);      // S5a: the texture matrix slot indexes the pass's tables too
-        }
+        f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);          // S5a: the texture matrix slot indexes the pass's tables too (C5: every item type; 0 = none)
     }
     sGeo.mMaxSlotAll = std::max(sGeo.mMaxSlotAll, std::min<U32>(f->mMaxModel, 2047u));
     for (U32 i = 0; i < h.mEntries; ++i)
@@ -8059,10 +8056,7 @@ void geo_write_items(GeoFrag& f)
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
-        if (f.mItems[i].mType == kGeoAlphaType || f.mItems[i].mType == kGeoAlphaRiggedType)
-        {
-            g.mPad[0] = e.mPad3;            // S5a: the slot of the draw's texture matrix (0 = none)
-        }
+        g.mPad[0] = e.mPad3;                // S5a: the slot of the draw's texture matrix (0 = none); C5: the G-buffer items carry one too
         if (i < f.mPbrOfItem.size() && f.mPbrOfItem[i])
         {
             g.mPad[1] = f.mPbrOfItem[i] - 1;       // S5c: its PBR row (S6 X4: the glTF items of the G passes have one too)
@@ -8847,6 +8841,47 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         memcpy(shared.mVP, view, sizeof(shared.mVP));
         shared.mModels = models;
     }
+    // C5: the texture matrices of the slots (the raw matrices the viewer sent; a texture animation's slot holds its parameters, slot 0 the clock), once for the frame's records
+    static struct SharedTexmats { U64 mFrame = ~0ull, mPrepares = ~0ull; U32 mSlots = 0; Renderer::ScratchAlloc mTex; } sharedTex;
+    Renderer::ScratchAlloc texmats;
+    if (pu.mTexmats != ~0u)
+    {
+        if (sharedTex.mFrame == frame_now && sharedTex.mPrepares == s.mPrepares && sharedTex.mSlots == slots && sharedTex.mTex.mPtr && sharedTex.mTex.mAddress)
+        {
+            texmats = sharedTex.mTex;
+        }
+        else
+        {
+            texmats = r.allocVertexScratch(64 * (size_t)slots);
+            if (texmats.mPtr && texmats.mAddress)
+            {
+                F32* tex = (F32*)texmats.mPtr;
+                for (U32 slot = 0; slot < slots; ++slot)
+                {
+                    F32* t = tex + 16 * (size_t)slot;
+                    if (slot && sGeo.mHaveM[slot])
+                    {
+                        memcpy(t, sGeo.mRegionM[slot], 64);
+                    }
+                    else
+                    {
+                        memset(t, 0, 64);
+                        t[0] = t[5] = t[10] = t[15] = 1.f;
+                    }
+                }
+                LLVkTexAnim::writeSlot0(tex);
+                sharedTex.mFrame = frame_now;
+                sharedTex.mPrepares = s.mPrepares;
+                sharedTex.mSlots = slots;
+                sharedTex.mTex = texmats;
+            }
+            else
+            {
+                texmats = Renderer::ScratchAlloc();
+                ++s.mScratchFail;
+            }
+        }
+    }
     if (timed) s.mNsDrawMatrices += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
     static thread_local VertexInput vi_cache;
@@ -8863,6 +8898,12 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (pu.mModels != ~0u)
     {
         program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+    }
+    if (pu.mTexmats != ~0u && texmats.mAddress)
+    {   // C5: the texture matrices of the slots (a row's pad.x names one; 0 = none)
+        const U64 texmats_address = (U64)texmats.mAddress;
+        const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
+        program->setFloatsAt(pu.mTexmats, reinterpret_cast<const F32*>(texmats_words), 2, 1);
     }
     if (pu.mPbr != ~0u && sGeo.mPbrT)
     {   // S6 X4: the glTF passes read their PBR rows
