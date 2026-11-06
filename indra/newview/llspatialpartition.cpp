@@ -1970,6 +1970,10 @@ static void rebuild(LLCamera& camera, LLSpatialPartition* part, PartState& st)
 void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed)
 {
     const auto t0 = std::chrono::steady_clock::now();
+    static double sec_ms[6] = {};       // setup, stale discards, events (swap, merge, sort), rewalks, flat array, rest
+    static U64 stale_total = 0, stale_frames = 0;
+    auto sec_t = t0;
+    auto lap = [&](int k) { const auto now = std::chrono::steady_clock::now(); sec_ms[k] += std::chrono::duration<double, std::milli>(now - sec_t).count(); sec_t = now; };
     ++sStats.mFrames;
     const S32 frame = (S32)LLFrameTimer::getFrameCount();
     // the partitions that are tracked now (a partition that went away takes its state with it)
@@ -1994,6 +1998,9 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         sStats.mUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         return;
     }
+    lap(0);
+    stale_total += sStale.size();
+    ++stale_frames;
     // the discards of awaited verdicts, which the walk makes when it visits a group (checkOcclusion): for the groups the last walk visited, now
     for (auto it = sStale.begin(); it != sStale.end();)
     {
@@ -2004,18 +2011,21 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
             continue;
         }
         LLSpatialGroup* sg = (LLSpatialGroup*)g;
+        if (!sg->hizNeedsMainThread())
+        {
+            it = sStale.erase(it);          // (the verdict arrived or the box was sent again: nothing is left to discard)
+            continue;
+        }
         auto sit = sState.find(sg->getSpatialPartition());
         if (sit != sState.end() && sit->second.mValid && sit->second.mNodes.count((const void*)g))
         {
             sg->checkOcclusion();
-            if (!sg->hizIsStale())
-            {
-                it = sStale.erase(it);
-                continue;
-            }
+            it = sStale.erase(it);
+            continue;
         }
         ++it;
     }
+    lap(1);
     std::vector<Ev> events;
     {
         std::lock_guard<std::mutex> lock(sMutex);
@@ -2055,6 +2065,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         }
     }
     std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    lap(2);
     std::unordered_set<const void*> rewalked;
     static LLSpatialPartition::CullCollect c;
     std::vector<const void*> old_nodes;
@@ -2134,6 +2145,31 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         rewalked.insert((const void*)g);
         ++sStats.mRewalks;
     }
+    lap(3);
+    {
+        // (the update's own cost, once a minute or so, for the runs that do not verify: sStats.mUpdateMs is what verify() prints from)
+        static U64 calls = 0;
+        static double ms_total = 0.0, ms_still = 0.0, ms_max = 0.0;
+        static U64 still_calls = 0;
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        ms_total += ms;
+        ++calls;
+        ++still_calls;
+        ms_still += ms;
+        ms_max = std::max(ms_max, ms);
+        if (calls % 3000 == 0)
+        {
+            LL_INFOS("VisSet") << "retained set update on frames the camera did not change: " << ms_still / (double)still_calls << " ms a frame on average, the slowest " << ms_max << " ms; of it setup " << sec_ms[0] / (double)still_calls
+                << ", stale discards " << sec_ms[1] / (double)still_calls << " (" << (double)stale_total / (double)std::max<U64>(1, stale_frames) << " groups in the set), events " << sec_ms[2] / (double)still_calls << ", rewalks " << sec_ms[3] / (double)still_calls
+                << ", flat array " << sec_ms[4] / (double)still_calls << " (" << still_calls << " frames; events a frame "
+                << (double)(sStats.mOccEvents + sStats.mBoundsEvents) / (double)std::max<U64>(1, sStats.mFrames) << ", rewalks " << (double)sStats.mRewalks / (double)std::max<U64>(1, sStats.mFrames) << ")" << LL_ENDL;
+            ms_still = 0.0;
+            still_calls = 0;
+            ms_max = 0.0;
+            for (double& x : sec_ms) { x = 0.0; }
+            stale_total = stale_frames = 0;
+        }
+    }
     for (auto& kv : sState)
     {
         PartState& st = kv.second;
@@ -2148,6 +2184,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
             st.mFlatDirty = false;
         }
     }
+    lap(4);
     sStats.mUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
