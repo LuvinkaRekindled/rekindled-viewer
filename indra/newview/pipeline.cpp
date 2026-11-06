@@ -19971,7 +19971,7 @@ static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures
 // <FS> the packets of the casters with a texture (alpha masked, blended, grass, the materials' masks) of one cascade, static or rigged: a pure builder like the others. The textures the entries
 // name are listed in order of first use and the entries carry their number plus one until finish_shadow_alpha() (main thread) has prepared them and put the names in; the statistics of the
 // draws it left to the old path are counted here and added by the main thread too.
-enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL };
+enum { KIND_MASK, KIND_FULLBRIGHT, KIND_ALPHA, KIND_GRASS, KIND_MATERIAL, KIND_GLTF_OPAQUE, KIND_GLTF_MASK };
 struct ShadowAlphaSource { U32 type; int kind; };
 static const ShadowAlphaSource sources[] = {
     { LLRenderPass::PASS_ALPHA_MASK, KIND_MASK },
@@ -19982,7 +19982,75 @@ static const ShadowAlphaSource sources[] = {
     { LLRenderPass::PASS_MATERIAL_ALPHA_MASK, KIND_MATERIAL },
     { LLRenderPass::PASS_SPECMAP_MASK, KIND_MATERIAL },
     { LLRenderPass::PASS_NORMMAP_MASK, KIND_MATERIAL },
+    { LLRenderPass::PASS_GLTF_PBR, KIND_GLTF_OPAQUE },              // C5 PBR shadow rows: the static glTF casters (static pass only, see shadow_gltf_kind)
+    { LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, KIND_GLTF_MASK },
 };
+
+// <FS> C5 PBR shadow rows (doc/vulkan/PLAN-clean-core.md): the static glTF casters of a cascade (opaque, alpha mask, alpha blend) are entries of the alpha record (kind 1) instead of one old draw each
+// (mat->bind, setBuffer, drawRange: 110 + 17 a frame). Opaque: ALPHA_OPAQUE (nothing sampled); mask: ALPHA_HARD (texture alpha x vertex alpha against the material's cutoff, no dithering, as
+// pbrShadowAlphaMaskF.glsl); blend: the dithered test (pbrShadowAlphaBlendF.glsl); the base colour's KHR transform is the entry's texture matrix; a double sided material is sent in a record of its
+// own with culling off (ALPHA_DOUBLE_SIDED). A draw with a texture animation matrix, a rigged one and the ray shadow mode keep the old path (LL_VK_PBR_SHADOW=0: all of them).
+enum { GS_NONE, GS_OPAQUE, GS_MASK, GS_BLEND };
+static bool shadow_gltf_env()
+{
+    static const bool on = !getenv("LL_VK_PBR_SHADOW") || getenv("LL_VK_PBR_SHADOW")[0] != '0';
+    return on;
+}
+static bool sShadowGltfRows = false;        // main thread: this renderShadow call sends the static glTF casters in the alpha record (the old loops skip what the record carries)
+static int shadow_gltf_kind(const LLDrawInfo& p)
+{
+    const LLGLTFMaterial* mat = p.mGLTFMaterial.get();
+    if (!mat || p.mAvatar || !p.mCount)
+    {
+        return GS_NONE;
+    }
+    const LLVertexBuffer* vb = p.mVertexBuffer.get();
+    if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
+        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
+    {
+        return GS_NONE;
+    }
+    const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
+    if (kind != GS_OPAQUE && (p.mTextureMatrix || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)))
+    {
+        return GS_NONE;
+    }
+    return kind;
+}
+// (the old shadow loops: this draw is in the record)
+bool ll_shadow_gltf_in_record(const LLDrawInfo& p)
+{
+    return sShadowGltfRows && LLPipeline::sShadowRender && shadow_gltf_kind(p) != GS_NONE;
+}
+// the KHR texture transform of the base colour as the 4 x 4 matrix the record's pull shader multiplies the texture coordinate with (textureUtilV.glsl: y flipped, scale, rotation, offset, y flipped back);
+// false = the identity (no matrix needed)
+static bool shadow_gltf_texmat(const LLGLTFMaterial::TextureTransform& t, F32* m)
+{
+    if (t.mScale.mV[VX] == 1.f && t.mScale.mV[VY] == 1.f && t.mRotation == 0.f && t.mOffset.mV[VX] == 0.f && t.mOffset.mV[VY] == 0.f)
+    {
+        return false;
+    }
+    auto eval = [&](F32 u, F32 v, F32& ou, F32& ov)
+    {
+        F32 x = u, y = 1.f - v;
+        const F32 sx = t.mScale.mV[VX] * x, sy = t.mScale.mV[VY] * y;
+        const F32 c = cosf(t.mRotation), sn = sinf(t.mRotation);
+        x = c * sx + sn * sy + t.mOffset.mV[VX];
+        y = -sn * sx + c * sy + t.mOffset.mV[VY];
+        ou = x;
+        ov = 1.f - y;
+    };
+    F32 o0x, o0y, o1x, o1y, o2x, o2y;
+    eval(0.f, 0.f, o0x, o0y);
+    eval(1.f, 0.f, o1x, o1y);
+    eval(0.f, 1.f, o2x, o2y);
+    memset(m, 0, 16 * sizeof(F32));
+    m[0] = o1x - o0x;  m[1] = o1y - o0y;        // the image of the u axis (column 0)
+    m[4] = o2x - o0x;  m[5] = o2y - o0y;        // of the v axis (column 1)
+    m[10] = 1.f;
+    m[12] = o0x;       m[13] = o0y;  m[15] = 1.f;
+    return true;
+}
 
 struct LLPipeline::ShadowAlphaBuild
 {
@@ -20020,11 +20088,87 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
         texture_numbers.emplace(tex, number);
         return number;
     };
+        // C5 PBR shadow rows: the static glTF casters of the pass as entries (the rigged ones and the ray shadow mode keep the old path)
+        const bool gltf_rows = shadow_gltf_env() && !rigged && !LLVkBridge::rtShadowMode();
+        auto add_gltf = [&](LLDrawInfo* params, int gk)
+        {
+            static std::atomic<U64> sGltfOpaque{ 0 }, sGltfMask{ 0 }, sGltfBlend{ 0 }, sGltfDouble{ 0 }, sGltfTexmat{ 0 };
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            const LLFetchedGLTFMaterial* mat = params->mGLTFMaterial.get();
+            LLVkBridge::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getVertexBufferId();
+            e.mIndexBuffer = vb->getIndexBufferId();
+            e.mFirstIndex = params->mOffset;
+            e.mIndexCount = params->mCount;
+            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+            if (params->mModelMatrix)
+            {
+                auto it = matrix_numbers.find(params->mModelMatrix);
+                if (it == matrix_numbers.end())
+                {
+                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                    matrices.insert(matrices.end(), m, m + 16);
+                }
+                e.mMatrix = it->second;
+            }
+            U32 flags = mat->mDoubleSided ? (U32)LLVkBridge::ALPHA_DOUBLE_SIDED : 0u;
+            if (mat->mDoubleSided) { ++sGltfDouble; }
+            if (gk == GS_OPAQUE)
+            {
+                flags |= LLVkBridge::ALPHA_OPAQUE;
+                ++sGltfOpaque;
+            }
+            else
+            {
+                flags |= LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+                {
+                    flags |= LLVkBridge::ALPHA_HAS_COLOR;
+                    e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+                }
+                // (the media texture overrides the base colour, a missing one is the white image: LLFetchedGLTFMaterial::bind)
+                LLViewerTexture* tex = params->mTexture.notNull() ? params->mTexture.get() : (mat->mBaseColorTexture.notNull() ? (LLViewerTexture*)mat->mBaseColorTexture.get() : (LLViewerTexture*)LLViewerFetchedTexture::sWhiteImagep.get());
+                e.mTextures[0] = texture_ref(tex);
+                F32 tm[16];
+                if (shadow_gltf_texmat(mat->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], tm))
+                {
+                    out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
+                    e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+                    ++sGltfTexmat;
+                }
+                if (gk == GS_MASK)
+                {
+                    flags |= LLVkBridge::ALPHA_HARD;
+                    e.mCutoff = mat->mAlphaCutoff;
+                    ++sGltfMask;
+                }
+                else
+                {
+                    e.mCutoff = 0.f;        // (the blend shadow shader has no cutoff of its own: the dithered test only)
+                    ++sGltfBlend;
+                }
+            }
+            e.mFlags = flags;
+            entries.push_back(e);
+            static std::atomic<U64> sGltfCalls{ 0 };
+            if (++sGltfCalls % 200000 == 0)
+            {
+                LL_INFOS("ShadowDraws") << "glTF casters in the alpha records, entries so far: opaque " << sGltfOpaque.load() << ", mask " << sGltfMask.load() << ", blend " << sGltfBlend.load() << " (double sided " << sGltfDouble.load()
+                    << ", with a base colour transform " << sGltfTexmat.load() << ")" << LL_ENDL;
+            }
+        };
         for (const ShadowAlphaSource& source : sources)
         {
             if (rigged && source.kind == KIND_GRASS)
             {
                 continue;       // grass is only drawn in the static pass
+            }
+            const bool gltf_source = source.kind >= KIND_GLTF_OPAQUE;
+            if (gltf_source && !gltf_rows)
+            {
+                continue;       // (the old loops draw them)
             }
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
             const U32 type = (rigged && source.kind != KIND_ALPHA) ? source.type + 1 : source.type;       // the rigged variant of a pass type is the next number (PASS_ALPHA holds both)
@@ -20037,6 +20181,19 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 if (!params->mCount || rigged != (params->mAvatar != nullptr))
                 {
                     continue;       // nothing to draw (the old path returns), or a draw of the other loop (no avatar: the old rigged path draws nothing)
+                }
+                if (gltf_rows && params->mGLTFMaterial && (gltf_source || source.kind == KIND_ALPHA))
+                {
+                    const int gk = shadow_gltf_kind(*params);
+                    if (gk != GS_NONE)
+                    {
+                        add_gltf(params, gk);
+                        continue;
+                    }
+                }
+                if (gltf_source)
+                {
+                    continue;       // a glTF draw the record cannot carry: the old loops draw it
                 }
                 if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
                 {
@@ -20180,6 +20337,10 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
     };
     for (const ShadowAlphaSource& source : sources)
     {
+        if (source.kind >= KIND_GLTF_OPAQUE)
+        {
+            continue;       // (C5 PBR shadow rows: the glTF casters are made by the builder for now)
+        }
         auto found = group->mDrawMap.find(source.type);
         if (found == group->mDrawMap.end())
         {
@@ -20550,6 +20711,10 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
         if (skip_packet_draws && shadow_alpha_packet_ok(*pparams, true, rigged))
         {
             continue;       // <FS> already part of the alpha packet record of this pass
+        }
+        if (skip_packet_draws && !rigged && ll_shadow_gltf_in_record(*pparams))
+        {
+            continue;       // C5 PBR shadow rows: a glTF blend caster of the record
         }
 
         if (rigged)
@@ -26613,6 +26778,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     LLRenderState::CullScope cull(true);
 
+    // C5 PBR shadow rows: this call sends the static glTF casters in the alpha record (when that record is used at all); the old loops below skip what it carries
+    struct GltfRowsScope
+    {
+        explicit GltfRowsScope(bool on) { sShadowGltfRows = on; }
+        ~GltfRowsScope() { sShadowGltfRows = false; }
+    } gltf_rows_scope(shadow_gltf_env() && !LLVkBridge::rtShadowMode() && !rt_skip && shadow_packets_enabled() && shadow_kind_on(1) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
+
     //enable depth clamping if available
     LLRenderState::DepthClampScope clamp_depth(true, depth_clamp);
 
@@ -27355,30 +27527,48 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     named.mUv[3] = 1.f;
                 }
             }
-            LLVkBridge::ShadowPacketsHeader header;
-            header.mKind = rt_skip ? (rigged ? 7 : 5) : 1;       // 5 and 7: the same record, only named to the ray scene
-            header.mTargetWidth = (F32)target_width;
-            header.mEntries = (U32)entries.size();
-            header.mPass = shadow_pass_index();
-            header.mMatrices = (U32)(matrices.size() / 16);
-            const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
-            memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
-            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
-            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-            header.mPaletteFloats = (U32)palettes.size();
-            if (!palettes.empty())
+            // C5 PBR shadow rows: the double sided glTF casters go in a record of their own, drawn with culling off (the others use the pass's culling)
+            size_t single_sided = entries.size();
+            if (!rt_skip && !rigged)
             {
-                blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
+                single_sided = (size_t)(std::stable_partition(entries.begin(), entries.end(), [](const LLVkBridge::ShadowAlphaEntry& e) { return !(e.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED); }) - entries.begin());
             }
-            if (!build_owned->mTexmats.empty())
+            auto send_record = [&](const LLVkBridge::ShadowAlphaEntry* first, size_t count)
             {
-                header.mTexmats = (U32)(build_owned->mTexmats.size() / 16);
-                blob.insert(blob.end(), (const U8*)build_owned->mTexmats.data(), (const U8*)(build_owned->mTexmats.data() + build_owned->mTexmats.size()));
+                LLVkBridge::ShadowPacketsHeader header;
+                header.mKind = rt_skip ? (rigged ? 7 : 5) : 1;       // 5 and 7: the same record, only named to the ray scene
+                header.mTargetWidth = (F32)target_width;
+                header.mEntries = (U32)count;
+                header.mPass = shadow_pass_index();
+                header.mMatrices = (U32)(matrices.size() / 16);
+                const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+                memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+                std::vector<U8> blob(count * sizeof(entries[0]) + matrices.size() * sizeof(F32));
+                memcpy(blob.data(), first, count * sizeof(entries[0]));
+                memcpy(blob.data() + count * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+                header.mPaletteFloats = (U32)palettes.size();
+                if (!palettes.empty())
+                {
+                    blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
+                }
+                if (!build_owned->mTexmats.empty())
+                {
+                    header.mTexmats = (U32)(build_owned->mTexmats.size() / 16);
+                    blob.insert(blob.end(), (const U8*)build_owned->mTexmats.data(), (const U8*)(build_owned->mTexmats.data() + build_owned->mTexmats.size()));
+                }
+                LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+                gShadowDrawStats.mAlphaEntries += count;
+                ++gShadowDrawStats.mAlphaRecords;
+            };
+            if (single_sided)
+            {
+                send_record(entries.data(), single_sided);
             }
-            LLVkBridge::shadowPackets(header, blob.data(), blob.size());
-            gShadowDrawStats.mAlphaEntries += entries.size();
-            ++gShadowDrawStats.mAlphaRecords;
+            if (single_sided < entries.size())
+            {
+                LLRenderState::CullScope cull_off(false, true);
+                send_record(entries.data() + single_sided, entries.size() - single_sided);
+            }
         }
         if (res_raster)
         {

@@ -1939,11 +1939,17 @@ void LLRenderPass::pushUntexturedGLTFBatches(U32 type)
     }
 }
 
+bool ll_shadow_gltf_in_record(const LLDrawInfo& p);        // pipeline.cpp: C5 PBR shadow rows
+
 // static
 void LLRenderPass::pushGLTFBatch(LLDrawInfo& params)
 {
     if (LLPipeline::sShadowRender)
     {
+        if (ll_shadow_gltf_in_record(params))
+        {
+            return;     // C5 PBR shadow rows: an entry of the cascade's alpha record
+        }
         ++gShadowDrawStats.mGLTF;
     }
     auto& mat = params.mGLTFMaterial;
@@ -1970,6 +1976,10 @@ void LLRenderPass::pushUntexturedGLTFBatch(LLDrawInfo& params)
 {
     if (LLPipeline::sShadowRender)
     {
+        if (ll_shadow_gltf_in_record(params))
+        {
+            return;     // C5 PBR shadow rows
+        }
         ++gShadowDrawStats.mGLTF;
     }
     auto& mat = params.mGLTFMaterial;
