@@ -8134,6 +8134,8 @@ void LLPipeline::postSort(LLCamera &camera)
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
                 // C5: the blended alpha types are not put in the main view's render map (the alpha pool reads the groups' draw maps and the ray naming reads them through collect_main_view_draw_infos; LL_VK_RM_ALPHA=0 fills them as before; the verifiers and the census keep them)
                 static const bool rm_alpha_env = rm_alpha_mode() == 1;
+                static const bool lazy_env = !getenv("LL_VK_LAZY_TYPES") || getenv("LL_VK_LAZY_TYPES")[0] != '0';
+                const bool lazy_types_ok = lazy_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on();
                 const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on() && !getenv("LL_VK_RMCENSUS");
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
@@ -8200,6 +8202,17 @@ void LLPipeline::postSort(LLCamera &camera)
                                 }
                             }
                             const bool alpha_type = skip_alpha_lists && (j->first == LLRenderPass::PASS_ALPHA || j->first == LLRenderPass::PASS_ALPHA_RIGGED);
+                            // C5 J4: the types the table has no kind for are listed by group and made into a list when a pool asks (LL_VK_LAZY_TYPES=0 pushes them as before)
+                            const bool lazy_type = lazy_types_ok && !alpha_type && ll_scene_geo_type_number(j->first) < 0;
+                            if (lazy_type)
+                            {
+                                local.pushLazyGroup(j->first, group);
+                                for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
+                                {
+                                    chunk.mIndices += (*k)->mCount;
+                                }
+                                continue;
+                            }
                             static const bool leftover_census = getenv("LL_VK_RMCENSUS") != nullptr;
                             if (leftover_census && j->first != LLRenderPass::PASS_ALPHA && j->first != LLRenderPass::PASS_ALPHA_RIGGED)
                             {
@@ -8247,6 +8260,14 @@ void LLPipeline::postSort(LLCamera &camera)
                     for (MapChunk& chunk : chunks)
                     {
                         LLCullResult& from = *chunk.mLocal;
+                        if (from.mLazyTypes)
+                        {
+                            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+                            {
+                                from.mLazyDone[type] = true;
+                                for (LLSpatialGroup* lazy_group : from.mLazyGroups[type]) { sCull->pushLazyGroup(type, lazy_group); }
+                            }
+                        }
                         for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
                         {
                             for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)

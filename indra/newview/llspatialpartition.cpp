@@ -5503,6 +5503,11 @@ void LLCullResult::clearLists()
 void LLCullResult::clear()
 {
     mAlphaListsSkipped = false;
+    if (mLazyTypes)
+    {
+        for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t) { mLazyGroups[t].clear(); mLazyDone[t] = false; }
+        mLazyTypes = false;
+    }
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
 
@@ -5615,8 +5620,33 @@ LLCullResult::bridge_iterator LLCullResult::endVisibleBridge()
     return mVisibleBridgeEnd;
 }
 
+void LLCullResult::materializeLazy(U32 type)
+{
+    mLazyDone[type] = true;
+    for (LLSpatialGroup* group : mLazyGroups[type])
+    {
+        if (group->isDead())
+        {
+            continue;
+        }
+        auto found = group->mDrawMap.find(type);
+        if (found == group->mDrawMap.end())
+        {
+            continue;
+        }
+        for (const LLPointer<LLDrawInfo>& info : found->second)
+        {
+            pushDrawInfo(type, info.get());
+        }
+    }
+}
+
 LLCullResult::drawinfo_iterator LLCullResult::beginRenderMap(U32 type)
 {
+    if (mLazyTypes && !mLazyDone[type] && !mLazyGroups[type].empty())
+    {
+        materializeLazy(type);
+    }
     if (mAlphaListsSkipped && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
     {
         static std::atomic<int> logged{ 0 };
@@ -5630,6 +5660,10 @@ LLCullResult::drawinfo_iterator LLCullResult::beginRenderMap(U32 type)
 
 LLCullResult::drawinfo_iterator LLCullResult::endRenderMap(U32 type)
 {
+    if (mLazyTypes && !mLazyDone[type] && !mLazyGroups[type].empty())
+    {
+        materializeLazy(type);
+    }
     return mRenderMapEnd[type];
 }
 
