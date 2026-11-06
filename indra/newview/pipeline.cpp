@@ -10836,7 +10836,7 @@ static U32 scene_region_slot(const LLMatrix4* m)
     return it == sRegionSlot.end() ? 0 : it->second;
 }
 
-static U64 sGeoFillNs = 0, sGeoFillCalls = 0, sGeoFillItems = 0, sGeoFillFallback = 0, sGeoFillNonRegion = 0;
+static U64 sGeoFillNs = 0, sGeoFillCalls = 0, sGeoFillItems = 0, sGeoFillFallback = 0, sGeoFillNonRegion = 0, sGeoTexmatRows = 0;
 static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0;
 // S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
 struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (mLodIb, mLodCount: the simplified index list the viewer chose for the item this frame, 0 = its own; made on the main thread, scene_geo_rigged_lod)
@@ -11015,6 +11015,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
         }
         const LLGeometryPassInfo info = geo_pass_info(kGeoTypes[t]);
         const LLGeometryPassInfo* materials = kGeoTypes[t].mShader >= 0 ? &info : nullptr;
+        // C5 J4: a draw with a texture matrix is a row too: the matrix is a slot of the moving matrix table (as the alpha items'), the row's pad.x names it; the pull programs of the static opaque types apply it (the
+        // per-frame packet records did the same). LL_VK_GEO_TEXMAT=0 = those draws stay on the per-frame records as before
+        static const bool texmat_env = !getenv("LL_VK_GEO_TEXMAT") || getenv("LL_VK_GEO_TEXMAT")[0] != '0';
+        const bool texmat_ok = texmat_env && !rigged && !kGeoTypes[t].mPbr && scene_geo_moving_on();
         for (LLDrawInfo* params : it->second)
         {
             if (!params->mCount)
@@ -11039,7 +11043,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             LLViewerTexture* textures[6];
             F32 pbr_values[40];
             if (!(kGeoTypes[t].mPbr ? scene_gltf_g_entry(*params, rigged, kGeoTypes[t], item.mE, textures, pbr_values)
-                                    : LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, false, ll_pass_arrays(kGeoTypes[t].mType))))
+                                    : LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, texmat_ok, ll_pass_arrays(kGeoTypes[t].mType))))
             {
                 {   // S6 census: why, by type (logged with the fragment G entry builds)
                     static U64 reasons[2 * kGeoTypeCount][16] = {};
@@ -11097,9 +11101,17 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 item.mE.mMatrix = slot;
                 f.mGeoRegion = f.mGeoRegion && slot != 0;
             }
+            bool texmat_served = true;
+            if (texmat_ok && params->mTextureMatrix)
+            {
+                const U32 tslot = scene_moving_acquire(params->mTextureMatrix, f);
+                item.mE.mPad3 = tslot;
+                texmat_served = tslot != 0;
+                if (texmat_served) { ++sGeoTexmatRows; }
+            }
             item.mInfo = params;
             item.mType = (U32)t2;
-            item.mServed = !params->mModelMatrix || item.mE.mMatrix != 0;
+            item.mServed = (!params->mModelMatrix || item.mE.mMatrix != 0) && texmat_served;
             params->mGeoServed = item.mServed;
             f.mGeoServedCount += item.mServed ? 1 : 0;
             if (item.mServed)
@@ -11137,7 +11149,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     if (sGeoFillCalls % 4000 == 0)
     {
         LL_INFOS("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
-            << sGeoFillFallback << " fallback draws, " << sGeoFillNonRegion << " fragments not region-only, region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
+            << sGeoFillFallback << " fallback draws, " << sGeoTexmatRows << " rows with a texture matrix slot, " << sGeoFillNonRegion << " fragments not region-only, region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
     }
 }
 
