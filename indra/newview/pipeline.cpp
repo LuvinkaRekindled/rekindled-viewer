@@ -8880,6 +8880,10 @@ struct ViewJobsStats
     std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0}, mSkippedAlpha{0}, mWouldSkipAlpha{0}, mPlanSkipped{0};
 };
 ViewJobsStats sViewJobs;
+// C5 J3 census (LL_VK_RMCENSUS=1): the draw infos the cascades' render map job still pushes, by pass type (and how many are an avatar's)
+static const bool sCascadeTypeCensus = getenv("LL_VK_RMCENSUS") != nullptr;
+static std::atomic<U64> sCascadeTypePushed[128], sCascadeTypeAvatar[128];
+
 std::atomic<bool> sViewJobsSkipStatic{false};
 std::atomic<S32> sViewJobsSkipAlpha{0};        // C4.1 for the alpha casters: 1 the render map job leaves out the draw infos the worker holds as resident alpha entries (the builder built them and the viewer dropped them again), 2 counts only
 ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
@@ -9022,6 +9026,17 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                 LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment; draw infos pushed: %.1f static (%.1f left out), %.1f rigged static, %.1f alpha, %.1f other",
                     (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mStatic.exchange(0) / n, sViewJobs.mSkippedStatic.exchange(0) / n,
                     sViewJobs.mRiggedStatic.exchange(0) / n, sViewJobs.mAlpha.exchange(0) / n, sViewJobs.mOther.exchange(0) / n) << LL_ENDL;
+                if (sCascadeTypeCensus)
+                {
+                    std::string types;
+                    const double per_job = n;
+                    for (U32 t = 0; t < 128; ++t)
+                    {
+                        const U64 pushed = sCascadeTypePushed[t].exchange(0), avatar_pushed = sCascadeTypeAvatar[t].exchange(0);
+                        if (pushed) { types += llformat(" | type %u: %.1f (%.1f an avatar's)", t, (double)pushed / per_job, (double)avatar_pushed / per_job); }
+                    }
+                    LL_INFOS("RMCensus") << "cascade render map job, draw infos pushed per job by pass type:" << types << LL_ENDL;
+                }
                 LL_INFOS("ShadowPrep") << llformat("render map jobs: alpha draw infos left out %.1f a job (the worker holds them), %.1f a job that would be left out (count-only mode), %.1f groups a job skipped by their answer",
                     sViewJobs.mSkippedAlpha.exchange(0) / n, sViewJobs.mWouldSkipAlpha.exchange(0) / n, sViewJobs.mPlanSkipped.exchange(0) / n) << LL_ENDL;
             }
@@ -15878,6 +15893,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
 
                 ++plan_pushed;
+                if (sCascadeTypeCensus) { sCascadeTypePushed[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); if (info->mAvatar.notNull()) { sCascadeTypeAvatar[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); } }
                 sCull->pushDrawInfo(j->first, info);
                 if (ll_scene_geo_on() && ll_scene_geo_verify_on())
                 {
