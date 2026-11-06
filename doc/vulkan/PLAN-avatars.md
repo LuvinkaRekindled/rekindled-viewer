@@ -19,6 +19,8 @@ Measured and ruled out as single fixes: the skin cache across frames (4% of pale
 
 Cuts that are quality-neutral and in: 22.9 of 36 looped avatars are skipped without the loop (98.7 attachments), static rigid attachments are not moved, the box override is skipped when unchanged, matrices-only updates for hidden avatars, alpha and opaque rigged LOD at half a pixel (looked at by Adam, default on), shadow caster LOD (2026-11-04).
 
+Zone lap pz1 (2026-11-06, the completion loop by piece, 40.8 avatars a frame, main thread): motion batch 0.727 ms = blend 0.250 + attachment jobs 0.050 + completions 0.425; of the completions idleUpdateMisc (attachment ledger replay, world matrices) 0.190, appearance animation 0.117 (2.9 us an avatar for a function that is one flag test unless the avatar is morphing: a cache miss on the avatar object, or avatars still animating their appearance), name tag 0.092, voice visualizer 0.010, lip sync / loading / water / wind 0.007 (14.8 avatars), updateCharacterPostMotion 0.020 (27.5 avatars). Every piece is small and per avatar: the shape the avatar table is for.
+
 ## The model
 
 One owner per fact, rows instead of an object graph, work proportional to what is seen.
