@@ -259,6 +259,17 @@ public:
     };
 };
 
+class LLSpatialGroup;
+// <FS> C4.1: the groups that have (or had, until the next prune) a state bit the rebuild loops of the shadow preparation look for (MESH_DIRTY, GEOM_DIRTY, NEW_DRAWINFO), kept as they are set, so that those loops
+// ask the few groups instead of reading the state word of every visible group of every cascade
+namespace LLDirtyGroups
+{
+    void add(LLSpatialGroup* group);
+    void forget(LLSpatialGroup* group);                         // a group that is destroyed
+    std::vector<LLSpatialGroup*> snapshot();
+    void prune();                                               // main thread: groups with none of the bits left leave
+}
+
 LL_ALIGN_PREFIX(16)
 class LLSpatialGroup : public LLOcclusionCullingGroup
 {
@@ -362,7 +373,7 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       {row().state |= state;}
+    void setState(U32 state)       { row().state |= state; if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO)) { LLDirtyGroups::add(this); } }
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 
@@ -410,6 +421,11 @@ public:
     U64 mGeoServedMask = 0;             // <FS> S3 G4 (S4 B: the bits after the static types are the rigged variants): the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
     U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)
     bool mGeoAllServed = false;         // <FS> R2 (S-retire-views-design.md): every non-empty draw map type of the group is served by the table: postSort has nothing to put in the render map for it
+    // <FS> C4.1: the sun cascades' render map job asks this before it walks the group's draw map: bits 0-3 the answer (1 nothing to push, 2 the group has an alpha draw map entry, 4 a rigged alpha one, 8 resident), the rest a key of what the
+    // answer was made from (draw map serial, fragment state, render type mask, the job's switches). Written by the jobs of several cascades at once: one atomic word.
+    std::atomic<U64> mMapPlan{ 0 };
+    std::atomic<bool> mInDirtyReg{ false };        // <FS> C4.1: listed in LLDirtyGroups
+    U32 mDirtyIdx = 0;
     U32 mGeoHandle = 0;                 // <FS> S3 G3: the worker's handle of this group's scene geometry fragment (0 = none, or the table does not hold it): what postSort lists for the passes
     static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
 
