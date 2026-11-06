@@ -30,6 +30,7 @@
 #include "llviscensus.h"
 #include "llcullshadow.h"
 #include <deque>
+#include <array>
 #include <unordered_map>
 #include "llviewerregion.h"
 #include "pipeline.h"
@@ -971,6 +972,30 @@ void LLHiz::send(const F32* view_proj)
     sHizPending.push_back(std::move(p));
 }
 
+namespace
+{
+const bool sHizKeepVerdicts = getenv("LL_VK_BLINK") != nullptr;         // (diagnostic: the last verdict of every target, for the blink detector)
+std::unordered_map<U32, std::array<U32, 5>> sHizLastVerdict;
+}
+
+bool LLHiz::lastVerdict(const LLHizTarget* target, U32* out5)
+{
+    if (!sHizKeepVerdicts || !target->mHizId)
+    {
+        return false;
+    }
+    auto it = sHizLastVerdict.find(target->mHizId);
+    if (it == sHizLastVerdict.end())
+    {
+        return false;
+    }
+    for (int k = 0; k < 5; ++k)
+    {
+        out5[k] = it->second[k];
+    }
+    return true;
+}
+
 void LLHiz::apply()
 {
     if (sHizPending.empty())
@@ -1069,6 +1094,10 @@ void LLHiz::apply()
                 LLOccCensus::sHizWhy[1] += (word >> 17) & 1u;
                 LLOccCensus::sHizWhy[2] += (word >> 18) & 1u;
                 LLOccCensus::sHizWhy[3] += (word >> 19) & 1u;
+            }
+            if (sHizKeepVerdicts)
+            {
+                sHizLastVerdict[p.mIds[i]] = { word, words[3 * i + 1], words[3 * i + 2], (U32)gFrameCount, stale ? 1u : 0u };
             }
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
@@ -1461,6 +1490,37 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     // Water is depth clamped (as the cubes were) so it is not rejected for being behind the far clip plane
     const bool water = mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_WATER || mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER;
     LLHiz::add(this, bounds[0], bounds[1][0] + SG_OCCLUSION_FUDGE, bounds[1][1] + SG_OCCLUSION_FUDGE, bounds[1][2] + OCCLUSION_FUDGE_Z, water);
+}
+
+void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
+{
+    static const bool off = getenv("LL_VK_HIZ_ENTRY_OFF") != nullptr;
+    if (off)
+    {
+        return;
+    }
+    const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
+    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+    for (LLViewerOctreeGroup* g = this; g; g = g->getParent())
+    {
+        LLOcclusionCullingGroup* o = static_cast<LLOcclusionCullingGroup*>(g);
+        if (!(o->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        {
+            continue;
+        }
+        // the box the verdict was for: the group's bounds (centre, half size) as they stand until the next rebound
+        const LLVector4a* b = o->row().bounds;
+        LLVector4a lo, hi;
+        lo.setSub(b[0], b[1]);
+        hi.setAdd(b[0], b[1]);
+        const bool inside = !(entry_extents[0].lessThan(lo).getGatheredBits() & 0x7) && !(entry_extents[1].greaterThan(hi).getGatheredBits() & 0x7);
+        if (!inside)
+        {
+            o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
+            o->mHizOccludedOnce = false;
+        }
+    }
+    LLViewerCamera::sCurCameraID = saved_camera;
 }
 
 //virtual

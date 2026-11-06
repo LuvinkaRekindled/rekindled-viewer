@@ -413,6 +413,7 @@ static std::atomic<U64> sPartCullNs[96];
 static std::atomic<U64> sPartCullCalls[96];
 static std::atomic<U32> sPartCullType[96];
 static thread_local LLCullResult* sCull = NULL; // <FS> per thread: the parallel shadow cascade preparation culls into several results at once
+static thread_local bool sCullCollectLod = false; // <FS> C4.4: the shadow cascade culls name, while they stamp a group, the ones the mark job has to look at (LLCullResult::mLodGroups)
 
 // Add color attachments for deferred rendering
 // target -- RenderTarget to add attachments to
@@ -4719,6 +4720,10 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     else
     {   //render by group
         sCull->pushVisibleGroup(group);
+        if (sCullCollectLod && group->changeLOD())      // <FS> C4.4: the row was just written, the answer costs no second visit (the mark job used to ask every visible group)
+        {
+            sCull->mLodGroups.push_back(group);
+        }
     }
 
     if (group->needsUpdate() ||
@@ -7215,10 +7220,301 @@ static U32 main_map_chunk()
     return env_chunk;
 }
 
+// <FS> LL_VK_BLINK=1 (diagnostic, off by default): an avatar that was in the main view's visible list, is missing from it for 1 to 12 frames while its sphere is inside the camera's frustum on every one of those
+// frames, and is back: one line (tag AvBlink) with the avatar, the frame, the gap, how many gap frames its group carried an occluded verdict, its impostor state, the distance and how far the camera moved and
+// turned on the frame it went (the Hi-Z verdict latency blink needs motion; a blink in a still camera is something else). Once a frame on the main thread, a few dozen avatars: no per-frame reads of upload memory.
+namespace
+{
+// the flight recorder: one record a frame for every avatar, the last kRingFrames of them; the Pause key dumps them (near avatars whose flags changed in the window, as runs of frames with the same flags)
+struct BlinkRec { S32 mFrame; U16 mFlags, mDistDm; };
+constexpr U32 kRingFrames = 600;
+// flags of a record, as bits: 1 in the visible list, 2 no group, 4 group dead, 8 group occluded, 10 group not stamped by the world cull, 20 a group above it is occluded, 40 Hi-Z occluded verdict held, 80 impostor,
+// 100 far tier heavy, 200 culled (not baked), 400 avatar visible (mVisible), 800 drawable hidden, 1000 group changed since the frame before, 2000 not normal appearance, 4000 drawable visible stamp, 8000 fully loaded
+struct AvBlinkState
+{
+    std::vector<BlinkRec> mRing;
+    U32 mRingN = 0;
+    S32 mLastSeen = -1, mGap = 0, mInFrustum = 0, mOccluded = 0, mTouched = 0;
+    bool mImpostorAtLoss = false;
+    F32 mCamMove = 0.f, mCamTurn = 0.f;
+    LLVector3 mPrevPos;             // the avatar's position the frame before
+    bool mHavePos = false;
+    U32 mStateBits = 0xffffffffu;   // impostor 1, far tier heavy 2, culled (not baked) 4, fully loaded 8, visible 16, not normal appearance 32: a change is logged (AvFlip), near avatars only
+    S32 mStateFrame = 0;
+    const LLSpatialGroup* mLastGroup = nullptr;   // the avatar's group on the frame before (a change = it crossed into another group)
+    F32 mSpeed = 0.f;              // m a frame, on the frame it was lost
+    F32 mFrameMs = 0.f;             // length of the frame it was lost
+    U32 mFirstWhy = 0, mAllWhy = 0; // the reasons (bits below) on the first lost frame, and over all of them
+    std::string mWhy;               // one hex digit pair a lost frame
+    std::string mVerdict;           // the last Hi-Z verdict applied to the avatar's group on each lost frame: word, level, nearest box depth, farthest covered pyramid depth, age in frames, stale
+};
+// reasons an avatar is not in the visible list on a frame, as bits (all that apply are set):
+enum : U32 { BLK_NO_GROUP = 1, BLK_GROUP_OCCLUDED = 2, BLK_GROUP_NOT_STAMPED = 4, BLK_GROUP_DEAD = 8, BLK_GROUP_DIRTY = 16, BLK_DRAWABLE_HIDDEN = 32, BLK_IMPOSTOR = 64, BLK_HIZ_ONCE = 128,
+             BLK_AV_NOT_VISIBLE = 256, BLK_GROUP_CHANGED = 512, BLK_ANCESTOR_OCCLUDED = 1024 };
+std::unordered_map<const LLVOAvatar*, AvBlinkState> sAvBlink;
+}
+
+// the Pause key (while LL_VK_BLINK is set): the flight recorder of every avatar within LL_VK_BLINK_DUMP_M (30) metres, the last kRingFrames frames as runs of frames with the same flags. An avatar whose flags did not
+// change in the window is named once with its flags; the others get their runs. One log line a avatar (tag AvRecorder).
+static void fs_blink_dump(S32 frame)
+{
+    static const F32 near_m = getenv("LL_VK_BLINK_DUMP_M") ? (F32)atof(getenv("LL_VK_BLINK_DUMP_M")) : 30.f;
+    LL_INFOS("AvRecorder") << "flight recorder at frame " << frame << " (Pause key): the last " << kRingFrames << " frames of avatars within " << near_m
+        << " m, runs 'first-last:flags'; flags 1 in visible list, 2 no group, 4 group dead, 8 group occluded, 10 group not stamped by the world cull, 20 a group above is occluded, 40 Hi-Z occluded verdict held, 80 impostor, "
+        << "100 far tier heavy, 200 culled/not baked, 400 avatar visible, 800 drawable hidden, 1000 group changed since the frame before, 2000 not normal appearance, 4000 drawable visible stamp, 8000 fully loaded (hex)" << LL_ENDL;
+    for (auto& kv : sAvBlink)
+    {
+        const LLVOAvatar* av = kv.first;
+        AvBlinkState& st = kv.second;
+        if (st.mTouched != frame || st.mRingN == 0 || !LLVOAvatar::isLiveInstance(av))
+        {
+            continue;
+        }
+        const U32 n = std::min<U32>(st.mRingN, kRingFrames);
+        const BlinkRec& last = st.mRing[(st.mRingN - 1) % kRingFrames];
+        if (last.mDistDm > near_m * 10.f)
+        {
+            continue;
+        }
+        std::string runs;
+        U32 changes = 0, run_count = 0;
+        S32 run_first = 0, run_last = 0;
+        U16 run_flags = 0;
+        for (U32 k = 0; k < n; ++k)
+        {
+            const BlinkRec& r = st.mRing[(st.mRingN - n + k) % kRingFrames];
+            if (k == 0) { run_first = run_last = r.mFrame; run_flags = r.mFlags; continue; }
+            if (r.mFlags == run_flags && r.mFrame == run_last + 1) { run_last = r.mFrame; continue; }
+            if (r.mFlags != run_flags) { ++changes; }
+            if (run_count++ < 60) { char b[64]; snprintf(b, sizeof(b), "%d-%d:%x ", run_first, run_last, run_flags); runs += b; }
+            run_first = run_last = r.mFrame;
+            run_flags = r.mFlags;
+        }
+        if (run_count++ < 60) { char b[64]; snprintf(b, sizeof(b), "%d-%d:%x ", run_first, run_last, run_flags); runs += b; }
+        LL_INFOS("AvRecorder") << "avatar '" << av->getFullname() << "'" << (av->isSelf() ? " (self)" : "") << " " << last.mDistDm / 10.f << " m, " << changes << " changes: " << runs << LL_ENDL;
+    }
+}
+
+static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
+{
+    static const bool on = getenv("LL_VK_BLINK") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static S32 last_frame = -1;
+    const S32 frame = (S32)LLFrameTimer::getFrameCount();
+    if (frame == last_frame)
+    {
+        return;
+    }
+    last_frame = frame;
+    static LLVector3 prev_origin, prev_at;
+    static U64 blinks = 0;
+    const LLVector3 origin = camera.getOrigin(), at = camera.getAtAxis();
+    const F32 cam_move = (origin - prev_origin).length();
+    const F32 cam_turn = acosf(llclamp(at * prev_at, -1.f, 1.f)) * RAD_TO_DEG;
+    prev_origin = origin;
+    prev_at = at;
+    std::unordered_set<const LLDrawable*> seen;
+    for (LLCullResult::drawable_iterator d = cull.beginVisibleList(); d != cull.endVisibleList(); ++d)
+    {
+        if (*d && (*d)->getVObj() && (*d)->getVObj()->isAvatar())
+        {
+            seen.insert(*d);
+        }
+    }
+    S32 tracked = 0;
+    for (LLCharacter* c : LLCharacter::sInstances)
+    {
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        if (!av || av->isDead() || av->isControlAvatar())
+        {
+            continue;
+        }
+        LLDrawable* dr = av->mDrawable;
+        if (!dr || dr->isDead())
+        {
+            continue;
+        }
+        AvBlinkState& st = sAvBlink[av];
+        st.mTouched = frame;
+        ++tracked;
+        {
+            const LLVector3 now_pos = dr->getPositionAgent();
+            if (st.mHavePos && st.mGap == 0)
+            {
+                st.mSpeed = (now_pos - st.mPrevPos).length();      // (the speed on the last frame it was seen; kept while it is lost)
+            }
+            st.mPrevPos = now_pos;
+            st.mHavePos = true;
+        }
+        {
+            // the avatar's own states that decide how it is drawn, whatever the visible list says: a change is one line (AvFlip), so a state that flips and flips back shows as two lines a few frames apart
+            const U32 bits = (av->isImpostor() ? 1u : 0u) | (av->mFarTierHeavy ? 2u : 0u) | (av->isCulled() ? 4u : 0u) | (av->isFullyLoaded() ? 8u : 0u) | (av->isVisible() ? 16u : 0u)
+                | (av->getOverallAppearance() != LLVOAvatar::AOA_NORMAL ? 32u : 0u);
+            if (bits != st.mStateBits)
+            {
+                const F32 dist = (dr->getPositionAgent() - origin).length();
+                static const F32 flip_near_m = getenv("LL_VK_BLINK_NEAR_M") ? (F32)atof(getenv("LL_VK_BLINK_NEAR_M")) : 60.f;
+                if (st.mStateBits != 0xffffffffu && dist <= flip_near_m)
+                {
+                    LL_INFOS("AvBlink") << "AvFlip avatar '" << av->getFullname() << "'" << (av->isSelf() ? " (self)" : "") << " frame " << frame << ": state 0x" << std::hex << st.mStateBits << " -> 0x" << bits << std::dec
+                        << " after " << frame - st.mStateFrame << " frames, " << dist << " m (1 impostor, 2 far tier heavy, 4 culled/not baked, 8 fully loaded, 10 visible, 20 not normal appearance, hex)" << LL_ENDL;
+                }
+                st.mStateBits = bits;
+                st.mStateFrame = frame;
+            }
+        }
+        const LLSpatialGroup* cur_group = dr->getSpatialGroup();
+        const bool group_changed = st.mHavePos && cur_group != st.mLastGroup && st.mLastGroup != nullptr;
+        st.mLastGroup = cur_group;
+        {
+            U32 f = seen.count(dr) ? 1u : 0u;
+            LLSpatialGroup* rg = dr->getSpatialGroup();
+            if (!rg) { f |= 2u; }
+            else
+            {
+                if (rg->isDead()) { f |= 4u; }
+                if (rg->getOcclusionState() & LLOcclusionCullingGroup::OCCLUDED) { f |= 8u; }
+                if (rg->getVisible(LLViewerCamera::CAMERA_WORLD) < LLViewerOctreeEntryData::getCurrentFrame()) { f |= 0x10u; }
+                if (rg->mHizOccludedOnce) { f |= 0x40u; }
+                for (LLViewerOctreeGroup* up = rg->getParent(); up; up = up->getParent())
+                {
+                    if (((LLSpatialGroup*)up)->getOcclusionState() & LLOcclusionCullingGroup::OCCLUDED) { f |= 0x20u; break; }
+                }
+            }
+            if (av->isImpostor()) { f |= 0x80u; }
+            if (av->mFarTierHeavy) { f |= 0x100u; }
+            if (av->isCulled()) { f |= 0x200u; }
+            if (av->isVisible()) { f |= 0x400u; }
+            if (dr->isState(LLDrawable::INVISIBLE | LLDrawable::FORCE_INVISIBLE)) { f |= 0x800u; }
+            if (group_changed) { f |= 0x1000u; }
+            if (av->getOverallAppearance() != LLVOAvatar::AOA_NORMAL) { f |= 0x2000u; }
+            if (dr->isVisible()) { f |= 0x4000u; }
+            if (av->isFullyLoaded()) { f |= 0x8000u; }
+            if (st.mRing.empty()) { st.mRing.resize(kRingFrames); }
+            st.mRing[st.mRingN % kRingFrames] = { frame, (U16)f, (U16)llmin(65535.f, (dr->getPositionAgent() - origin).length() * 10.f) };
+            ++st.mRingN;
+        }
+        if (seen.count(dr))
+        {
+            static const F32 near_m = getenv("LL_VK_BLINK_NEAR_M") ? (F32)atof(getenv("LL_VK_BLINK_NEAR_M")) : 60.f;   // only the near ones are logged: a far impostor going in and out is not what is looked for
+            if (st.mLastSeen >= 0 && st.mGap > 0 && st.mGap <= 12 && st.mInFrustum == st.mGap && (av->getPositionAgent() - origin).length() <= near_m)
+            {
+                ++blinks;
+                LL_INFOS("AvBlink") << "avatar '" << av->getFullname() << "'" << (av->isSelf() ? " (self)" : "") << " out of the visible list for " << st.mGap << " frames (frame " << frame - st.mGap
+                    << " to " << frame - 1 << ") while inside the frustum; occluded verdict on " << st.mOccluded << " of them; impostor " << (st.mImpostorAtLoss ? "yes" : "no") << " at the loss, "
+                    << (av->isImpostor() ? "yes" : "no") << " now; " << (av->getPositionAgent() - origin).length() << " m; camera moved " << st.mCamMove << " m and turned " << st.mCamTurn << " deg on the loss frame"
+                    << (av->isFullyLoaded() ? "" : "; not fully loaded")
+                    << "; avatar speed " << st.mSpeed << " m a frame, loss frame " << st.mFrameMs << " ms; reasons on the first lost frame 0x" << std::hex << st.mFirstWhy << ", over all 0x" << st.mAllWhy << std::dec
+                    << ", last Hi-Z verdict on each lost frame " << st.mVerdict
+                    << ", per frame [" << st.mWhy << "] (1 no group, 2 group occluded, 4 group not stamped visible by the world cull, 8 group dead, 10 group dirty, 20 drawable hidden, 40 impostor, 80 a Hi-Z occluded verdict was held, 100 avatar not visible, 200 the avatar's group changed since the frame before, 400 a group above it holds an occluded verdict, hex)" << LL_ENDL;
+            }
+            st.mGap = 0;
+            st.mInFrustum = 0;
+            st.mOccluded = 0;
+            st.mLastSeen = frame;
+        }
+        else if (st.mLastSeen >= 0)
+        {
+            // why: what the avatar's drawable, its group and the verdicts say on this frame (the stamp is the world cull's: the main view's)
+            U32 why = 0;
+            {
+                LLSpatialGroup* wg = dr->getSpatialGroup();
+                if (!wg) { why |= BLK_NO_GROUP; }
+                else
+                {
+                    if (wg->isDead()) { why |= BLK_GROUP_DEAD; }
+                    if (wg->isDirty()) { why |= BLK_GROUP_DIRTY; }
+                    if (wg->getOcclusionState() & LLOcclusionCullingGroup::OCCLUDED) { why |= BLK_GROUP_OCCLUDED; }
+                    if (wg->getVisible(LLViewerCamera::CAMERA_WORLD) < LLViewerOctreeEntryData::getCurrentFrame()) { why |= BLK_GROUP_NOT_STAMPED; }
+                    if (wg->mHizOccludedOnce) { why |= BLK_HIZ_ONCE; }
+                    // the cull walk stops at an occluded ancestor and never reaches the group below it: an avatar whose own group is clear can still be dropped by a held verdict of a bigger box above it
+                    for (LLViewerOctreeGroup* up = wg->getParent(); up; up = up->getParent())
+                    {
+                        if (((LLSpatialGroup*)up)->getOcclusionState() & LLOcclusionCullingGroup::OCCLUDED) { why |= BLK_ANCESTOR_OCCLUDED; break; }
+                    }
+                }
+                if (dr->isState(LLDrawable::INVISIBLE | LLDrawable::FORCE_INVISIBLE)) { why |= BLK_DRAWABLE_HIDDEN; }
+                if (av->isImpostor()) { why |= BLK_IMPOSTOR; }
+                if (!av->isVisible()) { why |= BLK_AV_NOT_VISIBLE; }
+                if (group_changed) { why |= BLK_GROUP_CHANGED; }
+            }
+            if (st.mGap == 0)
+            {
+                st.mImpostorAtLoss = av->isImpostor();
+                st.mCamMove = cam_move;
+                st.mCamTurn = cam_turn;
+                st.mFrameMs = (F32)(gFrameIntervalSeconds.value() * 1000.0);
+                st.mFirstWhy = why;
+                st.mAllWhy = 0;
+                st.mWhy.clear();
+                st.mVerdict.clear();
+            }
+            st.mAllWhy |= why;
+            { char b[8]; snprintf(b, sizeof(b), "%x ", why); st.mWhy += b; }
+            if (LLSpatialGroup* vg = dr->getSpatialGroup())
+            {
+                U32 v[5];
+                if (LLHiz::lastVerdict(vg, v))
+                {
+                    float zn, zf;
+                    memcpy(&zn, &v[1], 4);
+                    memcpy(&zf, &v[2], 4);
+                    char b[160];
+                    snprintf(b, sizeof(b), "{w%x L%u near %.7f far %.7f age %d%s} ", v[0] & 0xffffu, (v[0] >> 8) & 0xffu, zn, zf, frame - (S32)v[3], v[4] ? " stale" : "");
+                    st.mVerdict += b;
+                }
+            }
+            ++st.mGap;
+            if (camera.sphereInFrustum(dr->getPositionAgent(), dr->getRadius()))
+            {
+                ++st.mInFrustum;
+            }
+            LLSpatialGroup* group = dr->getSpatialGroup();
+            if (group && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            {
+                ++st.mOccluded;
+            }
+            if (st.mGap > 40)
+            {
+                st.mLastSeen = -1;      // gone for good (left the view, or the region)
+                st.mGap = 0;
+                st.mInFrustum = 0;
+                st.mOccluded = 0;
+            }
+        }
+    }
+    if (frame % 600 == 0)
+    {
+        for (auto it = sAvBlink.begin(); it != sAvBlink.end();)
+        {
+            it = (frame - it->second.mTouched > 600) ? sAvBlink.erase(it) : std::next(it);
+        }
+        LL_INFOS("AvBlink") << "blink detector: " << blinks << " blinks so far, " << tracked << " avatars tracked" << LL_ENDL;
+    }
+#if LL_WINDOWS
+    {
+        static bool was_down = false;
+        const bool down = (GetAsyncKeyState(VK_PAUSE) & 0x8000) != 0;
+        if (down && !was_down)
+        {
+            fs_blink_dump(frame);
+        }
+        was_down = down;
+    }
+#endif
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     const View view = currentView(camera, false);
+    if (view.isMainWorldSort() && !gCubeSnapshot)
+    {
+        fs_blink_detect(camera, *sCull);
+    }
     const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     struct VisPostEnd
     {
@@ -7902,9 +8198,11 @@ struct ShadowPrepScope
     ShadowCascadeCull mCascadeCull = sShadowCascadeCull;
     bool mParallel = LLPipeline::sParallelPrep;
     const LLPipeline::View* mJobView = LLPipeline::sJobView;
+    bool mCollectLod = sCullCollectLod;
 
     ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep)
     {
+        sCullCollectLod = false;
         LLPipeline::sJobView = prep.mJobView;       // (null: the thread works with the pipeline's own state, as before)
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
         LLPipeline::sParallelPrep = true;
@@ -7922,8 +8220,20 @@ struct ShadowPrepScope
         sCull = cull;
     }
 
+    // the cull walks of a cascade (the result `cull`, or the cascade's own when null): the groups they stamp are checked for a LOD change on the way (markNotCulled)
+    struct Cull {};
+    ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep, LLCullResult* cull, Cull) : ShadowPrepScope(prep)
+    {
+        if (cull)
+        {
+            sCull = cull;
+        }
+        sCullCollectLod = true;
+    }
+
     ~ShadowPrepScope()
     {
+        sCullCollectLod = mCollectLod;
         LLPipeline::sJobView = mJobView;
         LLViewerCamera::sCurCameraID = mCameraID;
         sCull = mCull;
@@ -8310,7 +8620,7 @@ static bool shadow_hull_ray_meets(const LLPipeline::ShadowSliceHull& hull, const
 void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    ShadowPrepScope scope(prep);
+    ShadowPrepScope scope(prep, nullptr, ShadowPrepScope::Cull());
 
     LLCamera& camera = prep.mCamera;
     LLCullResult& result = *prep.mResult;
@@ -8435,7 +8745,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
             {
                 const auto w0 = std::chrono::steady_clock::now();
                 ScChunk& first = new_chunk(p, part, true, false, { nullptr, 0 });
-                ShadowPrepScope scope(prep, first.mLocal);
+                ShadowPrepScope scope(prep, first.mLocal, ShadowPrepScope::Cull());
                 const OctreeNode* root = part->mOctree;
                 part->cullShadowSplit(prep.mCamera, 8, [&](const OctreeNode* n)
                 {
@@ -8472,7 +8782,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     {
         ScChunk& chunk = chunks[work[w]];
         ShadowCascadePrep& prep = pending[chunk.mPrep];
-        ShadowPrepScope scope(prep, chunk.mLocal);
+        ShadowPrepScope scope(prep, chunk.mLocal, ShadowPrepScope::Cull());
         const auto t0 = std::chrono::steady_clock::now();
         if (chunk.mTask)
         {
@@ -8502,6 +8812,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         for (LLCullResult::sg_iterator g = l.beginOcclusionGroups(); g != l.endOcclusionGroups(); ++g) into.pushOcclusionGroup(*g);
         for (LLCullResult::sg_iterator g = l.beginAlphaGroups(); g != l.endAlphaGroups(); ++g) into.pushAlphaGroup(*g);
         for (LLCullResult::sg_iterator g = l.beginRiggedAlphaGroups(); g != l.endRiggedAlphaGroups(); ++g) into.pushRiggedAlphaGroup(*g);
+        into.mLodGroups.insert(into.mLodGroups.end(), l.mLodGroups.begin(), l.mLodGroups.end());       // <FS> C4.4
         if (!chunk.mSegment)
         {
             const U64 key = ((U64)(uintptr_t)chunk.mPart << 2) | (U64)(pending[chunk.mPrep].mIndex & 3);
@@ -8553,7 +8864,7 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
                 sCascadeCullCensus.mDrawGroups[ci].fetch_add(1, std::memory_order_relaxed);
                 sCascadeCullCensus.mDrawGroupsNew[ci].fetch_add((S32)group->getVisible(LLViewerCamera::CAMERA_WORLD) < frame ? 1 : 0, std::memory_order_relaxed);
             }
-            group->setVisible();
+            // (the group's own stamp was written by the cull walk that found it: markNotCulled)
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
@@ -8568,25 +8879,27 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
         return;
     }
 
-    LLCullResult::sg_iterator groups = result.beginVisibleGroups();
+    // <FS> C4.4: kind 1 runs over the groups of the cascade's cull whose changeLOD() answered true (LLCullResult::mLodGroups, filled by markNotCulled while the walk stamped them), not over every visible group:
+    // the stamp and the question were this job's second visit to each of ~1800 group rows a frame. The shadow hull's verdict (it dropped some visible groups before the marking) is asked again here, of these few.
+    const bool hull_apply = prep.mHull.mValid && shadow_hull_mode() == 1;
+    static const F32 hull_margin = getenv("LL_VK_SHADOW_HULL_MARGIN") ? (F32)atof(getenv("LL_VK_SHADOW_HULL_MARGIN")) : 6.f;
     for (U32 k = begin; k < end; ++k)
     {
-        LLSpatialGroup* group = groups[k];
+        LLSpatialGroup* group = result.mLodGroups[k];
         if (group->isDead())
         {
             continue;
         }
+        if (hull_apply)
+        {
+            const LLVector4a* bounds = group->getObjectBounds();
+            const F32* size = bounds[1].getF32ptr();
+            if (!(size[0] <= 0.f && size[1] <= 0.f && size[2] <= 0.f) && shadow_hull_outside(prep.mHull, bounds[0], bounds[1], hull_margin))
+            {
+                continue;
+            }
+        }
         const bool group_new = census && (S32)group->getVisible(LLViewerCamera::CAMERA_WORLD) < frame;
-        if (census)
-        {
-            sCascadeCullCensus.mVisGroups[ci].fetch_add(1, std::memory_order_relaxed);
-            sCascadeCullCensus.mVisGroupsNew[ci].fetch_add(group_new ? 1 : 0, std::memory_order_relaxed);
-        }
-        group->setVisible();
-        if (!group->changeLOD())
-        {
-            continue;
-        }
         if (census)
         {
             sCascadeCullCensus.mLodGroups[ci].fetch_add(1, std::memory_order_relaxed);
@@ -27932,7 +28245,47 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     LLCullResult& r = *pending[p].mResult;
                     for (int kind = 0; kind < 2; ++kind)
                     {
-                        const U32 n = kind == 0 ? r.getDrawableGroupsSize() : r.getVisibleGroupsSize();
+                        const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (U32)r.mLodGroups.size();     // <FS> C4.4: kind 1 = the groups whose LOD check said yes
+                        static const bool mark_verify = getenv("LL_VK_MARK_VERIFY") != nullptr;
+                        if (kind == 1 && mark_verify)
+                        {
+                            // verify: every visible group (after the hull) that the LOD check says yes to now is on the list the walk made (the old job asked all of them here)
+                            static U64 checked = 0, missing = 0, calls = 0;
+                            std::unordered_set<const LLSpatialGroup*> listed(r.mLodGroups.begin(), r.mLodGroups.end());
+                            for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
+                            {
+                                if ((*g)->isDead())
+                                {
+                                    continue;
+                                }
+                                ++checked;
+                                const bool yes = (*g)->changeLOD();
+                                if (yes && !listed.count(*g))
+                                {
+                                    if (++missing <= 6)
+                                    {
+                                        LL_WARNS("MarkVerify") << "a group the LOD check says yes to is not on the walk's list (cascade " << pending[p].mIndex << ")" << LL_ENDL;
+                                    }
+                                }
+                            }
+                            if (++calls % 2400 == 0)
+                            {
+                                LL_INFOS("MarkVerify") << "mark verify: " << checked << " visible groups checked, " << missing << " missing from the walk's list" << LL_ENDL;
+                            }
+                        }
+                        if (kind == 1 && shadow_census_on())
+                        {
+                            // (census only: what the job used to count for every visible group, counted here once for the list)
+                            const size_t ci = (size_t)(pending[p].mIndex & 3);
+                            const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+                            U32 total = r.getVisibleGroupsSize(), fresh = 0;
+                            for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
+                            {
+                                fresh += (S32)(*g)->getVisible(LLViewerCamera::CAMERA_WORLD) < frame ? 1 : 0;
+                            }
+                            sCascadeCullCensus.mVisGroups[ci].fetch_add(total, std::memory_order_relaxed);
+                            sCascadeCullCensus.mVisGroupsNew[ci].fetch_add(fresh, std::memory_order_relaxed);
+                        }
                         const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
                         for (U32 b = 0; b < n; b += step)
                         {
