@@ -28,7 +28,28 @@ flat in float vary_cutoff;
 
 void main()
 {
+    if ((vary_flags & 2048u) != 0u)
+    {
+        frag_color = vec4(1, 1, 1, 1);      // an opaque caster (glTF opaque): no alpha test, nothing sampled
+        return;
+    }
+
     float alpha = texture(ll_bindless_textures[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0).a;
+
+    if ((vary_flags & 64u) != 0u)
+    {
+        // glTF alpha mask (pbrShadowAlphaMaskF.glsl): texture alpha times vertex alpha against the material's cutoff, no dithering
+        if ((vary_flags & 1u) == 0u)
+        {
+            alpha *= vary_alpha;
+        }
+        if (alpha < vary_cutoff)
+        {
+            discard;
+        }
+        frag_color = vec4(1, 1, 1, 1);
+        return;
+    }
 
     if (alpha < vary_cutoff)
     {

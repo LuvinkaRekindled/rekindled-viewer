@@ -181,7 +181,9 @@ namespace LLVkBridge
         ALPHA_HARD = 64,            // ray tracing: a plain cut at mCutoff on texture alpha times vertex alpha (glTF alpha mask): no dithering
         ALPHA_RAY_ONLY = 128,       // ray tracing: an opaque caster (no alpha test); kind 5 records only
         ALPHA_NOT_READY = 256,      // kind 18 / 19 only: a texture of the entry has no data yet (ray scene loading gate): the entry stays out of the scene
-        ALPHA_BLENDED = 512         // ray tracing: an alpha BLENDED draw (the alpha pool, KIND_ALPHA): the soft sun ray takes its alpha as its coverage (rtAlphaCover), not the masked ramp
+        ALPHA_BLENDED = 512,        // ray tracing: an alpha BLENDED draw (the alpha pool, KIND_ALPHA): the soft sun ray takes its alpha as its coverage (rtAlphaCover), not the masked ramp
+        ALPHA_DOUBLE_SIDED = 1024,  // kind 1 (raster), C5 PBR shadow rows: a double sided glTF caster: the viewer sends it in a record of its own with culling off (the shader ignores the bit)
+        ALPHA_OPAQUE = 2048         // kind 1 (raster): a caster with no alpha test (opaque glTF): the fragment shader samples nothing. ALPHA_HARD (64) in the raster pass: texture alpha times vertex alpha against mCutoff, no dithering
     };
     struct ShadowAlphaEntry
     {
