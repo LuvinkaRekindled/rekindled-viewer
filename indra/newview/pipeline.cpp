@@ -8010,6 +8010,13 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
 #endif
 }
 
+// C5: LL_VK_RM_ALPHA 1 (default) the main view's postSort does not list the blended alpha draws, 0 lists them, 2 lists them and collect_main_view_draw_infos compares them with the draws of the alpha groups
+static int rm_alpha_mode()
+{
+    static const int mode = getenv("LL_VK_RM_ALPHA") ? atoi(getenv("LL_VK_RM_ALPHA")) : 1;
+    return mode;
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8121,6 +8128,9 @@ void LLPipeline::postSort(LLCamera &camera)
                     }
                 }
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
+                // C5: the blended alpha types are not put in the main view's render map (the alpha pool reads the groups' draw maps and the ray naming reads them through collect_main_view_draw_infos; LL_VK_RM_ALPHA=0 fills them as before; the verifiers and the census keep them)
+                static const bool rm_alpha_env = rm_alpha_mode() == 1;
+                const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on() && !getenv("LL_VK_RMCENSUS");
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
                 std::vector<MapChunk> chunks;
@@ -8185,10 +8195,14 @@ void LLPipeline::postSort(LLCamera &camera)
                                     continue;
                                 }
                             }
+                            const bool alpha_type = skip_alpha_lists && (j->first == LLRenderPass::PASS_ALPHA || j->first == LLRenderPass::PASS_ALPHA_RIGGED);
                             for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
                             {
                                 LLDrawInfo* info = *k;
-                                local.pushDrawInfo(j->first, info);
+                                if (!alpha_type)
+                                {
+                                    local.pushDrawInfo(j->first, info);
+                                }
                                 chunk.mIndices += info->mCount;
                             }
                         }
@@ -8253,6 +8267,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         indices += chunk.mIndices;
                     }
                     addTrianglesDrawn(indices);
+                    sCull->mAlphaListsSkipped = skip_alpha_lists;
                 }
             }
         }
@@ -10820,6 +10835,65 @@ static bool scene_fragment_behind(const LLSceneFragment* f)
 static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out)
 {
     out.clear();
+    if (rm_alpha_mode() == 2 && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
+    {
+        LLCullResult* c = gPipeline.getCull();
+        if (c)
+        {
+            std::vector<LLDrawInfo*> from_list, from_groups;
+            for (auto i = c->beginRenderMap(type), e = c->endRenderMap(type); i != e; ) { from_list.push_back(*i); LLCullResult::increment_iterator(i, e); }
+            auto it = type == LLRenderPass::PASS_ALPHA ? c->beginAlphaGroups() : c->beginRiggedAlphaGroups();
+            auto end = type == LLRenderPass::PASS_ALPHA ? c->endAlphaGroups() : c->endRiggedAlphaGroups();
+            for (; it != end; ++it)
+            {
+                LLSpatialGroup* group = *it;
+                auto found = group->isDead() ? group->mDrawMap.end() : group->mDrawMap.find(type);
+                if (!group->isDead() && found != group->mDrawMap.end())
+                {
+                    for (const LLPointer<LLDrawInfo>& info : found->second) { from_groups.push_back(info.get()); }
+                }
+            }
+            // (the render map is in the order of the visible groups, the alpha groups are sorted by distance: the same set)
+            std::unordered_set<LLDrawInfo*> a(from_list.begin(), from_list.end()), b(from_groups.begin(), from_groups.end());
+            static U64 checks = 0, bad = 0;
+            ++checks;
+            if (a != b || from_list.size() != from_groups.size())
+            {
+                ++bad;
+                if (bad <= 6)
+                {
+                    LL_WARNS("RMCensus") << "alpha draws of pass type " << type << ": the render map holds " << from_list.size() << ", the alpha groups' draw maps " << from_groups.size() << " (" << bad << " of " << checks << ")" << LL_ENDL;
+                }
+            }
+            else if (checks % 600 == 0)
+            {
+                LL_INFOS("RMCensus") << "alpha draws check: " << bad << " of " << checks << " differ (" << from_list.size() << " draws now)" << LL_ENDL;
+            }
+        }
+    }
+    if (LLCullResult* skipped = gPipeline.getCull(); skipped && skipped->mAlphaListsSkipped && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
+    {
+        // C5: postSort did not list the blended alpha draws; they are the groups' own: the alpha groups (or the rigged alpha groups) in their order, each group's draw infos of the type in the group's order
+        auto it = type == LLRenderPass::PASS_ALPHA ? skipped->beginAlphaGroups() : skipped->beginRiggedAlphaGroups();
+        auto end = type == LLRenderPass::PASS_ALPHA ? skipped->endAlphaGroups() : skipped->endRiggedAlphaGroups();
+        for (; it != end; ++it)
+        {
+            LLSpatialGroup* group = *it;
+            if (group->isDead())
+            {
+                continue;
+            }
+            auto found = group->mDrawMap.find(type);
+            if (found != group->mDrawMap.end())
+            {
+                for (const LLPointer<LLDrawInfo>& info : found->second)
+                {
+                    out.push_back(info.get());
+                }
+            }
+        }
+        return;
+    }
     auto* begin = gPipeline.beginRenderMap(type);
     auto* end = gPipeline.endRenderMap(type);
     for (LLCullResult::drawinfo_iterator i = begin; i != end; )

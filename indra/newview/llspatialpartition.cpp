@@ -5502,6 +5502,7 @@ void LLCullResult::clearLists()
 
 void LLCullResult::clear()
 {
+    mAlphaListsSkipped = false;
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
 
@@ -5616,6 +5617,14 @@ LLCullResult::bridge_iterator LLCullResult::endVisibleBridge()
 
 LLCullResult::drawinfo_iterator LLCullResult::beginRenderMap(U32 type)
 {
+    if (mAlphaListsSkipped && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
+    {
+        static std::atomic<int> logged{ 0 };
+        if (logged.fetch_add(1) < 6)
+        {
+            LL_WARNS("RMCensus") << "a reader asks the main view's render map list of pass type " << type << ", which postSort did not fill (LL_VK_RM_ALPHA=0 fills it)" << LL_ENDL;
+        }
+    }
     return &mRenderMap[type][0];
 }
 

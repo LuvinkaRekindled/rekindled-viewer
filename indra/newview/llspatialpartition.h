@@ -634,6 +634,9 @@ public:
     bridge_iterator beginVisibleBridge();
     bridge_iterator endVisibleBridge();
 
+    // <FS> C5: the main view's postSort did not fill the lists of the blended alpha types (PASS_ALPHA, PASS_ALPHA_RIGGED): the alpha pool reads the groups' own draw maps and the alpha group lists; a reader that asks
+    // for them anyway is logged (LLCullResult::beginRenderMap)
+    bool mAlphaListsSkipped = false;
     drawinfo_iterator beginRenderMap(U32 type);
     drawinfo_iterator endRenderMap(U32 type);
 
