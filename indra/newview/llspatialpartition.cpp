@@ -1720,7 +1720,7 @@ void LLSpatialPartition::cullTask(LLCamera& camera, const LLViewerOctreeCull::Sp
 }
 
 // <FS> C4.5 S1a: the main view's cull verdicts without the side effects (see LLSpatialPartition::CullCollect). Base is LLOctreeCull or LLOctreeCullNoFarClip: the same frustum tests as the real walk.
-template <class Base>
+template <class Base, bool Shadow = false>
 class LLOctreeCullCollect : public Base
 {
 public:
@@ -1729,6 +1729,10 @@ public:
     virtual bool earlyFail(LLViewerOctreeGroup* base_group) override
     {
         // (LLOctreeCull::earlyFail without markOccluder and the census counters)
+        if (Shadow)
+        {
+            return false;       // (the cascades' culls run with the occlusion test off)
+        }
         if (LLPipeline::reflectionRender())
         {
             return false;
@@ -1835,6 +1839,22 @@ void LLSpatialPartition::collectSubtree(LLCamera& camera, const OctreeNode* node
     }
 }
 
+void LLSpatialPartition::collectCullShadow(LLCamera& camera, CullCollect& out)
+{
+    out.mDrawable.clear();
+    out.mVisible.clear();
+    out.mOrder.clear();
+    out.mNodes.clear();
+    LLOctreeCullCollect<LLOctreeCullShadow, true> culler(&camera, out);
+    culler.traverse(mOctree);
+}
+
+void LLSpatialPartition::collectSubtreeShadow(LLCamera& camera, const OctreeNode* node, S32 entry_res, CullCollect& out)
+{
+    LLOctreeCullCollect<LLOctreeCullShadow, true> culler(&camera, out);
+    culler.start(node, entry_res);
+}
+
 // <FS> C4.5 S1b: the retained set. Per partition, what the collecting walk found (the nodes it visited with their entry mRes and outcome, the member groups), kept between frames and changed by the events the hooks
 // report: an occlusion state change of a group (the walk of its subtree is redone from the group), a change of what a frustum verdict reads of a group (bounds, extents, object bounds, the frustum-skip flag, its
 // elements), a destroy (the group is dropped at once). Nothing here changes what the cull lists: LL_VK_VISSET=2 compares the retained set with a full collecting walk every frame and logs every difference.
@@ -1853,13 +1873,24 @@ struct PartState
     std::vector<S32> mFlatLod;
     bool mFlatDirty = true;
     std::unordered_set<LLSpatialGroup*> mPending;               // the groups that joined this frame: they get the set's slot (and so its stamp) when the frame is claimed or the real walk is over, not before (their stored stamp is what the walk must see)
-    U32 mSlot = 0;                                              // the slot of the set in LLRetainedStamps (and in the rows of its members)
+    U32 mSlot = 0;                                              // the slot of the partition in LLRetainedStamps (and in the rows of its members): shared by its sets
+    int mSet = 0;                                               // 0 the main view's, 1 to 4 the sun cascades'
+    U32 mCam = 0;                                               // the camera the set stands for
 };
 struct Ev { LLViewerOctreeGroup* mGroup; U8 mKind; };
-static std::unordered_map<LLSpatialPartition*, PartState> sState;
+static constexpr int kSets = 5;
+static std::unordered_map<LLSpatialPartition*, PartState> sStateArr[kSets];
 static std::mutex sMutex;
-static std::vector<Ev> sEvents;
-static std::atomic<bool> sInvalidate{ true };
+static std::vector<Ev> sEventsArr[kSets];
+static std::atomic<bool> sInvalidateArr[kSets] = { true, true, true, true, true };
+static std::atomic<bool> sSetLive[kSets];                   // the set has been updated lately: the hooks keep its events (a cascade set of a session without sun shadows keeps none)
+static PartState& get_state(int set, LLSpatialPartition* part)
+{
+    PartState& st = sStateArr[set][part];
+    st.mSet = set;
+    st.mCam = set == 0 ? (U32)LLViewerCamera::CAMERA_WORLD : (U32)LLViewerCamera::CAMERA_SUN_SHADOW0 + (U32)set - 1;
+    return st;
+}
 struct Hist { S32 mFrame[4] = {}; U8 mKind[4] = {}; U8 mN = 0; };
 static std::unordered_map<const void*, Hist> sRecent;       // group -> its last four events (for the log of a difference)
 static S32 sLastRebuildFrame = 0;
@@ -1873,36 +1904,56 @@ struct Stats
 static Stats sStats;
 
 static bool sSlotUsed[256] = {};
-static U32 alloc_slot()
+static std::unordered_map<LLSpatialPartition*, std::pair<U32, U32>> sPartSlot;       // partition -> (slot, sets that use it)
+static U32 acquire_slot(LLSpatialPartition* part)
 {
-    for (U32 i = 1; i < 256; ++i)
+    auto& e = sPartSlot[part];
+    if (!e.first)
     {
-        if (!sSlotUsed[i])
+        for (U32 i = 1; i < 256; ++i)
         {
-            sSlotUsed[i] = true;
-            LLRetainedStamps::sFrame[i].store(0);
-            return i;
+            if (!sSlotUsed[i])
+            {
+                sSlotUsed[i] = true;
+                for (U32 cam = 0; cam < 9; ++cam) { LLRetainedStamps::sFrame[i][cam].store(0); }
+                e.first = i;
+                break;
+            }
         }
     }
-    return 0;
-}
-static void free_slot(U32 slot)
-{
-    if (slot)
+    if (e.first)
     {
-        sSlotUsed[slot] = false;
+        ++e.second;
+    }
+    return e.first;
+}
+static void release_slot(LLSpatialPartition* part)
+{
+    auto it = sPartSlot.find(part);
+    if (it != sPartSlot.end() && --it->second.second == 0)
+    {
+        sSlotUsed[it->second.first] = false;
+        sPartSlot.erase(it);
     }
 }
 // a group leaves its set: its stamp is written back (what the set's replays stood for), then it is a plain group again
-static void clear_member(LLSpatialGroup* g)
+static void clear_member(LLSpatialGroup* g, U32 cam)
 {
     LLGroupRows::Row& r = g->row();
-    if (r.retainedSlot)
+    const U32 bit = 0x100u << cam;
+    if (r.retainedSlot & bit)
     {
-        const S32 f = LLRetainedStamps::sFrame[r.retainedSlot].load(std::memory_order_relaxed);
-        r.visible[LLViewerCamera::CAMERA_WORLD] = std::max(r.visible[LLViewerCamera::CAMERA_WORLD], f);
-        r.anyVisible = std::max(r.anyVisible, f);
-        r.retainedSlot = 0;
+        const S32 f = LLRetainedStamps::sFrame[r.retainedSlot & 255u][cam].load(std::memory_order_relaxed);
+        r.visible[cam] = std::max(r.visible[cam], f);
+        if (cam < (U32)LLViewerCamera::CAMERA_WATER0)
+        {
+            r.anyVisible = std::max(r.anyVisible, f);
+        }
+        r.retainedSlot &= ~bit;
+        if (!(r.retainedSlot >> 8))
+        {
+            r.retainedSlot = 0;
+        }
     }
 }
 
@@ -1925,7 +1976,7 @@ static void erase_node(PartState& st, const void* key, bool write_back = true)
     st.mPending.erase((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
     if (write_back && it->second.mMember)
     {
-        clear_member((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
+        clear_member((LLSpatialGroup*)(LLViewerOctreeGroup*)key, st.mCam);
     }
     {
         auto pit = st.mPos.find((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
@@ -1955,7 +2006,7 @@ static void adopt(PartState& st, LLSpatialPartition::CullCollect& c, std::list<L
             LLSpatialGroup* g = it.mGroup;
             it.mLod = g->row().lodHash;
             st.mPending.insert(g);
-            gPipeline.replayAdopted(g, camera);     // (its wake and its distance: what markNotCulled does for a group it reaches)
+            gPipeline.replayAdopted(g, camera, st.mSet == 0);     // (its wake and its distance: what markNotCulled does for a group it reaches)
         }
         st.mPos[it.mGroup] = st.mOrder.insert(where, it);
     }
@@ -2008,17 +2059,17 @@ static void rebuild(LLCamera& camera, LLSpatialPartition* part, PartState& st)
     static LLSpatialPartition::CullCollect c;
     if (!st.mSlot)
     {
-        st.mSlot = alloc_slot();
+        st.mSlot = acquire_slot(part);
     }
     for (const auto& item : st.mOrder)
     {
         if (item.mKind && item.mGroup)
         {
-            clear_member(item.mGroup);      // (the stamp is written back: a group that is no longer a member keeps what the replays stood for)
+            clear_member(item.mGroup, st.mCam);      // (the stamp is written back: a group that is no longer a member keeps what the replays stood for)
         }
     }
     st.mPending.clear();
-    part->collectCull(camera, c);
+    if (st.mSet) { part->collectCullShadow(camera, c); } else { part->collectCull(camera, c); }
     st.mNodes.clear();
     st.mDrawable.clear();
     st.mVisible.clear();
@@ -2033,8 +2084,11 @@ static void rebuild(LLCamera& camera, LLSpatialPartition* part, PartState& st)
 
 // the events of the frame, applied (and the roots of the tracked partitions rebounded, what the cull does first: that makes the events of this frame's rebounds).
 // A frame whose camera signature changed leaves every state invalid (the cull walks); the first frame the camera is the same again rebuilds them from a collecting walk, the ones after apply events.
-void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed, bool will_replay)
+void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed, bool will_replay, int set)
 {
+    auto& sState = sStateArr[set];
+    auto& sEvents = sEventsArr[set];
+    sSetLive[set].store(true, std::memory_order_relaxed);
     const auto t0 = std::chrono::steady_clock::now();
     static double sec_ms[6] = {};       // setup, stale discards, events (swap, merge, sort), rewalks, flat array, rest
     static U64 stale_total = 0, stale_frames = 0;
@@ -2056,24 +2110,24 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         {
             if (item.mKind && item.mGroup)
             {
-                clear_member(item.mGroup);
+                clear_member(item.mGroup, it->second.mCam);
             }
         }
-        free_slot(it->second.mSlot);
+        if (it->second.mSlot) { release_slot(it->first); }
         it = sState.erase(it);
     }
     for (LLSpatialPartition* part : parts)
     {
         ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
     }
-    const bool inval = camera_changed || sInvalidate.exchange(false);
+    const bool inval = camera_changed || sInvalidateArr[set].exchange(false);
     if (inval)
     {
         {
             std::lock_guard<std::mutex> lock(sMutex);
             sEvents.clear();
         }
-        for (LLSpatialPartition* part : parts) { sState[part].mValid = false; }
+        for (LLSpatialPartition* part : parts) { get_state(set, part).mValid = false; }
         sStats.mUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         return;
     }
@@ -2081,7 +2135,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
     stale_total += sStale.size();
     ++stale_frames;
     // the discards of awaited verdicts, which the walk makes when it visits a group (checkOcclusion): for the groups the last walk visited, now
-    for (auto it = sStale.begin(); it != sStale.end();)
+    for (auto it = sStale.begin(); set == 0 && it != sStale.end();)
     {
         LLViewerOctreeGroup* g = *it;
         if (g->isDead())
@@ -2113,7 +2167,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
     std::unordered_set<LLSpatialPartition*> rebuilt;
     for (LLSpatialPartition* part : parts)
     {
-        PartState& st = sState[part];
+        PartState& st = get_state(set, part);
         if (!st.mValid)
         {
             rebuild(camera, part, st);
@@ -2206,7 +2260,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         for (const void* k : old_nodes) { erase_node(st, k); }
         sStats.mNodesErased += old_nodes.size();
         c.mDrawable.clear(); c.mVisible.clear(); c.mOrder.clear(); c.mNodes.clear();
-        part->collectSubtree(camera, sg->getOctreeNode(), entry, c);
+        if (set) { part->collectSubtreeShadow(camera, sg->getOctreeNode(), entry, c); } else { part->collectSubtree(camera, sg->getOctreeNode(), entry, c); }
         sStats.mNodesWalked += c.mNodes.size();
         if (have_marker)
         {
@@ -2278,7 +2332,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         {
             if (kv.second.mValid && kv.second.mSlot)
             {
-                LLRetainedStamps::sFrame[kv.second.mSlot].store((S32)LLViewerOctreeEntryData::getCurrentFrame(), std::memory_order_relaxed);
+                LLRetainedStamps::sFrame[kv.second.mSlot][kv.second.mCam].store((S32)LLViewerOctreeEntryData::getCurrentFrame(), std::memory_order_relaxed);
             }
         }
         finishFrame();
@@ -2289,6 +2343,7 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
 // the retained set against a full collecting walk of every partition; every difference is logged (the first ones in full)
 void verify(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts)
 {
+    auto& sState = sStateArr[0];
     static LLSpatialPartition::CullCollect c;
     bool bad = false;
     ++sStats.mCompares;
@@ -2413,20 +2468,23 @@ void verify(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts)
         sRecent.clear();
     }
 }
-bool replayable(LLSpatialPartition* part)
+bool replayable(LLSpatialPartition* part, int set)
 {
+    auto& sState = sStateArr[set];
     auto it = sState.find(part);
     return it != sState.end() && it->second.mValid;
 }
 
-size_t replayCount(LLSpatialPartition* part)
+size_t replayCount(LLSpatialPartition* part, int set)
 {
+    auto& sState = sStateArr[set];
     auto it = sState.find(part);
     return it == sState.end() ? 0 : it->second.mFlat.size();
 }
 
-void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end)
+void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end, int set)
 {
+    auto& sState = sStateArr[set];
     auto it = sState.find(part);
     if (it == sState.end())
     {
@@ -2445,7 +2503,14 @@ void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end
             continue;
         }
         const U8 kind = st.mFlatKind[k];
-        if (kind == 0)
+        if (set)
+        {
+            if (kind)
+            {
+                gPipeline.replayMemberShadow(g, kind);
+            }
+        }
+        else if (kind == 0)
         {
             gPipeline.markOccluder(g);
         }
@@ -2465,23 +2530,91 @@ void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end
 
 void finishFrame()
 {
-    for (auto& kv : sState)
+    for (int set = 0; set < kSets; ++set)
     {
-        PartState& st = kv.second;
-        if (st.mPending.empty())
+        for (auto& kv : sStateArr[set])
         {
-            continue;
+            PartState& st = kv.second;
+            if (st.mPending.empty())
+            {
+                continue;
+            }
+            for (LLSpatialGroup* g : st.mPending)
+            {
+                U32& r = g->row().retainedSlot;
+                r = st.mSlot | (r & ~255u) | (0x100u << st.mCam);
+            }
+            st.mPending.clear();
         }
-        for (LLSpatialGroup* g : st.mPending)
-        {
-            g->row().retainedSlot = st.mSlot;
-        }
-        st.mPending.clear();
     }
 }
 
-U32 checkStamps(S32 frame)
+void checkOrder(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, int set)
 {
+    auto& sState = sStateArr[set];
+    static LLSpatialPartition::CullCollect c;
+    static int logged = 0;
+    const S32 frame = (S32)LLFrameTimer::getFrameCount();
+    for (LLSpatialPartition* part : parts)
+    {
+        auto sit = sState.find(part);
+        if (sit == sState.end() || !sit->second.mValid)
+        {
+            continue;
+        }
+        PartState& st = sit->second;
+        if (set) { part->collectCullShadow(camera, c); } else { part->collectCull(camera, c); }
+        size_t i = 0;
+        auto it = st.mOrder.begin();
+        for (; i < c.mOrder.size() && it != st.mOrder.end(); ++i, ++it)
+        {
+            if (c.mOrder[i].mGroup != it->mGroup)
+            {
+                break;
+            }
+        }
+        if (i == c.mOrder.size() && it == st.mOrder.end())
+        {
+            continue;
+        }
+        if (++logged > 10)
+        {
+            continue;
+        }
+        auto history = [&](const void* k)
+        {
+            std::string out;
+            auto r = sRecent.find(k);
+            if (r != sRecent.end())
+            {
+                for (U32 j = 0; j < std::min<U32>(4, r->second.mN); ++j)
+                {
+                    const U32 idx = (r->second.mN - 1 - j) & 3;
+                    out += std::string(r->second.mKind[idx] ? "bounds@" : "occ@") + std::to_string(frame - r->second.mFrame[idx]) + "ago ";
+                }
+            }
+            return out.empty() ? std::string("none") : out;
+        };
+        auto where = [&](LLSpatialGroup* g)
+        {
+            size_t pos = 0;
+            for (const auto& item : st.mOrder) { if (item.mGroup == g) { return std::to_string(pos); } ++pos; }
+            return std::string("not in the retained list");
+        };
+        LLSpatialGroup* want = i < c.mOrder.size() ? c.mOrder[i].mGroup : nullptr;
+        LLSpatialGroup* have = it != st.mOrder.end() ? it->mGroup : nullptr;
+        size_t want_pos_walk = 0;
+        for (size_t k = 0; want && k < c.mOrder.size(); ++k) { if (c.mOrder[k].mGroup == have) { want_pos_walk = k; break; } }
+        LL_WARNS("VisSet") << "retained ORDER differs from the walk: set " << set << " partition type " << part->mPartitionType << " first difference at " << i << " (walk " << c.mOrder.size() << " entries, retained " << st.mOrder.size() << "); the walk has "
+            << (void*)want << " there (kind " << (want ? (int)c.mOrder[i].mKind : -1) << ", retained position " << (want ? where(want) : std::string("-")) << ", events " << (want ? history((const void*)(LLViewerOctreeGroup*)want) : std::string("-"))
+            << "), the retained list has " << (void*)have << " (kind " << (have ? (int)it->mKind : -1) << ", walk position " << want_pos_walk << ", events " << (have ? history((const void*)(LLViewerOctreeGroup*)have) : std::string("-"))
+            << "); orders made again from the nodes so far " << sStats.mReorders << ", rewalks " << sStats.mRewalks << ", rebuilds " << sStats.mRebuilds << ", frames since the last rebuild " << (frame - sLastRebuildFrame) << LL_ENDL;
+    }
+}
+
+U32 checkStamps(S32 frame, int set)
+{
+    auto& sState = sStateArr[set];
     U32 bad = 0;
     for (auto& kv : sState)
     {
@@ -2493,12 +2626,12 @@ U32 checkStamps(S32 frame)
         for (size_t k = 0; k < st.mFlat.size(); ++k)
         {
             LLSpatialGroup* g = st.mFlat[k];
-            if (g && st.mFlatKind[k] && g->row().visible[LLViewerCamera::CAMERA_WORLD] != frame)
+            if (g && st.mFlatKind[k] && g->row().visible[st.mCam] != frame)
             {
                 if (++bad <= 4)
                 {
                     LL_WARNS("VisSet") << "stamp check: a member of a retained set (partition type " << kv.first->mPartitionType << ") was not stamped by the real walk on frame " << frame << ", its stored stamp is "
-                        << g->row().visible[LLViewerCamera::CAMERA_WORLD] << LL_ENDL;
+                        << g->row().visible[st.mCam] << LL_ENDL;
                 }
             }
         }
@@ -2515,7 +2648,7 @@ void LLVisSetHooks::noteOcc(LLViewerOctreeGroup* group)
         return;
     }
     std::lock_guard<std::mutex> lock(LLVisSet::sMutex);
-    LLVisSet::sEvents.push_back({ group, 0 });
+    LLVisSet::sEventsArr[0].push_back({ group, 0 });
 }
 
 void LLVisSetHooks::noteBounds(LLViewerOctreeGroup* group)
@@ -2526,7 +2659,22 @@ void LLVisSetHooks::noteBounds(LLViewerOctreeGroup* group)
         return;
     }
     std::lock_guard<std::mutex> lock(LLVisSet::sMutex);
-    LLVisSet::sEvents.push_back({ group, 1 });
+    for (int set = 0; set < LLVisSet::kSets; ++set)
+    {
+        if (!LLVisSet::sSetLive[set].load(std::memory_order_relaxed))
+        {
+            continue;
+        }
+        auto& ev = LLVisSet::sEventsArr[set];
+        if (ev.size() > 200000)
+        {
+            ev.clear();                                                         // (a set nobody updates: it starts over from a walk when it is next used)
+            LLVisSet::sInvalidateArr[set].store(true);
+            LLVisSet::sSetLive[set].store(false);
+            continue;
+        }
+        ev.push_back({ group, 1 });
+    }
 }
 
 void LLVisSetHooks::noteStale(LLViewerOctreeGroup* group)
@@ -2544,20 +2692,29 @@ void LLVisSetHooks::forget(LLViewerOctreeGroup* group)
 {
     {
         std::lock_guard<std::mutex> lock(LLVisSet::sMutex);
-        auto& ev = LLVisSet::sEvents;
-        ev.erase(std::remove_if(ev.begin(), ev.end(), [group](const LLVisSet::Ev& e) { return e.mGroup == group; }), ev.end());
+        for (int set = 0; set < LLVisSet::kSets; ++set)
+        {
+            auto& ev = LLVisSet::sEventsArr[set];
+            ev.erase(std::remove_if(ev.begin(), ev.end(), [group](const LLVisSet::Ev& e) { return e.mGroup == group; }), ev.end());
+        }
         LLVisSet::sStale.erase(group);
     }
-    for (auto& kv : LLVisSet::sState)
+    for (int set = 0; set < LLVisSet::kSets; ++set)
     {
-        LLVisSet::erase_node(kv.second, (const void*)group);
+        for (auto& kv : LLVisSet::sStateArr[set])
+        {
+            LLVisSet::erase_node(kv.second, (const void*)group);
+        }
     }
     LLVisSet::sRecent.erase((const void*)group);
 }
 
 void LLVisSetHooks::invalidateAll()
 {
-    LLVisSet::sInvalidate.store(true);
+    for (int set = 0; set < LLVisSet::kSets; ++set)
+    {
+        LLVisSet::sInvalidateArr[set].store(true);
+    }
 }
 
 void pushVerts(LLDrawInfo* params)

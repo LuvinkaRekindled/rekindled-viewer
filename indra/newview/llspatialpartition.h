@@ -490,6 +490,8 @@ public:
     };
     void collectCull(LLCamera& camera, CullCollect& out);
     void collectSubtree(LLCamera& camera, const OctreeNode* node, S32 entry_res, CullCollect& out);       // the same from one node, entered with mRes = entry_res (out is added to, not cleared)
+    void collectCullShadow(LLCamera& camera, CullCollect& out);                                          // the same for a sun cascade's cull (LLOctreeCullShadow: no occlusion, the shadow frustum tests)
+    void collectSubtreeShadow(LLCamera& camera, const OctreeNode* node, S32 entry_res, CullCollect& out);
     // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullSplit and cullTask cut the main cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
     // on its own thread, before any of these run: rebound() writes); empty is cleared when the walk found a visible group.
     // <FS> the cascades' cull (LL_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
@@ -956,13 +958,15 @@ extern const F32 SG_MAX_OBJ_RAD;
 // full collecting walk of every partition and logs each difference
 namespace LLVisSet
 {
-    void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed, bool will_replay);
+    // set 0 is the main view's, 1 to 4 are the sun cascades' (C4.5 R2: the cascades' cull replays a retained set the same way)
+    void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed, bool will_replay, int set = 0);
     void verify(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts);
-    bool replayable(LLSpatialPartition* part);                  // the partition's retained set is current for this frame: the cull replays it instead of walking
-    size_t replayCount(LLSpatialPartition* part);               // the entries of its replay list
-    void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end);      // what the walk would have done to the groups at [begin, end) of the replay list, in order (a cull job: runs under the job's scope)
+    bool replayable(LLSpatialPartition* part, int set = 0);                  // the partition's retained set is current for this frame: the cull replays it instead of walking
+    size_t replayCount(LLSpatialPartition* part, int set = 0);               // the entries of its replay list
+    void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end, int set = 0);      // what the walk would have done to the groups at [begin, end) of the replay list, in order (a cull job: runs under the job's scope)
     void finishFrame();                // after the cull of the frame: the groups that joined a set this frame get its slot (on a frame the sets claimed this was done by the update)
-    U32 checkStamps(S32 frame);        // after a frame whose real walk also ran: the members' stored stamps (written by the walk) against the frame the replay claimed; returns the mismatches
+    U32 checkStamps(S32 frame, int set = 0);
+    void checkOrder(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, int set);       // diagnostic: the retained order of every valid set against a collecting walk; the first differences are logged with the events of the groups concerned        // after a frame whose real walk also ran: the members' stored stamps (written by the walk) against the frame the replay claimed; returns the mismatches
 }
 
 #endif //LL_LLSPATIALPARTITION_H

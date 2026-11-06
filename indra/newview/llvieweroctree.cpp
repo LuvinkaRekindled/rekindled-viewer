@@ -757,6 +757,11 @@ void LLViewerOctreeGroup::handleChildAddition(const OctreeNode* parent, OctreeNo
 void LLViewerOctreeGroup::handleChildRemoval(const OctreeNode* parent, const OctreeNode* child)
 {
     unbound();
+    if (LLVisSetHooks::sOn.load(std::memory_order_relaxed))
+    {
+        // <FS> C4.5: removeChild puts the LAST child in the freed place (lloctree.h), so the walk reaches the remaining children in another order although no bounds changed: the retained sets rewalk this subtree
+        LLVisSetHooks::noteBounds(this);
+    }
 }
 
 //virtual

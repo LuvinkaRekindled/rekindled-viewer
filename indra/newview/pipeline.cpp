@@ -4219,7 +4219,7 @@ bool cull_lists_equal(LLCullResult& a, LLCullResult& b)
                 ++shown;
                 LLSpatialGroup* par = g->getParent();
                 LL_WARNS("CullSplit") << "cull check: only the " << side << " listed an occlusion group: partition type " << g->getSpatialPartition()->mPartitionType << ", stored stamp " << g->row().visible[LLViewerCamera::CAMERA_WORLD]
-                    << ", slot " << g->row().retainedSlot << " (its frame " << g->retainedFrame() << "), frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", needsUpdate " << g->needsUpdate() << ", occlusion state " << g->row().occlusion[LLViewerCamera::CAMERA_WORLD]
+                    << ", slot " << g->row().retainedSlot << " (its frame " << g->retainedFrame(LLViewerCamera::CAMERA_WORLD) << "), frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", needsUpdate " << g->needsUpdate() << ", occlusion state " << g->row().occlusion[LLViewerCamera::CAMERA_WORLD]
                     << ", parent " << (par ? (par->isOcclusionState(LLSpatialGroup::OCCLUDED) ? "occluded" : "not occluded") : "none") << ", empty " << g->isEmpty() << LL_ENDL;
             }
         };
@@ -5207,15 +5207,31 @@ void LLPipeline::replayMember(LLSpatialGroup* group, U8 kind, bool occlude)
     }
 }
 
-void LLPipeline::replayAdopted(LLSpatialGroup* group, LLCamera& camera)
+void LLPipeline::replayAdopted(LLSpatialGroup* group, LLCamera& camera, bool world)
 {
     if (group->hasState(LLSpatialGroup::FS_RELEASED))
     {
         wakeRequest(group);
     }
-    if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+    if (world && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         group->updateDistance(camera);
+    }
+}
+
+void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
+{
+    if (kind == 1)
+    {
+        sCull->pushDrawableGroup(group);
+    }
+    else
+    {
+        sCull->pushVisibleGroup(group);
+        if (sCullCollectLod && group->changeLOD())      // (markNotCulled's second half for a cascade: the row is read here, the list is the mark job's)
+        {
+            sCull->mLodGroups.push_back(group);
+        }
     }
 }
 
@@ -9187,6 +9203,12 @@ void LLPipeline::shadowPrepHull(ShadowCascadePrep& prep)
 // of its result, and its subtrees that cost over LL_VK_SC_NODE_US (default 40 us) as jobs of their own), each with a result of its own, appended to the cascade's result in that order afterwards.
 namespace
 {
+// C4.5 R2 (doc/vulkan/PLAN-clean-core.md): the sun cascades' cull replays a retained set (LLVisSet sets 1 to 4) instead of walking the octrees. LL_VK_CASCSET 1 = on (default), 0 = off, 2 = on and the order of every set checked against a collecting walk (with LL_VK_SC_SPLIT=2 the lists against the serial cull)
+int cascade_sets_mode()
+{
+    static const int mode = getenv("LL_VK_CASCSET") ? atoi(getenv("LL_VK_CASCSET")) : 1;
+    return mode;
+}
 std::unordered_map<U64, float> sScCostUs;       // the last measured cost of the walk of a partition for a cascade (smoothed); key: partition * 4 + cascade index
 std::unordered_map<U64, float> sScNodeUs;       // the same for a subtree that was a job; key: node * 4 + cascade index
 std::vector<std::unique_ptr<LLCullResult>> sScLocals;
@@ -9199,6 +9221,9 @@ struct ScChunk
     LLViewerOctreeCull::SplitTask mSplit;
     LLCullResult* mLocal;
     float mUs;
+    bool mReplay = false;               // the retained set of the cascade replays this piece of the partition's list
+    size_t mBegin = 0, mEnd = 0;
+    int mSet = 0;
 };
 }
 
@@ -9229,6 +9254,20 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         prep.mDeferred.clear();
         for (LLSpatialPartition* part : partitions)
         {
+            const int vs_set = 1 + (int)(prep.mIndex & 3);
+            if (cascade_sets_mode() && LLVisSet::replayable(part, vs_set))
+            {
+                const size_t n = LLVisSet::replayCount(part, vs_set);
+                for (size_t b = 0; b < n; b += 1536)
+                {
+                    ScChunk& piece = new_chunk(p, part, false, false, { nullptr, 0 });
+                    piece.mReplay = true;
+                    piece.mBegin = b;
+                    piece.mEnd = std::min<size_t>(n, b + 1536);
+                    piece.mSet = vs_set;
+                }
+                continue;
+            }
             const U64 key = ((U64)(uintptr_t)part << 2) | (U64)(prep.mIndex & 3);
             auto cost = sScCostUs.find(key);
             if (cost != sScCostUs.end() && cost->second > split_cost)
@@ -9274,7 +9313,11 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         ShadowCascadePrep& prep = pending[chunk.mPrep];
         ShadowPrepScope scope(prep, chunk.mLocal, ShadowPrepScope::Cull());
         const auto t0 = std::chrono::steady_clock::now();
-        if (chunk.mTask)
+        if (chunk.mReplay)
+        {
+            LLVisSet::replay(chunk.mPart, prep.mCamera, chunk.mBegin, chunk.mEnd, chunk.mSet);
+        }
+        else if (chunk.mTask)
         {
             chunk.mPart->cullShadowTask(prep.mCamera, chunk.mSplit);
         }
@@ -9303,7 +9346,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         for (LLCullResult::sg_iterator g = l.beginAlphaGroups(); g != l.endAlphaGroups(); ++g) into.pushAlphaGroup(*g);
         for (LLCullResult::sg_iterator g = l.beginRiggedAlphaGroups(); g != l.endRiggedAlphaGroups(); ++g) into.pushRiggedAlphaGroup(*g);
         into.mLodGroups.insert(into.mLodGroups.end(), l.mLodGroups.begin(), l.mLodGroups.end());       // <FS> C4.4
-        if (!chunk.mSegment)
+        if (!chunk.mSegment && !chunk.mReplay)
         {
             const U64 key = ((U64)(uintptr_t)chunk.mPart << 2) | (U64)(pending[chunk.mPrep].mIndex & 3);
             now_us[key] += chunk.mUs;
@@ -25980,7 +26023,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (prepared)
         {
             static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
-            shadowPrepFinish(*prepared);
+            { LL_CPU_ZONE("renderShadow: prep finish"); shadowPrepFinish(*prepared); }
             if (check_prep)
             {
                 shadowPrepCompare(*prepared, sShadowPrepReference[prepared->mIndex & 3]);
@@ -26866,7 +26909,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // the vertex input and would draw whatever their table entry 0 holds
             (rigged ? &gDeferredShadowProgram : ll_pull_or(&gDeferredShadowProgram))->bind(rigged);       // S6.6: the static glTF casters through the pull twin (the cull mode of each draw rides in the stream)
         }
-        renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged);
+        { LL_CPU_ZONE("renderShadow: glTF static"); renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged); }
 
     }
 
@@ -26875,6 +26918,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow geom");
+        LL_CPU_ZONE("renderShadow: geom");
         renderGeomShadow(shadow_cam);
     }
 
@@ -26896,6 +26940,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 {
                     LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha blend");
                     LL_PROFILE_GPU_ZONE("shadow alpha blend");
+                    LL_CPU_ZONE("renderShadow: alpha blend");
                     renderAlphaObjects(rigged, true);
                 }
                 continue;
@@ -26955,6 +27000,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
             LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
 
+            LL_CPU_ZONE("renderShadow: glTF alpha mask");
             LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
             gRenderLastMatrix = NULL;
 
@@ -28722,6 +28768,44 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
             if (sc_split != 0)
             {
+                if (cascade_sets_mode())
+                {
+                    LL_CPU_ZONE("shadow prep: cascade sets update");
+                    // the partitions the sets follow (the ones the main view's set follows), and per cascade the camera signature the verdicts were made for
+                    static std::vector<LLSpatialPartition*> casc_parts;
+                    casc_parts.clear();
+                    for (LLSpatialPartition* part : partitions)
+                    {
+                        const U32 t = part->mPartitionType;
+                        if (t == LLViewerRegion::PARTITION_TERRAIN || t == LLViewerRegion::PARTITION_VOIDWATER || t == LLViewerRegion::PARTITION_WATER || t == LLViewerRegion::PARTITION_TREE || t == LLViewerRegion::PARTITION_GRASS || t == LLViewerRegion::PARTITION_VOLUME)
+                        {
+                            casc_parts.push_back(part);
+                        }
+                    }
+                    static F32 sigs[4][40] = {};
+                    for (ShadowCascadePrep& prep : pending)
+                    {
+                        F32 now[40] = {};
+                        int k = 0;
+                        for (U32 i = 0; i < 7; ++i)
+                        {
+                            const LLPlane& pl = prep.mCamera.getAgentPlane(i);
+                            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
+                        }
+                        now[k++] = (F32)prep.mCamera.getPlaneCount();
+                        now[k++] = prep.mCamera.mFrustumCornerDist;
+                        const LLVector3& o = prep.mCamera.getOrigin();
+                        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
+                        F32* sig = sigs[prep.mIndex & 3];
+                        const bool changed = memcmp(sig, now, sizeof(now)) != 0;
+                        memcpy(sig, now, sizeof(now));
+                        LLVisSet::update(prep.mCamera, casc_parts, changed, true, 1 + (int)(prep.mIndex & 3));
+                        if (cascade_sets_mode() >= 2)
+                        {
+                            LLVisSet::checkOrder(prep.mCamera, casc_parts, 1 + (int)(prep.mIndex & 3));       // (diagnostic, LL_VK_CASCSET=2)
+                        }
+                    }
+                }
                 shadowPrepCullSplit(pending, partitions, prep_pool);
                 if (sc_split == 2)
                 {
@@ -28733,13 +28817,26 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         LLCullResult& r = *prep.mResult;
                         const std::vector<const void*> vg = list_of(r.beginVisibleGroups(), r.endVisibleGroups()), dg = list_of(r.beginDrawableGroups(), r.endDrawableGroups()),
                             ag = list_of(r.beginAlphaGroups(), r.endAlphaGroups()), rg = list_of(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), br = list_of(r.beginVisibleBridge(), r.endVisibleBridge()),
-                            vl = list_of(r.beginVisibleList(), r.endVisibleList()), og = list_of(r.beginOcclusionGroups(), r.endOcclusionGroups());
+                            vl = list_of(r.beginVisibleList(), r.endVisibleList()), og = list_of(r.beginOcclusionGroups(), r.endOcclusionGroups()),
+                            lg = list_of(r.mLodGroups.begin(), r.mLodGroups.end());
                         shadowPrepCull(prep, partitions);
                         LLCullResult& s = *prep.mResult;
-                        const bool same = vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
+                        const bool stamps_ok = !cascade_sets_mode() || LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame(), 1 + (int)(prep.mIndex & 3)) == 0;
+                        const bool same = stamps_ok && lg == list_of(s.mLodGroups.begin(), s.mLodGroups.end()) && vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
                             && ag == list_of(s.beginAlphaGroups(), s.endAlphaGroups()) && rg == list_of(s.beginRiggedAlphaGroups(), s.endRiggedAlphaGroups())
                             && br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) && vl == list_of(s.beginVisibleList(), s.endVisibleList())
                             && og == list_of(s.beginOcclusionGroups(), s.endOcclusionGroups());
+                        if (!same)
+                        {
+                            static int detail = 0;
+                            if (++detail <= 12)
+                            {
+                                auto first_diff = [](const std::vector<const void*>& a, const std::vector<const void*>& b) { size_t k = 0; while (k < a.size() && k < b.size() && a[k] == b[k]) { ++k; } return (a.size() == b.size() && k == a.size()) ? (S64)-1 : (S64)k; };
+                                LL_WARNS("ShadowPrep") << "cascade cull split check detail: cascade " << prep.mIndex << " first difference at: visible groups " << first_diff(vg, list_of(s.beginVisibleGroups(), s.endVisibleGroups())) << " (" << vg.size() << "), drawable groups "
+                                    << first_diff(dg, list_of(s.beginDrawableGroups(), s.endDrawableGroups())) << " (" << dg.size() << "), lod groups " << first_diff(lg, list_of(s.mLodGroups.begin(), s.mLodGroups.end())) << " (" << lg.size() << " against " << s.mLodGroups.size()
+                                    << "), visible list " << (vl == list_of(s.beginVisibleList(), s.endVisibleList()) ? "same" : "differs") << ", bridges " << (br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) ? "same" : "differs") << ", stamps " << (stamps_ok ? "ok" : "bad") << LL_ENDL;
+                            }
+                        }
                         ++checks;
                         differs += same ? 0 : 1;
                         if (!same || checks % 1800 == 0)
