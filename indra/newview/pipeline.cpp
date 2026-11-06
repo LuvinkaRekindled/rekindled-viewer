@@ -6266,6 +6266,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     }
     if (view.mUseOcclusion > 1)
     {
+        LL_CPU_ZONE("stateSort: pre-scan");
         // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
         for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); i != read.endDrawableGroups(); ++i)
         {
@@ -6372,22 +6373,26 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     { LL_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->runLabeled("stateSort: compute 1", first.size(), first_job); }
 
     // what the first loop found, in chunk order: the visible drawables and bridges, and the groups that a bridge's own cull (LLSpatialBridge::setVisible) added to the lists
-    for (SortChunk& chunk : first)
     {
-        if (chunk.mKind != 0)
+        LL_CPU_ZONE("stateSort: merge 1");
+        for (SortChunk& chunk : first)
         {
-            continue;
+            if (chunk.mKind != 0)
+            {
+                continue;
+            }
+            for (LLCullResult::drawable_iterator d = chunk.mLocal->beginVisibleList(); d != chunk.mLocal->endVisibleList(); ++d) sCull->pushDrawable(*d);
+            for (LLCullResult::bridge_iterator b = chunk.mLocal->beginVisibleBridge(); b != chunk.mLocal->endVisibleBridge(); ++b) sCull->pushBridge(*b);
+            for (LLCullResult::sg_iterator g = chunk.mLocal->beginDrawableGroups(); g != chunk.mLocal->endDrawableGroups(); ++g) sCull->pushDrawableGroup(*g);
+            for (LLCullResult::sg_iterator g = chunk.mLocal->beginVisibleGroups(); g != chunk.mLocal->endVisibleGroups(); ++g) sCull->pushVisibleGroup(*g);
+            for (LLCullResult::sg_iterator g = chunk.mLocal->beginOcclusionGroups(); g != chunk.mLocal->endOcclusionGroups(); ++g) sCull->pushOcclusionGroup(*g);
         }
-        for (LLCullResult::drawable_iterator d = chunk.mLocal->beginVisibleList(); d != chunk.mLocal->endVisibleList(); ++d) sCull->pushDrawable(*d);
-        for (LLCullResult::bridge_iterator b = chunk.mLocal->beginVisibleBridge(); b != chunk.mLocal->endVisibleBridge(); ++b) sCull->pushBridge(*b);
-        for (LLCullResult::sg_iterator g = chunk.mLocal->beginDrawableGroups(); g != chunk.mLocal->endDrawableGroups(); ++g) sCull->pushDrawableGroup(*g);
-        for (LLCullResult::sg_iterator g = chunk.mLocal->beginVisibleGroups(); g != chunk.mLocal->endVisibleGroups(); ++g) sCull->pushVisibleGroup(*g);
-        for (LLCullResult::sg_iterator g = chunk.mLocal->beginOcclusionGroups(); g != chunk.mLocal->endOcclusionGroups(); ++g) sCull->pushOcclusionGroup(*g);
     }
 
     // ---- serial: the drawable groups added by the bridges (the first loop of the serial sort goes on over them: its end is the end of the list as it grows)
     std::vector<SortDelta> ledger_x;
     {
+        LL_CPU_ZONE("stateSort: serial added groups (drawable)");
         SortJournal* saved_journal = sSortJournal;
         std::vector<SortDelta>* saved_sink = sSortSink;
         sSortJournal = journal;
@@ -6405,6 +6410,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     const U32 n_vd = read.getVisibleListSize();
     std::vector<char> do_distance(n_br, 0);
     {
+        LL_CPU_ZONE("stateSort: bridge decisions");
         SortJournal* saved_journal = sSortJournal;
         sSortJournal = journal;
         if (view.mWorldCameraID && !view.mCubeSnapshot)
@@ -6494,6 +6500,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     std::vector<SortDelta> ledger_y;
     std::vector<LLDrawable*> pool_y;
     {
+        LL_CPU_ZONE("stateSort: serial added groups (visible)");
         SortJournal* saved_journal = sSortJournal;
         std::vector<SortDelta>* saved_sink = sSortSink;
         std::vector<LLDrawable*>* saved_pool = sSortPoolSink;
