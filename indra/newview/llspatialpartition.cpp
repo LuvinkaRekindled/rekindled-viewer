@@ -5530,6 +5530,7 @@ void LLCullResult::clear()
     mVisibleBridgeEnd = &mVisibleBridge[0];
 
     mSceneGroups.clear();
+    mAlphaFragGroups.clear();
     mLodGroups.clear();
     mGeoGroups.clear();
     mGeoSerials.clear();
@@ -5636,6 +5637,10 @@ void LLCullResult::materializeLazy(U32 type)
         }
         for (const LLPointer<LLDrawInfo>& info : found->second)
         {
+            if (info->mVertexBuffer.isNull())
+            {
+                continue;       // (a draw info of a group that is being rebuilt: no buffer yet)
+            }
             pushDrawInfo(type, info.get());
         }
     }
