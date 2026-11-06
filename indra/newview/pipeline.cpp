@@ -4518,6 +4518,10 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
 // differed on the other frames and which of the three changed. The report is a line every 600 frames (tag MainCull).
 void LLCullCensus::noteOcc(LLOcclusionCullingGroup* g, bool now_occluded, int source)
 {
+    if (!sOn)
+    {
+        return;
+    }
     sOccSrc[source & 3].fetch_add(1, std::memory_order_relaxed);
     (now_occluded ? sOccSet : sOccClear).fetch_add(1, std::memory_order_relaxed);
     static std::mutex mtx;
@@ -4955,10 +4959,61 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLCullCensus::sActive.store(false);
         main_cull_census(camera);
     }
-    static const int visset_mode = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0;
+    static const int visset_mode = (LLVisSetHooks::sOn = (getenv("LL_VK_VISSET") && atoi(getenv("LL_VK_VISSET")) >= 3), getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0);
     if (visset_mode >= 2 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
         main_vis_verify(camera);
+    }
+    if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    {
+        // the retained set as an observer: events applied, then compared with a full collecting walk (the cull still decides what is listed)
+        static std::vector<LLSpatialPartition*> vs_parts;
+        vs_parts.clear();
+        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+        {
+            for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+            {
+                LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
+                // (the partitions whose groups keep their place: the moving ones, avatars, bridges, particles and control avatars, are walked every frame and not part of the retained set)
+                if (part && gPipeline.hasRenderType(part->mDrawableType)
+                    && (i == LLViewerRegion::PARTITION_TERRAIN || i == LLViewerRegion::PARTITION_VOIDWATER || i == LLViewerRegion::PARTITION_WATER || i == LLViewerRegion::PARTITION_TREE || i == LLViewerRegion::PARTITION_GRASS || i == LLViewerRegion::PARTITION_VOLUME))
+                {
+                    vs_parts.push_back(part);
+                }
+            }
+        }
+        // the camera signature the verdicts were made for: the planes, the corner distance, the origin, and the settings the culler reads
+        static F32 sig[40] = {};
+        F32 now[40] = {};
+        int k = 0;
+        for (U32 i = 0; i < 7; ++i)
+        {
+            const LLPlane& pl = camera.getAgentPlane(i);
+            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
+        }
+        now[k++] = (F32)camera.getPlaneCount();
+        now[k++] = camera.mFrustumCornerDist;
+        const LLVector3& o = camera.getOrigin();
+        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
+        now[k++] = (F32)LLPipeline::useOcclusion();
+        now[k++] = LLPipeline::sUseFarClip ? 1.f : 0.f;
+        const bool camera_changed = memcmp(sig, now, sizeof(sig)) != 0;
+        if (camera_changed)
+        {
+            static int logged = 0;
+            if (++logged <= 24)
+            {
+                std::string diff;
+                for (int j = 0; j < 40; ++j)
+                {
+                    if (sig[j] != now[j]) { char b[96]; snprintf(b, sizeof(b), "[%d: %.9g -> %.9g] ", j, sig[j], now[j]); diff += b; }
+                }
+                LL_INFOS("VisSet") << "camera signature changed (planes 0-27, plane count 28, corner distance 29, origin 30-32, occlusion mode 33, far clip 34): " << diff << LL_ENDL;
+            }
+        }
+        memcpy(sig, now, sizeof(sig));
+        LLVisSet::update(camera, vs_parts, camera_changed);
+        LLVisSet::verify(camera, vs_parts);
     }
 
     if (cull_use)

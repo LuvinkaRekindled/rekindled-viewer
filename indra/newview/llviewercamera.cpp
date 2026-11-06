@@ -241,7 +241,9 @@ void LLViewerCamera::updateFrustumPlanes(LLCamera& camera, bool ortho, bool zfli
 {
     glm::ivec4 viewport = glm::make_vec4((S32*) gRenderViewport);
     glm::mat4 model = get_current_modelview();
-    glm::mat4 proj = get_current_projection();
+    // <FS> C4.5: the frustum the main view is culled with is the camera's, not the camera plus this frame's sub-pixel jitter: with the jittered projection every plane moved a little on every frame of a still camera
+    // (the verdicts of the groups at the edge flipped, and nothing about the scene could be kept from one frame to the next); getScreenProjection() is the unjittered one while the jittered one is current
+    glm::mat4 proj = getScreenProjection();
 
     LLVector3 frust[8];
 
