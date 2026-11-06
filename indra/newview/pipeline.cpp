@@ -8670,6 +8670,51 @@ void LLPipeline::postSort(LLCamera &camera)
         }
     }
 
+    {
+        // <FS> C5 census (LL_VK_RMCENSUS=1): what the main view's render map holds when postSort is done, by pass type: draw infos, indices, and how many of them belong to an avatar (rigged) or are
+        // from a group whose fragment the table does not hold
+        static const bool rm_census = getenv("LL_VK_RMCENSUS") != nullptr;
+        if (rm_census && view.isMainWorldSort() && !gCubeSnapshot)
+        {
+            static const char* const names[] = { "SIMPLE", "SIMPLE_RIGGED", "GRASS", "FULLBRIGHT", "FULLBRIGHT_RIGGED", "INVISIBLE", "INVISIBLE_RIGGED", "INVISI_SHINY", "INVISI_SHINY_RIGGED", "FULLBRIGHT_SHINY",
+                "FULLBRIGHT_SHINY_RIGGED", "SHINY", "SHINY_RIGGED", "BUMP", "BUMP_RIGGED", "POST_BUMP", "POST_BUMP_RIGGED", "MATERIAL", "MATERIAL_RIGGED", "MATERIAL_ALPHA", "MATERIAL_ALPHA_RIGGED", "MATERIAL_ALPHA_MASK",
+                "MATERIAL_ALPHA_MASK_RIGGED", "MATERIAL_ALPHA_EMISSIVE", "MATERIAL_ALPHA_EMISSIVE_RIGGED", "SPECMAP", "SPECMAP_RIGGED", "SPECMAP_BLEND", "SPECMAP_BLEND_RIGGED", "SPECMAP_MASK", "SPECMAP_MASK_RIGGED",
+                "SPECMAP_EMISSIVE", "SPECMAP_EMISSIVE_RIGGED", "NORMMAP", "NORMMAP_RIGGED", "NORMMAP_BLEND", "NORMMAP_BLEND_RIGGED", "NORMMAP_MASK", "NORMMAP_MASK_RIGGED", "NORMMAP_EMISSIVE", "NORMMAP_EMISSIVE_RIGGED",
+                "NORMSPEC", "NORMSPEC_RIGGED", "NORMSPEC_BLEND", "NORMSPEC_BLEND_RIGGED", "NORMSPEC_MASK", "NORMSPEC_MASK_RIGGED", "NORMSPEC_EMISSIVE", "NORMSPEC_EMISSIVE_RIGGED", "GLOW", "GLOW_RIGGED", "GLTF_GLOW",
+                "GLTF_GLOW_RIGGED", "ALPHA", "ALPHA_RIGGED", "ALPHA_MASK", "ALPHA_MASK_RIGGED", "FULLBRIGHT_ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK_RIGGED", "ALPHA_INVISIBLE", "ALPHA_INVISIBLE_RIGGED", "GLTF_PBR",
+                "GLTF_PBR_RIGGED", "GLTF_PBR_ALPHA_MASK", "GLTF_PBR_ALPHA_MASK_RIGGED" };
+            constexpr U32 n_types = (U32)(sizeof(names) / sizeof(names[0]));
+            static U64 draws[n_types] = {}, indices[n_types] = {}, avatar_draws[n_types] = {}, frames = 0;
+            for (U32 k = 0; k < n_types; ++k)
+            {
+                const U32 type = LLRenderPass::PASS_SIMPLE + k;
+                for (LLCullResult::drawinfo_iterator d = sCull->beginRenderMap(type); d != sCull->endRenderMap(type); ++d)
+                {
+                    const LLDrawInfo* info = *d;
+                    ++draws[k];
+                    indices[k] += info->mCount;
+                    if (info->mAvatar.notNull()) { ++avatar_draws[k]; }
+                }
+            }
+            if (++frames % 600 == 0)
+            {
+                std::string text;
+                U64 total_draws = 0, total_indices = 0;
+                for (U32 k = 0; k < n_types; ++k)
+                {
+                    total_draws += draws[k];
+                    total_indices += indices[k];
+                    if (draws[k])
+                    {
+                        text += llformat(" | %s %.1f draws (%.1f of an avatar), %.0f indices", names[k], (double)draws[k] / 600.0, (double)avatar_draws[k] / 600.0, (double)indices[k] / 600.0);
+                    }
+                    draws[k] = indices[k] = avatar_draws[k] = 0;
+                }
+                LL_INFOS("RMCensus") << "main view render map after postSort, per frame over 600 frames: " << (double)total_draws / 600.0 << " draw infos, " << (double)total_indices / 600.0 << " indices;" << text << LL_ENDL;
+            }
+        }
+    }
+
     LLVertexBuffer::flushBuffers();
     // LLSpatialGroup::sNoDelete = false;
     LL_PUSH_CALLSTACKS();
