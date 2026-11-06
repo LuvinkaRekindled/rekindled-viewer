@@ -1,6 +1,6 @@
 # PLAN-avatars: avatars as rows, from load to skinning (2026-11-06)
 
-Status: planned, not started. Decision: Adam, 2026-11-06 ("we might need to stop looking at avatar updates in pieces and think about how to redesign avatars completely, from load to skinning to animation"; hidden avatars may skip the pose and catch up: accepted). Work order: the clean-core plan (PLAN-clean-core.md, C5) goes on first; this plan is picked up after it.
+Status: planned, picked up 2026-11-06 after C5 (J2, PBR shadow rows and INVISIBLE done; BUMP / SHINY shaders, the RT material cache and J1 follow this plan). Decision: Adam, 2026-11-06 ("we might need to stop looking at avatar updates in pieces and think about how to redesign avatars completely, from load to skinning to animation"; hidden avatars may skip the pose and catch up: accepted). Work order: the clean-core plan (PLAN-clean-core.md, C5) goes on first; this plan is picked up after it.
 
 ## Why a plan and not another fix
 
@@ -52,3 +52,19 @@ One owner per fact, rows instead of an object graph, work proportional to what i
 ## Relation to the other plans
 
 PLAN-clean-core.md (C4.2 for the walked partitions turned out the wrong form: they are evented every frame; stage C of this plan is their right form). The ray scene's instance table (PLAN-retained-records / S-series) is the table stage C writes to. "Plasmastorm" (a from-scratch viewer) would start from this model; nothing here depends on it.
+
+## Leftovers from the clean-core plan that this plan owns (2026-11-06, Adam: "combining the leftovers from here that are avatar owned")
+
+Everything below is a rigged draw that still reaches the GPU through a per-draw path or a LLDrawInfo, so LLDrawInfo cannot be deleted (J1) until they are rows. They are stage B / C work (the skin and palette plumbing), not separate fixes:
+- **Main view render map, rigged, per frame at the beach spot (census inv1-rmcensus1):** NORMSPEC_MASK_RIGGED 14, GLTF_GLOW_RIGGED 12, GLTF_PBR_ALPHA_MASK_RIGGED 12, FULLBRIGHT_ALPHA_MASK_RIGGED 4 (+ rigged SHINY / BUMP / INVISIBLE variants, which come with their table kinds). The rigged table types are served only when the skin pull programs and `ll_rigged_packets_enabled()` allow; these are the types where a rigged variant of the program does not exist or the draw is refused. Fix: the missing skin pull programs, then the draws are rows with a palette binding like the other rigged items.
+- **Rigged glTF casters in the cascades:** `renderGLTFObjects(rigged)` / `pushRiggedGLTFBatches` still draw per draw (the static ones moved in the PBR shadow rows step); the skin shadow pull program has to take the glTF opaque / mask (base colour transform, cutoff) like the alpha records do now.
+- **Rigged alpha casters (`shadow_alpha_packet_ok` rigged), skin LOD (`ll_rigged_lod_lookup`, `shadow_lod_*`, `rigged_lod_for`):** read the draw info's index and vertex data per frame; the avatar table holds the mesh's LOD data and the pixel-size decision instead.
+- **Palettes:** `ll_frame_palette` copies a palette per (avatar, skin) per frame (355 palettes, 10.6 k joint matrices a frame); stage B writes them straight into the GPU palette buffer from the skeleton arrays.
+- **The ray scene's rigged material / skin buffer** (`note_rt_skinned_alpha`, `rt_material_id` cached on the draw info): RT is not the baseline; it moves with the RT material cache step, after this plan.
+
+## Stage 0 first steps (what to build before any of the model)
+
+1. The consumer list: who reads which avatar field (isVisible / mDrawable->isVisible / mUpdatePeriod / mCulled / isImpostor / isTooSlow / isVisuallyMuted / far_avatar_tier / mNeedsImpostorUpdate / isFullyLoaded, counted by file: llvoavatar.cpp, pipeline.cpp, lldrawpoolavatar.cpp, llviewerpartsim.cpp, llworld.cpp, llflexibleobject.cpp, llcontrolavatar.cpp, lldrawable.cpp), into this document.
+2. The importance class as a number computed next to the existing tests every frame (own / seen in the main view / cascade or probe only / nothing), with a mismatch counter against today's tests, log line every 600 frames. No behaviour change.
+3. Cost by class of the completion loop pieces (zones exist: pz1) once the class is logged.
+4. The load path timeline (first packet to first draw) by avatar, from the existing appearance and mesh log lines.
