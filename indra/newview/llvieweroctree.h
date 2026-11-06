@@ -186,7 +186,7 @@ protected:
 // <FS> C4.5 R2: per retained set (the slot in the rows of its members) the frame its replay last ran: that is the world stamp of a member, so a replay does not write a stamp per group
 struct LLRetainedStamps
 {
-    static inline std::atomic<S32> sFrame[256];
+    static inline std::atomic<S32> sFrame[256][9];       // [partition slot][camera]: the frame the replay of the set of that partition for that camera last ran
 };
 
 class LLViewerOctreeGroup
@@ -227,9 +227,22 @@ public:
     void setVisible();
     bool isVisible() const;
     virtual bool isRecentlyVisible() const;
-    S32  retainedFrame() const { const U32 slot = row().retainedSlot; return slot ? LLRetainedStamps::sFrame[slot].load(std::memory_order_relaxed) : 0; }
-    S32  getVisible(LLViewerCamera::eCameraID id) const { const S32 v = row().visible[id]; return (id == LLViewerCamera::CAMERA_WORLD && row().retainedSlot) ? std::max(v, retainedFrame()) : v; }
-    S32  getAnyVisible() const { const S32 v = row().anyVisible; return row().retainedSlot ? std::max(v, retainedFrame()) : v; }
+    // (retainedSlot: bits 0-7 the slot of the group's partition, bit 8 + c set when the group is a member of the replayed set for camera c: the stamp for that camera is the set's frame, not written per group)
+    S32  retainedFrame(LLViewerCamera::eCameraID id) const { const U32 r = row().retainedSlot; return (r & (0x100u << id)) ? LLRetainedStamps::sFrame[r & 255u][id].load(std::memory_order_relaxed) : 0; }
+    S32  getVisible(LLViewerCamera::eCameraID id) const { const S32 v = row().visible[id]; return row().retainedSlot ? std::max(v, retainedFrame(id)) : v; }
+    S32  getAnyVisible() const
+    {
+        S32 v = row().anyVisible;
+        const U32 r = row().retainedSlot;
+        if (r)
+        {
+            for (U32 c = 0; c < LLViewerCamera::CAMERA_WATER0; ++c)
+            {
+                if (r & (0x100u << c)) { v = std::max(v, LLRetainedStamps::sFrame[r & 255u][c].load(std::memory_order_relaxed)); }
+            }
+        }
+        return v;
+    }
     bool isEmpty() const { return mOctreeNode->isEmpty(); }
 
     U32  getState()                {return row().state; }
