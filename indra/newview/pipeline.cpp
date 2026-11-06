@@ -8010,6 +8010,10 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
 #endif
 }
 
+// C5 J4 census (LL_VK_RMCENSUS=1): draws left in the main view's render map by (partition type, table type, group has a fragment handle, rigged)
+static std::atomic<U64> sLeftoverCensus[16 * 8];
+static std::atomic<U64> sLeftoverByType[128];
+
 // C5: LL_VK_RM_ALPHA 1 (default) the main view's postSort does not list the blended alpha draws, 0 lists them, 2 lists them and collect_main_view_draw_infos compares them with the draws of the alpha groups
 static int rm_alpha_mode()
 {
@@ -8196,6 +8200,22 @@ void LLPipeline::postSort(LLCamera &camera)
                                 }
                             }
                             const bool alpha_type = skip_alpha_lists && (j->first == LLRenderPass::PASS_ALPHA || j->first == LLRenderPass::PASS_ALPHA_RIGGED);
+                            static const bool leftover_census = getenv("LL_VK_RMCENSUS") != nullptr;
+                            if (leftover_census && j->first != LLRenderPass::PASS_ALPHA && j->first != LLRenderPass::PASS_ALPHA_RIGGED)
+                            {
+                                // C5 J4: the draws that stay in the render map, by partition, whether the group has a fragment handle, whether the type is a table type, and whether the matrix is a region's
+                                const U32 part = std::min<U32>(group->getSpatialPartition() ? group->getSpatialPartition()->mPartitionType : 15u, 15u);
+                                const bool in_table = ll_scene_geo_type_number(j->first) >= 0;
+                                const bool has_handle = group->mGeoHandle != 0;
+                                for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
+                                {
+                                    const LLDrawInfo* info = *k;
+                                    const bool rigged = info->mAvatar.notNull();
+                                    const U32 cell = (((part * 2 + (in_table ? 1 : 0)) * 2 + (has_handle ? 1 : 0)) * 2 + (rigged ? 1 : 0));
+                                    sLeftoverCensus[cell].fetch_add(1, std::memory_order_relaxed);
+                                    if (!in_table) { sLeftoverByType[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); }
+                                }
+                            }
                             for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
                             {
                                 LLDrawInfo* info = *k;
@@ -8710,6 +8730,27 @@ void LLPipeline::postSort(LLCamera &camera)
                     indices[k] += info->mCount;
                     if (info->mAvatar.notNull()) { ++avatar_draws[k]; }
                 }
+            }
+            if (frames % 600 == 599)
+            {
+                static const char* const part_names[16] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "control av", "hud particle", "vo cache", "none", "14", "other" };
+                std::string cells;
+                for (U32 c = 0; c < 16 * 8; ++c)
+                {
+                    const U64 n = sLeftoverCensus[c].exchange(0);
+                    if (n)
+                    {
+                        cells += llformat(" | %s, %s type, %s, %s: %.1f", part_names[c >> 3], (c & 4) ? "table" : "NOT table", (c & 2) ? "fragment handle" : "no handle", (c & 1) ? "rigged" : "static", (double)n / 600.0);
+                    }
+                }
+                std::string types;
+                for (U32 t = 0; t < 128; ++t)
+                {
+                    const U64 n = sLeftoverByType[t].exchange(0);
+                    if (n) { types += llformat(" | type %u: %.1f", t, (double)n / 600.0); }
+                }
+                LL_INFOS("RMCensus") << "draws left in the render map (not alpha), per frame:" << cells << LL_ENDL;
+                LL_INFOS("RMCensus") << "of them, pass types the table does not take:" << types << LL_ENDL;
             }
             if (++frames % 600 == 0)
             {
