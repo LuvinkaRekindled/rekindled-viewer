@@ -58,6 +58,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Al
 
 uniform uvec2 ll_packet_table;
 uniform uvec2 ll_packet_models;
+uniform uvec2 ll_packet_texmats;        // C5 J3: the record's texture matrices (pad of a packet = its number, 0 = none; slot 0 holds the texture animation clock)
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer AlphaTexmats { mat4 t[]; };
 uniform mat4 ll_view_proj;
 uniform int shadow_alpha_indexed;   // 1: an indexed draw (the hardware read the index buffer: gl_VertexIndex is the vertex), 0: a draw over the index list that reads the indices here
 uniform float ll_target_width;
@@ -116,5 +118,11 @@ void main()
     vary_flags = pk.flags;
     vary_cutoff = pk.cutoff;
     vary_texcoord0 = ((pk.flags & 8u) != 0u) ? AlphaTexcoords(pk.texcoords).t[index] : vec2(0.0);
+    if (pk.pad != 0u && (pk.flags & 8u) != 0u)
+    {
+        mat4 ll_tm = AlphaTexmats(ll_packet_texmats).t[pk.pad];
+        if (ll_tm[3][3] == 0.0) ll_tm = ll_texanim_core(ll_tm, AlphaTexmats(ll_packet_texmats).t[0][0].yz);       // a texture animation's slot holds its parameters (llvktexanim.h)
+        vary_texcoord0 = (ll_tm * vec4(vary_texcoord0, 0.0, 1.0)).xy;
+    }
     vary_alpha = ((pk.flags & 16u) != 0u) ? float(AlphaColors(pk.colors).c[index] >> 24) * (1.0 / 255.0) : 1.0;
 }

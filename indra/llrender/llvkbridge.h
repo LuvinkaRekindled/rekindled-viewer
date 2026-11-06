@@ -145,6 +145,7 @@ namespace LLVkBridge
         U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below); kind 0: 1 = drawn only, not named to the ray scene (S6.6c)
         U64 mProgram = ~0ull;       // S6.3: the program (an LLVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
         U32 mParticleFloats = 0;    // kind 36 (the particle sort): floats of the source table after the jobs: a row (now high, now low, 0, 0), then a source is 8 floats (position, 0, target, 0)
+        U32 mTexmats = 0;           // kind 1: texture matrices (16 floats each) after the palettes; an entry names its matrix by mTexMatrix
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
@@ -198,6 +199,7 @@ namespace LLVkBridge
         F32 mUv[6];                 // kind 5: the texture coordinate transform as the ray query applies it: u' = mUv[0] * u + mUv[2] * v + mUv[4], v' = mUv[1] * u + mUv[3] * v + mUv[5]
         U32 mMaterial;              // ray tracing: RtMaterialDef id of the draw, 0 = none
         U32 mNormalOffset;          // ray tracing: byte offset of the normal array, 0 = none
+        U32 mTexMatrix;             // kind 1 (raster): 1 + the number of the draw's texture matrix among the record's mTexmats (after the palettes), 0 = none
     };
     // kind 10 (ray tracing only, nothing is drawn): mEntries RtMaterialDef rows to store (new materials, or ones whose texture names changed); the ids are the viewer's, stable for as long as a
     // material is in use. The draws name their material by id (mMaterial of the entries above). Texture names are GL names, resolved by the viewer; the worker turns them into bindless slots.
