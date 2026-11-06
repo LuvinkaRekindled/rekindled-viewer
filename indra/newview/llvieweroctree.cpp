@@ -1447,7 +1447,12 @@ void LLOcclusionCullingGroup::checkOcclusion()
 
     if (mHizStale && mHizSerial)
     {   // a verdict is awaited and the group asked to be discarded (an object was added): visible until the next box has a result
+        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
+        {
+            LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+        }
         mHizSerial = 0;
         mHizStale = false;
     }
@@ -1479,7 +1484,12 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     {   // the camera is inside the box: nothing to test, visible
         mHizSerial = 0;
         mHizStale = true;
+        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
+        {
+            LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+        }
         return;
     }
     if (mHizSerial && !mHizStale)
@@ -1518,6 +1528,10 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
         {
             o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
             o->mHizOccludedOnce = false;
+            if (LLCullCensus::sOn && o->mSpatialPartition)
+            {
+                LLCullCensus::sOccChanges[std::min<U32>(o->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     LLViewerCamera::sCurCameraID = saved_camera;
@@ -1528,6 +1542,18 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
 {
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
+    const bool census_was = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED);
+    struct CensusEnd
+    {
+        LLOcclusionCullingGroup* mG; bool mWas;
+        ~CensusEnd()
+        {
+            if (LLCullCensus::sOn && mG->mSpatialPartition && mWas != ((mG->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0))
+            {
+                LLCullCensus::sOccChanges[std::min<U32>(mG->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    } census_end = { this, census_was };
     if (occluded)
     {
         // <FS> plan 8.38: occluded on two agreeing verdicts, so one wrong or stale answer never hides the group; visible on one
@@ -1662,9 +1688,18 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
 {
     LL_PROFILE_ZONE_SCOPED;
     LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) n->getListener(0);
+    const bool cen = LLCullCensus::sOn && LLCullCensus::sActive.load(std::memory_order_relaxed) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;      // <FS> C4.5 census
+    if (cen)
+    {
+        LLCullCensus::sNodes.fetch_add(1, std::memory_order_relaxed);
+    }
 
     if (earlyFail(group))
     {
+        if (cen)
+        {
+            LLCullCensus::sEarlyFail.fetch_add(1, std::memory_order_relaxed);
+        }
         return;
     }
 
@@ -1672,12 +1707,24 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
         (mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
     {   //fully in, just add everything
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("AllInside");
+        if (cen)
+        {
+            LLCullCensus::sAllInside.fetch_add(1, std::memory_order_relaxed);
+        }
         OctreeTraveler::traverse(n);
     }
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("Check inside?");
         mRes = frustumCheck(group);
+        if (cen)
+        {
+            LLCullCensus::sFrustumTests.fetch_add(1, std::memory_order_relaxed);
+            if (!mRes)
+            {
+                LLCullCensus::sFrustumOut.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
 
         if (mRes)
         { //at least partially in, run on down

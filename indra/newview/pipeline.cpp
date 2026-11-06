@@ -4512,6 +4512,139 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     return view;
 }
 
+// <FS> C4.5 census (LL_VK_MAINCENSUS=1, off by default; the main view's partition cull, in the production path): the walk's counts (LLCullCensus, written by the walks and markNotCulled on every thread), and
+// per frame a comparison of the groups the cull listed with the last frame's, by the type of the group's partition. A group list a retained cull would replay is exact when the camera is the same, the partition's
+// change epoch is the same and no group of it changed its occlusion state: for each type the frames where that key holds ("hit") and how many groups differed from the last frame on them (it must be 0), the groups that
+// differed on the other frames and which of the three changed. The report is a line every 600 frames (tag MainCull).
+static void main_cull_census(LLCamera& camera)
+{
+    using C = LLCullCensus;
+    static const char* const names[16] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "control_av", "hud_particle", "t12", "t13", "t14", "t15" };
+    static LLVector3 prev_origin, prev_at;
+    static bool have_prev = false;
+    static std::unordered_map<const void*, U8> prev_groups;
+    static U64 prev_epoch[16] = {};
+    static U64 frames = 0, cam_still_frames = 0, all_hit_frames = 0;
+    static U64 w_nodes = 0, w_early = 0, w_occdrop = 0, w_inside = 0, w_frustum = 0, w_out = 0, w_marks = 0, w_empty = 0, w_pd = 0, w_pv = 0, w_ticks = 0;
+    struct Per { U64 mGroups = 0, mHit = 0, mHitChanged = 0, mMiss = 0, mMissChanged = 0, mMissCam = 0, mMissEpoch = 0, mMissOcc = 0, mOccChanges = 0, mPresent = 0; };
+    static Per per[16];
+    static std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    static U64 tsc0 = LLVisCensus::now();
+
+    const LLVector3 origin = camera.getOrigin(), at = camera.getAtAxis();
+    const bool cam_same = have_prev && origin == prev_origin && at == prev_at;
+    prev_origin = origin;
+    prev_at = at;
+    have_prev = true;
+    ++frames;
+    cam_still_frames += cam_same ? 1 : 0;
+
+    w_nodes += C::sNodes.exchange(0); w_early += C::sEarlyFail.exchange(0); w_occdrop += C::sOccDropped.exchange(0); w_inside += C::sAllInside.exchange(0);
+    w_frustum += C::sFrustumTests.exchange(0); w_out += C::sFrustumOut.exchange(0); w_marks += C::sMarkCalls.exchange(0); w_empty += C::sMarkEmpty.exchange(0);
+    w_pd += C::sMarkDrawable.exchange(0); w_pv += C::sMarkVisible.exchange(0); w_ticks += C::sMarkTicks.exchange(0);
+
+    // the partitions' change epochs, summed by type (the partitions of the regions; the bridges' own partitions are not in the list: their groups' types show it when a key built on the epochs would miss them)
+    U64 epoch[16] = {};
+    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+    {
+        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+        {
+            if (LLSpatialPartition* part = (*iter)->getSpatialPartition(i))
+            {
+                epoch[std::min<U32>(part->mPartitionType, 15)] += part->mEpoch.load(std::memory_order_relaxed);
+            }
+        }
+    }
+    U32 occ[16];
+    for (int t = 0; t < 16; ++t)
+    {
+        occ[t] = C::sOccChanges[t].exchange(0);
+        per[t].mOccChanges += occ[t];
+    }
+
+    std::unordered_map<const void*, U8> cur;
+    cur.reserve(sCull->getDrawableGroupsSize() + sCull->getVisibleGroupsSize());
+    auto take = [&](LLCullResult::sg_iterator b, LLCullResult::sg_iterator e)
+    {
+        for (LLCullResult::sg_iterator g = b; g != e; ++g)
+        {
+            cur.emplace((const void*)*g, (U8)std::min<U32>((*g)->getSpatialPartition()->mPartitionType, 15));
+        }
+    };
+    take(sCull->beginDrawableGroups(), sCull->endDrawableGroups());
+    take(sCull->beginVisibleGroups(), sCull->endVisibleGroups());
+    U64 changed[16] = {}, count[16] = {};
+    for (const auto& kv : cur)
+    {
+        ++count[kv.second];
+        if (!prev_groups.count(kv.first))
+        {
+            ++changed[kv.second];
+        }
+    }
+    for (const auto& kv : prev_groups)
+    {
+        if (!cur.count(kv.first))
+        {
+            ++changed[kv.second];
+        }
+    }
+    bool all_hit = true;
+    for (int t = 0; t < 16; ++t)
+    {
+        const bool epoch_same = epoch[t] == prev_epoch[t];
+        const bool hit = cam_same && epoch_same && occ[t] == 0;
+        per[t].mGroups += count[t];
+        if (count[t] || changed[t])
+        {
+            ++per[t].mPresent;
+            if (hit)
+            {
+                ++per[t].mHit;
+                per[t].mHitChanged += changed[t];
+            }
+            else
+            {
+                all_hit = false;
+                ++per[t].mMiss;
+                per[t].mMissChanged += changed[t];
+                per[t].mMissCam += cam_same ? 0 : 1;
+                per[t].mMissEpoch += epoch_same ? 0 : 1;
+                per[t].mMissOcc += occ[t] ? 1 : 0;
+            }
+        }
+        prev_epoch[t] = epoch[t];
+    }
+    all_hit_frames += (all_hit && cam_same) ? 1 : 0;
+    prev_groups.swap(cur);
+
+    if (frames % 600 == 0)
+    {
+        const double wall_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const double ms_per_tick = wall_ms / (double)std::max<U64>(1, LLVisCensus::now() - tsc0);
+        const double n = 600.0;
+        LL_INFOS("MainCull") << "main cull census over 600 frames, per frame: camera unchanged on " << cam_still_frames << " frames, every partition's key held on " << all_hit_frames
+            << " | walk: nodes " << w_nodes / n << " (early fail " << w_early / n << " of them " << w_occdrop / n << " dropped as occluded, fully inside " << w_inside / n << ", frustum tests " << w_frustum / n << " of them out " << w_out / n
+            << ") | markNotCulled: calls " << w_marks / n << " (empty " << w_empty / n << "), drawable groups " << w_pd / n << ", visible groups " << w_pv / n << ", time inside it on all threads " << (double)w_ticks * ms_per_tick / n << " ms" << LL_ENDL;
+        for (int t = 0; t < 16; ++t)
+        {
+            const Per& p = per[t];
+            if (!p.mPresent)
+            {
+                continue;
+            }
+            LL_INFOS("MainCull") << "main cull census, partition " << names[t] << ": groups listed " << p.mGroups / n << " a frame, present on " << p.mPresent << " frames: key held on " << p.mHit << " ("
+                << (p.mHit ? (double)p.mHitChanged / p.mHit : 0.0) << " groups differed from the frame before on those, 0 expected), not held on " << p.mMiss << " (" << (p.mMiss ? (double)p.mMissChanged / p.mMiss : 0.0)
+                << " groups differed a frame; camera changed on " << p.mMissCam << ", epoch on " << p.mMissEpoch << ", occlusion state on " << p.mMissOcc << "), occlusion state changes " << p.mOccChanges << LL_ENDL;
+        }
+        for (Per& p : per) { p = Per(); }
+        frames = cam_still_frames = all_hit_frames = 0;
+        w_nodes = w_early = w_occdrop = w_inside = w_frustum = w_out = w_marks = w_empty = w_pd = w_pv = w_ticks = 0;
+        t0 = std::chrono::steady_clock::now();
+        tsc0 = LLVisCensus::now();
+    }
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
@@ -4585,6 +4718,13 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     sCull->clear();
 
+    static const bool main_census_env = (LLCullCensus::sOn = getenv("LL_VK_MAINCENSUS") != nullptr);
+    const bool main_census = main_census_env && view.isMainWorld() && !gCubeSnapshot;
+    if (main_census)
+    {
+        LLCullCensus::sActive.store(true);
+    }
+
     // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
     const bool main_cull = view.isMainWorld()
         && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
@@ -4656,6 +4796,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         }
     }
 
+    if (main_census)
+    {
+        LLCullCensus::sActive.store(false);
+        main_cull_census(camera);
+    }
+
     if (cull_use)
     {
         LL_CPU_ZONE("updateCull: C2 flat cull");
@@ -4683,8 +4829,23 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
+    // <FS> C4.5 census (LL_VK_MAINCENSUS=1): the calls, what they push, and the time inside them (all threads)
+    struct MarkCensus
+    {
+        bool mOn; U64 mT0;
+        ~MarkCensus() { if (mOn) { LLCullCensus::sMarkTicks.fetch_add(LLVisCensus::now() - mT0, std::memory_order_relaxed); } }
+    } census = { LLCullCensus::sOn && LLCullCensus::sActive.load(std::memory_order_relaxed) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot, 0 };
+    if (census.mOn)
+    {
+        census.mT0 = LLVisCensus::now();
+        LLCullCensus::sMarkCalls.fetch_add(1, std::memory_order_relaxed);
+    }
     if (group->isEmpty())
     {
+        if (census.mOn)
+        {
+            LLCullCensus::sMarkEmpty.fetch_add(1, std::memory_order_relaxed);
+        }
         return;
     }
 
@@ -4713,6 +4874,10 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 
     assertInitialized();
 
+    if (census.mOn)
+    {
+        (group->getSpatialPartition()->mRenderByGroup ? LLCullCensus::sMarkVisible : LLCullCensus::sMarkDrawable).fetch_add(1, std::memory_order_relaxed);
+    }
     if (!group->getSpatialPartition()->mRenderByGroup)
     { //render by drawable
         sCull->pushDrawableGroup(group);
