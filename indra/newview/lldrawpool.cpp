@@ -1008,6 +1008,7 @@ U32 ll_pass_arrays(U32 type)
     case LLRenderPass::PASS_FULLBRIGHT_RIGGED:
     case LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK:
     case LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED:
+    case LLRenderPass::PASS_INVISIBLE:         // C5: positions only (the colour program reads nothing else)
         return 0;
     case LLRenderPass::PASS_GLOW:
     case LLRenderPass::PASS_GLOW_RIGGED:
