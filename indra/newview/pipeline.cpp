@@ -4741,6 +4741,64 @@ static void main_cull_census(LLCamera& camera)
     }
 }
 
+// <FS> C4.5 S1a (LL_VK_VISSET=2): after the main view's cull, every partition's membership is worked out again by the collecting walk (LLSpatialPartition::collectCull: the same frustum and occlusion verdicts,
+// nothing written) and compared with the groups the real cull listed for that partition. The collector is what the retained set will be built from: this proves it gives what the walk gives.
+static void main_vis_verify(LLCamera& camera)
+{
+    static U64 frames = 0, parts_checked = 0, groups_checked = 0, extra = 0, missing = 0, bad_frames = 0;
+    std::unordered_set<const LLSpatialGroup*> real_d, real_v;
+    std::unordered_map<const void*, std::pair<U32, U32>> real_count;
+    for (LLCullResult::sg_iterator g = sCull->beginDrawableGroups(); g != sCull->endDrawableGroups(); ++g)
+    {
+        real_d.insert(*g);
+        ++real_count[(*g)->getSpatialPartition()].first;
+    }
+    for (LLCullResult::sg_iterator g = sCull->beginVisibleGroups(); g != sCull->endVisibleGroups(); ++g)
+    {
+        real_v.insert(*g);
+        ++real_count[(*g)->getSpatialPartition()].second;
+    }
+    static LLSpatialPartition::CullCollect collect;
+    bool bad = false;
+    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+    {
+        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+        {
+            LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
+            if (!part || !(LLViewerRegion::PARTITION_BRIDGE == i || gPipeline.hasRenderType(part->mDrawableType)))
+            {
+                continue;
+            }
+            part->collectCull(camera, collect);
+            ++parts_checked;
+            U32 ex = 0;
+            for (LLSpatialGroup* g : collect.mDrawable) { if (!real_d.count(g)) { ++ex; } }
+            for (LLSpatialGroup* g : collect.mVisible) { if (!real_v.count(g)) { ++ex; } }
+            const auto rc = real_count.count(part) ? real_count[part] : std::make_pair(0u, 0u);
+            const S64 miss = ((S64)rc.first - (S64)collect.mDrawable.size()) + ((S64)rc.second - (S64)collect.mVisible.size()) + ex;      // (what the real cull listed and the collector did not)
+            groups_checked += rc.first + rc.second;
+            extra += ex;
+            missing += miss > 0 ? miss : 0;
+            if (ex || miss)
+            {
+                bad = true;
+                static int logged = 0;
+                if (++logged <= 8)
+                {
+                    LL_WARNS("VisSet") << "collector differs from the cull: partition type " << part->mPartitionType << " region partition " << i << ": real " << rc.first << " drawable + " << rc.second << " visible groups, collector "
+                        << collect.mDrawable.size() << " + " << collect.mVisible.size() << ", collector groups the cull did not list " << ex << LL_ENDL;
+                }
+            }
+        }
+    }
+    bad_frames += bad ? 1 : 0;
+    if (++frames % 600 == 0)
+    {
+        LL_INFOS("VisSet") << "collector check: " << frames << " frames, " << parts_checked << " partition walks, " << groups_checked << " groups listed by the cull, " << extra << " the collector listed and the cull did not, " << missing
+            << " the cull listed and the collector did not, " << bad_frames << " frames with a difference" << LL_ENDL;
+    }
+}
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
@@ -4896,6 +4954,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     {
         LLCullCensus::sActive.store(false);
         main_cull_census(camera);
+    }
+    static const int visset_mode = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0;
+    if (visset_mode >= 2 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    {
+        main_vis_verify(camera);
     }
 
     if (cull_use)

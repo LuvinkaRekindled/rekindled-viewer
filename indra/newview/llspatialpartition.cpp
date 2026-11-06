@@ -337,7 +337,6 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
         (drawablep->getBinRadius() > mOctreeNode->getSize()[0] && parent && parent->getElementCount() >= gOctreeMaxCapacity);
     if (inside && fits)
     {
-        hizEntryMoved(drawablep->getSpatialExtents());
         unbound();
         setState(OBJECT_DIRTY);
         //setState(GEOM_DIRTY);
@@ -1705,6 +1704,94 @@ void LLSpatialPartition::cullTask(LLCamera& camera, const LLViewerOctreeCull::Sp
     {
         LLOctreeCull culler(&camera);
         culler.traverseTask(task);
+    }
+}
+
+// <FS> C4.5 S1a: the main view's cull verdicts without the side effects (see LLSpatialPartition::CullCollect). Base is LLOctreeCull or LLOctreeCullNoFarClip: the same frustum tests as the real walk.
+template <class Base>
+class LLOctreeCullCollect : public Base
+{
+public:
+    LLOctreeCullCollect(LLCamera* camera, LLSpatialPartition::CullCollect& out) : Base(camera), mOut(out) {}
+
+    virtual bool earlyFail(LLViewerOctreeGroup* base_group) override
+    {
+        // (LLOctreeCull::earlyFail without markOccluder and the census counters)
+        if (LLPipeline::reflectionRender())
+        {
+            return false;
+        }
+        LLSpatialGroup* group = (LLSpatialGroup*)base_group;
+        if (LLPipeline::useOcclusion() >= 2)
+        {
+            group->checkOcclusion();
+        }
+        return LLPipeline::useOcclusion() &&
+            group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
+            group->getOctreeNode() &&
+            group->getOctreeNode()->getParent();
+    }
+
+    virtual void traverse(const OctreeNode* n) override
+    {
+        LLViewerOctreeGroup* group = (LLViewerOctreeGroup*)n->getListener(0);
+        LLSpatialPartition::CullCollect::NodeInfo info;
+        info.mEntryRes = (S8)this->mRes;
+        if (earlyFail(group))
+        {
+            info.mOutcome = 1;
+            mOut.mNodes[n] = info;
+            return;
+        }
+        if (this->mRes == 2 || (this->mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
+        {
+            info.mOutcome = 3;
+            mOut.mNodes[n] = info;
+            OctreeTraveler::traverse(n);
+        }
+        else
+        {
+            this->mRes = this->frustumCheck(group);
+            info.mOutcome = this->mRes ? 3 : 2;
+            mOut.mNodes[n] = info;
+            if (this->mRes)
+            {
+                OctreeTraveler::traverse(n);
+            }
+            this->mRes = 0;
+        }
+    }
+
+    virtual void processGroup(LLViewerOctreeGroup* base_group) override
+    {
+        LLSpatialGroup* group = (LLSpatialGroup*)base_group;
+        if (group->isEmpty())
+        {
+            return;
+        }
+        const bool by_group = group->getSpatialPartition()->mRenderByGroup;
+        (by_group ? mOut.mVisible : mOut.mDrawable).push_back(group);
+        mOut.mNodes[group->getOctreeNode()].mMember = by_group ? 2 : 1;
+    }
+
+private:
+    LLSpatialPartition::CullCollect& mOut;
+};
+
+void LLSpatialPartition::collectCull(LLCamera& camera, CullCollect& out)
+{
+    out.mDrawable.clear();
+    out.mVisible.clear();
+    out.mNodes.clear();
+    if (mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot))
+    {
+        LLOctreeCullCollect<LLOctreeCullNoFarClip> culler(&camera, out);
+        culler.traverse(mOctree);
+    }
+    else
+    {
+        LLOctreeCullCollect<LLOctreeCull> culler(&camera, out);
+        culler.traverse(mOctree);
     }
 }
 
