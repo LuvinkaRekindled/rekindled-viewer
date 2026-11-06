@@ -852,7 +852,7 @@ bool LLViewerOctreeGroup::boundObjects(bool empty, LLVector4a& minOut, LLVector4
 //virtual
 bool LLViewerOctreeGroup::isVisible() const
 {
-    return row().visible[LLViewerCamera::sCurCameraID] >= LLViewerOctreeEntryData::getCurrentFrame();
+    return getVisible(LLViewerCamera::sCurCameraID) >= LLViewerOctreeEntryData::getCurrentFrame();
 }
 
 //virtual
@@ -1238,13 +1238,13 @@ bool LLOcclusionCullingGroup::needsUpdate()
 bool LLOcclusionCullingGroup::isRecentlyVisible() const
 {
     const S32 MIN_VIS_FRAME_RANGE = 2;
-    return (LLDrawable::getCurrentFrame() - row().visible[LLViewerCamera::sCurCameraID]) < MIN_VIS_FRAME_RANGE ;
+    return (LLDrawable::getCurrentFrame() - getVisible(LLViewerCamera::sCurCameraID)) < MIN_VIS_FRAME_RANGE ;
 }
 
 bool LLOcclusionCullingGroup::isAnyRecentlyVisible() const
 {
     const S32 MIN_VIS_FRAME_RANGE = 2;
-    return (LLDrawable::getCurrentFrame() - row().anyVisible) < MIN_VIS_FRAME_RANGE ;
+    return (LLDrawable::getCurrentFrame() - getAnyVisible()) < MIN_VIS_FRAME_RANGE ;
 }
 
 //virtual

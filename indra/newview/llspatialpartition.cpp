@@ -1850,7 +1850,10 @@ struct PartState
     bool mReorder = false;                                      // an entry could not be put in its place (its subtree had none): the list is made again from the nodes
     std::vector<LLSpatialGroup*> mFlat;                         // the list as an array for the cull jobs (made when the list changed)
     std::vector<U8> mFlatKind;
+    std::vector<S32> mFlatLod;
     bool mFlatDirty = true;
+    std::unordered_set<LLSpatialGroup*> mPending;               // the groups that joined this frame: they get the set's slot (and so its stamp) when the frame is claimed or the real walk is over, not before (their stored stamp is what the walk must see)
+    U32 mSlot = 0;                                              // the slot of the set in LLRetainedStamps (and in the rows of its members)
 };
 struct Ev { LLViewerOctreeGroup* mGroup; U8 mKind; };
 static std::unordered_map<LLSpatialPartition*, PartState> sState;
@@ -1869,6 +1872,40 @@ struct Stats
 };
 static Stats sStats;
 
+static bool sSlotUsed[256] = {};
+static U32 alloc_slot()
+{
+    for (U32 i = 1; i < 256; ++i)
+    {
+        if (!sSlotUsed[i])
+        {
+            sSlotUsed[i] = true;
+            LLRetainedStamps::sFrame[i].store(0);
+            return i;
+        }
+    }
+    return 0;
+}
+static void free_slot(U32 slot)
+{
+    if (slot)
+    {
+        sSlotUsed[slot] = false;
+    }
+}
+// a group leaves its set: its stamp is written back (what the set's replays stood for), then it is a plain group again
+static void clear_member(LLSpatialGroup* g)
+{
+    LLGroupRows::Row& r = g->row();
+    if (r.retainedSlot)
+    {
+        const S32 f = LLRetainedStamps::sFrame[r.retainedSlot].load(std::memory_order_relaxed);
+        r.visible[LLViewerCamera::CAMERA_WORLD] = std::max(r.visible[LLViewerCamera::CAMERA_WORLD], f);
+        r.anyVisible = std::max(r.anyVisible, f);
+        r.retainedSlot = 0;
+    }
+}
+
 static void enumerate(const OctreeNode* node, std::vector<const void*>& out)
 {
     out.push_back(node->getListener(0));
@@ -1878,12 +1915,17 @@ static void enumerate(const OctreeNode* node, std::vector<const void*>& out)
     }
 }
 
-static void erase_node(PartState& st, const void* key)
+static void erase_node(PartState& st, const void* key, bool write_back = true)
 {
     auto it = st.mNodes.find(key);
     if (it == st.mNodes.end())
     {
         return;
+    }
+    st.mPending.erase((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
+    if (write_back && it->second.mMember)
+    {
+        clear_member((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
     }
     {
         auto pit = st.mPos.find((LLSpatialGroup*)(LLViewerOctreeGroup*)key);
@@ -1900,14 +1942,22 @@ static void erase_node(PartState& st, const void* key)
 }
 
 // the new entries go before `where` (the end of the list for a whole partition)
-static void adopt(PartState& st, LLSpatialPartition::CullCollect& c, std::list<LLSpatialPartition::CullCollect::Item>::iterator where)
+static void adopt(PartState& st, LLSpatialPartition::CullCollect& c, std::list<LLSpatialPartition::CullCollect::Item>::iterator where, LLCamera& camera, S32 frame)
 {
     for (const auto& kv : c.mNodes) { st.mNodes[kv.first] = kv.second; }
     for (LLSpatialGroup* g : c.mDrawable) { st.mDrawable.insert(g); }
     for (LLSpatialGroup* g : c.mVisible) { st.mVisible.insert(g); }
     for (const auto& item : c.mOrder)
     {
-        st.mPos[item.mGroup] = st.mOrder.insert(where, item);
+        LLSpatialPartition::CullCollect::Item it = item;
+        if (it.mKind)
+        {
+            LLSpatialGroup* g = it.mGroup;
+            it.mLod = g->row().lodHash;
+            st.mPending.insert(g);
+            gPipeline.replayAdopted(g, camera);     // (its wake and its distance: what markNotCulled does for a group it reaches)
+        }
+        st.mPos[it.mGroup] = st.mOrder.insert(where, it);
     }
     st.mFlatDirty = true;
 }
@@ -1915,6 +1965,8 @@ static void adopt(PartState& st, LLSpatialPartition::CullCollect& c, std::list<L
 // the order of the walk made again from the nodes: preorder, a node dropped as occluded first and alone, a member before the nodes below it
 static void reorder(PartState& st, LLSpatialPartition* part)
 {
+    std::unordered_map<LLSpatialGroup*, LLSpatialPartition::CullCollect::Item> old;
+    for (const auto& item : st.mOrder) { old[item.mGroup] = item; }
     st.mOrder.clear();
     st.mPos.clear();
     std::function<void(const OctreeNode*)> dfs = [&](const OctreeNode* n)
@@ -1934,7 +1986,9 @@ static void reorder(PartState& st, LLSpatialPartition* part)
         }
         if (info.mMember)
         {
-            st.mPos[g] = st.mOrder.insert(st.mOrder.end(), LLSpatialPartition::CullCollect::Item{ g, info.mMember });
+            LLSpatialPartition::CullCollect::Item item = old.count(g) ? old[g] : LLSpatialPartition::CullCollect::Item{ g, info.mMember };
+            item.mKind = info.mMember;
+            st.mPos[g] = st.mOrder.insert(st.mOrder.end(), item);
         }
         if (info.mOutcome == 3)
         {
@@ -1952,6 +2006,18 @@ static void reorder(PartState& st, LLSpatialPartition* part)
 static void rebuild(LLCamera& camera, LLSpatialPartition* part, PartState& st)
 {
     static LLSpatialPartition::CullCollect c;
+    if (!st.mSlot)
+    {
+        st.mSlot = alloc_slot();
+    }
+    for (const auto& item : st.mOrder)
+    {
+        if (item.mKind && item.mGroup)
+        {
+            clear_member(item.mGroup);      // (the stamp is written back: a group that is no longer a member keeps what the replays stood for)
+        }
+    }
+    st.mPending.clear();
     part->collectCull(camera, c);
     st.mNodes.clear();
     st.mDrawable.clear();
@@ -1959,15 +2025,15 @@ static void rebuild(LLCamera& camera, LLSpatialPartition* part, PartState& st)
     st.mOrder.clear();
     st.mPos.clear();
     st.mReorder = false;
-    adopt(st, c, st.mOrder.end());
-    st.mValid = true;
+    adopt(st, c, st.mOrder.end(), camera, (S32)LLViewerOctreeEntryData::getCurrentFrame());
+    st.mValid = st.mSlot != 0;
     ++sStats.mRebuilds;
     sLastRebuildFrame = (S32)LLFrameTimer::getFrameCount();
 }
 
 // the events of the frame, applied (and the roots of the tracked partitions rebounded, what the cull does first: that makes the events of this frame's rebounds).
 // A frame whose camera signature changed leaves every state invalid (the cull walks); the first frame the camera is the same again rebuilds them from a collecting walk, the ones after apply events.
-void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed)
+void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed, bool will_replay)
 {
     const auto t0 = std::chrono::steady_clock::now();
     static double sec_ms[6] = {};       // setup, stale discards, events (swap, merge, sort), rewalks, flat array, rest
@@ -1981,7 +2047,20 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
     for (LLSpatialPartition* part : parts) { part->mVisTracked.store(true, std::memory_order_relaxed); }
     for (auto it = sState.begin(); it != sState.end();)
     {
-        it = alive.count(it->first) ? std::next(it) : sState.erase(it);
+        if (alive.count(it->first))
+        {
+            ++it;
+            continue;
+        }
+        for (const auto& item : it->second.mOrder)
+        {
+            if (item.mKind && item.mGroup)
+            {
+                clear_member(item.mGroup);
+            }
+        }
+        free_slot(it->second.mSlot);
+        it = sState.erase(it);
     }
     for (LLSpatialPartition* part : parts)
     {
@@ -2131,12 +2210,12 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         sStats.mNodesWalked += c.mNodes.size();
         if (have_marker)
         {
-            adopt(st, c, marker);
+            adopt(st, c, marker, camera, (S32)LLViewerOctreeEntryData::getCurrentFrame());
             st.mOrder.erase(marker);
         }
         else
         {
-            adopt(st, c, st.mOrder.end());
+            adopt(st, c, st.mOrder.end(), camera, (S32)LLViewerOctreeEntryData::getCurrentFrame());
             if (!c.mOrder.empty())
             {
                 st.mReorder = true;     // (nothing of the subtree was in the list: where its entries belong is found from the nodes)
@@ -2178,13 +2257,32 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
         {
             st.mFlat.clear();
             st.mFlatKind.clear();
+            st.mFlatLod.clear();
             st.mFlat.reserve(st.mOrder.size());
             st.mFlatKind.reserve(st.mOrder.size());
-            for (const auto& item : st.mOrder) { st.mFlat.push_back(item.mGroup); st.mFlatKind.push_back(item.mKind); }
+            st.mFlatLod.reserve(st.mOrder.size());
+            for (const auto& item : st.mOrder)
+            {
+                st.mFlat.push_back(item.mGroup);
+                st.mFlatKind.push_back(item.mKind);
+                st.mFlatLod.push_back(item.mLod);
+            }
             st.mFlatDirty = false;
         }
     }
     lap(4);
+    if (will_replay)
+    {
+        // the replay of every valid set stands for the stamp of its members on this frame
+        for (auto& kv : sState)
+        {
+            if (kv.second.mValid && kv.second.mSlot)
+            {
+                LLRetainedStamps::sFrame[kv.second.mSlot].store((S32)LLViewerOctreeEntryData::getCurrentFrame(), std::memory_order_relaxed);
+            }
+        }
+        finishFrame();
+    }
     sStats.mUpdateMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -2336,15 +2434,26 @@ void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end
     }
     PartState& st = it->second;
     end = std::min(end, st.mFlat.size());
+    const U32 frame = (U32)LLViewerOctreeEntryData::getCurrentFrame();
+    const U32 period = std::max<U32>(1, part->mLODPeriod);
+    const U32 bucket = frame % period;
     for (size_t k = begin; k < end; ++k)
     {
-        if (st.mFlatKind[k] == 0)
+        LLSpatialGroup* g = st.mFlat[k];
+        if (!g)
         {
-            gPipeline.markOccluder(st.mFlat[k]);
+            continue;
+        }
+        const U8 kind = st.mFlatKind[k];
+        if (kind == 0)
+        {
+            gPipeline.markOccluder(g);
         }
         else
         {
-            gPipeline.markNotCulled(st.mFlat[k], camera);
+            // (what markNotCulled did, minus what the set already holds: the stamp is the set's, the distance was worked out when the group joined; the list it goes on, and the occlusion test of
+            // a group whose turn it is by its LOD hash: the walk's test of a stamp older than the last frame is made after its setVisible, so it never holds)
+            gPipeline.replayMember(g, kind, (U32)st.mFlatLod[k] == bucket);
         }
     }
     if (begin == 0)
@@ -2352,6 +2461,49 @@ void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end
         sStats.mReplayParts.fetch_add(1, std::memory_order_relaxed);
     }
     sStats.mReplayGroups.fetch_add(end > begin ? end - begin : 0, std::memory_order_relaxed);
+}
+
+void finishFrame()
+{
+    for (auto& kv : sState)
+    {
+        PartState& st = kv.second;
+        if (st.mPending.empty())
+        {
+            continue;
+        }
+        for (LLSpatialGroup* g : st.mPending)
+        {
+            g->row().retainedSlot = st.mSlot;
+        }
+        st.mPending.clear();
+    }
+}
+
+U32 checkStamps(S32 frame)
+{
+    U32 bad = 0;
+    for (auto& kv : sState)
+    {
+        PartState& st = kv.second;
+        if (!st.mValid)
+        {
+            continue;
+        }
+        for (size_t k = 0; k < st.mFlat.size(); ++k)
+        {
+            LLSpatialGroup* g = st.mFlat[k];
+            if (g && st.mFlatKind[k] && g->row().visible[LLViewerCamera::CAMERA_WORLD] != frame)
+            {
+                if (++bad <= 4)
+                {
+                    LL_WARNS("VisSet") << "stamp check: a member of a retained set (partition type " << kv.first->mPartitionType << ") was not stamped by the real walk on frame " << frame << ", its stored stamp is "
+                        << g->row().visible[LLViewerCamera::CAMERA_WORLD] << LL_ENDL;
+                }
+            }
+        }
+    }
+    return bad;
 }
 }   // namespace LLVisSet
 
