@@ -1223,6 +1223,10 @@ public:
             {
                 ++census->mCullDropped;
             }
+            if (LLCullCensus::sOn && LLCullCensus::sActive.load(std::memory_order_relaxed) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
+            {
+                LLCullCensus::sOccDropped.fetch_add(1, std::memory_order_relaxed);      // <FS> C4.5 census
+            }
             gPipeline.markOccluder(group);
             return true;
         }
