@@ -4708,6 +4708,24 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     {
         return;
     }
+    // C5 J3: the record's texture matrices (after the palettes): slot 0 is the texture animation clock, the matrices from 1
+    Renderer::ScratchAlloc texmats;
+    if (h.mTexmats)
+    {
+        texmats = r.allocVertexScratch(64 * ((size_t)h.mTexmats + 1));
+        if (texmats.mPtr && texmats.mAddress)
+        {
+            F32* tm = (F32*)texmats.mPtr;
+            memset(tm, 0, 64);
+            tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
+            LLVkTexAnim::writeSlot0(tm);
+            memcpy(tm + 16, matrices + 16 * (size_t)h.mMatrices + h.mPaletteFloats, 64 * (size_t)h.mTexmats);
+        }
+        else
+        {
+            texmats = Renderer::ScratchAlloc();
+        }
+    }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     alpha_index_buffers.assign(h.mEntries, nullptr);
@@ -4768,6 +4786,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         g.mFlags = flags;
+        g.mPad = (texmats.mAddress && e.mTexMatrix <= h.mTexmats) ? e.mTexMatrix : 0u;      // C5 J3: the draw's texture matrix (0 = none)
         if (flags & LLVkBridge::ALPHA_RIGGED)
         {
             if (!palettes.mAddress)
@@ -4815,6 +4834,12 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setInts("ll_packet_table", table_words, 2);
     program->setInts("ll_packet_models", models_words, 2);
+    if (texmats.mAddress && program->hasUniform("ll_packet_texmats"))
+    {
+        const U64 texmats_address = (U64)texmats.mAddress;
+        const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
+        program->setInts("ll_packet_texmats", texmats_words, 2);
+    }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     program->setFloats("ll_target_width", &h.mTargetWidth, 1);
     // rt-debug.txt pktidx=1 (the default): the entries are drawn indexed (see draw_packet_runs)

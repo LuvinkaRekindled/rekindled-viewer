@@ -10361,6 +10361,8 @@ struct LLSceneFragment
     // S2 alpha (LL_VK_SCENE_RAYALPHA): the group's static alpha masked casters, what build_shadow_alpha makes of them. mMatrix: 0 = none, else 1 + index into mMatrices; mTextures: local texture
     // number (1-based, into mTexLocal), 0 = none. Texture names are not kept here: the registry (sAlphaTex) resolves them once a frame.
     std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
+    std::vector<LLVkBridge::ShadowAlphaEntry> mAlphaTex;      // C5 J3: the alpha casters with a texture matrix (raster only): never registered with the worker; mAlphaTexPtrs: their matrices (values read when a record is made)
+    std::vector<const LLMatrix4*> mAlphaTexPtrs;
     std::vector<LLPointer<LLViewerTexture>> mTexLocal;
     std::vector<U32> mSentName;                         // per local texture: the name the worker was told
     std::vector<U8> mSentReady;
@@ -11723,6 +11725,8 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
         }
     }
     f.mAlpha.clear();
+    f.mAlphaTex.clear();
+    f.mAlphaTexPtrs.clear();
     f.mTexLocal.clear();
     if ((scene_alpha_on() && LLVkBridge::rtShadowMode()) || (alpha_res_wanted() && !LLVkBridge::rtShadowMode()))
     {
@@ -15915,7 +15919,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                         }
                         ++n_alpha_would;
                     }
-                    else if (alpha_frag_mode() && info->mAlphaInFragment && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
+                    else if (alpha_frag_mode() && (info->mAlphaInFragment || info->mAlphaFragTex) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
                     {
                         // C5 J3: the group's fragment names this caster and the worker does not hold it yet: renderShadow makes the entry from the fragment (mode 2 also pushes the draw info, to compare)
                         plan_frag = true;
@@ -19862,7 +19866,7 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false)
+static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     // <FS> a rows-mode particle group (GPU particles) holds one row a particle in its buffer, not vertex positions: the pull shaders make the quads. Named as a caster (the blended pass) it was
@@ -19885,7 +19889,7 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
     {
         return p.mTextureList.size() <= 4;
     }
-    return allow_gltf || !(p.mTexture.notNull() && p.mTextureMatrix);
+    return allow_gltf || allow_texmat || !(p.mTexture.notNull() && p.mTextureMatrix);
 }
 
 // <FS> why shadow_alpha_packet_ok said no (for the statistics, and for the ray scene, which takes the texture matrix draws): 1 glTF material, 2 buffer layout, 3 rigged without weights
@@ -19937,6 +19941,7 @@ struct LLPipeline::ShadowAlphaBuild
     std::vector<LLVkBridge::ShadowAlphaEntry> mEntries;
     std::vector<F32> mMatrices;
     std::vector<F32> mPalettes;
+    std::vector<F32> mTexmats;                  // C5 J3: the texture matrices of the draws (16 floats each; an entry's mTexMatrix is 1 + its number)
     std::vector<LLDrawInfo*> mFallback[KIND_MATERIAL + 1];
     std::vector<LLViewerTexture*> mTextures;
     U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
@@ -19994,7 +19999,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 {
                     continue;       // ray shadows: the texture has no data yet, nothing is traced for the draw until it has
                 }
-                if (!shadow_alpha_packet_ok(*params, batch, rigged))
+                if (!shadow_alpha_packet_ok(*params, batch, rigged, false, !rigged && !LLVkBridge::rtShadowMode()))
                 {
                     switch (shadow_alpha_fallback_reason(*params, batch, rigged))
                     {
@@ -20048,6 +20053,13 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                         matrices.insert(matrices.end(), m, m + 16);
                     }
                     e.mMatrix = it->second;
+                }
+                if (!rigged && !LLVkBridge::rtShadowMode() && params->mTextureMatrix && !(batch && params->mTextureList.size() > 1) && params->mTexture.notNull())
+                {
+                    // C5 J3: the draw's texture matrix travels with the record
+                    const F32* tm = (const F32*)params->mTextureMatrix->mMatrix;
+                    out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
+                    e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
                 }
                 U32 flags = rigged ? (U32)LLVkBridge::ALPHA_RIGGED : 0u;
                 if (source.kind == KIND_FULLBRIGHT)
@@ -20129,6 +20141,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
         for (LLDrawInfo* params : found->second)
         {
             params->mAlphaInFragment = false;
+            params->mAlphaFragTex = false;
             if (!params->mCount || params->mAvatar != nullptr)
             {
                 continue;
@@ -20137,11 +20150,12 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             {
                 continue;
             }
-            if (!shadow_alpha_packet_ok(*params, batch, false))
+            const bool texmat_draw = !LLVkBridge::rtShadowMode() && params->mTextureMatrix && !(batch && params->mTextureList.size() > 1) && params->mTexture.notNull();
+            if (!shadow_alpha_packet_ok(*params, batch, false, false, !LLVkBridge::rtShadowMode()))
             {
                 continue;
             }
-            params->mAlphaInFragment = true;
+            if (texmat_draw) { params->mAlphaFragTex = true; } else { params->mAlphaInFragment = true; }
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
             bool known = false;
             for (const LLSceneFragment::BufferRef& b : f.mBuffers)
@@ -20217,7 +20231,15 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
             e.mUv[0] = 1.f;       // identity texture coordinate transform (the matrix-free entries of the kind 5 record)
             e.mUv[3] = 1.f;
-            f.mAlpha.push_back(e);
+            if (texmat_draw)
+            {
+                f.mAlphaTex.push_back(e);
+                f.mAlphaTexPtrs.push_back(params->mTextureMatrix);
+            }
+            else
+            {
+                f.mAlpha.push_back(e);
+            }
         }
     }
 }
@@ -20245,13 +20267,18 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             continue;
         }
         const LLSceneFragment* f = group->mSceneFragment;
-        if (!f || f->mSerial != group->mDrawMapSerial || f->mAlphaResSent)
+        if (!f || f->mSerial != group->mDrawMapSerial || (f->mAlphaResSent && f->mAlphaTex.empty()))
         {
             continue;
         }
         ++groups_seen;
-        for (const LLVkBridge::ShadowAlphaEntry& e : f->mAlpha)
+        const size_t plain = f->mAlphaResSent ? 0 : f->mAlpha.size();      // (the entries the worker holds are not named again)
+        const size_t total = plain + f->mAlphaTex.size();
+        for (size_t entry_index = 0; entry_index < total; ++entry_index)
         {
+            const bool with_texmat = entry_index >= plain;
+            const LLVkBridge::ShadowAlphaEntry& e = with_texmat ? f->mAlphaTex[entry_index - plain] : f->mAlpha[entry_index];
+            const LLMatrix4* texmat = with_texmat ? f->mAlphaTexPtrs[entry_index - plain] : nullptr;
             LLVkBridge::ShadowAlphaEntry ne = e;
             const LLMatrix4* matrix = e.mMatrix ? f->mMatrices[e.mMatrix - 1] : nullptr;
             const LLViewerTexture* tex[4] = {};
@@ -20269,10 +20296,14 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
                     continue;
                 }
                 const LLVkBridge::ShadowAlphaEntry& be = *found->second;
-                bool same = be.mFlags == e.mFlags && be.mCutoff == e.mCutoff && be.mMatrixId == e.mMatrixId && (be.mMatrix != 0) == (matrix != nullptr);
+                bool same = be.mFlags == e.mFlags && be.mCutoff == e.mCutoff && be.mMatrixId == e.mMatrixId && (be.mMatrix != 0) == (matrix != nullptr) && (be.mTexMatrix != 0) == (texmat != nullptr);
                 if (same && matrix)
                 {
                     same = memcmp(b.mMatrices.data() + 16 * (size_t)be.mMatrix, matrix->mMatrix, 64) == 0;
+                }
+                if (same && texmat)
+                {
+                    same = memcmp(b.mTexmats.data() + 16 * (size_t)(be.mTexMatrix - 1), texmat->mMatrix, 64) == 0;
                 }
                 for (int t = 0; t < 4 && same; ++t)
                 {
@@ -20285,6 +20316,13 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
                 continue;
             }
             ne.mMatrix = 0;
+            ne.mTexMatrix = 0;
+            if (texmat)
+            {
+                const F32* tm = (const F32*)texmat->mMatrix;
+                b.mTexmats.insert(b.mTexmats.end(), tm, tm + 16);
+                ne.mTexMatrix = (U32)(b.mTexmats.size() / 16);
+            }
             if (matrix)
             {
                 auto it = matrix_numbers.find(matrix);
@@ -20352,7 +20390,7 @@ static void verify_shadow_alpha(const LLPipeline::ShadowAlphaBuild& a, const LLP
 {
     static std::atomic<U32> checked{0}, bad{0};
     ++checked;
-    bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mTextures == b.mTextures
+    bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mTexmats == b.mTexmats && a.mTextures == b.mTextures
         && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0)
         && a.mFbGLTF == b.mFbGLTF && a.mFbLayout == b.mFbLayout && a.mFbRigged == b.mFbRigged && a.mFbManyTextures == b.mFbManyTextures && a.mFbTextureMatrix == b.mFbTextureMatrix;
     for (int k = 0; k <= KIND_MATERIAL && same; ++k)
@@ -27284,6 +27322,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (!palettes.empty())
             {
                 blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
+            }
+            if (!build_owned->mTexmats.empty())
+            {
+                header.mTexmats = (U32)(build_owned->mTexmats.size() / 16);
+                blob.insert(blob.end(), (const U8*)build_owned->mTexmats.data(), (const U8*)(build_owned->mTexmats.data() + build_owned->mTexmats.size()));
             }
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
             gShadowDrawStats.mAlphaEntries += entries.size();
