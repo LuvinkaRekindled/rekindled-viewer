@@ -8739,10 +8739,11 @@ struct ShadowPrepTimes
 // R0 / R1a (doc/vulkan/S-retire-views-design.md): what the render map job of a cascade pushes, by kind, and the draw infos it leaves out when the cascade's static lists are dead
 struct ViewJobsStats
 {
-    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0};
+    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0}, mSkippedAlpha{0}, mWouldSkipAlpha{0};
 };
 ViewJobsStats sViewJobs;
 std::atomic<bool> sViewJobsSkipStatic{false};
+std::atomic<S32> sViewJobsSkipAlpha{0};        // C4.1 for the alpha casters: 1 the render map job leaves out the draw infos the worker holds as resident alpha entries (the builder built them and the viewer dropped them again), 2 counts only
 ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
 U64 sCascadeRenderNs[4];                 // renderShadow of each sun cascade (preparation included), summed over the renders
 U32 sCascadeRenders[4];
@@ -8883,6 +8884,8 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                 LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment; draw infos pushed: %.1f static (%.1f left out), %.1f rigged static, %.1f alpha, %.1f other",
                     (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mStatic.exchange(0) / n, sViewJobs.mSkippedStatic.exchange(0) / n,
                     sViewJobs.mRiggedStatic.exchange(0) / n, sViewJobs.mAlpha.exchange(0) / n, sViewJobs.mOther.exchange(0) / n) << LL_ENDL;
+                LL_INFOS("ShadowPrep") << llformat("render map jobs: alpha draw infos left out %.1f a job (the worker holds them), %.1f a job that would be left out (count-only mode)",
+                    sViewJobs.mSkippedAlpha.exchange(0) / n, sViewJobs.mWouldSkipAlpha.exchange(0) / n) << LL_ENDL;
             }
         }
         t = ShadowPrepTimes();
@@ -15398,6 +15401,26 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 }
 
 // worker: the render map of the cascade (the loop in postSort)
+// C4.1 for the alpha casters (doc/vulkan/PLAN-clean-core.md): the non-rigged draw info of an alpha source type that the worker holds as a resident alpha entry (the same test as renderShadow's drop of the builder's entries, made at the
+// map job: the pool, while the main thread is in the preparation and nothing registers or retires a fragment). The builder made an entry for it (hash, matrix and texture numbers) and the viewer dropped the entry again: 1,251 of
+// 1,301 entries a cascade pass, 83 M in a lap.
+static bool alpha_source_type(U32 type)
+{
+    return type == LLRenderPass::PASS_ALPHA_MASK || type == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK || type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_GRASS
+        || type == LLRenderPass::PASS_NORMSPEC_MASK || type == LLRenderPass::PASS_MATERIAL_ALPHA_MASK || type == LLRenderPass::PASS_SPECMAP_MASK || type == LLRenderPass::PASS_NORMMAP_MASK;
+}
+
+static bool alpha_info_resident(const LLDrawInfo& info)
+{
+    const LLVertexBuffer* vb = info.mVertexBuffer.get();
+    if (!vb || !info.mCount)
+    {
+        return false;
+    }
+    const auto found = sAlphaKeys.find(alpha_key(vb->getVertexBufferId(), vb->getIndexBufferId(), info.mOffset, info.mCount));
+    return found != sAlphaKeys.end() && found->second.mFrag->mAlphaResSent;
+}
+
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -15409,6 +15432,8 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     // R1a: in the ray-only modes with resident fragments nothing reads this cascade's lists of the static (non-rigged) types: the builder is not submitted (shadowPrepSubmitBuilds) and
     // render_shadow_packets takes the casters from the fragments; the main thread decided (generateSunShadow)
     const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
+    const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
+    U64 n_alpha_skipped = 0, n_alpha_would = 0;
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
     LLCullResult::sg_iterator visible_groups = result.beginVisibleGroups();
@@ -15468,6 +15493,16 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                     continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                 }
 
+                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first) && alpha_info_resident(*info))
+                {
+                    if (skip_alpha == 1)
+                    {
+                        ++n_alpha_skipped;
+                        continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
+                    }
+                    ++n_alpha_would;
+                }
+
                 sCull->pushDrawInfo(j->first, info);
                 if (ll_scene_geo_on() && ll_scene_geo_verify_on())
                 {
@@ -15507,6 +15542,8 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     sViewJobs.mAlpha.fetch_add(n_alpha, std::memory_order_relaxed);
     sViewJobs.mOther.fetch_add(n_other, std::memory_order_relaxed);
     sViewJobs.mSkippedStatic.fetch_add(n_skipped, std::memory_order_relaxed);
+    sViewJobs.mSkippedAlpha.fetch_add(n_alpha_skipped, std::memory_order_relaxed);
+    sViewJobs.mWouldSkipAlpha.fetch_add(n_alpha_would, std::memory_order_relaxed);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
@@ -28865,8 +28902,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
                 // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
                 const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
-                sViewJobsSkipStatic.store(view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static,
-                                          std::memory_order_relaxed);
+                const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static;
+                sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
+                // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
+                static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
+                sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted()) ? alpha_mode : 0, std::memory_order_relaxed);
             }
             // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
             // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
