@@ -4934,7 +4934,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
     // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
-    static const int visset_mode = (LLVisSetHooks::sOn = (getenv("LL_VK_VISSET") && atoi(getenv("LL_VK_VISSET")) >= 3), getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0);
+    static const int visset_mode = [] { const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 6; LLVisSetHooks::sOn = m >= 3; return m; }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
     static std::vector<LLSpatialPartition*> vs_parts;
     bool vs_replay = false, vs_check = false;
     if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
@@ -4972,7 +4972,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         memcpy(sig, now, sizeof(sig));
         LLVisSet::update(camera, vs_parts, camera_changed);
         vs_replay = visset_mode >= 4 && cull_split_setting() >= 3;
-        vs_check = vs_replay && visset_mode == 4 && (LLFrameTimer::getFrameCount() % 60) == 0;       // (5: the replay alone, nothing is compared: for the cost)
+        vs_check = vs_replay && ((visset_mode == 4 && (LLFrameTimer::getFrameCount() % 60) == 0) || (visset_mode == 6 && (LLFrameTimer::getFrameCount() % 300) == 0));       // (5: the replay alone, nothing is compared: for the cost)
     }
     sVisSetReplay = vs_replay;
     const int cull_mode = main_cull ? (vs_check ? 4 : cull_split_setting()) : 0;
@@ -5048,11 +5048,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLCullCensus::sActive.store(false);
         main_cull_census(camera);
     }
-    if (visset_mode >= 2 && visset_mode != 5 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    if (visset_mode >= 2 && visset_mode != 5 && visset_mode != 6 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
         main_vis_verify(camera);
     }
-    if (visset_mode >= 3 && visset_mode != 5 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    if (visset_mode >= 3 && visset_mode != 5 && visset_mode != 6 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
         LLVisSet::verify(camera, vs_parts);
     }
