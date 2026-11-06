@@ -3490,24 +3490,29 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
     LLVector3 hud_name_pos;
     {
         AvScope s(AV_PC_NAMEPOS);
+        LL_CPU_ZONE("av post: name tag position");
         hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
     }
 
     {
         AvScope s(AV_PC_VOICEVIS);
+        LL_CPU_ZONE("av post: voice visualizer");
         idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
     }
     {
         AvScope s(AV_PC_MISC);
+        LL_CPU_ZONE("av post: idleUpdateMisc (attachment replay, matrices)");
         idleUpdateMisc( detailed_update );
     }
     {
         AvScope s(AV_PC_APPEARANCE);
+        LL_CPU_ZONE("av post: appearance animation");
         idleUpdateAppearanceAnimation();
     }
     if (detailed_update)
     {
         AvScope s(AV_PC_DETAILED);
+        LL_CPU_ZONE("av post: lipsync, loading, water, wind");
         idleUpdateLipSync( voice_enabled );
         idleUpdateLoadingEffect();
         idleUpdateBelowWater(); // wind effect uses this
@@ -3516,6 +3521,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
 
     {
         AvScope s(AV_PC_NAMETAG);
+        LL_CPU_ZONE("av post: name tag");
         idleUpdateNameTag(hud_name_pos);
     }
 
@@ -6668,7 +6674,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     AvScope done_scope(AV_DEFERRED_DONE);
     flushDeferredStopRequests();        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
-    updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial);
+    { LL_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
     idleUpdatePostCharacter(mDeferredDetailedUpdate);
 }
 
