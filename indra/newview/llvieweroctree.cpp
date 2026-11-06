@@ -1452,6 +1452,7 @@ void LLOcclusionCullingGroup::checkOcclusion()
         if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
         {
             LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+            LLCullCensus::noteOcc(this, false, 1);
         }
         mHizSerial = 0;
         mHizStale = false;
@@ -1489,6 +1490,7 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
         if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
         {
             LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+            LLCullCensus::noteOcc(this, false, 2);
         }
         return;
     }
@@ -1531,6 +1533,7 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
             if (LLCullCensus::sOn && o->mSpatialPartition)
             {
                 LLCullCensus::sOccChanges[std::min<U32>(o->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+                LLCullCensus::noteOcc(o, false, 3);
             }
         }
     }
@@ -1551,6 +1554,7 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
             if (LLCullCensus::sOn && mG->mSpatialPartition && mWas != ((mG->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0))
             {
                 LLCullCensus::sOccChanges[std::min<U32>(mG->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
+                LLCullCensus::noteOcc(mG, !mWas, 0);
             }
         }
     } census_end = { this, census_was };
