@@ -1286,7 +1286,8 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
     // the rows the sort pass wrote, class after class (the classes' live counts give the ranges), are drawn as rows of stage 1
     LLVertexBuffer* rows = parts->mRows.get();
     group->mVertexBuffer = rows;
-    LLSpatialGroup::drawmap_elem_t& class_draws = group->mDrawMap[render_pass];
+    group->mDrawMap[render_pass];       // (C5 J2: the draw map keeps its entry, empty: the alpha group lists find the group by it; the draws are the group's particle runs)
+    group->mParticleRuns.clear();
     U32 first = 0;
     for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
     {
@@ -1296,12 +1297,15 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
             continue;
         }
         const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
-        LLDrawInfo* run = new LLDrawInfo((U16)first, (U16)(first + cnt - 1), 6 * cnt, 6 * first, key.mTex.get(), rows, key.mFullbright);
-        run->mBlendFuncDst = (LLRender::eBlendFactor)key.mDst;
-        run->mBlendFuncSrc = (LLRender::eBlendFactor)key.mSrc;
-        run->mHasGlow = parts->mClassGlow[c] > 0;       // (a class without a glow in it draws no glow pass: the second draw over every particle was most of the GPU cost)
-        run->mParticleRows = true;
-        class_draws.push_back(run);
+        LLParticleRun run;
+        run.mTexture = key.mTex.get();
+        run.mFirst = first;
+        run.mRows = cnt;
+        run.mBlendSrc = (U8)key.mSrc;
+        run.mBlendDst = (U8)key.mDst;
+        run.mFullbright = key.mFullbright;
+        run.mGlow = parts->mClassGlow[c] > 0;       // (a class without a glow in it draws no glow pass: the second draw over every particle was most of the GPU cost)
+        group->mParticleRuns.push_back(std::move(run));
         first += cnt;
     }
 }
@@ -1438,8 +1442,10 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         *glowp++ = glow;
     };
 
-    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mDrawMap[mRenderPass];
-    LLDrawInfo* info = nullptr;
+    group->mDrawMap[mRenderPass];       // (C5 J2: kept, empty: the alpha group lists find the group by it)
+    std::vector<LLParticleRun>& runs = group->mParticleRuns;
+    runs.clear();
+    LLParticleRun* info = nullptr;
     U32 row = 0;
     for (U32 k = 0; k < n; ++k)
     {
@@ -1462,20 +1468,22 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         LLRender::eBlendFactor bf_src = (LLRender::eBlendFactor)r.mBlendSrc;
         LLRender::eBlendFactor bf_dst = (LLRender::eBlendFactor)r.mBlendDst;
         const bool glow = r.mGlow.mV[3] != 0;
-        if (info && info->mTexture == texture && info->mFullbright == fullbright && info->mBlendFuncDst == bf_dst && info->mBlendFuncSrc == bf_src)
+        if (info && info->mTexture.get() == texture && info->mFullbright == fullbright && info->mBlendDst == (U8)bf_dst && info->mBlendSrc == (U8)bf_src)
         {
-            info->mCount += 6 * added;
-            info->mEnd = (U16)(row + added - 1);
-            info->mHasGlow = info->mHasGlow || glow;
+            info->mRows += added;
+            info->mGlow = info->mGlow || glow;
         }
         else
         {
-            info = new LLDrawInfo((U16)row, (U16)(row + added - 1), 6 * added, 6 * row, texture, buffer, fullbright);
-            info->mBlendFuncDst = bf_dst;
-            info->mBlendFuncSrc = bf_src;
-            info->mHasGlow = glow;
-            info->mParticleRows = true;
-            draw_vec.push_back(info);
+            runs.emplace_back();
+            info = &runs.back();
+            info->mTexture = texture;
+            info->mFirst = row;
+            info->mRows = added;
+            info->mBlendSrc = (U8)bf_src;
+            info->mBlendDst = (U8)bf_dst;
+            info->mFullbright = fullbright;
+            info->mGlow = glow;
         }
         row += added;
     }
@@ -1501,7 +1509,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         sPartStats.mCClasses += classes;
         sPartStats.mCMulti += classes > 1;
         sPartStats.mCTextures += textures;
-        sPartStats.mCRuns += draw_vec.size();
+        sPartStats.mCRuns += runs.size();
         sPartStats.mCParts += n;
         // runs of one draw state (texture ignored): a group sorted back to front, how often does the state change
         U32 state_runs = 0, last_key = ~0u;

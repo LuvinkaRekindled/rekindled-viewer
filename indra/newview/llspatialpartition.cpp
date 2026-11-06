@@ -224,6 +224,7 @@ void LLSpatialGroup::clearDrawMap()
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mDrawMap.clear();
+    mParticleRuns.clear();
     mGeoHandle = 0;
     mGeoServedMask = 0;
     mGeoServedTris = 0;
@@ -2861,7 +2862,7 @@ void pushBufferVerts(LLSpatialGroup* group, bool push_alpha = true)
 {
     if (group->getSpatialPartition()->mRenderByGroup)
     {
-        if (!group->mDrawMap.empty())
+        if (!group->mDrawMap.empty() && !group->mDrawMap.begin()->second.empty())
         {
             LLDrawInfo* params = *(group->mDrawMap.begin()->second.begin());
             LLRenderPass::applyModelMatrix(*params);
