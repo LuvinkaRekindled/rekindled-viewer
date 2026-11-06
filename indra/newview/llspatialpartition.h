@@ -637,6 +637,13 @@ public:
     // <FS> C5: the main view's postSort did not fill the lists of the blended alpha types (PASS_ALPHA, PASS_ALPHA_RIGGED): the alpha pool reads the groups' own draw maps and the alpha group lists; a reader that asks
     // for them anyway is logged (LLCullResult::beginRenderMap)
     bool mAlphaListsSkipped = false;
+    // <FS> C5 J4: the pass types the scene table has no kind for (INVISIBLE, FULLBRIGHT_SHINY, BUMP, POST_BUMP and their rigged variants, SHINY ...): postSort lists the GROUPS that have draws of the type (in the
+    // visible group order), and the render map list of the type is made from those groups' draw maps when a pool asks for it (beginRenderMap / endRenderMap), once a frame
+    bool mLazyTypes = false;
+    std::vector<LLSpatialGroup*> mLazyGroups[LLRenderPass::NUM_RENDER_TYPES];
+    bool mLazyDone[LLRenderPass::NUM_RENDER_TYPES] = {};
+    void pushLazyGroup(U32 type, LLSpatialGroup* group) { mLazyGroups[type].push_back(group); mLazyTypes = true; }
+    void materializeLazy(U32 type);
     drawinfo_iterator beginRenderMap(U32 type);
     drawinfo_iterator endRenderMap(U32 type);
 
