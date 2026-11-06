@@ -304,6 +304,7 @@ struct LLVisSetHooks
     static void noteOcc(LLViewerOctreeGroup* group);        // the group's world OCCLUDED state changed (its subtree may have: the walk of it is redone from the group)
     static void noteBounds(LLViewerOctreeGroup* group);     // the group's bounds, extents, object bounds, frustum-skip flag or elements changed
     static void forget(LLViewerOctreeGroup* group);         // the group is destroyed
+    static void noteStale(LLViewerOctreeGroup* group);      // hizInvalidate: the discard of an awaited verdict is made the next time the walk visits the group (checkOcclusion): the retained set makes it itself
     static void invalidateAll();                            // everything moved (a region shift): the retained set is rebuilt
 };
 
@@ -341,7 +342,8 @@ public:
     void checkOcclusion(); // a group that asked to be discarded while its verdict was awaited is visible again; a group under an occluded parent is occluded with it
     // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
     void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
-    void hizInvalidate() { mHizStale = true; }  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    void hizInvalidate() { mHizStale = true; if (LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteStale(this); } }  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    bool hizIsStale() const { return mHizStale; }
     // <FS> an object (its extents) is now in this group: a held occluded verdict of the group or of a group above it was tested without the object, so where the object is outside the box it covered, the
     // verdict says nothing about it. The occluded state is dropped there (this group and the ones above, one node each: the siblings keep theirs) and the next two agreeing verdicts decide again. Without this
     // an object that moved into a group with a held occluded verdict was missing for the 1 to 4 frames the verdict of its new box took. LL_VK_HIZ_ENTRY_OFF=1 = the old behaviour.
