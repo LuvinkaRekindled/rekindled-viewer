@@ -1943,6 +1943,7 @@ struct PartState
 };
 struct Ev { LLViewerOctreeGroup* mGroup; U8 mKind; };
 static constexpr int kSets = 5;
+static std::atomic<U64> sEvByType[16];                      // census: bounds events by partition type
 static std::unordered_map<LLSpatialPartition*, PartState> sStateArr[kSets];
 static std::mutex sMutex;
 static std::vector<Ev> sEventsArr[kSets];
@@ -2360,6 +2361,19 @@ void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, boo
                 << ", stale discards " << sec_ms[1] / (double)still_calls << " (" << (double)stale_total / (double)std::max<U64>(1, stale_frames) << " groups in the set), events " << sec_ms[2] / (double)still_calls << ", rewalks " << sec_ms[3] / (double)still_calls
                 << ", flat array " << sec_ms[4] / (double)still_calls << " (" << still_calls << " frames; events a frame "
                 << (double)(sStats.mOccEvents + sStats.mBoundsEvents) / (double)std::max<U64>(1, sStats.mFrames) << ", rewalks " << (double)sStats.mRewalks / (double)std::max<U64>(1, sStats.mFrames) << ")" << LL_ENDL;
+            {
+                static U32 last_frame = 0;
+                const U32 now_frame = LLFrameTimer::getFrameCount();
+                const double frames = (double)std::max<U32>(1, now_frame - last_frame);
+                last_frame = now_frame;
+                std::string by_type;
+                for (int ty = 0; ty < 16; ++ty)
+                {
+                    const U64 n = sEvByType[ty].exchange(0);
+                    if (n) { by_type += " type " + std::to_string(ty) + ": " + std::to_string((double)n / frames); }
+                }
+                LL_INFOS("VisSet") << "bounds events a frame by partition type (all sets together, every partition):" << by_type << LL_ENDL;
+            }
             ms_still = 0.0;
             still_calls = 0;
             ms_max = 0.0;
@@ -2718,6 +2732,10 @@ void LLVisSetHooks::noteOcc(LLViewerOctreeGroup* group)
 void LLVisSetHooks::noteBounds(LLViewerOctreeGroup* group)
 {
     LLViewerOctreePartition* part = group->getOctreePartition();
+    if (part)
+    {
+        LLVisSet::sEvByType[std::min<U32>(15, part->mPartitionType)].fetch_add(1, std::memory_order_relaxed);      // (census: every partition, tracked or walked)
+    }
     if (!part || !part->mVisTracked.load(std::memory_order_relaxed))
     {
         return;
