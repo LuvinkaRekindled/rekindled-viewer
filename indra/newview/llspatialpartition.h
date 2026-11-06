@@ -481,7 +481,9 @@ public:
     struct CullCollect
     {
         struct NodeInfo { S8 mEntryRes = 0; S8 mResOut = 0; U8 mOutcome = 0; U8 mMember = 0; };      // entry / out: the walk's mRes when the node was entered and after its own frustum test; outcome: 1 dropped as occluded, 2 outside the frustum, 3 passed; member: 0 no, 1 drawable group, 2 visible group
+        struct Item { LLSpatialGroup* mGroup; U8 mKind; };      // in the order the walk reached them: kind 0 a node dropped as occluded (markOccluder), 1 a drawable group, 2 a visible group (markNotCulled)
         std::vector<LLSpatialGroup*> mDrawable, mVisible;
+        std::vector<Item> mOrder;
         std::unordered_map<const void*, NodeInfo> mNodes;
     };
     void collectCull(LLCamera& camera, CullCollect& out);
@@ -954,6 +956,9 @@ namespace LLVisSet
 {
     void update(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts, bool camera_changed);
     void verify(LLCamera& camera, const std::vector<LLSpatialPartition*>& parts);
+    bool replayable(LLSpatialPartition* part);                  // the partition's retained set is current for this frame: the cull replays it instead of walking
+    size_t replayCount(LLSpatialPartition* part);               // the entries of its replay list
+    void replay(LLSpatialPartition* part, LLCamera& camera, size_t begin, size_t end);    // what the walk would have done to the groups at [begin, end) of the replay list, in order (a cull job: runs under the job's scope)
 }
 
 #endif //LL_LLSPATIALPARTITION_H

@@ -4051,6 +4051,8 @@ struct CullItem
     bool mTask = false;
     LLViewerOctreeCull::SplitTask mSplit = { nullptr, 0 };
     float mUs = 0.f;
+    bool mReplay = false;       // C4.5 S1c: the retained set is replayed instead of the walk
+    size_t mBegin = 0, mEnd = 0;        // (of the replay list)
 };
 
 // a unit of the result, in the order of the serial loop: a segment (what the top levels of a split partition did, on the calling thread, before the jobs) or a run of items (a job)
@@ -4104,6 +4106,7 @@ struct CullTaskScope
     }
 };
 
+bool sVisSetReplay = false;       // C4.5 S1c: this frame the tracked partitions with a current retained set are replayed (set by updateCull around the pool cull)
 std::vector<std::unique_ptr<LLCullResult>> sCullLocals;
 std::unordered_map<LLSpatialPartition*, float> sCullCostUs;     // the last measured cost of a partition's walk (smoothed), the weight when the runs are cut
 LLCullResult* sCullCheckResult = nullptr;
@@ -4258,6 +4261,15 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
             cost[k] = -1.f;
         }
     }
+    std::vector<char> replay(parts.size(), 0);
+    for (size_t k = 0; k < parts.size(); ++k)
+    {
+        if (sVisSetReplay && LLVisSet::replayable(parts[k]))
+        {
+            replay[k] = 1;
+            cost[k] = 0.2f * (float)LLVisSet::replayCount(parts[k]) + 1.f;        // (about 0.2 us a group)
+        }
+    }
     const float unknown_cost = known ? (float)(known_sum / known) : 6.f;
     double total = 0.0;
     for (float& c : cost)
@@ -4300,7 +4312,7 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
         for (size_t k = 0; k < parts.size(); ++k)
         {
             LLSpatialPartition* part = parts[k];
-            if (cost[k] > split_cost)
+            if (cost[k] > split_cost && !replay[k])
             {
                 run = nullptr;
                 static const double node_split = getenv("LL_VK_CULL_NODE_US") ? atof(getenv("LL_VK_CULL_NODE_US")) : 100.0;
@@ -4338,6 +4350,31 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
                     run = &new_chunk(false);
                     run_cost = 0.0;
                 }
+                if (replay[k])
+                {
+                    // a replayed partition in pieces of the same size as a walk job's share: the pieces are consecutive in the result, as the walk's would be
+                    const size_t n = LLVisSet::replayCount(part);
+                    const size_t piece = std::max<size_t>(64, (size_t)(target / 0.2));
+                    for (size_t b = 0; b < std::max<size_t>(n, 1); b += piece)
+                    {
+                        if (!run)
+                        {
+                            run = &new_chunk(false);
+                            run_cost = 0.0;
+                        }
+                        items.push_back({ part, false, { nullptr, 0 }, 0.f });
+                        items.back().mReplay = true;
+                        items.back().mBegin = b;
+                        items.back().mEnd = std::min(n, b + piece);
+                        run->mEnd = items.size();
+                        run_cost += 0.2 * (double)(items.back().mEnd - b) + 0.5;
+                        if (run_cost >= target)
+                        {
+                            run = nullptr;
+                        }
+                    }
+                    continue;
+                }
                 items.push_back({ part, false, { nullptr, 0 }, 0.f });
                 run->mEnd = items.size();
                 run_cost += cost[k];
@@ -4368,7 +4405,11 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
             const auto p0 = std::chrono::steady_clock::now();
             {
                 LL_CPU_ZONE("updateCull: partition cull");
-                if (item.mTask)
+                if (item.mReplay)
+                {
+                    LLVisSet::replay(item.mPart, camera, item.mBegin, item.mEnd);
+                }
+                else if (item.mTask)
                 {
                     item.mPart->cullTask(camera, item.mSplit);
                 }
@@ -4435,8 +4476,13 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
     {
         sCullNodeUs.clear();
     }
-    for (LLSpatialPartition* part : parts)
+    for (size_t k = 0; k < parts.size(); ++k)
     {
+        if (replay[k])
+        {
+            continue;       // (the cost of the walk of a replayed partition stays what it was: the weights are for the walk)
+        }
+        LLSpatialPartition* part = parts[k];
         float& c = sCullCostUs[part];
         const float now_us = part_us[part];
         c = c > 0.f ? c * 0.8f + now_us * 0.2f : now_us;
@@ -4886,7 +4932,50 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
     const bool main_cull = view.isMainWorld()
         && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
-    const int cull_mode = main_cull ? cull_split_setting() : 0;
+    // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
+    // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
+    static const int visset_mode = (LLVisSetHooks::sOn = (getenv("LL_VK_VISSET") && atoi(getenv("LL_VK_VISSET")) >= 3), getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0);
+    static std::vector<LLSpatialPartition*> vs_parts;
+    bool vs_replay = false, vs_check = false;
+    if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    {
+        vs_parts.clear();
+        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+        {
+            for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+            {
+                LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
+                // (the partitions whose groups keep their place: the moving ones, avatars, bridges, particles and control avatars, are walked every frame and not part of the retained set)
+                if (part && gPipeline.hasRenderType(part->mDrawableType)
+                    && (i == LLViewerRegion::PARTITION_TERRAIN || i == LLViewerRegion::PARTITION_VOIDWATER || i == LLViewerRegion::PARTITION_WATER || i == LLViewerRegion::PARTITION_TREE || i == LLViewerRegion::PARTITION_GRASS || i == LLViewerRegion::PARTITION_VOLUME))
+                {
+                    vs_parts.push_back(part);
+                }
+            }
+        }
+        // the camera signature the verdicts were made for: the planes, the corner distance, the origin, and the settings the culler reads
+        static F32 sig[40] = {};
+        F32 now[40] = {};
+        int k = 0;
+        for (U32 i = 0; i < 7; ++i)
+        {
+            const LLPlane& pl = camera.getAgentPlane(i);
+            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
+        }
+        now[k++] = (F32)camera.getPlaneCount();
+        now[k++] = camera.mFrustumCornerDist;
+        const LLVector3& o = camera.getOrigin();
+        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
+        now[k++] = (F32)LLPipeline::useOcclusion();
+        now[k++] = LLPipeline::sUseFarClip ? 1.f : 0.f;
+        const bool camera_changed = memcmp(sig, now, sizeof(sig)) != 0;
+        memcpy(sig, now, sizeof(sig));
+        LLVisSet::update(camera, vs_parts, camera_changed);
+        vs_replay = visset_mode >= 4 && cull_split_setting() >= 3;
+        vs_check = vs_replay && visset_mode == 4 && (LLFrameTimer::getFrameCount() % 60) == 0;       // (5: the replay alone, nothing is compared: for the cost)
+    }
+    sVisSetReplay = vs_replay;
+    const int cull_mode = main_cull ? (vs_check ? 4 : cull_split_setting()) : 0;
     int cull_done = 0;
     if (cull_mode >= 3)
     {
@@ -4959,62 +5048,15 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLCullCensus::sActive.store(false);
         main_cull_census(camera);
     }
-    static const int visset_mode = (LLVisSetHooks::sOn = (getenv("LL_VK_VISSET") && atoi(getenv("LL_VK_VISSET")) >= 3), getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 0);
-    if (visset_mode >= 2 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    if (visset_mode >= 2 && visset_mode != 5 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
         main_vis_verify(camera);
     }
-    if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
+    if (visset_mode >= 3 && visset_mode != 5 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
-        // the retained set as an observer: events applied, then compared with a full collecting walk (the cull still decides what is listed)
-        static std::vector<LLSpatialPartition*> vs_parts;
-        vs_parts.clear();
-        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-        {
-            for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-            {
-                LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
-                // (the partitions whose groups keep their place: the moving ones, avatars, bridges, particles and control avatars, are walked every frame and not part of the retained set)
-                if (part && gPipeline.hasRenderType(part->mDrawableType)
-                    && (i == LLViewerRegion::PARTITION_TERRAIN || i == LLViewerRegion::PARTITION_VOIDWATER || i == LLViewerRegion::PARTITION_WATER || i == LLViewerRegion::PARTITION_TREE || i == LLViewerRegion::PARTITION_GRASS || i == LLViewerRegion::PARTITION_VOLUME))
-                {
-                    vs_parts.push_back(part);
-                }
-            }
-        }
-        // the camera signature the verdicts were made for: the planes, the corner distance, the origin, and the settings the culler reads
-        static F32 sig[40] = {};
-        F32 now[40] = {};
-        int k = 0;
-        for (U32 i = 0; i < 7; ++i)
-        {
-            const LLPlane& pl = camera.getAgentPlane(i);
-            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
-        }
-        now[k++] = (F32)camera.getPlaneCount();
-        now[k++] = camera.mFrustumCornerDist;
-        const LLVector3& o = camera.getOrigin();
-        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
-        now[k++] = (F32)LLPipeline::useOcclusion();
-        now[k++] = LLPipeline::sUseFarClip ? 1.f : 0.f;
-        const bool camera_changed = memcmp(sig, now, sizeof(sig)) != 0;
-        if (camera_changed)
-        {
-            static int logged = 0;
-            if (++logged <= 24)
-            {
-                std::string diff;
-                for (int j = 0; j < 40; ++j)
-                {
-                    if (sig[j] != now[j]) { char b[96]; snprintf(b, sizeof(b), "[%d: %.9g -> %.9g] ", j, sig[j], now[j]); diff += b; }
-                }
-                LL_INFOS("VisSet") << "camera signature changed (planes 0-27, plane count 28, corner distance 29, origin 30-32, occlusion mode 33, far clip 34): " << diff << LL_ENDL;
-            }
-        }
-        memcpy(sig, now, sizeof(sig));
-        LLVisSet::update(camera, vs_parts, camera_changed);
         LLVisSet::verify(camera, vs_parts);
     }
+    sVisSetReplay = false;
 
     if (cull_use)
     {
