@@ -297,6 +297,16 @@ struct LLCullCensus
     static void noteOcc(class LLOcclusionCullingGroup* group, bool now_occluded, int source);       // pipeline.cpp
 };
 
+// <FS> C4.5 S1b (LL_VK_VISSET >= 1): the events that change what the main view's cull lists, told to the retained set (llspatialpartition.cpp, LLVisSet). Every call site tests sOn first.
+struct LLVisSetHooks
+{
+    static inline std::atomic<bool> sOn{ false };
+    static void noteOcc(LLViewerOctreeGroup* group);        // the group's world OCCLUDED state changed (its subtree may have: the walk of it is redone from the group)
+    static void noteBounds(LLViewerOctreeGroup* group);     // the group's bounds, extents, object bounds, frustum-skip flag or elements changed
+    static void forget(LLViewerOctreeGroup* group);         // the group is destroyed
+    static void invalidateAll();                            // everything moved (a region shift): the retained set is rebuilt
+};
+
 //octree group which has capability to support occlusion culling
 //LL_ALIGN_PREFIX(16)
 class LLOcclusionCullingGroup : public LLViewerOctreeGroup, public LLHizTarget
@@ -383,6 +393,7 @@ public:
     // LLViewerOctreeGroup::bumpPartitionEpoch)
     U32              mId = 0;
     std::atomic<U32> mEpoch{ 0 };
+    std::atomic<bool> mVisTracked{ false };      // <FS> C4.5 S1b: the retained set follows this partition (the hooks of groups of other partitions return at once)
 };
 
 class LLViewerOctreeCull : public OctreeTraveler

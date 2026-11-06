@@ -586,6 +586,14 @@ void LLViewerOctreeGroup::rebound()
         return;
     }
 
+    // <FS> C4.5 S1b: what a frustum verdict reads of this group, before and after: a change is an event for the retained set
+    LLVector4a old_rows[6];
+    const bool vis_set = LLVisSetHooks::sOn.load(std::memory_order_relaxed);
+    if (vis_set)
+    {
+        old_rows[0] = row().bounds[0]; old_rows[1] = row().bounds[1]; old_rows[2] = row().extents[0]; old_rows[3] = row().extents[1]; old_rows[4] = row().objectBounds[0]; old_rows[5] = row().objectBounds[1];
+    }
+
     if (mOctreeNode->getChildCount() == 1 && mOctreeNode->getElementCount() == 0)
     {
         LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) mOctreeNode->getChild(0)->getListener(0);
@@ -600,6 +608,10 @@ void LLViewerOctreeGroup::rebound()
         if (LLCullShadow::sOn && !group->hasState(SKIP_FRUSTUM_CHECK))
         {
             LLCullShadow::touch(group);     // <FS> S7 C1b: the flag shows in its row
+        }
+        if (vis_set && !group->hasState(SKIP_FRUSTUM_CHECK))
+        {
+            LLVisSetHooks::noteBounds(group);
         }
         group->setState(SKIP_FRUSTUM_CHECK);
     }
@@ -618,6 +630,10 @@ void LLViewerOctreeGroup::rebound()
         {
             LLCullShadow::touch(group);     // <FS> S7 C1b
         }
+        if (vis_set && group->hasState(SKIP_FRUSTUM_CHECK))
+        {
+            LLVisSetHooks::noteBounds(group);
+        }
         group->clearState(SKIP_FRUSTUM_CHECK);
         group->rebound();
         //initialize to first child
@@ -631,6 +647,10 @@ void LLViewerOctreeGroup::rebound()
             if (LLCullShadow::sOn && group->hasState(SKIP_FRUSTUM_CHECK))
             {
                 LLCullShadow::touch(group);     // <FS> S7 C1b
+            }
+            if (vis_set && group->hasState(SKIP_FRUSTUM_CHECK))
+            {
+                LLVisSetHooks::noteBounds(group);
             }
             group->clearState(SKIP_FRUSTUM_CHECK);
             group->rebound();
@@ -650,6 +670,11 @@ void LLViewerOctreeGroup::rebound()
     }
 
     clearState(DIRTY);
+    if (vis_set && (memcmp(&old_rows[0], &row().bounds[0], sizeof(LLVector4a)) || memcmp(&old_rows[1], &row().bounds[1], sizeof(LLVector4a)) || memcmp(&old_rows[2], &row().extents[0], sizeof(LLVector4a))
+        || memcmp(&old_rows[3], &row().extents[1], sizeof(LLVector4a)) || memcmp(&old_rows[4], &row().objectBounds[0], sizeof(LLVector4a)) || memcmp(&old_rows[5], &row().objectBounds[1], sizeof(LLVector4a))))
+    {
+        LLVisSetHooks::noteBounds(this);
+    }
     bumpPartitionEpoch();               // <FS> C4.3: the bounds are new (a result computed while this group was stale must not be kept under the final epoch)
 
     return;
@@ -680,6 +705,10 @@ void LLViewerOctreeGroup::handleDestruction(const TreeNode* node)
         return;
     }
     setState(DEAD);
+    if (LLVisSetHooks::sOn.load(std::memory_order_relaxed))
+    {
+        LLVisSetHooks::forget(this);
+    }
     bumpPartitionEpoch();               // <FS> C4.3
     if (LLCullShadow::sOn)
     {
@@ -1447,12 +1476,13 @@ void LLOcclusionCullingGroup::checkOcclusion()
 
     if (mHizStale && mHizSerial)
     {   // a verdict is awaited and the group asked to be discarded (an object was added): visible until the next box has a result
-        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
+        const bool was_occluded = (LLCullCensus::sOn || LLVisSetHooks::sOn.load(std::memory_order_relaxed)) && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
         if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
         {
             LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
             LLCullCensus::noteOcc(this, false, 1);
+            if (LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteOcc(this); }
         }
         mHizSerial = 0;
         mHizStale = false;
@@ -1485,12 +1515,13 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     {   // the camera is inside the box: nothing to test, visible
         mHizSerial = 0;
         mHizStale = true;
-        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
+        const bool was_occluded = (LLCullCensus::sOn || LLVisSetHooks::sOn.load(std::memory_order_relaxed)) && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
         if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
         {
             LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
             LLCullCensus::noteOcc(this, false, 2);
+            if (LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteOcc(this); }
         }
         return;
     }
@@ -1530,10 +1561,11 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
         {
             o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
             o->mHizOccludedOnce = false;
-            if (LLCullCensus::sOn && o->mSpatialPartition)
+            if ((LLCullCensus::sOn || LLVisSetHooks::sOn.load(std::memory_order_relaxed)) && o->mSpatialPartition)
             {
                 LLCullCensus::sOccChanges[std::min<U32>(o->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
                 LLCullCensus::noteOcc(o, false, 3);
+                if (LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteOcc(o); }
             }
         }
     }
@@ -1545,16 +1577,17 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
 {
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
-    const bool census_was = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED);
+    const bool census_was = (LLCullCensus::sOn || LLVisSetHooks::sOn.load(std::memory_order_relaxed)) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED);
     struct CensusEnd
     {
         LLOcclusionCullingGroup* mG; bool mWas;
         ~CensusEnd()
         {
-            if (LLCullCensus::sOn && mG->mSpatialPartition && mWas != ((mG->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0))
+            if ((LLCullCensus::sOn || LLVisSetHooks::sOn.load(std::memory_order_relaxed)) && mG->mSpatialPartition && mWas != ((mG->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0))
             {
                 LLCullCensus::sOccChanges[std::min<U32>(mG->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
                 LLCullCensus::noteOcc(mG, !mWas, 0);
+                if (LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteOcc(mG); }
             }
         }
     } census_end = { this, census_was };
