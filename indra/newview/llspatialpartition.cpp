@@ -337,6 +337,7 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
         (drawablep->getBinRadius() > mOctreeNode->getSize()[0] && parent && parent->getElementCount() >= gOctreeMaxCapacity);
     if (inside && fits)
     {
+        hizEntryMoved(drawablep->getSpatialExtents());
         unbound();
         setState(OBJECT_DIRTY);
         //setState(GEOM_DIRTY);
@@ -413,6 +414,7 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
         drawablep->setGroup(this);
         setState(static_cast<U32>(OBJECT_DIRTY) | static_cast<U32>(GEOM_DIRTY));
         hizInvalidate();
+        hizEntryMoved(drawablep->getSpatialExtents());
         gPipeline.markRebuild(this);
         if (drawablep->isSpatialBridge())
         {
@@ -4400,6 +4402,7 @@ void LLCullResult::clearLists()
     mVisibleListEnd = &mVisibleList[0];
     mVisibleBridgeSize = 0;
     mVisibleBridgeEnd = &mVisibleBridge[0];
+    mLodGroups.clear();
 }
 
 void LLCullResult::clear()
@@ -4426,6 +4429,7 @@ void LLCullResult::clear()
     mVisibleBridgeEnd = &mVisibleBridge[0];
 
     mSceneGroups.clear();
+    mLodGroups.clear();
     mGeoGroups.clear();
     mGeoSerials.clear();
     mGeoHandles.clear();

@@ -644,6 +644,9 @@ public:
     // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
     // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
     std::vector<LLSpatialGroup*> mSceneGroups;
+    // <FS> C4.4: the visible groups of a shadow cascade's cull whose changeLOD() answered true when the cull walk stamped them (the row was hot there), in the walk's order: the only ones the mark job
+    // (shadowPrepMark) still has to look at (a few dozen of ~1800 a frame). Filled by LLPipeline::markNotCulled for the cascade culls; cleared with the lists.
+    std::vector<LLSpatialGroup*> mLodGroups;
     // <FS> S3: the visible groups that passed postSort's filters (not dead, not occluded, not auto-hidden), after their rebuild: the groups whose deferred geometry the scene tables draw
     // (LL_VK_SCENE_GEO=1). Filled by postSort.
     std::vector<LLSpatialGroup*> mGeoGroups;
