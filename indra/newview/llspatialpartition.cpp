@@ -124,8 +124,68 @@ S32 LLSphereAABB(const LLVector3& center, const LLVector3& size, const LLVector3
     return ret;
 }
 
+namespace LLDirtyGroups
+{
+static std::mutex sMutex;
+static std::vector<LLSpatialGroup*> sList;
+
+void add(LLSpatialGroup* g)
+{
+    if (g->mInDirtyReg.exchange(true, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sMutex);
+    g->mDirtyIdx = (U32)sList.size();
+    sList.push_back(g);
+}
+
+void forget(LLSpatialGroup* g)
+{
+    if (!g->mInDirtyReg.exchange(false, std::memory_order_acq_rel))
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sMutex);
+    const U32 idx = g->mDirtyIdx;
+    if (idx < sList.size() && sList[idx] == g)
+    {
+        LLSpatialGroup* last = sList.back();
+        sList[idx] = last;
+        last->mDirtyIdx = idx;
+        sList.pop_back();
+    }
+}
+
+std::vector<LLSpatialGroup*> snapshot()
+{
+    std::lock_guard<std::mutex> lock(sMutex);
+    return sList;
+}
+
+void prune()
+{
+    std::lock_guard<std::mutex> lock(sMutex);
+    for (size_t k = 0; k < sList.size();)
+    {
+        LLSpatialGroup* g = sList[k];
+        if (g->isDead() || !g->hasState(LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::NEW_DRAWINFO))
+        {
+            g->mInDirtyReg.store(false, std::memory_order_release);
+            LLSpatialGroup* last = sList.back();
+            sList[k] = last;
+            last->mDirtyIdx = (U32)k;
+            sList.pop_back();
+            continue;
+        }
+        ++k;
+    }
+}
+}   // namespace LLDirtyGroups
+
 LLSpatialGroup::~LLSpatialGroup()
 {
+    LLDirtyGroups::forget(this);
     /*if (sNoDelete)
     {
         LL_ERRS() << "Illegal deletion of LLSpatialGroup!" << LL_ENDL;
@@ -660,6 +720,10 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
     else
     {
         row().state |= state;
+        if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO))
+        {
+            LLDirtyGroups::add(this);
+        }
     }
 }
 

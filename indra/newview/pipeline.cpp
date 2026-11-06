@@ -8755,7 +8755,7 @@ struct ShadowPrepTimes
 // R0 / R1a (doc/vulkan/S-retire-views-design.md): what the render map job of a cascade pushes, by kind, and the draw infos it leaves out when the cascade's static lists are dead
 struct ViewJobsStats
 {
-    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0}, mSkippedAlpha{0}, mWouldSkipAlpha{0};
+    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0}, mSkippedAlpha{0}, mWouldSkipAlpha{0}, mPlanSkipped{0};
 };
 ViewJobsStats sViewJobs;
 std::atomic<bool> sViewJobsSkipStatic{false};
@@ -8900,8 +8900,8 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                 LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment; draw infos pushed: %.1f static (%.1f left out), %.1f rigged static, %.1f alpha, %.1f other",
                     (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mStatic.exchange(0) / n, sViewJobs.mSkippedStatic.exchange(0) / n,
                     sViewJobs.mRiggedStatic.exchange(0) / n, sViewJobs.mAlpha.exchange(0) / n, sViewJobs.mOther.exchange(0) / n) << LL_ENDL;
-                LL_INFOS("ShadowPrep") << llformat("render map jobs: alpha draw infos left out %.1f a job (the worker holds them), %.1f a job that would be left out (count-only mode)",
-                    sViewJobs.mSkippedAlpha.exchange(0) / n, sViewJobs.mWouldSkipAlpha.exchange(0) / n) << LL_ENDL;
+                LL_INFOS("ShadowPrep") << llformat("render map jobs: alpha draw infos left out %.1f a job (the worker holds them), %.1f a job that would be left out (count-only mode), %.1f groups a job skipped by their answer",
+                    sViewJobs.mSkippedAlpha.exchange(0) / n, sViewJobs.mWouldSkipAlpha.exchange(0) / n, sViewJobs.mPlanSkipped.exchange(0) / n) << LL_ENDL;
             }
         }
         t = ShadowPrepTimes();
@@ -9471,6 +9471,14 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
     }
 }
 
+// C4.1: LL_VK_REBUILD_REG 1 (default) the rebuild loops of the shadow preparation ask the groups that have a dirty bit set (LLDirtyGroups) whether the cascade sees them, 0 reads the state of every visible group,
+// 2 does the old loops and compares what they would act on with what the registry gives
+static int rebuild_reg_mode()
+{
+    static const int mode = getenv("LL_VK_REBUILD_REG") ? atoi(getenv("LL_VK_REBUILD_REG")) : 1;
+    return mode;
+}
+
 // main thread, after the culls: the geometry rebuilds that stateSort and postSort did for each cascade
 void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
 {
@@ -9482,13 +9490,79 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of every group these rebuilds make, once
     const bool census = shadow_census_on();
     const S32 census_frame = LLViewerOctreeEntryData::getCurrentFrame();
+    const int reg_mode = rebuild_reg_mode();
     const auto world_sees = [census_frame](LLSpatialGroup* g) { return (S32)g->getVisible(LLViewerCamera::CAMERA_WORLD) >= census_frame ? 0 : 1; };      // (the index of the census row: 1 = only the cascades)
 
     for (ShadowCascadePrep& prep : preps)
     {
         LLCullResult& result = *prep.mResult;
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+        const bool use_reg = reg_mode == 1 && !(prep.mHull.mValid && shadow_hull_mode() == 1);       // (the hull drops stamped groups from the lists: those cascades read the lists)
+        const LLViewerCamera::eCameraID cascade_cam = LLViewerCamera::sCurCameraID;
 
+        if (reg_mode == 2 && !(prep.mHull.mValid && shadow_hull_mode() == 1))
+        {
+            // verify: what the loops below would act on, against the registry's answer
+            std::unordered_set<const LLSpatialGroup*> listed_mesh, listed_new, reg_mesh, reg_new;
+            for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
+            {
+                if (!(*iter)->isDead() && (*iter)->hasState(LLSpatialGroup::MESH_DIRTY)) { listed_mesh.insert(*iter); }
+            }
+            for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
+            {
+                LLSpatialGroup* g = *iter;
+                if (g->isDead()) { continue; }
+                if (g->hasState(LLSpatialGroup::MESH_DIRTY)) { listed_mesh.insert(g); }
+                if (!(RenderAutoHideSurfaceAreaLimit > 0.f && g->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(g->row().objectBoxSize, 10.f))
+                    && g->hasState(LLSpatialGroup::NEW_DRAWINFO) && g->hasState(LLSpatialGroup::GEOM_DIRTY))
+                {
+                    listed_new.insert(g);
+                }
+            }
+            for (LLSpatialGroup* g : LLDirtyGroups::snapshot())
+            {
+                if (g->isDead() || g->getVisible(cascade_cam) < census_frame) { continue; }
+                if (g->hasState(LLSpatialGroup::MESH_DIRTY)) { reg_mesh.insert(g); }
+                if (g->getSpatialPartition()->mRenderByGroup && !(RenderAutoHideSurfaceAreaLimit > 0.f && g->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(g->row().objectBoxSize, 10.f))
+                    && g->hasState(LLSpatialGroup::NEW_DRAWINFO) && g->hasState(LLSpatialGroup::GEOM_DIRTY))
+                {
+                    reg_new.insert(g);
+                }
+            }
+            static U64 checks = 0, bad = 0;
+            ++checks;
+            if (listed_mesh != reg_mesh || listed_new != reg_new)
+            {
+                ++bad;
+                if (bad <= 8)
+                {
+                    LL_WARNS("ShadowPrep") << "rebuild registry differs from the lists: cascade " << prep.mIndex << " mesh dirty " << listed_mesh.size() << " against " << reg_mesh.size() << ", new draw info " << listed_new.size() << " against " << reg_new.size() << " (" << bad << " of " << checks << ")" << LL_ENDL;
+                }
+            }
+            else if (checks % 3000 == 0)
+            {
+                LL_INFOS("ShadowPrep") << "rebuild registry check: " << bad << " of " << checks << " cascades differ from the lists" << LL_ENDL;
+            }
+        }
+
+        if (use_reg)
+        {
+            // the drawable groups' meshes first, then the visible groups' (the order of the lists)
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                for (LLSpatialGroup* group : LLDirtyGroups::snapshot())
+                {
+                    if (group->isDead() || (group->getSpatialPartition()->mRenderByGroup ? 1 : 0) != pass || !group->hasState(LLSpatialGroup::MESH_DIRTY) || group->getVisible(cascade_cam) < census_frame)
+                    {
+                        continue;
+                    }
+                    if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
+                    { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                }
+            }
+        }
+        else
+        {
         for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
@@ -9506,6 +9580,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
                 if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
                 { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
+        }
         }
         lap.mark(PH_REBUILD_MESH);
         // rebuild drawable geometry
@@ -9528,7 +9603,26 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     {
         LLCullResult& result = *prep.mResult;
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+        const LLViewerCamera::eCameraID cascade_cam = LLViewerCamera::sCurCameraID;
 
+        if (reg_mode == 1 && !(prep.mHull.mValid && shadow_hull_mode() == 1))
+        {
+            for (LLSpatialGroup* group : LLDirtyGroups::snapshot())
+            {
+                if (group->isDead() || !group->getSpatialPartition()->mRenderByGroup || !group->hasState(LLSpatialGroup::NEW_DRAWINFO) || !group->hasState(LLSpatialGroup::GEOM_DIRTY) || group->getVisible(cascade_cam) < census_frame)
+                {
+                    continue;
+                }
+                if (RenderAutoHideSurfaceAreaLimit > 0.f &&
+                    group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f))
+                {
+                    continue;
+                }
+                if (census) { ++sCascadeCullCensus.mNewDrawInfo[world_sees(group)]; }
+                group->rebuildGeom();
+            }
+            continue;
+        }
         for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
@@ -9548,6 +9642,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             }
         }
     }
+    LLDirtyGroups::prune();
 
     rebuild_batch.flush();
     lap.mark(PH_NEW_DRAWINFO);
@@ -15444,6 +15539,13 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 }
 
 // worker: the render map of the cascade (the loop in postSort)
+// C4.1: LL_VK_MAP_PLAN 1 (default) the render map job skips a group whose last walk pushed nothing and whose inputs are the same, 0 walks every group, 2 walks them all and compares with the answer
+static int map_plan_mode()
+{
+    static const int mode = getenv("LL_VK_MAP_PLAN") ? atoi(getenv("LL_VK_MAP_PLAN")) : 1;
+    return mode;
+}
+
 // C4.1 for the alpha casters (doc/vulkan/PLAN-clean-core.md): the non-rigged draw info of an alpha source type that the worker holds as a resident alpha entry (the same test as renderShadow's drop of the builder's entries, made at the
 // map job: the pool, while the main thread is in the preparation and nothing registers or retires a fragment). The builder made an entry for it (hash, matrix and texture numbers) and the viewer dropped the entry again: 1,251 of
 // 1,301 entries a cascade pass, 83 M in a lap.
@@ -15473,6 +15575,18 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
     U64 n_alpha_skipped = 0, n_alpha_would = 0;
+    const int plan_mode = map_plan_mode();
+    U64 n_plan_skipped = 0;
+    U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
+    if (plan_mode)
+    {
+        plan_inputs = 1469598103934665603ull;
+        for (U32 t = 0; t < LLPipeline::NUM_RENDER_TYPES; ++t)
+        {
+            plan_inputs = (plan_inputs ^ (hasRenderType(t) ? 0x9Eu + t : 0x31u)) * 1099511628211ull;
+        }
+        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull)) * 1099511628211ull;
+    }
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
     LLCullResult::sg_iterator visible_groups = result.beginVisibleGroups();
@@ -15492,6 +15606,33 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         }
 
         ++n_groups;
+        U64 plan_key = 0;
+        if (plan_mode)
+        {
+            const LLSceneFragment* f = group->mSceneFragment;
+            plan_key = plan_inputs;
+            auto mix = [&](U64 v) { plan_key = (plan_key ^ v) * 1099511628211ull; };
+            mix(group->mDrawMapSerial);
+            mix((U64)(uintptr_t)f);
+            if (f)
+            {
+                mix(f->mSerial | ((U64)(f->mResident ? 1 : 0) << 32) | ((U64)(f->mAlphaResSent ? 1 : 0) << 33) | ((U64)f->mAlpha.size() << 34));
+            }
+            plan_key &= ~15ull;
+            const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
+            if ((plan & 1) && (plan & ~15ull) == plan_key && plan_mode == 1)
+            {
+                // nothing to push, as the last walk found: the group's alpha entries still go on the alpha lists
+                ++n_plan_skipped;
+                if (plan & 8) { ++n_resident; }
+                if (plan & 2) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); } }
+                if (plan & 4) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); } }
+                continue;
+            }
+        }
+        const size_t plan_cull_mark = local.mSceneGroups.size();
+        U64 plan_pushed = 0;
+        U64 plan_avatar_skips = 0;
         if (scene_resident_on() && !group->mDrawMap.empty())
         {
             // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
@@ -15529,6 +15670,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
                 if (cascade_cull_active && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get(), cascade_cull))
                 {
+                    ++plan_avatar_skips;
                     continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                 }
 
@@ -15542,6 +15684,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                     ++n_alpha_would;
                 }
 
+                ++plan_pushed;
                 sCull->pushDrawInfo(j->first, info);
                 if (ll_scene_geo_on() && ll_scene_geo_verify_on())
                 {
@@ -15550,12 +15693,14 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
         }
 
+        bool plan_alpha = false, plan_rigged_alpha = false;
         if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LLSpatialGroup::draw_map_t::iterator alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
 
             if (alpha != group->mDrawMap.end())
             {  // store alpha groups for sorting
+                plan_alpha = true;
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
                 {
                     sCull->pushAlphaGroup(group);
@@ -15566,11 +15711,33 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
             if (rigged_alpha != group->mDrawMap.end())
             {
+                plan_rigged_alpha = true;
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
                 {
                     sCull->pushRiggedAlphaGroup(group);
                 }
             }
+        }
+        if (plan_mode)
+        {
+            const bool empty = plan_pushed == 0 && plan_avatar_skips == 0 && local.mSceneGroups.size() == plan_cull_mark;
+            if (plan_mode == 2)
+            {
+                // verify: a group the answer said was empty has pushed nothing now
+                static std::atomic<U64> checked{ 0 }, wrong{ 0 };
+                const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
+                if ((plan & 1) && (plan & ~15ull) == plan_key)
+                {
+                    ++checked;
+                    if (!empty && ++wrong <= 8)
+                    {
+                        LL_WARNS("ShadowPrep") << "render map plan: a group the answer called empty pushed " << plan_pushed << " draw infos now (checked " << checked.load() << ")" << LL_ENDL;
+                    }
+                }
+            }
+            const LLSceneFragment* f = group->mSceneFragment;
+            const bool resident = scene_resident_on() && !group->mDrawMap.empty() && f && f->mSerial == group->mDrawMapSerial && f->mResident;
+            group->mMapPlan.store(plan_key | (empty ? 1ull : 0ull) | (plan_alpha ? 2ull : 0ull) | (plan_rigged_alpha ? 4ull : 0ull) | (resident ? 8ull : 0ull), std::memory_order_relaxed);
         }
     }
     sViewJobs.mJobs.fetch_add(1, std::memory_order_relaxed);
@@ -15583,6 +15750,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     sViewJobs.mSkippedStatic.fetch_add(n_skipped, std::memory_order_relaxed);
     sViewJobs.mSkippedAlpha.fetch_add(n_alpha_skipped, std::memory_order_relaxed);
     sViewJobs.mWouldSkipAlpha.fetch_add(n_alpha_would, std::memory_order_relaxed);
+    sViewJobs.mPlanSkipped.fetch_add(n_plan_skipped, std::memory_order_relaxed);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
