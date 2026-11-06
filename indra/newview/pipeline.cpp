@@ -10730,6 +10730,7 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_GLTF_PBR, -1, 1 },         // S6 X4: the glTF opaque and mask passes (LLDrawPoolGLTFPBR) and the glTF glow
     { LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, -1, 1 },
     { LLRenderPass::PASS_GLTF_GLOW, -1, 2 },
+    { LLRenderPass::PASS_INVISIBLE, -1 },           // C5: the water exclusion pool's invisible draws (positions only, the colour program's pull twin), see LLDrawPoolWaterExclusion::render
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -10773,6 +10774,11 @@ static bool geo_type_available(size_t t, bool rigged)
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
         return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPullReady && (!rigged || ll_rigged_packets_enabled());       // (gAlphaGlowPullReady: the plain and the skinned emissive pull programs)
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
+    {
+        static const bool inv_table = !getenv("LL_VK_INV_TABLE") || getenv("LL_VK_INV_TABLE")[0] != '0';      // (0 = the pull batch of the render map, as before)
+        return inv_table && !rigged && LLRenderPass::deferredPacketsEnabled() && ll_pull_twin(&gDrawColorProgram) != nullptr;      // (the water exclusion pool draws it with the colour program's pull twin; the rigged ones stay in the render map)
     }
     return true;
 }
@@ -11118,6 +11124,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 f.mGeoFallback.push_back({ (U32)t2, params });
                 params->mGeoServed = false;
                 continue;
+            }
+            if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
+            {
+                for (int k = 0; k < 6; ++k) { textures[k] = nullptr; }      // (the colour program samples nothing)
             }
             U32* fields[6] = { &item.mE.mTextures[0], &item.mE.mTextures[1], &item.mE.mTextures[2], &item.mE.mTextures[3], &item.mE.mNormalMap, &item.mE.mSpecularMap };
             for (int k = 0; k < 6; ++k)
