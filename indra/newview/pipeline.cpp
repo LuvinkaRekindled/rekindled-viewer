@@ -15410,15 +15410,11 @@ static bool alpha_source_type(U32 type)
         || type == LLRenderPass::PASS_NORMSPEC_MASK || type == LLRenderPass::PASS_MATERIAL_ALPHA_MASK || type == LLRenderPass::PASS_SPECMAP_MASK || type == LLRenderPass::PASS_NORMMAP_MASK;
 }
 
-static bool alpha_info_resident(const LLDrawInfo& info)
+// (the draw info says its entry is in its group's fragment; the fragment of the group's current draw map says the worker holds the fragment's alpha entries: no lookup by buffer ids)
+static bool alpha_info_resident(const LLDrawInfo& info, const LLSpatialGroup* group)
 {
-    const LLVertexBuffer* vb = info.mVertexBuffer.get();
-    if (!vb || !info.mCount)
-    {
-        return false;
-    }
-    const auto found = sAlphaKeys.find(alpha_key(vb->getVertexBufferId(), vb->getIndexBufferId(), info.mOffset, info.mCount));
-    return found != sAlphaKeys.end() && found->second.mFrag->mAlphaResSent;
+    const LLSceneFragment* fragment = group->mSceneFragment;
+    return info.mAlphaInFragment && fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mAlphaResSent;
 }
 
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
@@ -15493,7 +15489,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                     continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
                 }
 
-                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first) && alpha_info_resident(*info))
+                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first) && alpha_info_resident(*info, group))
                 {
                     if (skip_alpha == 1)
                     {
@@ -19673,6 +19669,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
         const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
         for (LLDrawInfo* params : found->second)
         {
+            params->mAlphaInFragment = false;
             if (!params->mCount || params->mAvatar != nullptr)
             {
                 continue;
@@ -19685,6 +19682,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             {
                 continue;
             }
+            params->mAlphaInFragment = true;
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
             bool known = false;
             for (const LLSceneFragment::BufferRef& b : f.mBuffers)
