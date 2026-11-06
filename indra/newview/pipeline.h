@@ -261,6 +261,9 @@ public:
 
     void        doOcclusion(LLCamera& camera);
     void        markNotCulled(LLSpatialGroup* group, LLCamera &camera);
+    // <FS> C4.5 R2: what markNotCulled did for a member of a retained set that the retained set does not already hold: the list it goes on and the occlusion test (a replay), and for a group that just joined the set its wake and its distance
+    void        replayMember(LLSpatialGroup* group, U8 kind, bool occlude);
+    void        replayAdopted(LLSpatialGroup* group, LLCamera& camera);
     void        markMoved(LLDrawable *drawablep, bool damped_motion = false);
     void        markShift(LLDrawable *drawablep);
     void        markTextured(LLDrawable *drawablep);

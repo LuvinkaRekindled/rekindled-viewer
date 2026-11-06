@@ -4204,6 +4204,28 @@ bool cull_lists_equal(LLCullResult& a, LLCullResult& b)
     };
     std::vector<LLSpatialGroup*> occ_a = first_occurrences(a), occ_b = first_occurrences(b);
     cmp("occlusion groups", occ_a.data(), occ_a.data() + occ_a.size(), occ_b.data(), occ_b.data() + occ_b.size());
+    {
+        // (the groups only one side listed, with what decides the listing: the first few, to find the cause of a difference)
+        static int shown = 0;
+        std::unordered_set<LLSpatialGroup*> sa(occ_a.begin(), occ_a.end()), sb(occ_b.begin(), occ_b.end());
+        auto show = [&](const char* side, const std::vector<LLSpatialGroup*>& v, const std::unordered_set<LLSpatialGroup*>& other)
+        {
+            for (LLSpatialGroup* g : v)
+            {
+                if (other.count(g) || shown >= 24)
+                {
+                    continue;
+                }
+                ++shown;
+                LLSpatialGroup* par = g->getParent();
+                LL_WARNS("CullSplit") << "cull check: only the " << side << " listed an occlusion group: partition type " << g->getSpatialPartition()->mPartitionType << ", stored stamp " << g->row().visible[LLViewerCamera::CAMERA_WORLD]
+                    << ", slot " << g->row().retainedSlot << " (its frame " << g->retainedFrame() << "), frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", needsUpdate " << g->needsUpdate() << ", occlusion state " << g->row().occlusion[LLViewerCamera::CAMERA_WORLD]
+                    << ", parent " << (par ? (par->isOcclusionState(LLSpatialGroup::OCCLUDED) ? "occluded" : "not occluded") : "none") << ", empty " << g->isEmpty() << LL_ENDL;
+            }
+        };
+        show("pool (replay)", occ_a, sb);
+        show("serial walk", occ_b, sa);
+    }
     if (a.getVisibleListSize() != b.getVisibleListSize() || a.getVisibleBridgeSize() != b.getVisibleBridgeSize())
     {
         same = false;
@@ -4970,9 +4992,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         now[k++] = LLPipeline::sUseFarClip ? 1.f : 0.f;
         const bool camera_changed = memcmp(sig, now, sizeof(sig)) != 0;
         memcpy(sig, now, sizeof(sig));
-        LLVisSet::update(camera, vs_parts, camera_changed);
         vs_replay = visset_mode >= 4 && cull_split_setting() >= 3;
         vs_check = vs_replay && ((visset_mode == 4 && (LLFrameTimer::getFrameCount() % 60) == 0) || (visset_mode == 6 && (LLFrameTimer::getFrameCount() % 300) == 0));       // (5: the replay alone, nothing is compared: for the cost)
+        // (a check frame runs the real walk, which stamps the groups itself and must see the stamps of the frame before: the sets claim the frame only when the replay is the only thing that runs)
+        LLVisSet::update(camera, vs_parts, camera_changed, vs_replay && !vs_check);
     }
     sVisSetReplay = vs_replay;
     const int cull_mode = main_cull ? (vs_check ? 4 : cull_split_setting()) : 0;
@@ -5036,6 +5059,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             {
                 ++s.mCheckBad;
             }
+            if (sVisSetReplay && LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame()) != 0)      // <FS> C4.5 R2: the stamps the real walk wrote against the frame the sets claim
+            {
+                ++s.mCheckBad;
+            }
         }
         if (++s.mReport >= 600)
         {
@@ -5055,6 +5082,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     if (visset_mode >= 3 && visset_mode != 5 && visset_mode != 6 && view.isMainWorld() && !gCubeSnapshot && main_cull)
     {
         LLVisSet::verify(camera, vs_parts);
+    }
+    if (visset_mode >= 4 && view.isMainWorld() && !gCubeSnapshot)
+    {
+        LLVisSet::finishFrame();
     }
     sVisSetReplay = false;
 
@@ -5157,6 +5188,34 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     if (!sParallelPrep) // <FS> only a statistic: not worth sharing between the threads of the parallel shadow preparation
     {
         mNumVisibleNodes++;
+    }
+}
+
+void LLPipeline::replayMember(LLSpatialGroup* group, U8 kind, bool occlude)
+{
+    if (kind == 1)
+    {
+        sCull->pushDrawableGroup(group);
+    }
+    else
+    {
+        sCull->pushVisibleGroup(group);
+    }
+    if (occlude)
+    {
+        markOccluder(group);
+    }
+}
+
+void LLPipeline::replayAdopted(LLSpatialGroup* group, LLCamera& camera)
+{
+    if (group->hasState(LLSpatialGroup::FS_RELEASED))
+    {
+        wakeRequest(group);
+    }
+    if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+    {
+        group->updateDistance(camera);
     }
 }
 

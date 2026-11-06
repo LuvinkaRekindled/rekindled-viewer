@@ -183,6 +183,12 @@ protected:
 
 //defines an octree group for an octree node, which contains multiple entries.
 //LL_ALIGN_PREFIX(16)
+// <FS> C4.5 R2: per retained set (the slot in the rows of its members) the frame its replay last ran: that is the world stamp of a member, so a replay does not write a stamp per group
+struct LLRetainedStamps
+{
+    static inline std::atomic<S32> sFrame[256];
+};
+
 class LLViewerOctreeGroup
 :   public OctreeListener
 {
@@ -221,8 +227,9 @@ public:
     void setVisible();
     bool isVisible() const;
     virtual bool isRecentlyVisible() const;
-    S32  getVisible(LLViewerCamera::eCameraID id) const {return row().visible[id];}
-    S32  getAnyVisible() const {return row().anyVisible;}
+    S32  retainedFrame() const { const U32 slot = row().retainedSlot; return slot ? LLRetainedStamps::sFrame[slot].load(std::memory_order_relaxed) : 0; }
+    S32  getVisible(LLViewerCamera::eCameraID id) const { const S32 v = row().visible[id]; return (id == LLViewerCamera::CAMERA_WORLD && row().retainedSlot) ? std::max(v, retainedFrame()) : v; }
+    S32  getAnyVisible() const { const S32 v = row().anyVisible; return row().retainedSlot ? std::max(v, retainedFrame()) : v; }
     bool isEmpty() const { return mOctreeNode->isEmpty(); }
 
     U32  getState()                {return row().state; }
