@@ -4516,6 +4516,70 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
 // per frame a comparison of the groups the cull listed with the last frame's, by the type of the group's partition. A group list a retained cull would replay is exact when the camera is the same, the partition's
 // change epoch is the same and no group of it changed its occlusion state: for each type the frames where that key holds ("hit") and how many groups differed from the last frame on them (it must be 0), the groups that
 // differed on the other frames and which of the three changed. The report is a line every 600 frames (tag MainCull).
+void LLCullCensus::noteOcc(LLOcclusionCullingGroup* g, bool now_occluded, int source)
+{
+    sOccSrc[source & 3].fetch_add(1, std::memory_order_relaxed);
+    (now_occluded ? sOccSet : sOccClear).fetch_add(1, std::memory_order_relaxed);
+    static std::mutex mtx;
+    static std::unordered_map<const void*, std::pair<S32, S32>> last;       // group -> (frame of its last change, state after it)
+    const S32 frame = (S32)LLFrameTimer::getFrameCount();
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = last.find(g);
+        if (it == last.end())
+        {
+            sOccFirst.fetch_add(1, std::memory_order_relaxed);
+            last.emplace(g, std::make_pair(frame, now_occluded ? 1 : 0));
+        }
+        else
+        {
+            const S32 gap = frame - it->second.first;
+            sOccDwell[now_occluded ? 0 : 1][gap <= 2 ? 0 : gap <= 8 ? 1 : gap <= 60 ? 2 : 3].fetch_add(1, std::memory_order_relaxed);      // [the state it left: 0 visible, 1 occluded][how long]
+            it->second = { frame, now_occluded ? 1 : 0 };
+        }
+    }
+    if (LLSpatialGroup* sg = dynamic_cast<LLSpatialGroup*>(g))
+    {
+        if (const OctreeNode* node = sg->getOctreeNode())
+        {
+            if (node->getChildCount() == 0)
+            {
+                sOccLeaf.fetch_add(1, std::memory_order_relaxed);
+            }
+            U64 nodes = 0;
+            std::function<void(const OctreeNode*)> count = [&](const OctreeNode* n)
+            {
+                ++nodes;
+                for (U32 i = 0; i < n->getChildCount(); ++i)
+                {
+                    count(n->getChild(i));
+                }
+            };
+            count(node);
+            sOccSubtree.fetch_add(nodes, std::memory_order_relaxed);
+        }
+        bool avatar = false, active = false;
+        for (LLSpatialGroup::element_iter i = sg->getDataBegin(); i != sg->getDataEnd(); ++i)
+        {
+            LLDrawable* d = (LLDrawable*)(*i)->getDrawable();
+            if (!d)
+            {
+                continue;
+            }
+            if (d->isAvatar() || d->isSpatialBridge())
+            {
+                avatar = true;
+            }
+            else if (d->isActive())
+            {
+                active = true;
+            }
+        }
+        sOccAvatar.fetch_add(avatar ? 1 : 0, std::memory_order_relaxed);
+        sOccActive.fetch_add(active ? 1 : 0, std::memory_order_relaxed);
+    }
+}
+
 static void main_cull_census(LLCamera& camera)
 {
     using C = LLCullCensus;
@@ -4523,10 +4587,9 @@ static void main_cull_census(LLCamera& camera)
     static LLVector3 prev_origin, prev_at;
     static bool have_prev = false;
     static std::unordered_map<const void*, U8> prev_groups;
-    static U64 prev_epoch[16] = {};
     static U64 frames = 0, cam_still_frames = 0, all_hit_frames = 0;
     static U64 w_nodes = 0, w_early = 0, w_occdrop = 0, w_inside = 0, w_frustum = 0, w_out = 0, w_marks = 0, w_empty = 0, w_pd = 0, w_pv = 0, w_ticks = 0;
-    struct Per { U64 mGroups = 0, mHit = 0, mHitChanged = 0, mMiss = 0, mMissChanged = 0, mMissCam = 0, mMissEpoch = 0, mMissOcc = 0, mOccChanges = 0, mPresent = 0; };
+    struct Per { U64 mGroupsB = 0, mHitChangedB = 0, mMissChangedB = 0, mGroups = 0, mHit = 0, mHitChanged = 0, mMiss = 0, mMissChanged = 0, mMissCam = 0, mMissEpoch = 0, mMissOcc = 0, mOccChanges = 0, mPresent = 0; };
     static Per per[16];
     static std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     static U64 tsc0 = LLVisCensus::now();
@@ -4543,16 +4606,21 @@ static void main_cull_census(LLCamera& camera)
     w_frustum += C::sFrustumTests.exchange(0); w_out += C::sFrustumOut.exchange(0); w_marks += C::sMarkCalls.exchange(0); w_empty += C::sMarkEmpty.exchange(0);
     w_pd += C::sMarkDrawable.exchange(0); w_pv += C::sMarkVisible.exchange(0); w_ticks += C::sMarkTicks.exchange(0);
 
-    // the partitions' change epochs, summed by type (the partitions of the regions; the bridges' own partitions are not in the list: their groups' types show it when a key built on the epochs would miss them)
-    U64 epoch[16] = {};
+    // the partitions' change epochs: the partitions of the regions, and the own partition of every listed group (the bridges' partitions hold the attachments' groups, typed like the region's: they are not in the region's list)
+    static std::unordered_map<const void*, std::pair<U8, U64>> prev_parts;      // partition -> (type, epoch) as last seen
+    std::unordered_map<const void*, std::pair<U8, U64>> cur_parts;
+    auto note_part = [&](LLSpatialPartition* part)
+    {
+        if (part)
+        {
+            cur_parts.emplace((const void*)part, std::make_pair((U8)std::min<U32>(part->mPartitionType, 15), (U64)part->mEpoch.load(std::memory_order_relaxed)));
+        }
+    };
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
         for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
         {
-            if (LLSpatialPartition* part = (*iter)->getSpatialPartition(i))
-            {
-                epoch[std::min<U32>(part->mPartitionType, 15)] += part->mEpoch.load(std::memory_order_relaxed);
-            }
+            note_part((*iter)->getSpatialPartition(i));
         }
     }
     U32 occ[16];
@@ -4568,33 +4636,48 @@ static void main_cull_census(LLCamera& camera)
     {
         for (LLCullResult::sg_iterator g = b; g != e; ++g)
         {
-            cur.emplace((const void*)*g, (U8)std::min<U32>((*g)->getSpatialPartition()->mPartitionType, 15));
+            cur.emplace((const void*)*g, (U8)(std::min<U32>((*g)->getSpatialPartition()->mPartitionType, 15) | ((*g)->getSpatialPartition()->isBridge() ? 0x80u : 0u)));      // (bit 7: the group is in a bridge's own partition: the attachments of an avatar)
+            note_part((*g)->getSpatialPartition());
         }
     };
     take(sCull->beginDrawableGroups(), sCull->endDrawableGroups());
     take(sCull->beginVisibleGroups(), sCull->endVisibleGroups());
-    U64 changed[16] = {}, count[16] = {};
+    bool epoch_changed[16] = {};
+    for (const auto& kv : cur_parts)
+    {
+        auto it = prev_parts.find(kv.first);
+        if (it == prev_parts.end() || it->second.second != kv.second.second)
+        {
+            epoch_changed[kv.second.first] = true;
+        }
+        prev_parts[kv.first] = kv.second;
+    }
+    U64 changed[16] = {}, count[16] = {}, changed_b[16] = {}, count_b[16] = {};
     for (const auto& kv : cur)
     {
-        ++count[kv.second];
+        ++count[kv.second & 15];
+        count_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
         if (!prev_groups.count(kv.first))
         {
-            ++changed[kv.second];
+            ++changed[kv.second & 15];
+            changed_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
         }
     }
     for (const auto& kv : prev_groups)
     {
         if (!cur.count(kv.first))
         {
-            ++changed[kv.second];
+            ++changed[kv.second & 15];
+            changed_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
         }
     }
     bool all_hit = true;
     for (int t = 0; t < 16; ++t)
     {
-        const bool epoch_same = epoch[t] == prev_epoch[t];
+        const bool epoch_same = !epoch_changed[t];
         const bool hit = cam_same && epoch_same && occ[t] == 0;
         per[t].mGroups += count[t];
+        per[t].mGroupsB += count_b[t];
         if (count[t] || changed[t])
         {
             ++per[t].mPresent;
@@ -4602,18 +4685,19 @@ static void main_cull_census(LLCamera& camera)
             {
                 ++per[t].mHit;
                 per[t].mHitChanged += changed[t];
+                per[t].mHitChangedB += changed_b[t];
             }
             else
             {
                 all_hit = false;
                 ++per[t].mMiss;
                 per[t].mMissChanged += changed[t];
+                per[t].mMissChangedB += changed_b[t];
                 per[t].mMissCam += cam_same ? 0 : 1;
                 per[t].mMissEpoch += epoch_same ? 0 : 1;
                 per[t].mMissOcc += occ[t] ? 1 : 0;
             }
         }
-        prev_epoch[t] = epoch[t];
     }
     all_hit_frames += (all_hit && cam_same) ? 1 : 0;
     prev_groups.swap(cur);
@@ -4634,10 +4718,22 @@ static void main_cull_census(LLCamera& camera)
                 continue;
             }
             LL_INFOS("MainCull") << "main cull census, partition " << names[t] << ": groups listed " << p.mGroups / n << " a frame, present on " << p.mPresent << " frames: key held on " << p.mHit << " ("
-                << (p.mHit ? (double)p.mHitChanged / p.mHit : 0.0) << " groups differed from the frame before on those, 0 expected), not held on " << p.mMiss << " (" << (p.mMiss ? (double)p.mMissChanged / p.mMiss : 0.0)
+                << (p.mHit ? (double)p.mHitChanged / p.mHit : 0.0) << " groups differed from the frame before on those, 0 expected; " << (p.mHit ? (double)p.mHitChangedB / p.mHit : 0.0) << " of them in bridge partitions; " << p.mGroupsB / n << " of the listed groups are in bridge partitions), not held on " << p.mMiss << " (" << (p.mMiss ? (double)p.mMissChanged / p.mMiss : 0.0)
                 << " groups differed a frame; camera changed on " << p.mMissCam << ", epoch on " << p.mMissEpoch << ", occlusion state on " << p.mMissOcc << "), occlusion state changes " << p.mOccChanges << LL_ENDL;
         }
+        {
+            const U64 set = C::sOccSet.exchange(0), clr = C::sOccClear.exchange(0), leaf = C::sOccLeaf.exchange(0), sub = C::sOccSubtree.exchange(0), av = C::sOccAvatar.exchange(0), act = C::sOccActive.exchange(0), first = C::sOccFirst.exchange(0);
+            const U64 all = std::max<U64>(1, set + clr);
+            U64 dw[2][4];
+            for (int a = 0; a < 2; ++a) { for (int b = 0; b < 4; ++b) { dw[a][b] = C::sOccDwell[a][b].exchange(0); } }
+            LL_INFOS("MainCull") << "main cull census, occlusion state changes over 600 frames: " << set << " set, " << clr << " cleared (by a verdict " << C::sOccSrc[0].exchange(0) << ", a discard in checkOcclusion " << C::sOccSrc[1].exchange(0)
+                << ", the eye inside the box " << C::sOccSrc[2].exchange(0) << ", hizEntryMoved " << C::sOccSrc[3].exchange(0) << "); leaf groups " << leaf << ", nodes below the group on average " << (double)sub / all
+                << "; the group holds an avatar or bridge " << av << ", another moving drawable " << act << "; first change seen of the group " << first
+                << "; how long the group had been in the state it left (frames <= 2 / <= 8 / <= 60 / longer): visible " << dw[0][0] << " / " << dw[0][1] << " / " << dw[0][2] << " / " << dw[0][3]
+                << ", occluded " << dw[1][0] << " / " << dw[1][1] << " / " << dw[1][2] << " / " << dw[1][3] << LL_ENDL;
+        }
         for (Per& p : per) { p = Per(); }
+        prev_parts.clear();
         frames = cam_still_frames = all_hit_frames = 0;
         w_nodes = w_early = w_occdrop = w_inside = w_frustum = w_out = w_marks = w_empty = w_pd = w_pv = w_ticks = 0;
         t0 = std::chrono::steady_clock::now();

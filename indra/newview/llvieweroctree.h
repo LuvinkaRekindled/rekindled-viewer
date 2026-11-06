@@ -291,6 +291,10 @@ struct LLCullCensus
     static inline std::atomic<U64> sNodes{ 0 }, sEarlyFail{ 0 }, sOccDropped{ 0 }, sAllInside{ 0 }, sFrustumTests{ 0 }, sFrustumOut{ 0 };
     static inline std::atomic<U64> sMarkCalls{ 0 }, sMarkEmpty{ 0 }, sMarkDrawable{ 0 }, sMarkVisible{ 0 }, sMarkTicks{ 0 };
     static inline std::atomic<U32> sOccChanges[16] = {};      // changes of a group's world OCCLUDED state (a verdict, a discard, the eye inside the box), by partition type
+    // what those changes are (step 0 of the C4.5 design): set / cleared, by who made them (0 a verdict, 1 checkOcclusion's discard, 2 the eye inside the box, 3 hizEntryMoved), whether the group is a leaf, the nodes below it,
+    // whether it holds an avatar (or a bridge) or another moving drawable, and how long the group had been in the state it left (frames: <= 2, <= 8, <= 60, longer, first time seen), for the state left = visible / occluded
+    static inline std::atomic<U64> sOccSet{ 0 }, sOccClear{ 0 }, sOccSrc[4] = {}, sOccLeaf{ 0 }, sOccSubtree{ 0 }, sOccAvatar{ 0 }, sOccActive{ 0 }, sOccFirst{ 0 }, sOccDwell[2][4] = {};
+    static void noteOcc(class LLOcclusionCullingGroup* group, bool now_occluded, int source);       // pipeline.cpp
 };
 
 //octree group which has capability to support occlusion culling
