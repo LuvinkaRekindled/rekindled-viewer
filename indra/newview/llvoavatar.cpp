@@ -6699,6 +6699,7 @@ void LLAvatarTable::endFrame()
         }
         entry.second.mTooSlow = av->isTooSlow();        // (not final yet: the live answers)
         entry.second.mMuted = av->isVisuallyMuted();
+        entry.second.mAppearance = (U8)av->getOverallAppearance();
         entry.second.mImpostor = av->isImpostor();      // (the virtual one: a control avatar follows the avatar it is attached to; after the two above: they are inputs)
     }
     for (auto& entry : sAvatarRows)
@@ -6709,7 +6710,7 @@ void LLAvatarTable::endFrame()
 
 void LLAvatarTable::noteCheck(int which, bool same)
 {
-    static U64 reads[3] = {}, different[3] = {};
+    static U64 reads[4] = {}, different[4] = {};
     static U32 last = 0;
     ++reads[which];
     different[which] += same ? 0 : 1;
@@ -6718,8 +6719,8 @@ void LLAvatarTable::noteCheck(int which, bool same)
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
         LL_INFOS("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
-            << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << ")" << LL_ENDL;
-        for (int k = 0; k < 3; ++k) { reads[k] = different[k] = 0; }
+            << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << "), overall appearance " << reads[3] / frames << " (" << different[3] << ")" << LL_ENDL;
+        for (int k = 0; k < 4; ++k) { reads[k] = different[k] = 0; }
     }
 }
 
@@ -14983,6 +14984,21 @@ void LLVOAvatar::updateOverallAppearanceAnimations()
 
 // Based on isVisuallyMuted(), but has 3 possible results.
 LLVOAvatar::AvatarOverallAppearance LLVOAvatar::getOverallAppearance() const
+{
+    // <FS> PLAN-avatars.md stage A step 5: after the avatars' update the table holds the answer (jellydoll / invisible decisions of the avatar pool, the cull, the velocity pass, the ray scene)
+    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    {
+        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        if (verify)
+        {
+            LLAvatarTable::noteCheck(3, row->mAppearance == (U8)computeOverallAppearanceLive());
+        }
+        return (AvatarOverallAppearance)row->mAppearance;
+    }
+    return computeOverallAppearanceLive();
+}
+
+LLVOAvatar::AvatarOverallAppearance LLVOAvatar::computeOverallAppearanceLive() const
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     AvatarOverallAppearance result = AOA_NORMAL;

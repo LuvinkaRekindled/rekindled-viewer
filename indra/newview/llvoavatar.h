@@ -631,6 +631,7 @@ public:
     };
 
     AvatarOverallAppearance getOverallAppearance() const;
+    AvatarOverallAppearance computeOverallAppearanceLive() const;       // <FS> getOverallAppearance() derived from the avatar's state (what the table caches at endFrame)
     void setOverallAppearanceNormal();
     void setOverallAppearanceJellyDoll();
     void setOverallAppearanceInvisible();
