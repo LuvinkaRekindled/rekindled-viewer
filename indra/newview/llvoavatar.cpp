@@ -7044,6 +7044,27 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // In some cases, calls updateOrientation() for a lot of the
     // work
     // --------------------------------------------------------------------
+    // <FS> PLAN-avatars.md stage B3d (LL_VK_ROOTJOB: 1 default, 0 inline as before): an avatar that goes into the motion batch has its root position and rotation worked out at the start of its pool job, not here on the main
+    // thread: the root only feeds the pose job's world pass (nothing between here and the batch reads it: begin and the hidden motion update do not), and it reads the terrain and writes the avatar's own fields.
+    // The viewer's own avatar, animesh, UI avatars, special render modes and an avatar sitting on an object keep the inline form.
+    int can_defer_known = -1;
+    bool root_in_job = false;
+    {
+        static const bool root_job_on = !getenv("LL_VK_ROOTJOB") || atoi(getenv("LL_VK_ROOTJOB")) != 0;
+        if (root_job_on && !gFSAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !(isSitting() && getParent()))
+        {
+            if (!visible)
+            {
+                root_in_job = true;         // (the hidden branch below puts it in the batch under the same conditions)
+            }
+            else
+            {
+                can_defer_known = canDeferMotionUpdate() ? 1 : 0;
+                root_in_job = can_defer_known == 1 && !mMotionController.isPaused();
+            }
+        }
+    }
+    if (!root_in_job)
     {
         AvScope root_scope(AV_CHAR_ROOT);
         updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
@@ -7067,6 +7088,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mDeferredMatricesOnly = true;
             mDeferredSitGroundConstrained = was_sit_ground_constrained;
             mDeferredVisible = visible;
+            mRootInJob = root_in_job;
+            mDeferredSpeed = speed;
             sMotionUpdateBatch->push_back(this);
             return visible;
         }
@@ -7075,7 +7098,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         updateMotions(LLCharacter::FORCE_UPDATE);
     }
-    else if (canDeferMotionUpdate())
+    else if (can_defer_known >= 0 ? can_defer_known == 1 : canDeferMotionUpdate())
     {
         // Serial part now; the pose blend runs later, possibly on a worker
         // thread, and then completeDeferredMotionUpdate() finishes the frame.
@@ -7089,6 +7112,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mMotionUpdateDeferred = true;
             mDeferredSitGroundConstrained = was_sit_ground_constrained;
             mDeferredVisible = visible;
+            mRootInJob = root_in_job;
+            mDeferredSpeed = speed;
             sMotionUpdateBatch->push_back(this);
             return visible;
         }
@@ -7104,6 +7129,16 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         updateMotions(LLCharacter::NORMAL_UPDATE);
     }
 
+    if (root_in_job)
+    {
+        // (not expected: the avatar was going to join the batch and did not; the root is worked out now, late)
+        static std::atomic<U32> late{ 0 };
+        if (++late <= 5)
+        {
+            LL_WARNS("RootJob") << "an avatar planned for the root job did not join the motion batch; root worked out inline, late" << LL_ENDL;
+        }
+        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+    }
     {
         AvScope post_scope(AV_CHAR_POST);
         updateCharacterPostMotion(was_sit_ground_constrained, visible);
@@ -7190,6 +7225,17 @@ void LLVOAvatar::cleanJointMatrices()
 void LLVOAvatar::runDeferredMotionBlend()
 {
     AvImpTimer imp_blend_timer(1, this);
+    if (mRootInJob)
+    {
+        // <FS> stage B3d: the root position and rotation, worked out here (see updateCharacter); the job's own thread, the avatar's own fields and joints
+        mRootInJob = false;
+        updateRootPositionAndRotation(gAgent, mDeferredSpeed, mDeferredSitGroundConstrained);
+        static std::atomic<U64> in_job{ 0 };
+        if (++in_job % 200000 == 0)
+        {
+            LL_INFOS("RootJob") << "root position and rotation worked out in the avatar's pool job: " << in_job.load() << " so far" << LL_ENDL;
+        }
+    }
     if (fs_av_imp_on())
     {
         fs_av_imp_motions(this, mMotionController.getActiveMotions().size());
@@ -13089,7 +13135,6 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     static std::mutex palette_mutex;
     const bool timed = fs_paltime_on();
     // <FS> stage B3b: a request that finds the palette ready (the job built it, or an earlier request) reads the avatar's cache under a shared lock and never touches the global lock
-    // (compare mode 2 checks the first request of each job palette, which writes a flag: that one goes the long way)
     {
         const U64 shared_t0 = timed ? fs_pal_now() : 0;
         std::shared_lock<std::shared_mutex> shared_lock(mPaletteMutex);
@@ -13099,8 +13144,8 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             ++sPalRequests2;
         }
         auto found = mMatrixPaletteCache.find(skin->mHash);
-        if (found != mMatrixPaletteCache.end() && found->second.mFrame == gFrameCount && !(fs_paljob_mode() == 2 && found->second.mJobFor == gFrameCount && !found->second.mJobChecked)
-            && !(found->second.mJobFor == gFrameCount && LLJoint::sTouchSerial != sPalJobTouchSerial.load(std::memory_order_relaxed)))
+        // (a palette the job built and nobody has asked for yet (mJobFor == this frame) goes the long way once: that first request decides, and from then on every consumer of the frame gets the same palette)
+        if (found != mMatrixPaletteCache.end() && found->second.mFrame == gFrameCount && found->second.mJobFor != gFrameCount)
         {
             if (timed)
             {
@@ -13162,6 +13207,9 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
                 }
             }
         }
+        // the first request of the frame has decided: the entry is frozen for the frame, every later consumer (the shadow cascades, the main view, the velocity pass) gets this very palette. (Walking shadow glitch of
+        // 2026-11-07: a guard that rebuilt on a later request gave the cascades the job's palette and the main view a newer one, a frame apart)
+        entry.mJobFor = 0xFFFFFFFFu;
     }
     else
     {
