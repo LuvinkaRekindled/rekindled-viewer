@@ -129,7 +129,7 @@ void LLViewerJointMesh::computeJointPalette(F32* mat, bool with_modelview)
     size_t num_joints = llmin(reference_mesh->mJointRenderData.size(), LL_CHARACTER_MAX_JOINTS_PER_MESH);
     for (joint_num = 0; joint_num < num_joints; joint_num++)
     {
-        LLMatrix4 joint_mat = *reference_mesh->mJointRenderData[joint_num]->mWorldMatrix;
+        LLMatrix4 joint_mat = reference_mesh->mJointRenderData[joint_num]->getWorldMatrix();
 
         if (with_modelview)
         {

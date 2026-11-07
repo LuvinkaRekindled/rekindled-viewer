@@ -365,15 +365,15 @@ void LLAvatarJointMesh::setupJoint(LLAvatarJoint* current_joint)
         {
             // ...then just add ourselves
             LLAvatarJoint* jointp = js.mJoint;
-            jrd.push_back(new LLJointRenderData(&jointp->getWorldMatrix(), &js));
+            jrd.push_back(new LLJointRenderData(&jointp->getWorldMatrix(), &js, jointp));
             LL_DEBUGS("Avatar") << "add joint[" << (jrd.size()-1) << "] = " << js.mJoint->getName() << LL_ENDL;
         }
         // otherwise add our ancestor and ourselves
         else
         {
-            jrd.push_back(new LLJointRenderData(&ancestor->getWorldMatrix(), NULL));
+            jrd.push_back(new LLJointRenderData(&ancestor->getWorldMatrix(), NULL, ancestor));
             LL_DEBUGS("Avatar") << "add2 ancestor joint[" << (jrd.size()-1) << "] = " << ancestor->getName() << LL_ENDL;
-            jrd.push_back(new LLJointRenderData(&current_joint->getWorldMatrix(), &js));
+            jrd.push_back(new LLJointRenderData(&current_joint->getWorldMatrix(), &js, current_joint));
             LL_DEBUGS("Avatar") << "add2 joint[" << (jrd.size()-1) << "] = " << current_joint->getName() << LL_ENDL;
         }
     }
