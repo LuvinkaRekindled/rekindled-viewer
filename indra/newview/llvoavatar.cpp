@@ -3249,6 +3249,68 @@ inline bool att_plain(const LLViewerObject* root)
     }
     return true;
 }
+// <FS> stage C5a (LL_VK_ATTLIGHT: 1 default, 0 = a light, a sound or a particle emitter keeps the walk): an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
+// (a light: calc_light_dist; a sound: the audio source's object position; a particle emitter: the source's getRenderPosition) from the drawable the row keeps up to date, none of them through the moved list. Not rowable:
+// selected, flexible, animated (animesh) and HUD attachments, and linksets with one of those.
+inline bool att_rowable(const LLViewerObject* root)
+{
+    static const int mode = getenv("LL_VK_ATTLIGHT") ? atoi(getenv("LL_VK_ATTLIGHT")) : 1;
+    if (!mode)
+    {
+        return att_plain(root);
+    }
+    auto ok = [](const LLViewerObject* o)
+    {
+        return !(o->isSelected() || o->isFlexible() || o->isAnimatedObject());
+    };
+    if (root->isHUDAttachment() || !ok(root))
+    {
+        return false;
+    }
+    if (root->numChildren() > 0)
+    {
+        for (const LLPointer<LLViewerObject>& child : root->getChildren())
+        {
+            if (child.notNull() && !ok(child.get()))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+// <FS> stage C5 census (LL_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
+static std::atomic<U64> sWalkClassN[8][2], sWalkClassOps[8][2];
+static int fs_att_class(const LLViewerObject* root)
+{
+    auto reason = [](const LLViewerObject* o) -> int
+    {
+        if (o->isAnimatedObject()) return 0;
+        if (o->isFlexible()) return 1;
+        if (o->getPCode() == LL_PCODE_VOLUME && static_cast<const LLVOVolume*>(o)->getIsLight()) return 2;
+        if (o->isAudioSource()) return 3;
+        if (o->isParticleSource()) return 4;
+        if (o->isSelected()) return 5;
+        return -1;
+    };
+    if (root->isHUDAttachment())
+    {
+        return 6;
+    }
+    int r = reason(root);
+    if (r >= 0)
+    {
+        return r;
+    }
+    for (const LLPointer<LLViewerObject>& child : root->getChildren())
+    {
+        if (child.notNull() && (r = reason(child.get())) >= 0)
+        {
+            return r;
+        }
+    }
+    return 7;
+}
 // census: 1 = the attachment has faces and every one has a texture entry colour alpha of 0 (nothing of it is drawn), 0 = something is visible, -1 = no face at all
 inline int att_all_clear(const LLViewerObject* root, U64& faces)
 {
@@ -3907,7 +3969,7 @@ void LLVOAvatar::rebuildAttRows()
                 drawable->mAttOrder = rigged_order++;
                 drawable->mAttOrderRev = LLViewerJointAttachment::sRevision;
             }
-            if (!bridge || (rigged && !rig_rows) || !att_plain(attached_object.get()))
+            if (!bridge || (rigged && !rig_rows) || !att_rowable(attached_object.get()))
             {
                 continue;
             }
@@ -4361,11 +4423,12 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 {
                     continue;       // (the avatar's rows moved it this frame)
                 }
-                if (rows_run && mAttRowsRevision != ~0u && attached_object->mDrawable->getSpatialBridge() && att_plain(attached_object.get()))
+                if (rows_run && mAttRowsRevision != ~0u && attached_object->mDrawable->getSpatialBridge() && att_rowable(attached_object.get()))
                 {
                     mAttRowsRevision = ~0u;     // (a plain attachment, rigid or rigged, that the rows do not hold yet - its drawable or bridge came after them: the walk moves it this frame, the rows are made again at the next visit)
                 }
 
+                const size_t walk_ops0 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
                 LLSpatialBridge* bridge = attached_object->mDrawable->getSpatialBridge();
                 const auto att_t0 = att_now();
                 bool att_rigged_kind = false;
@@ -4654,6 +4717,13 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
 
                     { LL_CPU_ZONE("att: updateText"); const auto t = att_now(); attached_object->updateText(); gAttStats.nsText += att_ns(t); }
                 }
+                if (rowops_on && LLPipeline::sAvSink)
+                {
+                    const int cls = fs_att_class(attached_object.get());
+                    const int rig = attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) ? 1 : 0;
+                    ++sWalkClassN[cls][rig];
+                    sWalkClassOps[cls][rig] += LLPipeline::sAvSink->size() - walk_ops0;
+                }
                 if (gFSAvTimersOn)
                 {
                     const U64 ns = att_ns(att_t0);
@@ -4681,6 +4751,16 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             ++loops;
             row_loops += rows_run ? 1 : 0;
             row_atts += rows_passed;
+            if (loops % 100000 == 0)
+            {
+                static const char* names[8] = { "animesh", "flexible", "light", "audio", "particles", "selected", "HUD", "plain, not in rows" };
+                std::string text;
+                for (int c = 0; c < 8; ++c)
+                {
+                    text += llformat(" | %s: rigid %.3f (%.3f ops), rigged %.3f (%.3f ops)", names[c], (double)sWalkClassN[c][0] / loops, (double)sWalkClassOps[c][0] / loops, (double)sWalkClassN[c][1] / loops, (double)sWalkClassOps[c][1] / loops);
+                }
+                LL_INFOS("WalkKinds") << "what the attachment walk handles, per avatar loop over " << loops.load() << " loops (attachments, ledger ops):" << text << LL_ENDL;
+            }
             if (loops % 20000 == 0)
             {
                 // kinds: 0 moved list, 1 moved bridge, 2 partition move, 3 bridge move, 4 render order, 5 make active shared, 6 update text, 7 dirty group
