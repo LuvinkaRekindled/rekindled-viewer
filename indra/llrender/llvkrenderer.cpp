@@ -1281,6 +1281,15 @@ bool Renderer::init()
             return false;
         }
     }
+    // <FS> the palette arenas (llvkbridge.h): an arena that cannot be made is not an error, the viewer copies the palettes as before
+    for (U32 i = 0; i < PALETTE_ARENAS; ++i)
+    {
+        if (!ctx.createBuffer(PALETTE_ARENA_BYTES, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, mPaletteArena[i]) || !mPaletteArena[i].mAddress || !mPaletteArena[i].mMapped)
+        {
+            break;
+        }
+        LLVkBridge::paletteArenaRegister(i, (F32*)mPaletteArena[i].mMapped, (U64)mPaletteArena[i].mAddress, (U32)(PALETTE_ARENA_BYTES / 4));
+    }
     ctx.addAddressDescriber([this](unsigned long long at) -> std::string
     {
         auto close_to = [at](const Buffer& b, unsigned long long& offset) -> bool
@@ -1922,6 +1931,12 @@ void Renderer::shutdown()
             if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
             b = Buffer();
         }
+        LLVkBridge::paletteArenaClear();        // (the viewer must not write into them any more)
+        for (Buffer& b : mPaletteArena)
+        {
+            if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
+            b = Buffer();
+        }
         for (Buffer& b : mVertexRing)
         {
             if (b.valid()) vmaDestroyBuffer(ctx.getAllocator(), b.mBuffer, b.mAllocation);
@@ -2092,6 +2107,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
         mPaletteSlot = (U32)(Context::instance().getFrameNumber() % (U64)(Context::frameCount() + 2));      // <FS> the palette ring: one slot per frame, round frameCount() + 2 of them
         mPaletteRingUsed = 0;
+        LLVkBridge::paletteArenaFree(Context::instance().getFrameNumber());      // <FS> the palette arenas whose last reader frame is over
         if (mOverflowChunk || mOverflowUsed)
         {
             mOverflowIdle = 0;

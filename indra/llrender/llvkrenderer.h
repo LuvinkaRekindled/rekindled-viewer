@@ -700,6 +700,11 @@ private:
     Buffer mPaletteRing[PALETTE_RING_SLOTS];
     U32 mPaletteRingUsed = 0, mPaletteSlot = 0;
     U64 mPaletteFallbacks = 0;              // palettes that had to go to the vertex ring (the palette ring was full)
+    // <FS> PLAN-avatars.md rigged draws as rows, P1: palette arenas the viewer writes into directly (llvkbridge.h paletteArena*); one per viewer frame in flight and a few more: freed frameCount() + 3 renderer frames
+    // after the last record that named them
+    static const U32 PALETTE_ARENAS = Context::FRAMES_IN_FLIGHT + 4;
+    static const VkDeviceSize PALETTE_ARENA_BYTES = 4u * 1024 * 1024;
+    Buffer mPaletteArena[PALETTE_ARENAS];
     // F3.1: chunks that carry the vertex scratch when the ring is full (immediate mode draws its vertices there: a debug draw of every bounding box needs far more than the ring); reused each time a slot
     // comes round, released after a long time without use. The cursor is reset with the ring.
     std::vector<Buffer> mVertexOverflow[Context::FRAMES_IN_FLIGHT];

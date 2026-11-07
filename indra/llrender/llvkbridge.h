@@ -363,6 +363,17 @@ namespace LLVkBridge
     bool shadowAlphaPacketsAvailable();
     // blob: mEntries ShadowPacketEntry, then mMatrices * 16 floats
     void shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes);
+    // <FS> PLAN-avatars.md, rigged draws as rows, P1 (LL_VK_PALARENA): the frame's palettes are written by the viewer straight into memory the renderer owns (a host visible, mapped buffer with a device address),
+    // not copied into the frame list and then twice more (kind 27: the record, the worker's scratch). paletteArenaAcquire gives the arena of a viewer frame (false: none is free, the old copies are used);
+    // a kind 39 record (mPass = the viewer frame, mEntries = the arena index, mFragment = the first float, mPaletteFloats = how many) names a written part as a segment of the frame's list; the renderer frees
+    // an arena frameCount() + 3 renderer frames after the last record that named it (the ring rule of the palette scratch: the ray scene reads palettes up to two frames later).
+    struct PaletteArena { F32* mPtr = nullptr; U64 mAddress = 0; U32 mFloats = 0; U32 mIndex = 0; };
+    bool paletteArenaAcquire(U32 frame, PaletteArena& out);              // any thread
+    void paletteArenaRegister(U32 index, F32* ptr, U64 address, U32 floats);       // the renderer, once the buffers exist
+    void paletteArenaClear();                                            // the renderer, before the buffers are destroyed
+    bool paletteArenaInfo(U32 index, PaletteArena& out);                 // the worker
+    void paletteArenaSent(U32 index, U64 free_at_renderer_frame);        // the worker, for a kind 39 record
+    void paletteArenaFree(U64 renderer_frame);                           // the renderer, at the start of each frame
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);
 
