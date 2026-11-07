@@ -13413,6 +13413,7 @@ struct LLFlatSkeleton
     U32 mFrame = ~0u;
     bool mFromJob = false;                  // <FS> stage C: made by the avatar's pose job (flatWorldPass) for this frame
     U32 mStructKey = 0;                     // (the skeleton serial, the joint counts: the structure below is made again when it changes)
+    bool mScaleInLocals = false;            // the pass found every joint bound to its slot of mLocals: the joint's own scale is mLocals[k].mScale and mScale is not filled
     std::vector<LLVector3> mWPos, mScale;   // by joint number, as the pass made them: the joint's world position and its own scale (the arithmetic of a child reads the parent's)
     std::vector<LLQuaternion> mWRot;        // the world rotation
     std::vector<U8> mSco;                   // the scale-child-offset flag
@@ -13929,6 +13930,9 @@ bool LLVOAvatar::flatWorldPass()
     LLVector3* jscale = flat.mScale.data();
     LLQuaternion* wrot = flat.mWRot.data();
     U8* sco = flat.mSco.data();
+    // The locals live in the array when every joint is bound to its slot (ensureJointLocals, main thread, before the jobs): the pass then reads the contiguous slots, no getter, and keeps no scale copy
+    const LLXformLocals* locals = (flat.mLocalsKey == flat.mStructKey && flat.mLocals.size() == N) ? flat.mLocals.data() : nullptr;
+    flat.mScaleInLocals = locals != nullptr;
     const bool root_active = mRoot->mUpdateXform;
     const U32 pass_serial = ++LLJoint::sViewPasses;
     if (root_active && (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
@@ -13949,26 +13953,29 @@ bool LLVOAvatar::flatWorldPass()
         LLXformMatrix* xf = joint->getXform();
         U8 view_kind = 0;
         bool clean_before = true;
-        jscale[k] = xf->getScale();
+        if (!locals)
+        {
+            jscale[k] = xf->getScale();
+        }
         sco[k] = xf->getScaleChildOffset() ? 1 : 0;
         if (act && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
         {
             const LLVector3& parent_pos = p < 0 ? root_pos : wpos[p];
             const LLQuaternion& parent_rot = p < 0 ? root_rot : wrot[p];
             const bool parent_sco = p < 0 ? root_sco : sco[p] != 0;
-            const LLVector3& parent_scale = p < 0 ? root_scale : jscale[p];
-            LLVector3 pos = xf->getPosition();
+            const LLVector3& parent_scale = p < 0 ? root_scale : (locals ? locals[p].mScale : jscale[p]);
+            LLVector3 pos = locals ? locals[k].mPos : xf->getPosition();
             if (parent_sco)
             {
                 pos.scaleVec(parent_scale);
             }
             pos *= parent_rot;
             pos += parent_pos;
-            const LLQuaternion rot = xf->getRotation() * parent_rot;
+            const LLQuaternion rot = (locals ? locals[k].mRot : xf->getRotation()) * parent_rot;
             wpos[k] = pos;
             wrot[k] = rot;
             LLMatrix4 m;
-            m.initAll(jscale[k], rot, pos);
+            m.initAll(locals ? locals[k].mScale : jscale[k], rot, pos);
             flat.mWorld[k].loadu(m);
             if (writeback)
             {
@@ -14071,7 +14078,7 @@ bool LLVOAvatar::flatJoint(S32 joint_num, const LLVector3*& pos, const LLQuatern
     }
     pos = &mFlatSkel->mWPos[joint_num];
     rot = &mFlatSkel->mWRot[joint_num];
-    scale = &mFlatSkel->mScale[joint_num];
+    scale = mFlatSkel->mScaleInLocals ? &mFlatSkel->mLocals[joint_num].mScale : &mFlatSkel->mScale[joint_num];
     scale_child_offset = mFlatSkel->mSco[joint_num] != 0;
     return true;
 }
