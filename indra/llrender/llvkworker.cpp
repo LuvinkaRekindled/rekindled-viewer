@@ -4525,7 +4525,7 @@ static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U
 static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     Context::instance().flight(Context::FL_RT_NOTE, (unsigned long long)h.mKind, (unsigned long long)h.mEntries, (unsigned long long)h.mPaletteFloats, (unsigned long long)h.mPass);
-    const bool shared_palettes = h.mKind == 6 && h.mFragment == 1;       // S4 A2: the palettes are in the frame's shared list
+    const bool shared_palettes = (h.mKind == 6 || h.mKind == 7) && h.mFragment == 1;       // S4 A2: the palettes are in the frame's shared list (P3: the alpha notes too)
     if (!Rt::active() || h.mEntries == 0 || (h.mPaletteFloats == 0 && !shared_palettes))
     {
         return;
@@ -4584,7 +4584,12 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
             {
                 continue;
             }
-            note_rt_skinned_alpha(h.mPass, e, *vb, *ib, (U64)palettes.mAddress + 4ull * e.mPaletteOffset, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
+            const U64 pal_alpha = shared_palettes ? palette_address(e.mPaletteOffset) : (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            if (!pal_alpha)
+            {
+                continue;
+            }
+            note_rt_skinned_alpha(h.mPass, e, *vb, *ib, pal_alpha, e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr);
         }
         else
         {
@@ -4840,7 +4845,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     alpha_index_buffers.assign(h.mEntries, nullptr);
     AlphaGpu* out = (AlphaGpu*)table.mPtr;
     Renderer::ScratchAlloc palettes;
-    if (h.mPaletteFloats)
+    const bool shared_palettes = h.mFragment == 1;       // P3: the rigged entries name their palettes by id (the frame's shared list)
+    if (h.mPaletteFloats && !shared_palettes)
     {
         palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
         palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
@@ -4898,11 +4904,15 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mPad = (texmats.mAddress && e.mTexMatrix <= h.mTexmats) ? e.mTexMatrix : 0u;      // C5 J3: the draw's texture matrix (0 = none)
         if (flags & LLVkBridge::ALPHA_RIGGED)
         {
-            if (!palettes.mAddress)
+            if (!shared_palettes && !palettes.mAddress)
             {
                 continue;
             }
-            const U64 wa = pa + e.mWeightOffset, pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            const U64 wa = pa + e.mWeightOffset, pal = shared_palettes ? palette_address(e.mPaletteOffset) : (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            if (!pal)
+            {
+                continue;       // (a palette the frame's table does not hold: not drawn)
+            }
             g.mWeights[0] = (U32)wa;
             g.mWeights[1] = (U32)(wa >> 32);
             g.mPalette[0] = (U32)pal;

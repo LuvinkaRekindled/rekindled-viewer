@@ -20143,11 +20143,15 @@ struct LLPipeline::ShadowAlphaBuild
     std::vector<LLViewerTexture*> mTextures;
     U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
     bool mFinished = false;
+    bool mShared = false;                       // P3: the rigged entries name their palettes in the frame's shared list (by id), mPaletteFrame = the frame it was made in
+    U64 mPaletteFrame = 0;
 };
 
 static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::ShadowAlphaBuild& out)
 {
     out = LLPipeline::ShadowAlphaBuild();
+    out.mShared = rigged && ll_palette_shared();
+    out.mPaletteFrame = ll_frame_palette_frame();
     std::vector<LLVkBridge::ShadowAlphaEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     std::vector<F32>& palettes = out.mPalettes;
@@ -20311,7 +20315,8 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 e.mMatrixId = rt_matrix_id(params->mModelMatrix);
                 if (rigged)
                 {
-                    if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                    if (!(out.mShared ? ll_frame_palette(params->mAvatar.get(), params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
+                                      : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
                     {
                         continue;       // the skin is not loaded yet: not drawn, as before
                     }
@@ -24437,6 +24442,7 @@ static void rt_name_rigged_main_view()
         std::unordered_map<const void*, U32> matrix_numbers;
         std::vector<F32> palettes;
         std::unordered_map<const F32*, U32> palette_offsets;
+        const bool note_shared = ll_palette_shared();       // P3: the notes name their palettes by id like the shadow records (kind 6 with mFragment = 1)
         // <FS> one rigged draw named to the ray scene (S4 B: the render map or, for the draws the scene table serves, the visible fragments' items)
         auto name_one = [&](LLDrawInfo* params)
         {
@@ -24451,7 +24457,8 @@ static void rt_name_rigged_main_view()
                     return;
                 }
                 LLVkBridge::ShadowSkinEntry e = {};
-                if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+                if (!(note_shared ? ll_frame_palette(params->mAvatar.get(), params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
+                                  : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
                 {
                     return;
                 }
@@ -24542,6 +24549,11 @@ static void rt_name_rigged_main_view()
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mPaletteFloats = (U32)palettes.size();
+            if (note_shared)
+            {
+                header.mFragment = 1;
+                ll_frame_palette_flush();
+            }
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
@@ -24572,6 +24584,7 @@ static void rt_name_rigged_main_view()
         std::unordered_map<const LLViewerTexture*, U32> texture_names;
         std::vector<F32> palettes;
         std::unordered_map<const F32*, U32> palette_offsets;
+        const bool note_shared = ll_palette_shared();       // P3: by id like the opaque notes (kind 7 with mFragment = 1)
         auto texture_name = [&](LLViewerTexture* tex) -> U32
         {
             auto found = texture_names.find(tex);
@@ -24622,7 +24635,8 @@ static void rt_name_rigged_main_view()
             e.mFirstIndex = params->mOffset;
             e.mIndexCount = params->mCount;
             e.mMatrixId = rt_matrix_id(params->mModelMatrix);
-            if (!shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints))
+            if (!(note_shared ? ll_frame_palette(params->mAvatar.get(), params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
+                              : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
             {
                 note_why(params, 7);
                 return;
@@ -24819,6 +24833,11 @@ static void rt_name_rigged_main_view()
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mPaletteFloats = (U32)palettes.size();
+            if (note_shared)
+            {
+                header.mFragment = 1;
+                ll_frame_palette_flush();
+            }
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
@@ -27540,6 +27559,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
+        if (build_owned->mShared && build_owned->mPaletteFrame != ll_frame_palette_frame())
+        {
+            // P3: made in another frame (an id is only in the table of the frames whose list holds its palette): made again in this one
+            build_owned = std::make_shared<ShadowAlphaBuild>();
+            build_shadow_alpha(result, rigged, *build_owned);
+        }
         if (!rigged && !rt_skip && alpha_frag_mode() && !result.mAlphaFragGroups.empty())
         {
             append_fragment_alpha(*build_owned, result.mAlphaFragGroups, alpha_frag_mode() == 2);
@@ -27655,6 +27680,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 if (!palettes.empty())
                 {
                     blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
+                }
+                if (build_owned->mShared)
+                {
+                    header.mFragment = 1;       // P3: the rigged entries name their palettes by id (the frame's shared list)
+                    ll_frame_palette_flush();
                 }
                 if (!build_owned->mTexmats.empty())
                 {
