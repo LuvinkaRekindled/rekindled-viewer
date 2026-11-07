@@ -48,6 +48,8 @@ public:
         bool mTooSlow = false;          // isTooSlow()
         bool mMuted = false;            // isVisuallyMuted()
         U8 mAppearance = 0;             // getOverallAppearance() (LLVOAvatar::AvatarOverallAppearance: normal, jellydoll, invisible)
+        bool mVoice = false;            // PLAN-avatars.md B3d: the avatar is a participant of a voice channel (LLVoiceClient::getVoiceEnabled), taken once a frame from the participant list, not asked of the voice client per avatar
+        bool mSpeaking = false;         // ... and the voice client says it is speaking (LLVoiceClient::getIsSpeaking), asked for the participants only
         U16 mBits = 0;
         U32 mFrame = 0;
     };
@@ -60,6 +62,9 @@ public:
     static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
     static void noteCheck(int which, bool same);                                     // LL_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted, 3 overall appearance) against the live one
     static bool attachmentLoop(const LLVOAvatar* av, bool from_update);              // step 3: the loop's gate, from the row (the result of updateCharacter is only compared with it)
+    static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
+    static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)
+    static bool voiceSpeaking(const LLVOAvatar* av);                                 // B3d: the speaking fact from the row
     static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
 };
 

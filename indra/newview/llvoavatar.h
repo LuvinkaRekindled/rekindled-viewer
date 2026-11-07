@@ -678,6 +678,8 @@ private:
 
     // state carried across a deferred motion update, see sMotionUpdateBatch
     bool        mMotionUpdateDeferred = false;
+    bool        mBelowWaterDone = false;        // <FS> B3d: the pool job already worked out mBelowWater this frame
+    U32         mWindFrame = 0xFFFFFFFFu;       // <FS> B3d: the frame the cloth wind state was last worked out (at draw)
     bool        mRootInJob = false;             // <FS> stage B3d: the root position and rotation are worked out at the start of the pool job (updateCharacter set it with the batch entry)
     F32         mDeferredSpeed = 0.f;           // (the speed updateCharacter worked out, for the root update in the job)
     bool        mDeferredMatricesOnly = false; // <FS> hidden avatar: only its skeleton's world matrices are worked out on the worker (no pose blend)
@@ -1383,6 +1385,7 @@ public:
     // <FS> PLAN-avatars.md stage B3d, name tag events (LL_VK_NAMETAGPOLL): something the tag shows may have changed (animations, names and title, complexity, rez state, appearance, typing, chat, marks): look at its
     // inputs at the next chance. bumpNameTagGen(): the same for every avatar (the mute list, the friend list).
     void            invalidateNameTagInputs() { mNameTagForce = true; }
+    void            updateWindEffectForDraw();          // B3d: the cloth wind state, worked out when the avatar is drawn
     static void     bumpNameTagGen();
     std::string     avString() const; // Frequently used string in log messages "Avatar '<full name'"
 protected:

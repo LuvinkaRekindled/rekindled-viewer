@@ -3526,13 +3526,29 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     }
 }
 
+// <FS> PLAN-avatars.md B3d: LL_VK_WINDDRAW 1 (default) the cloth wind state is worked out when the avatar is drawn (once a frame), 0 in the update as before
+static bool fs_winddraw_on()
+{
+    static const bool on = !getenv("LL_VK_WINDDRAW") || atoi(getenv("LL_VK_WINDDRAW")) != 0;
+    return on;
+}
+
+void LLVOAvatar::updateWindEffectForDraw()
+{
+    if (fs_winddraw_on() && mWindFrame != gFrameCount)
+    {
+        mWindFrame = gFrameCount;
+        idleUpdateWindEffect();
+    }
+}
+
 void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
-    bool voice_enabled = (visualizers_in_calls || LLVoiceClient::getInstance()->inProximalChannel()) &&
-                         LLVoiceClient::getInstance()->getVoiceEnabled(mID);
+    // <FS> B3d: the voice facts come from the avatar's row (taken once a frame from the voice client's participant list), not asked of the voice client for every avatar
+    bool voice_enabled = LLAvatarTable::voiceEnabled(this) && (visualizers_in_calls || LLAvatarTable::voiceProximal());
 
     LLVector3 hud_name_pos;
     {
@@ -3567,8 +3583,19 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         LL_CPU_ZONE("av post: lipsync, loading, water, wind");
         idleUpdateLipSync( voice_enabled );
         idleUpdateLoadingEffect();
-        idleUpdateBelowWater(); // wind effect uses this
-        idleUpdateWindEffect();
+        // <FS> B3d: the below water fact is worked out in the avatar's pool job next to the root (mBelowWaterDone); the wind effect at draw time, where its cloth uniforms are set (updateWindEffectForDraw)
+        if (mBelowWaterDone)
+        {
+            mBelowWaterDone = false;
+        }
+        else
+        {
+            idleUpdateBelowWater(); // wind effect uses this
+        }
+        if (!fs_winddraw_on())
+        {
+            idleUpdateWindEffect();
+        }
     }
 
     {
@@ -3690,7 +3717,7 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
         // Notice the calls to "gAwayTimer.reset()". This resets the timer that determines how long the avatar has been
         // "away", so that the avatar doesn't lapse into away-mode (and slump over) while the user is still talking.
         //-----------------------------------------------------------------------------------------------------------------
-        if (LLVoiceClient::getInstance()->getIsSpeaking( mID ) && (!isInMuteList() || isSelf()))
+        if (LLAvatarTable::voiceSpeaking(this) && (!isInMuteList() || isSelf()))
         {
             if (!mVoiceVisualizer->getCurrentlySpeaking())
             {
@@ -4358,7 +4385,7 @@ void LLVOAvatar::idleUpdateLipSync(bool voice_enabled)
     if (voice_enabled
         && mLastRezzedStatus > 0 // no point updating lip-sync for clouds
         && LLVoiceVisualizer::getLipSyncEnabled()
-        && LLVoiceClient::getInstance()->getIsSpeaking(mID))
+        && LLAvatarTable::voiceSpeaking(this))
     {
         F32 ooh_morph_amount = 0.0f;
         F32 aah_morph_amount = 0.0f;
@@ -6818,7 +6845,7 @@ void LLAvatarTable::endFrame()
 
 void LLAvatarTable::noteCheck(int which, bool same)
 {
-    static U64 reads[4] = {}, different[4] = {};
+    static U64 reads[6] = {}, different[6] = {};
     static U32 last = 0;
     ++reads[which];
     different[which] += same ? 0 : 1;
@@ -6827,9 +6854,50 @@ void LLAvatarTable::noteCheck(int which, bool same)
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
         LL_INFOS("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
-            << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << "), overall appearance " << reads[3] / frames << " (" << different[3] << ")" << LL_ENDL;
-        for (int k = 0; k < 4; ++k) { reads[k] = different[k] = 0; }
+            << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << "), overall appearance " << reads[3] / frames << " (" << different[3]
+            << "), voice enabled " << reads[4] / frames << " (" << different[4] << "), speaking " << reads[5] / frames << " (" << different[5] << ")" << LL_ENDL;
+        for (int k = 0; k < 6; ++k) { reads[k] = different[k] = 0; }
     }
+}
+
+namespace
+{
+bool sVoiceProximal = false;
+}
+
+bool LLAvatarTable::voiceProximal()
+{
+    return switchMode() == 1 ? sVoiceProximal : LLVoiceClient::getInstance()->inProximalChannel();
+}
+
+bool LLAvatarTable::voiceEnabled(const LLVOAvatar* av)
+{
+    static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+    const Row* r = switchMode() == 1 ? row(av) : nullptr;
+    if (!r)
+    {
+        return LLVoiceClient::getInstance()->getVoiceEnabled(av->getID());
+    }
+    if (verify)
+    {
+        noteCheck(4, r->mVoice == LLVoiceClient::getInstance()->getVoiceEnabled(av->getID()));
+    }
+    return r->mVoice;
+}
+
+bool LLAvatarTable::voiceSpeaking(const LLVOAvatar* av)
+{
+    static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+    const Row* r = switchMode() == 1 ? row(av) : nullptr;
+    if (!r)
+    {
+        return LLVoiceClient::getInstance()->getIsSpeaking(av->getID());
+    }
+    if (verify)
+    {
+        noteCheck(5, r->mSpeaking == LLVoiceClient::getInstance()->getIsSpeaking(av->getID()));
+    }
+    return r->mSpeaking;
 }
 
 void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
@@ -6841,6 +6909,19 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     sAvatarRows.clear();
     const U32 frame = LLFrameTimer::getFrameCount();
+    // B3d: the voice facts, once a frame: the participants of the voice channels (empty without voice: then nothing is asked per avatar), and whether they speak
+    static std::set<LLUUID> voice_participants, voice_speaking;
+    voice_participants.clear();
+    voice_speaking.clear();
+    LLVoiceClient::getInstance()->getParticipantList(voice_participants);
+    sVoiceProximal = !voice_participants.empty() && LLVoiceClient::getInstance()->inProximalChannel();
+    for (const LLUUID& id : voice_participants)
+    {
+        if (LLVoiceClient::getInstance()->getIsSpeaking(id))
+        {
+            voice_speaking.insert(id);
+        }
+    }
     for (size_t i = 0; i < count; ++i)
     {
         LLViewerObject* object = list[i];
@@ -6868,6 +6949,11 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         }
         r.mBits = (av->isSelf() || r.mInFrustum || av->nameTagBusy()) ? BIT_NAME_TAG : 0;
         r.mBits |= (r.mMode == MODE_POSE && r.mVisible) ? BIT_ATTACHMENT_LOOP : 0;
+        if (!voice_participants.empty())
+        {
+            r.mVoice = voice_participants.count(av->getID()) != 0;
+            r.mSpeaking = voice_speaking.count(av->getID()) != 0;
+        }
         av->mAvTableSlot = (S32)sAvatarRows.size();
         sAvatarRows.emplace_back(av, r);
     }
@@ -7338,6 +7424,11 @@ void LLVOAvatar::runDeferredMotionBlend()
         // <FS> stage B3d: the root position and rotation, worked out here (see updateCharacter); the job's own thread, the avatar's own fields and joints
         mRootInJob = false;
         updateRootPositionAndRotation(gAgent, mDeferredSpeed, mDeferredSitGroundConstrained);
+        if (!mDeferredMatricesOnly)
+        {
+            idleUpdateBelowWater();     // <FS> B3d: reads the position and the region's water height, writes mBelowWater (not the own avatar: it has no root job)
+            mBelowWaterDone = true;
+        }
         static std::atomic<U64> in_job{ 0 };
         if (++in_job % 200000 == 0)
         {

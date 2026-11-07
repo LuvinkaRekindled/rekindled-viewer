@@ -912,6 +912,7 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
     if (LLPipeline::RenderAvatarCloth)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("shader level > CLOTH"); // <FS:Beq/> Tracy markup
+        avatarp->updateWindEffectForDraw();     // <FS> B3d: the wind state is worked out here, once a frame, not in the update
         LLMatrix4 rot_mat;
         LLViewerCamera::getInstance()->getMatrixToLocal(rot_mat);
         LLMatrix4 cfr(OGL_TO_CFR_ROTATION);
