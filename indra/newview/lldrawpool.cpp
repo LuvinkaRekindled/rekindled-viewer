@@ -37,6 +37,7 @@
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolavatar.h"
 #include "lldrawpoolbump.h"
+#include "llfetchedgltfmaterial.h"
 #include "lldrawpoolmaterials.h"
 #include "lldrawpoolpbropaque.h"
 #include "lldrawpoolsimple.h"
@@ -964,6 +965,54 @@ void ll_palette_id_free(U32 id)
     ids.mFree.push_back(index);
 }
 
+// <FS> P3 census (LL_VK_RIGCENSUS=1): where the rigged draws of a frame go. 0-2 the G-buffer's per frame records (own avatar / other avatars / animesh), 3 left out of them (the table draws them), 4 not drawn
+// (no skin / no palette), 5 fallback to the old path, 6 entries of the cascades' rigged shadow records, 7 builds of those records, 8 transient rigged alpha entries, 9 rigged draw infos in the render maps
+// the cascade jobs push (read from the caster lists)
+static std::atomic<U64> sRigCensus[12];
+static std::atomic<U64> sRigReasonEntry[16], sRigReasonFallback[16];       // why the table did not take a rigged draw the per frame records built (ll_geometry_reject_reason, texture matrix not allowed as for table rows), and why a draw went to the old path
+static std::atomic<U64> sRigWithModel{ 0 };
+static std::atomic<U64> sRigGltf[4];       // the rigged glTF draws that went to the old path: all / double sided / with a texture matrix / the glow pass without an emissive array
+void ll_rig_census_add(int what, U64 n)
+{
+    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;
+    if (on && n)
+    {
+        sRigCensus[what].fetch_add(n, std::memory_order_relaxed);
+    }
+}
+void ll_rig_census_log()
+{
+    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;
+    static U64 last = 0;
+    if (!on || gFrameCount < last + 1200)
+    {
+        return;
+    }
+    const double frames = (double)(gFrameCount - last);
+    last = gFrameCount;
+    double v[12];
+    for (int k = 0; k < 12; ++k)
+    {
+        v[k] = (double)sRigCensus[k].exchange(0) / frames;
+    }
+    {
+        std::string text;
+        for (int k = 0; k < 16; ++k)
+        {
+            const U64 e = sRigReasonEntry[k].exchange(0), f = sRigReasonFallback[k].exchange(0);
+            if (e || f)
+            {
+                text += " r" + std::to_string(k) + ": records " + std::to_string((double)e / frames) + " old path " + std::to_string((double)f / frames) + ";";
+            }
+        }
+        LL_INFOS("RigCensus") << "rigged G-buffer draws a frame by reason the table did not take them (0 = it would, 12 = texture matrix, 2 avatar mismatch, 10 no skin)," << text << " with a model matrix " << (double)sRigWithModel.exchange(0) / frames
+            << "; rigged glTF draws on the old path " << (double)sRigGltf[0].exchange(0) / frames << ": double sided " << (double)sRigGltf[1].exchange(0) / frames << ", texture matrix " << (double)sRigGltf[2].exchange(0) / frames
+            << ", glow without emissive " << (double)sRigGltf[3].exchange(0) / frames << LL_ENDL;
+    }
+    LL_INFOS("RigCensus") << "rigged draws per frame over " << (U64)frames << " frames: G-buffer records own " << v[0] << " others " << v[1] << " animesh " << v[2] << " | left out (table) " << v[3] << ", not drawn " << v[4]
+        << ", old path " << v[5] << " | cascade shadow records: entries " << v[6] << " in " << v[7] << " builds | transient rigged alpha entries " << v[8] << LL_ENDL;
+}
+
 bool ll_palette_ids_on()
 {
     return palette_id_mode() != 0;
@@ -1651,11 +1700,13 @@ static void build_geometry(LLGeometryBuild& out)
         if (out.mSkipServed && params->mGeoServed)
         {
             ++out.mSkipped;     // S3: the scene table draws this one
+            ll_rig_census_add(3, out.mRigged ? 1 : 0);
             continue;
         }
         if (out.mRigged && !params->mAvatar)
         {
             ++out.mNotDrawn;    // no palette: the old path draws nothing either
+            ll_rig_census_add(4, 1);
             continue;
         }
         // S6.6b: a draw with a texture matrix is an entry too (the record carries the matrix; every pull program of the geometry passes reads its slot); the rigged records with palettes of their own keep
@@ -1664,6 +1715,19 @@ static void build_geometry(LLGeometryBuild& out)
         if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, texmat_ok, ll_pass_arrays(out.mType)))
         {
             out.mFallback.push_back(params);
+            ll_rig_census_add(5, out.mRigged ? 1 : 0);
+            if (out.mRigged && getenv("LL_VK_RIGCENSUS"))
+            {
+                ++sRigReasonFallback[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, true, texmat_ok, ll_pass_arrays(out.mType)))];
+                if (params->mGLTFMaterial)
+                {
+                    const LLVertexBuffer* vb_c = params->mVertexBuffer.get();
+                    ++sRigGltf[0];
+                    sRigGltf[1] += params->mGLTFMaterial->mDoubleSided;
+                    sRigGltf[2] += params->mTextureMatrix != nullptr;
+                    sRigGltf[3] += (ll_pass_arrays(out.mType) & LL_PASS_ARRAY_EMISSIVE) && !(vb_c && vb_c->hasDataType(LLVertexBuffer::TYPE_EMISSIVE));
+                }
+            }
             continue;
         }
         const LLVertexBuffer* vb = params->mVertexBuffer.get();
@@ -1757,6 +1821,16 @@ static void build_geometry(LLGeometryBuild& out)
         {
             out.mTexmats.insert(out.mTexmats.end(), (const F32*)params->mTextureMatrix->mMatrix, (const F32*)params->mTextureMatrix->mMatrix + 16);
             e.mPad3 = (U32)(out.mTexmats.size() / 16);
+        }
+        if (out.mRigged)
+        {
+            if (getenv("LL_VK_RIGCENSUS"))
+            {
+                ++sRigReasonEntry[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, true, false, ll_pass_arrays(out.mType)))];
+                sRigWithModel += params->mModelMatrix != nullptr;
+            }
+            const LLVOAvatar* av = params->mAvatar.get();
+            ll_rig_census_add(av && av->isSelf() ? 0 : (av && av->isControlAvatar() ? 2 : 1), 1);
         }
         entries.push_back(e);
     }

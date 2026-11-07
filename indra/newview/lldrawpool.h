@@ -150,6 +150,8 @@ bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigg
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
 void ll_frame_palette_flush();
+void ll_rig_census_add(int what, U64 n);          // <FS> P3 census (LL_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see ll_rig_census_log)
+void ll_rig_census_log();
 bool ll_palette_ids_on();                        // <FS> P1 step 3: records name shared palettes by id (LL_VK_PALID, default on)
 U32 ll_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
 void ll_palette_id_free(U32 id);

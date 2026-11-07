@@ -813,6 +813,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
             e.mPaletteOffset = offset;
             e.mJoints = joints;
+            ll_rig_census_add(8, 1);
         }
         U32* fields[6] = { &e.mTextures[0], &e.mTextures[1], &e.mTextures[2], &e.mTextures[3], &e.mNormalMap, &e.mSpecularMap };
         for (int k = 0; k < 6; ++k)
