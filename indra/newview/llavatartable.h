@@ -47,6 +47,7 @@ public:
         bool mImpostor = false;         // isImpostor() after the avatars' update (its inputs: update period, muted, too slow, RLV silhouette, exclusion settings are final then)
         bool mTooSlow = false;          // isTooSlow()
         bool mMuted = false;            // isVisuallyMuted()
+        U8 mAppearance = 0;             // getOverallAppearance() (LLVOAvatar::AvatarOverallAppearance: normal, jellydoll, invisible)
         U16 mBits = 0;
         U32 mFrame = 0;
     };
@@ -57,7 +58,7 @@ public:
     static void noteActual(const LLVOAvatar* av, U8 actual);                         // mode 2: what the old gates did
     static void endFrame();                                                          // after the avatars' update (the motion batch and the completions): the facts the render side reads
     static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
-    static void noteCheck(int which, bool same);                                     // LL_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted) against the live one
+    static void noteCheck(int which, bool same);                                     // LL_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted, 3 overall appearance) against the live one
     static bool attachmentLoop(const LLVOAvatar* av, bool from_update);              // step 3: the loop's gate, from the row (the result of updateCharacter is only compared with it)
     static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
 };
