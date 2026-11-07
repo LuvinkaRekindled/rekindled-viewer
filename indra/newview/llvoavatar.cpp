@@ -5396,6 +5396,21 @@ void LLVOAvatar::slamPosition()
 
 bool LLVOAvatar::isVisuallyMuted()
 {
+    // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
+    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    {
+        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        if (verify)
+        {
+            LLAvatarTable::noteCheck(2, row->mMuted == computeVisuallyMutedLive());
+        }
+        return row->mMuted;
+    }
+    return computeVisuallyMutedLive();
+}
+
+bool LLVOAvatar::computeVisuallyMutedLive()
+{
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR; // <FS:Beq/> Tracy accounting for imposter testing.
     bool muted = false;
     // <FS:minerjr> [FIRE-35735] Imposter/Impostor Avatar Exclusions
@@ -6678,7 +6693,9 @@ void LLAvatarTable::endFrame()
         {
             continue;
         }
-        entry.second.mImpostor = av->isImpostor();      // (not final yet: the live answer, the virtual one: a control avatar follows the avatar it is attached to)
+        entry.second.mTooSlow = av->isTooSlow();        // (not final yet: the live answers)
+        entry.second.mMuted = av->isVisuallyMuted();
+        entry.second.mImpostor = av->isImpostor();      // (the virtual one: a control avatar follows the avatar it is attached to; after the two above: they are inputs)
     }
     for (auto& entry : sAvatarRows)
     {
@@ -6686,18 +6703,19 @@ void LLAvatarTable::endFrame()
     }
 }
 
-void LLAvatarTable::noteImpostorCheck(bool same)
+void LLAvatarTable::noteCheck(int which, bool same)
 {
-    static U64 reads = 0, different = 0;
+    static U64 reads[3] = {}, different[3] = {};
     static U32 last = 0;
-    ++reads;
-    different += same ? 0 : 1;
+    ++reads[which];
+    different[which] += same ? 0 : 1;
     if (LLFrameTimer::getFrameCount() >= last + 600)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_INFOS("AvTable") << "impostor reads from the row per frame over " << (U32)frames << " frames: " << reads / frames << ", different from the live answer " << different / frames << " (" << different << " in all this window)" << LL_ENDL;
-        reads = different = 0;
+        LL_INFOS("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
+            << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << ")" << LL_ENDL;
+        for (int k = 0; k < 3; ++k) { reads[k] = different[k] = 0; }
     }
 }
 
@@ -11259,6 +11277,21 @@ bool LLVOAvatar::isTooComplex() const
 
 bool LLVOAvatar::isTooSlow() const
 {
+    // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
+    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    {
+        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        if (verify)
+        {
+            LLAvatarTable::noteCheck(1, row->mTooSlow == computeTooSlowLive());
+        }
+        return row->mTooSlow;
+    }
+    return computeTooSlowLive();
+}
+
+bool LLVOAvatar::computeTooSlowLive() const
+{
     if (mIsControlAvatar)
     {
         return mTooSlow;
@@ -13906,7 +13939,7 @@ bool LLVOAvatar::isImpostor()
         static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
         if (verify && !isControlAvatar())
         {
-            LLAvatarTable::noteImpostorCheck(row->mImpostor == computeImpostorLive());
+            LLAvatarTable::noteCheck(0, row->mImpostor == computeImpostorLive());
         }
         return row->mImpostor;
     }
