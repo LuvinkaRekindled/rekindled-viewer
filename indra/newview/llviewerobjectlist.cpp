@@ -29,6 +29,7 @@
 #include <chrono>
 
 #include "llviewerobjectlist.h"
+#include "llcontrolavatar.h"   // <FS> stage C5d
 #include "llavatartable.h"
 #include "llforkjoinpool.h"
 
@@ -1204,21 +1205,35 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     LLForkJoinPool* pool = LLForkJoinPool::shared();
 
     constexpr size_t MIN_PARALLEL_BATCH = 4;
+    const std::function<void(size_t)> blend = [&batch](size_t index)
+    {
+        if (av_class)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            batch[index]->runDeferredMotionBlend();
+            gAvClass.mBlendNs[av_cls[index]].fetch_add((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
+            return;
+        }
+        batch[index]->runDeferredMotionBlend();
+    };
+    // <FS> stage C5d (LL_VK_ANIMROOT): an animated object worn by an avatar (LLControlAvatar::hostJobOwned) is placed from the host's FINAL pose, after the host's completion (hover, overrides and the rest that the
+    // completion changes after the pose job): its placement, its pose job and its completion are the second phase, after the completions of the first.
+    static std::vector<size_t> phase1, phase2;
+    phase1.clear();
+    phase2.clear();
+    for (size_t i = 0; i < batch.size(); ++i)
+    {
+        LLVOAvatar* a = batch[i].get();
+        (a->isControlAvatar() && static_cast<LLControlAvatar*>(a)->hostJobOwned() ? phase2 : phase1).push_back(i);
+    }
     if (pool && batch.size() >= MIN_PARALLEL_BATCH)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("parallel motion blend");
-        const std::function<void(size_t)> blend = [&batch](size_t index)
         {
-            if (av_class)
-            {
-                const auto t0 = std::chrono::steady_clock::now();
-                batch[index]->runDeferredMotionBlend();
-                gAvClass.mBlendNs[av_cls[index]].fetch_add((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
-                return;
-            }
-            batch[index]->runDeferredMotionBlend();
-        };
-        { LL_CPU_ZONE("motion batch: blend (launch to join)"); pool->runLabeled("avatar motion batch", batch.size(), blend); }
+            LL_CPU_ZONE("motion batch: blend (launch to join)");
+            const std::function<void(size_t)> blend1 = [&blend](size_t k) { blend(phase1[k]); };
+            pool->runLabeled("avatar motion batch", phase1.size(), blend1);
+        }
 
         // <FS> view rework A2 (LL_VK_AV_PARALLEL=1): the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
@@ -1253,16 +1268,49 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
     else
     {
-        for (LLPointer<LLVOAvatar>& avatar : batch)
+        for (size_t i : phase1)
         {
-            avatar->runDeferredMotionBlend();
+            batch[i]->runDeferredMotionBlend();
         }
     }
+
+    // <FS> stage C5d: the second phase: each animated object worn by an avatar is placed (main thread) from the host's final pose, then their pose jobs run (the pool), then their completions (above)
+    auto run_second_phase = [&]()
+    {
+        if (phase2.empty())
+        {
+            return;
+        }
+        for (size_t i : phase2)
+        {
+            static_cast<LLControlAvatar*>(batch[i].get())->placeFromHost();
+        }
+        if (pool && phase2.size() >= 2)
+        {
+            LL_CPU_ZONE("motion batch: blend of animated objects worn (launch to join)");
+            const std::function<void(size_t)> blend2 = [&blend](size_t k) { blend(phase2[k]); };
+            pool->runLabeled("avatar motion batch (animated objects worn)", phase2.size(), blend2);
+        }
+        else
+        {
+            for (size_t i : phase2)
+            {
+                batch[i]->runDeferredMotionBlend();
+            }
+        }
+    };
 
     const auto blend_end = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     if (av_class)
     {
-        for (size_t i = 0; i < batch.size(); ++i)
+        for (size_t i : phase1)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            batch[i]->completeDeferredMotionUpdate();
+            gAvClass.mCompleteNs[av_cls[i]] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+        }
+        run_second_phase();
+        for (size_t i : phase2)
         {
             const auto t0 = std::chrono::steady_clock::now();
             batch[i]->completeDeferredMotionUpdate();
@@ -1292,9 +1340,14 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     else
     {
         LL_CPU_ZONE("motion batch: completions (main thread)");
-        for (LLPointer<LLVOAvatar>& avatar : batch)
+        for (size_t i : phase1)
         {
-            avatar->completeDeferredMotionUpdate();
+            batch[i]->completeDeferredMotionUpdate();
+        }
+        run_second_phase();
+        for (size_t i : phase2)
+        {
+            batch[i]->completeDeferredMotionUpdate();
         }
     }
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
