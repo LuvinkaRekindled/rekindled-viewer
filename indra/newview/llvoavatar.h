@@ -72,6 +72,8 @@ extern const LLUUID ANIM_AGENT_TARGET;
 extern const LLUUID ANIM_AGENT_WALK_ADJUST;
 
 class LLViewerWearable;
+class LLSpatialBridge;              // <FS> the attachment rows
+class LLViewerJointAttachment;
 class LLVoiceVisualizer;
 class LLHUDNameTag;
 class LLHUDEffectSpiral;
@@ -351,6 +353,18 @@ public:
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
     void            buildPalettesInJob();
+    // <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS: 1 default, 0 the loop finds them each frame, 2 rows built and compared with the loop's own set): the plain rigid attachments of the avatar as a list of rows, built when the
+    // attachment set changes (LLViewerJointAttachment::sRevision) and swept every 32 frames, not found by walking the attachment points and testing each object every frame
+    struct AttRow
+    {
+        LLViewerObject* mObject = nullptr;
+        LLDrawable* mDrawable = nullptr;
+        LLSpatialBridge* mBridge = nullptr;
+        LLViewerJointAttachment* mPoint = nullptr;
+    };
+    std::vector<AttRow> mAttRows;
+    U32 mAttRowsRevision = ~0u;
+    void            rebuildAttRows();
     static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)
     static void     sPalJobWallNsAdd(U64 ns);       // (LL_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();
