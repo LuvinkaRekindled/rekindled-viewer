@@ -6651,7 +6651,7 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
 
 namespace
 {
-std::unordered_map<const LLVOAvatar*, LLAvatarTable::Row> sAvatarRows;
+std::vector<std::pair<const LLVOAvatar*, LLAvatarTable::Row>> sAvatarRows;      // the rows of the frame; an avatar's index is in LLVOAvatar::mAvTableSlot
 U64 sAvTableAgree = 0, sAvTableMatrix[LLAvatarTable::MODE_COUNT][LLAvatarTable::MODE_COUNT] = {}, sAvTableNoRow = 0;
 U32 sAvTableLast = 0;
 }
@@ -6664,8 +6664,8 @@ int LLAvatarTable::switchMode()
 
 const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
 {
-    auto found = sAvatarRows.find(av);
-    return found == sAvatarRows.end() ? nullptr : &found->second;
+    const S32 slot = av->mAvTableSlot;
+    return (slot >= 0 && (size_t)slot < sAvatarRows.size() && sAvatarRows[slot].first == av) ? &sAvatarRows[slot].second : nullptr;
 }
 
 const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
@@ -6674,8 +6674,12 @@ const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
     {
         return nullptr;
     }
-    auto found = sAvatarRows.find(av);
-    return (found == sAvatarRows.end() || !found->second.mFinal) ? nullptr : &found->second;
+    const S32 slot = av->mAvTableSlot;
+    if (slot < 0 || (size_t)slot >= sAvatarRows.size() || sAvatarRows[slot].first != av || !sAvatarRows[slot].second.mFinal)
+    {
+        return nullptr;
+    }
+    return &sAvatarRows[slot].second;
 }
 
 void LLAvatarTable::endFrame()
@@ -6755,7 +6759,8 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         }
         r.mBits = (av->isSelf() || r.mInFrustum || av->nameTagBusy()) ? BIT_NAME_TAG : 0;
         r.mBits |= (r.mMode == MODE_POSE && r.mVisible) ? BIT_ATTACHMENT_LOOP : 0;
-        sAvatarRows[av] = r;
+        av->mAvTableSlot = (S32)sAvatarRows.size();
+        sAvatarRows.emplace_back(av, r);
     }
 }
 
@@ -6812,15 +6817,15 @@ void LLAvatarTable::noteActual(const LLVOAvatar* av, U8 actual)
     {
         return;
     }
-    auto found = sAvatarRows.find(av);
-    if (found == sAvatarRows.end())
+    const Row* found = row(av);
+    if (!found)
     {
         ++sAvTableNoRow;
     }
     else
     {
-        ++sAvTableMatrix[found->second.mMode][actual];
-        sAvTableAgree += found->second.mMode == actual ? 1 : 0;
+        ++sAvTableMatrix[found->mMode][actual];
+        sAvTableAgree += found->mMode == actual ? 1 : 0;
     }
     if (LLFrameTimer::getFrameCount() >= sAvTableLast + 600)
     {
