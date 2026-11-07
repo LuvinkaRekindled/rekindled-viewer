@@ -7211,6 +7211,50 @@ void LLVOAvatar::runDeferredMotionBlend()
         AvImpTimer imp_world_timer(3, this);        // (region 3: the world matrix walk at the end of the job)
         mRoot->updateWorldMatrixChildren();
     }
+    // <FS> PLAN-avatars.md stage B2c, LL_VK_SCALEGUARD=2: with the scale setter not dirtying an unchanged scale, a joint left clean must hold the world matrix a full recompute gives: save the matrices, dirty the whole
+    // skeleton, walk again, compare bit for bit
+    static const bool verify_clean = getenv("LL_VK_SCALEGUARD") && atoi(getenv("LL_VK_SCALEGUARD")) == 2;
+    if (verify_clean && mRoot)
+    {
+        static std::atomic<U64> checked{ 0 }, stale{ 0 }, jobs{ 0 };
+        std::vector<LLJoint*> joints;
+        for (LLJoint* bone : mSkeleton)
+        {
+            if (bone && bone->mUpdateXform)
+            {
+                joints.push_back(bone);
+            }
+        }
+        for (auto& attachment : mAttachmentPoints)
+        {
+            if (attachment.second && attachment.second->mUpdateXform)
+            {
+                joints.push_back(attachment.second);
+            }
+        }
+        std::vector<LLMatrix4a> before(joints.size());
+        for (size_t k = 0; k < joints.size(); ++k)
+        {
+            before[k] = joints[k]->getWorldMatrix4a();
+        }
+        mRoot->touch(LLJoint::ALL_DIRTY);
+        mRoot->updateWorldMatrixChildren();
+        for (size_t k = 0; k < joints.size(); ++k)
+        {
+            ++checked;
+            if (memcmp(&before[k], &joints[k]->getWorldMatrix4a(), sizeof(LLMatrix4a)) != 0)
+            {
+                if (++stale <= 6)
+                {
+                    LL_WARNS("ScaleGuard") << "joint '" << joints[k]->getName() << "' of " << getFullname() << " was left clean with a stale world matrix" << LL_ENDL;
+                }
+            }
+        }
+        if (++jobs % 20000 == 0)
+        {
+            LL_INFOS("ScaleGuard") << "clean joints checked against a full recompute over " << jobs.load() << " jobs: joints " << checked.load() << ", stale " << stale.load() << LL_ENDL;
+        }
+    }
 }
 
 void LLVOAvatar::completeDeferredMotionUpdate()
