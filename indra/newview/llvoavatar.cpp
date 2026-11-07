@@ -13054,7 +13054,8 @@ namespace
 {
 // LL_VK_PALTIME=1: where the palette time goes. 0 built on request, 1 built by the job; per frame: builds, build time (all threads), time waiting for the global palette lock, hits
 std::atomic<U64> sPalBuildNs[2], sPalBuilds[2], sPalWaitNs{ 0 }, sPalRequests2{ 0 }, sPalHits{ 0 }, sPalJobWallNs{ 0 }, sPalJobRuns{ 0 };
-std::atomic<U64> sPalCompared{ 0 }, sPalDiffer{ 0 }, sPalSkippedUninit{ 0 };
+std::atomic<U64> sPalCompared{ 0 }, sPalDiffer{ 0 }, sPalSkippedUninit{ 0 }, sPalStaleByTouch{ 0 }, sPalDifferUntouched{ 0 };
+std::atomic<U32> sPalJobTouchSerial{ 0 };       // LLJoint::sTouchSerial when the palette jobs of the last batch were done: a joint touched after that makes the job's palettes suspect for the frame
 std::atomic<U32> sPalTimeLast{ 0 };
 bool fs_paltime_on()
 {
@@ -13074,7 +13075,8 @@ void fs_paltime_report()
         LL_INFOS("PalTime") << "palettes a frame over " << (U32)frames << " frames: requests " << sPalRequests2.exchange(0) / frames << " (hits " << sPalHits.exchange(0) / frames << "); built on request " << sPalBuilds[0].load() / frames
             << " in " << sPalBuildNs[0].exchange(0) / 1.0e6 / frames << " ms (all threads), built by the job " << sPalBuilds[1].load() / frames << " in " << sPalBuildNs[1].exchange(0) / 1.0e6 / frames
             << " ms (all threads), job wall " << sPalJobWallNs.exchange(0) / 1.0e6 / frames << " ms; waiting for the global palette lock " << sPalWaitNs.exchange(0) / 1.0e6 / frames
-            << " ms (all threads); job palettes compared with a rebuild " << sPalCompared.load() << ", different " << sPalDiffer.load() << ", entries skipped (skin joint numbers not initialised) " << sPalSkippedUninit.load() << LL_ENDL;
+            << " ms (all threads); job palettes rebuilt at the request because a joint was touched after the job " << sPalStaleByTouch.exchange(0) / frames << " a frame; job palettes compared with a rebuild " << sPalCompared.load()
+            << ", different " << sPalDiffer.load() << " (of them with no joint touched after the job: " << sPalDifferUntouched.load() << "), entries skipped (skin joint numbers not initialised) " << sPalSkippedUninit.load() << LL_ENDL;
         sPalBuilds[0] = sPalBuilds[1] = 0;
     }
 }
@@ -13086,18 +13088,49 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     // The entry returned is not written again in this frame, so the callers read it without the lock.
     static std::mutex palette_mutex;
     const bool timed = fs_paltime_on();
+    // <FS> stage B3b: a request that finds the palette ready (the job built it, or an earlier request) reads the avatar's cache under a shared lock and never touches the global lock
+    // (compare mode 2 checks the first request of each job palette, which writes a flag: that one goes the long way)
+    {
+        const U64 shared_t0 = timed ? fs_pal_now() : 0;
+        std::shared_lock<std::shared_mutex> shared_lock(mPaletteMutex);
+        if (timed)
+        {
+            sPalWaitNs += fs_pal_now() - shared_t0;
+            ++sPalRequests2;
+        }
+        auto found = mMatrixPaletteCache.find(skin->mHash);
+        if (found != mMatrixPaletteCache.end() && found->second.mFrame == gFrameCount && !(fs_paljob_mode() == 2 && found->second.mJobFor == gFrameCount && !found->second.mJobChecked)
+            && !(found->second.mJobFor == gFrameCount && LLJoint::sTouchSerial != sPalJobTouchSerial.load(std::memory_order_relaxed)))
+        {
+            if (timed)
+            {
+                ++sPalHits;
+                fs_paltime_report();
+            }
+            return found->second;
+        }
+    }
     const U64 wait_t0 = timed ? fs_pal_now() : 0;
     std::lock_guard<std::mutex> palette_lock(palette_mutex);
-    std::lock_guard<std::mutex> avatar_lock(mPaletteMutex);
+    std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
     if (timed)
     {
         sPalWaitNs += fs_pal_now() - wait_t0;
-        ++sPalRequests2;
     }
 
     U64 hash = skin->mHash;
     MatrixPaletteCache& entry = mMatrixPaletteCache[hash];
 
+    if (entry.mFrame == gFrameCount && entry.mJobFor == gFrameCount && LLJoint::sTouchSerial != sPalJobTouchSerial.load(std::memory_order_relaxed))
+    {
+        // <FS> stage B3b: a joint was touched after the palette jobs (compare lap pl1 caught one avatar's joint changing between the job and the render, 12 times in 6.4 M): the job's palette may be a frame old, rebuild it
+        // now from the skeleton as it is (the motion history was already moved on by the job)
+        ++sPalStaleByTouch;
+        entry.mJobFor = 0xFFFFFFFFu;
+        entry.mSkin = skin;
+        buildPaletteEntry(entry, skin, gFrameCount, true, false);
+        return entry;
+    }
     if (entry.mFrame == gFrameCount)
     {
         if (timed)
@@ -13119,6 +13152,7 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             ++sPalCompared;
             if (scratch.size() != entry.mMatrixPalette.size() || memcmp(scratch.data(), entry.mMatrixPalette.data(), sizeof(LLMatrix4a) * (size_t)count) != 0)
             {
+                ++sPalDifferUntouched;      // (the touch serial is unchanged since the job: nothing the serial sees explains it)
                 if (++sPalDiffer <= 8)
                 {
                     U32 first = 0;
@@ -13147,6 +13181,10 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     return entry;
 }
 
+void LLVOAvatar::sPalJobDone()
+{
+    sPalJobTouchSerial.store(LLJoint::sTouchSerial, std::memory_order_relaxed);
+}
 void LLVOAvatar::sPalJobWallNsAdd(U64 ns)
 {
     sPalJobWallNs += ns;
@@ -13163,7 +13201,7 @@ void LLVOAvatar::buildPalettesInJob()
     }
     const bool timed = fs_paltime_on();
     const U32 target = gFrameCount + 1;     // (gFrameCount is advanced at the start of display(), after this idle: the request of the render finds mFrame == its own frame)
-    std::lock_guard<std::mutex> avatar_lock(mPaletteMutex);
+    std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
     if (mFlatSkel)
     {
         mFlatSkel->mFrame = ~0u;            // (the world array is filled again from the final skeleton of this frame)
@@ -13209,6 +13247,7 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
         {
             entry.mPrevGLMp.swap(entry.mGLMp);
         }
+        entry.mListSlot.store(~0ull, std::memory_order_relaxed);        // (a new palette: its place in the frame's shared list is not valid)
         entry.mFrame = stamp;
         entry.mComputed = true;
         if (skin->mBadBindCount > 0 && !entry.mBadBindNamed)
