@@ -4390,6 +4390,27 @@ static U64 palette_address(U32 offset)
     return 0;
 }
 
+// <FS> PLAN-avatars.md rigged draws as rows, P1: kind 39: part of the frame's palette list that the viewer wrote straight into a palette arena (mEntries = the arena, mFragment = the first float, mPaletteFloats = how many):
+// a segment of the frame's list at the arena's own address, no copy; the arena is held until frameCount() + 3 renderer frames after this record
+static void on_palette_arena(const LLVkBridge::ShadowPacketsHeader& h)
+{
+    if (h.mPass != gFrameState.mPalFrame)
+    {
+        gFrameState.mPalFrame = h.mPass;
+        gFrameState.mPalSegs.clear();
+    }
+    LLVkBridge::PaletteArena arena;
+    if (h.mPaletteFloats == 0 || !LLVkBridge::paletteArenaInfo(h.mEntries, arena) || (U64)h.mFragment + h.mPaletteFloats > arena.mFloats)
+    {
+        return;
+    }
+    const U64 address = arena.mAddress + 4ull * h.mFragment;
+    gFrameState.mPalSegs.push_back({ h.mFragment, h.mPaletteFloats, address });
+    palette_cpu_register(address, 4u * h.mPaletteFloats, arena.mPtr + h.mFragment);        // (the skin catcher's snapshot)
+    LLVkBridge::paletteArenaSent(h.mEntries, Context::instance().getFrameNumber() + Context::frameCount() + 3);
+    Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)address, (unsigned long long)h.mPass);
+}
+
 static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (h.mPass != gFrameState.mPalFrame)
@@ -10994,6 +11015,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 27)
     {
         on_palette_segment(h, blob);
+        return;
+    }
+    if (h.mKind == 39)
+    {
+        on_palette_arena(h);
         return;
     }
     if (h.mKind == 33)

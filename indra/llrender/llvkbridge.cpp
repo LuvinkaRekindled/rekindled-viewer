@@ -48,6 +48,12 @@ void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
 void LLVkBridge::cullPublish(U32, U32) {}
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
+bool LLVkBridge::paletteArenaAcquire(U32, PaletteArena&) { return false; }
+void LLVkBridge::paletteArenaRegister(U32, F32*, U64, U32) {}
+void LLVkBridge::paletteArenaClear() {}
+bool LLVkBridge::paletteArenaInfo(U32, PaletteArena&) { return false; }
+void LLVkBridge::paletteArenaSent(U32, U64) {}
+void LLVkBridge::paletteArenaFree(U64) {}
 void LLVkBridge::upscale(const UpscaleArgs&) {}
 U32 LLVkBridge::rtShadowMode() { return 0; }
 bool LLVkBridge::rtLoadingGates() { return false; }
@@ -1332,6 +1338,130 @@ void LLVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* bl
         return;
     }
     shadowPacketsImpl(header, (const U8*)blob);
+}
+
+// <FS> the palette arenas (see llvkbridge.h): the arena of a viewer frame is index frame % count; it is busy from the first acquire until the renderer frees it
+namespace
+{
+constexpr U32 kPaletteArenasMax = 16;
+struct PaletteArenaSlot
+{
+    std::atomic<F32*> mPtr{ nullptr };
+    std::atomic<U64> mAddress{ 0 };
+    std::atomic<U32> mFloats{ 0 };
+    std::atomic<U32> mBusy{ 0 };            // 0 = free, else the viewer frame + 1 that holds it
+    std::atomic<U64> mFreeAt{ 0 };          // the renderer frame from which it is free again; 0 = no record has named it yet
+};
+PaletteArenaSlot gPaletteArena[kPaletteArenasMax];
+std::atomic<U32> gPaletteArenaCount{ 0 };
+}
+
+void LLVkBridge::paletteArenaRegister(U32 index, F32* ptr, U64 address, U32 floats)
+{
+    if (index >= kPaletteArenasMax || !ptr || !address)
+    {
+        return;
+    }
+    PaletteArenaSlot& s = gPaletteArena[index];
+    s.mFloats.store(floats, std::memory_order_relaxed);
+    s.mAddress.store(address, std::memory_order_relaxed);
+    s.mBusy.store(0, std::memory_order_relaxed);
+    s.mFreeAt.store(0, std::memory_order_relaxed);
+    s.mPtr.store(ptr, std::memory_order_release);
+    if (index + 1 > gPaletteArenaCount.load(std::memory_order_relaxed))
+    {
+        gPaletteArenaCount.store(index + 1, std::memory_order_release);
+    }
+}
+
+void LLVkBridge::paletteArenaClear()
+{
+    gPaletteArenaCount.store(0, std::memory_order_release);
+    for (PaletteArenaSlot& s : gPaletteArena)
+    {
+        s.mPtr.store(nullptr, std::memory_order_release);
+    }
+}
+
+bool LLVkBridge::paletteArenaAcquire(U32 frame, PaletteArena& out)
+{
+    const U32 count = gPaletteArenaCount.load(std::memory_order_acquire);
+    if (!count)
+    {
+        return false;
+    }
+    const U32 index = frame % count;
+    PaletteArenaSlot& s = gPaletteArena[index];
+    F32* ptr = s.mPtr.load(std::memory_order_acquire);
+    if (!ptr)
+    {
+        return false;
+    }
+    const U32 want = frame + 1;
+    U32 busy = s.mBusy.load(std::memory_order_acquire);
+    if (busy != want)
+    {
+        if (busy != 0)
+        {
+            // taken by an earlier frame: free only once the renderer has freed it, or when that frame never sent a record (an aborted frame: nobody can read it) and this is the next use of the index
+            if (s.mFreeAt.load(std::memory_order_acquire) != 0 || (U32)(want - busy) < count)
+            {
+                return false;
+            }
+        }
+        if (!s.mBusy.compare_exchange_strong(busy, want, std::memory_order_acq_rel))
+        {
+            return false;
+        }
+        s.mFreeAt.store(0, std::memory_order_release);
+    }
+    out.mPtr = ptr;
+    out.mAddress = s.mAddress.load(std::memory_order_relaxed);
+    out.mFloats = s.mFloats.load(std::memory_order_relaxed);
+    out.mIndex = index;
+    return true;
+}
+
+bool LLVkBridge::paletteArenaInfo(U32 index, PaletteArena& out)
+{
+    if (index >= kPaletteArenasMax)
+    {
+        return false;
+    }
+    PaletteArenaSlot& s = gPaletteArena[index];
+    out.mPtr = s.mPtr.load(std::memory_order_acquire);
+    out.mAddress = s.mAddress.load(std::memory_order_relaxed);
+    out.mFloats = s.mFloats.load(std::memory_order_relaxed);
+    out.mIndex = index;
+    return out.mPtr && out.mAddress;
+}
+
+void LLVkBridge::paletteArenaSent(U32 index, U64 free_at_renderer_frame)
+{
+    if (index >= kPaletteArenasMax)
+    {
+        return;
+    }
+    PaletteArenaSlot& s = gPaletteArena[index];
+    U64 cur = s.mFreeAt.load(std::memory_order_relaxed);
+    while (cur < free_at_renderer_frame && !s.mFreeAt.compare_exchange_weak(cur, free_at_renderer_frame, std::memory_order_acq_rel))
+    {
+    }
+}
+
+void LLVkBridge::paletteArenaFree(U64 renderer_frame)
+{
+    const U32 count = gPaletteArenaCount.load(std::memory_order_acquire);
+    for (U32 i = 0; i < count; ++i)
+    {
+        PaletteArenaSlot& s = gPaletteArena[i];
+        const U64 at = s.mFreeAt.load(std::memory_order_acquire);
+        if (at != 0 && renderer_frame >= at)
+        {
+            s.mFreeAt.store(0, std::memory_order_relaxed);
+            s.mBusy.store(0, std::memory_order_release);
+        }
+    }
 }
 
 // S7 H1: the Hi-Z ring (the worker writes the results, the main thread reads them once published)
