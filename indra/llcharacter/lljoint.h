@@ -141,6 +141,7 @@ public:
     const LLQuaternion* mViewRot = nullptr;
     const LLMatrix4a*   mViewMat = nullptr;
     bool                mViewValid = false;
+    U32                 mViewMatPass = 0;   // the pass whose matrix the xform's LLMatrix4 copy (getWorldMatrix()) was last made from
     U8                  mViewKind = 0;      // how the pass set it: 1 computed from the locals, 2 clean and copied, 3 not worked out (dirty or outside the walk)
     U32                 mViewPass = 0;      // the pass counter at that time
     static std::atomic<U32> sViewPasses;
@@ -285,6 +286,17 @@ public:
 
     void updateWorldMatrix();
     // <FS> PLAN-avatars.md stage C: what updateWorldMatrix leaves, for a world position and rotation the avatar's flat world pass worked out from the locals (the joint object is the view of the array)
+    // (LL_VK_JOINTVIEW=3: the joint is clean and its world data is the array's slot only: nothing is written into the xform's world fields)
+    void setView(const LLVector3* pos, const LLQuaternion* rot, const LLMatrix4a* mat, bool valid, U8 kind, U32 pass)
+    {
+        mViewPos = pos; mViewRot = rot; mViewMat = mat; mViewValid = valid; mViewKind = kind; mViewPass = pass;
+        mXform.setWorldView(valid ? pos : nullptr, valid ? rot : nullptr);      // (the xform's own world getters, which a drawable's parent chain and the manipulators read, follow)
+    }
+    void setCleanFromPass()
+    {
+        mDirtyFlags = 0x0;
+        sNumUpdates++;
+    }
     void setWorldFromPass(const LLVector3& pos, const LLQuaternion& rot)
     {
         mXform.setWorldFromPass(pos, rot);

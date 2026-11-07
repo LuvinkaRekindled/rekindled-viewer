@@ -37,7 +37,7 @@
 S32 LLJoint::sNumUpdates = 0;
 S32 LLJoint::sNumTouches = 0;
 U32 LLJoint::sTouchSerial = 0;
-int LLJoint::sViewMode = getenv("LL_VK_JOINTVIEW") ? atoi(getenv("LL_VK_JOINTVIEW")) : 2;     // <FS> stage C: 2 until the verify lap has shown 0 different, then 1
+int LLJoint::sViewMode = getenv("LL_VK_JOINTVIEW") ? atoi(getenv("LL_VK_JOINTVIEW")) : 3;     // <FS> stage C: 3 (default since 2026-11-07, laps jw2: 36.6 M answers 0 different, jw3: the user: looked good) the joints are views only, nothing written into the xform world fields; 2 adds the writeback and the compare; 1 the writeback; 0 off
 std::atomic<U32> LLJoint::sViewPasses{ 0 };
 std::atomic<U64> LLJoint::sViewChecked{ 0 }, LLJoint::sViewDifferent{ 0 };
 static std::atomic<U64> sViewWriteWhileValid{ 0 };
@@ -207,6 +207,7 @@ void LLJoint::touch(U32 flags)
         sNumTouches++;
         sTouchSerial++;
         mViewValid = false;     // (the array's slot no longer says what this joint will be)
+        mXform.setWorldView(nullptr, nullptr);
         mDirtyFlags |= flags;
         U32 child_flags = flags;
         if (flags & ROTATION_DIRTY)
@@ -752,12 +753,12 @@ void LLJoint::setDebugJointNames(const std::string& names_string)
 //--------------------------------------------------------------------
 LLVector3 LLJoint::getWorldPosition()
 {
-    if (mViewValid && sViewMode)
+    if (mViewValid && sViewMode && !mDirtyFlags)
     {
         if (sViewMode == 2)
         {
             ++sViewChecked;
-            const LLVector3& x = mXform.getWorldPosition();
+            const LLVector3& x = mXform.getWorldPositionField();
             if (memcmp(&x, mViewPos, sizeof(LLVector3)) != 0) { if (++sViewDifferent <= 12) { LL_INFOS("JointView") << "position of " << mName << " (joint " << mJointNum << ", mUpdateXform " << mUpdateXform << ", dirty 0x" << std::hex << mDirtyFlags << std::dec << "): array " << *mViewPos << " xform " << x << " diff " << (x - *mViewPos) << " ; kind " << (int)mViewKind << " set " << (sViewPasses.load() - mViewPass) << " passes ago ; from the local and the parent's xform now: " << ([&]{ LLXformMatrix t = mXform; t.update(); return t.getWorldPosition() - x; })() << " away from the xform; parent " << (mParent ? mParent->mName : std::string("-")) << " dirty 0x" << std::hex << (mParent ? mParent->mDirtyFlags : 0) << std::dec << " valid " << (mParent ? mParent->mViewValid : false) << LL_ENDL; } }
         }
         return *mViewPos;
@@ -771,6 +772,10 @@ LLVector3 LLJoint::getWorldPosition()
 //-----------------------------------------------------------------------------
 LLVector3 LLJoint::getLastWorldPosition()
 {
+    if (mViewValid && sViewMode && !mDirtyFlags)
+    {
+        return *mViewPos;
+    }
     return mXform.getWorldPosition();
 }
 //--------------------------------------------------------------------
@@ -834,12 +839,12 @@ void LLJoint::setRotation( const LLQuaternion& rot )
 //--------------------------------------------------------------------
 LLQuaternion LLJoint::getWorldRotation()
 {
-    if (mViewValid && sViewMode)
+    if (mViewValid && sViewMode && !mDirtyFlags)
     {
         if (sViewMode == 2)
         {
             ++sViewChecked;
-            const LLQuaternion& x = mXform.getWorldRotation();
+            const LLQuaternion& x = mXform.getWorldRotationField();
             if (memcmp(&x, mViewRot, sizeof(LLQuaternion)) != 0) { if (++sViewDifferent <= 12) { LL_INFOS("JointView") << "rotation of " << mName << " (joint " << mJointNum << ", mUpdateXform " << mUpdateXform << ", dirty 0x" << std::hex << mDirtyFlags << std::dec << "): array " << *mViewRot << " xform " << x << LL_ENDL; } }
         }
         return *mViewRot;
@@ -854,6 +859,10 @@ LLQuaternion LLJoint::getWorldRotation()
 //-----------------------------------------------------------------------------
 LLQuaternion LLJoint::getLastWorldRotation()
 {
+    if (mViewValid && sViewMode && !mDirtyFlags)
+    {
+        return *mViewRot;
+    }
     return mXform.getWorldRotation();
 }
 
@@ -931,6 +940,18 @@ void LLJoint::setScale( const LLVector3& requested_scale, bool apply_attachment_
 //--------------------------------------------------------------------
 const LLMatrix4 &LLJoint::getWorldMatrix()
 {
+    if (mViewValid && sViewMode && !mDirtyFlags)
+    {
+        // the array's matrix as an LLMatrix4, made once a pass (the xform's own copy is not written by the pass in mode 3)
+        if (mViewMatPass != mViewPass)
+        {
+            LLMatrix4 m;
+            memcpy(m.mMatrix, mViewMat->getF32ptr(), sizeof(m.mMatrix));
+            mXform.setWorldMatrix(m);
+            mViewMatPass = mViewPass;
+        }
+        return mXform.getWorldMatrix();
+    }
     updateWorldMatrixParent();
 
     return mXform.getWorldMatrix();
@@ -938,7 +959,7 @@ const LLMatrix4 &LLJoint::getWorldMatrix()
 
 const LLMatrix4a& LLJoint::getWorldMatrix4a()
 {
-    if (mViewValid && sViewMode)
+    if (mViewValid && sViewMode && !mDirtyFlags)
     {
         if (sViewMode == 2)
         {
@@ -1076,4 +1097,3 @@ void LLJoint::clampRotation(LLQuaternion old_rot, LLQuaternion new_rot)
 }
 
 // End
-
