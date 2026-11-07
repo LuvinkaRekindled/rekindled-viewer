@@ -310,6 +310,8 @@ public:
     // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (llavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
+    bool            computeTooSlowLive() const;         // isTooSlow() derived from the avatar's state (what the table caches at endFrame)
+    bool            computeVisuallyMutedLive();         // isVisuallyMuted() derived likewise
     bool            computeImpostorLive();      // isImpostor() derived from the avatar's state (what the table caches at endFrame)
     bool            reducedHiddenSkip();        // idleUpdate's reduced update of an avatar nobody sees (every 2nd or 4th frame)
     void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial = ~0u);
