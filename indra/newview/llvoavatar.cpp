@@ -1641,7 +1641,7 @@ void LLVOAvatar::calculateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
             for (S32 joint_num = 0; joint_num < mesh->mJointRenderData.size(); joint_num++)
             {
                 LLVector4a trans;
-                trans.load3( mesh->mJointRenderData[joint_num]->mWorldMatrix->getTranslation().mV);
+                trans.load3( mesh->mJointRenderData[joint_num]->getWorldMatrix().getTranslation().mV);
                 update_min_max(newMin, newMax, trans);
             }
         }
@@ -4443,14 +4443,28 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
                             if (group)
                             { //set draw order of group
-                                if (LLPipeline::sAvSink)
+                                // <FS> PLAN-avatars.md stage C4 (LL_VK_RIGORDER: 1 default, 0 off, 2 counts only): the stamp (the avatar and the order of the group among this avatar's rigged attachments) is the same every frame
+                                // while the attachment list and the groups stay: it is written only when the group does not hold it already. The group's two fields are only written for this avatar's own groups.
+                                static const int order_mode = getenv("LL_VK_RIGORDER") ? atoi(getenv("LL_VK_RIGORDER")) : 1;
+                                static std::atomic<U64> order_same{ 0 }, order_changed{ 0 };
+                                const U32 this_order = draw_order++;
+                                const bool holds = group->mAvatarp == this && group->mRenderOrder == this_order;
+                                (holds ? order_same : order_changed)++;
+                                if (order_mode == 2 && (((order_same + order_changed) % 200000) == 0))
                                 {
-                                    LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, attached_object->mDrawable, this, group, draw_order++ });
+                                    LL_INFOS("RigOrder") << "rigged draw order stamps: already held by the group " << order_same.load() << ", written " << order_changed.load() << LL_ENDL;
                                 }
-                                else
+                                if (!(order_mode == 1 && holds))
                                 {
-                                    group->mAvatarp = this;
-                                    group->mRenderOrder = draw_order++;
+                                    if (LLPipeline::sAvSink)
+                                    {
+                                        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, attached_object->mDrawable, this, group, this_order });
+                                    }
+                                    else
+                                    {
+                                        group->mAvatarp = this;
+                                        group->mRenderOrder = this_order;
+                                    }
                                 }
                             }
                         }

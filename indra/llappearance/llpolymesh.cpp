@@ -30,6 +30,7 @@
 #include "linden_common.h"
 #include "llpolymesh.h"
 #include "llfasttimer.h"
+#include "lljoint.h"
 #include "llmemory.h"
 
 //#include "llviewercontrol.h"
@@ -59,6 +60,12 @@ LLPolyMorphData *clone_morph_param_cleavage(const LLPolyMorphData *src_data,
 // Global table of loaded LLPolyMeshes
 //-----------------------------------------------------------------------------
 LLPolyMesh::LLPolyMeshSharedDataTable LLPolyMesh::sGlobalSharedMeshList;
+
+// <FS> see llpolymesh.h
+const LLMatrix4& LLJointRenderData::getWorldMatrix() const
+{
+    return mJoint ? mJoint->getWorldMatrix() : *mWorldMatrix;
+}
 
 //-----------------------------------------------------------------------------
 // LLPolyMeshSharedData()

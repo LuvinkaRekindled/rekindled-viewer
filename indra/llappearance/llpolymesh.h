@@ -142,14 +142,20 @@ public:
 };
 
 
+class LLJoint;
 class LLJointRenderData
 {
 public:
-    LLJointRenderData(const LLMatrix4* world_matrix, LLSkinJoint* skin_joint) : mWorldMatrix(world_matrix), mSkinJoint(skin_joint) {}
+    LLJointRenderData(const LLMatrix4* world_matrix, LLSkinJoint* skin_joint, LLJoint* joint = nullptr) : mWorldMatrix(world_matrix), mSkinJoint(skin_joint), mJoint(joint) {}
     ~LLJointRenderData(){}
 
-    const LLMatrix4*        mWorldMatrix;
+    // <FS> The joint's world matrix as it is now, asked of the joint (its view of the avatar's flat array). mWorldMatrix is the address of the xform's own copy, which the joint's views no longer write: it only
+    // holds what the last request of the joint converted, so reading it directly gave the system avatar's skinning joint matrices of different frames (hair stretching while walking).
+    const LLMatrix4&        getWorldMatrix() const;
+
+    const LLMatrix4*        mWorldMatrix;       // (the address, kept to tell the joints apart)
     LLSkinJoint*            mSkinJoint;
+    LLJoint*                mJoint;
 };
 
 
