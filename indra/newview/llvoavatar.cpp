@@ -3293,6 +3293,34 @@ inline std::chrono::steady_clock::time_point att_now() { return gFSAvTimersOn ? 
 inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gFSAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
 }
 
+// <FS> PLAN-avatars.md stage 0 (LL_VK_AVIMP=1): the time of three regions of the avatar update by importance class and kind (defined with the class below): 0 idleUpdate (the serial part), 1 the batched pose
+// blend of one avatar (a pool thread), 2 completeDeferredMotionUpdate (the serial completion)
+static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns);
+static bool fs_av_imp_on();
+namespace
+{
+struct AvImpTimer
+{
+    int mRegion;
+    const LLVOAvatar* mAv;
+    std::chrono::steady_clock::time_point mStart;
+    AvImpTimer(int region, const LLVOAvatar* av) : mRegion(region), mAv(av)
+    {
+        if (fs_av_imp_on())
+        {
+            mStart = std::chrono::steady_clock::now();
+        }
+    }
+    ~AvImpTimer()
+    {
+        if (fs_av_imp_on())
+        {
+            fs_av_imp_time(mRegion, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
+        }
+    }
+};
+}
+
 //------------------------------------------------------------------------
 // idleUpdate()
 //------------------------------------------------------------------------
@@ -3300,6 +3328,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     AvScope idle_total_scope(AV_IDLE_TOTAL);
+    AvImpTimer imp_idle_timer(0, this);
 
     if (LLApp::isExiting())
         return;
@@ -6321,6 +6350,26 @@ struct AvImportanceStats
     U32 mLast = 0;
 };
 AvImportanceStats sAvImp;
+std::atomic<U64> sAvImpNs[3][2][4], sAvImpCount[3][2][4];          // [region][kind][class]: time and visits
+std::unordered_map<const LLVOAvatar*, int> sAvImpMap;              // avatar -> kind * 4 + class, set in updateCharacter (the main thread), read after it by the blend jobs and the completion
+}
+
+static bool fs_av_imp_on()
+{
+    static const bool on = getenv("LL_VK_AVIMP") != nullptr;
+    return on;
+}
+
+static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns)
+{
+    auto found = sAvImpMap.find(av);
+    if (found == sAvImpMap.end())
+    {
+        return;
+    }
+    const int kind = found->second / 4, cls = found->second % 4;
+    sAvImpNs[region][kind][cls].fetch_add(ns, std::memory_order_relaxed);
+    sAvImpCount[region][kind][cls].fetch_add(1, std::memory_order_relaxed);
 }
 
 static int fs_av_importance_class(LLVOAvatar* av, bool visible)
@@ -6365,6 +6414,7 @@ static void fs_av_importance_begin(LLVOAvatar* av, bool visible)
     }
     sAvImpKind = (av->isControlAvatar() || av->isUIAvatar() || av->mDrawable.isNull()) ? 1 : 0;
     sAvImpClass = fs_av_importance_class(av, visible);
+    sAvImpMap[av] = sAvImpKind * 4 + sAvImpClass;
     if (sAvImpKind == 0)
     {
         U64* f = sAvImp.mFlag[sAvImpClass];
@@ -6416,6 +6466,26 @@ static void fs_av_importance_ran(int ran)
         }
         LL_INFOS("AvImportance") << "avatar importance class, per frame over " << (U32)frames << " frames (visits of the update loop)" << text << LL_ENDL;
         LL_INFOS("AvImportance") << "today's tests by class (avatars a frame)" << flags << LL_ENDL;
+        {
+            static const char* const region_names[3] = { "idleUpdate serial", "pose blend job", "completion" };
+            std::string cost;
+            for (int r = 0; r < 3; ++r)
+            {
+                cost += llformat(" | %s:", region_names[r]);
+                for (int k = 0; k < 2; ++k)
+                {
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        const U64 n = sAvImpCount[r][k][c].exchange(0), ns = sAvImpNs[r][k][c].exchange(0);
+                        if (n)
+                        {
+                            cost += llformat(" %s %s %.3f ms (%.1f us x %.1f)", k ? "ctl" : "av", cls[c], (double)ns / frames / 1.0e6, (double)ns / n / 1000.0, n / frames);
+                        }
+                    }
+                }
+            }
+            LL_INFOS("AvImportance") << "cost by class, ms a frame (us an avatar x avatars a frame)" << cost << LL_ENDL;
+        }
         memset(&sAvImp.mRan, 0, sizeof(sAvImp.mRan));
         memset(&sAvImp.mFlag, 0, sizeof(sAvImp.mFlag));
     }
@@ -6755,6 +6825,7 @@ void LLVOAvatar::cleanJointMatrices()
 
 void LLVOAvatar::runDeferredMotionBlend()
 {
+    AvImpTimer imp_blend_timer(1, this);
     if (mDeferredMatricesOnly)
     {
         if (mRoot)
@@ -6790,6 +6861,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     }
 
     AvScope done_scope(AV_DEFERRED_DONE);
+    AvImpTimer imp_done_timer(2, this);
     flushDeferredStopRequests();        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
     { LL_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
