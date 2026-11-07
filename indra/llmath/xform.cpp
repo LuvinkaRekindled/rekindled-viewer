@@ -70,19 +70,19 @@ void LLXformMatrix::update()
 {
     if (mParent)
     {
-        mWorldPosition = mPosition;
+        mWorldPosition = lpos();
         if (mParent->getScaleChildOffset())
         {
             mWorldPosition.scaleVec(mParent->getScale());
         }
         mWorldPosition *= mParent->getWorldRotation();
         mWorldPosition += mParent->getWorldPosition();
-        mWorldRotation = mRotation * mParent->getWorldRotation();
+        mWorldRotation = lrot() * mParent->getWorldRotation();
     }
     else
     {
-        mWorldPosition = mPosition;
-        mWorldRotation = mRotation;
+        mWorldPosition = lpos();
+        mWorldRotation = lrot();
     }
 }
 
@@ -90,14 +90,14 @@ void LLXformMatrix::update()
 // bounds of updateMatrix(update_bounds)
 void LLXformMatrix::updateMatrixFromParent(const LLVector3& parent_pos, const LLQuaternion& parent_rot, const LLVector3& parent_scale, bool parent_scale_child_offset, bool update_bounds)
 {
-    mWorldPosition = mPosition;
+    mWorldPosition = lpos();
     if (parent_scale_child_offset)
     {
         mWorldPosition.scaleVec(parent_scale);
     }
     mWorldPosition *= parent_rot;
     mWorldPosition += parent_pos;
-    mWorldRotation = mRotation * parent_rot;
+    mWorldRotation = lrot() * parent_rot;
     finishMatrix(update_bounds);
 }
 
@@ -109,7 +109,7 @@ void LLXformMatrix::updateMatrix(bool update_bounds)
 
 void LLXformMatrix::finishMatrix(bool update_bounds)
 {
-    mWorldMatrix.initAll(mScale, mWorldRotation, mWorldPosition);
+    mWorldMatrix.initAll(lscale(), mWorldRotation, mWorldPosition);
 
     if (update_bounds && (mChanged & MOVED))
     {
