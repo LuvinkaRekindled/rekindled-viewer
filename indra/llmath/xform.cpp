@@ -86,10 +86,29 @@ void LLXformMatrix::update()
     }
 }
 
+// <FS> PLAN-avatars.md stage C: update() with the parent's world position, rotation, scale and scale-child-offset given (from the avatar's flat world array: the parent xform is not read), then the matrix and the
+// bounds of updateMatrix(update_bounds)
+void LLXformMatrix::updateMatrixFromParent(const LLVector3& parent_pos, const LLQuaternion& parent_rot, const LLVector3& parent_scale, bool parent_scale_child_offset, bool update_bounds)
+{
+    mWorldPosition = mPosition;
+    if (parent_scale_child_offset)
+    {
+        mWorldPosition.scaleVec(parent_scale);
+    }
+    mWorldPosition *= parent_rot;
+    mWorldPosition += parent_pos;
+    mWorldRotation = mRotation * parent_rot;
+    finishMatrix(update_bounds);
+}
+
 void LLXformMatrix::updateMatrix(bool update_bounds)
 {
     update();
+    finishMatrix(update_bounds);
+}
 
+void LLXformMatrix::finishMatrix(bool update_bounds)
+{
     mWorldMatrix.initAll(mScale, mWorldRotation, mWorldPosition);
 
     if (update_bounds && (mChanged & MOVED))

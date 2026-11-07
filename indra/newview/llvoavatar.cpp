@@ -3219,7 +3219,7 @@ struct AttStats
 AttStats gAttStats;
 namespace
 {
-std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 }, sAttXfFast{ 0 }, sAttXfChecked{ 0 }, sAttXfDifferent{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
+std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 }, sAttXfFast{ 0 }, sAttXfChecked{ 0 }, sAttXfDifferent{ 0 }, sAttArrChecked{ 0 }, sAttArrDifferent{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
 }
 // an attachment that only follows its joint: nothing selected, flexible, animated, lighted, sounding or emitting particles in it or its children, not a HUD
 inline bool att_plain(const LLViewerObject* root)
@@ -3906,6 +3906,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         U32 draw_order = 0;
         static const int cons_mode = getenv("LL_VK_ATTCONS") ? atoi(getenv("LL_VK_ATTCONS")) : 1;
         static const int xf_mode = getenv("LL_VK_ATTXF") ? atoi(getenv("LL_VK_ATTXF")) : 1;
+        static const int att_arr_mode = getenv("LL_VK_ATTARR") ? atoi(getenv("LL_VK_ATTARR")) : 1;
         bool attachment_selected = sAttachmentSelectedForJobs >= 0 ? sAttachmentSelectedForJobs != 0
             : (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment());
 
@@ -4086,8 +4087,42 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 }
                 drawable->mBridgeFrozen = cons_frozen;
                 if (!skip_rigid)
-                {
-                    if (!(xf_mode && drawable->updateMoveFast()))
+                    {
+                    // <FS> stage C (LL_VK_ATTARR: 1 default, 0 off, 2 verified): the attachment's world matrix from the avatar's flat world array (the attachment point's world position, rotation, scale and scale-child-offset
+                    // as the pass made them), not from the attachment point's xform: the arithmetic of LLXformMatrix::update with the same operations; mode 2 then makes the old update from the joint's xform and compares
+                    const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
+                    const bool from_array = att_arr_mode && flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
+                    bool fast_done = false;
+                    if (xf_mode)
+                    {
+                        fast_done = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
+                        if (fast_done && from_array && att_arr_mode == 2)
+                        {
+                            LLMatrix4 before = drawable->getXform()->getWorldMatrix();
+                            drawable->getXform()->updateMatrix();
+                            ++sAttArrChecked;
+                            if (memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
+                            {
+                                if (++sAttArrDifferent <= 8)
+                                {
+                                    F32 worst = 0.f;
+                                    const F32* a = &before.mMatrix[0][0];
+                                    const F32* b = &drawable->getXform()->getWorldMatrix().mMatrix[0][0];
+                                    for (int k = 0; k < 16; ++k) { worst = std::max(worst, fabsf(a[k] - b[k])); }
+                                    LLXformMatrix* pxf = row.mPoint->getXform();
+                                    const LLVector3 dpos = *ppos - pxf->getWorldPosition();
+                                    LL_INFOS("AttArr") << "attachment " << row.mPoint->getName() << " (joint " << row.mPoint->getJointNum() << ") of " << getFullname() << ": matrix differs by " << worst << "; the array's point position minus the xform's "
+                                        << dpos << ", rotation dot " << dot(*prot, pxf->getWorldRotation()) << ", point dirty 0x" << std::hex << row.mPoint->mDirtyFlags << std::dec << ", mUpdateXform " << row.mPoint->mUpdateXform
+                                        << ", the drawable xform's parent is the point's xform " << (drawable->getXform()->getParent() == pxf) << LL_ENDL;
+                                }
+                            }
+                            if ((sAttArrChecked % 100000) == 0)
+                            {
+                                LL_INFOS("AttArr") << "attachment matrices from the flat array: checked against the xform chain " << sAttArrChecked.load() << ", different " << sAttArrDifferent.load() << LL_ENDL;
+                            }
+                        }
+                    }
+                    if (!fast_done)
                     {
                         gPipeline.updateMoveDampedAsync(drawable);
                     }
@@ -5827,7 +5862,7 @@ void LLVOAvatar::slamPosition()
     {
         gPipeline.updateMoveNormalAsync(mDrawable);
     }
-    mRoot->updateWorldMatrixChildren();
+    walkWorldAfterPass(false);
 }
 
 bool LLVOAvatar::isVisuallyMuted()
@@ -7703,7 +7738,7 @@ void LLVOAvatar::cleanJointMatrices()
 {
     if (mRoot)
     {
-        mRoot->updateWorldMatrixChildren();
+        walkWorldAfterPass(false);
     }
     for (S32 i = 0; i < mNumCollisionVolumes; ++i)
     {
@@ -7871,7 +7906,7 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
     if (clean_serial != LLJoint::sTouchSerial)
     {
         AvScope s(AV_PM_MATRIX);
-        mRoot->updateWorldMatrixChildren();
+        walkWorldAfterPass(true);
     }
 
     if (visible)
@@ -7978,7 +8013,7 @@ void LLVOAvatar::debugBodySize() const
 //------------------------------------------------------------------------
 void LLVOAvatar::postPelvisSetRecalc()
 {
-    mRoot->updateWorldMatrixChildren();
+    walkWorldAfterPass(false);
     computeBodySize();
     dirtyMesh(2);
 }
@@ -10320,7 +10355,7 @@ void LLVOAvatar::updateVisualParams()
     {
         computeBodySize();
         mLastSkeletonSerialNum = mSkeletonSerialNum;
-        mRoot->updateWorldMatrixChildren();
+        walkWorldAfterPass(false);
     }
 
     dirtyMesh();
@@ -11141,7 +11176,7 @@ void LLVOAvatar::sitOnObject(LLViewerObject *sit_object)
     mRoot->getXform()->setParent(&sit_object->mDrawable->xform()); // LLVOAvatar::sitOnObject
     // SL-315
     mRoot->setPosition(getPosition());
-    mRoot->updateWorldMatrixChildren();
+    walkWorldAfterPass(false);
 
     stopMotion(ANIM_AGENT_BODY_NOISE);
 
@@ -13376,6 +13411,9 @@ struct LLFlatSkeleton
     U32 mFrame = ~0u;
     bool mFromJob = false;                  // <FS> stage C: made by the avatar's pose job (flatWorldPass) for this frame
     U32 mStructKey = 0;                     // (the skeleton serial, the joint counts: the structure below is made again when it changes)
+    std::vector<LLVector3> mWPos, mScale;   // by joint number, as the pass made them: the joint's world position and its own scale (the arithmetic of a child reads the parent's)
+    std::vector<LLQuaternion> mWRot;        // the world rotation
+    std::vector<U8> mSco;                   // the scale-child-offset flag
     std::vector<LLMatrix4a> mWorld;         // by joint number: the joint's world matrix (what getWorldMatrix4a() gives)
     std::vector<U8> mHas;                   // the joint exists
     std::vector<LLJoint*> mJoint;
@@ -13767,6 +13805,22 @@ std::atomic<U64> sFlatFillJob{ 0 }, sFlatFillReused{ 0 }, sFlatFillRedone{ 0 }, 
 // would visit (its chain of parents all take part, mUpdateXform) and that is dirty gets its world matrix worked out by the joint's own function (LLJoint::updateWorldMatrix: the same arithmetic, the joint object's
 // caches are the writeback), and the flat array takes the result in the same loop: the array is the pass's output. Not for an avatar whose root is under another transform (sitting on an object), nor one
 // without palettes: the walk does those. True when it did the pass.
+// <FS> stage C: every writer of the joints' world data outside the pose job must reach the array or say it no longer holds. Found by the attachment compare lap: a sitting-on-ground avatar's root is moved by
+// the hover offset after the pass and the chain walked again, the array kept the old position (6 cm) and 6 % of the attachment matrices from it differed from the chain
+void LLVOAvatar::walkWorldAfterPass(bool rerun_pass)
+{
+    if (rerun_pass && flatWorldPass())
+    {
+        return;
+    }
+    if (mFlatSkel)
+    {
+        mFlatSkel->mFrame = ~0u;
+        mFlatSkel->mFromJob = false;
+    }
+    mRoot->updateWorldMatrixChildren();
+}
+
 bool LLVOAvatar::flatWorldPass()
 {
     if (fs_flatfill_mode() == 0 || fs_skelflat_mode() == 0 || !mRoot || mMatrixPaletteCache.empty() || mRoot->getXform()->getParent() != nullptr)
@@ -13791,9 +13845,17 @@ bool LLVOAvatar::flatWorldPass()
     // follows works them out the old way and the array can be compared with it.
     const bool writeback = fs_flatfill_mode() == 1;
     U8 active[LL_CHARACTER_MAX_ANIMATED_JOINTS];
-    LLVector3 wpos[LL_CHARACTER_MAX_ANIMATED_JOINTS], jscale[LL_CHARACTER_MAX_ANIMATED_JOINTS];
-    LLQuaternion wrot[LL_CHARACTER_MAX_ANIMATED_JOINTS];
-    U8 sco[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    if (flat.mWPos.size() != N)
+    {
+        flat.mWPos.assign(N, LLVector3());
+        flat.mScale.assign(N, LLVector3(1.f, 1.f, 1.f));
+        flat.mWRot.assign(N, LLQuaternion());
+        flat.mSco.assign(N, 0);
+    }
+    LLVector3* wpos = flat.mWPos.data();
+    LLVector3* jscale = flat.mScale.data();
+    LLQuaternion* wrot = flat.mWRot.data();
+    U8* sco = flat.mSco.data();
     const bool root_active = mRoot->mUpdateXform;
     if (root_active && (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
     {
@@ -13900,6 +13962,19 @@ bool LLVOAvatar::skeletonDirty() const
         }
     }
     return false;
+}
+
+bool LLVOAvatar::flatJoint(S32 joint_num, const LLVector3*& pos, const LLQuaternion*& rot, const LLVector3*& scale, bool& scale_child_offset) const
+{
+    if (!mFlatSkel || !mFlatSkel->mFromJob || mFlatSkel->mFrame != gFrameCount || joint_num < 0 || (size_t)joint_num >= mFlatSkel->mWPos.size() || !mFlatSkel->mHas[joint_num])
+    {
+        return false;
+    }
+    pos = &mFlatSkel->mWPos[joint_num];
+    rot = &mFlatSkel->mWRot[joint_num];
+    scale = &mFlatSkel->mScale[joint_num];
+    scale_child_offset = mFlatSkel->mSco[joint_num] != 0;
+    return true;
 }
 
 const F32* LLVOAvatar::flatWorld(S32 joint_num) const
