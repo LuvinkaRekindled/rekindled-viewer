@@ -3983,6 +3983,8 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         // static joint, the avatar's box for its bridge, the fast move, the bridge move when the box changed, the text); the walk below skips what the rows moved this frame. Mode 2 moves nothing here: it counts the rows
         // that pass the gate and the plain rigid attachments the walk below finds, per visit, and says where they differ.
         static const int rows_mode = getenv("LL_VK_ATTROWS") ? atoi(getenv("LL_VK_ATTROWS")) : 1;
+        static const bool rowops_on = getenv("LL_VK_ROWOPS") && atoi(getenv("LL_VK_ROWOPS")) != 0;      // census: the ops the rows write into the ledger and the ops the walk writes, by kind (stage C step C3)
+        const size_t rowops0 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
         U32 rows_passed = 0, walk_eligible = 0;
         const bool rows_run = rows_mode && cons_mode && !isSelf() && !gFSAvTimersOn && !LLAttCensus::sOn && !attachment_selected && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL;
         if (rows_run)
@@ -4137,6 +4139,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             }
         }
 
+        const size_t rowops1 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             // <FS:Ansariel> Possible crash fix
@@ -4457,6 +4460,26 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             if (visits % 50000 == 0)
             {
                 LL_INFOS("AttRows") << "attachment rows compared with the walk: visits " << visits.load() << ", different " << differ.load() << ", attachments by rows " << rows_total.load() << ", by the walk " << walk_total.load() << LL_ENDL;
+            }
+        }
+        if (rowops_on && LLPipeline::sAvSink)
+        {
+            // census (LL_VK_ROWOPS=1): per kind, the ops the rows wrote (index 0) and the ops the walk wrote (index 1); the rows' share of attachments is rows_passed
+            static std::atomic<U64> loops{ 0 }, row_loops{ 0 }, row_atts{ 0 }, by_kind[2][8];
+            const std::vector<LLPipeline::AvOp>& sink = *LLPipeline::sAvSink;
+            for (size_t i = rowops0; i < sink.size(); ++i)
+            {
+                ++by_kind[i < rowops1 ? 0 : 1][sink[i].mKind & 7];
+            }
+            ++loops;
+            row_loops += rows_run ? 1 : 0;
+            row_atts += rows_passed;
+            if (loops % 20000 == 0)
+            {
+                // kinds: 0 moved list, 1 moved bridge, 2 partition move, 3 bridge move, 4 render order, 5 make active shared, 6 update text, 7 dirty group
+                LL_INFOS("RowOps") << "attachment loops " << loops.load() << " (with rows " << row_loops.load() << ", plain rigid attachments moved by rows " << row_atts.load() << "); ops by kind [list, bridge, partition, bridge move, order, active, text, dirty], rows: "
+                    << by_kind[0][0].load() << " " << by_kind[0][1].load() << " " << by_kind[0][2].load() << " " << by_kind[0][3].load() << " " << by_kind[0][4].load() << " " << by_kind[0][5].load() << " " << by_kind[0][6].load() << " " << by_kind[0][7].load()
+                    << "; walk: " << by_kind[1][0].load() << " " << by_kind[1][1].load() << " " << by_kind[1][2].load() << " " << by_kind[1][3].load() << " " << by_kind[1][4].load() << " " << by_kind[1][5].load() << " " << by_kind[1][6].load() << " " << by_kind[1][7].load() << LL_ENDL;
             }
         }
         gAttStats.nsLoop += att_ns(att_loop_t0);
