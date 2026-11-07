@@ -187,6 +187,29 @@ void LLSkinningUtil::initSkinningMatrixPalette(
     }
 }
 
+bool LLSkinningUtil::initSkinningMatrixPaletteFlat(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const LLMatrix4a* world_by_num, const U8* has_by_num, S32 num_count)
+{
+    // (the joint numbers of the skin are initialised by the caller: initJointNums)
+    if (skin->mInvBindMatrix.size() < count || (S32)skin->mJointNums.size() < count)
+    {
+        return false;
+    }
+    for (S32 j = 0; j < count; ++j)
+    {
+        const S32 joint_num = skin->mJointNums[j];
+        if (joint_num < 0 || joint_num >= num_count || !has_by_num[joint_num])
+        {
+            return false;
+        }
+    }
+    const LLMatrix4a* invBind = &(skin->mInvBindMatrix[0]);
+    for (S32 j = 0; j < count; ++j)
+    {
+        matMulUnsafe(invBind[j], world_by_num[skin->mJointNums[j]], mat[j]);
+    }
+    return true;
+}
+
 void LLSkinningUtil::checkSkinWeights(LLVector4a* weights, U32 num_vertices, const LLMeshSkinInfo* skin)
 {
 #if DEBUG_SKINNING

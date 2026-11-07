@@ -44,6 +44,9 @@ namespace LLSkinningUtil
     U32 getMeshJointCount(const LLMeshSkinInfo *skin);
     void scrubInvalidJoints(LLVOAvatar *avatar, LLMeshSkinInfo* skin);
     void initSkinningMatrixPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, LLVOAvatar *avatar);
+    // <FS> stage B0 (PLAN-avatars.md): the same palette from the avatar's flat array of world matrices (by joint number) instead of a pointer chase per joint; false when a joint of the skin is not in the array
+    // (the caller then makes the palette the old way: it also names the missing joint)
+    bool initSkinningMatrixPaletteFlat(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const LLMatrix4a* world_by_num, const U8* has_by_num, S32 num_count);
     void checkSkinWeights(LLVector4a* weights, U32 num_vertices, const LLMeshSkinInfo* skin);
     void scrubSkinWeights(LLVector4a* weights, U32 num_vertices, const LLMeshSkinInfo* skin);
     void getPerVertexSkinMatrix(F32* weights, const LLMatrix4a* mat, bool handle_bad_scale, LLMatrix4a& final_mat, U32 max_joints);

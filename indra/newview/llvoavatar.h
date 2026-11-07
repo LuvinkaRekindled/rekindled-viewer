@@ -88,6 +88,7 @@ extern U32 gFrameCount;
 //
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class LLVOAvatar;
+struct LLFlatSkeleton;      // <FS> stage B0 (llvoavatar.cpp): the avatar's world matrices as a flat array by joint number
 using LLAvatarHandles = LLHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (llhandletable.h)
 
 class LLVOAvatar :
@@ -310,6 +311,8 @@ public:
     // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (llavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
+    std::shared_ptr<LLFlatSkeleton> mFlatSkel;          // <FS> stage B0
+    void            flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin);       // the skin's palette (LL_VK_SKELFLAT: 0 the old per-joint build, 1 from the flat array, 2 both, compared)
     mutable S32     mAvTableSlot = -1;                  // <FS> the avatar's row in LLAvatarTable's array this frame (valid when the row at the slot names this avatar)
     bool            computeTooSlowLive() const;         // isTooSlow() derived from the avatar's state (what the table caches at endFrame)
     bool            computeVisuallyMutedLive();         // isVisuallyMuted() derived likewise
