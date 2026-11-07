@@ -563,7 +563,7 @@ static bool rigged_lod_wanted(bool opaque)
     return live[i] >= 0 ? live[i] != 0 : env[i];
 }
 
-static bool rigged_lod_for(const LLDrawInfo* info, U32& ib_name, U32& count, bool opaque = false)
+static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count, bool opaque = false)
 {
     ib_name = 0;
     count = 0;
@@ -577,7 +577,6 @@ static bool rigged_lod_for(const LLDrawInfo* info, U32& ib_name, U32& count, boo
     {
         return false;
     }
-    LLVOAvatar* avatar = info->mAvatar.get();
     if (!avatar || avatar->isSelf() || avatar->mDrawable.isNull())
     {
         return false;
@@ -589,13 +588,13 @@ static bool rigged_lod_for(const LLDrawInfo* info, U32& ib_name, U32& count, boo
     }
     const F32 height = (F32)gViewerWindow->getWorldViewHeightRaw();
     const F32 pixel = 2.f * distance * tanf(0.5f * camera->getView()) / llmax(height, 1.f);        // the world size of a pixel of the window at that distance
-    return ll_rigged_lod_lookup(ll_geo_range(info), 0.5f * pixel, ib_name, count);
+    return ll_rigged_lod_lookup(range, 0.5f * pixel, ib_name, count);
 }
 
 // the scene table's opaque rigged items (pipeline.cpp, the frame record's palette bindings)
-bool ll_rigged_lod_opaque(const LLDrawInfo* info, U32& ib_name, U32& count)
+bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
 {
-    return rigged_lod_for(info, ib_name, count, true);
+    return rigged_lod_for(range, avatar, ib_name, count, true);
 }
 
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
@@ -613,7 +612,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
     const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && !(LLPipeline::sRenderingHUDs && rigged);
     struct PendingRange { U32 mHandle, mFirst, mCount; };
-    struct PendingSrc { const LLDrawInfo* const* mInfo; const U32* mWire; U32 mRank, mCount, mHandle; U32* mBound = nullptr; };       // (S5d: where the items of a rigged range are, for their palette bindings)
+    struct PendingSrc { const GeoRigSource* mRig; const U32* mWire; U32 mRank, mCount, mHandle; U32* mBound = nullptr; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
     static thread_local std::vector<PendingSrc> pending_src;
     pending.clear();
@@ -889,9 +888,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             {
                 for (U32 k = 0; k < src.mCount; ++k)
                 {
-                    const LLDrawInfo* info = src.mInfo[src.mRank + k];
-                    LLVOAvatar* avatar = info->mAvatar.get();
-                    const LLMeshSkinInfo* skin = info->mSkinInfo.get();
+                    const GeoRigSource& rig = src.mRig[src.mRank + k];
+                    LLVOAvatar* avatar = rig.mAvatar.get();
+                    const LLMeshSkinInfo* skin = rig.mSkin.get();
                     if (avatar != last_avatar || skin != last_skin)
                     {
                         last_avatar = avatar;
@@ -911,7 +910,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     U32 lod_ib = 0, lod_count = 0;
                     if (last_offset != ~0u)
                     {
-                        rigged_lod_for(info, lod_ib, lod_count);
+                        rigged_lod_for(rig.range(), avatar, lod_ib, lod_count);
                     }
                     if (persist && src.mBound)
                     {
@@ -960,7 +959,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending.push_back({ pv.mHandle, seg.mRank, seg.mCount });
         if (rigged)
         {
-            pending_src.push_back({ pv.mItemInfo, pv.mItemWire, seg.mRank, seg.mCount, pv.mHandle, pv.mItemBound });
+            pending_src.push_back({ pv.mItemRig, pv.mItemWire, seg.mRank, seg.mCount, pv.mHandle, pv.mItemBound });
         }
     };
     // S5e: a served draw with a glow buffer: into the group's glow ranges when the table draws its glow (true); false when its class has no glow pull program (no glow is drawn for it)
@@ -982,7 +981,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         else
         {
             r.push_back({ pv.mHandle, rank, 1 });
-            src.push_back({ pv.mItemInfo, pv.mItemWire, rank, 1, pv.mHandle, pv.mItemBound });
+            src.push_back({ pv.mItemRig, pv.mItemWire, rank, 1, pv.mHandle, pv.mItemBound });
         }
         ++sAlphaScene.mGlowServed;
         return true;
