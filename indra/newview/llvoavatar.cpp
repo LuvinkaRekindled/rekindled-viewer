@@ -4082,13 +4082,43 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     bool bridge_refit = false;
                     if (!skip_update)
                     {
-                        if (attachment_selected)
+                        // <FS> stage C4c (LL_VK_RIGMOVE: 1 default, 0 = the full damped move as before, 2 = the fast move and then the full one, the matrices compared bit for bit): the drawable of a rigged attachment follows its joint
+                        // like a rigid one: when the object's own transform is unchanged the fast move writes the matrix from the avatar's flat array and the faces' centres, with no moved list entry; with the bridge held at the
+                        // avatar's box (C4b) the drawable's update has no bridge to queue either (mBridgeFrozen). The full move is made when anything differs, or for an avatar with a selected attachment.
+                        static const int rigmove_mode = getenv("LL_VK_RIGMOVE") ? atoi(getenv("LL_VK_RIGMOVE")) : 1;
+                        drawable->mBridgeFrozen = rigbox_mode != 0 && rigmove_mode != 0;
+                        bool fast = false;
+                        if (rigmove_mode && !attachment_selected && xf_mode)
                         {
-                            gPipeline.updateMoveNormalAsync(drawable);
+                            const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
+                            const bool from_array = att_arr_mode && flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
+                            fast = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
+                            if (fast && rigmove_mode == 2)
+                            {
+                                static std::atomic<U64> mv_checked{ 0 }, mv_diff{ 0 };
+                                LLMatrix4 before = drawable->getXform()->getWorldMatrix();
+                                gPipeline.updateMoveDampedAsync(drawable);
+                                ++mv_checked;
+                                if (memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
+                                {
+                                    ++mv_diff;
+                                }
+                                if ((mv_checked % 100000) == 0)
+                                {
+                                    LL_INFOS("RigMove") << "rigged attachment matrix by the fast move checked against the full move " << mv_checked.load() << ", different " << mv_diff.load() << LL_ENDL;
+                                }
+                            }
                         }
-                        else
+                        if (!fast)
                         {
-                            gPipeline.updateMoveDampedAsync(drawable);
+                            if (attachment_selected)
+                            {
+                                gPipeline.updateMoveNormalAsync(drawable);
+                            }
+                            else
+                            {
+                                gPipeline.updateMoveDampedAsync(drawable);
+                            }
                         }
                         if (rigbox_mode == 0)
                         {
