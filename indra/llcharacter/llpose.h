@@ -36,6 +36,7 @@
 #include "llpointer.h"
 
 #include <map>
+#include <memory>
 #include <string>
 
 
@@ -113,7 +114,15 @@ protected:
 
     S32         mNextPoseSlot;
     LLPose      mBlendedPose;
+    // <FS> PLAN-avatars.md stage B1 (LL_VK_BLENDFLAT: 0 the pool above, 1 flat slots by joint number instead, 2 both, compared): the joint states of the frame in an array indexed by the joint's number, an active
+    // list of numbers with a count instead of a std::list searched linearly for every joint state, no map lookups. The blend math is the same. A joint without a valid number keeps using the pool above.
 public:
+    struct FlatBlend;
+protected:
+    std::shared_ptr<FlatBlend> mFlat;
+    bool        mFlatOn = false;
+public:
+    void setFlat(bool on) { mFlatOn = on; }       // the controller: off while it uses the time quantum (blendAndCache / interpolate work on the pool)
     // Constructor
     LLPoseBlender();
     // Destructor

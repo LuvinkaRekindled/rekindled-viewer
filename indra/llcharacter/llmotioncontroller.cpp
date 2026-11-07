@@ -918,6 +918,7 @@ void LLMotionController::finishUpdateMotions()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     const bool use_quantum = (mTimeStep != 0.f);
+    mPoseBlender.setFlat(!use_quantum);        // <FS> stage B1: the flat slots serve blendAndApply; the time quantum's cache and interpolation work on the pool
 
     // update additive motions
     updateAdditiveMotions();
