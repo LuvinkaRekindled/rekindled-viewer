@@ -15534,7 +15534,7 @@ bool shadow_lod_on()
     return live >= 0 ? live != 0 : env;
 }
 
-U64 shadow_lod_fingerprint(const LLDrawInfo& p, const LLVertexBuffer* vb, const U16* indices, const LLVector4a* positions)
+U64 shadow_lod_fingerprint(const GeoRange& p, const LLVertexBuffer* vb, const U16* indices, const LLVector4a* positions)
 {
     U64 h = 1469598103934665603ull;
     auto mix = [&h](U64 v) { h = (h ^ v) * 1099511628211ull; };
@@ -15646,23 +15646,23 @@ static void shadow_lod_pump()
 }
 
 // the simplified list of a draw at a level: true with its index buffer (GL name) and count when it is ready; when it is not there it is queued (a snapshot of the draw's data, from the budget) and false is returned
-static bool shadow_lod_one(const LLDrawInfo* p, U32 lvl, F32 error, int& snapshots, U32& ib_name, U32& count)
+static bool shadow_lod_one(const GeoRange& r, U32 lvl, F32 error, int& snapshots, U32& ib_name, U32& count)
 {
-    if (!p || p->mCount < 1500 || p->mVertexBuffer.isNull())
+    if (!r.mVb || r.mCount < 1500)
     {
         return false;
     }
-    const LLVertexBuffer* vb = p->mVertexBuffer.get();
+    const LLVertexBuffer* vb = r.mVb;
     const U16* indices = (const U16*)vb->getMappedIndices();
     const U8* data = vb->getMappedData();
     if (!indices || !data || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4)
-        || p->mEnd < p->mStart || (U64)p->mOffset + p->mCount > vb->getNumIndices() || (U32)p->mEnd >= vb->getNumVerts())
+        || r.mEnd < r.mStart || (U64)r.mOffset + r.mCount > vb->getNumIndices() || (U32)r.mEnd >= vb->getNumVerts())
     {
         return false;
     }
     const LLVector4a* positions = (const LLVector4a*)(data + vb->getOffset(LLVertexBuffer::TYPE_VERTEX));
-    const U64 fingerprint = shadow_lod_fingerprint(*p, vb, indices, positions);
-    const ShadowLodKey key = { vb, (U32)p->mOffset, (U32)p->mCount, lvl };
+    const U64 fingerprint = shadow_lod_fingerprint(r, vb, indices, positions);
+    const ShadowLodKey key = { vb, r.mOffset, r.mCount, lvl };
     auto it = sSlCache.find(key);
     if (it != sSlCache.end() && it->second.mFingerprint != fingerprint)
     {
@@ -15678,22 +15678,22 @@ static bool shadow_lod_one(const LLDrawInfo* p, U32 lvl, F32 error, int& snapsho
         }
         --snapshots;
         ShadowLodEntry e;
-        e.mOwner = p->mVertexBuffer;
+        e.mOwner = const_cast<LLVertexBuffer*>(vb);
         e.mFingerprint = fingerprint;
-        e.mOriginal = p->mCount;
+        e.mOriginal = r.mCount;
         e.mUsed = gFrameCount;
         e.mTicket = ++sSlTicket;
         ShadowLodJob job;
         job.mKey = key;
         job.mTicket = e.mTicket;
-        job.mFirstVertex = p->mStart;
+        job.mFirstVertex = r.mStart;
         job.mError = error;
-        const U32 first = p->mStart, vcount = (U32)p->mEnd + 1u - p->mStart;
+        const U32 first = r.mStart, vcount = (U32)r.mEnd + 1u - r.mStart;
         bool ok = true;
-        job.mIndices.resize(p->mCount);
-        for (U32 k = 0; k < p->mCount && ok; ++k)
+        job.mIndices.resize(r.mCount);
+        for (U32 k = 0; k < r.mCount && ok; ++k)
         {
-            const U16 v = indices[p->mOffset + k];
+            const U16 v = indices[r.mOffset + k];
             ok = v >= first && v < first + vcount;
             job.mIndices[k] = (U16)(v - first);
         }
@@ -15746,7 +15746,7 @@ static bool shadow_lod_one(const LLDrawInfo* p, U32 lvl, F32 error, int& snapsho
 
 // the main view's rigged draws (item E): the simplified list of a draw for a geometric error in metres (below half a pixel at its distance), true with its index buffer and count when it is ready.
 // LL_VK_RIGGEDLOD (default off while measuring) or rt-debug.txt riggedlod=0/1 decide in the caller.
-bool ll_rigged_lod_lookup(const LLDrawInfo* p, F32 error_m, U32& ib_name, U32& count)
+bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
 {
     const int level = (int)floorf(log2f(error_m * 1000.f));
     if (level < 1)
@@ -15763,14 +15763,14 @@ bool ll_rigged_lod_lookup(const LLDrawInfo* p, F32 error_m, U32& ib_name, U32& c
         shadow_lod_pump();
     }
     static U64 asked = 0, ready = 0, tris_asked = 0, tris_before = 0, tris_after = 0, levels[8] = {};
-    const bool hit = shadow_lod_one(p, lvl, 0.001f * (F32)(1 << lvl), snapshots, ib_name, count);
+    const bool hit = shadow_lod_one(r, lvl, 0.001f * (F32)(1 << lvl), snapshots, ib_name, count);
     ++asked;
-    tris_asked += p->mCount / 3;
+    tris_asked += r.mCount / 3;
     ++levels[lvl];
     if (hit)
     {
         ++ready;
-        tris_before += p->mCount / 3;
+        tris_before += r.mCount / 3;
         tris_after += count / 3;
     }
     if (asked % 20000 == 0)
@@ -15813,7 +15813,7 @@ static bool shadow_lod_apply(U32 pass, const std::vector<LLDrawInfo*>& draws, st
     for (size_t i = 0; i < draws.size(); ++i)
     {
         U32 ib_name = 0, count = 0;
-        if (!shadow_lod_one(draws[i], lvl, error, snapshots, ib_name, count))
+        if (!shadow_lod_one(ll_geo_range(draws[i]), lvl, error, snapshots, ib_name, count))
         {
             continue;
         }

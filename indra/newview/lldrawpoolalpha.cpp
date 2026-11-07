@@ -530,7 +530,7 @@ static struct AlphaSceneStats
 // item E (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rigged alpha draws of the world's colour pass (and its depth passes) draw a simplified index list when the avatar is far enough that the error of the
 // simplification is under half a pixel at its distance (a hair card with 100,000 triangles for a few hundred pixels). The lists are made on a background thread (item A's cache: ll_rigged_lod_lookup in
 // pipeline.cpp); until one is ready the draw's own list is used. LL_VK_RIGGEDLOD=1 starts it on, rt-debug.txt riggedlod=0/1 switches it live (a same-lap A/B).
-extern bool ll_rigged_lod_lookup(const LLDrawInfo* p, F32 error_m, U32& ib_name, U32& count);
+extern bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count);
 static bool rigged_lod_wanted(bool opaque)
 {
     // (the alpha draws and the scene table's opaque rigged draws have a key each: riggedlod= and riggedlodopq=, so a lap can switch one of them)
@@ -589,7 +589,7 @@ static bool rigged_lod_for(const LLDrawInfo* info, U32& ib_name, U32& count, boo
     }
     const F32 height = (F32)gViewerWindow->getWorldViewHeightRaw();
     const F32 pixel = 2.f * distance * tanf(0.5f * camera->getView()) / llmax(height, 1.f);        // the world size of a pixel of the window at that distance
-    return ll_rigged_lod_lookup(info, 0.5f * pixel, ib_name, count);
+    return ll_rigged_lod_lookup(ll_geo_range(info), 0.5f * pixel, ib_name, count);
 }
 
 // the scene table's opaque rigged items (pipeline.cpp, the frame record's palette bindings)
