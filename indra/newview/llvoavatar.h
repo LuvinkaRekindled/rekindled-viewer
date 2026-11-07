@@ -309,6 +309,7 @@ public:
     virtual bool    updateCharacter(LLAgent &agent);
     // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (llavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
+    bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     bool            reducedHiddenSkip();        // idleUpdate's reduced update of an avatar nobody sees (every 2nd or 4th frame)
     void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial = ~0u);
     void            idleUpdatePostCharacter(bool detailed_update);

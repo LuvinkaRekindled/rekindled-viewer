@@ -3574,7 +3574,10 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         AvScope s(AV_PC_NAMETAG);
         AvSelfScope self_scope(11, this);
         LL_CPU_ZONE("av post: name tag");
-        idleUpdateNameTag(hud_name_pos);
+        if (LLAvatarTable::nameTagOpen(this))
+        {
+            idleUpdateNameTag(hud_name_pos);
+        }
     }
 
     // Complexity has stale mechanics, but updates still can be very rapid
@@ -6670,8 +6673,43 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate);
         r.mClass = av->isSelf() ? CLASS_OWN : (r.mVisible ? CLASS_SEEN : CLASS_UNSEEN);
         r.mFrame = frame;
+        if (av->mDrawable.notNull() && !av->isSelf())
+        {
+            // the main camera's frustum (the previous frame's planes: the update runs before the cull), the extents grown by the room a name tag takes (above the head, sideways in screen space)
+            const LLVector4a* ext = av->mDrawable->getSpatialExtents();
+            LLVector4a center, half;
+            center.setAdd(ext[0], ext[1]);
+            center.mul(0.5f);
+            half.setSub(ext[1], ext[0]);
+            half.mul(0.5f);
+            const F32 grow = 2.5f + 0.3f * av->mDrawable->mDistanceWRTCamera;
+            half.add(LLVector4a(grow));
+            r.mInFrustum = LLViewerCamera::getInstance()->AABBInFrustum(center, half) != 0;
+        }
+        r.mBits = (av->isSelf() || r.mInFrustum || av->nameTagBusy()) ? BIT_NAME_TAG : 0;
         sAvatarRows[av] = r;
     }
+}
+
+bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
+{
+    if (switchMode() != 1)
+    {
+        return true;
+    }
+    static U64 ran = 0, skipped = 0;
+    static U32 last = 0;
+    const Row* r = row(av);
+    const bool open = !r || (r->mBits & BIT_NAME_TAG);
+    ++(open ? ran : skipped);
+    if (LLFrameTimer::getFrameCount() >= last + 600)
+    {
+        const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
+        last = LLFrameTimer::getFrameCount();
+        LL_INFOS("AvTable") << "name tags per frame over " << (U32)frames << " frames: updated " << ran / frames << ", left out (not in the camera's frustum, no chat) " << skipped / frames << LL_ENDL;
+        ran = skipped = 0;
+    }
+    return open;
 }
 
 void LLAvatarTable::noteActual(const LLVOAvatar* av, U8 actual)
