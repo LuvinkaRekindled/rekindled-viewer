@@ -21764,81 +21764,120 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
         std::unordered_map<const LLMatrix4*, U32> numbers;
         const LLMatrix4* last_matrix = nullptr;
         const ModelMatrixHistory* last_history = nullptr;
-        std::vector<LLDrawInfo*> moving_infos;
-        for (U32 rigged_type : kVelocityRiggedTypes)
+        // J1 K2c: the per draw work takes (model matrix, the buffer or its names, the range): the draws left in the render map come with their draw infos (the buffer is checked), the served items of the fragments
+        // that move (a model matrix in the moving table: vehicles, physical objects, rigid attachments) with the names their entry holds; a draw on a region matrix never moves, so those items are not looked at
+        auto consume_object = [&](const LLMatrix4* matrix, bool check_vb, const LLVertexBuffer* vb, U32 vb_id, U32 ib_id, U32 offset, U32 count)
         {
-            // the rigged variant of a pass type is the next number
-            collect_main_view_draw_infos(rigged_type - 1, moving_infos);       // (S4 C: the render map and the draws the scene table serves)
-            for (LLDrawInfo* params : moving_infos)
+            if (!matrix)
             {
-                const LLMatrix4* matrix = params->mModelMatrix;
-                if (!matrix)
+                return;
+            }
+            if (matrix != last_matrix)
+            {
+                last_matrix = matrix;
+                const F32* value = (const F32*)matrix->mMatrix;
+                auto it = sModelMatrixHistory.find(matrix);
+                if (it == sModelMatrixHistory.end())
                 {
-                    continue;
+                    ModelMatrixHistory fresh;
+                    memcpy(fresh.mCur, value, sizeof(fresh.mCur));
+                    memcpy(fresh.mPrev, value, sizeof(fresh.mPrev));
+                    fresh.mFrame = frame;
+                    fresh.mMoving = false;
+                    it = sModelMatrixHistory.emplace(matrix, fresh).first;
                 }
-                if (matrix != last_matrix)
+                else if (it->second.mFrame != frame)
                 {
-                    last_matrix = matrix;
-                    const F32* value = (const F32*)matrix->mMatrix;
-                    auto it = sModelMatrixHistory.find(matrix);
-                    if (it == sModelMatrixHistory.end())
+                    ModelMatrixHistory& h = it->second;
+                    if (h.mFrame == frame - 1)
                     {
-                        ModelMatrixHistory fresh;
-                        memcpy(fresh.mCur, value, sizeof(fresh.mCur));
-                        memcpy(fresh.mPrev, value, sizeof(fresh.mPrev));
-                        fresh.mFrame = frame;
-                        fresh.mMoving = false;
-                        it = sModelMatrixHistory.emplace(matrix, fresh).first;
+                        memcpy(h.mPrev, h.mCur, sizeof(h.mPrev));
                     }
-                    else if (it->second.mFrame != frame)
+                    else
                     {
-                        ModelMatrixHistory& h = it->second;
-                        if (h.mFrame == frame - 1)
-                        {
-                            memcpy(h.mPrev, h.mCur, sizeof(h.mPrev));
-                        }
-                        else
-                        {
-                            memcpy(h.mPrev, value, sizeof(h.mPrev));
-                        }
-                        memcpy(h.mCur, value, sizeof(h.mCur));
-                        h.mFrame = frame;
-                        // the translation is the last row of a viewer matrix (row vectors)
-                        const F32 dx = value[12] - w.mCameraOrigin.mV[VX], dy = value[13] - w.mCameraOrigin.mV[VY], dz = value[14] - w.mCameraOrigin.mV[VZ];
-                        const F32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
-                        bool moving = distance <= w.mRange && memcmp(h.mCur, h.mPrev, sizeof(h.mCur)) != 0;
-                        if (moving && w.mObjectMinMotionPx > 0.f)
-                        {
-                            F32 biggest = 0.f;
-                            for (size_t k = 0; k < 16; ++k)
-                            {
-                                biggest = llmax(biggest, fabsf(h.mCur[k] - h.mPrev[k]));
-                            }
-                            moving = biggest * 1.5f * w.mFocalPx / llmax(distance, 0.5f) >= w.mObjectMinMotionPx;
-                        }
-                        h.mMoving = moving;
+                        memcpy(h.mPrev, value, sizeof(h.mPrev));
                     }
-                    last_history = &it->second;
+                    memcpy(h.mCur, value, sizeof(h.mCur));
+                    h.mFrame = frame;
+                    // the translation is the last row of a viewer matrix (row vectors)
+                    const F32 dx = value[12] - w.mCameraOrigin.mV[VX], dy = value[13] - w.mCameraOrigin.mV[VY], dz = value[14] - w.mCameraOrigin.mV[VZ];
+                    const F32 distance = sqrtf(dx * dx + dy * dy + dz * dz);
+                    bool moving = distance <= w.mRange && memcmp(h.mCur, h.mPrev, sizeof(h.mCur)) != 0;
+                    if (moving && w.mObjectMinMotionPx > 0.f)
+                    {
+                        F32 biggest = 0.f;
+                        for (size_t k = 0; k < 16; ++k)
+                        {
+                            biggest = llmax(biggest, fabsf(h.mCur[k] - h.mPrev[k]));
+                        }
+                        moving = biggest * 1.5f * w.mFocalPx / llmax(distance, 0.5f) >= w.mObjectMinMotionPx;
+                    }
+                    h.mMoving = moving;
                 }
-                if (!last_history->mMoving || !params->mCount)
-                {
-                    continue;
-                }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
+                last_history = &it->second;
+            }
+            if (!last_history->mMoving || !count)
+            {
+                return;
+            }
+            if (check_vb)
+            {
                 if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
                     || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
                 {
                     ++w.mObjUnfit;
-                    continue;
+                    return;
                 }
-                auto number = numbers.find(matrix);
-                if (number == numbers.end())
+                vb_id = vb->getVertexBufferId();
+                ib_id = vb->getIndexBufferId();
+            }
+            auto number = numbers.find(matrix);
+            if (number == numbers.end())
+            {
+                number = numbers.emplace(matrix, (U32)(w.mObjCur.size() / 16)).first;
+                w.mObjCur.insert(w.mObjCur.end(), last_history->mCur, last_history->mCur + 16);
+                w.mObjPrev.insert(w.mObjPrev.end(), last_history->mPrev, last_history->mPrev + 16);
+            }
+            w.mObjEntries.push_back({ vb_id, ib_id, offset, count, number->second, 0 });
+        };
+        std::vector<LLDrawInfo*> moving_infos;
+        bool wanted_type[kGeoTypeCount] = {};
+        for (U32 rigged_type : kVelocityRiggedTypes)
+        {
+            // the rigged variant of a pass type is the next number
+            const int tn = ll_scene_geo_type_number(rigged_type - 1);
+            if (tn >= 0 && tn < (int)kGeoTypeCount)
+            {
+                wanted_type[tn] = true;
+            }
+            collect_main_view_draw_infos(rigged_type - 1, moving_infos, !rig_mode);       // (S4 C: the render map and, unless the items are read below, the draws the scene table serves)
+            for (LLDrawInfo* params : moving_infos)
+            {
+                consume_object(params->mModelMatrix, true, params->mVertexBuffer.get(), 0, 0, (U32)params->mOffset, (U32)params->mCount);
+            }
+        }
+        if (rig_mode)
+        {
+            LLCullResult* cull = gPipeline.getCull();
+            if (cull && cull->mGeoElided)
+            {
+                LL_CPU_ZONE("avatar velocity: moving items of the fragments");
+                for (U32 handle : cull->mGeoHandles)
                 {
-                    number = numbers.emplace(matrix, (U32)(w.mObjCur.size() / 16)).first;
-                    w.mObjCur.insert(w.mObjCur.end(), last_history->mCur, last_history->mCur + 16);
-                    w.mObjPrev.insert(w.mObjPrev.end(), last_history->mPrev, last_history->mPrev + 16);
+                    const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+                    if (!f || f->mGeoMoving.empty() || !f->mGeoServedMask)
+                    {
+                        continue;
+                    }
+                    for (const LLSceneFragment::GeoItem& item : f->mGeo)
+                    {
+                        if (!item.mServed || item.mType >= kGeoTypeCount || !wanted_type[item.mType] || !(f->mGeoServedMask & (1ull << item.mType)) || item.mE.mMatrix < kMovingBase || item.mE.mMatrix >= kMovingMax)
+                        {
+                            continue;
+                        }
+                        consume_object(sMovingMatrix[item.mE.mMatrix - kMovingBase], false, nullptr, item.mE.mVertexBuffer, item.mE.mIndexBuffer, item.mE.mFirstIndex, item.mE.mIndexCount);
+                    }
                 }
-                w.mObjEntries.push_back({ vb->getVertexBufferId(), vb->getIndexBufferId(), params->mOffset, params->mCount, number->second, 0 });
             }
         }
         if (frame % 600 == 0)

@@ -972,19 +972,22 @@ static std::atomic<U64> sRigCensus[12];
 static std::atomic<U64> sRigReasonEntry[16], sRigReasonFallback[16];       // why the table did not take a rigged draw the per frame records built (ll_geometry_reject_reason, texture matrix not allowed as for table rows), and why a draw went to the old path
 static std::atomic<U64> sRigWithModel{ 0 };
 static std::atomic<U64> sRigGltf[4];       // the rigged glTF draws that went to the old path: all / double sided / with a texture matrix / the glow pass without an emissive array
+static bool rig_census_on()
+{
+    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;       // (read once: the census is asked about for every rigged draw of every frame)
+    return on;
+}
 void ll_rig_census_add(int what, U64 n)
 {
-    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;
-    if (on && n)
+    if (rig_census_on() && n)
     {
         sRigCensus[what].fetch_add(n, std::memory_order_relaxed);
     }
 }
 void ll_rig_census_log()
 {
-    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;
     static U64 last = 0;
-    if (!on || gFrameCount < last + 1200)
+    if (!rig_census_on() || gFrameCount < last + 1200)
     {
         return;
     }
@@ -1716,7 +1719,7 @@ static void build_geometry(LLGeometryBuild& out)
         {
             out.mFallback.push_back(params);
             ll_rig_census_add(5, out.mRigged ? 1 : 0);
-            if (out.mRigged && getenv("LL_VK_RIGCENSUS"))
+            if (out.mRigged && rig_census_on())
             {
                 ++sRigReasonFallback[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, true, texmat_ok, ll_pass_arrays(out.mType)))];
                 if (params->mGLTFMaterial)
@@ -1824,7 +1827,7 @@ static void build_geometry(LLGeometryBuild& out)
         }
         if (out.mRigged)
         {
-            if (getenv("LL_VK_RIGCENSUS"))
+            if (rig_census_on())
             {
                 ++sRigReasonEntry[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, true, false, ll_pass_arrays(out.mType)))];
                 sRigWithModel += params->mModelMatrix != nullptr;
