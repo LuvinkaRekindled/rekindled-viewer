@@ -875,7 +875,10 @@ static struct FramePalettes
     // arena of the renderer (offsets 0 .. its capacity), named to the worker by a kind 39 record, no copy; what does not fit (or a frame with no arena free) goes into mData as before, at offsets after the capacity
     LLVkBridge::PaletteArena mArena;
     bool mArenaOn = false;
-    U32 mArenaUsed = 0, mArenaSent = 0;                 // floats written / named to the worker
+    std::atomic<U32> mArenaCursor{ 0 };                 // floats written (the palette jobs allocate with a compare and swap, the requests under the mutex)
+    U32 mArenaSent = 0;                                 // floats named to the worker
+    U64 mPreparedFrame = ~0ull;                         // the frame whose list the palette jobs were prepared for (the coming frame: gFrameCount + 1 during the idle)
+    U64 mIdleRequests = 0;                              // requests that came in the idle phase while the coming frame's list was prepared (they are refused, not allowed to reset it)
     U32 mDataBase = 0;                                  // the list offset of mData[0]: the arena's capacity when an arena serves the frame, else 0
     U64 mArenaFrames = 0, mArenaFallbackFrames = 0, mArenaOverflows = 0, mArenaVerified = 0, mArenaWrong = 0;
 } sFramePal;
@@ -918,6 +921,61 @@ bool ll_palette_shared()
     return now;
 }
 
+static std::atomic<U64> sArenaJobWrites{ 0 };       // palettes the palette jobs wrote into an arena (census)
+
+// <FS> P1: the list of a frame starts here (under the mutex): the vectors are emptied, an arena is taken for the frame when one is free
+static void palette_frame_begin_locked(U64 frame)
+{
+    sFramePal.mFrame = frame;
+    sFramePal.mData.clear();
+    sFramePal.mOffsets.clear();
+    sFramePal.mSent = 0;
+    sFramePal.mArenaCursor.store(0, std::memory_order_relaxed);
+    sFramePal.mArenaSent = 0;
+    sFramePal.mArenaOn = palette_arena_mode() != 0 && LLVkBridge::paletteArenaAcquire((U32)frame, sFramePal.mArena);
+    sFramePal.mDataBase = sFramePal.mArenaOn ? sFramePal.mArena.mFloats : 0;
+    ++(sFramePal.mArenaOn ? sFramePal.mArenaFrames : sFramePal.mArenaFallbackFrames);
+    if (palette_arena_mode() != 0 && ((sFramePal.mArenaFrames + sFramePal.mArenaFallbackFrames) % 1200) == 0)
+    {
+        LL_INFOS("PalArena") << "palette arenas: frames served from an arena " << sFramePal.mArenaFrames << ", frames with none free (copied as before) " << sFramePal.mArenaFallbackFrames << ", palettes that did not fit "
+            << sFramePal.mArenaOverflows << ", written by the palette jobs " << sArenaJobWrites.load() << ", requests refused in the idle phase " << sFramePal.mIdleRequests << LL_ENDL;
+    }
+}
+
+// <FS> P1 step 2 (the palette jobs write into the arena): main thread, before the jobs of the idle launch: the list of the coming frame (gFrameCount + 1) begins and takes its arena
+void ll_frame_palette_prepare(U32 frame)
+{
+    std::lock_guard<std::mutex> lock(sFramePal.mMutex);
+    if (sFramePal.mFrame == frame)
+    {
+        return;
+    }
+    palette_frame_begin_locked(frame);
+    sFramePal.mPreparedFrame = frame;
+}
+
+// a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
+bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset)
+{
+    if (!count || sFramePal.mPreparedFrame != frame || !sFramePal.mArenaOn)
+    {
+        return false;
+    }
+    U32 cur = sFramePal.mArenaCursor.load(std::memory_order_relaxed);
+    do
+    {
+        if ((U64)cur + count > sFramePal.mArena.mFloats)
+        {
+            return false;
+        }
+    }
+    while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + count, std::memory_order_acq_rel));
+    memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
+    ++sArenaJobWrites;
+    offset = cur;
+    return true;
+}
+
 // census (a rigged outfit that disappears for a frame now and then): why a palette request fails. An item without a palette is not drawn (the old path draws nothing for it either)
 static std::atomic<U64> sPalFailNoAvatar{ 0 }, sPalFailEmpty{ 0 }, sPalFailShort{ 0 }, sPalRequests{ 0 }, sPalFastRequests{ 0 };
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
@@ -957,7 +1015,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
             std::lock_guard<std::mutex> check_lock(sFramePal.mMutex);
             const size_t n = (size_t)joints * 12;
             const bool ok = sFramePal.mFrame == gFrameCount
-                && ((sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaUsed && memcmp(sFramePal.mArena.mPtr + offset, mpc.mGLMp.data(), n * sizeof(F32)) == 0)
+                && ((sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaCursor.load() && memcmp(sFramePal.mArena.mPtr + offset, mpc.mGLMp.data(), n * sizeof(F32)) == 0)
                     || (offset >= sFramePal.mDataBase && (size_t)(offset - sFramePal.mDataBase) + n <= sFramePal.mData.size() && memcmp(sFramePal.mData.data() + (offset - sFramePal.mDataBase), mpc.mGLMp.data(), n * sizeof(F32)) == 0));
             ++checked;
             if (!ok && ++wrong <= 6)
@@ -974,19 +1032,17 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
     {
-        sFramePal.mFrame = gFrameCount;
-        sFramePal.mData.clear();
-        sFramePal.mOffsets.clear();
-        sFramePal.mSent = 0;
-        sFramePal.mArenaUsed = sFramePal.mArenaSent = 0;
-        sFramePal.mArenaOn = palette_arena_mode() != 0 && LLVkBridge::paletteArenaAcquire((U32)gFrameCount, sFramePal.mArena);
-        sFramePal.mDataBase = sFramePal.mArenaOn ? sFramePal.mArena.mFloats : 0;
-        ++(sFramePal.mArenaOn ? sFramePal.mArenaFrames : sFramePal.mArenaFallbackFrames);
-        if (palette_arena_mode() != 0 && ((sFramePal.mArenaFrames + sFramePal.mArenaFallbackFrames) % 1200) == 0)
+        if (sFramePal.mPreparedFrame == gFrameCount + 1)
         {
-            LL_INFOS("PalArena") << "palette arenas: frames served from an arena " << sFramePal.mArenaFrames << ", frames with none free (copied as before) " << sFramePal.mArenaFallbackFrames << ", palettes that did not fit "
-                << sFramePal.mArenaOverflows << ", compared " << sFramePal.mArenaVerified << ", wrong " << sFramePal.mArenaWrong << LL_ENDL;
+            // a request in the idle phase while the coming frame's list is prepared (the palette jobs have written into it): it may not reset that list, whose offsets the entries already carry
+            const U64 n = ++sFramePal.mIdleRequests;
+            if (n <= 5)
+            {
+                LL_WARNS("PalArena") << "a palette request came in the idle phase of frame " << gFrameCount << " while the list of the coming frame is prepared (refused, " << n << " so far)" << LL_ENDL;
+            }
+            return false;
         }
+        palette_frame_begin_locked(gFrameCount);
     }
     ++sFramePal.mRequests;
     const U64 again = mpc.mListSlot.load(std::memory_order_acquire);        // (another thread may have added it while this one waited)
@@ -996,15 +1052,26 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         return true;
     }
     const size_t need = (size_t)joints * 12;
-    U32 at;
-    if (sFramePal.mArenaOn && (size_t)sFramePal.mArenaUsed + need <= sFramePal.mArena.mFloats)
+    U32 at = 0;
+    bool in_arena = false;
+    if (sFramePal.mArenaOn)
     {
-        at = sFramePal.mArenaUsed;
-        memcpy(sFramePal.mArena.mPtr + at, mpc.mGLMp.data(), need * sizeof(F32));
-        sFramePal.mArenaUsed += (U32)need;
+        U32 cur = sFramePal.mArenaCursor.load(std::memory_order_relaxed);
+        while ((size_t)cur + need <= sFramePal.mArena.mFloats)
+        {
+            if (sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + (U32)need, std::memory_order_acq_rel))
+            {
+                at = cur;
+                in_arena = true;
+                break;
+            }
+        }
+    }
+    if (in_arena)
+    {
         // (no read back of what was written: the arena is device visible upload memory, a CPU read of it is uncached and very slow. A first compare mode that did it cost a crowd 20 fps: the content was right, 287 k
-        // palettes compared, 0 wrong; the lifetime and the addresses are what is left to check, in the worker)
-        sFramePal.mArenaVerified += (palette_arena_mode() == 2);
+        // palettes compared, 0 wrong)
+        memcpy(sFramePal.mArena.mPtr + at, mpc.mGLMp.data(), need * sizeof(F32));
     }
     else
     {
@@ -1026,7 +1093,7 @@ bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
         return false;
     }
     const size_t n = (size_t)joints * 12;
-    if (sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaUsed)
+    if (sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaCursor.load())
     {
         out.assign(sFramePal.mArena.mPtr + offset, sFramePal.mArena.mPtr + offset + n);
         return true;
@@ -1046,7 +1113,7 @@ bool ll_frame_palette_first_joint(U32 offset, F32* out12)
     {
         return false;
     }
-    if (sFramePal.mArenaOn && (size_t)offset + 12 <= sFramePal.mArenaUsed)
+    if (sFramePal.mArenaOn && (size_t)offset + 12 <= sFramePal.mArenaCursor.load())
     {
         memcpy(out12, sFramePal.mArena.mPtr + offset, 12 * sizeof(F32));
         return true;
@@ -1066,7 +1133,8 @@ void ll_frame_palette_flush()
     {
         return;
     }
-    if (sFramePal.mArenaOn && sFramePal.mArenaUsed > sFramePal.mArenaSent)
+    const U32 arena_used = sFramePal.mArenaCursor.load(std::memory_order_acquire);
+    if (sFramePal.mArenaOn && arena_used > sFramePal.mArenaSent)
     {
         // <FS> P1: the part of the list that was written into the arena is named, not sent (kind 39)
         LLVkBridge::ShadowPacketsHeader arena_header;
@@ -1074,11 +1142,11 @@ void ll_frame_palette_flush()
         arena_header.mPass = (U32)gFrameCount;
         arena_header.mEntries = sFramePal.mArena.mIndex;
         arena_header.mFragment = sFramePal.mArenaSent;
-        arena_header.mPaletteFloats = sFramePal.mArenaUsed - sFramePal.mArenaSent;
+        arena_header.mPaletteFloats = arena_used - sFramePal.mArenaSent;
         static const U32 no_blob = 0;
         LLVkBridge::shadowPackets(arena_header, &no_blob, sizeof(no_blob));
         sFramePal.mFlushedFloats += arena_header.mPaletteFloats;
-        sFramePal.mArenaSent = sFramePal.mArenaUsed;
+        sFramePal.mArenaSent = arena_used;
     }
     if (sFramePal.mSent >= sFramePal.mData.size())
     {

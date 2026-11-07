@@ -30,6 +30,7 @@
 
 #include "llviewerobjectlist.h"
 #include "llcontrolavatar.h"   // <FS> stage C5d
+#include "lldrawpool.h"      // <FS> P1 step 2: the palette list of the coming frame
 #include "llavatartable.h"
 #include "llforkjoinpool.h"
 
@@ -1352,6 +1353,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
     {
+        ll_frame_palette_prepare((U32)gFrameCount + 1);      // <FS> P1 step 2: the coming frame's palette list begins (and takes its arena) before the jobs write into it
         static const bool pal_time = getenv("LL_VK_PALTIME") != nullptr;
         const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         if (pool && batch.size() >= MIN_PARALLEL_BATCH)

@@ -58,6 +58,7 @@
 #include "llavatarpropertiesprocessor.h"
 #include "llavatarrendernotifier.h"
 #include "llcontrolavatar.h"
+#include "lldrawpool.h"      // <FS> P1 step 2: the palette list of the coming frame
 #include "llexperiencecache.h"
 #include "llphysicsmotion.h"
 #include "llviewercontrol.h"
@@ -14585,6 +14586,14 @@ void LLVOAvatar::buildPalettesInJob()
         const bool again = entry.mFrame == target;
         const U64 t0 = timed ? fs_pal_now() : 0;
         buildPaletteEntry(entry, skin, target, true, !again);
+        {
+            // <FS> P1 step 2: the palette goes straight into the coming frame's arena (the request at render time finds the slot stamped: no copy under the list's mutex)
+            U32 at = 0;
+            if (ll_frame_palette_write(entry.mGLMp.data(), (U32)entry.mGLMp.size(), target, at))
+            {
+                entry.mListSlot.store(((U64)target << 32) | at, std::memory_order_release);
+            }
+        }
         entry.mJobFor = target;
         entry.mJobChecked = false;
         if (timed)
