@@ -7651,8 +7651,9 @@ struct GeoFrag
     std::vector<U32> mARLodIb, mARLodCount;                 // item E: per command, a simplified index list (the GL name of its index buffer, its count) the viewer chose for this frame; 0 = the item's own list
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     U32 mTypeFirst[kGeoTypes + 1] = {};
+    U32 mTypeDs[kGeoTypes] = {};                // P3: where the double sided commands of type t start inside its range of mCmds (= mTypeFirst[t + 1] when it has none)
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
-    struct RRun { U32 mPair, mFirst, mCount; };
+    struct RRun { U32 mPair, mFirst, mCount; bool mDs; };       // (P3: mDs = the run's items are double sided: drawn by the kind 22 that has culling off)
     std::vector<VkDrawIndexedIndirectCommand> mRCmds;
     std::vector<U32> mRCount0;                  // the index count of each (a skin without a palette this frame draws nothing: count 0)
     std::vector<RRun> mRRuns;
@@ -7707,8 +7708,9 @@ static struct GeoState
     bool mPersist = false;              // P2: the viewer sends persistent bindings (kind 21's mFragment == 1): the opaque ones are resolved at kind 21, the alpha ones when a run is named (kind 29)
     Renderer::ScratchAlloc mCommands;
     U32 mFirst[kGeoTypes] = {}, mCount[kGeoTypes] = {};
+    U32 mDsFirst[kGeoTypes] = {}, mDsCount[kGeoTypes] = {};      // P3: the double sided commands of type t (after its single sided ones)
     // S4 B: the frame's rigged draws by rigged type: a run = the commands of one buffer pair of one fragment (index buffer bound, one indirect indexed draw)
-    struct RDraw { U32 mIbName; U32 mFirst, mCount; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
+    struct RDraw { U32 mIbName; U32 mFirst, mCount; bool mDs; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
     std::vector<RDraw> mRDraws[kGeoTypes];
     Renderer::ScratchAlloc mRCommands;
     Renderer::ScratchAlloc mSTable;         // LL_VK_GEO_ROWCOPY: the rows of the static items of this frame (copies of the table's rows), the static commands index it
@@ -8240,11 +8242,18 @@ void geo_build_commands(GeoFrag& f)
     for (U32 t = 0; t < kGeoTypes; ++t)
     {
         f.mTypeFirst[t] = (U32)f.mCmds.size();
-        for (size_t i = 0; i < f.mItems.size(); ++i)
+        for (U32 ds = 0; ds < 2; ++ds)
         {
-            if (f.mItems[i].mType == t && geo_item_ok(f, i))
+            if (ds)
             {
-                f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
+                f.mTypeDs[t] = (U32)f.mCmds.size();
+            }
+            for (size_t i = 0; i < f.mItems.size(); ++i)
+            {
+                if (f.mItems[i].mType == t && ((f.mItems[i].mE.mFlags & LLVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
+                {
+                    f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
+                }
             }
         }
     }
@@ -8260,20 +8269,23 @@ void geo_build_commands(GeoFrag& f)
         f.mRTypeFirst[rt] = (U32)f.mRRuns.size();
         for (size_t k = 0; k < f.mPairs.size(); ++k)
         {
-            const U32 first = (U32)f.mRCmds.size();
-            for (size_t i = 0; i < f.mItems.size(); ++i)
+            for (U32 ds = 0; ds < 2; ++ds)
             {
-                if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && geo_item_ok(f, i))
+                const U32 first = (U32)f.mRCmds.size();
+                for (size_t i = 0; i < f.mItems.size(); ++i)
                 {
-                    f.mRItemCmd[i] = (U32)f.mRCmds.size();
-                    f.mRItems.push_back((U32)i);
-                    f.mRCmds.push_back({ f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
-                    f.mRCount0.push_back(f.mItems[i].mE.mIndexCount);
+                    if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && ((f.mItems[i].mE.mFlags & LLVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
+                    {
+                        f.mRItemCmd[i] = (U32)f.mRCmds.size();
+                        f.mRItems.push_back((U32)i);
+                        f.mRCmds.push_back({ f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
+                        f.mRCount0.push_back(f.mItems[i].mE.mIndexCount);
+                    }
                 }
-            }
-            if (f.mRCmds.size() > first)
-            {
-                f.mRRuns.push_back({ (U32)k, first, (U32)f.mRCmds.size() - first });
+                if (f.mRCmds.size() > first)
+                {
+                    f.mRRuns.push_back({ (U32)k, first, (U32)f.mRCmds.size() - first, ds != 0 });
+                }
             }
         }
     }
@@ -8571,7 +8583,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     static thread_local std::vector<GeoFrag*> listed;
     listed.clear();
     t0 = std::chrono::steady_clock::now();
-    U32 counts[kGeoTypes] = {};
+    U32 counts[kGeoTypes] = {}, counts_ds[kGeoTypes] = {};
     U64 items_frame = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -8606,6 +8618,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         for (U32 t = 0; t < kGeoTypes; ++t)
         {
             counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
+            counts_ds[t] += f->mTypeFirst[t + 1] - f->mTypeDs[t];
         }
     }
     if (timed) s.mNsList += geo_ns(t0);
@@ -8692,7 +8705,9 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 t = 0; t < kGeoTypes; ++t)
     {
         sGeo.mFirst[t] = (U32)total;
-        sGeo.mCount[t] = counts[t];
+        sGeo.mCount[t] = counts[t] - counts_ds[t];
+        sGeo.mDsFirst[t] = (U32)total + sGeo.mCount[t];       // P3: the double sided commands of the type follow its single sided ones
+        sGeo.mDsCount[t] = counts_ds[t];
         total += counts[t];
         s.mCommands[t] += counts[t];
         s.mCommandsMax[t] = std::max<U64>(s.mCommandsMax[t], counts[t]);
@@ -8707,6 +8722,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             ++s.mScratchFail;
             std::fill(sGeo.mCount, sGeo.mCount + kGeoTypes, 0u);
+            std::fill(sGeo.mDsCount, sGeo.mDsCount + kGeoTypes, 0u);
         }
         else
         {
@@ -8727,33 +8743,38 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                     ++s.mScratchFail;
                 }
             }
-            U32 at[kGeoTypes];
+            U32 at[kGeoTypes], at_ds[kGeoTypes];
             for (U32 t = 0; t < kGeoTypes; ++t)
             {
                 at[t] = sGeo.mFirst[t];
+                at_ds[t] = sGeo.mDsFirst[t];
             }
+            auto copy_commands = [&](const GeoFrag* f, U32 first, U32 n, U32& dest)
+            {
+                if (n && static_rows)
+                {
+                    const VkDrawIndirectCommand* src = f->mCmds.data() + first;
+                    for (U32 k = 0; k < n; ++k)
+                    {
+                        VkDrawIndirectCommand c = src[k];
+                        static_rows[dest + k] = sGeo.mTCpu[c.firstInstance];
+                        c.firstInstance = dest + k;
+                        out[dest + k] = c;
+                    }
+                    dest += n;
+                }
+                else if (n)
+                {
+                    memcpy(out + dest, f->mCmds.data() + first, n * sizeof(VkDrawIndirectCommand));
+                    dest += n;
+                }
+            };
             for (const GeoFrag* f : listed)
             {
                 for (U32 t = 0; t < kGeoTypes; ++t)
                 {
-                    const U32 n = f->mTypeFirst[t + 1] - f->mTypeFirst[t];
-                    if (n && static_rows)
-                    {
-                        const VkDrawIndirectCommand* src = f->mCmds.data() + f->mTypeFirst[t];
-                        for (U32 k = 0; k < n; ++k)
-                        {
-                            VkDrawIndirectCommand c = src[k];
-                            static_rows[at[t] + k] = sGeo.mTCpu[c.firstInstance];
-                            c.firstInstance = at[t] + k;
-                            out[at[t] + k] = c;
-                        }
-                        at[t] += n;
-                    }
-                    else if (n)
-                    {
-                        memcpy(out + at[t], f->mCmds.data() + f->mTypeFirst[t], n * sizeof(VkDrawIndirectCommand));
-                        at[t] += n;
-                    }
+                    copy_commands(f, f->mTypeFirst[t], f->mTypeDs[t] - f->mTypeFirst[t], at[t]);
+                    copy_commands(f, f->mTypeDs[t], f->mTypeFirst[t + 1] - f->mTypeDs[t], at_ds[t]);
                 }
             }
         }
@@ -8814,12 +8835,12 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                             }
                             if (c > 0 && lod != seg_lod)
                             {
-                                sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg });
+                                sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg, run.mDs });
                                 seg = c;
                             }
                             seg_lod = lod;
                         }
-                        sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, run.mCount - seg });
+                        sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, run.mCount - seg, run.mDs });
                         cursor += run.mCount;
                     }
                 }
@@ -8907,6 +8928,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     U32 count = 0;
+    const bool ds_draw = h.mFragment == 1;      // P3: the double sided rows of the type (the viewer turned culling off for this record)
     if (rigged_draw)
     {
         if (!sGeo.mRCommands.mPtr)
@@ -8915,12 +8937,12 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         for (const GeoState::RDraw& d : sGeo.mRDraws[type - kGeoTypes])
         {
-            count += d.mCount;
+            count += d.mDs == ds_draw ? d.mCount : 0u;
         }
     }
     else
     {
-        count = sGeo.mCount[type];
+        count = ds_draw ? sGeo.mDsCount[type] : sGeo.mCount[type];
         if (count == 0 || !sGeo.mCommands.mPtr)
         {
             return;
@@ -9085,6 +9107,10 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         U32 drawn = 0, runs = 0;
         for (const GeoState::RDraw& d : sGeo.mRDraws[type - kGeoTypes])
         {
+            if (d.mDs != ds_draw)
+            {
+                continue;
+            }
             Buf* ib = packet_buffer(d.mIbName);
             if (!ib || !ib->mVk.valid())
             {
@@ -9113,7 +9139,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     else
     {
-        if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)sGeo.mFirst[type] * sizeof(VkDrawIndirectCommand)))
+        if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)(ds_draw ? sGeo.mDsFirst[type] : sGeo.mFirst[type]) * sizeof(VkDrawIndirectCommand)))
         {
             if (sStatsEnabled)
             {

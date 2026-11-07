@@ -2040,6 +2040,14 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
             memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
             LLVkBridge::shadowPackets(header, matrices, sizeof(matrices));
             ll_scene_geo_count(1, 1);
+            extern bool ll_scene_geo_type_has_double_sided(int tn);
+            if (ll_scene_geo_type_has_double_sided(tn))
+            {
+                // P3: the type's double sided rows (glTF materials): their own draw, culling off (the worker draws nothing when the frame has none)
+                LLRenderState::CullScope cull_face(false, true);
+                header.mFragment = 1;
+                LLVkBridge::shadowPackets(header, matrices, sizeof(matrices));
+            }
         }
     }
     if (ll_scene_geo_on() && !rigged)
