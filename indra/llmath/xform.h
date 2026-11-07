@@ -48,12 +48,27 @@ constexpr F32 OS_DEFAULT_MAX_PRIM_SCALE = 256.f;
 constexpr F32 OS_MIN_PRIM_SCALE = 0.001f;
 constexpr F32 OS_MAX_PRIM_SCALE = 65536.f;  // something very high but not near FLT_MAX
 // <AW: opensim-limits>
+// <FS> PLAN-avatars.md stage C: the local position, rotation and scale of a joint's xform as one slot of the avatar's flat array (the array is where they live; the xform's own fields are not used while the slot is set)
+struct LLXformLocals
+{
+    LLVector3    mPos;
+    LLQuaternion mRot;
+    LLVector3    mScale;
+};
+
 class LLXform
 {
 protected:
     LLVector3     mPosition;
     LLQuaternion  mRotation;
     LLVector3     mScale;
+    // the local data: the slot of the avatar's flat array while this is a joint's xform bound to one, else the fields
+    LLVector3&          lpos()          { return mLocals ? mLocals->mPos : mPosition; }
+    const LLVector3&    lpos() const    { return mLocals ? mLocals->mPos : mPosition; }
+    LLQuaternion&       lrot()          { return mLocals ? mLocals->mRot : mRotation; }
+    const LLQuaternion& lrot() const    { return mLocals ? mLocals->mRot : mRotation; }
+    LLVector3&          lscale()        { return mLocals ? mLocals->mScale : mScale; }
+    const LLVector3&    lscale() const  { return mLocals ? mLocals->mScale : mScale; }
 
     //RN: TODO: move these world transform members to LLXformMatrix
     // as they are *never* updated or accessed in the base class
@@ -64,6 +79,7 @@ protected:
     U32           mChanged;
 
     bool          mScaleChildOffset;
+    LLXformLocals*      mLocals = nullptr;      // <FS> stage C: when set, the local position, rotation and scale are this slot's (the setters and getters follow it)
     const LLVector3*    mViewWorldPos = nullptr;
     const LLQuaternion* mViewWorldRot = nullptr;
 
@@ -94,12 +110,13 @@ public:
         mScaleChildOffset = false;
         mViewWorldPos = nullptr;
         mViewWorldRot = nullptr;
+        mLocals = nullptr;
     }
 
      LLXform();
     virtual ~LLXform();
 
-    void getLocalMat4(LLMatrix4 &mat) const { mat.initAll(mScale, mRotation, mPosition); }
+    void getLocalMat4(LLMatrix4 &mat) const { mat.initAll(lscale(), lrot(), lpos()); }
 
     inline bool setParent(LLXform *parent);
 
@@ -137,15 +154,18 @@ public:
     virtual bool isRoot() const;
     virtual bool isRootEdit() const;
 
-    const LLVector3&    getPosition()  const        { return mPosition; }
-    const LLVector3&    getScale() const            { return mScale; }
-    const LLQuaternion& getRotation() const         { return mRotation; }
+    const LLVector3&    getPosition()  const        { return lpos(); }
+    const LLVector3&    getScale() const            { return lscale(); }
+    const LLQuaternion& getRotation() const         { return lrot(); }
     const LLVector3&    getPositionW() const        { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
     const LLQuaternion& getWorldRotation() const    { return mViewWorldRot ? *mViewWorldRot : mWorldRotation; }
     const LLVector3&    getWorldPosition() const    { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
     // <FS> PLAN-avatars.md stage C: a joint's xform while the joint is a view of the avatar's flat world array: the world position and rotation are the array's slot (set by the avatar's pass, cleared by LLJoint::touch)
     const LLVector3&    getWorldPositionField() const   { return mWorldPosition; }        // (the xform's own field: what the verify mode compares the array with)
     const LLQuaternion& getWorldRotationField() const   { return mWorldRotation; }
+    void                setLocals(LLXformLocals* slot) { mLocals = slot; }      // (the caller copies the values over first)
+    LLXformLocals*      getLocals() const { return mLocals; }
+    void                releaseLocals() { if (mLocals) { mPosition = mLocals->mPos; mRotation = mLocals->mRot; mScale = mLocals->mScale; mLocals = nullptr; } }      // (the fields get the last values back)
     void                setWorldView(const LLVector3* pos, const LLQuaternion* rot) { mViewWorldPos = pos; mViewWorldRot = rot; }
 };
 
@@ -177,7 +197,7 @@ public:
     {
         mWorldPosition = world_pos;
         mWorldRotation = world_rot;
-        mWorldMatrix.initAll(mScale, mWorldRotation, mWorldPosition);
+        mWorldMatrix.initAll(lscale(), mWorldRotation, mWorldPosition);
     }
     void getMinMax(LLVector3& min,LLVector3& max) const;
 
@@ -216,10 +236,10 @@ void LLXform::setPosition(const LLVector3& pos)
 {
     setChanged(TRANSLATED);
     if (pos.isFinite())
-        mPosition = pos;
+        lpos() = pos;
     else
     {
-        mPosition.clearVec();
+        lpos().clearVec();
         warn("Non Finite in LLXform::setPosition(LLVector3)");
     }
 }
@@ -228,10 +248,10 @@ void LLXform::setPosition(const F32 x, const F32 y, const F32 z)
 {
     setChanged(TRANSLATED);
     if (llfinite(x) && llfinite(y) && llfinite(z))
-        mPosition.setVec(x,y,z);
+        lpos().setVec(x,y,z);
     else
     {
-        mPosition.clearVec();
+        lpos().clearVec();
         warn("Non Finite in LLXform::setPosition(F32,F32,F32)");
     }
 }
@@ -240,10 +260,10 @@ void LLXform::setPositionX(const F32 x)
 {
     setChanged(TRANSLATED);
     if (llfinite(x))
-        mPosition.mV[VX] = x;
+        lpos().mV[VX] = x;
     else
     {
-        mPosition.mV[VX] = 0.f;
+        lpos().mV[VX] = 0.f;
         warn("Non Finite in LLXform::setPositionX");
     }
 }
@@ -252,10 +272,10 @@ void LLXform::setPositionY(const F32 y)
 {
     setChanged(TRANSLATED);
     if (llfinite(y))
-        mPosition.mV[VY] = y;
+        lpos().mV[VY] = y;
     else
     {
-        mPosition.mV[VY] = 0.f;
+        lpos().mV[VY] = 0.f;
         warn("Non Finite in LLXform::setPositionY");
     }
 }
@@ -264,10 +284,10 @@ void LLXform::setPositionZ(const F32 z)
 {
     setChanged(TRANSLATED);
     if (llfinite(z))
-        mPosition.mV[VZ] = z;
+        lpos().mV[VZ] = z;
     else
     {
-        mPosition.mV[VZ] = 0.f;
+        lpos().mV[VZ] = 0.f;
         warn("Non Finite in LLXform::setPositionZ");
     }
 }
@@ -276,7 +296,7 @@ void LLXform::addPosition(const LLVector3& pos)
 {
     setChanged(TRANSLATED);
     if (pos.isFinite())
-        mPosition += pos;
+        lpos() += pos;
     else
         warn("Non Finite in LLXform::addPosition");
 }
@@ -285,10 +305,10 @@ void LLXform::setScale(const LLVector3& scale)
 {
     setChanged(SCALED);
     if (scale.isFinite())
-        mScale = scale;
+        lscale() = scale;
     else
     {
-        mScale.setVec(1.f, 1.f, 1.f);
+        lscale().setVec(1.f, 1.f, 1.f);
         warn("Non Finite in LLXform::setScale");
     }
 }
@@ -296,10 +316,10 @@ void LLXform::setScale(const F32 x, const F32 y, const F32 z)
 {
     setChanged(SCALED);
     if (llfinite(x) && llfinite(y) && llfinite(z))
-        mScale.setVec(x,y,z);
+        lscale().setVec(x,y,z);
     else
     {
-        mScale.setVec(1.f, 1.f, 1.f);
+        lscale().setVec(1.f, 1.f, 1.f);
         warn("Non Finite in LLXform::setScale");
     }
 }
@@ -307,10 +327,10 @@ void LLXform::setRotation(const LLQuaternion& rot)
 {
     setChanged(ROTATED);
     if (rot.isFinite())
-        mRotation = rot;
+        lrot() = rot;
     else
     {
-        mRotation.loadIdentity();
+        lrot().loadIdentity();
         warn("Non Finite in LLXform::setRotation");
     }
 }
@@ -319,11 +339,11 @@ void LLXform::setRotation(const F32 x, const F32 y, const F32 z)
     setChanged(ROTATED);
     if (llfinite(x) && llfinite(y) && llfinite(z))
     {
-        mRotation.setQuat(x,y,z);
+        lrot().setQuat(x,y,z);
     }
     else
     {
-        mRotation.loadIdentity();
+        lrot().loadIdentity();
         warn("Non Finite in LLXform::setRotation");
     }
 }
@@ -332,11 +352,11 @@ void LLXform::setRotation(const F32 x, const F32 y, const F32 z, const F32 s)
     setChanged(ROTATED);
     if (llfinite(x) && llfinite(y) && llfinite(z) && llfinite(s))
     {
-        mRotation.mQ[VX] = x; mRotation.mQ[VY] = y; mRotation.mQ[VZ] = z; mRotation.mQ[VS] = s;
+        lrot().mQ[VX] = x; lrot().mQ[VY] = y; lrot().mQ[VZ] = z; lrot().mQ[VS] = s;
     }
     else
     {
-        mRotation.loadIdentity();
+        lrot().loadIdentity();
         warn("Non Finite in LLXform::setRotation");
     }
 }

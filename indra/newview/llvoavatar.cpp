@@ -7498,6 +7498,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         return false;
     }
+    ensureJointLocals();        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
 
     const LLAvatarTable::Row* table_row = LLAvatarTable::switchMode() == 1 ? LLAvatarTable::row(this) : nullptr;       // <FS> stage A mode 1
     bool visible = table_row ? table_row->mVisible : isVisible();
@@ -13421,6 +13422,8 @@ struct LLFlatSkeleton
     std::vector<S16> mParent;               // the parent's joint number (-1: none, or a parent that is not in the array)
     std::vector<S16> mOrder;                // the joints, parents before children
     U32 mJointCount = 0;
+    std::vector<LLXformLocals> mLocals;     // <FS> stage C: the joints' local position, rotation and scale live here (the xforms' slot pointers point into this vector, which is sized once)
+    U32 mLocalsKey = ~0u;                   // the structure key the joints were bound for
 };
 
 static int fs_skelflat_mode()
@@ -13817,9 +13820,64 @@ void LLVOAvatar::releaseJointViews()
             if (joint)
             {
                 joint->setView(nullptr, nullptr, nullptr, false, 0, 0);
+                joint->getXform()->releaseLocals();
             }
         }
     }
+}
+
+static int fs_localview_mode()
+{
+    static const int mode = getenv("LL_VK_LOCALVIEW") ? atoi(getenv("LL_VK_LOCALVIEW")) : 1;     // 1 the joints' local position, rotation and scale live in the avatar's flat array; 0 in the joint objects (the old way)
+    return mode;
+}
+
+// <FS> PLAN-avatars.md stage C: the joints' locals move into the avatar's flat array. Main thread, before the avatar's jobs of the frame: the structure is made when it changed, and every joint not yet bound gets a
+// slot (the slot takes the joint's values over first, then the xform's getters and setters follow it, so the blend's setters write the array and every reader of a local reads it)
+void LLVOAvatar::ensureJointLocals()
+{
+    if (fs_localview_mode() == 0 || fs_flatfill_mode() == 0 || fs_skelflat_mode() == 0 || !mRoot || mMatrixPaletteCache.empty())
+    {
+        return;
+    }
+    if (!mFlatSkel)
+    {
+        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+    }
+    LLFlatSkeleton& flat = *mFlatSkel;
+    const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
+    const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
+    if (flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty())
+    {
+        fs_flat_fill(this, flat);
+        flat.mStructKey = key;
+    }
+    if (flat.mLocalsKey == key && flat.mLocals.size() == N)
+    {
+        return;
+    }
+    if (flat.mLocals.size() != N)
+    {
+        flat.mLocals.assign(N, LLXformLocals());        // (sized once: the pointers into it stay)
+    }
+    for (U32 k = 0; k < N; ++k)
+    {
+        LLJoint* joint = flat.mJoint[k];
+        if (!joint)
+        {
+            continue;
+        }
+        LLXformMatrix* xf = joint->getXform();
+        LLXformLocals* slot = &flat.mLocals[k];
+        if (xf->getLocals() != slot)
+        {
+            slot->mPos = xf->getPosition();
+            slot->mRot = xf->getRotation();
+            slot->mScale = xf->getScale();
+            xf->setLocals(slot);
+        }
+    }
+    flat.mLocalsKey = key;
 }
 
 void LLVOAvatar::walkWorldAfterPass(bool rerun_pass)
