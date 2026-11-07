@@ -399,6 +399,7 @@ bool    LLPipeline::sDoFEnabled = false;
 
 F32 LLPipeline::sVolumeSAFrame = 0.f; // ZK LBG
 thread_local bool LLPipeline::sParallelPrep = false; // <FS>
+thread_local const LLDrawable* LLPipeline::sPrepExclude = nullptr; // <FS> J1 K3e
 
 bool    LLPipeline::sRenderParticles; // <FS:LO> flag to hold correct, user selected, status of particles
 // [SL:KB] - Patch: Render-TextureToggle (Catznip-4.0)
@@ -7154,7 +7155,7 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     // SL-11353
     // ignore our own geo when rendering spotlight shadowmaps...
     //
-    if (RenderSpotLight && drawablep == RenderSpotLight)
+    if ((RenderSpotLight && drawablep == RenderSpotLight) || (sPrepExclude && drawablep == sPrepExclude))
     {
         return;
     }
@@ -8837,6 +8838,7 @@ struct ShadowPrepScope
     bool mParallel = LLPipeline::sParallelPrep;
     const LLPipeline::View* mJobView = LLPipeline::sJobView;
     bool mCollectLod = sCullCollectLod;
+    const LLDrawable* mExclude = LLPipeline::sPrepExclude;
 
     ShadowPrepScope(const LLPipeline::ShadowCascadePrep& prep)
     {
@@ -8844,6 +8846,7 @@ struct ShadowPrepScope
         LLPipeline::sJobView = prep.mJobView;       // (null: the thread works with the pipeline's own state, as before)
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
         LLPipeline::sParallelPrep = true;
+        LLPipeline::sPrepExclude = prep.mExclude;
         sCull = prep.mResult;
         sShadowCascadeCull.mActive = prep.mCullActive;
         sShadowCascadeCull.mCameraOrigin = prep.mCullOrigin;
@@ -8877,6 +8880,7 @@ struct ShadowPrepScope
         sCull = mCull;
         sShadowCascadeCull = mCascadeCull;
         LLPipeline::sParallelPrep = mParallel;
+        LLPipeline::sPrepExclude = mExclude;
     }
 };
 
@@ -9405,7 +9409,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         for (LLSpatialPartition* part : partitions)
         {
             const int vs_set = 1 + (int)(prep.mIndex & 3);
-            if (cascade_sets_mode() && LLVisSet::replayable(part, vs_set))
+            if (cascade_sets_mode() && prep.mIndex < 4 && LLVisSet::replayable(part, vs_set))
             {
                 const size_t n = LLVisSet::replayCount(part, vs_set);
                 for (size_t b = 0; b < n; b += 1536)
@@ -9418,7 +9422,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                 }
                 continue;
             }
-            const U64 key = ((U64)(uintptr_t)part << 2) | (U64)(prep.mIndex & 3);
+            const U64 key = ((U64)(uintptr_t)part << 3) | (U64)(prep.mIndex & 7);
             auto cost = sScCostUs.find(key);
             if (cost != sScCostUs.end() && cost->second > split_cost)
             {
@@ -9432,7 +9436,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                     {
                         return true;
                     }
-                    auto it = sScNodeUs.find(((U64)(uintptr_t)n << 2) | (U64)(prep.mIndex & 3));
+                    auto it = sScNodeUs.find(((U64)(uintptr_t)n << 3) | (U64)(prep.mIndex & 7));
                     return it != sScNodeUs.end() && it->second > node_split;
                 }, [&](const LLViewerOctreeCull::SplitTask& task)
                 {
@@ -9498,11 +9502,11 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         into.mLodGroups.insert(into.mLodGroups.end(), l.mLodGroups.begin(), l.mLodGroups.end());       // <FS> C4.4
         if (!chunk.mSegment && !chunk.mReplay)
         {
-            const U64 key = ((U64)(uintptr_t)chunk.mPart << 2) | (U64)(pending[chunk.mPrep].mIndex & 3);
+            const U64 key = ((U64)(uintptr_t)chunk.mPart << 3) | (U64)(pending[chunk.mPrep].mIndex & 7);
             now_us[key] += chunk.mUs;
             if (chunk.mTask)
             {
-                float& c = sScNodeUs[((U64)(uintptr_t)chunk.mSplit.mNode << 2) | (U64)(pending[chunk.mPrep].mIndex & 3)];
+                float& c = sScNodeUs[((U64)(uintptr_t)chunk.mSplit.mNode << 3) | (U64)(pending[chunk.mPrep].mIndex & 7)];
                 c = c > 0.f ? c * 0.7f + chunk.mUs * 0.3f : chunk.mUs;
             }
         }
@@ -9595,7 +9599,7 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
             {
                 continue;
             }
-            if (RenderSpotLight && drawablep == RenderSpotLight)
+            if ((RenderSpotLight && drawablep == RenderSpotLight) || (sPrepExclude && drawablep == sPrepExclude))
             {
                 continue;
             }
@@ -27181,7 +27185,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
             { LL_CPU_ZONE("renderShadow: prep finish"); shadowPrepFinish(*prepared); }
-            if (check_prep)
+            if (check_prep && prepared->mIndex < 4)
             {
                 shadowPrepCompare(*prepared, sShadowPrepReference[prepared->mIndex & 3]);
             }
@@ -29089,6 +29093,492 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
 
 
+    // <FS> parallel preparation of the cascades (see shadowPrepCull): the cascades that need a real render are collected
+    // in the loop and prepared together after it. Not for reflection probe renders, not while the GPU zone timers count
+    // batches (they share counters), not while selected objects are hidden (that check reads the selection).
+    static LLCachedControl<bool> parallel_prep(gSavedSettings, "FSParallelShadowPrep", false);
+    // <FS> FSParallelShadowPrepAB: test mode, the setting is ignored and the mode alternates every 30 seconds (the log shows both)
+    static LLCachedControl<bool> parallel_prep_ab(gSavedSettings, "FSParallelShadowPrepAB", false);
+    const bool use_parallel = parallel_prep_ab
+        ? ((std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 30) % 2) == 1
+        : (bool)parallel_prep;
+    LLForkJoinPool* prep_pool = (use_parallel && !gCubeSnapshot) ? LLForkJoinPool::shared() : nullptr;
+    if (prep_pool && (LLGpuZoneTimer::isActive() || LLSelectMgr::getInstance()->mHideSelectedObjects))
+    {
+        prep_pool = nullptr;
+    }
+    const bool defer_cascades = prep_pool != nullptr;
+    // <FS> J1 K3e: the preparation of a batch of shadow passes on the pool (the cull split, the marking, the render map job, the rebuild, the builders), then each pass drawn in order by render_one: the sun cascades'
+    // were this block inside generateSunShadow; a spot or projector light's pass goes through it the same way (mIndex 4 and 5: the camera ids follow, the cascades' retained sets and cost keys are not used)
+    auto run_shadow_prep_batch = [&](std::vector<ShadowCascadePrep>& pending, LLForkJoinPool* prep_pool, const std::function<void(ShadowCascadePrep&)>& render_one)
+    {
+        // <FS> prepare the collected cascades together
+        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("parallel shadow prep");
+        const auto prep_start = std::chrono::steady_clock::now();
+        PhaseLap lap;
+
+        // the partitions every cascade culls, with their root bounds brought up to date here (rebound() writes)
+        std::vector<LLSpatialPartition*> partitions;
+        for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+        {
+            for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
+            {
+                LLSpatialPartition* part = region->getSpatialPartition(i);
+                if (part && (LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType)))
+                {
+                    ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
+                    partitions.push_back(part);
+                }
+            }
+        }
+        for (ShadowCascadePrep& prep : pending)
+        {
+            apply_shadow_clip_plane(prep.mCamera);
+        }
+
+        // what renderShadow sets for the whole of a shadow pass
+        const S32 saved_occlusion = LLPipeline::useOcclusion();
+        const bool saved_shadow_render = LLPipeline::shadowRender();
+        sUseOcclusion = 0;
+        LLPipeline::sShadowRender = true;
+
+        // <FS> view rework W3: each cascade's jobs work for a view of their own (made now: the flags are what the preparation needs, the mask is the shadow pass's)
+        std::vector<View> cascade_views;
+        cascade_views.reserve(pending.size());
+        for (ShadowCascadePrep& prep : pending)
+        {
+            cascade_views.push_back(currentView(prep.mCamera, false));
+            cascade_views.back().mCameraID = (S32)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+            cascade_views.back().mWorldCameraID = false;
+            prep.mJobView = &cascade_views.back();
+        }
+
+        static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
+        if (check_prep)
+        {
+            // the serial path first, for the comparison (see shadowPrepCompare)
+            const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
+            for (ShadowCascadePrep& prep : pending)
+            {
+                if (prep.mIndex >= 4)
+                {
+                    continue;
+                }
+                LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
+                ShadowCascadeCullArm cull_arm(prep.mCullActive, prep.mCullOrigin, prep.mCullAt, prep.mCullSliceStart, prep.mCullMargin);
+                LLCamera reference_camera = prep.mCamera;
+                updateCull(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
+                stateSort(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
+            }
+            LLViewerCamera::sCurCameraID = saved_camera_id;
+        }
+
+        lap.mark(PH_SETUP);
+        static const bool job_census = getenv("LL_VK_SCENECENSUS") != nullptr;
+        std::vector<double> job_ms(pending.size(), 0.0);
+        const std::function<void(size_t)> cull_job = [&](size_t i)
+        {
+            const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+            shadowPrepCull(pending[i], partitions);
+            if (job_census) { job_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+        };
+        const auto cull_wall0 = std::chrono::steady_clock::now();
+        static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
+        if (sc_split != 0)
+        {
+            if (cascade_sets_mode())
+            {
+                LL_CPU_ZONE("shadow prep: cascade sets update");
+                // the partitions the sets follow (the ones the main view's set follows), and per cascade the camera signature the verdicts were made for
+                static std::vector<LLSpatialPartition*> casc_parts;
+                casc_parts.clear();
+                for (LLSpatialPartition* part : partitions)
+                {
+                    const U32 t = part->mPartitionType;
+                    if (t == LLViewerRegion::PARTITION_TERRAIN || t == LLViewerRegion::PARTITION_VOIDWATER || t == LLViewerRegion::PARTITION_WATER || t == LLViewerRegion::PARTITION_TREE || t == LLViewerRegion::PARTITION_GRASS || t == LLViewerRegion::PARTITION_VOLUME)
+                    {
+                        casc_parts.push_back(part);
+                    }
+                }
+                static F32 sigs[4][40] = {};
+                for (ShadowCascadePrep& prep : pending)
+                {
+                    if (prep.mIndex >= 4)
+                    {
+                        continue;       // (a spot light's pass has no retained set)
+                    }
+                    F32 now[40] = {};
+                    int k = 0;
+                    for (U32 i = 0; i < 7; ++i)
+                    {
+                        const LLPlane& pl = prep.mCamera.getAgentPlane(i);
+                        now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
+                    }
+                    now[k++] = (F32)prep.mCamera.getPlaneCount();
+                    now[k++] = prep.mCamera.mFrustumCornerDist;
+                    const LLVector3& o = prep.mCamera.getOrigin();
+                    now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
+                    F32* sig = sigs[prep.mIndex & 3];
+                    const bool changed = memcmp(sig, now, sizeof(now)) != 0;
+                    memcpy(sig, now, sizeof(now));
+                    LLVisSet::update(prep.mCamera, casc_parts, changed, true, 1 + (int)(prep.mIndex & 3));
+                    if (cascade_sets_mode() >= 2)
+                    {
+                        LLVisSet::checkOrder(prep.mCamera, casc_parts, 1 + (int)(prep.mIndex & 3));       // (diagnostic, LL_VK_CASCSET=2)
+                    }
+                }
+            }
+            shadowPrepCullSplit(pending, partitions, prep_pool);
+            if (sc_split == 2)
+            {
+                // LL_VK_SC_SPLIT=2: what the split made is compared, list by list and in order, with what the serial cull of the same cascade makes (which then stays as the result)
+                static U64 checks = 0, differs = 0;
+                auto list_of = [](auto begin, auto end) { std::vector<const void*> v; for (auto i = begin; i != end; ++i) { v.push_back((const void*)*i); } return v; };
+                for (ShadowCascadePrep& prep : pending)
+                {
+                    LLCullResult& r = *prep.mResult;
+                    const std::vector<const void*> vg = list_of(r.beginVisibleGroups(), r.endVisibleGroups()), dg = list_of(r.beginDrawableGroups(), r.endDrawableGroups()),
+                        ag = list_of(r.beginAlphaGroups(), r.endAlphaGroups()), rg = list_of(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), br = list_of(r.beginVisibleBridge(), r.endVisibleBridge()),
+                        vl = list_of(r.beginVisibleList(), r.endVisibleList()), og = list_of(r.beginOcclusionGroups(), r.endOcclusionGroups()),
+                        lg = list_of(r.mLodGroups.begin(), r.mLodGroups.end());
+                    shadowPrepCull(prep, partitions);
+                    LLCullResult& s = *prep.mResult;
+                    const bool stamps_ok = !cascade_sets_mode() || prep.mIndex >= 4 || LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame(), 1 + (int)(prep.mIndex & 3)) == 0;
+                    const bool same = stamps_ok && lg == list_of(s.mLodGroups.begin(), s.mLodGroups.end()) && vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
+                        && ag == list_of(s.beginAlphaGroups(), s.endAlphaGroups()) && rg == list_of(s.beginRiggedAlphaGroups(), s.endRiggedAlphaGroups())
+                        && br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) && vl == list_of(s.beginVisibleList(), s.endVisibleList())
+                        && og == list_of(s.beginOcclusionGroups(), s.endOcclusionGroups());
+                    if (!same)
+                    {
+                        static int detail = 0;
+                        if (++detail <= 12)
+                        {
+                            auto first_diff = [](const std::vector<const void*>& a, const std::vector<const void*>& b) { size_t k = 0; while (k < a.size() && k < b.size() && a[k] == b[k]) { ++k; } return (a.size() == b.size() && k == a.size()) ? (S64)-1 : (S64)k; };
+                            LL_WARNS("ShadowPrep") << "cascade cull split check detail: cascade " << prep.mIndex << " first difference at: visible groups " << first_diff(vg, list_of(s.beginVisibleGroups(), s.endVisibleGroups())) << " (" << vg.size() << "), drawable groups "
+                                << first_diff(dg, list_of(s.beginDrawableGroups(), s.endDrawableGroups())) << " (" << dg.size() << "), lod groups " << first_diff(lg, list_of(s.mLodGroups.begin(), s.mLodGroups.end())) << " (" << lg.size() << " against " << s.mLodGroups.size()
+                                << "), visible list " << (vl == list_of(s.beginVisibleList(), s.endVisibleList()) ? "same" : "differs") << ", bridges " << (br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) ? "same" : "differs") << ", stamps " << (stamps_ok ? "ok" : "bad") << LL_ENDL;
+                        }
+                    }
+                    ++checks;
+                    differs += same ? 0 : 1;
+                    if (!same || checks % 1800 == 0)
+                    {
+                        LL_INFOS("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
+                            << (same ? "" : " (this one: cascade " + std::to_string(prep.mIndex) + ", visible groups " + std::to_string(vg.size()) + " against " + std::to_string((size_t)(s.endVisibleGroups() - s.beginVisibleGroups()))
+                                + ", drawable groups " + std::to_string(dg.size()) + " against " + std::to_string((size_t)(s.endDrawableGroups() - s.beginDrawableGroups())) + ")") << LL_ENDL;
+                    }
+                }
+            }
+        }
+        else
+        {
+            LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->runLabeled("shadow prep: cull job", pending.size(), cull_job);
+        }
+        {
+            // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
+            static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;
+            // <FS> the chunks' results are kept between frames and cleared (the seven vectors of a new LLCullResult were allocated, grown from empty and freed again for every chunk of every cascade, every frame)
+            static std::vector<std::unique_ptr<LLCullResult>> sMarkLocals;
+            struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; LLCullResult* mLocal; };
+            std::vector<MarkChunk> chunks;
+            for (size_t p = 0; p < pending.size(); ++p)
+            {
+                LLCullResult& r = *pending[p].mResult;
+                for (int kind = 0; kind < 2; ++kind)
+                {
+                    const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (U32)r.mLodGroups.size();     // <FS> C4.4: kind 1 = the groups whose LOD check said yes
+                    static const bool mark_verify = getenv("LL_VK_MARK_VERIFY") != nullptr;
+                    if (kind == 1 && mark_verify)
+                    {
+                        // verify: every visible group (after the hull) that the LOD check says yes to now is on the list the walk made (the old job asked all of them here)
+                        static U64 checked = 0, missing = 0, calls = 0;
+                        std::unordered_set<const LLSpatialGroup*> listed(r.mLodGroups.begin(), r.mLodGroups.end());
+                        for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
+                        {
+                            if ((*g)->isDead())
+                            {
+                                continue;
+                            }
+                            ++checked;
+                            const bool yes = (*g)->changeLOD();
+                            if (yes && !listed.count(*g))
+                            {
+                                if (++missing <= 6)
+                                {
+                                    LL_WARNS("MarkVerify") << "a group the LOD check says yes to is not on the walk's list (cascade " << pending[p].mIndex << ")" << LL_ENDL;
+                                }
+                            }
+                        }
+                        if (++calls % 2400 == 0)
+                        {
+                            LL_INFOS("MarkVerify") << "mark verify: " << checked << " visible groups checked, " << missing << " missing from the walk's list" << LL_ENDL;
+                        }
+                    }
+                    if (kind == 1 && shadow_census_on())
+                    {
+                        // (census only: what the job used to count for every visible group, counted here once for the list)
+                        const size_t ci = (size_t)(pending[p].mIndex & 3);
+                        const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+                        U32 total = r.getVisibleGroupsSize(), fresh = 0;
+                        for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
+                        {
+                            fresh += (S32)(*g)->getVisible(LLViewerCamera::CAMERA_WORLD) < frame ? 1 : 0;
+                        }
+                        sCascadeCullCensus.mVisGroups[ci].fetch_add(total, std::memory_order_relaxed);
+                        sCascadeCullCensus.mVisGroupsNew[ci].fetch_add(fresh, std::memory_order_relaxed);
+                    }
+                    const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
+                    for (U32 b = 0; b < n; b += step)
+                    {
+                        if (chunks.size() >= sMarkLocals.size())
+                        {
+                            sMarkLocals.push_back(std::make_unique<LLCullResult>());
+                        }
+                        sMarkLocals[chunks.size()]->clear();
+                        chunks.push_back({ p, kind, b, std::min(n, b + step), {}, sMarkLocals[chunks.size()].get() });
+                    }
+                }
+            }
+            const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
+            const auto mark_wall0 = std::chrono::steady_clock::now();
+            if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->runLabeled("shadow prep: mark job", chunks.size(), mark_job); }
+            LL_CPU_ZONE("shadow prep: merge mark chunks");
+            for (MarkChunk& c : chunks)
+            {
+                pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
+                LLCullResult& into = *pending[c.mPrep].mResult;
+                for (LLCullResult::drawable_iterator d = c.mLocal->beginVisibleList(); d != c.mLocal->endVisibleList(); ++d)
+                {
+                    into.pushDrawable(*d);
+                }
+                for (LLCullResult::bridge_iterator b = c.mLocal->beginVisibleBridge(); b != c.mLocal->endVisibleBridge(); ++b)
+                {
+                    into.pushBridge(*b);
+                }
+                // <FS> markVisible of an attachment's bridge walks the bridge's own octree (LLSpatialBridge::setVisible), and that walk pushes the bridge's groups into the result the thread is
+                // working with, which here is the chunk's own: they have to be appended too, or an avatar's attachments (the rigged body of a mesh avatar) are in no cascade's render map and cast
+                // no shadow (the check mode, FSParallelShadowPrepCheck, reported them missing for nearly every cascade: visible, drawable, alpha and rigged alpha groups, and the render maps).
+                for (LLCullResult::sg_iterator g = c.mLocal->beginVisibleGroups(); g != c.mLocal->endVisibleGroups(); ++g)
+                {
+                    into.pushVisibleGroup(*g);
+                }
+                for (LLCullResult::sg_iterator g = c.mLocal->beginDrawableGroups(); g != c.mLocal->endDrawableGroups(); ++g)
+                {
+                    into.pushDrawableGroup(*g);
+                }
+                for (LLCullResult::sg_iterator g = c.mLocal->beginAlphaGroups(); g != c.mLocal->endAlphaGroups(); ++g)
+                {
+                    into.pushAlphaGroup(*g);
+                }
+                for (LLCullResult::sg_iterator g = c.mLocal->beginRiggedAlphaGroups(); g != c.mLocal->endRiggedAlphaGroups(); ++g)
+                {
+                    into.pushRiggedAlphaGroup(*g);
+                }
+            }
+            if (job_census)
+            {
+                sPrepJobCensus.mMarkWallMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mark_wall0).count();
+                sPrepJobCensus.mMarkChunks += chunks.size();
+            }
+        }
+        if (job_census)
+        {
+            PrepJobCensus& c = sPrepJobCensus;
+            ++c.mRuns;
+            c.mWallMs[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cull_wall0).count();
+            double longest = 0.0;
+            for (size_t i = 0; i < pending.size(); ++i)
+            {
+                c.mSumMs[0] += job_ms[i];
+                longest = std::max(longest, job_ms[i]);
+                ++c.mJobs[0];
+                c.mCascadeMs[0][pending[i].mIndex & 3] += job_ms[i];
+                ++c.mCascadeJobs[0][pending[i].mIndex & 3];
+                LLCullResult& found = *pending[i].mResult;
+                c.mFoundDrawGroups[pending[i].mIndex & 3] += found.getDrawableGroupsSize();
+                c.mFoundVisGroups[pending[i].mIndex & 3] += found.getVisibleGroupsSize();
+                c.mFoundDrawables[pending[i].mIndex & 3] += (U64)(found.endVisibleList() - found.beginVisibleList());
+            }
+            c.mLongestMs[0] += longest;
+        }
+        lap.mark(PH_CULL);
+
+        { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
+        lap.reset();
+
+        {
+            // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
+            bool all_static = true;
+            for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
+            {
+                all_static = hasRenderType(kShadowStaticTypes[k]);
+            }
+            // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
+            // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
+            // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
+            // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
+            // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
+            const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
+            const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static;
+            sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
+            // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
+            static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
+            sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
+        }
+        // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
+        // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
+        static const U32 map_chunk_size = getenv("LL_VK_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAP_CHUNK")) : 192;
+        static std::vector<std::unique_ptr<LLCullResult>> sMapLocals;       // <FS> kept between frames, as sMarkLocals
+        struct MapChunk { size_t mPrep; U32 mBegin, mEnd; LLCullResult* mLocal; double mMs; };
+        std::vector<MapChunk> map_chunks;
+        for (size_t p = 0; p < pending.size(); ++p)
+        {
+            const U32 n = pending[p].mResult->getVisibleGroupsSize();
+            const U32 step = map_chunk_size ? map_chunk_size : std::max<U32>(n, 1u);
+            for (U32 b = 0; b < n || (b == 0 && n == 0); b += step)
+            {
+                if (map_chunks.size() >= sMapLocals.size())
+                {
+                    sMapLocals.push_back(std::make_unique<LLCullResult>());
+                }
+                sMapLocals[map_chunks.size()]->clear();
+                map_chunks.push_back({ p, b, std::min(n, b + step), sMapLocals[map_chunks.size()].get(), 0.0 });
+                if (n == 0) { break; }
+            }
+        }
+        const std::function<void(size_t)> map_job = [&](size_t c)
+        {
+            const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+            shadowPrepRenderMap(pending[map_chunks[c].mPrep], map_chunks[c].mBegin, map_chunks[c].mEnd, *map_chunks[c].mLocal);
+            if (job_census) { map_chunks[c].mMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
+        };
+        const auto map_wall0 = std::chrono::steady_clock::now();
+        // appends one chunk's result to its cascade's, in chunk order
+        const auto merge_map_chunk = [&](MapChunk& c)
+        {
+            LLCullResult& into = *pending[c.mPrep].mResult;
+            LLCullResult& from = *c.mLocal;
+            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+            {
+                for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
+                {
+                    into.pushDrawInfo(type, *d);
+                }
+            }
+            for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
+            {
+                into.pushAlphaGroup(*g);
+            }
+            for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
+            {
+                into.pushRiggedAlphaGroup(*g);
+            }
+            into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
+            into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
+            into.mRigSources.insert(into.mRigSources.end(), from.mRigSources.begin(), from.mRigSources.end());
+            into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
+            if (!from.mGeoOwner.empty())
+            {
+                into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
+            }
+        };
+        // <FS> LL_VK_PREP_PIPELINE (default OFF, 1 = on; 0 = the stages one after the other as before): the render map of every cascade is launched at once, and the cascades are then taken in order (the nearest, smallest one first): join its map,
+        // merge, submit its builders, record it, while the pool is still making the maps of the later ones. The main thread's wait for the maps is hidden behind the recording of the earlier cascades. The flags
+        // of the shadow state stay until the last cascade is recorded (renderShadow sets and restores them itself).
+        static const bool prep_pipeline = getenv("LL_VK_PREP_PIPELINE") && atoi(getenv("LL_VK_PREP_PIPELINE")) != 0;       // off by default: measured worse (8.13) until the builders are submitted a cascade ahead
+        bool recorded_in_pipeline = false;
+        if (prep_pipeline && !job_census)
+        {
+            std::vector<size_t> first(pending.size() + 1, map_chunks.size());
+            for (size_t c = map_chunks.size(); c-- > 0;)
+            {
+                first[map_chunks[c].mPrep] = c;
+            }
+            for (size_t p = pending.size(); p-- > 0;)
+            {
+                first[p] = std::min(first[p], first[p + 1]);
+            }
+            std::vector<std::function<void(size_t)>> map_fns(pending.size());
+            std::vector<LLForkJoinPool::Handle> handles(pending.size());
+            for (size_t p = 0; p < pending.size(); ++p)
+            {
+                map_fns[p] = [&map_job, base = first[p]](size_t c) { map_job(base + c); };
+                handles[p] = prep_pool->launchLabeled("shadow prep: render map job", first[p + 1] - first[p], map_fns[p]);
+            }
+            for (size_t p = 0; p < pending.size(); ++p)
+            {
+                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->join(handles[p]); }
+                { LL_CPU_ZONE("shadow prep: merge render map chunks");
+                for (size_t c = first[p]; c < first[p + 1]; ++c)
+                {
+                    merge_map_chunk(map_chunks[c]);
+                }
+                }
+                if (p == 0)
+                {
+                    lap.mark(PH_RENDER_MAP);
+                    note_shadow_prep_time(true, prep_start);
+                }
+                shadowPrepSubmitBuilds(pending[p]);
+                render_one(pending[p]);
+            }
+            sUseOcclusion = saved_occlusion;
+            LLPipeline::sShadowRender = saved_shadow_render;
+            recorded_in_pipeline = true;
+        }
+        else
+        {
+            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
+            { LL_CPU_ZONE("shadow prep: merge render map chunks");
+            for (MapChunk& c : map_chunks)
+            {
+                merge_map_chunk(c);
+            }
+            }
+        }
+        if (job_census)
+        {
+            PrepJobCensus& c = sPrepJobCensus;
+            c.mWallMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_wall0).count();
+            double longest = 0.0;
+            for (const MapChunk& chunk : map_chunks)
+            {
+                c.mSumMs[1] += chunk.mMs;
+                longest = std::max(longest, chunk.mMs);
+                ++c.mJobs[1];
+                c.mCascadeMs[1][pending[chunk.mPrep].mIndex & 3] += chunk.mMs;
+                ++c.mCascadeJobs[1][pending[chunk.mPrep].mIndex & 3];
+            }
+            c.mLongestMs[1] += longest;
+        }
+        if (!recorded_in_pipeline)
+        {
+            lap.mark(PH_RENDER_MAP);
+
+            for (ShadowCascadePrep& prep : pending)
+            {
+                shadowPrepSubmitBuilds(prep);
+            }
+
+            sUseOcclusion = saved_occlusion;
+            LLPipeline::sShadowRender = saved_shadow_render;
+
+            note_shadow_prep_time(true, prep_start);
+
+            for (ShadowCascadePrep& prep : pending)
+            {
+                render_one(prep);
+            }
+        }
+        for (ShadowCascadePrep& prep : pending)
+        {
+            // a cascade that was not drawn still has its builders in flight: they read the cull result, which must not change under them
+            if (prep.mStaticJob) { prep.mStaticJob->wait(); }
+            if (prep.mSkinJob) { prep.mSkinJob->wait(); }
+            for (LLAsyncPool::JobPtr& job : prep.mAlphaJob) { if (job) { job->wait(); } }
+        }
+    };
+
     // convenience array of 4 near clip plane distances
     F32 dist[] = { near_clip, mSunClipPlanes.mV[0], mSunClipPlanes.mV[1], mSunClipPlanes.mV[2], mSunClipPlanes.mV[3] };
 
@@ -29098,21 +29588,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
     else
     {
-        // <FS> parallel preparation of the cascades (see shadowPrepCull): the cascades that need a real render are collected
-        // in the loop and prepared together after it. Not for reflection probe renders, not while the GPU zone timers count
-        // batches (they share counters), not while selected objects are hidden (that check reads the selection).
-        static LLCachedControl<bool> parallel_prep(gSavedSettings, "FSParallelShadowPrep", false);
-        // <FS> FSParallelShadowPrepAB: test mode, the setting is ignored and the mode alternates every 30 seconds (the log shows both)
-        static LLCachedControl<bool> parallel_prep_ab(gSavedSettings, "FSParallelShadowPrepAB", false);
-        const bool use_parallel = parallel_prep_ab
-            ? ((std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 30) % 2) == 1
-            : (bool)parallel_prep;
-        LLForkJoinPool* prep_pool = (use_parallel && !gCubeSnapshot) ? LLForkJoinPool::shared() : nullptr;
-        if (prep_pool && (LLGpuZoneTimer::isActive() || LLSelectMgr::getInstance()->mHideSelectedObjects))
-        {
-            prep_pool = nullptr;
-        }
-        const bool defer_cascades = prep_pool != nullptr;
         sShadowPrepPhaseMode = defer_cascades ? 1 : 0;
         std::vector<ShadowCascadePrep> pending;
         U32 cascades_prepared = 0;
@@ -29893,463 +30368,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
         if (!pending.empty())
         {
-            // <FS> prepare the collected cascades together
-            LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("parallel shadow prep");
-            const auto prep_start = std::chrono::steady_clock::now();
-            PhaseLap lap;
-
-            // the partitions every cascade culls, with their root bounds brought up to date here (rebound() writes)
-            std::vector<LLSpatialPartition*> partitions;
-            for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
-            {
-                for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-                {
-                    LLSpatialPartition* part = region->getSpatialPartition(i);
-                    if (part && (LLViewerRegion::PARTITION_BRIDGE == i || hasRenderType(part->mDrawableType)))
-                    {
-                        ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
-                        partitions.push_back(part);
-                    }
-                }
-            }
-            for (ShadowCascadePrep& prep : pending)
-            {
-                apply_shadow_clip_plane(prep.mCamera);
-            }
-
-            // what renderShadow sets for the whole of a shadow pass
-            const S32 saved_occlusion = LLPipeline::useOcclusion();
-            const bool saved_shadow_render = LLPipeline::shadowRender();
-            sUseOcclusion = 0;
-            LLPipeline::sShadowRender = true;
-
-            // <FS> view rework W3: each cascade's jobs work for a view of their own (made now: the flags are what the preparation needs, the mask is the shadow pass's)
-            std::vector<View> cascade_views;
-            cascade_views.reserve(pending.size());
-            for (ShadowCascadePrep& prep : pending)
-            {
-                cascade_views.push_back(currentView(prep.mCamera, false));
-                cascade_views.back().mCameraID = (S32)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
-                cascade_views.back().mWorldCameraID = false;
-                prep.mJobView = &cascade_views.back();
-            }
-
-            static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
-            if (check_prep)
-            {
-                // the serial path first, for the comparison (see shadowPrepCompare)
-                const LLViewerCamera::eCameraID saved_camera_id = LLViewerCamera::sCurCameraID;
-                for (ShadowCascadePrep& prep : pending)
-                {
-                    LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
-                    ShadowCascadeCullArm cull_arm(prep.mCullActive, prep.mCullOrigin, prep.mCullAt, prep.mCullSliceStart, prep.mCullMargin);
-                    LLCamera reference_camera = prep.mCamera;
-                    updateCull(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
-                    stateSort(reference_camera, sShadowPrepReference[prep.mIndex & 3]);
-                }
-                LLViewerCamera::sCurCameraID = saved_camera_id;
-            }
-
-            lap.mark(PH_SETUP);
-            static const bool job_census = getenv("LL_VK_SCENECENSUS") != nullptr;
-            std::vector<double> job_ms(pending.size(), 0.0);
-            const std::function<void(size_t)> cull_job = [&](size_t i)
-            {
-                const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-                shadowPrepCull(pending[i], partitions);
-                if (job_census) { job_ms[i] = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
-            };
-            const auto cull_wall0 = std::chrono::steady_clock::now();
-            static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
-            if (sc_split != 0)
-            {
-                if (cascade_sets_mode())
-                {
-                    LL_CPU_ZONE("shadow prep: cascade sets update");
-                    // the partitions the sets follow (the ones the main view's set follows), and per cascade the camera signature the verdicts were made for
-                    static std::vector<LLSpatialPartition*> casc_parts;
-                    casc_parts.clear();
-                    for (LLSpatialPartition* part : partitions)
-                    {
-                        const U32 t = part->mPartitionType;
-                        if (t == LLViewerRegion::PARTITION_TERRAIN || t == LLViewerRegion::PARTITION_VOIDWATER || t == LLViewerRegion::PARTITION_WATER || t == LLViewerRegion::PARTITION_TREE || t == LLViewerRegion::PARTITION_GRASS || t == LLViewerRegion::PARTITION_VOLUME)
-                        {
-                            casc_parts.push_back(part);
-                        }
-                    }
-                    static F32 sigs[4][40] = {};
-                    for (ShadowCascadePrep& prep : pending)
-                    {
-                        F32 now[40] = {};
-                        int k = 0;
-                        for (U32 i = 0; i < 7; ++i)
-                        {
-                            const LLPlane& pl = prep.mCamera.getAgentPlane(i);
-                            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
-                        }
-                        now[k++] = (F32)prep.mCamera.getPlaneCount();
-                        now[k++] = prep.mCamera.mFrustumCornerDist;
-                        const LLVector3& o = prep.mCamera.getOrigin();
-                        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
-                        F32* sig = sigs[prep.mIndex & 3];
-                        const bool changed = memcmp(sig, now, sizeof(now)) != 0;
-                        memcpy(sig, now, sizeof(now));
-                        LLVisSet::update(prep.mCamera, casc_parts, changed, true, 1 + (int)(prep.mIndex & 3));
-                        if (cascade_sets_mode() >= 2)
-                        {
-                            LLVisSet::checkOrder(prep.mCamera, casc_parts, 1 + (int)(prep.mIndex & 3));       // (diagnostic, LL_VK_CASCSET=2)
-                        }
-                    }
-                }
-                shadowPrepCullSplit(pending, partitions, prep_pool);
-                if (sc_split == 2)
-                {
-                    // LL_VK_SC_SPLIT=2: what the split made is compared, list by list and in order, with what the serial cull of the same cascade makes (which then stays as the result)
-                    static U64 checks = 0, differs = 0;
-                    auto list_of = [](auto begin, auto end) { std::vector<const void*> v; for (auto i = begin; i != end; ++i) { v.push_back((const void*)*i); } return v; };
-                    for (ShadowCascadePrep& prep : pending)
-                    {
-                        LLCullResult& r = *prep.mResult;
-                        const std::vector<const void*> vg = list_of(r.beginVisibleGroups(), r.endVisibleGroups()), dg = list_of(r.beginDrawableGroups(), r.endDrawableGroups()),
-                            ag = list_of(r.beginAlphaGroups(), r.endAlphaGroups()), rg = list_of(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), br = list_of(r.beginVisibleBridge(), r.endVisibleBridge()),
-                            vl = list_of(r.beginVisibleList(), r.endVisibleList()), og = list_of(r.beginOcclusionGroups(), r.endOcclusionGroups()),
-                            lg = list_of(r.mLodGroups.begin(), r.mLodGroups.end());
-                        shadowPrepCull(prep, partitions);
-                        LLCullResult& s = *prep.mResult;
-                        const bool stamps_ok = !cascade_sets_mode() || LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame(), 1 + (int)(prep.mIndex & 3)) == 0;
-                        const bool same = stamps_ok && lg == list_of(s.mLodGroups.begin(), s.mLodGroups.end()) && vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
-                            && ag == list_of(s.beginAlphaGroups(), s.endAlphaGroups()) && rg == list_of(s.beginRiggedAlphaGroups(), s.endRiggedAlphaGroups())
-                            && br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) && vl == list_of(s.beginVisibleList(), s.endVisibleList())
-                            && og == list_of(s.beginOcclusionGroups(), s.endOcclusionGroups());
-                        if (!same)
-                        {
-                            static int detail = 0;
-                            if (++detail <= 12)
-                            {
-                                auto first_diff = [](const std::vector<const void*>& a, const std::vector<const void*>& b) { size_t k = 0; while (k < a.size() && k < b.size() && a[k] == b[k]) { ++k; } return (a.size() == b.size() && k == a.size()) ? (S64)-1 : (S64)k; };
-                                LL_WARNS("ShadowPrep") << "cascade cull split check detail: cascade " << prep.mIndex << " first difference at: visible groups " << first_diff(vg, list_of(s.beginVisibleGroups(), s.endVisibleGroups())) << " (" << vg.size() << "), drawable groups "
-                                    << first_diff(dg, list_of(s.beginDrawableGroups(), s.endDrawableGroups())) << " (" << dg.size() << "), lod groups " << first_diff(lg, list_of(s.mLodGroups.begin(), s.mLodGroups.end())) << " (" << lg.size() << " against " << s.mLodGroups.size()
-                                    << "), visible list " << (vl == list_of(s.beginVisibleList(), s.endVisibleList()) ? "same" : "differs") << ", bridges " << (br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) ? "same" : "differs") << ", stamps " << (stamps_ok ? "ok" : "bad") << LL_ENDL;
-                            }
-                        }
-                        ++checks;
-                        differs += same ? 0 : 1;
-                        if (!same || checks % 1800 == 0)
-                        {
-                            LL_INFOS("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
-                                << (same ? "" : " (this one: cascade " + std::to_string(prep.mIndex) + ", visible groups " + std::to_string(vg.size()) + " against " + std::to_string((size_t)(s.endVisibleGroups() - s.beginVisibleGroups()))
-                                    + ", drawable groups " + std::to_string(dg.size()) + " against " + std::to_string((size_t)(s.endDrawableGroups() - s.beginDrawableGroups())) + ")") << LL_ENDL;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->runLabeled("shadow prep: cull job", pending.size(), cull_job);
-            }
-            {
-                // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
-                static const U32 chunk_size = getenv("LL_VK_PREP_CHUNK") ? (U32)atoi(getenv("LL_VK_PREP_CHUNK")) : 128;
-                // <FS> the chunks' results are kept between frames and cleared (the seven vectors of a new LLCullResult were allocated, grown from empty and freed again for every chunk of every cascade, every frame)
-                static std::vector<std::unique_ptr<LLCullResult>> sMarkLocals;
-                struct MarkChunk { size_t mPrep; int mKind; U32 mBegin, mEnd; std::vector<LLDrawable*> mDeferred; LLCullResult* mLocal; };
-                std::vector<MarkChunk> chunks;
-                for (size_t p = 0; p < pending.size(); ++p)
-                {
-                    LLCullResult& r = *pending[p].mResult;
-                    for (int kind = 0; kind < 2; ++kind)
-                    {
-                        const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (U32)r.mLodGroups.size();     // <FS> C4.4: kind 1 = the groups whose LOD check said yes
-                        static const bool mark_verify = getenv("LL_VK_MARK_VERIFY") != nullptr;
-                        if (kind == 1 && mark_verify)
-                        {
-                            // verify: every visible group (after the hull) that the LOD check says yes to now is on the list the walk made (the old job asked all of them here)
-                            static U64 checked = 0, missing = 0, calls = 0;
-                            std::unordered_set<const LLSpatialGroup*> listed(r.mLodGroups.begin(), r.mLodGroups.end());
-                            for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
-                            {
-                                if ((*g)->isDead())
-                                {
-                                    continue;
-                                }
-                                ++checked;
-                                const bool yes = (*g)->changeLOD();
-                                if (yes && !listed.count(*g))
-                                {
-                                    if (++missing <= 6)
-                                    {
-                                        LL_WARNS("MarkVerify") << "a group the LOD check says yes to is not on the walk's list (cascade " << pending[p].mIndex << ")" << LL_ENDL;
-                                    }
-                                }
-                            }
-                            if (++calls % 2400 == 0)
-                            {
-                                LL_INFOS("MarkVerify") << "mark verify: " << checked << " visible groups checked, " << missing << " missing from the walk's list" << LL_ENDL;
-                            }
-                        }
-                        if (kind == 1 && shadow_census_on())
-                        {
-                            // (census only: what the job used to count for every visible group, counted here once for the list)
-                            const size_t ci = (size_t)(pending[p].mIndex & 3);
-                            const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
-                            U32 total = r.getVisibleGroupsSize(), fresh = 0;
-                            for (LLCullResult::sg_iterator g = r.beginVisibleGroups(); g != r.endVisibleGroups(); ++g)
-                            {
-                                fresh += (S32)(*g)->getVisible(LLViewerCamera::CAMERA_WORLD) < frame ? 1 : 0;
-                            }
-                            sCascadeCullCensus.mVisGroups[ci].fetch_add(total, std::memory_order_relaxed);
-                            sCascadeCullCensus.mVisGroupsNew[ci].fetch_add(fresh, std::memory_order_relaxed);
-                        }
-                        const U32 step = chunk_size ? chunk_size : std::max<U32>(n, 1u);
-                        for (U32 b = 0; b < n; b += step)
-                        {
-                            if (chunks.size() >= sMarkLocals.size())
-                            {
-                                sMarkLocals.push_back(std::make_unique<LLCullResult>());
-                            }
-                            sMarkLocals[chunks.size()]->clear();
-                            chunks.push_back({ p, kind, b, std::min(n, b + step), {}, sMarkLocals[chunks.size()].get() });
-                        }
-                    }
-                }
-                const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
-                const auto mark_wall0 = std::chrono::steady_clock::now();
-                if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->runLabeled("shadow prep: mark job", chunks.size(), mark_job); }
-                LL_CPU_ZONE("shadow prep: merge mark chunks");
-                for (MarkChunk& c : chunks)
-                {
-                    pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
-                    LLCullResult& into = *pending[c.mPrep].mResult;
-                    for (LLCullResult::drawable_iterator d = c.mLocal->beginVisibleList(); d != c.mLocal->endVisibleList(); ++d)
-                    {
-                        into.pushDrawable(*d);
-                    }
-                    for (LLCullResult::bridge_iterator b = c.mLocal->beginVisibleBridge(); b != c.mLocal->endVisibleBridge(); ++b)
-                    {
-                        into.pushBridge(*b);
-                    }
-                    // <FS> markVisible of an attachment's bridge walks the bridge's own octree (LLSpatialBridge::setVisible), and that walk pushes the bridge's groups into the result the thread is
-                    // working with, which here is the chunk's own: they have to be appended too, or an avatar's attachments (the rigged body of a mesh avatar) are in no cascade's render map and cast
-                    // no shadow (the check mode, FSParallelShadowPrepCheck, reported them missing for nearly every cascade: visible, drawable, alpha and rigged alpha groups, and the render maps).
-                    for (LLCullResult::sg_iterator g = c.mLocal->beginVisibleGroups(); g != c.mLocal->endVisibleGroups(); ++g)
-                    {
-                        into.pushVisibleGroup(*g);
-                    }
-                    for (LLCullResult::sg_iterator g = c.mLocal->beginDrawableGroups(); g != c.mLocal->endDrawableGroups(); ++g)
-                    {
-                        into.pushDrawableGroup(*g);
-                    }
-                    for (LLCullResult::sg_iterator g = c.mLocal->beginAlphaGroups(); g != c.mLocal->endAlphaGroups(); ++g)
-                    {
-                        into.pushAlphaGroup(*g);
-                    }
-                    for (LLCullResult::sg_iterator g = c.mLocal->beginRiggedAlphaGroups(); g != c.mLocal->endRiggedAlphaGroups(); ++g)
-                    {
-                        into.pushRiggedAlphaGroup(*g);
-                    }
-                }
-                if (job_census)
-                {
-                    sPrepJobCensus.mMarkWallMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mark_wall0).count();
-                    sPrepJobCensus.mMarkChunks += chunks.size();
-                }
-            }
-            if (job_census)
-            {
-                PrepJobCensus& c = sPrepJobCensus;
-                ++c.mRuns;
-                c.mWallMs[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cull_wall0).count();
-                double longest = 0.0;
-                for (size_t i = 0; i < pending.size(); ++i)
-                {
-                    c.mSumMs[0] += job_ms[i];
-                    longest = std::max(longest, job_ms[i]);
-                    ++c.mJobs[0];
-                    c.mCascadeMs[0][pending[i].mIndex & 3] += job_ms[i];
-                    ++c.mCascadeJobs[0][pending[i].mIndex & 3];
-                    LLCullResult& found = *pending[i].mResult;
-                    c.mFoundDrawGroups[pending[i].mIndex & 3] += found.getDrawableGroupsSize();
-                    c.mFoundVisGroups[pending[i].mIndex & 3] += found.getVisibleGroupsSize();
-                    c.mFoundDrawables[pending[i].mIndex & 3] += (U64)(found.endVisibleList() - found.beginVisibleList());
-                }
-                c.mLongestMs[0] += longest;
-            }
-            lap.mark(PH_CULL);
-
-            { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
-            lap.reset();
-
-            {
-                // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
-                bool all_static = true;
-                for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
-                {
-                    all_static = hasRenderType(kShadowStaticTypes[k]);
-                }
-                // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
-                // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
-                // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
-                // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
-                // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
-                const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
-                const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static;
-                sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
-                // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
-                static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
-                sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
-            }
-            // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
-            // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
-            static const U32 map_chunk_size = getenv("LL_VK_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAP_CHUNK")) : 192;
-            static std::vector<std::unique_ptr<LLCullResult>> sMapLocals;       // <FS> kept between frames, as sMarkLocals
-            struct MapChunk { size_t mPrep; U32 mBegin, mEnd; LLCullResult* mLocal; double mMs; };
-            std::vector<MapChunk> map_chunks;
-            for (size_t p = 0; p < pending.size(); ++p)
-            {
-                const U32 n = pending[p].mResult->getVisibleGroupsSize();
-                const U32 step = map_chunk_size ? map_chunk_size : std::max<U32>(n, 1u);
-                for (U32 b = 0; b < n || (b == 0 && n == 0); b += step)
-                {
-                    if (map_chunks.size() >= sMapLocals.size())
-                    {
-                        sMapLocals.push_back(std::make_unique<LLCullResult>());
-                    }
-                    sMapLocals[map_chunks.size()]->clear();
-                    map_chunks.push_back({ p, b, std::min(n, b + step), sMapLocals[map_chunks.size()].get(), 0.0 });
-                    if (n == 0) { break; }
-                }
-            }
-            const std::function<void(size_t)> map_job = [&](size_t c)
-            {
-                const auto t0 = job_census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-                shadowPrepRenderMap(pending[map_chunks[c].mPrep], map_chunks[c].mBegin, map_chunks[c].mEnd, *map_chunks[c].mLocal);
-                if (job_census) { map_chunks[c].mMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }
-            };
-            const auto map_wall0 = std::chrono::steady_clock::now();
-            // appends one chunk's result to its cascade's, in chunk order
-            const auto merge_map_chunk = [&](MapChunk& c)
-            {
-                LLCullResult& into = *pending[c.mPrep].mResult;
-                LLCullResult& from = *c.mLocal;
-                for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-                {
-                    for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
-                    {
-                        into.pushDrawInfo(type, *d);
-                    }
-                }
-                for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
-                {
-                    into.pushAlphaGroup(*g);
-                }
-                for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
-                {
-                    into.pushRiggedAlphaGroup(*g);
-                }
-                into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
-                into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
-                into.mRigSources.insert(into.mRigSources.end(), from.mRigSources.begin(), from.mRigSources.end());
-                into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
-                if (!from.mGeoOwner.empty())
-                {
-                    into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
-                }
-            };
-            // <FS> LL_VK_PREP_PIPELINE (default OFF, 1 = on; 0 = the stages one after the other as before): the render map of every cascade is launched at once, and the cascades are then taken in order (the nearest, smallest one first): join its map,
-            // merge, submit its builders, record it, while the pool is still making the maps of the later ones. The main thread's wait for the maps is hidden behind the recording of the earlier cascades. The flags
-            // of the shadow state stay until the last cascade is recorded (renderShadow sets and restores them itself).
-            static const bool prep_pipeline = getenv("LL_VK_PREP_PIPELINE") && atoi(getenv("LL_VK_PREP_PIPELINE")) != 0;       // off by default: measured worse (8.13) until the builders are submitted a cascade ahead
-            bool recorded_in_pipeline = false;
-            if (prep_pipeline && !job_census)
-            {
-                std::vector<size_t> first(pending.size() + 1, map_chunks.size());
-                for (size_t c = map_chunks.size(); c-- > 0;)
-                {
-                    first[map_chunks[c].mPrep] = c;
-                }
-                for (size_t p = pending.size(); p-- > 0;)
-                {
-                    first[p] = std::min(first[p], first[p + 1]);
-                }
-                std::vector<std::function<void(size_t)>> map_fns(pending.size());
-                std::vector<LLForkJoinPool::Handle> handles(pending.size());
-                for (size_t p = 0; p < pending.size(); ++p)
-                {
-                    map_fns[p] = [&map_job, base = first[p]](size_t c) { map_job(base + c); };
-                    handles[p] = prep_pool->launchLabeled("shadow prep: render map job", first[p + 1] - first[p], map_fns[p]);
-                }
-                for (size_t p = 0; p < pending.size(); ++p)
-                {
-                    { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->join(handles[p]); }
-                    { LL_CPU_ZONE("shadow prep: merge render map chunks");
-                    for (size_t c = first[p]; c < first[p + 1]; ++c)
-                    {
-                        merge_map_chunk(map_chunks[c]);
-                    }
-                    }
-                    if (p == 0)
-                    {
-                        lap.mark(PH_RENDER_MAP);
-                        note_shadow_prep_time(true, prep_start);
-                    }
-                    shadowPrepSubmitBuilds(pending[p]);
-                    render_cascade(pending[p], true);
-                }
-                sUseOcclusion = saved_occlusion;
-                LLPipeline::sShadowRender = saved_shadow_render;
-                recorded_in_pipeline = true;
-            }
-            else
-            {
-                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
-                { LL_CPU_ZONE("shadow prep: merge render map chunks");
-                for (MapChunk& c : map_chunks)
-                {
-                    merge_map_chunk(c);
-                }
-                }
-            }
-            if (job_census)
-            {
-                PrepJobCensus& c = sPrepJobCensus;
-                c.mWallMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - map_wall0).count();
-                double longest = 0.0;
-                for (const MapChunk& chunk : map_chunks)
-                {
-                    c.mSumMs[1] += chunk.mMs;
-                    longest = std::max(longest, chunk.mMs);
-                    ++c.mJobs[1];
-                    c.mCascadeMs[1][pending[chunk.mPrep].mIndex & 3] += chunk.mMs;
-                    ++c.mCascadeJobs[1][pending[chunk.mPrep].mIndex & 3];
-                }
-                c.mLongestMs[1] += longest;
-            }
-            if (!recorded_in_pipeline)
-            {
-                lap.mark(PH_RENDER_MAP);
-
-                for (ShadowCascadePrep& prep : pending)
-                {
-                    shadowPrepSubmitBuilds(prep);
-                }
-
-                sUseOcclusion = saved_occlusion;
-                LLPipeline::sShadowRender = saved_shadow_render;
-
-                note_shadow_prep_time(true, prep_start);
-
-                for (ShadowCascadePrep& prep : pending)
-                {
-                    render_cascade(prep, true);
-                }
-            }
-            for (ShadowCascadePrep& prep : pending)
-            {
-                // a cascade that was not drawn still has its builders in flight: they read the cull result, which must not change under them
-                if (prep.mStaticJob) { prep.mStaticJob->wait(); }
-                if (prep.mSkinJob) { prep.mSkinJob->wait(); }
-                for (LLAsyncPool::JobPtr& job : prep.mAlphaJob) { if (job) { job->wait(); } }
-            }
+            run_shadow_prep_batch(pending, prep_pool, [&](ShadowCascadePrep& prep) { render_cascade(prep, true); });
             // <FS> the deferred cascade passes set the camera id and the current and last matrices of the cascade they drew: nothing after this point may see them
             LLViewerCamera::sCurCameraID = entry_camera_id;
             set_current_modelview(saved_view);
@@ -30411,6 +30430,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
         // this should never happen
         llassert(mShadowSpotLight[0] != mShadowSpotLight[1] || mShadowSpotLight[0].isNull());
+
+        // <FS> J1 K3e: what the loop works out for a spot or projector light's pass, drawn after it (through the batch of preparations when the pool is there, else one by one as before)
+        struct SpotPass { bool mActive = false; LLDrawable* mDrawable = nullptr; LLCamera mCamera; glm::mat4 mLastView, mLastProj; };
+        SpotPass spots[2];
+        static LLCullResult spot_results[2];
 
         for (S32 i = 0; i < 2; i++)
         {
@@ -30480,38 +30504,82 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             mSunShadowMatrix[i + 4] = trans * proj[i + 4] * view[i + 4] * inv_view;
 
-            set_last_modelview(mShadowModelview[i + 4]);
-            set_last_projection(mShadowProjection[i + 4]);
+            spots[i].mLastView = mShadowModelview[i + 4];
+            spots[i].mLastProj = mShadowProjection[i + 4];
+            set_last_modelview(spots[i].mLastView);
+            set_last_projection(spots[i].mLastProj);
 
             mShadowModelview[i + 4] = view[i + 4];
             mShadowProjection[i + 4] = proj[i + 4];
 
             if (!gCubeSnapshot) //skip updating spot shadow maps during cubemap updates
             {
-                LLCamera shadow_cam = camera;
-                shadow_cam.setFar(far_clip);
-                shadow_cam.setOrigin(origin);
+                spots[i].mCamera = camera;
+                spots[i].mCamera.setFar(far_clip);
+                spots[i].mCamera.setOrigin(origin);
 
-                LLViewerCamera::updateFrustumPlanes(shadow_cam, false, false, true);
+                mSpotShadow[i].getViewport(gRenderViewport);       // (the frustum is unprojected through the viewport: this light's own, as the render below sets it)
+                LLViewerCamera::updateFrustumPlanes(spots[i].mCamera, false, false, true);
 
-                //
+                spots[i].mActive = true;
+                spots[i].mDrawable = drawable;
+            }
+        }
 
-                RenderPassScope pass(mSpotShadow[i]);
-                mSpotShadow[i].getViewport(gRenderViewport);
-                mSpotShadow[i].clear();
+        // the pass of one light: its target, the cull and the sort (done by the batch when `prepared`) and the shadow render
+        auto render_spot = [&](S32 i, ShadowCascadePrep* prepared)
+        {
+            LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SPOT_SHADOW0 + i);
+            set_current_modelview(view[i + 4]);
+            set_current_projection(proj[i + 4]);
+            set_last_modelview(spots[i].mLastView);
+            set_last_projection(spots[i].mLastProj);
 
-                static LLCullResult result[2];
+            RenderPassScope pass(mSpotShadow[i]);
+            mSpotShadow[i].getViewport(gRenderViewport);
+            mSpotShadow[i].clear();
 
-                LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SPOT_SHADOW0 + i);
+            RenderSpotLight = spots[i].mDrawable;
 
-                RenderSpotLight = drawable;
+            sShadowSpotCall = true;
+            renderShadow(view[i + 4], proj[i + 4], spots[i].mCamera, spot_results[i], false, prepared);
+            sShadowSpotCall = false;
 
-                sShadowSpotCall = true;
-                renderShadow(view[i + 4], proj[i + 4], shadow_cam, result[i], false);
-                sShadowSpotCall = false;
-
-                RenderSpotLight = nullptr;
-
+            RenderSpotLight = nullptr;
+        };
+        static const bool spot_prep_env = !getenv("LL_VK_SPOT_PREP") || atoi(getenv("LL_VK_SPOT_PREP")) != 0;
+        const bool spot_prep = spot_prep_env && prep_pool && !gCubeSnapshot && !LLVkBridge::rtShadowMode();
+        if (spot_prep && (spots[0].mActive || spots[1].mActive))
+        {
+            std::vector<ShadowCascadePrep> spot_preps;
+            spot_preps.reserve(2);      // (the batch keeps pointers into it)
+            for (S32 i = 0; i < 2; ++i)
+            {
+                if (!spots[i].mActive)
+                {
+                    continue;
+                }
+                ShadowCascadePrep& prep = spot_preps.emplace_back();
+                prep.mIndex = 4 + i;
+                prep.mCamera = spots[i].mCamera;
+                prep.mResult = &spot_results[i];
+                prep.mView = view[i + 4];
+                prep.mProj = proj[i + 4];
+                prep.mLastView = spots[i].mLastView;
+                prep.mLastProj = spots[i].mLastProj;
+                prep.mCullActive = false;
+                prep.mExclude = spots[i].mDrawable;
+            }
+            run_shadow_prep_batch(spot_preps, prep_pool, [&](ShadowCascadePrep& prep) { render_spot(prep.mIndex - 4, &prep); });
+        }
+        else
+        {
+            for (S32 i = 0; i < 2; ++i)
+            {
+                if (spots[i].mActive)
+                {
+                    render_spot(i, nullptr);
+                }
             }
         }
     }

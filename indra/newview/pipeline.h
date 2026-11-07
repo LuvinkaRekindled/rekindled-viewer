@@ -440,6 +440,7 @@ public:
         LLVector3 mCullAt;
         F32 mCullSliceStart = 0.f;
         F32 mCullMargin = 0.f;
+        const LLDrawable* mExclude = nullptr;   // J1 K3e: a spot light's own drawable, left out of its shadow pass's cull (what RenderSpotLight does for the unprepared pass; the jobs have no such global)
         std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
         std::shared_ptr<ShadowStaticBuild> mStaticBuild;    // the untextured static casters' packet entries, built by the render map job
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
@@ -460,6 +461,7 @@ public:
     void shadowPrepFinish(ShadowCascadePrep& prep);
     static void shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference);
     static thread_local bool sParallelPrep; // true while a worker thread prepares a cascade: no shared statistics, bridges are locked
+    static thread_local const LLDrawable* sPrepExclude; // J1 K3e: the drawable the pass being prepared on this thread leaves out (a spot light's own)
 
     void forAllVisibleDrawables(void (*func)(LLDrawable*));
     std::vector<LLDrawable*> mDeferredPoolFill;      // <FS> see stateSort(..., defer_pools)
