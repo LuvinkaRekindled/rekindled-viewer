@@ -374,6 +374,9 @@ namespace LLVkBridge
     bool paletteArenaInfo(U32 index, PaletteArena& out);                 // the worker
     void paletteArenaSent(U32 index, U64 free_at_renderer_frame);        // the worker, for a kind 39 record
     void paletteArenaFree(U64 renderer_frame);                           // the renderer, at the start of each frame
+    // <FS> P2 (PLAN-avatars.md): the number of kind 21 records the worker did not play (not in a frame, no scene table). A rigged item's palette binding is persistent: the viewer sends it when it changes, so a record
+    // that was lost makes it send every binding again
+    static inline std::atomic<U32> sGeoPrepareDropped{ 0 };
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);
 

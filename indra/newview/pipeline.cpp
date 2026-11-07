@@ -10372,7 +10372,8 @@ struct LLSceneFragment
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
-    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; U32 mWire; };      // mType 0-12 static, 13-25 the rigged variants (S4 B); mWire: its number in the worker's item list
+    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; U32 mWire;       // mType 0-12 static, 13-25 the rigged variants (S4 B); mWire: its number in the worker's item list
+        U32 mBoundEpoch; U32 mBoundId, mBoundJoints, mBoundLodIb, mBoundLodCount; };      // P2: the binding the worker holds for this rigged item (valid when mBoundEpoch is sRebindEpoch; 0 = none sent)
     std::vector<GeoItem> mGeo;
     std::vector<LLPointer<LLViewerTexture>> mGeoTex;
     std::vector<std::pair<U32, LLDrawInfo*>> mGeoFallback;      // (type number, draw info) the packet layout cannot take
@@ -10894,7 +10895,15 @@ static U32 scene_region_slot(const LLMatrix4* m)
 }
 
 static U64 sGeoFillNs = 0, sGeoFillCalls = 0, sGeoFillItems = 0, sGeoFillFallback = 0, sGeoFillNonRegion = 0, sGeoTexmatRows = 0;
-static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0;
+static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0, sGeoRiggedUpdates = 0;
+// <FS> P2: a rigged item's binding (palette id, joints, simplified list) is persistent at the worker: it is sent when it changes (LL_VK_GEOPERSIST, default on while palette ids are on; 0 = every binding every
+// frame, as before). sRebindEpoch makes every item send its binding again (the worker dropped a kind 21 record).
+static U32 sRebindEpoch = 1, sGeoDroppedSeen = 0;
+static bool geo_persist_on()
+{
+    static const bool on = (getenv("LL_VK_GEOPERSIST") ? atoi(getenv("LL_VK_GEOPERSIST")) != 0 : true) && ll_palette_ids_on();
+    return on;
+}
 // S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
 struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (mLodIb, mLodCount: the simplified index list the viewer chose for the item this frame, 0 = its own; made on the main thread, scene_geo_rigged_lod)
 // (plain pointers: the job must never hold the last reference of an avatar, a destructor on a pool thread; they stay valid until the end of the display, where the job is waited for: ll_scene_geo_frame_end)
@@ -12007,6 +12016,10 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     header.mPaletteFloats = (U32)f->mGeoTex.size();
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     f->mGeoSent = true;
+    for (LLSceneFragment::GeoItem& it : f->mGeo)
+    {
+        it.mBoundEpoch = 0;     // P2: the worker has a new copy of the fragment: none of its rigged items has a binding there
+    }
     group->mGeoHandle = handle;
     group->mGeoServedMask = f->mGeoServedMask;
     group->mGeoServedTris = f->mGeoServedTris;
@@ -14065,6 +14078,33 @@ void ll_scene_geo_frame(LLCullResult* cull)
     typedef GeoBinding Binding;
     static std::vector<Binding> bindings;
     bindings.clear();
+    // <FS> P2: with persistent bindings only the ones that changed since the worker was told go in the record (updates); else all of them, every frame
+    static std::vector<Binding> updates;
+    updates.clear();
+    const bool persist = geo_persist_on();
+    if (LLVkBridge::sGeoPrepareDropped.load(std::memory_order_relaxed) != sGeoDroppedSeen)
+    {
+        sGeoDroppedSeen = LLVkBridge::sGeoPrepareDropped.load(std::memory_order_relaxed);
+        ++sRebindEpoch;
+    }
+    auto note_bind = [&](const Binding& b, const LLSceneFragment* fc, U32 index)
+    {
+        if (!persist)
+        {
+            return;
+        }
+        LLSceneFragment::GeoItem& it = const_cast<LLSceneFragment*>(fc)->mGeo[index];
+        if (it.mBoundEpoch == sRebindEpoch && it.mBoundId == b.mOffset && it.mBoundJoints == b.mJoints && it.mBoundLodIb == b.mLodIb && it.mBoundLodCount == b.mLodCount)
+        {
+            return;
+        }
+        it.mBoundEpoch = sRebindEpoch;
+        it.mBoundId = b.mOffset;
+        it.mBoundJoints = b.mJoints;
+        it.mBoundLodIb = b.mLodIb;
+        it.mBoundLodCount = b.mLodCount;
+        updates.push_back(b);
+    };
     if (scene_geo_rigged_on())
     {
         const auto t_bind = std::chrono::steady_clock::now();
@@ -14141,6 +14181,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     Binding& b = bindings[at++];
                     if (b.mOffset == ~0u)
                     {
+                        note_bind(b, f, index);
                         continue;
                     }
                     {
@@ -14230,6 +14271,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                         b.mLodIb = b.mLodCount = 0;
                         tris_lod += item.mInfo->mCount / 3;
                     }
+                    note_bind(b, f, index);
                 }
             }
             if (asked >= 20000)
@@ -14239,17 +14281,21 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         sGeoRiggedBindings += bindings.size();
+        sGeoRiggedUpdates += persist ? updates.size() : bindings.size();
         sGeoRiggedNs += geo_ns_since(t_bind);
     }
-    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + bindings.size() * sizeof(Binding));
+    const std::vector<Binding>& sent_bindings = persist ? updates : bindings;
+    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding));
     if (!handles.empty()) { memcpy(blob.data(), handles.data(), handles.size() * sizeof(U32)); }
     if (!matrices.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32), matrices.data(), matrices.size() * sizeof(matrices[0])); }
-    if (!bindings.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]), bindings.data(), bindings.size() * sizeof(Binding)); }
+    if (!sent_bindings.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]), sent_bindings.data(), sent_bindings.size() * sizeof(Binding)); }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 21;
     header.mEntries = (U32)handles.size();
     header.mMatrices = (U32)matrices.size();
-    header.mPaletteFloats = (U32)bindings.size();
+    header.mPaletteFloats = (U32)sent_bindings.size();
+    header.mFragment = persist ? 1u : 0u;       // P2: 1 = the bindings are updates of persistent ones (ids), mPass = the frame whose palette table they are resolved in
+    header.mPass = (U32)gFrameCount;
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();
     s.mMatrices += matrices.size();
@@ -14279,9 +14325,9 @@ void ll_scene_geo_frame(LLCullResult* cull)
             << r.mTexUpdateRecords << " (" << r.mTexUpdateEntries << " entries); reconcile every 256 frames: " << r.mReconcileRuns << " runs, " << r.mReconcileMissed << " names an event had not told ("
             << (double)r.mNsReconcile / 1000.0 / std::max<U64>(r.mReconcileRuns, 1) << " us a run) | main thread us per frame: all " << (double)s.mNsAll / 1000.0 / n << " = events and keep-alive "
             << (double)s.mNsEvents / 1000.0 / n << " (registry total " << (double)r.mNsEvents / 1000.0 / n << ") + list and send " << (double)s.mNsSend / 1000.0 / n << "; fragment attach (retain, at group rebuild) "
-            << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame, " << (double)sGeoRiggedNs / 1000.0 / n << " us (palette jobs taken " << sBindJobTaken << ", made inline " << sBindJobInline << ") | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
+            << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame (sent as " << (double)sGeoRiggedUpdates / n << "), " << (double)sGeoRiggedNs / 1000.0 / n << " us (palette jobs taken " << sBindJobTaken << ", made inline " << sBindJobInline << ") | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
             << sMovingSlot.size() << ", acquired " << sMovingAcquired << ", no slot free " << sMovingFull << LL_ENDL;
-        sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = 0;
+        sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = sGeoRiggedUpdates = 0;
     }
 }
 
