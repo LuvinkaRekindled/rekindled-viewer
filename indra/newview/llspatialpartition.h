@@ -571,6 +571,10 @@ public:
 
     virtual bool isSpatialBridge() const        { return true; }
     virtual void updateSpatialExtents();
+    void exactWorldBox(LLVector4a& newMin, LLVector4a& newMax);      // <FS> stage C: what updateSpatialExtents made of the contents' bounds and the bridge's matrix
+    bool sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance);     // <FS> stage C: the bounding sphere of the contents (the octree root's bounds as they are, the bridge's matrix) lies inside the box: a few multiplications, safe at any rotation
+    bool mConservative = false;                                      // <FS> stage C (LL_VK_ATTCONS): the bridge holds mConsMin / mConsMax (the avatar's box, world space) instead of its contents' exact box
+    F32 mConsMin[3] = { 0.f, 0.f, 0.f }, mConsMax[3] = { 0.f, 0.f, 0.f };
     virtual void updateBinRadius();
     virtual void setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* results = NULL, bool for_select = false);
     virtual void updateDistance(LLCamera& camera_in, bool force_update);

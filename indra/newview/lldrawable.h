@@ -219,6 +219,7 @@ protected:
     bool updateMoveUndamped();
 
 public:
+    bool mBridgeFrozen = false;     // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): this attachment's bridge sits at the avatar's box and is not queued to move with every update of the attachment
     friend class LLPipeline;
     friend class LLDrawPool;
     friend class LLSpatialBridge;

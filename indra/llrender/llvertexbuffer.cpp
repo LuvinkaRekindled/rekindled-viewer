@@ -1333,8 +1333,10 @@ bool LLVertexBuffer::allocateBuffer(U32 nverts, U32 nindices)
 bool expand_region(LLVertexBuffer::MappedRegion& region, U32 start, U32 end)
 {
 
-    if (end < region.mStart ||
-        start > region.mEnd)
+    // <FS> a range that touches the region (the next byte after its end, or the one before its start) joins it: the test used to call that a gap, so sequential writes (a particle store written one slot at
+    // a time, eight arrays each) made a region per call and every call scanned all of them: n squared, 80-150 ms main thread stalls with a few thousand dirty slots
+    if (end + 1 < region.mStart ||
+        start > region.mEnd + 1)
     { //gap exists, do not merge
         return false;
     }
@@ -1363,8 +1365,8 @@ U8* LLVertexBuffer::mapVertexBuffer(LLVertexBuffer::AttributeType type, U32 inde
         U32 end = start + sTypeSize[type] * count-1;
 
         bool flagged = false;
-        // flag region as mapped
-        for (U32 i = 0; i < mMappedVertexRegions.size(); ++i)
+        // flag region as mapped (<FS> newest region first: writes come in runs, the one just extended is the one that takes the next range)
+        for (U32 i = (U32)mMappedVertexRegions.size(); i-- > 0;)
         {
             MappedRegion& region = mMappedVertexRegions[i];
             if (expand_region(region, start, end))
@@ -1400,8 +1402,8 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
         U32 end = start + sizeof(U16) * count-1;
 
         bool flagged = false;
-        // flag region as mapped
-        for (U32 i = 0; i < mMappedIndexRegions.size(); ++i)
+        // flag region as mapped (<FS> newest region first, as for the vertices)
+        for (U32 i = (U32)mMappedIndexRegions.size(); i-- > 0;)
         {
             MappedRegion& region = mMappedIndexRegions[i];
             if (expand_region(region, start, end))

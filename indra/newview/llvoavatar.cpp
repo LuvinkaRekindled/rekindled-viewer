@@ -3217,6 +3217,10 @@ struct AttStats
     U32 firstFrame = 0;
 };
 AttStats gAttStats;
+namespace
+{
+std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
+}
 // an attachment that only follows its joint: nothing selected, flexible, animated, lighted, sounding or emitting particles in it or its children, not a HUD
 inline bool att_plain(const LLViewerObject* root)
 {
@@ -3865,6 +3869,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         ++gAttStats.avatars;
         LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
         U32 draw_order = 0;
+        static const int cons_mode = getenv("LL_VK_ATTCONS") ? atoi(getenv("LL_VK_ATTCONS")) : 1;
         bool attachment_selected = sAttachmentSelectedForJobs >= 0 ? sAttachmentSelectedForJobs != 0
             : (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment());
 
@@ -4049,6 +4054,87 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         gAttStats.rigidSkipped += skip_rigid;
                     }
 
+                    // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS: 1 default, 0 off, 2 on and verified): a plain rigid attachment's bridge sits at the AVATAR's box (as a rigged attachment's drawable does), so the
+                    // attachment following its joint does not move the bridge in the octree: the matrix and face centers are still updated every visit, the bridge is moved when the avatar's box changes. The exact box of the
+                    // bridge's contents has to lie inside the avatar's box when the bridge takes it, else this bridge stays exact. Mode 2 also checks it on every visit that left the bridge alone.
+                    bool cons_frozen = false;
+                    const bool cons_eligible = cons_mode && !rigged && bridge && !attachment_selected && !isSelf() && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL && att_plain(attached_object.get());
+                    if (bridge && bridge->mConservative && !cons_eligible)
+                    {
+                        bridge->mConservative = false;      // (selected, not plain, jellydolled: the exact box again, at this visit's move)
+                    }
+                    if (cons_eligible && !skip_rigid)
+                    {
+                        const LLVector4a* abox = mDrawable->getSpatialExtents();
+                        const F32* amin = abox[0].getF32ptr();
+                        const F32* amax = abox[1].getF32ptr();
+                        constexpr F32 tol = 0.01f;
+                        bool same = bridge->mConservative;
+                        for (S32 k = 0; k < 3 && same; ++k)
+                        {
+                            same = fabsf(amin[k] - bridge->mConsMin[k]) < tol && fabsf(amax[k] - bridge->mConsMax[k]) < tol;
+                        }
+                        auto inside = [&](const LLVector4a& lo, const LLVector4a& hi)
+                        {
+                            const F32* a = lo.getF32ptr();
+                            const F32* b = hi.getF32ptr();
+                            bool in = true;
+                            for (S32 k = 0; k < 3 && in; ++k)
+                            {
+                                in = a[k] >= amin[k] - tol && b[k] <= amax[k] + tol;
+                            }
+                            return in;
+                        };
+                        if (same && !bridge->sphereInsideBox(amin, amax, tol))
+                        {
+                            // the held box no longer holds the attachment's bounding sphere (it moved toward the edge): back to the exact box at this visit's move
+                            bridge->mConservative = false;
+                            same = false;
+                            ++sAttConsLeft;
+                        }
+                        if (same)
+                        {
+                            cons_frozen = true;
+                            ++sAttConsFrozen;
+                            if (cons_mode == 2)
+                            {
+                                LLVector4a lo, hi;
+                                bridge->exactWorldBox(lo, hi);
+                                ++sAttConsChecked;
+                                if (!inside(lo, hi))
+                                {
+                                    ++sAttConsOutside;      // (the sphere test says inside, so this must stay 0)
+                                }
+                            }
+                        }
+                        else
+                        {
+                            LLVector4a lo, hi;
+                            bridge->exactWorldBox(lo, hi);
+                            if (inside(lo, hi))
+                            {
+                                bridge->mConservative = true;
+                                for (S32 k = 0; k < 3; ++k)
+                                {
+                                    bridge->mConsMin[k] = amin[k];
+                                    bridge->mConsMax[k] = amax[k];
+                                }
+                                ++sAttConsTaken;
+                            }
+                            else
+                            {
+                                bridge->mConservative = false;      // (this attachment reaches beyond the avatar's box: it keeps its exact box)
+                                ++sAttConsRefused;
+                            }
+                        }
+                        if (cons_mode == 2 && (++sAttConsVisits % 100000) == 0)
+                        {
+                            LL_INFOS("AttCons") << "plain rigid attachments: bridge left alone " << sAttConsFrozen.load() << ", box taken (the bridge was moved) " << sAttConsTaken.load() << ", refused (reaches beyond the avatar's box) " << sAttConsRefused.load()
+                                << "; held box given up (the bounding sphere reached its edge) " << sAttConsLeft.load() << "; checked on the left alone visits " << sAttConsChecked.load() << ", exact box outside the avatar's box " << sAttConsOutside.load() << LL_ENDL;
+                        }
+                    }
+                    attached_object->mDrawable->mBridgeFrozen = cons_frozen;
+
                     // if selecting any attachments, update all of them as non-damped
                     if (!skip_update && !skip_rigid)
                     {
@@ -4075,7 +4161,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     {
                         if (!rigged)
                         {
-                            if (!skip_rigid)
+                            if (!skip_rigid && !cons_frozen)
                             {
                                 LL_CPU_ZONE("att: bridge move (not rigged)");
                                 const auto t = att_now();

@@ -889,9 +889,9 @@ F32 LLDrawable::updateXform(bool undamped)
         }
     }
 
-    if (mSpatialBridge)
+    if (mSpatialBridge && !mBridgeFrozen)
     {
-        gPipeline.markMoved(mSpatialBridge, false);
+        gPipeline.markMoved(mSpatialBridge, false);     // (mBridgeFrozen: the avatar's loop holds this attachment's bridge at the avatar's box, PLAN-avatars.md stage C)
     }
     return dist_squared;
 }
@@ -1512,6 +1512,60 @@ void LLSpatialBridge::updateSpatialExtents()
     LL_CPU_ZONE("bridge: updateSpatialExtents");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
+    LLVector4a newMin;
+    LLVector4a newMax;
+    if (mConservative)
+    {
+        // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): a plain rigid attachment's bridge holds the avatar's box (world space) while the avatar's loop keeps it there: moves of the attachment do not move it in the octree
+        newMin.load3(mConsMin);
+        newMax.load3(mConsMax);
+    }
+    else
+    {
+        exactWorldBox(newMin, newMax);
+    }
+    setSpatialExtents(newMin, newMax);
+
+    LLVector4a diagonal;
+    diagonal.setSub(newMax, newMin);
+    setRadius(diagonal.getLength3().getF32() * 0.5f);
+
+    LLVector4a& pos = getGroupPosition();
+    pos.setAdd(newMin,newMax);
+    pos.mul(0.5f);
+    updateBinRadius();
+}
+
+bool LLSpatialBridge::sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance)
+{
+    LLSpatialGroup* root = (LLSpatialGroup*) mOctree->getListener(0);
+    root->rebound();        // (returns at once when nothing in the bridge changed since the last one)
+    const LLVector4a* root_bounds = root->getBounds();      // (centre, half size) in the bridge's own space
+    LLMatrix4a mat;
+    mat.loadu(mDrawable->getXform()->getWorldMatrix());
+    LLVector4a t;
+    t.splat(0.f);
+    LLVector4a origin;
+    mat.affineTransform(t, origin);
+    LLVector4a offset;
+    mat.rotate(root_bounds[0], offset);
+    LLVector4a center;
+    center.setAdd(origin, offset);
+    const F32 radius = root_bounds[1].getLength3().getF32();        // (half the diagonal: the rotation of the bridge cannot take a corner beyond it; the matrix has no scale)
+    const F32* c = center.getF32ptr();
+    for (S32 k = 0; k < 3; ++k)
+    {
+        if (c[k] - radius < boxMin[k] - tolerance || c[k] + radius > boxMax[k] + tolerance)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// the box of the bridge's contents in world space, from the octree root's bounds and the bridge object's matrix (what updateSpatialExtents always did)
+void LLSpatialBridge::exactWorldBox(LLVector4a& newMin, LLVector4a& newMax)
+{
     LLSpatialGroup* root = (LLSpatialGroup*) mOctree->getListener(0);
 
     root->rebound();
@@ -1552,8 +1606,6 @@ void LLSpatialBridge::updateSpatialExtents()
     scale.mul(size);
     mat.rotate(scale, v[3]);
 
-    LLVector4a newMin;
-    LLVector4a newMax;
     newMin = newMax = center;
     for (U32 i = 0; i < 4; i++)
     {
@@ -1567,16 +1619,6 @@ void LLSpatialBridge::updateSpatialExtents()
         newMin.setMin(newMin, min);
         newMax.setMax(newMax, max);
     }
-    setSpatialExtents(newMin, newMax);
-
-    LLVector4a diagonal;
-    diagonal.setSub(newMax, newMin);
-    setRadius(diagonal.getLength3().getF32() * 0.5f);
-
-    LLVector4a& pos = getGroupPosition();
-    pos.setAdd(newMin,newMax);
-    pos.mul(0.5f);
-    updateBinRadius();
 }
 
 void LLSpatialBridge::updateBinRadius()
