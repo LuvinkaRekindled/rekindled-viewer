@@ -3274,11 +3274,13 @@ inline bool att_rowable(const LLViewerObject* root)
     // avatar's part is the root's world matrix)
     // (C5e, LL_VK_ATTANIM: 1 default, 0 = animesh keep the walk: an animated object whose control avatar is placed by the avatar it is worn by (C5d: LLControlAvatar::hostJobOwned) is a row with the fast move: the
     // drawable's update no longer places the skeleton's root, so nothing is left in the full move that the fast one does not do)
-    auto ok = [](const LLViewerObject* o)
+    // (C5b, lap cf2: a linkset with FLEXIBLE CHILDREN is moved by the rows: 18,802 root matrices by the fast move checked against the full move, 0 different; the children draw through the root's matrix and run their own
+    // physics from their own idle update. A flexible ROOT stays off until one is seen: LL_VK_ATTFLEXI)
+    auto ok = [](const LLViewerObject* o, bool root_object)
     {
-        return !(o->isSelected() || (!flexi_allowed() && o->isFlexible()) || (o->isAnimatedObject() && !animesh_rowable(o)));
+        return !(o->isSelected() || (root_object && !flexi_allowed() && o->isFlexible()) || (o->isAnimatedObject() && !animesh_rowable(o)));
     };
-    if (root->isHUDAttachment() || !ok(root))
+    if (root->isHUDAttachment() || !ok(root, true))
     {
         return false;
     }
@@ -3286,7 +3288,7 @@ inline bool att_rowable(const LLViewerObject* root)
     {
         for (const LLPointer<LLViewerObject>& child : root->getChildren())
         {
-            if (child.notNull() && !ok(child.get()))
+            if (child.notNull() && !ok(child.get(), false))
             {
                 return false;
             }
@@ -3296,6 +3298,7 @@ inline bool att_rowable(const LLViewerObject* root)
 }
 // <FS> stage C5 census (LL_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
 static std::atomic<U64> sWalkClassN[8][2], sWalkClassOps[8][2];
+static std::atomic<U64> sRowFlexiRoot{ 0 }, sRowFlexiChild{ 0 }, sRowFlexiFast{ 0 }, sRowFlexiFastDiff{ 0 }, sRowFlexiFull{ 0 };   // flexible attachments in the rows: a flexible root, a linkset with flexible children; fast moves, their differences from the full move, full moves
 static int fs_att_class(const LLViewerObject* root)
 {
     auto reason = [](const LLViewerObject* o) -> int
@@ -4141,6 +4144,25 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     continue;
                 }
                 ++rows_passed;
+                if (rowops_on)
+                {
+                    // census of the flexible attachments the rows hold (LL_VK_ROWOPS): a flexible root, or a linkset with a flexible child
+                    if (obj->isFlexible())
+                    {
+                        ++sRowFlexiRoot;
+                    }
+                    else if (obj->numChildren() > 0)
+                    {
+                        for (const LLPointer<LLViewerObject>& child : obj->getChildren())
+                        {
+                            if (child.notNull() && child->isFlexible())
+                            {
+                                ++sRowFlexiChild;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (gFSAvTimersOn)
                 {
                     ++gAttStats.attachments;
@@ -4411,6 +4433,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         const LLXformMatrix* dxf = drawable->getXform();
                         const LLVector3 target_pos = dxf->isRoot() ? obj->getPositionAgent() : obj->getPosition();
                         ++fx_n;
+                        ++sRowFlexiFull;
                         fx_moved += obj->isChanged(LLXform::MOVED);
                         fx_pos += !(dxf->getPosition() == target_pos);
                         fx_rot += !(dxf->getRotation() == obj->getRotation());
@@ -4432,10 +4455,24 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         const bool differs = memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0;
                         ++rx_checked;
                         rx_diff += differs;
-                        if (obj->isFlexible())
+                        bool flexi_class = obj->isFlexible();
+                        if (!flexi_class)
+                        {
+                            for (const LLPointer<LLViewerObject>& child : obj->getChildren())
+                            {
+                                if (child.notNull() && child->isFlexible())
+                                {
+                                    flexi_class = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (flexi_class)
                         {
                             ++rx_flexi;
                             rx_flexi_diff += differs;
+                            ++sRowFlexiFast;
+                            sRowFlexiFastDiff += differs;
                         }
                         if ((rx_checked % 100000) == 0)
                         {
@@ -4816,6 +4853,8 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     text += llformat(" | %s: rigid %.3f (%.3f ops), rigged %.3f (%.3f ops)", names[c], (double)sWalkClassN[c][0] / loops, (double)sWalkClassOps[c][0] / loops, (double)sWalkClassN[c][1] / loops, (double)sWalkClassOps[c][1] / loops);
                 }
                 LL_INFOS("WalkKinds") << "what the attachment walk handles, per avatar loop over " << loops.load() << " loops (attachments, ledger ops):" << text << LL_ENDL;
+                LL_INFOS("FlexiRows") << "flexible attachments held by the rows, visits in " << loops.load() << " loops: a flexible root " << sRowFlexiRoot.load() << ", a linkset with flexible children " << sRowFlexiChild.load()
+                    << "; matrices by the fast move (ATTXF=2: checked against the full move) " << sRowFlexiFast.load() << ", different " << sRowFlexiFastDiff.load() << "; flexible roots the fast move refused " << sRowFlexiFull.load() << LL_ENDL;
             }
             if (loops % 20000 == 0)
             {
