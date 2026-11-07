@@ -1281,8 +1281,8 @@ public:
 public:
     void            addChat(const LLChat& chat);
     void            clearChat();
-    void            startTyping() { mTyping = true; mTypingTimer.reset(); }
-    void            stopTyping() { mTyping = false; }
+    void            startTyping() { mTyping = true; mTypingTimer.reset(); mNameTagForce = true; }
+    void            stopTyping() { mTyping = false; mNameTagForce = true; }
     // <FS:Ansariel> Get typing status
     bool            isTyping() const { return mTyping; }
 private:
@@ -1386,6 +1386,8 @@ protected:
     static void     getAnimNames(std::vector<std::string>* names);
 private:
     bool            mNameIsSet;
+    F64             mNameTagLastPoll = -1.0;        // <FS> stage B3d: when the tag's inputs were last looked at (LL_VK_NAMETAGPOLL); mNameTagForce: look next time
+    bool            mNameTagForce = false;
     LLSD            mClientTagData;
     bool            mHasClientTagColor;
     std::string     mTitle;

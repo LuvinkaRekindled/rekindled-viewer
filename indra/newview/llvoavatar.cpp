@@ -4670,8 +4670,44 @@ void LLVOAvatar::idleUpdateNameTag(const LLVector3& root_pos_last)
     // idleUpdateNameTagAlpha(new_name, alpha);
 }
 
+// <FS> PLAN-avatars.md stage B3d, name tag: when the tag's INPUTS are looked at (LL_VK_NAMETAGPOLL: 1 default, 0 every frame as before, 2 every frame and counts what the throttle would have delayed). The inputs (away /
+// do not disturb / appearance animations, mute, friend, missing parts, colour, distance text, complexity, title and names) were gathered and compared with the last build of the tag every frame for every avatar whose tag
+// can be seen (about 1.7 us each); the viewer already marks the tag for rebuilding where it knows (clearNameTag: settings, display names, RLV, contact sets) and typing / chat force it here, the rest is looked at
+// at most 0.1 s apart (a label that says "away" appears a tenth of a second late; staggered by avatar so that they do not all look in the same frame).
+static int fs_nametagpoll_mode()
+{
+    static const int mode = getenv("LL_VK_NAMETAGPOLL") ? atoi(getenv("LL_VK_NAMETAGPOLL")) : 1;
+    return mode;
+}
+
 void LLVOAvatar::idleUpdateNameTagText(bool new_name)
 {
+    bool poll = true;
+    const int poll_mode = fs_nametagpoll_mode();
+    const F64 poll_now = LLFrameTimer::getElapsedSeconds();
+    bool would_skip = false;
+    if (poll_mode != 0)
+    {
+        if (mNameTagLastPoll < 0.0)
+        {
+            mNameTagLastPoll = poll_now - 0.01 * (F64)(getID().mData[0] % 10);       // (first look: spread the avatars over the interval)
+        }
+        would_skip = mNameIsSet && !new_name && !mNameTagForce && (poll_now - mNameTagLastPoll) < 0.1;
+        poll = poll_mode == 2 || !would_skip;
+    }
+    if (poll)
+    {
+        mNameTagLastPoll = poll_now;
+        mNameTagForce = false;
+    }
+    static std::atomic<U64> polled{ 0 }, skipped{ 0 }, found_by_sweep{ 0 };
+    ++(poll ? polled : skipped);
+    if (poll_mode != 0 && ((polled + skipped) % 400000) == 0)
+    {
+        LL_INFOS("NameTagPoll") << "name tag inputs looked at " << polled.load() << " times, left for later " << skipped.load() << "; rebuilds found only by the sweep (mode 2) " << found_by_sweep.load() << LL_ENDL;
+    }
+    if (poll)
+    {
     LLNameValue *title = getNVPair("Title");
     LLNameValue* firstname = getNVPair("FirstName");
     LLNameValue* lastname = getNVPair("LastName");
@@ -4841,6 +4877,10 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
         || complexity != mNameArc
         || complexity_color != mNameArcColor)
     {
+        if (poll_mode == 2 && would_skip)
+        {
+            ++found_by_sweep;       // (mode 2) the throttle would have left this change for a later look
+        }
 
         //WS: If we got a uuid and if we know if it's id_based or not, ask FSDATA for the other tagdata, before we display it.
         if (mClientTagData.has("uuid") && mClientTagData.has("id_based"))
@@ -5077,8 +5117,7 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
         LLStringFn::replace_ascii_controlchars(mTitle,LL_UNKNOWN_CHAR);
         new_name = true;
     }
-
-
+    }       // (if (poll))
 
     if (mVisibleChat || mVisibleTyping)
     {
@@ -11950,6 +11989,7 @@ void LLVOAvatar::addChat(const LLChat& chat)
     }
 
     mChatTimer.reset();
+    mNameTagForce = true;
 }
 
 void LLVOAvatar::clearChat()
