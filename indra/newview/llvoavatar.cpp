@@ -13857,6 +13857,7 @@ bool LLVOAvatar::flatWorldPass()
     LLQuaternion* wrot = flat.mWRot.data();
     U8* sco = flat.mSco.data();
     const bool root_active = mRoot->mUpdateXform;
+    const U32 pass_serial = ++LLJoint::sViewPasses;
     if (root_active && (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
     {
         mRoot->updateWorldMatrix();
@@ -13873,6 +13874,8 @@ bool LLVOAvatar::flatWorldPass()
         const bool act = parent_active && joint->mUpdateXform;
         active[k] = act ? 1 : 0;
         LLXformMatrix* xf = joint->getXform();
+        U8 view_kind = 0;
+        bool clean_before = true;
         jscale[k] = xf->getScale();
         sco[k] = xf->getScaleChildOffset() ? 1 : 0;
         if (act && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
@@ -13897,18 +13900,37 @@ bool LLVOAvatar::flatWorldPass()
             if (writeback)
             {
                 joint->setWorldFromPass(pos, rot);
+                view_kind = 1;
             }
         }
         else
         {
+            // (the main thread may clean this joint lazily while this runs: the flags are read before and after the copy, and the view is taken only when the joint was clean on both sides)
+            clean_before = joint->mDirtyFlags == 0;
+            std::atomic_thread_fence(std::memory_order_acquire);
             wpos[k] = xf->getWorldPosition();
             wrot[k] = xf->getWorldRotation();
             flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
+            std::atomic_thread_fence(std::memory_order_acquire);
+        }
+        if (writeback)
+        {
+            // the joint as a view (LLJoint::mViewValid): its slot in the arrays is what it is, as long as nothing touches it; a joint still dirty (outside the walk's subtree) is not
+            joint->mViewPos = &wpos[k];
+            joint->mViewRot = &wrot[k];
+            joint->mViewMat = &flat.mWorld[k];
+            joint->mViewValid = joint->mDirtyFlags == 0 && clean_before;
+            joint->mViewKind = view_kind ? view_kind : (joint->mViewValid ? 2 : 3);
+            joint->mViewPass = pass_serial;
         }
     }
     flat.mFrame = gFrameCount;
     flat.mFromJob = true;
     ++sFlatFillJob;
+    if (LLJoint::sViewMode == 2 && (sFlatFillJob.load() % 20000) == 0)
+    {
+        LL_INFOS("JointView") << "joint world getters answered from the array and compared with the xform: " << LLJoint::sViewChecked.load() << ", different " << LLJoint::sViewDifferent.load() << LL_ENDL;
+    }
     if (fs_flatfill_mode() == 2)
     {
         // verify: the old walk works the joints out the old way after the pass, a fresh fill reads them, and the array must be what the pass made, bit for bit
