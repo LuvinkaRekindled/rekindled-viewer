@@ -13786,12 +13786,23 @@ bool LLVOAvatar::flatWorldPass()
         fs_flat_fill(this, flat);
         flat.mStructKey = key;
     }
+    // The arithmetic of LLXformMatrix::update / updateMatrix, in array order from the joints' locals, with the parents' world position, rotation, scale and scale-child-offset kept in arrays (the first joints'
+    // parent is the root, which is worked out first by the joint's own function). Mode 1 writes the results back into the joint objects (the views); mode 2 leaves the joints alone, so that the old walk that
+    // follows works them out the old way and the array can be compared with it.
+    const bool writeback = fs_flatfill_mode() == 1;
     U8 active[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    LLVector3 wpos[LL_CHARACTER_MAX_ANIMATED_JOINTS], jscale[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    LLQuaternion wrot[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    U8 sco[LL_CHARACTER_MAX_ANIMATED_JOINTS];
     const bool root_active = mRoot->mUpdateXform;
     if (root_active && (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
     {
         mRoot->updateWorldMatrix();
     }
+    const LLXformMatrix* root_xf = mRoot->getXform();
+    const LLVector3 root_pos = root_xf->getWorldPosition(), root_scale = root_xf->getScale();
+    const LLQuaternion root_rot = root_xf->getWorldRotation();
+    const bool root_sco = root_xf->getScaleChildOffset();
     for (const S16 k : flat.mOrder)
     {
         LLJoint* joint = flat.mJoint[k];
@@ -13799,18 +13810,46 @@ bool LLVOAvatar::flatWorldPass()
         const bool parent_active = p < 0 ? root_active : active[p] != 0;
         const bool act = parent_active && joint->mUpdateXform;
         active[k] = act ? 1 : 0;
+        LLXformMatrix* xf = joint->getXform();
+        jscale[k] = xf->getScale();
+        sco[k] = xf->getScaleChildOffset() ? 1 : 0;
         if (act && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
         {
-            joint->updateWorldMatrix();
+            const LLVector3& parent_pos = p < 0 ? root_pos : wpos[p];
+            const LLQuaternion& parent_rot = p < 0 ? root_rot : wrot[p];
+            const bool parent_sco = p < 0 ? root_sco : sco[p] != 0;
+            const LLVector3& parent_scale = p < 0 ? root_scale : jscale[p];
+            LLVector3 pos = xf->getPosition();
+            if (parent_sco)
+            {
+                pos.scaleVec(parent_scale);
+            }
+            pos *= parent_rot;
+            pos += parent_pos;
+            const LLQuaternion rot = xf->getRotation() * parent_rot;
+            wpos[k] = pos;
+            wrot[k] = rot;
+            LLMatrix4 m;
+            m.initAll(jscale[k], rot, pos);
+            flat.mWorld[k].loadu(m);
+            if (writeback)
+            {
+                joint->setWorldFromPass(pos, rot);
+            }
         }
-        flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
+        else
+        {
+            wpos[k] = xf->getWorldPosition();
+            wrot[k] = xf->getWorldRotation();
+            flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
+        }
     }
     flat.mFrame = gFrameCount;
     flat.mFromJob = true;
     ++sFlatFillJob;
     if (fs_flatfill_mode() == 2)
     {
-        // verify: the walk after the pass must find nothing to do, and a fresh fill must give the array
+        // verify: the old walk works the joints out the old way after the pass, a fresh fill reads them, and the array must be what the pass made, bit for bit
         mRoot->updateWorldMatrixChildren();
         LLFlatSkeleton fresh;
         fs_flat_fill(this, fresh);

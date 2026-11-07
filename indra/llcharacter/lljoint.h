@@ -272,6 +272,14 @@ public:
     void updateWorldPRSParent();
 
     void updateWorldMatrix();
+    // <FS> PLAN-avatars.md stage C: what updateWorldMatrix leaves, for a world position and rotation the avatar's flat world pass worked out from the locals (the joint object is the view of the array)
+    void setWorldFromPass(const LLVector3& pos, const LLQuaternion& rot)
+    {
+        mXform.setWorldFromPass(pos, rot);
+        mWorldMatrix.loadu(mXform.getWorldMatrix());
+        mDirtyFlags = 0x0;
+        sNumUpdates++;
+    }
 
     // get/set skin offset
     const LLVector3 &getSkinOffset();

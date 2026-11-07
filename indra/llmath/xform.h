@@ -161,6 +161,14 @@ public:
 
     void update();
     void updateMatrix(bool update_bounds = true);
+    // <FS> PLAN-avatars.md stage C: the world position and rotation worked out elsewhere (the avatar's flat world pass computes them from the locals in array order): the fields update() leaves, and the matrix
+    // updateMatrix(false) makes from them
+    void setWorldFromPass(const LLVector3& world_pos, const LLQuaternion& world_rot)
+    {
+        mWorldPosition = world_pos;
+        mWorldRotation = world_rot;
+        mWorldMatrix.initAll(mScale, mWorldRotation, mWorldPosition);
+    }
     void getMinMax(LLVector3& min,LLVector3& max) const;
 
 protected:
