@@ -43,6 +43,13 @@
 //-----------------------------------------------------------------------------
 // LLPose
 //-----------------------------------------------------------------------------
+// <FS> PLAN-avatars.md stage B2b: LL_VK_POSEVEC 1 (default) the pose's joint states walked as a vector, 0 as the map, 2 both, compared (same states in the same order)
+static int pose_vec_mode()
+{
+    static const int mode = getenv("LL_VK_POSEVEC") ? atoi(getenv("LL_VK_POSEVEC")) : 1;
+    return mode;
+}
+
 LLPose::~LLPose()
 {
 }
@@ -87,8 +94,27 @@ bool LLPose::addJointState(const LLPointer<LLJointState>& jointState)
     if (mJointMap.find(jointState->getJoint()->getName()) == mJointMap.end())
     {
         mJointMap[jointState->getJoint()->getName()] = jointState;
+        mStateVecDirty = true;
     }
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// jointStateVector()
+//-----------------------------------------------------------------------------
+const std::vector<LLJointState*>& LLPose::jointStateVector() const
+{
+    if (mStateVecDirty)
+    {
+        mStateVec.clear();
+        mStateVec.reserve(mJointMap.size());
+        for (const joint_map_value_type& joint_pair : mJointMap)
+        {
+            mStateVec.push_back(joint_pair.second.get());
+        }
+        mStateVecDirty = false;
+    }
+    return mStateVec;
 }
 
 //-----------------------------------------------------------------------------
@@ -97,6 +123,7 @@ bool LLPose::addJointState(const LLPointer<LLJointState>& jointState)
 bool LLPose::removeJointState(const LLPointer<LLJointState>& jointState)
 {
     mJointMap.erase(jointState->getJoint()->getName());
+    mStateVecDirty = true;
     return true;
 }
 
@@ -106,6 +133,7 @@ bool LLPose::removeJointState(const LLPointer<LLJointState>& jointState)
 bool LLPose::removeAllJointStates()
 {
     mJointMap.clear();
+    mStateVecDirty = true;
     return true;
 }
 
@@ -148,10 +176,19 @@ LLJointState* LLPose::findJointState(const std::string &name)
 //-----------------------------------------------------------------------------
 void LLPose::setWeight(F32 weight)
 {
-    joint_map_iterator iter;
-    for (joint_map_value_type& joint_pair : mJointMap)
+    if (pose_vec_mode() != 0)
     {
-        joint_pair.second->setWeight(weight);
+        for (LLJointState* state : jointStateVector())
+        {
+            state->setWeight(weight);
+        }
+    }
+    else
+    {
+        for (joint_map_value_type& joint_pair : mJointMap)
+        {
+            joint_pair.second->setWeight(weight);
+        }
     }
     mWeight = weight;
 }
@@ -659,7 +696,31 @@ bool LLPoseBlender::addMotion(LLMotion* motion)
         mFlat = std::make_shared<FlatBlend>();
     }
 
-    for(LLJointState* jsp = pose->getFirstJointState(); jsp; jsp = pose->getNextJointState())
+    // <FS> stage B2b: the pose's joint states as a vector in the map's order (mode 0: the map walk into a local vector; mode 2: both, compared)
+    const int vec_mode = pose_vec_mode();
+    std::vector<LLJointState*> walked;
+    if (vec_mode != 1)
+    {
+        for (LLJointState* walk = pose->getFirstJointState(); walk; walk = pose->getNextJointState())
+        {
+            walked.push_back(walk);
+        }
+        if (vec_mode == 2)
+        {
+            static std::atomic<U64> compared{ 0 }, different{ 0 };
+            ++compared;
+            if (walked != pose->jointStateVector() && ++different <= 4)
+            {
+                LL_WARNS("PoseVec") << "pose joint state vector differs from the map walk (" << walked.size() << " against " << pose->jointStateVector().size() << ")" << LL_ENDL;
+            }
+            if (compared % 200000 == 0)
+            {
+                LL_INFOS("PoseVec") << "pose joint state vectors compared with the map walk: " << compared.load() << ", different " << different.load() << LL_ENDL;
+            }
+        }
+    }
+    const std::vector<LLJointState*>& states = (vec_mode == 1 || vec_mode == 2) ? pose->jointStateVector() : walked;
+    for (LLJointState* jsp : states)
     {
         LLJoint *jointp = jsp->getJoint();
         if (flat_mode && jointp)
