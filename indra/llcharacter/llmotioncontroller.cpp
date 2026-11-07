@@ -30,6 +30,10 @@
 #include "linden_common.h"
 
 #include "llmotioncontroller.h"
+#include <atomic>
+#include <chrono>
+#include <typeinfo>
+#include <algorithm>
 #include "llfasttimer.h"
 #include "llkeyframemotion.h"
 #include "llmath.h"
@@ -556,6 +560,81 @@ void LLMotionController::updateIdleActiveMotions()
     }
 }
 
+
+// <FS> PLAN-avatars.md stage B2 census (LL_VK_POSECENSUS=1): where the time of one avatar's pose job goes: each motion class's onUpdate, addMotion, the blend, and the controller's own part (the rest of
+// finishUpdateMotions), logged every 20000 jobs
+namespace
+{
+bool pose_census_on()
+{
+    static const bool on = getenv("LL_VK_POSECENSUS") != nullptr;
+    return on;
+}
+struct PoseCensusClass
+{
+    std::atomic<const char*> mName{ nullptr };
+    std::atomic<U64> mNs{ 0 }, mCount{ 0 };
+};
+PoseCensusClass sPoseClasses[48];
+std::atomic<U64> sPoseAddNs{ 0 }, sPoseBlendNs{ 0 }, sPoseTotalNs{ 0 }, sPoseJobs{ 0 }, sPoseOnUpdateNs{ 0 }, sPoseMotions{ 0 };
+
+inline U64 pose_now_ns()
+{
+    return (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+bool timed_on_update(LLMotion* motion, F32 time, U8* joint_mask)
+{
+    if (!pose_census_on())
+    {
+        return motion->onUpdate(time, joint_mask);
+    }
+    const U64 t0 = pose_now_ns();
+    const bool result = motion->onUpdate(time, joint_mask);
+    const U64 ns = pose_now_ns() - t0;
+    sPoseOnUpdateNs += ns;
+    ++sPoseMotions;
+    const char* name = typeid(*motion).name();
+    for (PoseCensusClass& c : sPoseClasses)
+    {
+        const char* have = c.mName.load();
+        if (have == name || (have == nullptr && c.mName.compare_exchange_strong(have, name)) || c.mName.load() == name)
+        {
+            c.mNs += ns;
+            ++c.mCount;
+            break;
+        }
+    }
+    return result;
+}
+
+void pose_census_report()
+{
+    std::vector<std::pair<U64, int>> order;
+    for (int k = 0; k < 48; ++k)
+    {
+        if (sPoseClasses[k].mName.load())
+        {
+            order.push_back({ sPoseClasses[k].mNs.load(), k });
+        }
+    }
+    std::sort(order.rbegin(), order.rend());
+    const double jobs = (double)std::max<U64>(1, sPoseJobs.load());
+    std::string text;
+    for (const auto& o : order)
+    {
+        const PoseCensusClass& c = sPoseClasses[o.second];
+        char line[256];
+        snprintf(line, sizeof(line), " | %s: %.1f us per job (%.2f calls, %.2f us each)", c.mName.load(), (double)c.mNs.load() / 1000.0 / jobs, (double)c.mCount.load() / jobs, (double)c.mNs.load() / 1000.0 / std::max<U64>(1, c.mCount.load()));
+        text += line;
+    }
+    const double total = (double)sPoseTotalNs.load() / 1000.0 / jobs;
+    const double on_update = (double)sPoseOnUpdateNs.load() / 1000.0 / jobs, add = (double)sPoseAddNs.load() / 1000.0 / jobs, blend = (double)sPoseBlendNs.load() / 1000.0 / jobs;
+    LL_INFOS("PoseCensus") << "pose job (finishUpdateMotions) per avatar over " << (U64)jobs << " jobs: " << total << " us in all = onUpdate of the motions " << on_update << " (" << (double)sPoseMotions.load() / jobs << " motions) + addMotion " << add
+        << " + blend " << blend << " + the controller's own part " << (total - on_update - add - blend) << "; by motion class:" << text << LL_ENDL;
+}
+}
+
 //-----------------------------------------------------------------------------
 // updateMotionsByType()
 //-----------------------------------------------------------------------------
@@ -661,7 +740,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
                 // if not, let's stop it this time through and deactivate it the next
 
                 posep->setWeight(motionp->getFadeWeight());
-                motionp->onUpdate(motionp->getStopTime() - motionp->mActivationTimestamp, last_joint_signature);
+                timed_on_update(motionp, motionp->getStopTime() - motionp->mActivationTimestamp, last_joint_signature);
             }
             else
             {
@@ -693,7 +772,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
             }
 
             // perform motion update
-            update_result = motionp->onUpdate(mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+            update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
         }
 
         //**********************
@@ -717,7 +796,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
 
             // perform motion update
             {
-                update_result = motionp->onUpdate(mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+                update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
             }
         }
 
@@ -740,12 +819,12 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
                 posep->setWeight(motionp->getFadeWeight() * motionp->mResidualWeight + (1.f - motionp->mResidualWeight) * cubic_step((mAnimTime - motionp->mActivationTimestamp) / motionp->getEaseInDuration()));
             }
             // perform motion update
-            update_result = motionp->onUpdate(mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+            update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
         }
         else
         {
             posep->setWeight(0.f);
-            update_result = motionp->onUpdate(0.f, last_joint_signature);
+            update_result = timed_on_update(motionp, 0.f, last_joint_signature);
         }
 
         // allow motions to deactivate themselves
@@ -763,7 +842,16 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
         }
 
         // even if onupdate returns false, add this motion in to the blend one last time
-        mPoseBlender.addMotion(motionp);
+        if (pose_census_on())
+        {
+            const U64 t0 = pose_now_ns();
+            mPoseBlender.addMotion(motionp);
+            sPoseAddNs += pose_now_ns() - t0;
+        }
+        else
+        {
+            mPoseBlender.addMotion(motionp);
+        }
     }
 }
 
@@ -917,6 +1005,7 @@ bool LLMotionController::beginUpdateMotions(bool force_update)
 void LLMotionController::finishUpdateMotions()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    const U64 census_t0 = pose_census_on() ? pose_now_ns() : 0;
     const bool use_quantum = (mTimeStep != 0.f);
     mPoseBlender.setFlat(!use_quantum);        // <FS> stage B1: the flat slots serve blendAndApply; the time quantum's cache and interpolation work on the pool
 
@@ -934,10 +1023,23 @@ void LLMotionController::finishUpdateMotions()
     }
     else
     {
+        const U64 blend_t0 = pose_census_on() ? pose_now_ns() : 0;
         mPoseBlender.blendAndApply();
+        if (blend_t0)
+        {
+            sPoseBlendNs += pose_now_ns() - blend_t0;
+        }
     }
 
     mHasRunOnce = true;
+    if (census_t0)
+    {
+        sPoseTotalNs += pose_now_ns() - census_t0;
+        if (++sPoseJobs % 20000 == 0)
+        {
+            pose_census_report();
+        }
+    }
 //  LL_INFOS() << "Motion controller time " << motionTimer.getElapsedTimeF32() << LL_ENDL;
 }
 

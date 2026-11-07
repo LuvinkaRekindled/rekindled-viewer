@@ -6397,7 +6397,7 @@ struct AvImportanceStats
     U32 mLast = 0;
 };
 AvImportanceStats sAvImp;
-std::atomic<U64> sAvImpNs[3][2][4], sAvImpCount[3][2][4];          // [region][kind][class]: time and visits
+std::atomic<U64> sAvImpNs[4][2][4], sAvImpCount[4][2][4];          // [region][kind][class]: time and visits
 std::unordered_map<const LLVOAvatar*, int> sAvImpMap;              // avatar -> kind * 4 + class, set in updateCharacter (the main thread), read after it by the blend jobs and the completion
 std::atomic<U64> sAvPieceNs[8][16], sAvPieceCount[8][16];          // [kind * 4 + class][piece]
 std::atomic<U64> sAvMotionSum[8], sAvMotionCount[8];               // active motions of the controller at the blend job
@@ -6538,9 +6538,9 @@ static void fs_av_importance_ran(int ran)
         LL_INFOS("AvImportance") << "avatar importance class, per frame over " << (U32)frames << " frames (visits of the update loop)" << text << LL_ENDL;
         LL_INFOS("AvImportance") << "today's tests by class (avatars a frame)" << flags << LL_ENDL;
         {
-            static const char* const region_names[3] = { "idleUpdate serial", "pose blend job", "completion" };
+            static const char* const region_names[4] = { "idleUpdate serial", "pose blend job", "completion", "of the job: world walk" };
             std::string cost;
-            for (int r = 0; r < 3; ++r)
+            for (int r = 0; r < 4; ++r)
             {
                 cost += llformat(" | %s:", region_names[r]);
                 for (int k = 0; k < 2; ++k)
@@ -7208,6 +7208,7 @@ void LLVOAvatar::runDeferredMotionBlend()
     sBlendJobAvatar = saved_job_avatar;
     if (mRoot)
     {
+        AvImpTimer imp_world_timer(3, this);        // (region 3: the world matrix walk at the end of the job)
         mRoot->updateWorldMatrixChildren();
     }
 }
