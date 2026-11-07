@@ -354,6 +354,10 @@ public:
     //--------------------------------------------------------------------
 private:
     LLViewerJoint*      mScreenp; // special purpose joint for HUD attachments
+    // <FS> stage C5f (LL_VK_HUDEVENT: 1 default, 0 = every frame as before): the HUD attachments are moved when the screen's aspect or the attachment set changes (and every 240 frames as a safety), not every frame
+    F32                 mHudAspect = -1.f;
+    U32                 mHudRevision = ~0u;
+    U32                 mHudResetFrame = 0;
 
 /**                    Attachments
  **                                                                            **
