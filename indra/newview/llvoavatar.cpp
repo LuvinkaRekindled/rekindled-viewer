@@ -12783,7 +12783,7 @@ struct LLFlatSkeleton
 
 static int fs_skelflat_mode()
 {
-    static const int mode = getenv("LL_VK_SKELFLAT") ? atoi(getenv("LL_VK_SKELFLAT")) : 0;
+    static const int mode = getenv("LL_VK_SKELFLAT") ? atoi(getenv("LL_VK_SKELFLAT")) : 1;       // 1 (default since 2026-11-07: laps sf2 / sf3, palettes bit-equal, the user: looks good) the palettes from the flat array, 0 the old build, 2 both compared
     return mode;
 }
 
