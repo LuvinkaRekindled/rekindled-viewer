@@ -377,6 +377,8 @@ public:
     static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)
     static void     sPalJobWallNsAdd(U64 ns);       // (LL_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();
+    static LLVOAvatar* sAttachmentSelectedAvatar;   // with sAttachmentSelectedForJobs == 1: the avatar the selected attachments belong to (null: not known, every avatar counts as selected)
+    static void     askAttachmentSelection(S32& selected, LLVOAvatar*& avatar);     // main thread: is an attachment (or a HUD object) selected, and whose
     static S32      sAttachmentSelectedForJobs;     // -1: ask the selection manager; 0/1: what the main thread found before the jobs started (getObjectCount() cleans the selection's node list: not for several threads)
     void            runAttachmentJob();
     void            replayAttachmentJob();
@@ -1385,6 +1387,10 @@ public:
     // <FS> true while this avatar's deferred motion update (the batched pose blend, completeDeferredMotionUpdate) has not made its post motion step yet, and that step is going to add the ground sit hover
     // offset to the root (updateCharacterPostMotion): until then the skeleton is one hover offset below where the frame ends
     bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
+    // <FS> the avatar's pose job (blend + world pass) has finished for this frame: its joints hold this frame's pose WITHOUT the ground-sit hover (the post motion step adds it). Before that they still hold last frame's final
+    // value, which has the hover in. An animated object worn by this avatar adds the hover only in the first case (LLControlAvatar::matchVolumeTransform).
+    bool            poseJobDoneThisFrame() const { return mPoseJobFrame.load(std::memory_order_acquire) == (U32)LLFrameTimer::getFrameCount(); }
+    std::atomic<U32> mPoseJobFrame{ ~0u };
     void            sitOnObject(LLViewerObject *sit_object);
     void            getOffObject();
     void            revokePermissionsOnObject(LLViewerObject *sit_object);

@@ -1239,7 +1239,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             {
                 const std::function<void(size_t)> att_job = [](size_t index) { jobs[index]->runAttachmentJob(); };
                 // (asked here, on this thread: getObjectCount() cleans the selection's node list)
-                LLVOAvatar::sAttachmentSelectedForJobs = (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment()) ? 1 : 0;
+                { S32 on = 0; LLVOAvatar* owner = nullptr; LLVOAvatar::askAttachmentSelection(on, owner); LLVOAvatar::sAttachmentSelectedAvatar = owner; LLVOAvatar::sAttachmentSelectedForJobs = on; }
                 { LL_CPU_ZONE("motion batch: attachment jobs (launch to join)"); pool->runLabeled("avatar attachments", jobs.size(), att_job); }
                 LLVOAvatar::sAttachmentSelectedForJobs = -1;
                 job_total += jobs.size();

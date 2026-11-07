@@ -187,7 +187,21 @@ void LLControlAvatar::matchVolumeTransform()
                 }
                 attach->updateWorldPRSParent();
                 LLVector3 joint_pos = attach->getWorldPosition();
-                if (attached_av->hasPendingGroundSitHover())
+                // (LL_VK_HOVERFIX=0: as before, always when the host's motion update is pending) Only when the host's pose job has run this frame: its attachment point then holds this frame's pose without the hover. Before
+                // that it holds last frame's final value, hover included, and adding it again put the animated object one hover offset too high in the frames this call was the last to run.
+                static const bool hover_fix = !getenv("LL_VK_HOVERFIX") || atoi(getenv("LL_VK_HOVERFIX")) != 0;
+                static std::atomic<U64> hover_added{ 0 }, hover_skipped{ 0 };
+                const bool pending = attached_av->hasPendingGroundSitHover();
+                const bool add_hover = pending && (!hover_fix || attached_av->poseJobDoneThisFrame());
+                if (pending)
+                {
+                    (add_hover ? hover_added : hover_skipped)++;
+                    if (((hover_added + hover_skipped) % 20000) == 0)
+                    {
+                        LL_INFOS("HoverFix") << "animated objects worn by a ground-sitting avatar: hover added " << hover_added.load() << ", not added because the host's pose job had not run yet this frame " << hover_skipped.load() << LL_ENDL;
+                    }
+                }
+                if (add_hover)
                 {
                     // <FS> the animated object of an avatar that sits on the ground: this runs in the object loop, before the avatar's deferred motion update has added its hover offset to the root (the post motion
                     // step), so the attachment point is one hover offset too low here. The drawable's own update (LLDrawable::updateXform) reads it again with the offset in, but it does not run in a frame where the
