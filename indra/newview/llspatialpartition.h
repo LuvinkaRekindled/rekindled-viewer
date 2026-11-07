@@ -260,6 +260,30 @@ public:
     };
 };
 
+// <FS> J1 K1 (PLAN-clean-core.md, the J1 research note): the geometric range of a draw, all the LOD caches read of it (the shadow caster LOD and the main view's rigged LOD key on the buffer, the first index,
+// the index count and a level, and read the vertex range to measure): a range of a vertex buffer, whoever holds it. Made from a draw info now, from a fragment item later. mVb null = no range.
+struct GeoRange
+{
+    const LLVertexBuffer* mVb = nullptr;
+    U32 mOffset = 0;        // first index
+    U32 mCount = 0;         // index count
+    U32 mStart = 0;         // first vertex
+    U32 mEnd = 0;           // last vertex
+};
+inline GeoRange ll_geo_range(const LLDrawInfo* p)
+{
+    GeoRange r;
+    if (p && p->mVertexBuffer.notNull())
+    {
+        r.mVb = p->mVertexBuffer.get();
+        r.mOffset = p->mOffset;
+        r.mCount = p->mCount;
+        r.mStart = p->mStart;
+        r.mEnd = p->mEnd;
+    }
+    return r;
+}
+
 class LLSpatialGroup;
 // <FS> C5 J2: one draw of a particle group: a run of rows of the group's row buffer (the GPU particle path, PLAN-gpu-particles.md) with one texture and blend state. A particle group keeps these instead of draw
 // infos: the alpha pass makes its entries from them directly (ll_particle_transient), nothing is allocated per rebuild or classified per draw
