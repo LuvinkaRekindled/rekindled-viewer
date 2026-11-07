@@ -254,7 +254,8 @@ namespace LLVkBridge
         GEO_FULLBRIGHT = 32,        // item D1 (alpha runs): a fullbright alpha draw: the merged lit alpha program (ALPHA_UBER) skips the lighting for it
         GEO_MATERIAL = 64,          // item D2 (alpha runs): a material alpha draw: the merged program (ALPHA_UBER_MAT) shades it as the materials blend shader does
         GEO_NORMAL_MAP = 128,       // ... with a normal map (the row's mapSlots low half)
-        GEO_SPEC_MAP = 256          // ... with a specular map (the row's mapSlots high half)
+        GEO_SPEC_MAP = 256,         // ... with a specular map (the row's mapSlots high half)
+        GEO_DOUBLE_SIDED = 512      // P3: a double sided glTF draw of the table's G-buffer passes: the worker keeps these commands apart (after the single sided ones of the type) and a kind 22 with mFragment = 1 draws them, culling off
     };
     struct GeoEntry
     {

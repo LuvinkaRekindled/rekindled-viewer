@@ -10794,7 +10794,7 @@ static bool scene_gltf_g_entry(const LLDrawInfo& p, bool rigged, const GeoType& 
         textures[k] = nullptr;
     }
     LLFetchedGLTFMaterial* gltf = p.mGLTFMaterial.get();
-    if (!gltf || gltf->mDoubleSided || p.mTextureMatrix || !p.mCount)
+    if (!gltf || p.mTextureMatrix || !p.mCount)
     {
         return false;
     }
@@ -10824,7 +10824,17 @@ static bool scene_gltf_g_entry(const LLDrawInfo& p, bool rigged, const GeoType& 
     values[35] = gltf->mEmissiveColor.mV[1];
     values[36] = gltf->mEmissiveColor.mV[2];
     values[37] = gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? gltf->mAlphaCutoff : -1.f;       // (the minimum alpha, as LLFetchedGLTFMaterial::bind sets it)
+    if (gltf->mDoubleSided)
+    {
+        e.mFlags |= LLVkBridge::GEO_DOUBLE_SIDED;       // P3: a double sided material is a row too: the worker draws these after the single sided ones of the type, with a kind 22 that has culling off
+    }
     return true;
+}
+
+// P3: the pass types that can have double sided rows (the glTF ones): the pass sends a second draw record for them with culling off
+bool ll_scene_geo_type_has_double_sided(int tn)
+{
+    return tn >= 0 && kGeoTypes[(size_t)tn % kGeoTypeCount].mPbr != 0;
 }
 
 static LLGeometryPassInfo geo_pass_info(const GeoType& t)
