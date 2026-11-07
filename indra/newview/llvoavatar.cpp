@@ -3297,8 +3297,28 @@ inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gFSAvTim
 // blend of one avatar (a pool thread), 2 completeDeferredMotionUpdate (the serial completion)
 static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns);
 static bool fs_av_imp_on();
+static void fs_av_piece_time(int slot, const LLVOAvatar* av, U64 ns);
+static void fs_av_imp_motions(const LLVOAvatar* av, size_t motions);
 namespace
 {
+struct AvSelfScope      // (a piece of the avatar update by importance class: the name is from the first cut, which was the own avatar alone)
+{
+    int mSlot;
+    const LLVOAvatar* mAv;
+    bool mOn;
+    std::chrono::steady_clock::time_point mStart;
+    AvSelfScope(int slot, const LLVOAvatar* av) : mSlot(slot), mAv(av), mOn(fs_av_imp_on())
+    {
+        if (mOn) { mStart = std::chrono::steady_clock::now(); }
+    }
+    ~AvSelfScope()
+    {
+        if (mOn)
+        {
+            fs_av_piece_time(mSlot, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
+        }
+    }
+};
 struct AvImpTimer
 {
     int mRegion;
@@ -3519,28 +3539,33 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
     LLVector3 hud_name_pos;
     {
         AvScope s(AV_PC_NAMEPOS);
+        AvSelfScope self_scope(3, this);
         LL_CPU_ZONE("av post: name tag position");
         hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
     }
 
     {
         AvScope s(AV_PC_VOICEVIS);
+        AvSelfScope self_scope(4, this);
         LL_CPU_ZONE("av post: voice visualizer");
         idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
     }
     {
         AvScope s(AV_PC_MISC);
+        AvSelfScope self_scope(5, this);
         LL_CPU_ZONE("av post: idleUpdateMisc (attachment replay, matrices)");
         idleUpdateMisc( detailed_update );
     }
     {
         AvScope s(AV_PC_APPEARANCE);
+        AvSelfScope self_scope(9, this);
         LL_CPU_ZONE("av post: appearance animation");
         idleUpdateAppearanceAnimation();
     }
     if (detailed_update)
     {
         AvScope s(AV_PC_DETAILED);
+        AvSelfScope self_scope(10, this);
         LL_CPU_ZONE("av post: lipsync, loading, water, wind");
         idleUpdateLipSync( voice_enabled );
         idleUpdateLoadingEffect();
@@ -3550,6 +3575,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
 
     {
         AvScope s(AV_PC_NAMETAG);
+        AvSelfScope self_scope(11, this);
         LL_CPU_ZONE("av post: name tag");
         idleUpdateNameTag(hud_name_pos);
     }
@@ -3588,10 +3614,12 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         // Avatar profile takes ~ 0.5ms while idleUpdateRenderComplexity takes ~5ms
         // (both are unacceptably costly)
         AvScope s(AV_PC_COMPLEXITY);
+        AvSelfScope self_scope(12, this);
         idleUpdateRenderComplexity();
     }
     {
         AvScope s(AV_PC_DEBUGINFO);
+        AvSelfScope self_scope(13, this);
         idleUpdateDebugInfo();
     }
 }
@@ -4159,6 +4187,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     // update attachments positions
     if (detailed_update)
     {
+        AvSelfScope self_scope(6, this);
         if (mAttJobDone)
         {
             replayAttachmentJob();      // <FS> A2: the loop ran as a pool job, its writes are made now
@@ -4185,6 +4214,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 
     if (isImpostor() && !mNeedsImpostorUpdate)
     {
+        AvSelfScope self_scope(7, this);
         LL_ALIGN_16(LLVector4a ext[2]);
         F32 distance;
         LLVector3 angle;
@@ -4242,6 +4272,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 
     if (mDrawable.notNull())
     {
+        AvSelfScope self_scope(8, this);
         mDrawable->movePartition();
 
         //force a move if sitting on an active object
@@ -6352,6 +6383,30 @@ struct AvImportanceStats
 AvImportanceStats sAvImp;
 std::atomic<U64> sAvImpNs[3][2][4], sAvImpCount[3][2][4];          // [region][kind][class]: time and visits
 std::unordered_map<const LLVOAvatar*, int> sAvImpMap;              // avatar -> kind * 4 + class, set in updateCharacter (the main thread), read after it by the blend jobs and the completion
+std::atomic<U64> sAvPieceNs[8][16], sAvPieceCount[8][16];          // [kind * 4 + class][piece]
+std::atomic<U64> sAvMotionSum[8], sAvMotionCount[8];               // active motions of the controller at the blend job
+}
+
+static void fs_av_piece_time(int slot, const LLVOAvatar* av, U64 ns)
+{
+    auto found = sAvImpMap.find(av);
+    if (found == sAvImpMap.end())
+    {
+        return;
+    }
+    sAvPieceNs[found->second][slot].fetch_add(ns, std::memory_order_relaxed);
+    sAvPieceCount[found->second][slot].fetch_add(1, std::memory_order_relaxed);
+}
+
+static void fs_av_imp_motions(const LLVOAvatar* av, size_t motions)
+{
+    auto found = sAvImpMap.find(av);
+    if (found == sAvImpMap.end())
+    {
+        return;
+    }
+    sAvMotionSum[found->second].fetch_add(motions, std::memory_order_relaxed);
+    sAvMotionCount[found->second].fetch_add(1, std::memory_order_relaxed);
 }
 
 static bool fs_av_imp_on()
@@ -6485,6 +6540,26 @@ static void fs_av_importance_ran(int ran)
                 }
             }
             LL_INFOS("AvImportance") << "cost by class, ms a frame (us an avatar x avatars a frame)" << cost << LL_ENDL;
+            static const char* const self_names[14] = { "flush stop requests", "updateCharacterPostMotion", "idleUpdatePostCharacter (all)", "name tag position", "voice visualizer", "idleUpdateMisc (all)",
+                                                        "attachments (replay / loop)", "impostor checks", "movePartition", "appearance animation", "lipsync / loading / water / wind", "name tag", "render complexity", "debug info" };
+            for (int kc = 0; kc < 8; ++kc)
+            {
+                std::string own;
+                for (int n = 0; n < 14; ++n)
+                {
+                    const U64 c = sAvPieceCount[kc][n].exchange(0), ns = sAvPieceNs[kc][n].exchange(0);
+                    if (c)
+                    {
+                        own += llformat(" | %s %.3f ms (%.1f us x %.2f)", self_names[n], (double)ns / frames / 1.0e6, (double)ns / c / 1000.0, c / frames);
+                    }
+                }
+                const U64 mc = sAvMotionCount[kc].exchange(0), ms = sAvMotionSum[kc].exchange(0);
+                if (!own.empty() || mc)
+                {
+                    LL_INFOS("AvImportance") << "pieces of the update, " << (kc / 4 ? "animesh / control / UI " : "avatars ") << cls[kc % 4] << " (ms a frame, us each, visits a frame; the pieces nest as the names say)" << own
+                        << " | active motions at the blend " << (mc ? (double)ms / mc : 0.0) << " (" << mc / frames << " blends a frame)" << LL_ENDL;
+                }
+            }
         }
         memset(&sAvImp.mRan, 0, sizeof(sAvImp.mRan));
         memset(&sAvImp.mFlag, 0, sizeof(sAvImp.mFlag));
@@ -6826,6 +6901,10 @@ void LLVOAvatar::cleanJointMatrices()
 void LLVOAvatar::runDeferredMotionBlend()
 {
     AvImpTimer imp_blend_timer(1, this);
+    if (fs_av_imp_on())
+    {
+        fs_av_imp_motions(this, mMotionController.getActiveMotions().size());
+    }
     if (mDeferredMatricesOnly)
     {
         if (mRoot)
@@ -6862,10 +6941,10 @@ void LLVOAvatar::completeDeferredMotionUpdate()
 
     AvScope done_scope(AV_DEFERRED_DONE);
     AvImpTimer imp_done_timer(2, this);
-    flushDeferredStopRequests();        // <FS> stage d: the motions the own avatar's blend stopped
+    { AvSelfScope self_scope(0, this); flushDeferredStopRequests(); }        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
-    { LL_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
-    idleUpdatePostCharacter(mDeferredDetailedUpdate);
+    { AvSelfScope self_scope(1, this); LL_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
+    { AvSelfScope self_scope(2, this); idleUpdatePostCharacter(mDeferredDetailedUpdate); }
 }
 
 //-----------------------------------------------------------------------------
