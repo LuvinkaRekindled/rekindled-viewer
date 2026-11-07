@@ -5543,7 +5543,7 @@ void LLVOVolume::clearRiggedVolume()
     }
 }
 
-void LLVOVolume::updateRiggedVolume(bool force_treat_as_rigged, LLRiggedVolume::FaceIndex face_index, bool rebuild_face_octrees)
+void LLVOVolume::updateRiggedVolume(bool force_treat_as_rigged, LLRiggedVolume::FaceIndex face_index, bool rebuild_face_octrees, bool skip_if_unchanged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
     //Update mRiggedVolume to match current animation frame of avatar.
@@ -5578,7 +5578,7 @@ void LLVOVolume::updateRiggedVolume(bool force_treat_as_rigged, LLRiggedVolume::
         updateRelativeXform();
     }
 
-    mRiggedVolume->update(skin, avatar, volume, face_index, rebuild_face_octrees);
+    mRiggedVolume->update(skin, avatar, volume, face_index, rebuild_face_octrees, skip_if_unchanged);
 }
 
 void LLRiggedVolume::update(
@@ -5586,7 +5586,8 @@ void LLRiggedVolume::update(
     LLVOAvatar* avatar,
     const LLVolume* volume,
     FaceIndex face_index,
-    bool rebuild_face_octrees)
+    bool rebuild_face_octrees,
+    bool skip_if_unchanged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
     bool copy = false;
@@ -5632,6 +5633,30 @@ void LLRiggedVolume::update(
     U32 maxJoints = LLSkinningUtil::getMeshJointCount(skin);
     LLSkinningUtil::initSkinningMatrixPalette(mat, maxJoints, skin, avatar);
     const LLMatrix4a bind_shape_matrix = skin->mBindShapeMatrix;
+
+    // <FS> (LL_VK_RIGGED_SKIP=0: off) the caller asked to skip when nothing changed: the same joint matrices, skin, source volume, faces and octree request as the last such call give the same positions, extents
+    // and octrees, so the skinning of every vertex (and the octree rebuild) is not done again. Any other kind of update makes the key unknown. The selection outline of a worn mesh calls it every frame.
+    static const bool skip_on = !getenv("LL_VK_RIGGED_SKIP") || atoi(getenv("LL_VK_RIGGED_SKIP")) != 0;
+    if (skip_if_unchanged && skip_on)
+    {
+        const size_t bytes = (size_t)maxJoints * sizeof(LLMatrix4a);
+        if (!copy && mPaletteKeyValid && mPaletteSkin == skin && mPaletteSrc == volume && mPaletteFace == face_index && mPaletteOctrees == rebuild_face_octrees
+            && mPalette.size() == bytes && memcmp(mPalette.data(), mat, bytes) == 0)
+        {
+            return;
+        }
+        mPalette.assign((const char*)mat, (const char*)mat + bytes);
+        mPaletteSkin = skin;
+        mPaletteSrc = volume;
+        mPaletteFace = face_index;
+        mPaletteOctrees = rebuild_face_octrees;
+        mPaletteKeyValid = true;
+    }
+    else
+    {
+        mPaletteKeyValid = false;
+    }
+    ++mSkinSerial;
 
     S32 rigged_vert_count = 0;
     S32 rigged_face_count = 0;

@@ -38,6 +38,7 @@ static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetab
 #include <atomic>
 #include <mutex>
 #include <set>
+#include <unordered_map>
 #include "lljoint.h"      // <FS> the joints' dirty flags (gFSTexPreDirtyReads)
 #include "m3math.h"
 #include "llmatrix4a.h"
@@ -70,6 +71,7 @@ static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetab
 // [/RLVa:KB]
 #include "llperfstats.h"
 #include "llvktexanim.h"
+#include "llgpuzonetimer.h"
 
 #if LL_LINUX
 // Work-around spurious used before init warning on Vector4a
@@ -673,6 +675,23 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
 }
 
 
+// <FS> The selection's wireframe of a mesh draws the volume face's CPU arrays. Through the immediate mode that is one call per index and a flush every 2048 vertices: for a worn body mesh about 1.5 ms a frame on the main
+// thread (a hundred draws), for as long as it is selected, and the arrays do not change while it is selected. A face's positions and indices are copied into a vertex buffer once and the buffer is drawn in one call;
+// it is made again when the face's arrays, counts or (for a rigged volume) the count of skinning updates change. LL_VK_SELWIRE=0: the immediate mode as before. Main thread only.
+namespace
+{
+struct SelWire
+{
+    LLPointer<LLVertexBuffer> mBuf;
+    const void* mPos = nullptr;
+    const void* mIdx = nullptr;
+    S32 mVerts = 0, mIndices = 0;
+    U32 mSerial = 0, mUsed = 0;
+};
+std::unordered_map<const LLVolumeFace*, SelWire> sSelWire;
+U32 sSelWireSweep = 0;
+}
+
 void renderFace(LLDrawable* drawable, LLFace *face)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;
@@ -681,10 +700,13 @@ void renderFace(LLDrawable* drawable, LLFace *face)
     if (vobj)
     {
         LLVolume* volume = NULL;
+        U32 serial = 0;
 
         if (drawable->isState(LLDrawable::RIGGED))
         {
-            volume = vobj->getRiggedVolume();
+            LLRiggedVolume* rigged = vobj->getRiggedVolume();
+            volume = rigged;
+            serial = rigged ? rigged->mSkinSerial : 0;
         }
         else
         {
@@ -694,6 +716,66 @@ void renderFace(LLDrawable* drawable, LLFace *face)
         if (volume)
         {
             const LLVolumeFace& vol_face = volume->getVolumeFace(face->getTEOffset());
+            static const bool wire_cache = !getenv("LL_VK_SELWIRE") || atoi(getenv("LL_VK_SELWIRE")) != 0;
+            if (wire_cache && vol_face.mPositions && vol_face.mIndices && vol_face.mNumVertices > 0 && vol_face.mNumIndices > 0 && (!vobj->isSculpted() || vobj->isMesh()) && !vobj->isFlexible())
+            {
+                const U32 frame = LLFrameTimer::getFrameCount();
+                if (frame - sSelWireSweep >= 120)
+                {
+                    for (auto it = sSelWire.begin(); it != sSelWire.end();)
+                    {
+                        it = (frame - it->second.mUsed >= 120) ? sSelWire.erase(it) : std::next(it);        // (not drawn for two seconds: the selection moved on)
+                    }
+                    sSelWireSweep = frame;
+                }
+                SelWire& w = sSelWire[&vol_face];
+                static U64 wire_calls = 0, wire_new = 0, wire_ptr = 0, wire_count = 0, wire_serial = 0, wire_verts = 0, wire_tris = 0;
+                ++wire_calls;
+                if (w.mBuf.isNull() || w.mPos != vol_face.mPositions || w.mIdx != vol_face.mIndices || w.mVerts != vol_face.mNumVertices || w.mIndices != vol_face.mNumIndices || w.mSerial != serial)
+                {
+                    wire_new += w.mBuf.isNull();
+                    wire_ptr += !w.mBuf.isNull() && (w.mPos != vol_face.mPositions || w.mIdx != vol_face.mIndices);
+                    wire_count += !w.mBuf.isNull() && (w.mVerts != vol_face.mNumVertices || w.mIndices != vol_face.mNumIndices);
+                    wire_serial += !w.mBuf.isNull() && w.mSerial != serial;
+                    wire_verts += vol_face.mNumVertices;
+                    LL_CPU_ZONE("selection: wireframe buffer build");
+                    w.mBuf = nullptr;
+                    LLPointer<LLVertexBuffer> buf = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX);
+                    LLStrider<LLVector3> verts;
+                    LLStrider<U16> indices;
+                    if (buf->allocateBuffer(vol_face.mNumVertices, vol_face.mNumIndices) && buf->getVertexStrider(verts) && buf->getIndexStrider(indices))
+                    {
+                        for (S32 i = 0; i < vol_face.mNumVertices; ++i)
+                        {
+                            verts[i].set(vol_face.mPositions[i].getF32ptr());
+                        }
+                        memcpy(indices.get(), vol_face.mIndices, sizeof(U16) * (size_t)vol_face.mNumIndices);
+                        buf->unmapBuffer();
+                        w.mBuf = buf;
+                    }
+                    w.mPos = vol_face.mPositions;
+                    w.mIdx = vol_face.mIndices;
+                    w.mVerts = vol_face.mNumVertices;
+                    w.mIndices = vol_face.mNumIndices;
+                    w.mSerial = serial;
+                }
+                w.mUsed = frame;
+                wire_tris += vol_face.mNumIndices / 3;
+                if ((wire_calls % 2000) == 0)
+                {
+                    LL_INFOS("SelWire") << "selection wireframe faces drawn " << wire_calls << ": buffer made new " << wire_new << ", again because the arrays moved " << wire_ptr << ", the counts changed " << wire_count << ", the skinning serial changed " << wire_serial
+                        << "; vertices copied " << wire_verts << ", triangles drawn " << wire_tris << LL_ENDL;
+                }
+                if (w.mBuf.notNull())
+                {
+                    LL_CPU_ZONE("selection: wireframe buffer draw");
+                    gRender.syncMatrices();
+                    w.mBuf->setBuffer();
+                    w.mBuf->drawRange(LLRender::TRIANGLES, 0, vol_face.mNumVertices - 1, vol_face.mNumIndices, 0);
+                    LLVertexBuffer::unbind();
+                    return;
+                }
+            }
             LLVertexBuffer::drawElements(LLRender::TRIANGLES, vol_face.mPositions, NULL, vol_face.mNumIndices, vol_face.mIndices);
         }
     }

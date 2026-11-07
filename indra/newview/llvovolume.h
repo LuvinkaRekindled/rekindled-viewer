@@ -75,9 +75,19 @@ public:
         LLVOAvatar* avatar,
         const LLVolume* src_volume,
         FaceIndex face_index = UPDATE_ALL_FACES,
-        bool rebuild_face_octrees = true);
+        bool rebuild_face_octrees = true,
+        bool skip_if_unchanged = false);
 
     std::string mExtraDebugText;
+
+    // <FS> what the last update with skip_if_unchanged was made from: the joint matrices (as bytes), the skin, the source volume, the faces and octree request. The same again = the same positions, so nothing to do.
+    bool                mPaletteKeyValid = false;
+    const void*         mPaletteSkin = nullptr;
+    const void*         mPaletteSrc = nullptr;
+    FaceIndex           mPaletteFace = UPDATE_ALL_FACES;
+    bool                mPaletteOctrees = true;
+    std::vector<char>   mPalette;
+    U32                 mSkinSerial = 0;        // <FS> counts the updates that skinned the vertices: a cached copy of the positions (the selection's wireframe) is current while it is the same
 };
 
 // Base class for implementations of the volume - Primitive, Flexible Object, etc.
@@ -418,7 +428,8 @@ public:
     void updateRiggedVolume(
         bool force_treat_as_rigged,
         LLRiggedVolume::FaceIndex face_index = LLRiggedVolume::UPDATE_ALL_FACES,
-        bool rebuild_face_octrees = true);
+        bool rebuild_face_octrees = true,
+        bool skip_if_unchanged = false);
     LLRiggedVolume* getRiggedVolume();
 
     //returns true if volume should be treated as a rigged volume

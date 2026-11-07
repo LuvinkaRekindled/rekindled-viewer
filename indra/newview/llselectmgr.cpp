@@ -29,6 +29,7 @@
 // file include
 #define LLSELECTMGR_CPP
 #include "llselectmgr.h"
+#include "llgpuzonetimer.h"
 #include "llmaterialmgr.h"
 
 // library includes
@@ -6889,18 +6890,22 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
             if (objectp->mDrawable->isState(LLDrawable::RIGGED))
             {
-                vobj->updateRiggedVolume(true);
+                LL_CPU_ZONE("selection: rigged volume update");
+                vobj->updateRiggedVolume(true, LLRiggedVolume::UPDATE_ALL_FACES, true, true);       // <FS> (skipped while the joint matrices are the same as the last call's)
             }
         }
 
         gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
 
         S32 num_tes = llmin((S32)objectp->getNumTEs(), (S32)objectp->getNumFaces()); // avatars have TEs but no faces
-        for (S32 te = 0; te < num_tes; ++te)
         {
-            if (node->isTESelected(te))
+            LL_CPU_ZONE("selection: mesh wireframe faces");
+            for (S32 te = 0; te < num_tes; ++te)
             {
-                objectp->mDrawable->getFace(te)->renderOneWireframe(hlColor, fogCfx, wireframe_selection, bRenderHidenSelection, nullptr != shader);
+                if (node->isTESelected(te))
+                {
+                    objectp->mDrawable->getFace(te)->renderOneWireframe(hlColor, fogCfx, wireframe_selection, bRenderHidenSelection, nullptr != shader);
+                }
             }
         }
 
