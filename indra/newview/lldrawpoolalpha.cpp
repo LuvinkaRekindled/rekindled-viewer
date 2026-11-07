@@ -613,7 +613,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
     const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && !(LLPipeline::sRenderingHUDs && rigged);
     struct PendingRange { U32 mHandle, mFirst, mCount; };
-    struct PendingSrc { const LLDrawInfo* const* mInfo; const U32* mWire; U32 mRank, mCount, mHandle; };       // (S5d: where the items of a rigged range are, for their palette bindings)
+    struct PendingSrc { const LLDrawInfo* const* mInfo; const U32* mWire; U32 mRank, mCount, mHandle; U32* mBound = nullptr; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
     static thread_local std::vector<PendingSrc> pending_src;
     pending.clear();
@@ -875,6 +875,12 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (item E: the simplified list of the item this frame, 0 = its own)
             static thread_local std::vector<Binding> bindings;
             bindings.clear();
+            // <FS> P2 step 2: the binding of a rigged alpha item (palette id, joints, simplified list) is persistent at the worker (the kind 21 record says so): only the ones that changed are sent, the worker
+            // resolves the palettes of the run's items itself when the run is named
+            extern bool ll_geo_persist();
+            extern U32 ll_geo_rebind_epoch();
+            const bool persist = ll_geo_persist();
+            const U32 epoch = ll_geo_rebind_epoch();
             LLVOAvatar* last_avatar = nullptr;
             const LLMeshSkinInfo* last_skin = nullptr;
             U32 last_offset = ~0u, last_joints = 0;
@@ -906,15 +912,31 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     {
                         rigged_lod_for(info, lod_ib, lod_count);
                     }
+                    if (persist && src.mBound)
+                    {
+                        U32* bound = src.mBound + 5 * (size_t)(src.mRank + k);
+                        if (bound[0] == epoch && bound[1] == last_offset && bound[2] == last_joints && bound[3] == lod_ib && bound[4] == lod_count)
+                        {
+                            continue;
+                        }
+                        bound[0] = epoch;
+                        bound[1] = last_offset;
+                        bound[2] = last_joints;
+                        bound[3] = lod_ib;
+                        bound[4] = lod_count;
+                    }
                     bindings.push_back({ src.mHandle, src.mWire[src.mRank + k], last_offset, last_joints, lod_ib, lod_count });
                 }
             }
             ll_frame_palette_flush();
-            LLVkBridge::ShadowPacketsHeader palette_header;
-            palette_header.mKind = 31;
-            palette_header.mEntries = (U32)bindings.size();
-            LLVkBridge::shadowPackets(palette_header, bindings.data(), bindings.size() * sizeof(Binding));
-            sAlphaScene.mBytes += bindings.size() * sizeof(Binding);
+            if (!persist || !bindings.empty())
+            {
+                LLVkBridge::ShadowPacketsHeader palette_header;
+                palette_header.mKind = 31;
+                palette_header.mEntries = (U32)bindings.size();
+                LLVkBridge::shadowPackets(palette_header, bindings.data(), bindings.size() * sizeof(Binding));
+                sAlphaScene.mBytes += bindings.size() * sizeof(Binding);
+            }
         }
         LLVkBridge::ShadowPacketsHeader header;
         header.mKind = 29;
@@ -937,7 +959,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending.push_back({ pv.mHandle, seg.mRank, seg.mCount });
         if (rigged)
         {
-            pending_src.push_back({ pv.mItemInfo, pv.mItemWire, seg.mRank, seg.mCount, pv.mHandle });
+            pending_src.push_back({ pv.mItemInfo, pv.mItemWire, seg.mRank, seg.mCount, pv.mHandle, pv.mItemBound });
         }
     };
     // S5e: a served draw with a glow buffer: into the group's glow ranges when the table draws its glow (true); false when its class has no glow pull program (no glow is drawn for it)
@@ -959,7 +981,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         else
         {
             r.push_back({ pv.mHandle, rank, 1 });
-            src.push_back({ pv.mItemInfo, pv.mItemWire, rank, 1, pv.mHandle });
+            src.push_back({ pv.mItemInfo, pv.mItemWire, rank, 1, pv.mHandle, pv.mItemBound });
         }
         ++sAlphaScene.mGlowServed;
         return true;

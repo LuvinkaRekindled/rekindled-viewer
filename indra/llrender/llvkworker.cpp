@@ -7703,6 +7703,8 @@ static struct GeoState
     std::vector<GeoFrag*> mBy;                          // by the viewer's dense handle
     std::unordered_multimap<U32, U32> mByBuf;           // buffer name -> handle of a fragment that reads it
     U64 mPreparedFrame = ~0ull;
+    U32 mViewerFrame = ~0u;             // P2: the viewer frame of the last kind 21 (the frame whose palette table the persistent bindings are resolved in)
+    bool mPersist = false;              // P2: the viewer sends persistent bindings (kind 21's mFragment == 1): the opaque ones are resolved at kind 21, the alpha ones when a run is named (kind 29)
     Renderer::ScratchAlloc mCommands;
     U32 mFirst[kGeoTypes] = {}, mCount[kGeoTypes] = {};
     // S4 B: the frame's rigged draws by rigged type: a run = the commands of one buffer pair of one fragment (index buffer bound, one indirect indexed draw)
@@ -8611,6 +8613,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     // the frame's table: h.mPass is the viewer frame whose pairs it must be); else it carries all of them as offsets and the items without one are unbound first. Then every rigged item of a listed fragment gets
     // the row's palette address and joints and the command's count (an item without a palette in this frame's table draws nothing)
     const bool persist = h.mFragment == 1;
+    sGeo.mPersist = persist;
+    sGeo.mViewerFrame = h.mPass;
     if (!persist)
     {
         for (GeoFrag* f : listed)
@@ -9191,6 +9195,43 @@ static bool alpha_rows_reserve(Renderer& r, U32 rows, U32& base, Renderer::Scrat
     return true;
 }
 
+// <FS> P2 step 2: the rigged alpha items of a run (commands first .. first + count of the fragment): each item's persistent binding is resolved in this frame's palette table, its row gets the palette address and
+// joints, its command the count and its simplified list (an item without a palette in the table draws nothing)
+static void geo_alpha_resolve(GeoFrag& f, U32 first, U32 count)
+{
+    if (f.mARLodIb.size() != f.mARCmds.size())
+    {
+        f.mARLodIb.assign(f.mARCmds.size(), 0);
+        f.mARLodCount.assign(f.mARCmds.size(), 0);
+    }
+    const bool table_is_this_frame = gFrameState.mPalFrame == sGeo.mViewerFrame && gFrameState.mPalIdFrame == sGeo.mViewerFrame;
+    for (U32 c = first; c < first + count && c < f.mARCmds.size(); ++c)
+    {
+        const U32 item = f.mARItem[c];
+        const U32 id = f.mRItemId[item];
+        f.mARLodIb[c] = f.mRItemLodIb[item];
+        f.mARLodCount[c] = f.mRItemLodCount[item];
+        const U64 pal = (id != ~0u && table_is_this_frame) ? palette_id_address(id) : 0;
+        if (pal)
+        {
+            const U32 joints = f.mRItemJoints[item];
+            GeoGpuG& row = sGeo.mT[f.mSlots[item]];
+            f.mPalAddr[item] = pal;
+            f.mPalJoints[item] = joints;
+            row.mPalette[0] = (U32)pal;
+            row.mPalette[1] = (U32)(pal >> 32);
+            row.mJoints = joints;
+            GeoGpuG& cpu_row = sGeo.mTCpu[f.mSlots[item]];
+            cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+            f.mARCmds[c].indexCount = f.mARCount0[c];
+        }
+        else
+        {
+            f.mARCmds[c].indexCount = 0;
+        }
+    }
+}
+
 void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
@@ -9329,6 +9370,10 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             continue;
         }
         rg.mCount = std::min<U32>(rg.mCount, (U32)(avail - rg.mFirst));
+        if (rigged_run && sGeo.mPersist)
+        {
+            geo_alpha_resolve(*f, rg.mFirst, rg.mCount);
+        }
         todo.push_back({ f, rg });
         total += rg.mCount;
     }
@@ -9656,10 +9701,32 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
 {
     if (!sGeo.mReady || sGeo.mPreparedFrame != Context::instance().getFrameNumber())
     {
+        if (sGeo.mPersist)
+        {
+            ++LLVkBridge::sGeoPrepareDropped;       // P2: the changes in this record are lost: the viewer sends every binding again
+        }
         return;
     }
     struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)blob;
+    if (sGeo.mPersist)
+    {
+        // P2 step 2: the changes of the persistent bindings of the rigged alpha items (resolved when a run names them, geo_alpha_resolve)
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            const Binding& b = bindings[i];
+            GeoFrag* f = geo_find(b.mHandle);
+            if (!f || b.mItem >= f->mItems.size() || b.mItem >= f->mARItemCmd.size() || f->mARItemCmd[b.mItem] == ~0u)
+            {
+                continue;
+            }
+            f->mRItemId[b.mItem] = b.mOffset;
+            f->mRItemJoints[b.mItem] = b.mJoints;
+            f->mRItemLodIb[b.mItem] = b.mLodIb;
+            f->mRItemLodCount[b.mItem] = b.mLodCount;
+        }
+        return;
+    }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const Binding& b = bindings[i];
