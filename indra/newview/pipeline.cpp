@@ -10397,6 +10397,7 @@ struct LLSceneFragment
         std::vector<GeoItem> mItems;                    // the served draws as table items, in plan order
         std::vector<const LLDrawInfo*> mItemInfo;       // (their draw infos and wire numbers, by rank, for the view)
         std::vector<U32> mItemWire;
+        std::vector<U32> mBound;                        // P2: 5 U32 per item: the binding the worker holds (see LLAlphaPlanView::mItemBound); epoch 0 = none
         std::vector<AlphaPbr> mPbr;
         std::vector<U32> mGlowIdx;                      // plan indices of the served draws with a glow buffer
         bool mGlow = false, mDirect = false;
@@ -10904,6 +10905,8 @@ static bool geo_persist_on()
     static const bool on = (getenv("LL_VK_GEOPERSIST") ? atoi(getenv("LL_VK_GEOPERSIST")) != 0 : true) && ll_palette_ids_on();
     return on;
 }
+bool ll_geo_persist() { return geo_persist_on(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
+U32 ll_geo_rebind_epoch() { return sRebindEpoch; }
 // S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
 struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (mLodIb, mLodCount: the simplified index list the viewer chose for the item this frame, 0 = its own; made on the main thread, scene_geo_rigged_lod)
 // (plain pointers: the job must never hold the last reference of an avatar, a destructor on a pool thread; they stay valid until the end of the display, where the job is waited for: ll_scene_geo_frame_end)
@@ -11650,6 +11653,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         ps.mItemInfo.push_back(gi.mInfo);
     }
     ps.mItemWire.assign(ps.mItems.size(), 0);
+    ps.mBound.assign(ps.mItems.size() * 5, 0);
     sAlphaPlanSegs += ps.mPlan.size();
     ++sAlphaPlanBuilds;
     sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
@@ -11718,6 +11722,7 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
     out.mGlow = ps.mGlow;
     out.mItemInfo = ps.mItemInfo.data();
     out.mItemWire = ps.mItemWire.data();
+    out.mItemBound = const_cast<U32*>(ps.mBound.data());
     out.mHandle = f->mGeoHandle;
     out.mDirect = ps.mDirect;
     out.mGlowIdx = ps.mGlowIdx.data();
@@ -12019,6 +12024,10 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     for (LLSceneFragment::GeoItem& it : f->mGeo)
     {
         it.mBoundEpoch = 0;     // P2: the worker has a new copy of the fragment: none of its rigged items has a binding there
+    }
+    for (LLSceneFragment::AlphaSet& ps : f->mAlphaSet)
+    {
+        std::fill(ps.mBound.begin(), ps.mBound.end(), 0u);
     }
     group->mGeoHandle = handle;
     group->mGeoServedMask = f->mGeoServedMask;

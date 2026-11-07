@@ -110,6 +110,7 @@ struct LLAlphaPlanView
     const U32* mGlowIdx = nullptr;      // the plan indices of the served draws that have a glow buffer, ascending
     const class LLDrawInfo* const* mItemInfo = nullptr;     // S5d: per served item (by rank): its draw info and its number in the fragment's wire list (the palette bindings of the rigged items name it)
     const U32* mItemWire = nullptr;
+    U32* mItemBound = nullptr;  // P2: per served item (by rank), 5 U32: the binding the worker holds (epoch, palette id, joints, simplified list, its count); the rigged alpha runs send only what changed
     U32 mGlowCount = 0;
     bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
 };
