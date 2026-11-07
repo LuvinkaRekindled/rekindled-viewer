@@ -964,6 +964,11 @@ void ll_palette_id_free(U32 id)
     ids.mFree.push_back(index);
 }
 
+bool ll_palette_ids_on()
+{
+    return palette_id_mode() != 0;
+}
+
 // the id of a palette entry (made on first use; two threads that race give one of the two back)
 static U32 palette_id_of(std::atomic<U32>& cell)
 {

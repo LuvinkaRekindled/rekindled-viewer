@@ -4417,6 +4417,25 @@ static U64 palette_address(U32 value)
     return 0;
 }
 
+// an id's address in this frame's table; 0 = not there (the frame's pairs did not name it)
+static U64 palette_id_address(U32 id)
+{
+    if (gFrameState.mPalIdFrame != gFrameState.mPalFrame)
+    {
+        return 0;
+    }
+    const U32 index = id & 0xFFFFFFu;
+    if (index < gFrameState.mPalIds.size())
+    {
+        const PalIdSlot& s = gFrameState.mPalIds[index];
+        if (s.mId == id && s.mFrame == gFrameState.mPalFrame && s.mAddress)
+        {
+            return s.mAddress;
+        }
+    }
+    return 0;
+}
+
 // <FS> P1 step 3: kind 40: the palettes the viewer stamped into the frame's list, as (id, float offset) pairs (mEntries of them in the blob); each offset is resolved to an address now, the records that follow name the palette by its id
 static void on_palette_ids(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -7642,6 +7661,9 @@ struct GeoFrag
     U32 mMaxModel = 0;                          // the highest matrix slot its items name: the pass matrices must cover it whether or not the viewer sent that slot this frame (a fragment released by the viewer during the frame is still listed: an item must never index past the matrix scratch)
     std::vector<U64> mPalAddr;                  // per item: the palette address last bound (0: never): an item draws only with one
     std::vector<U32> mPalJoints;
+    // <FS> P2: the persistent binding of each rigged item (per item, so a rebuild keeps it): its palette id (~0u: none), joints and the simplified list the viewer chose; the viewer sends changes
+    std::vector<U32> mRItemId, mRItemJoints, mRItemLodIb, mRItemLodCount;
+    std::vector<U32> mRItems;                   // the items that have a rigged command, in command order
     bool mDirtyPairs = true, mDirtyEntries = true;
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
@@ -7892,6 +7914,10 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     f->mItems.assign(items, items + h.mEntries);
     f->mPalAddr.assign(h.mEntries, 0);
     f->mPalJoints.assign(h.mEntries, 0);
+    f->mRItemId.assign(h.mEntries, ~0u);
+    f->mRItemJoints.assign(h.mEntries, 0);
+    f->mRItemLodIb.assign(h.mEntries, 0);
+    f->mRItemLodCount.assign(h.mEntries, 0);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
@@ -8226,6 +8252,7 @@ void geo_build_commands(GeoFrag& f)
     f.mRCount0.clear();
     f.mRRuns.clear();
     f.mRItemCmd.assign(f.mItems.size(), ~0u);
+    f.mRItems.clear();
     for (U32 rt = 0; rt < kGeoTypes; ++rt)
     {
         f.mRTypeFirst[rt] = (U32)f.mRRuns.size();
@@ -8237,6 +8264,7 @@ void geo_build_commands(GeoFrag& f)
                 if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && geo_item_ok(f, i))
                 {
                     f.mRItemCmd[i] = (U32)f.mRCmds.size();
+                    f.mRItems.push_back((U32)i);
                     f.mRCmds.push_back({ f.mPalAddr[i] ? f.mItems[i].mE.mIndexCount : 0u, 1u, f.mItems[i].mE.mFirstIndex, 0, f.mSlots[i] });
                     f.mRCount0.push_back(f.mItems[i].mE.mIndexCount);
                 }
@@ -8485,11 +8513,13 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!geo_init())
     {
+        ++LLVkBridge::sGeoPrepareDropped;
         return;
     }
     if (!LLVkBridge::inFrame())
     {
         ++sGeo.mS.mNotInFrame;
+        ++LLVkBridge::sGeoPrepareDropped;       // P2: the viewer sends the persistent bindings again
         return;
     }
     const bool timed = geo_timed();
@@ -8563,10 +8593,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         f->mListedFrame = frame_now;
         sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, 2047u));
-        for (VkDrawIndexedIndirectCommand& c : f->mRCmds)
-        {
-            c.indexCount = 0;           // S4 B: a rigged item draws only when the viewer bound a palette for it in THIS frame (below): one that was not (its fragment replaced during the frame, ...) would use a palette address of an older frame
-        }
+        // (S4 B: a rigged item draws only with a palette of THIS frame's table: every rigged command is set below, from the item's binding)
         for (VkDrawIndexedIndirectCommand& c : f->mARCmds)
         {
             c.indexCount = 0;           // S5d: a rigged alpha item draws only when the viewer bound a palette for it in THIS frame (kind 31)
@@ -8580,7 +8607,19 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
     }
     if (timed) s.mNsList += geo_ns(t0);
-    // S4 B: this frame's palettes of the rigged items (the viewer sent the shared list before this record): the row's palette address and joints, and the command's count (a skin that has no palette draws nothing)
+    // S4 B + <FS> P2: the rigged items' palettes. The binding of an item (palette id, joints, simplified list) is persistent: with h.mFragment == 1 the record carries the ones that changed (ids, resolved below in
+    // the frame's table: h.mPass is the viewer frame whose pairs it must be); else it carries all of them as offsets and the items without one are unbound first. Then every rigged item of a listed fragment gets
+    // the row's palette address and joints and the command's count (an item without a palette in this frame's table draws nothing)
+    const bool persist = h.mFragment == 1;
+    if (!persist)
+    {
+        for (GeoFrag* f : listed)
+        {
+            std::fill(f->mRItemId.begin(), f->mRItemId.end(), ~0u);
+            std::fill(f->mRItemLodIb.begin(), f->mRItemLodIb.end(), 0u);
+            std::fill(f->mRItemLodCount.begin(), f->mRItemLodCount.end(), 0u);
+        }
+    }
     for (U32 i = 0; i < h.mPaletteFloats; ++i)
     {
         const Binding& b = bindings[i];
@@ -8590,31 +8629,48 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             continue;
         }
-        const U32 cmd = f->mRItemCmd[b.mItem];
+        f->mRItemId[b.mItem] = b.mOffset;
+        f->mRItemJoints[b.mItem] = b.mJoints;
+        f->mRItemLodIb[b.mItem] = b.mLodIb;
+        f->mRItemLodCount[b.mItem] = b.mLodCount;
+    }
+    const bool table_is_this_frame = !persist || (gFrameState.mPalFrame == h.mPass && gFrameState.mPalIdFrame == h.mPass);
+    for (GeoFrag* f : listed)
+    {
+        if (f->mRItems.empty())
+        {
+            continue;
+        }
         if (f->mRLodIb.size() != f->mRCmds.size())
         {
             f->mRLodIb.assign(f->mRCmds.size(), 0);
             f->mRLodCount.assign(f->mRCmds.size(), 0);
         }
-        f->mRLodIb[cmd] = b.mLodIb;
-        f->mRLodCount[cmd] = b.mLodCount;
-        const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
-        GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
-        if (pal)
+        for (U32 item : f->mRItems)
         {
-            f->mPalAddr[b.mItem] = pal;
-            f->mPalJoints[b.mItem] = b.mJoints;
-            row.mPalette[0] = (U32)pal;
-            row.mPalette[1] = (U32)(pal >> 32);
-            row.mJoints = b.mJoints;
-            GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[b.mItem]];
-            cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = b.mJoints;
-            f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
-        }
-        else
-        {
-            f->mRCmds[cmd].indexCount = 0;
-            ++sGeo.mRDead;
+            const U32 cmd = f->mRItemCmd[item];
+            const U32 id = f->mRItemId[item];
+            f->mRLodIb[cmd] = f->mRItemLodIb[item];
+            f->mRLodCount[cmd] = f->mRItemLodCount[item];
+            const U64 pal = id == ~0u ? 0 : (persist ? (table_is_this_frame ? palette_id_address(id) : 0) : palette_address(id));
+            if (pal)
+            {
+                const U32 joints = f->mRItemJoints[item];
+                GeoGpuG& row = sGeo.mT[f->mSlots[item]];
+                f->mPalAddr[item] = pal;
+                f->mPalJoints[item] = joints;
+                row.mPalette[0] = (U32)pal;
+                row.mPalette[1] = (U32)(pal >> 32);
+                row.mJoints = joints;
+                GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[item]];
+                cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+                f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
+            }
+            else
+            {
+                f->mRCmds[cmd].indexCount = 0;
+                sGeo.mRDead += id != ~0u;
+            }
         }
     }
     s.mItemsListed += items_frame;
