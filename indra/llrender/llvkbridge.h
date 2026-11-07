@@ -147,6 +147,7 @@ namespace LLVkBridge
         U32 mParticleFloats = 0;    // kind 36 (the particle sort): floats of the source table after the jobs: a row (now high, now low, 0, 0), then a source is 8 floats (position, 0, target, 0)
         U32 mTexmats = 0;           // kind 1: texture matrices (16 floats each) after the palettes; an entry names its matrix by mTexMatrix
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
+        U32 mViewerFrame = 0;       // P3: the viewer's frame (gFrameCount) a record that names palettes by id is made in: the id table it is resolved in (kind 8: mFragment == 1)
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
     // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.

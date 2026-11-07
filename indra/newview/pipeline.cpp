@@ -21538,6 +21538,13 @@ static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
     w.mObjUnfit = 0;
 }
 
+// P3 (LL_VK_VELIDS, default on while palette ids are on): the velocity pass's rigged entries name their palettes by id, as the G-buffer's rows do; 0 = this frame's and last frame's palettes are copied into the record
+static bool velocity_ids_on()
+{
+    static const bool on = (getenv("LL_VK_VELIDS") ? atoi(getenv("LL_VK_VELIDS")) != 0 : true) && ll_palette_ids_on();
+    return on;
+}
+
 static void build_velocity_rigged(VelocityRiggedWork& w)
 {
     LL_CPU_ZONE("avatar velocity: rigged draws (collect, palettes, motion test)");
@@ -21621,7 +21628,18 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             }
             if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
             {
-                if (mpc.mOffsetFrame != vel_frame)
+                if (velocity_ids_on())
+                {
+                    // P3: the palette is named by its id (this frame's palette list, and last frame's by the same id at the worker): nothing is copied
+                    U32 id = 0, id_joints = 0;
+                    if (!ll_frame_palette(avatar, params->mSkinInfo.get(), id, id_joints))
+                    {
+                        continue;
+                    }
+                    mpc.mOffset = id;
+                    mpc.mOffsetFrame = vel_frame;
+                }
+                else if (mpc.mOffsetFrame != vel_frame)
                 {
                     mpc.mOffset = (U32)w.mPalettes.size();
                     mpc.mOffsetFrame = vel_frame;
@@ -21883,6 +21901,12 @@ void LLPipeline::renderAvatarVelocity()
             header.mEntries = (U32)entries.size();
             header.mMatrices = 0;
             header.mPaletteFloats = (U32)palettes.size();
+            if (velocity_ids_on())
+            {
+                header.mFragment = 1;                   // P3: the entries name their palettes by id; mViewerFrame says in which frame's table
+                header.mViewerFrame = (U32)gFrameCount;
+                ll_frame_palette_flush();               // (the palettes and their ids go first)
+            }
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + 2 * palettes.size() * sizeof(F32));
