@@ -4020,7 +4020,11 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 bool skip_rigid = false;
                 if (skip_static_rigid)
                 {
-                    const F32* joint = row.mPoint->getWorldMatrix4a().getF32ptr();
+                    const F32* joint = flatWorld(row.mPoint->getJointNum());        // (the attachment point's world matrix from the flat array the pose job filled; the joint's cache when there is none)
+                    if (!joint)
+                    {
+                        joint = row.mPoint->getWorldMatrix4a().getF32ptr();
+                    }
                     if (drawable->mAttJointValid && ((rigid_frame + obj->mID.mData[1]) & 7) != 0 && !obj->isChanged(LLXform::MOVED))
                     {
                         const F32* last = drawable->mAttJointApplied;
@@ -7754,8 +7758,11 @@ void LLVOAvatar::runDeferredMotionBlend()
     sBlendJobAvatar = saved_job_avatar;
     if (mRoot)
     {
-        AvImpTimer imp_world_timer(3, this);        // (region 3: the world matrix walk at the end of the job)
-        mRoot->updateWorldMatrixChildren();
+        AvImpTimer imp_world_timer(3, this);        // (region 3: the world pass at the end of the job)
+        if (!flatWorldPass())       // <FS> stage C: the flat world pass (an avatar with palettes): the array is its output; the recursive walk for the others
+        {
+            mRoot->updateWorldMatrixChildren();
+        }
     }
     // <FS> PLAN-avatars.md stage B2c, LL_VK_SCALEGUARD=2: with the scale setter not dirtying an unchanged scale, a joint left clean must hold the world matrix a full recompute gives: save the matrices, dirty the whole
     // skeleton, walk again, compare bit for bit
@@ -13367,6 +13374,8 @@ LLViewerTexture* LLVOAvatar::getBakedTexture(const U8 te)
 struct LLFlatSkeleton
 {
     U32 mFrame = ~0u;
+    bool mFromJob = false;                  // <FS> stage C: made by the avatar's pose job (flatWorldPass) for this frame
+    U32 mStructKey = 0;                     // (the skeleton serial, the joint counts: the structure below is made again when it changes)
     std::vector<LLMatrix4a> mWorld;         // by joint number: the joint's world matrix (what getWorldMatrix4a() gives)
     std::vector<U8> mHas;                   // the joint exists
     std::vector<LLJoint*> mJoint;
@@ -13742,6 +13751,127 @@ void LLVOAvatar::sPalJobWallNsAdd(U64 ns)
     ++sPalJobRuns;
 }
 
+// <FS> PLAN-avatars.md stage C (LL_VK_FLATFILL: 1 default, 0 off, 2 compared): the flat world array as the output of the avatar's pose job
+static int fs_flatfill_mode()
+{
+    static const int mode = getenv("LL_VK_FLATFILL") ? atoi(getenv("LL_VK_FLATFILL")) : 1;
+    return mode;
+}
+
+namespace
+{
+std::atomic<U64> sFlatFillJob{ 0 }, sFlatFillReused{ 0 }, sFlatFillRedone{ 0 }, sFlatFillChecked{ 0 }, sFlatFillDifferent{ 0 }, sFlatPassChecked{ 0 }, sFlatPassDifferent{ 0 };
+}
+
+// The world pass of the avatar's pose job as a flat pass over the joints in array order (parents first), which replaces the recursive walk of the joint tree for an avatar that has palettes: each joint that the walk
+// would visit (its chain of parents all take part, mUpdateXform) and that is dirty gets its world matrix worked out by the joint's own function (LLJoint::updateWorldMatrix: the same arithmetic, the joint object's
+// caches are the writeback), and the flat array takes the result in the same loop: the array is the pass's output. Not for an avatar whose root is under another transform (sitting on an object), nor one
+// without palettes: the walk does those. True when it did the pass.
+bool LLVOAvatar::flatWorldPass()
+{
+    if (fs_flatfill_mode() == 0 || fs_skelflat_mode() == 0 || !mRoot || mMatrixPaletteCache.empty() || mRoot->getXform()->getParent() != nullptr)
+    {
+        return false;
+    }
+    if (!mFlatSkel)
+    {
+        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+    }
+    LLFlatSkeleton& flat = *mFlatSkel;
+    const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
+    // the structure: which joint is which number, the parents, the order: made again when the skeleton or its set of joints changed
+    const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
+    if (flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty())
+    {
+        fs_flat_fill(this, flat);
+        flat.mStructKey = key;
+    }
+    U8 active[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    const bool root_active = mRoot->mUpdateXform;
+    if (root_active && (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+    {
+        mRoot->updateWorldMatrix();
+    }
+    for (const S16 k : flat.mOrder)
+    {
+        LLJoint* joint = flat.mJoint[k];
+        const S16 p = flat.mParent[k];
+        const bool parent_active = p < 0 ? root_active : active[p] != 0;
+        const bool act = parent_active && joint->mUpdateXform;
+        active[k] = act ? 1 : 0;
+        if (act && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+        {
+            joint->updateWorldMatrix();
+        }
+        flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
+    }
+    flat.mFrame = gFrameCount;
+    flat.mFromJob = true;
+    ++sFlatFillJob;
+    if (fs_flatfill_mode() == 2)
+    {
+        // verify: the walk after the pass must find nothing to do, and a fresh fill must give the array
+        mRoot->updateWorldMatrixChildren();
+        LLFlatSkeleton fresh;
+        fs_flat_fill(this, fresh);
+        ++sFlatPassChecked;
+        bool same = fresh.mWorld.size() == flat.mWorld.size() && fresh.mHas == flat.mHas;
+        for (size_t k = 0; same && k < fresh.mWorld.size(); ++k)
+        {
+            same = !fresh.mHas[k] || memcmp(&fresh.mWorld[k], &flat.mWorld[k], sizeof(LLMatrix4a)) == 0;
+        }
+        if (!same)
+        {
+            ++sFlatPassDifferent;
+        }
+        if ((sFlatPassChecked % 20000) == 0)
+        {
+            LL_INFOS("FlatPass") << "flat world pass: avatars done by the pass " << sFlatFillJob.load() << ", checked against the walk and a fresh fill " << sFlatPassChecked.load() << ", different " << sFlatPassDifferent.load() << LL_ENDL;
+        }
+    }
+    return true;
+}
+
+// a joint of the skeleton (bones, collision volumes, attachment points) whose world matrix is stale: touched since the last walk
+bool LLVOAvatar::skeletonDirty() const
+{
+    if (!mRoot || (mRoot->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+    {
+        return true;
+    }
+    for (LLAvatarJoint* bone : mSkeleton)
+    {
+        if (bone && (bone->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+        {
+            return true;
+        }
+    }
+    for (S32 i = 0; i < mNumCollisionVolumes; ++i)
+    {
+        if (mCollisionVolumes[i].mDirtyFlags & LLJoint::MATRIX_DIRTY)
+        {
+            return true;
+        }
+    }
+    for (const auto& attachment : mAttachmentPoints)
+    {
+        if (attachment.second && (attachment.second->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+const F32* LLVOAvatar::flatWorld(S32 joint_num) const
+{
+    if (!mFlatSkel || !mFlatSkel->mFromJob || mFlatSkel->mFrame != gFrameCount || joint_num < 0 || (size_t)joint_num >= mFlatSkel->mWorld.size() || !mFlatSkel->mHas[joint_num])
+    {
+        return nullptr;
+    }
+    return mFlatSkel->mWorld[joint_num].getF32ptr();
+}
+
 // the pool job of one avatar (after the completions of the frame): rebuilds the palettes it had asked for in the last rendered frame, for the frame about to be rendered
 void LLVOAvatar::buildPalettesInJob()
 {
@@ -13755,7 +13885,39 @@ void LLVOAvatar::buildPalettesInJob()
     std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
     if (mFlatSkel)
     {
-        mFlatSkel->mFrame = ~0u;            // (the world array is filled again from the final skeleton of this frame)
+        // the array the pose job filled holds while no joint was touched after it (the completions: hover, ground sit, attachment overrides); else it is filled again from the final skeleton of this frame
+        if (mFlatSkel->mFromJob && mFlatSkel->mFrame == gFrameCount && !skeletonDirty())
+        {
+            ++sFlatFillReused;
+            if (fs_flatfill_mode() == 2)
+            {
+                LLFlatSkeleton fresh;
+                fs_flat_fill(this, fresh);
+                ++sFlatFillChecked;
+                bool same = fresh.mWorld.size() == mFlatSkel->mWorld.size() && fresh.mHas == mFlatSkel->mHas;
+                for (size_t k = 0; same && k < fresh.mWorld.size(); ++k)
+                {
+                    same = !fresh.mHas[k] || memcmp(&fresh.mWorld[k], &mFlatSkel->mWorld[k], sizeof(LLMatrix4a)) == 0;
+                }
+                if (!same)
+                {
+                    ++sFlatFillDifferent;
+                }
+                if ((sFlatFillChecked % 20000) == 0)
+                {
+                    LL_INFOS("FlatFill") << "flat world array filled by the pose job " << sFlatFillJob.load() << ", reused by the palette job " << sFlatFillReused.load() << ", filled again (a joint touched after) " << sFlatFillRedone.load()
+                        << "; reused arrays compared with a fresh fill " << sFlatFillChecked.load() << ", different " << sFlatFillDifferent.load() << LL_ENDL;
+                }
+            }
+        }
+        else
+        {
+            if (mFlatSkel->mFromJob)
+            {
+                ++sFlatFillRedone;
+            }
+            mFlatSkel->mFrame = ~0u;
+        }
     }
     for (auto& kv : mMatrixPaletteCache)
     {
@@ -13784,7 +13946,8 @@ void LLVOAvatar::buildPalettesInJob()
     }
     if (mFlatSkel)
     {
-        mFlatSkel->mFrame = ~0u;
+        mFlatSkel->mFrame = ~0u;            // (the render's own palette requests fill it again at their frame)
+        mFlatSkel->mFromJob = false;
     }
 }
 
