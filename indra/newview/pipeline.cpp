@@ -10385,6 +10385,7 @@ struct LLSceneFragment
     U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
     std::vector<U32> mGeoRigged;                        // S4 B: the indices in mGeo of the served rigged items (their palettes are bound every frame)
+    std::vector<GeoRigSource> mGeoRiggedSrc;            // J1 K2: what the binding of each reads (the same order as mGeoRigged)
     std::vector<U32> mGeoMoving;                        // S4 C: the moving matrix slots (256-2047) this fragment's items use (reference counted)
     // S5a-1 (LL_VK_SCENE_ALPHA=1): the plan of the group's static alpha draws (LLAlphaPlanView)
     struct AlphaPbr { U32 mRank; F32 mV[40]; };         // S5c: the PBR values of the alpha item mRank (see pbrAlphaPullV.glsl)
@@ -10395,7 +10396,7 @@ struct LLSceneFragment
         std::vector<const LLDrawInfo*> mOrder;
         std::vector<LLAlphaPlanSeg> mPlan;
         std::vector<GeoItem> mItems;                    // the served draws as table items, in plan order
-        std::vector<const LLDrawInfo*> mItemInfo;       // (their draw infos and wire numbers, by rank, for the view)
+        std::vector<GeoRigSource> mItemRig;             // J1 K2: the rigged set only: what the bindings of the items read, by rank, for the view
         std::vector<U32> mItemWire;
         std::vector<U32> mBound;                        // P2: 5 U32 per item: the binding the worker holds (see LLAlphaPlanView::mItemBound); epoch 0 = none
         std::vector<AlphaPbr> mPbr;
@@ -11080,6 +11081,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoServedMask = 0;
     f.mGeoServedTris = 0;
     f.mGeoRigged.clear();
+    f.mGeoRiggedSrc.clear();
     f.mGeoPbr.clear();
     U32 total_infos[2 * kGeoTypeCount] = {}, served_infos[2 * kGeoTypeCount] = {}, served_tris[2 * kGeoTypeCount] = {};
     const bool rigged_on = scene_geo_rigged_on();
@@ -11207,6 +11209,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 if (rigged)
                 {
                     f.mGeoRigged.push_back((U32)f.mGeo.size());
+                    f.mGeoRiggedSrc.push_back(ll_geo_rig_source(params));
                 }
             }
             if (kGeoTypes[t].mPbr && item.mServed)
@@ -11524,7 +11527,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     ps.mOrder.clear();
     ps.mPlan.clear();
     ps.mItems.clear();
-    ps.mItemInfo.clear();
+    ps.mItemRig.clear();
     ps.mItemWire.clear();
     ps.mPbr.clear();
     ps.mGlow = false;
@@ -11661,9 +11664,12 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
     }
     ps.mDirect = ps.mOrder.size() == it->second.size();
-    for (const LLSceneFragment::GeoItem& gi : ps.mItems)
+    if (rigged)
     {
-        ps.mItemInfo.push_back(gi.mInfo);
+        for (const LLSceneFragment::GeoItem& gi : ps.mItems)
+        {
+            ps.mItemRig.push_back(ll_geo_rig_source(gi.mInfo));
+        }
     }
     ps.mItemWire.assign(ps.mItems.size(), 0);
     ps.mBound.assign(ps.mItems.size() * 5, 0);
@@ -11733,7 +11739,7 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
     out.mSegs = ps.mPlan.data();
     out.mSegCount = (U32)ps.mPlan.size();
     out.mGlow = ps.mGlow;
-    out.mItemInfo = ps.mItemInfo.data();
+    out.mItemRig = ps.mItemRig.data();
     out.mItemWire = ps.mItemWire.data();
     out.mItemBound = const_cast<U32*>(ps.mBound.data());
     out.mHandle = f->mGeoHandle;
@@ -13964,10 +13970,11 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
         {
             continue;
         }
-        for (U32 index : f->mGeoRigged)
+        for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
         {
-            const LLSceneFragment::GeoItem& item = f->mGeo[index];
-            job->mWork.push_back({ item.mInfo->mAvatar.get(), item.mInfo->mSkinInfo.get(), handle, item.mWire });
+            const LLSceneFragment::GeoItem& item = f->mGeo[f->mGeoRigged[rk]];
+            const GeoRigSource& rig = f->mGeoRiggedSrc[rk];
+            job->mWork.push_back({ rig.mAvatar.get(), rig.mSkin.get(), handle, item.mWire });
         }
     }
     if (job->mWork.empty())
@@ -14153,11 +14160,12 @@ void ll_scene_geo_frame(LLCullResult* cull)
             const LLVOAvatar* last_avatar = nullptr;
             const LLMeshSkinInfo* last_skin = nullptr;
             U32 last_offset = ~0u, last_joints = 0;
-            for (U32 index : f->mGeoRigged)
+            for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
             {
-                const LLSceneFragment::GeoItem& item = f->mGeo[index];
-                LLVOAvatar* avatar = item.mInfo->mAvatar.get();
-                const LLMeshSkinInfo* skin = item.mInfo->mSkinInfo.get();
+                const LLSceneFragment::GeoItem& item = f->mGeo[f->mGeoRigged[rk]];
+                const GeoRigSource& rig = f->mGeoRiggedSrc[rk];
+                LLVOAvatar* avatar = rig.mAvatar.get();
+                const LLMeshSkinInfo* skin = rig.mSkin.get();
                 if (avatar != last_avatar || skin != last_skin)
                 {
                     last_avatar = avatar;
@@ -14179,7 +14187,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
         ll_frame_palette_flush();
         // item E for the opaque rigged items: a simplified list for an avatar far enough away (the cache and its background thread are the cascade casters'), in the order the bindings were made
-        extern bool ll_rigged_lod_opaque(const LLDrawInfo* info, U32& ib_name, U32& count);
+        extern bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count);
         if (!bindings.empty())
         {
             static U64 asked = 0, chosen = 0, mismatch = 0, tris_all = 0, tris_lod = 0;
@@ -14191,9 +14199,11 @@ void ll_scene_geo_frame(LLCullResult* cull)
                 {
                     continue;
                 }
-                for (U32 index : f->mGeoRigged)
+                for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
                 {
+                    const U32 index = f->mGeoRigged[rk];
                     const LLSceneFragment::GeoItem& item = f->mGeo[index];
+                    const GeoRigSource& rig = f->mGeoRiggedSrc[rk];
                     if (at >= bindings.size() || bindings[at].mHandle != handle || bindings[at].mItem != item.mWire)
                     {
                         ++mismatch;
@@ -14249,7 +14259,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                                     }
                                     if (worst >= 0 && gFrameCount > 600 && l.logged < 6)
                                     {
-                                        LLVOAvatar* av = item.mInfo->mAvatar.get();
+                                        LLVOAvatar* av = rig.mAvatar.get();
                                         const LLControlAvatar* cav = dynamic_cast<const LLControlAvatar*>(av);
                                         LLVOAvatar* host = cav ? const_cast<LLControlAvatar*>(cav)->getAttachedAvatar() : av;
                                         bool name_ok = flip_name.empty();
@@ -14266,8 +14276,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                                             LL_INFOS("FlipDiag") << "frame " << gFrameCount << " item " << handle << "/" << item.mWire << " type " << item.mType << " joint " << worst << " of " << joints << " step before " << l.d[worst * 3] << "," << l.d[worst * 3 + 1] << "," << l.d[worst * 3 + 2]
                                                 << " step now " << d[worst * 3] << "," << d[worst * 3 + 1] << "," << d[worst * 3 + 2] << " | avatar " << (av ? av->getFullname() : std::string("none")) << " control " << (cav ? 1 : 0) << " host " << (host ? host->getFullname() : std::string("none"))
                                                 << " sitting " << (host && host->isSitting() ? 1 : 0) << " update period " << (av ? av->getUpdatePeriod() : -1) << " impostor " << (av && av->isImpostor() ? 1 : 0) << " culled " << (av && av->isCulled() ? 1 : 0)
-                                                << " skin " << (item.mInfo->mSkinInfo ? item.mInfo->mSkinInfo->mHash : 0ull) << " tris " << item.mInfo->mCount / 3 << " fullbright " << (item.mInfo->mFullbright ? 1 : 0)
-                                                << " glow " << (item.mInfo->mHasGlow ? 1 : 0) << LL_ENDL;
+                                                << " skin " << (rig.mSkin.get() ? rig.mSkin.get()->mHash : 0ull) << " tris " << rig.mCount / 3 << LL_ENDL;
                                         }
                                     }
                                 }
@@ -14282,8 +14291,8 @@ void ll_scene_geo_frame(LLCullResult* cull)
                         }
                     }
                     ++asked;
-                    tris_all += item.mInfo->mCount / 3;
-                    if (ll_rigged_lod_opaque(item.mInfo, b.mLodIb, b.mLodCount))
+                    tris_all += rig.mCount / 3;
+                    if (ll_rigged_lod_opaque(rig.range(), rig.mAvatar.get(), b.mLodIb, b.mLodCount))
                     {
                         ++chosen;
                         tris_lod += b.mLodCount / 3;
@@ -14291,7 +14300,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     else
                     {
                         b.mLodIb = b.mLodCount = 0;
-                        tris_lod += item.mInfo->mCount / 3;
+                        tris_lod += rig.mCount / 3;
                     }
                     note_bind(b, f, index);
                 }

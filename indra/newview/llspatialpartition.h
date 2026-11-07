@@ -80,6 +80,7 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
     Member ordering is important for cache coherency
 */
 struct LLSceneFragment;
+struct GeoRigSource;
 void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
 class LLSpatialGroup;
 void ll_scene_fragment_build(LLSpatialGroup* group);
@@ -108,7 +109,7 @@ struct LLAlphaPlanView
     U32 mHandle = 0;            // the fragment's handle at the worker (0: not attached, nothing is served)
     bool mDirect = false;       // the draw map holds exactly these draw infos in this order (no draw of an avatar among them): a segment can be stepped over by its draw count
     const U32* mGlowIdx = nullptr;      // the plan indices of the served draws that have a glow buffer, ascending
-    const class LLDrawInfo* const* mItemInfo = nullptr;     // S5d: per served item (by rank): its draw info and its number in the fragment's wire list (the palette bindings of the rigged items name it)
+    const struct GeoRigSource* mItemRig = nullptr;          // J1 K2: per served rigged item (by rank): what its palette binding reads (avatar, skin, range); no draw info
     const U32* mItemWire = nullptr;
     U32* mItemBound = nullptr;  // P2: per served item (by rank), 5 U32: the binding the worker holds (epoch, palette id, joints, simplified list, its count); the rigged alpha runs send only what changed
     U32 mGlowCount = 0;
@@ -282,6 +283,41 @@ inline GeoRange ll_geo_range(const LLDrawInfo* p)
         r.mEnd = p->mEnd;
     }
     return r;
+}
+
+// <FS> J1 K2: what the per frame readers of a RIGGED fragment item need, kept with the item instead of read through its draw info every frame: the avatar and the skin (handles: a gone one reads as null),
+// the buffer (held, so the range stays valid) and the range. The palette bindings, the LOD choices and their census read this; the draw info is only read when the fragment is made.
+struct GeoRigSource
+{
+    LLAvatarRef mAvatar;
+    LLSkinRef mSkin;
+    LLPointer<LLVertexBuffer> mVb;
+    U32 mOffset = 0, mCount = 0, mStart = 0, mEnd = 0;
+    GeoRange range() const
+    {
+        GeoRange r;
+        r.mVb = mVb.get();
+        r.mOffset = mOffset;
+        r.mCount = mCount;
+        r.mStart = mStart;
+        r.mEnd = mEnd;
+        return r;
+    }
+};
+inline GeoRigSource ll_geo_rig_source(const LLDrawInfo* p)
+{
+    GeoRigSource s;
+    if (p)
+    {
+        s.mAvatar = p->mAvatar;
+        s.mSkin = p->mSkinInfo;
+        s.mVb = p->mVertexBuffer;
+        s.mOffset = p->mOffset;
+        s.mCount = p->mCount;
+        s.mStart = p->mStart;
+        s.mEnd = p->mEnd;
+    }
+    return s;
 }
 
 class LLSpatialGroup;
