@@ -665,24 +665,27 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
         }
         else
         {
-            for (S32 i = 0; i < NUM_JOINT_SIGNATURE_STRIDES; i++)
+            // <FS> stage B2b: eight joints a word (a motion's signature adds something when it has a bit the controller's does not: (cur | test) > cur is (test & ~cur) != 0)
+            static_assert(LL_CHARACTER_MAX_ANIMATED_JOINTS % 8 == 0, "signature words");
+            for (S32 i = 0; i < LL_CHARACTER_MAX_ANIMATED_JOINTS / 8; i++)
             {
-                U32 *current_signature = (U32*)&(mJointSignature[0][i * 4]);
-                U32 test_signature = *(U32*)&(motionp->mJointSignature[0][i * 4]);
-
-                if ((*current_signature | test_signature) > (*current_signature))
+                U64 cur, test;
+                memcpy(&cur, &mJointSignature[0][i * 8], 8);
+                memcpy(&test, &motionp->mJointSignature[0][i * 8], 8);
+                if (test & ~cur)
                 {
-                    *current_signature |= test_signature;
+                    cur |= test;
+                    memcpy(&mJointSignature[0][i * 8], &cur, 8);
                     update_motion = true;
                 }
 
-                *((U32*)&last_joint_signature[i * 4]) = *(U32*)&(mJointSignature[1][i * 4]);
-                current_signature = (U32*)&(mJointSignature[1][i * 4]);
-                test_signature = *(U32*)&(motionp->mJointSignature[1][i * 4]);
-
-                if ((*current_signature | test_signature) > (*current_signature))
+                memcpy(&last_joint_signature[i * 8], &mJointSignature[1][i * 8], 8);
+                memcpy(&cur, &mJointSignature[1][i * 8], 8);
+                memcpy(&test, &motionp->mJointSignature[1][i * 8], 8);
+                if (test & ~cur)
                 {
-                    *current_signature |= test_signature;
+                    cur |= test;
+                    memcpy(&mJointSignature[1][i * 8], &cur, 8);
                     update_motion = true;
                 }
             }

@@ -38,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 
 //-----------------------------------------------------------------------------
@@ -54,7 +55,12 @@ protected:
     joint_map                   mJointMap;
     F32                         mWeight;
     joint_map_iterator          mListIter;
+    // <FS> PLAN-avatars.md stage B2b (LL_VK_POSEVEC: 1 default, 0 the map walk, 2 both, compared): the joint states in the map's order (by joint name) as a contiguous vector, rebuilt when a state is added or removed (a motion
+    // fills its pose once, when it loads), so addMotion and setWeight walk an array and not the tree nodes of a std::map<std::string, ...>. The order is the map's, so the blend sees the states in the same order.
+    mutable std::vector<LLJointState*> mStateVec;
+    mutable bool                mStateVecDirty = true;
 public:
+    const std::vector<LLJointState*>& jointStateVector() const;
     // Iterate through jointStates
     LLJointState* getFirstJointState();
     LLJointState* getNextJointState();
