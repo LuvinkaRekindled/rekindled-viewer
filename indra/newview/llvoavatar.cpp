@@ -3861,6 +3861,40 @@ struct AvJobLedger
 };
 }
 
+// <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS): the rows of an avatar's plain rigid attachments (a root attachment with a bridge that is not rigged and is plain: not flexible, animated, lit, sounding or emitting
+// particles in it or its children, not a HUD, not selected), built from the attachment points when the attachment set changes and swept every 32 frames (staggered by avatar) for the flags that change without it
+void LLVOAvatar::rebuildAttRows()
+{
+    mAttRows.clear();
+    mAttRowsRevision = LLViewerJointAttachment::sRevision;
+    for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
+    {
+        if (!attachment || !attachment->getValid())
+        {
+            continue;
+        }
+        for (auto& attached_object : attachment->mAttachedObjects)
+        {
+            if (attached_object.isNull() || attached_object->isDead() || attached_object->mDrawable.isNull())
+            {
+                continue;
+            }
+            LLDrawable* drawable = attached_object->mDrawable;
+            LLSpatialBridge* bridge = drawable->getSpatialBridge();
+            if (!bridge || drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) || !att_plain(attached_object.get()))
+            {
+                continue;
+            }
+            AttRow row;
+            row.mObject = attached_object.get();
+            row.mDrawable = drawable;
+            row.mBridge = bridge;
+            row.mPoint = attachment;
+            mAttRows.push_back(row);
+        }
+    }
+}
+
 void LLVOAvatar::idleUpdateAttachments(bool visible)
 {
         LL_CPU_ZONE("att: attachment loop (per avatar)");
@@ -3942,6 +3976,127 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         }
         gAttStats.nsPre += att_ns(att_loop_t0);
         gAttStats.skipFrames += skip_rigged_this_frame;
+
+        // <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS: 1 default, 0 off, 2 compare): the plain rigid attachments from the avatar's rows, each moved as the walk below would move it (the same gate, the same skip of a
+        // static joint, the avatar's box for its bridge, the fast move, the bridge move when the box changed, the text); the walk below skips what the rows moved this frame. Mode 2 moves nothing here: it counts the rows
+        // that pass the gate and the plain rigid attachments the walk below finds, per visit, and says where they differ.
+        static const int rows_mode = getenv("LL_VK_ATTROWS") ? atoi(getenv("LL_VK_ATTROWS")) : 1;
+        U32 rows_passed = 0, walk_eligible = 0;
+        const bool rows_run = rows_mode && cons_mode && !isSelf() && !gFSAvTimersOn && !LLAttCensus::sOn && !attachment_selected && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL;
+        if (rows_run)
+        {
+            if (mAttRowsRevision != LLViewerJointAttachment::sRevision || ((rigid_frame + mID.mData[0]) & 31) == 0)
+            {
+                rebuildAttRows();
+            }
+            const LLVector4a* abox = mDrawable->getSpatialExtents();
+            const F32* amin = abox[0].getF32ptr();
+            const F32* amax = abox[1].getF32ptr();
+            constexpr F32 tol = 0.01f;
+            for (AttRow& row : mAttRows)
+            {
+                LLViewerObject* obj = row.mObject;
+                LLDrawable* drawable = row.mDrawable;
+                LLSpatialBridge* bridge = row.mBridge;
+                if (obj->isDead() || obj->mDrawable.get() != drawable || drawable->getSpatialBridge() != bridge || !row.mPoint->getValid())
+                {
+                    mAttRowsRevision = ~0u;     // (the set changed under the rows: the walk below does this frame's, the rows are made again at the next visit)
+                    continue;
+                }
+                if (!(visible || !(bridge->getRadius() < 2.0f)))
+                {
+                    if (rows_mode == 1)
+                    {
+                        drawable->mAttRowFrame = rigid_frame;       // (the walk below would leave it alone as well)
+                    }
+                    continue;
+                }
+                ++rows_passed;
+                if (rows_mode != 1)
+                {
+                    continue;
+                }
+                drawable->mAttRowFrame = rigid_frame;
+                bool skip_rigid = false;
+                if (skip_static_rigid)
+                {
+                    const F32* joint = row.mPoint->getWorldMatrix4a().getF32ptr();
+                    if (drawable->mAttJointValid && ((rigid_frame + obj->mID.mData[1]) & 7) != 0 && !obj->isChanged(LLXform::MOVED))
+                    {
+                        const F32* last = drawable->mAttJointApplied;
+                        bool same = true;
+                        for (int k = 0; k < 15 && same; ++k)
+                        {
+                            same = fabsf(joint[k] - last[k]) <= rigid_tolerance;
+                        }
+                        skip_rigid = same;
+                    }
+                    if (!skip_rigid)
+                    {
+                        memcpy(drawable->mAttJointApplied, joint, sizeof(drawable->mAttJointApplied));
+                        drawable->mAttJointValid = true;
+                    }
+                }
+                bool cons_frozen = false;
+                if (!skip_rigid)
+                {
+                    bool same = bridge->mConservative;
+                    for (S32 k = 0; k < 3 && same; ++k)
+                    {
+                        same = fabsf(amin[k] - bridge->mConsMin[k]) < tol && fabsf(amax[k] - bridge->mConsMax[k]) < tol;
+                    }
+                    if (same && !bridge->sphereInsideBox(amin, amax, tol))
+                    {
+                        bridge->mConservative = false;
+                        same = false;
+                    }
+                    if (same)
+                    {
+                        cons_frozen = true;
+                    }
+                    else
+                    {
+                        LLVector4a lo, hi;
+                        bridge->exactWorldBox(lo, hi);
+                        const F32* a = lo.getF32ptr();
+                        const F32* b = hi.getF32ptr();
+                        bool in = true;
+                        for (S32 k = 0; k < 3 && in; ++k)
+                        {
+                            in = a[k] >= amin[k] - tol && b[k] <= amax[k] + tol;
+                        }
+                        if (in)
+                        {
+                            bridge->mConservative = true;
+                            for (S32 k = 0; k < 3; ++k)
+                            {
+                                bridge->mConsMin[k] = amin[k];
+                                bridge->mConsMax[k] = amax[k];
+                            }
+                        }
+                        else
+                        {
+                            bridge->mConservative = false;
+                        }
+                    }
+                }
+                drawable->mBridgeFrozen = cons_frozen;
+                if (!skip_rigid)
+                {
+                    if (!(xf_mode && drawable->updateMoveFast()))
+                    {
+                        gPipeline.updateMoveDampedAsync(drawable);
+                    }
+                    bridge = drawable->getSpatialBridge();
+                    if (bridge && !cons_frozen)
+                    {
+                        gPipeline.updateMoveNormalAsync(bridge);
+                    }
+                }
+                obj->updateText();
+            }
+        }
+
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             // <FS:Ansariel> Possible crash fix
@@ -3959,6 +4114,10 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     || attached_object->mDrawable.isNull())
                 {
                     continue;
+                }
+                if (rows_run && rows_mode == 1 && attached_object->mDrawable->mAttRowFrame == rigid_frame)
+                {
+                    continue;       // (the avatar's rows moved it this frame)
                 }
 
                 LLSpatialBridge* bridge = attached_object->mDrawable->getSpatialBridge();
@@ -4061,6 +4220,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     // bridge's contents has to lie inside the avatar's box when the bridge takes it, else this bridge stays exact. Mode 2 also checks it on every visit that left the bridge alone.
                     bool cons_frozen = false;
                     const bool cons_eligible = cons_mode && !rigged && bridge && !attachment_selected && !isSelf() && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL && att_plain(attached_object.get());
+                    walk_eligible += cons_eligible ? 1 : 0;
                     if (bridge && bridge->mConservative && !cons_eligible)
                     {
                         bridge->mConservative = false;      // (selected, not plain, jellydolled: the exact box again, at this visit's move)
@@ -4241,6 +4401,22 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     }
                     else { ++gAttStats.rigid; gAttStats.nsRigid += ns; }
                 }
+            }
+        }
+        if (rows_run && rows_mode == 2)
+        {
+            // compare: the rows that passed the gate against the plain rigid attachments the walk found
+            static std::atomic<U64> visits{ 0 }, differ{ 0 }, rows_total{ 0 }, walk_total{ 0 };
+            ++visits;
+            rows_total += rows_passed;
+            walk_total += walk_eligible;
+            if (rows_passed != walk_eligible && ++differ <= 6)
+            {
+                LL_WARNS("AttRows") << "avatar " << getFullname() << ": rows passed " << rows_passed << ", walk found " << walk_eligible << " plain rigid attachments (rows " << (U32)mAttRows.size() << ")" << LL_ENDL;
+            }
+            if (visits % 50000 == 0)
+            {
+                LL_INFOS("AttRows") << "attachment rows compared with the walk: visits " << visits.load() << ", different " << differ.load() << ", attachments by rows " << rows_total.load() << ", by the walk " << walk_total.load() << LL_ENDL;
             }
         }
         gAttStats.nsLoop += att_ns(att_loop_t0);
