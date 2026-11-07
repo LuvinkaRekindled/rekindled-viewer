@@ -156,6 +156,22 @@ void LLControlAvatar::getNewConstraintFixups(LLVector3& new_pos_fixup, F32& new_
     }
 }
 
+int LLControlAvatar::animRootMode()
+{
+    static const int mode = getenv("LL_VK_ANIMROOT") ? atoi(getenv("LL_VK_ANIMROOT")) : 1;
+    return mode;
+}
+
+bool LLControlAvatar::hostJobOwned() const
+{
+    return animRootMode() != 0 && mRootVolp && mRootVolp->isAttachment() && mRootVolp->mDrawable.notNull() && getAttachedAvatar() != nullptr;
+}
+
+void LLControlAvatar::placeFromHost()
+{
+    matchVolumeTransform();
+}
+
 void LLControlAvatar::matchVolumeTransform()
 {
     if (mRootVolp)
@@ -185,8 +201,30 @@ void LLControlAvatar::matchVolumeTransform()
                 {
                     setPositionAgent(mRootVolp->getRenderPosition());
                 }
-                attach->updateWorldPRSParent();
-                LLVector3 joint_pos = attach->getWorldPosition();
+                // <FS> stage C5d: the attachment point from the host's flat world array when the host's pose job has made it this frame (read only: no lazy update of the host's joint from this thread), else from the joint
+                LLVector3 joint_pos;
+                LLQuaternion joint_rot;
+                {
+                    const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
+                    static std::atomic<U64> from_array{ 0 }, from_joint{ 0 };
+                    if (animRootMode() != 0 && attached_av->poseJobDoneThisFrame() && attach && attached_av->flatJoint(attach->getJointNum(), ppos, prot, pscale, psco))
+                    {
+                        joint_pos = *ppos;
+                        joint_rot = *prot;
+                        ++from_array;
+                    }
+                    else
+                    {
+                        attach->updateWorldPRSParent();
+                        joint_pos = attach->getWorldPosition();
+                        joint_rot = attach->getWorldRotation();
+                        ++from_joint;
+                    }
+                    if (animRootMode() != 0 && ((from_array + from_joint) % 50000) == 0)
+                    {
+                        LL_INFOS("AnimRoot") << "animated object root placements: the attachment point from the host's flat array " << from_array.load() << ", from the joint " << from_joint.load() << LL_ENDL;
+                    }
+                }
                 // (LL_VK_HOVERFIX=0: as before, always when the host's motion update is pending) Only when the host's pose job has run this frame: its attachment point then holds this frame's pose without the hover. Before
                 // that it holds last frame's final value, hover included, and adding it again put the animated object one hover offset too high in the frames this call was the last to run.
                 static const bool hover_fix = !getenv("LL_VK_HOVERFIX") || atoi(getenv("LL_VK_HOVERFIX")) != 0;
@@ -208,12 +246,15 @@ void LLControlAvatar::matchVolumeTransform()
                     // drawable did not move: the skeleton's root then stayed one hover offset down for that frame, and the animated object blinked between the two heights.
                     joint_pos.mV[VZ] += attached_av->getHoverOffset().mV[VZ];
                 }
-                LLQuaternion joint_rot = attach->getWorldRotation();
                 LLVector3 obj_pos = mRootVolp->mDrawable->getPosition();
                 LLQuaternion obj_rot = mRootVolp->mDrawable->getRotation();
                 obj_pos.rotVec(joint_rot);
-                mRoot->setWorldPosition(obj_pos + joint_pos);
-                mRoot->setWorldRotation(obj_rot * joint_rot);
+                mJobObjRot = obj_rot;
+                mJobJointRot = joint_rot;
+                mJobRootPos = obj_pos + joint_pos;
+                mJobRootRot = obj_rot * joint_rot;
+                mRoot->setWorldPosition(mJobRootPos);
+                mRoot->setWorldRotation(mJobRootRot);
                 setRotation(mRoot->getRotation());
 
                 setGlobalScale(mScaleConstraintFixup);

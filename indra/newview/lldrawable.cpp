@@ -885,7 +885,44 @@ F32 LLDrawable::updateXform(bool undamped)
         LLControlAvatar* cav = mVObjp->getControlAvatar();
         if (cav)
         {
-            cav->matchVolumeTransform();
+            // <FS> stage C5d (LL_VK_ANIMROOT): an animated object worn by an avatar is placed in its own pool job, from the host's array (1: not here, from another avatar's thread; 2: here too, and the two compared)
+            const int anim_mode = LLControlAvatar::animRootMode();
+            if (!cav->hostJobOwned() || anim_mode == 0)
+            {
+                cav->matchVolumeTransform();
+            }
+            else if (anim_mode == 2)
+            {
+                static std::atomic<U64> checked{ 0 }, over_mm{ 0 }, over_angle{ 0 }, identical{ 0 };
+                static std::atomic<F32> max_dist{ 0.f }, max_angle{ 0.f }, max_obj{ 0.f }, max_joint{ 0.f };
+                static std::atomic<U64> obj_differs{ 0 }, joint_differs{ 0 };
+                const LLVector3 job_pos = cav->mJobRootPos;
+                const LLQuaternion job_rot = cav->mJobRootRot;
+                const LLQuaternion job_obj = cav->mJobObjRot, job_joint = cav->mJobJointRot;
+                cav->matchVolumeTransform();
+                {
+                    const F32 a_obj = 2.f * acosf(llclamp(fabsf(dot(job_obj, cav->mJobObjRot)), 0.f, 1.f));
+                    const F32 a_joint = 2.f * acosf(llclamp(fabsf(dot(job_joint, cav->mJobJointRot)), 0.f, 1.f));
+                    obj_differs += a_obj > 0.00087f;
+                    joint_differs += a_joint > 0.00087f;
+                    if (a_obj > max_obj.load()) { max_obj.store(a_obj); }
+                    if (a_joint > max_joint.load()) { max_joint.store(a_joint); }
+                }
+                ++checked;
+                const F32 dist = dist_vec(job_pos, cav->mJobRootPos);
+                const F32 angle = 2.f * acosf(llclamp(fabsf(dot(job_rot, cav->mJobRootRot)), 0.f, 1.f));        // radians
+                identical += (dist == 0.f && angle == 0.f);
+                over_mm += dist > 0.001f;
+                over_angle += angle > 0.00087f;        // 0.05 degrees
+                if (dist > max_dist.load()) { max_dist.store(dist); }
+                if (angle > max_angle.load()) { max_angle.store(angle); }
+                if ((checked % 2000) == 0)
+                {
+                    LL_INFOS("AnimRoot") << "animated object root placed in the job against the drawable's update: checked " << checked.load() << ", bit-identical " << identical.load() << ", more than 1 mm apart " << over_mm.load()
+                        << ", more than 0.05 degrees apart " << over_angle.load() << "; largest " << max_dist.load() << " m, " << (max_angle.load() * RAD_TO_DEG) << " degrees; of the two inputs: the object's own rotation differs by more than 0.05 degrees "
+                        << obj_differs.load() << " times (largest " << (max_obj.load() * RAD_TO_DEG) << " degrees), the attachment point's " << joint_differs.load() << " times (largest " << (max_joint.load() * RAD_TO_DEG) << " degrees)" << LL_ENDL;
+                }
+            }
         }
     }
 
