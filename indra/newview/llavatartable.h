@@ -42,6 +42,8 @@ public:
         bool mVisible = false;          // isVisible() at the start of the frame (the cull's stamp: occlusion counts)
         bool mNeedsUpdate = false;      // computeNeedsUpdate()
         bool mInFrustum = true;         // the avatar's extents (grown by the room a name tag needs) against the main camera's frustum, no occlusion
+        bool mFinal = false;            // endFrame has run: the facts below are the frame's final ones (the readers of the render side take them)
+        bool mImpostor = false;         // isImpostor() after the avatars' update (its inputs: update period, muted, too slow, RLV silhouette, exclusion settings are final then)
         U16 mBits = 0;
         U32 mFrame = 0;
     };
@@ -50,6 +52,9 @@ public:
     static void beginFrame(const std::vector<LLViewerObject*>& list, size_t count);  // the only writer: LLViewerObjectList::update, before the avatars' idleUpdate
     static const Row* row(const LLVOAvatar* av);                                     // null when the avatar has no row this frame
     static void noteActual(const LLVOAvatar* av, U8 actual);                         // mode 2: what the old gates did
+    static void endFrame();                                                          // after the avatars' update (the motion batch and the completions): the facts the render side reads
+    static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
+    static void noteImpostorCheck(bool same);                                        // LL_VK_AVTABLE_VERIFY=1: the cached answer against the live one
     static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
 };
 
