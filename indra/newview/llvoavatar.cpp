@@ -6306,6 +6306,121 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
 // Most of the logic here is to figure out when to periodically update impostors.
 // Non-impostors have mUpdatePeriod == 1 and will need update every frame.
 //------------------------------------------------------------------------
+
+// <FS> PLAN-avatars.md stage 0 (LL_VK_AVIMP=1): the importance class of every avatar the update loop visits, as a number next to the tests the code uses today, and what the loop then did with it.
+// Class: 0 the viewer's own, 1 seen in the main view (isVisible()), 2 not in the main view but inside a sun cascade's frustum (the previous frame's cameras), 3 seen by nothing. Kind: 0 a resident's
+// avatar, 1 a dummy / control avatar (animesh) / UI avatar. Ran: 0 skipped by computeNeedsUpdate (impostor period, far period), 1 the hidden update (not visible: motions only, matrices in the batch),
+// 2 the full update. Counters only: nothing here changes what is done.
+namespace
+{
+struct AvImportanceStats
+{
+    U64 mRan[2][4][3] = {};         // [kind][class][ran]
+    U64 mFlag[4][8] = {};           // resident avatars by class: impostor, culled, too slow, visually muted, update period > 1, sitting, far from the camera over 40 m, fully loaded
+    U64 mCalls = 0;
+    U32 mLast = 0;
+};
+AvImportanceStats sAvImp;
+}
+
+static int fs_av_importance_class(LLVOAvatar* av, bool visible)
+{
+    if (av->isSelf())
+    {
+        return 0;
+    }
+    if (visible)
+    {
+        return 1;
+    }
+    LLDrawable* drawable = av->mDrawable;
+    if (drawable && LLPipeline::RenderShadowDetail > 0)
+    {
+        const LLVector4a* ext = drawable->getSpatialExtents();
+        LLVector4a center, half;
+        center.setAdd(ext[0], ext[1]);
+        center.mul(0.5f);
+        half.setSub(ext[1], ext[0]);
+        half.mul(0.5f);
+        for (int c = 0; c < 4; ++c)
+        {
+            if (gPipeline.mShadowCamera[c].AABBInFrustum(center, half) != 0)
+            {
+                return 2;
+            }
+        }
+    }
+    return 3;
+}
+
+static int sAvImpKind = 0, sAvImpClass = 0;
+
+static void fs_av_importance_begin(LLVOAvatar* av, bool visible)
+{
+    static const bool on = getenv("LL_VK_AVIMP") != nullptr;
+    if (!on)
+    {
+        sAvImpClass = -1;
+        return;
+    }
+    sAvImpKind = (av->isControlAvatar() || av->isUIAvatar() || av->mDrawable.isNull()) ? 1 : 0;
+    sAvImpClass = fs_av_importance_class(av, visible);
+    if (sAvImpKind == 0)
+    {
+        U64* f = sAvImp.mFlag[sAvImpClass];
+        f[0] += av->isImpostor() ? 1 : 0;
+        f[1] += av->isCulled() ? 1 : 0;
+        f[2] += av->isTooSlow() ? 1 : 0;
+        f[3] += av->isVisuallyMuted() ? 1 : 0;
+        f[4] += av->getUpdatePeriod() > 1 ? 1 : 0;
+        f[5] += av->getParent() ? 1 : 0;
+        f[6] += (av->mDrawable.notNull() && av->mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale() > 40.f) ? 1 : 0;
+        f[7] += av->isFullyLoaded() ? 1 : 0;
+    }
+}
+
+static void fs_av_importance_ran(int ran)
+{
+    if (sAvImpClass < 0)
+    {
+        return;
+    }
+    ++sAvImp.mRan[sAvImpKind][sAvImpClass][ran];
+    if (gFrameCount >= sAvImp.mLast + 600)
+    {
+        const double frames = (double)std::max<U32>(1, gFrameCount - sAvImp.mLast);
+        sAvImp.mLast = gFrameCount;
+        static const char* const cls[4] = { "own", "main view", "cascade only", "nothing" };
+        std::string text;
+        for (int k = 0; k < 2; ++k)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                const U64* r = sAvImp.mRan[k][c];
+                if (r[0] + r[1] + r[2])
+                {
+                    text += llformat(" | %s %s: %.2f (skipped %.2f, hidden update %.2f, full update %.2f)", k ? "dummy/control/UI" : "avatars", cls[c], (r[0] + r[1] + r[2]) / frames, r[0] / frames, r[1] / frames, r[2] / frames);
+                }
+            }
+        }
+        std::string flags;
+        static const char* const names[8] = { "impostor", "culled", "too slow", "visually muted", "period>1", "sitting", "over 40 m", "fully loaded" };
+        for (int c = 0; c < 4; ++c)
+        {
+            const U64* f = sAvImp.mFlag[c];
+            flags += llformat(" | %s:", cls[c]);
+            for (int n = 0; n < 8; ++n)
+            {
+                flags += llformat(" %s %.2f", names[n], f[n] / frames);
+            }
+        }
+        LL_INFOS("AvImportance") << "avatar importance class, per frame over " << (U32)frames << " frames (visits of the update loop)" << text << LL_ENDL;
+        LL_INFOS("AvImportance") << "today's tests by class (avatars a frame)" << flags << LL_ENDL;
+        memset(&sAvImp.mRan, 0, sizeof(sAvImp.mRan));
+        memset(&sAvImp.mFlag, 0, sizeof(sAvImp.mFlag));
+    }
+}
+
 // <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
 // held in between (the animation time still runs: the next update catches up). Not the viewer's own avatar, a sitting one (it follows its seat), a fast one (over 3 m/s), an animated
 // object, a UI avatar.
@@ -6426,6 +6541,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         mTimeVisible.reset();
     }
+    fs_av_importance_begin(this, visible);
 
     //--------------------------------------------------------------------
     // The rest should only be done occasionally for far away avatars.
@@ -6442,10 +6558,12 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (!needs_update && !isSelf())
     {
+        fs_av_importance_ran(0);
         AvScope early_scope(AV_CHAR_EARLY);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
+    fs_av_importance_ran((!visible && !isSelf()) ? 1 : 2);
 
     //--------------------------------------------------------------------
     // Handle transitions between regular rendering, jellydoll, or invisible.
