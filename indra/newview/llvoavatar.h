@@ -370,6 +370,7 @@ public:
         LLDrawable* mDrawable = nullptr;
         LLSpatialBridge* mBridge = nullptr;
         LLViewerJointAttachment* mPoint = nullptr;
+        bool mRigged = false;       // stage C4: a rigged attachment (drawn with the avatar's joints, held at the avatar's box), moved by the rows with the rigged rule
     };
     std::vector<AttRow> mAttRows;
     U32 mAttRowsRevision = ~0u;
