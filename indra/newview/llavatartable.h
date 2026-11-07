@@ -29,12 +29,20 @@ public:
     // importance: 0 the viewer's own, 1 seen in the main view, 2 seen by nothing (3 reserved: seen only by a probe or snapshot)
     enum Class : U8 { CLASS_OWN = 0, CLASS_SEEN = 1, CLASS_UNSEEN = 2, CLASS_COUNT = 4 };
 
+    // what the presentation of the avatar has to do this frame (step 2: one bit at a time, each decided here and read by the piece)
+    enum Bits : U16
+    {
+        BIT_NAME_TAG = 1,               // idleUpdateNameTag: the tag can be on the screen (the avatar is in the camera's frustum, occlusion does NOT count: tags show through walls), or it is the viewer's own, or chat / typing shows
+    };
+
     struct Row
     {
         U8 mMode = MODE_OTHER;
         U8 mClass = CLASS_UNSEEN;
-        bool mVisible = false;          // isVisible() at the start of the frame
+        bool mVisible = false;          // isVisible() at the start of the frame (the cull's stamp: occlusion counts)
         bool mNeedsUpdate = false;      // computeNeedsUpdate()
+        bool mInFrustum = true;         // the avatar's extents (grown by the room a name tag needs) against the main camera's frustum, no occlusion
+        U16 mBits = 0;
         U32 mFrame = 0;
     };
 
@@ -42,6 +50,7 @@ public:
     static void beginFrame(const std::vector<LLViewerObject*>& list, size_t count);  // the only writer: LLViewerObjectList::update, before the avatars' idleUpdate
     static const Row* row(const LLVOAvatar* av);                                     // null when the avatar has no row this frame
     static void noteActual(const LLVOAvatar* av, U8 actual);                         // mode 2: what the old gates did
+    static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
 };
 
 #endif
