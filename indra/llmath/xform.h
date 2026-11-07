@@ -161,6 +161,8 @@ public:
 
     void update();
     void updateMatrix(bool update_bounds = true);
+    void updateMatrixFromParent(const LLVector3& parent_pos, const LLQuaternion& parent_rot, const LLVector3& parent_scale, bool parent_scale_child_offset, bool update_bounds = true);     // <FS> stage C: updateMatrix with the parent's world data given
+    void finishMatrix(bool update_bounds);
     // <FS> PLAN-avatars.md stage C: the world position and rotation worked out elsewhere (the avatar's flat world pass computes them from the locals in array order): the fields update() leaves, and the matrix
     // updateMatrix(false) makes from them
     void setWorldFromPass(const LLVector3& world_pos, const LLQuaternion& world_rot)

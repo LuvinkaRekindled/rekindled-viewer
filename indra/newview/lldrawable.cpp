@@ -968,7 +968,7 @@ bool LLDrawable::updateMove()
 // <FS> PLAN-avatars.md stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform has not changed, which is all that follows its joint needs: updateXform of such a drawable finds the object's local
 // position, rotation and scale equal to what the xform holds (nothing to damp, no rebuild), sets the same values again and recomputes the world matrix from the parent's (the attachment point's); with the bridge
 // held at the avatar's box nothing is queued either. So this is that matrix and the faces' centres, for the loop of the avatar. False when anything differs: the full move is made.
-bool LLDrawable::updateMoveFast()
+bool LLDrawable::updateMoveFast(const LLVector3* parent_pos, const LLQuaternion* parent_rot, const LLVector3* parent_scale, bool parent_sco)
 {
     if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || mVObjp->isFlexible() || mVObjp->isAnimatedObject())
     {
@@ -983,7 +983,14 @@ bool LLDrawable::updateMoveFast()
     xform().setPosition(target_pos);            // (the same values as the full move sets, and its changed flags; no scale in drawable transforms)
     xform().setRotation(mVObjp->getRotation());
     xform().setScale(LLVector3(1, 1, 1));
-    xform().updateMatrix();
+    if (parent_pos && parent_rot && parent_scale)
+    {
+        xform().updateMatrixFromParent(*parent_pos, *parent_rot, *parent_scale, parent_sco);      // (the attachment point's data from the avatar's flat world array: the joint's xform is not read)
+    }
+    else
+    {
+        xform().updateMatrix();
+    }
     mGeneration++;
     for (S32 i = 0; i < getNumFaces(); i++)
     {
