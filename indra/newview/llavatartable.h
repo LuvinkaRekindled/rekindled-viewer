@@ -2,7 +2,7 @@
  * @file llavatartable.h
  * @brief The avatar table (doc/vulkan/PLAN-avatars.md, stage A): one row per avatar, filled by ONE writer once a frame before the avatar update loop. The row holds what the five scattered
  *        "does this avatar need work this frame" gates of the update loop used to derive from the object graph, one after the other: the importance class, and the frame's mode.
- *        LL_VK_AVTABLE: 0 (default) the old gates, 1 the loop reads the row, 2 both: the loop uses the old answer and counts the disagreements with the row (log tag AvTable, every 600 frames).
+ *        LL_VK_AVTABLE: 0 the old gates, 1 (default) the loop reads the row, 2 both: the loop uses the old answer and counts the disagreements with the row (log tag AvTable, every 600 frames).
  */
 #ifndef LL_LLAVATARTABLE_H
 #define LL_LLAVATARTABLE_H
