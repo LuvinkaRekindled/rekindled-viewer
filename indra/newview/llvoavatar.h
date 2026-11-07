@@ -30,7 +30,7 @@
 
 #include "llhandletable.h"
 #include <atomic>
-#include <atomic>
+#include <mutex>
 #include <map>
 #include <deque>
 #include <string>
@@ -347,6 +347,10 @@ public:
     // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job, LL_VK_AV_PARALLEL=1) and
     // idleUpdateMisc replays them in its turn (replayAttachmentJob) instead of running the loop
     void            idleUpdateAttachments(bool visible);
+    // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
+    // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
+    void            buildPalettesInJob();
+    static void     sPalJobWallNsAdd(U64 ns);       // (LL_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();
     static S32      sAttachmentSelectedForJobs;     // -1: ask the selection manager; 0/1: what the main thread found before the jobs started (getObjectCount() cleans the selection's node list: not for several threads)
     void            runAttachmentJob();
@@ -1064,6 +1068,11 @@ public:
         mutable U32 mOffsetFrame = 0xFFFFFFFFu;
         mutable U32 mOffset = 0;                // where the palette is in the pass's palette record
 
+        // <FS> stage B3a: the skin this entry was built from (kept so the avatar's job can rebuild it without a request), and the frame the avatar's job built it for (0xFFFFFFFF: not by a job)
+        LLSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
+        U32 mJobFor = 0xFFFFFFFFu;
+        bool mJobChecked = false;               // (LL_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request
+
         MatrixPaletteCache() :
             mFrame(gFrameCount - 1)
         {
@@ -1083,6 +1092,8 @@ public:
     // Map of LLMeshSkinInfo::mHash to MatrixPaletteCache
     typedef std::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;
     matrix_palette_cache_t mMatrixPaletteCache;
+    mutable std::mutex mPaletteMutex;           // <FS> stage B3a: this avatar's palette entries (the job and the lazy path both take it; the lazy path takes the global palette lock first)
+    void buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinInfo* skin, U32 stamp, bool had_last_frame, bool swap_prev);
 
 protected:
     void            releaseMeshData();

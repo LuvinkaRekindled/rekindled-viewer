@@ -13043,28 +13043,173 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     fs_flat_report();
 }
 
+// <FS> PLAN-avatars.md stage B3a: LL_VK_PALJOB 1 (default) the palettes are rebuilt by a pool job per avatar after the frame's completions, 0 only on request, 2 job and compared with a rebuild at the first request
+static int fs_paljob_mode()
+{
+    static const int mode = getenv("LL_VK_PALJOB") ? atoi(getenv("LL_VK_PALJOB")) : 1;
+    return mode;
+}
+
+namespace
+{
+// LL_VK_PALTIME=1: where the palette time goes. 0 built on request, 1 built by the job; per frame: builds, build time (all threads), time waiting for the global palette lock, hits
+std::atomic<U64> sPalBuildNs[2], sPalBuilds[2], sPalWaitNs{ 0 }, sPalRequests2{ 0 }, sPalHits{ 0 }, sPalJobWallNs{ 0 }, sPalJobRuns{ 0 };
+std::atomic<U64> sPalCompared{ 0 }, sPalDiffer{ 0 }, sPalSkippedUninit{ 0 };
+std::atomic<U32> sPalTimeLast{ 0 };
+bool fs_paltime_on()
+{
+    static const bool on = getenv("LL_VK_PALTIME") != nullptr;
+    return on;
+}
+inline U64 fs_pal_now()
+{
+    return (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void fs_paltime_report()
+{
+    if (gFrameCount >= sPalTimeLast.load() + 600)
+    {
+        const double frames = (double)std::max<U32>(1, gFrameCount - sPalTimeLast.load());
+        sPalTimeLast = gFrameCount;
+        LL_INFOS("PalTime") << "palettes a frame over " << (U32)frames << " frames: requests " << sPalRequests2.exchange(0) / frames << " (hits " << sPalHits.exchange(0) / frames << "); built on request " << sPalBuilds[0].load() / frames
+            << " in " << sPalBuildNs[0].exchange(0) / 1.0e6 / frames << " ms (all threads), built by the job " << sPalBuilds[1].load() / frames << " in " << sPalBuildNs[1].exchange(0) / 1.0e6 / frames
+            << " ms (all threads), job wall " << sPalJobWallNs.exchange(0) / 1.0e6 / frames << " ms; waiting for the global palette lock " << sPalWaitNs.exchange(0) / 1.0e6 / frames
+            << " ms (all threads); job palettes compared with a rebuild " << sPalCompared.load() << ", different " << sPalDiffer.load() << ", entries skipped (skin joint numbers not initialised) " << sPalSkippedUninit.load() << LL_ENDL;
+        sPalBuilds[0] = sPalBuilds[1] = 0;
+    }
+}
+}
+
 const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skin)
 {
     // <FS> the packet builders of the shadow cascades run on pool threads and ask for palettes at the same time: the lazy cache (and the lazy joint matrices and joint numbers it fills in) is one at a time.
     // The entry returned is not written again in this frame, so the callers read it without the lock.
     static std::mutex palette_mutex;
+    const bool timed = fs_paltime_on();
+    const U64 wait_t0 = timed ? fs_pal_now() : 0;
     std::lock_guard<std::mutex> palette_lock(palette_mutex);
+    std::lock_guard<std::mutex> avatar_lock(mPaletteMutex);
+    if (timed)
+    {
+        sPalWaitNs += fs_pal_now() - wait_t0;
+        ++sPalRequests2;
+    }
 
     U64 hash = skin->mHash;
     MatrixPaletteCache& entry = mMatrixPaletteCache[hash];
 
-    if (entry.mFrame != gFrameCount)
+    if (entry.mFrame == gFrameCount)
     {
-        LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
-
+        if (timed)
+        {
+            ++sPalHits;
+            fs_paltime_report();
+        }
+        if (entry.mJobFor == gFrameCount && fs_paljob_mode() == 2 && !entry.mJobChecked && entry.mSkin.notNull())
+        {
+            // compare mode: the palette the job built against a rebuild now, bit for bit (matrices, as B0)
+            entry.mJobChecked = true;
+            const U32 count = LLSkinningUtil::getMeshJointCount(skin);
+            LLMeshSkinInfo::matrix_list_t scratch(count);
+            if (mFlatSkel)
+            {
+                mFlatSkel->mFrame = ~0u;
+            }
+            flatPalette(scratch.data(), (S32)count, skin);
+            ++sPalCompared;
+            if (scratch.size() != entry.mMatrixPalette.size() || memcmp(scratch.data(), entry.mMatrixPalette.data(), sizeof(LLMatrix4a) * (size_t)count) != 0)
+            {
+                if (++sPalDiffer <= 8)
+                {
+                    U32 first = 0;
+                    for (; first < count && first < entry.mMatrixPalette.size() && memcmp(&scratch[first], &entry.mMatrixPalette[first], sizeof(LLMatrix4a)) == 0; ++first) {}
+                    LL_WARNS("PalTime") << "job palette differs from a rebuild: avatar " << getFullname() << (isSelf() ? " (own)" : "") << (isControlAvatar() ? " (animated object)" : "") << (isSitting() ? " (sitting)" : "") << ", skin " << hash << ", " << count
+                        << " joints, first different joint " << first << LL_ENDL;
+                }
+            }
+        }
+    }
+    else
+    {
+        entry.mSkin = skin;
         // <FS> motion vectors: last frame's palette becomes the previous one, but only when the entry was computed in the frame just before (an avatar that was not
         // asked for in between has no valid history: previous = current, no motion)
         const bool had_last_frame = entry.mComputed && entry.mFrame == gFrameCount - 1;
-        if (had_last_frame)
+        const U64 build_t0 = timed ? fs_pal_now() : 0;
+        buildPaletteEntry(entry, skin, gFrameCount, had_last_frame, had_last_frame);
+        if (timed)
+        {
+            sPalBuildNs[0] += fs_pal_now() - build_t0;
+            ++sPalBuilds[0];
+            fs_paltime_report();
+        }
+    }
+    return entry;
+}
+
+void LLVOAvatar::sPalJobWallNsAdd(U64 ns)
+{
+    sPalJobWallNs += ns;
+    ++sPalJobRuns;
+}
+
+// the pool job of one avatar (after the completions of the frame): rebuilds the palettes it had asked for in the last rendered frame, for the frame about to be rendered
+void LLVOAvatar::buildPalettesInJob()
+{
+    const int mode = fs_paljob_mode();
+    if (mode == 0 || isDead() || mMatrixPaletteCache.empty())
+    {
+        return;
+    }
+    const bool timed = fs_paltime_on();
+    const U32 target = gFrameCount + 1;     // (gFrameCount is advanced at the start of display(), after this idle: the request of the render finds mFrame == its own frame)
+    std::lock_guard<std::mutex> avatar_lock(mPaletteMutex);
+    if (mFlatSkel)
+    {
+        mFlatSkel->mFrame = ~0u;            // (the world array is filled again from the final skeleton of this frame)
+    }
+    for (auto& kv : mMatrixPaletteCache)
+    {
+        MatrixPaletteCache& entry = kv.second;
+        // an entry asked for in the last rendered frame (mFrame == gFrameCount), or already rebuilt for the coming one by an earlier run of this job (display did not come in between)
+        if (!entry.mComputed || entry.mSkin.isNull() || (entry.mFrame != gFrameCount && entry.mFrame != target))
+        {
+            continue;
+        }
+        const LLMeshSkinInfo* skin = entry.mSkin.get();
+        if (!skin->mJointNumsInitialized)
+        {
+            ++sPalSkippedUninit;            // (initJointNums writes the skin, which avatars share: only the lazy path under the global lock does that)
+            continue;
+        }
+        const bool again = entry.mFrame == target;
+        const U64 t0 = timed ? fs_pal_now() : 0;
+        buildPaletteEntry(entry, skin, target, true, !again);
+        entry.mJobFor = target;
+        entry.mJobChecked = false;
+        if (timed)
+        {
+            sPalBuildNs[1] += fs_pal_now() - t0;
+            ++sPalBuilds[1];
+        }
+    }
+    if (mFlatSkel)
+    {
+        mFlatSkel->mFrame = ~0u;
+    }
+}
+
+void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinInfo* skin, U32 stamp, bool had_last_frame, bool swap_prev)
+{
+    const U64 hash = skin->mHash;
+    {
+        LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+
+        if (swap_prev)
         {
             entry.mPrevGLMp.swap(entry.mGLMp);
         }
-        entry.mFrame = gFrameCount;
+        entry.mFrame = stamp;
         entry.mComputed = true;
         if (skin->mBadBindCount > 0 && !entry.mBadBindNamed)
         {
@@ -13317,8 +13462,6 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             }
         }
     }
-
-    return entry;
 }
 
 // static

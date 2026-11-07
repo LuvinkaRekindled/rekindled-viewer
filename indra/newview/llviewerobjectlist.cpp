@@ -1297,6 +1297,28 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             avatar->completeDeferredMotionUpdate();
         }
     }
+    // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
+    {
+        static const bool pal_time = getenv("LL_VK_PALTIME") != nullptr;
+        const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+        if (pool && batch.size() >= MIN_PARALLEL_BATCH)
+        {
+            LL_CPU_ZONE("motion batch: palette jobs (launch to join)");
+            const std::function<void(size_t)> pal_job = [&batch](size_t index) { batch[index]->buildPalettesInJob(); };
+            pool->runLabeled("avatar palettes", batch.size(), pal_job);
+        }
+        else
+        {
+            for (LLPointer<LLVOAvatar>& avatar : batch)
+            {
+                avatar->buildPalettesInJob();
+            }
+        }
+        if (pal_time)
+        {
+            LLVOAvatar::sPalJobWallNsAdd((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pal_t0).count());
+        }
+    }
     if (gFSAvTimersOn)
     {
         const auto complete_end = std::chrono::steady_clock::now();
