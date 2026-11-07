@@ -887,6 +887,13 @@ void LLJoint::setScale( const LLVector3& requested_scale, bool apply_attachment_
     {
         LL_DEBUGS("Avatar") << " joint " << getName() << " set scale " << scale << LL_ENDL;
     }
+    // <FS> PLAN-avatars.md stage B2c (LL_VK_SCALEGUARD: 1 default, 0 the old unconditional touch): a scale that does not change dirties nothing. The blend sets the scale of every joint it touches, every frame, and the touch
+    // dirtied the joint and all its descendants each time (the same fix the position and rotation setters have), so every avatar's whole skeleton was walked every frame whether or not anything had moved.
+    static const bool guard = !getenv("LL_VK_SCALEGUARD") || atoi(getenv("LL_VK_SCALEGUARD")) != 0;
+    if (guard && mXform.getScale() == scale)
+    {
+        return;
+    }
     mXform.setScale(scale);
     touch();
 
