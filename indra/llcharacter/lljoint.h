@@ -31,6 +31,7 @@
 // Header Files
 //-----------------------------------------------------------------------------
 #include <string>
+#include <atomic>
 #include <list>
 
 #include "v3math.h"
@@ -134,6 +135,17 @@ protected:
 public:
     U32             mDirtyFlags;
     bool            mUpdateXform;
+    // <FS> PLAN-avatars.md stage C (LL_VK_JOINTVIEW: 1 on, 0 off, 2 on and verified): the joint as a view of the avatar's flat world array. The pass points these at the joint's slot and sets mViewValid when the joint is clean and the slot is
+    // what the xform holds; touch() clears it, so while it is set the world position, rotation and matrix come from the array. Mode 2 also reads the xform and compares.
+    const LLVector3*    mViewPos = nullptr;
+    const LLQuaternion* mViewRot = nullptr;
+    const LLMatrix4a*   mViewMat = nullptr;
+    bool                mViewValid = false;
+    U8                  mViewKind = 0;      // how the pass set it: 1 computed from the locals, 2 clean and copied, 3 not worked out (dirty or outside the walk)
+    U32                 mViewPass = 0;      // the pass counter at that time
+    static std::atomic<U32> sViewPasses;
+    static int          sViewMode;
+    static std::atomic<U64> sViewChecked, sViewDifferent;
 
     // describes the skin binding pose
     LLVector3       mSkinOffset;
