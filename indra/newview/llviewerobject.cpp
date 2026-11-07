@@ -4522,6 +4522,10 @@ void LLViewerObject::addNVPair(const std::string& data)
         }
     }
     mNameValuePairs[nv->mName] = nv;
+    if (isAvatar())
+    {
+        static_cast<LLVOAvatar*>(this)->invalidateNameTagInputs();      // <FS> B3d: names and title show on the name tag
+    }
 }
 
 bool LLViewerObject::removeNVPair(const std::string& name)
@@ -4550,6 +4554,10 @@ bool LLViewerObject::removeNVPair(const std::string& name)
             // Remove the NV pair from the local list.
             delete nv;
             mNameValuePairs.erase(iter);
+            if (isAvatar())
+            {
+                static_cast<LLVOAvatar*>(this)->invalidateNameTagInputs();
+            }
             return true;
         }
         else

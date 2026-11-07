@@ -76,6 +76,7 @@
 // [/SL:KB]
 #include "llviewerregion.h"
 #include "llviewerwindow.h"
+#include "llvoavatar.h"     // <FS> B3d: marks change the name tag
 #include "llworld.h"
 #include "llworldmapview.h"     // shared draw code
 // [RLVa:KB] - Checked: RLVa-2.0.1
@@ -2016,6 +2017,7 @@ void LLNetMap::setAvatarMarkColors(const uuid_vec_t& avatar_ids, const LLSD& col
     for (const auto& avatar_id : avatar_ids)
     {
         sAvatarMarksMap[avatar_id] = mark_color;
+        LLVOAvatar::invalidateNameTag(avatar_id);       // <FS> B3d: the mark colours the name tag
     }
 }
 
@@ -2033,6 +2035,7 @@ void LLNetMap::clearAvatarMarkColors(const uuid_vec_t& avatar_ids)
     for (const auto& avatar_id : avatar_ids)
     {
         sAvatarMarksMap.erase(avatar_id);
+        LLVOAvatar::invalidateNameTag(avatar_id);
     }
 }
 
@@ -2040,6 +2043,7 @@ void LLNetMap::clearAvatarMarkColors(const uuid_vec_t& avatar_ids)
 void LLNetMap::clearAvatarMarkColors()
 {
     sAvatarMarksMap.clear();
+    LLVOAvatar::invalidateNameTags();
 }
 
 // static

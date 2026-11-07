@@ -1380,6 +1380,10 @@ private:
 
 public:
     virtual std::string getFullname() const; // Returns "FirstName LastName"
+    // <FS> PLAN-avatars.md stage B3d, name tag events (LL_VK_NAMETAGPOLL): something the tag shows may have changed (animations, names and title, complexity, rez state, appearance, typing, chat, marks): look at its
+    // inputs at the next chance. bumpNameTagGen(): the same for every avatar (the mute list, the friend list).
+    void            invalidateNameTagInputs() { mNameTagForce = true; }
+    static void     bumpNameTagGen();
     std::string     avString() const; // Frequently used string in log messages "Avatar '<full name'"
 protected:
     static void     getAnimLabels(std::vector<std::string>* labels);
@@ -1388,6 +1392,7 @@ private:
     bool            mNameIsSet;
     F64             mNameTagLastPoll = -1.0;        // <FS> stage B3d: when the tag's inputs were last looked at (LL_VK_NAMETAGPOLL); mNameTagForce: look next time
     bool            mNameTagForce = false;
+    U32             mNameTagGen = 0;                // (the global generation this avatar's tag was last looked at under)
     LLSD            mClientTagData;
     bool            mHasClientTagColor;
     std::string     mTitle;

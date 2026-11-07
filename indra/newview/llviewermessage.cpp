@@ -5264,6 +5264,7 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
 
     //clear animation flags
     avatarp->mSignaledAnimations.clear();
+    avatarp->invalidateNameTagInputs();     // <FS> B3d: away / do not disturb / appearance show on the name tag
 
     if (avatarp->isSelf())
     {

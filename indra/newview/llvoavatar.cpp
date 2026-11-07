@@ -4680,6 +4680,24 @@ static int fs_nametagpoll_mode()
     return mode;
 }
 
+namespace
+{
+std::atomic<U32> sNameTagGen{ 1 };           // bumped by the mute list and the friend list
+struct NameTagMuteObserver : public LLMuteListObserver
+{
+    void onChange() override { ++sNameTagGen; }
+};
+struct NameTagFriendObserver : public LLFriendObserver
+{
+    void changed(U32) override { ++sNameTagGen; }
+};
+}
+
+void LLVOAvatar::bumpNameTagGen()
+{
+    ++sNameTagGen;
+}
+
 void LLVOAvatar::idleUpdateNameTagText(bool new_name)
 {
     bool poll = true;
@@ -4688,12 +4706,32 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
     bool would_skip = false;
     if (poll_mode != 0)
     {
+        static bool observers_added = false;
+        if (!observers_added)
+        {
+            observers_added = true;
+            static NameTagMuteObserver mute_observer;
+            static NameTagFriendObserver friend_observer;
+            LLMuteList::getInstance()->addObserver(&mute_observer);
+            LLAvatarTracker::instance().addObserver(&friend_observer);
+        }
+        // The tag's inputs are looked at when an event said they may have changed (the hooks of invalidateNameTagInputs, the mute and friend lists, clearNameTag), and otherwise on a slow sweep that
+        // catches what has no event (the colour from map marks and client tags, the missing parts, anything this list does not know): 2 s. Continuous inputs, the distance text and colour when their settings
+        // are on, and the viewer's own tag (the auto-response text comes from account settings), are looked at at most 0.1 s apart.
+        static LLCachedControl<bool> distance_color(gSavedSettings, "FSTagShowDistanceColors");
+        static LLCachedControl<bool> distance_text(gSavedSettings, "FSTagShowDistance");
+        const F64 period = (isSelf() || distance_color || distance_text) ? 0.1 : 2.0;
         if (mNameTagLastPoll < 0.0)
         {
             mNameTagLastPoll = poll_now - 0.01 * (F64)(getID().mData[0] % 10);       // (first look: spread the avatars over the interval)
         }
-        would_skip = mNameIsSet && !new_name && !mNameTagForce && (poll_now - mNameTagLastPoll) < 0.1;
+        const U32 gen = sNameTagGen.load(std::memory_order_relaxed);
+        would_skip = mNameIsSet && !new_name && !mNameTagForce && mNameTagGen == gen && (poll_now - mNameTagLastPoll) < period;
         poll = poll_mode == 2 || !would_skip;
+        if (poll)
+        {
+            mNameTagGen = gen;
+        }
     }
     if (poll)
     {
@@ -4879,7 +4917,34 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
     {
         if (poll_mode == 2 && would_skip)
         {
-            ++found_by_sweep;       // (mode 2) the throttle would have left this change for a later look
+            // (mode 2) a change no event flagged: which input moved (an input can be counted with others; "other" is a rebuild none of the listed inputs explains)
+            ++found_by_sweep;
+            static std::atomic<U64> by_input[12];
+            const bool title_changed = (!title && !mTitle.empty()) || (title && mTitle != title->getString());
+            const bool names_changed = !LLGridManager::instance().isInSecondLife() && (firstname->getString() != mNameFirstname || lastname->getString() != mNameLastname);
+            bool any = false;
+            auto count = [&](int k, bool moved) { if (moved) { ++by_input[k]; any = true; } };
+            count(0, is_away != mNameAway || is_do_not_disturb != mNameDoNotDisturb || is_autoresponse != mNameAutoResponse);
+            count(1, is_appearance != mNameAppearance);
+            count(2, is_muted != mNameMute);
+            count(3, is_friend != mNameFriend);
+            count(4, is_cloud != mNameCloud);
+            count(5, name_tag_color != mNameColor);
+            count(6, is_typing != mNameIsTyping);
+            count(7, distance_string != mDistanceString);
+            count(8, complexity != mNameArc || complexity_color != mNameArcColor);
+            count(9, title_changed);
+            count(10, names_changed);
+            if (!any)
+            {
+                ++by_input[11];
+            }
+            if (found_by_sweep % 200 == 1)
+            {
+                LL_INFOS("NameTagPoll") << "rebuilds no event flagged, so far " << found_by_sweep.load() << " by input: away/dnd/auto " << by_input[0].load() << ", appearance " << by_input[1].load() << ", mute " << by_input[2].load()
+                    << ", friend " << by_input[3].load() << ", missing parts " << by_input[4].load() << ", colour " << by_input[5].load() << ", typing " << by_input[6].load() << ", distance text " << by_input[7].load()
+                    << ", complexity " << by_input[8].load() << ", title " << by_input[9].load() << ", names " << by_input[10].load() << ", none of these " << by_input[11].load() << LL_ENDL;
+            }
         }
 
         //WS: If we got a uuid and if we know if it's id_based or not, ask FSDATA for the other tagdata, before we display it.
@@ -5540,6 +5605,10 @@ bool LLVOAvatar::isInMuteList() const
 
         const F64 SECONDS_BETWEEN_MUTE_UPDATES = 1;
         mCachedMuteListUpdateTime = now + SECONDS_BETWEEN_MUTE_UPDATES;
+        if (muted != mCachedInMuteList)
+        {
+            const_cast<LLVOAvatar*>(this)->invalidateNameTagInputs();       // <FS> B3d: the cached answer flipped (the mute list observer fires before this cache catches up): the tag shows "muted"
+        }
         mCachedInMuteList = muted;
     }
     return muted;
@@ -11063,6 +11132,7 @@ void LLVOAvatar::updateRezzedStatusTimers(S32 rez_status)
             }
         }
         mLastRezzedStatus = rez_status;
+        invalidateNameTagInputs();      // <FS> B3d: "loading" shows on the name tag while the avatar is a cloud
 
         static LLUICachedControl<bool> show_rez_status("NameTagDebugAVRezState", false);
         if (show_rez_status)
@@ -12552,6 +12622,7 @@ bool resolve_appearance_version(const LLAppearanceMessageContents& contents, S32
 //-----------------------------------------------------------------------------
 void LLVOAvatar::processAvatarAppearance( LLMessageSystem* mesgsys )
 {
+    invalidateNameTagInputs();      // <FS> B3d: the shape and baked textures decide the "loading" text of the name tag
     static LLCachedControl<bool> enable_verbose_dumps(gSavedSettings, "DebugAvatarAppearanceMessage");
     static LLCachedControl<bool> block_avatar_appearance_messages(gSavedSettings, "BlockAvatarAppearanceMessages");
 
@@ -15140,6 +15211,10 @@ void LLVOAvatar::calculateUpdateRenderComplexity()
     }
 
     // Store results
+    if (mVisualComplexity != total_cost)
+    {
+        invalidateNameTagInputs();      // <FS> B3d: the complexity shows on the name tag
+    }
     mVisualComplexity = total_cost;
 
     // Call the reporting function with the aggregated lists
