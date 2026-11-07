@@ -3219,7 +3219,7 @@ struct AttStats
 AttStats gAttStats;
 namespace
 {
-std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
+std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 }, sAttXfFast{ 0 }, sAttXfChecked{ 0 }, sAttXfDifferent{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
 }
 // an attachment that only follows its joint: nothing selected, flexible, animated, lighted, sounding or emitting particles in it or its children, not a HUD
 inline bool att_plain(const LLViewerObject* root)
@@ -3871,6 +3871,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
         U32 draw_order = 0;
         static const int cons_mode = getenv("LL_VK_ATTCONS") ? atoi(getenv("LL_VK_ATTCONS")) : 1;
+        static const int xf_mode = getenv("LL_VK_ATTXF") ? atoi(getenv("LL_VK_ATTXF")) : 1;
         bool attachment_selected = sAttachmentSelectedForJobs >= 0 ? sAttachmentSelectedForJobs != 0
             : (LLSelectMgr::getInstance()->getSelection()->getObjectCount() > 0 && LLSelectMgr::getInstance()->getSelection()->isAttachment());
 
@@ -4141,15 +4142,41 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     {
                         LL_CPU_ZONE("att: drawable move");
                         const auto t = att_now();
-                        if (attachment_selected)
+                        // <FS> PLAN-avatars.md stage C (LL_VK_ATTXF: 1 default, 0 off, 2 on and verified): a plain rigid attachment whose own transform is unchanged needs only its matrix and its faces' centres written (the
+                        // joint moved, nothing else), not the whole damped move with its moved list entry, state bits and text; the full move when anything differs
+                        bool moved_fast = false;
+                        if (xf_mode && cons_eligible && attached_object->mDrawable->updateMoveFast())
                         {
-                            gPipeline.updateMoveNormalAsync(attached_object->mDrawable);
+                            moved_fast = true;
+                            ++sAttXfFast;
+                            if (xf_mode == 2)
+                            {
+                                // verify: the full move after the fast one must leave the matrix as it is
+                                LLMatrix4 before = attached_object->mDrawable->getXform()->getWorldMatrix();
+                                gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
+                                ++sAttXfChecked;
+                                if (memcmp(before.mMatrix, attached_object->mDrawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
+                                {
+                                    ++sAttXfDifferent;
+                                }
+                                if ((sAttXfChecked % 100000) == 0)
+                                {
+                                    LL_INFOS("AttXf") << "attachment matrix by the fast move " << sAttXfFast.load() << ", checked against the full move " << sAttXfChecked.load() << ", different " << sAttXfDifferent.load() << LL_ENDL;
+                                }
+                            }
                         }
-                        else
+                        if (!moved_fast)
                         {
-                            // Note: SL-17415; While most objects follow joints,
-                            // some objects get position updates from server
-                            gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
+                            if (attachment_selected)
+                            {
+                                gPipeline.updateMoveNormalAsync(attached_object->mDrawable);
+                            }
+                            else
+                            {
+                                // Note: SL-17415; While most objects follow joints,
+                                // some objects get position updates from server
+                                gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
+                            }
                         }
                         gAttStats.nsMove += att_ns(t);
                     }

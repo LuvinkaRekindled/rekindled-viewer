@@ -965,6 +965,36 @@ bool LLDrawable::updateMove()
     return isState(MOVE_UNDAMPED) ? updateMoveUndamped() : updateMoveDamped();
 }
 
+// <FS> PLAN-avatars.md stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform has not changed, which is all that follows its joint needs: updateXform of such a drawable finds the object's local
+// position, rotation and scale equal to what the xform holds (nothing to damp, no rebuild), sets the same values again and recomputes the world matrix from the parent's (the attachment point's); with the bridge
+// held at the avatar's box nothing is queued either. So this is that matrix and the faces' centres, for the loop of the avatar. False when anything differs: the full move is made.
+bool LLDrawable::updateMoveFast()
+{
+    if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || mVObjp->isFlexible() || mVObjp->isAnimatedObject())
+    {
+        return false;
+    }
+    const LLXformMatrix& xf = xform();
+    const LLVector3 target_pos = xf.isRoot() ? mVObjp->getPositionAgent() : mVObjp->getPosition();
+    if (!(xf.getPosition() == target_pos) || !(xf.getRotation() == mVObjp->getRotation()) || !(getScale() == mVObjp->getScale()))
+    {
+        return false;
+    }
+    xform().setPosition(target_pos);            // (the same values as the full move sets, and its changed flags; no scale in drawable transforms)
+    xform().setRotation(mVObjp->getRotation());
+    xform().setScale(LLVector3(1, 1, 1));
+    xform().updateMatrix();
+    mGeneration++;
+    for (S32 i = 0; i < getNumFaces(); i++)
+    {
+        if (LLFace* face = getFace(i))
+        {
+            face->updateCenterAgent();
+        }
+    }
+    return true;
+}
+
 bool LLDrawable::updateMoveUndamped()
 {
     F32 dist_squared = updateXform(true);
