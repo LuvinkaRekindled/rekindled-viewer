@@ -29,6 +29,7 @@
 #include <chrono>
 
 #include "llviewerobjectlist.h"
+#include "llavatartable.h"
 #include "llforkjoinpool.h"
 
 #include <atomic>
@@ -1419,6 +1420,8 @@ void LLViewerObjectList::update(LLAgent &agent)
     }
 
     std::vector<LLViewerObject*>::iterator idle_end = idle_list.begin()+idle_count;
+
+    LLAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place (LL_VK_AVTABLE)
 
     // <FS:Ansariel> Speed up debug settings
     //if (gSavedSettings.getBOOL("FreezeTime"))

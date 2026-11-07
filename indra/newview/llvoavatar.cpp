@@ -34,6 +34,7 @@
 #include <chrono>
 
 #include "llvoavatar.h"
+#include "llavatartable.h"
 #include "llretirelist.h"
 #include "llavatarref.h"
 #include <map>      // <FS> LL_VK_PALSTATS
@@ -3379,8 +3380,12 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         return;
     }
 
-    // record time and refresh "tooSlow" status
-    updateTooSlow();
+    // record time and refresh "tooSlow" status (<FS> stage A mode 1: the table's pre-pass has done it)
+    const LLAvatarTable::Row* table_row = LLAvatarTable::switchMode() == 1 ? LLAvatarTable::row(this) : nullptr;
+    if (!table_row)
+    {
+        updateTooSlow();
+    }
 
     static LLCachedControl<bool> disable_all_render_types(gSavedSettings, "DisableAllRenderTypes");
     if (!(gPipeline.hasRenderType(mIsControlAvatar ? LLPipeline::RENDER_TYPE_CONTROL_AV : LLPipeline::RENDER_TYPE_AVATAR))
@@ -3396,18 +3401,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // <FS> An avatar nobody can see does not need the whole per-frame update: its motions, matrices, name tag and the rest are all driven by elapsed time (the impostor
     // path already runs them every 32-64 frames), and it is picked up in full the frame after it comes into view. Others' avatars only, and not when something is waiting
     // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
+    if (table_row ? table_row->mMode == LLAvatarTable::MODE_NONE : reducedHiddenSkip())
     {
-        static LLCachedControl<bool> reduce_hidden(gSavedSettings, "FSReduceHiddenAvatarUpdates", true);
-        if (reduce_hidden && !isSelf() && !mIsControlAvatar && !isUIAvatar() && mDrawable.notNull() && mSpecialRenderMode == 0
-            && !mNeedsAnimUpdate && !isVisible())
-        {
-            const F32 distance = (getPositionAgent() - LLViewerCamera::getInstance()->getOrigin()).length();
-            const S32 period = distance > 50.f ? 4 : 2;
-            if (((LLFrameTimer::getFrameCount() + mID.mData[0]) % period) != 0)
-            {
-                return;
-            }
-        }
+        LLAvatarTable::noteActual(this, LLAvatarTable::MODE_NONE);
+        return;
     }
 
     // Update should be happening max once per frame.
@@ -6566,6 +6563,157 @@ static void fs_av_importance_ran(int ran)
     }
 }
 
+
+//------------------------------------------------------------------------
+// <FS> PLAN-avatars.md stage A: the avatar table (llavatartable.h)
+//------------------------------------------------------------------------
+bool LLVOAvatar::reducedHiddenSkip()
+{
+    // <FS> An avatar nobody can see does not need the whole per-frame update: its motions, matrices, name tag and the rest are all driven by elapsed time (the impostor
+    // path already runs them every 32-64 frames), and it is picked up in full the frame after it comes into view. Others' avatars only, and not when something is waiting
+    // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
+    static LLCachedControl<bool> reduce_hidden(gSavedSettings, "FSReduceHiddenAvatarUpdates", true);
+    if (reduce_hidden && !isSelf() && !mIsControlAvatar && !isUIAvatar() && mDrawable.notNull() && mSpecialRenderMode == 0
+        && !mNeedsAnimUpdate && !isVisible())
+    {
+        const F32 distance = (getPositionAgent() - LLViewerCamera::getInstance()->getOrigin()).length();
+        const S32 period = distance > 50.f ? 4 : 2;
+        if (((LLFrameTimer::getFrameCount() + mID.mData[0]) % period) != 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// the gates of idleUpdate and updateCharacter, in their order (idleUpdate: dead / exiting, friends only, tooSlow, render type off, the reduced update; updateCharacter: not built, visible, computeNeedsUpdate)
+unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
+{
+    visible = false;
+    needs_update = false;
+    if (LLApp::isExiting() || isDead())
+    {
+        return LLAvatarTable::MODE_OTHER;
+    }
+    static LLCachedControl<bool> friends_only(gSavedSettings, "RenderAvatarFriendsOnly", false);
+    if (friends_only() && !isUIAvatar() && !isControlAvatar() && !isSelf() && !isBuddy())
+    {
+        return LLAvatarTable::MODE_OTHER;
+    }
+    if (LLAvatarTable::switchMode() == 1)
+    {
+        updateTooSlow();        // (mode 1: idleUpdate does not; mode 2 leaves it to idleUpdate and the answers differ where the state it makes matters)
+    }
+    static LLCachedControl<bool> disable_all_render_types(gSavedSettings, "DisableAllRenderTypes");
+    if (!(gPipeline.hasRenderType(mIsControlAvatar ? LLPipeline::RENDER_TYPE_CONTROL_AV : LLPipeline::RENDER_TYPE_AVATAR)) && !disable_all_render_types && !isSelf())
+    {
+        return LLAvatarTable::MODE_OTHER;
+    }
+    if (reducedHiddenSkip())
+    {
+        return LLAvatarTable::MODE_NONE;
+    }
+    if (!mIsBuilt)
+    {
+        return LLAvatarTable::MODE_OTHER;
+    }
+    visible = isVisible();
+    needs_update = computeNeedsUpdate();
+    if (!needs_update && !isSelf())
+    {
+        return LLAvatarTable::MODE_SKIP;
+    }
+    if (!visible && !isSelf())
+    {
+        return LLAvatarTable::MODE_MATRICES;
+    }
+    return LLAvatarTable::MODE_POSE;
+}
+
+namespace
+{
+std::unordered_map<const LLVOAvatar*, LLAvatarTable::Row> sAvatarRows;
+U64 sAvTableAgree = 0, sAvTableMatrix[LLAvatarTable::MODE_COUNT][LLAvatarTable::MODE_COUNT] = {}, sAvTableNoRow = 0;
+U32 sAvTableLast = 0;
+}
+
+int LLAvatarTable::switchMode()
+{
+    static const int mode = getenv("LL_VK_AVTABLE") ? atoi(getenv("LL_VK_AVTABLE")) : 0;
+    return mode;
+}
+
+const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
+{
+    auto found = sAvatarRows.find(av);
+    return found == sAvatarRows.end() ? nullptr : &found->second;
+}
+
+void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
+{
+    if (!switchMode())
+    {
+        return;
+    }
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    sAvatarRows.clear();
+    const U32 frame = LLFrameTimer::getFrameCount();
+    for (size_t i = 0; i < count; ++i)
+    {
+        LLViewerObject* object = list[i];
+        if (!object || !object->isAvatar())
+        {
+            continue;
+        }
+        LLVOAvatar* av = static_cast<LLVOAvatar*>(object);
+        Row r;
+        r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate);
+        r.mClass = av->isSelf() ? CLASS_OWN : (r.mVisible ? CLASS_SEEN : CLASS_UNSEEN);
+        r.mFrame = frame;
+        sAvatarRows[av] = r;
+    }
+}
+
+void LLAvatarTable::noteActual(const LLVOAvatar* av, U8 actual)
+{
+    if (switchMode() != 2)
+    {
+        return;
+    }
+    auto found = sAvatarRows.find(av);
+    if (found == sAvatarRows.end())
+    {
+        ++sAvTableNoRow;
+    }
+    else
+    {
+        ++sAvTableMatrix[found->second.mMode][actual];
+        sAvTableAgree += found->second.mMode == actual ? 1 : 0;
+    }
+    if (LLFrameTimer::getFrameCount() >= sAvTableLast + 600)
+    {
+        const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - sAvTableLast);
+        sAvTableLast = LLFrameTimer::getFrameCount();
+        static const char* const names[MODE_COUNT] = { "other", "none", "skip", "matrices", "pose" };
+        std::string text;
+        U64 total = 0;
+        for (int p = 0; p < MODE_COUNT; ++p)
+        {
+            for (int a = 0; a < MODE_COUNT; ++a)
+            {
+                if (sAvTableMatrix[p][a])
+                {
+                    total += sAvTableMatrix[p][a];
+                    text += llformat(" | row %s, old gates %s: %.2f%s", names[p], names[a], sAvTableMatrix[p][a] / frames, p == a ? "" : "  <- DISAGREE");
+                }
+            }
+        }
+        LL_INFOS("AvTable") << "avatar table check, per frame over " << (U32)frames << " frames: " << total / frames << " avatars compared, agree " << sAvTableAgree / frames << ", no row " << sAvTableNoRow / frames << text << LL_ENDL;
+        sAvTableAgree = sAvTableNoRow = 0;
+        memset(sAvTableMatrix, 0, sizeof(sAvTableMatrix));
+    }
+}
+
 // <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
 // held in between (the animation time still runs: the next update catches up). Not the viewer's own avatar, a sitting one (it follows its seat), a fast one (over 3 m/s), an animated
 // object, a UI avatar.
@@ -6678,7 +6826,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         return false;
     }
 
-    bool visible = isVisible();
+    const LLAvatarTable::Row* table_row = LLAvatarTable::switchMode() == 1 ? LLAvatarTable::row(this) : nullptr;       // <FS> stage A mode 1
+    bool visible = table_row ? table_row->mVisible : isVisible();
 
     // For fading out the names above heads, only let the timer
     // run if we're visible.
@@ -6693,7 +6842,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // Set mUpdatePeriod and visible based on distance and other criteria,
     // and flag for impostor update if needed.
     //--------------------------------------------------------------------
-    bool needs_update = computeNeedsUpdate();
+    bool needs_update = table_row ? table_row->mNeedsUpdate : computeNeedsUpdate();
 
     //--------------------------------------------------------------------
     // Early out if does not need update and not self
@@ -6703,12 +6852,14 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (!needs_update && !isSelf())
     {
+        LLAvatarTable::noteActual(this, LLAvatarTable::MODE_SKIP);
         fs_av_importance_ran(0);
         AvScope early_scope(AV_CHAR_EARLY);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
     fs_av_importance_ran((!visible && !isSelf()) ? 1 : 2);
+    LLAvatarTable::noteActual(this, (!visible && !isSelf()) ? LLAvatarTable::MODE_MATRICES : LLAvatarTable::MODE_POSE);
 
     //--------------------------------------------------------------------
     // Handle transitions between regular rendering, jellydoll, or invisible.
