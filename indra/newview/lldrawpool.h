@@ -150,8 +150,10 @@ bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigg
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
 void ll_frame_palette_flush();
+U32 ll_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
+void ll_palette_id_free(U32 id);
 void ll_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread, before the palette jobs: the list of the coming frame begins and takes its palette arena
-bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
+bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
 // DIAGNOSTIC (the ear blink hunt): the 12 floats of the first joint of the palette at a float offset of this frame's shared list (false when the offset is not in the list)
 bool ll_frame_palette_first_joint(U32 offset, F32* out12);
 // DIAGNOSTIC: the whole palette (12 floats a joint) at a float offset of this frame's shared list

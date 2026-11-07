@@ -496,6 +496,7 @@ struct PassState
 PassState gPassState;
 // FrameState: tables that live for one frame (the palette list the frame's records name by offset, the targets and samplers the debug dump reports), reset where the frame turns over.
 struct PalSeg { U32 mStart, mFloats; U64 mAddress; };
+struct PalIdSlot { U32 mId; U32 mFrame; U64 mAddress; };       // <FS> P1 step 3: a palette id's address in the frame mFrame's list
 struct FrameState
 {
     std::set<U32> mTargets;             // textures rendered into during the current frame (for the debug dump)
@@ -504,6 +505,8 @@ struct FrameState
     std::map<U32, U32> mSampledLast;
     std::vector<PalSeg> mPalSegs;       // S4 A2: the palette list of the viewer's frame mPalFrame, by float offset
     U32 mPalFrame = ~0u;
+    std::vector<PalIdSlot> mPalIds;     // <FS> P1 step 3: by the index of a palette id (kind 40 fills it), valid for the frame in the slot
+    U32 mPalIdFrame = ~0u - 1;            // the frame whose records name their shared palettes by id (a kind 40 came for it); else by offset
 };
 FrameState gFrameState;
 // What is left at file level is owned by the resource tables (sGL: textures, buffers, targets; the bindless table and pins; the arena; the resident and scene fragments; queries), which only the
@@ -4377,7 +4380,7 @@ static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U
 }
 
 // S4 A2: the frame's shared palette list (kind 27): segments of whole palettes, each in scratch memory of this frame, found by the absolute float offset the entries carry
-static U64 palette_address(U32 offset)
+static U64 palette_segment_address(U32 offset)
 {
     for (size_t k = gFrameState.mPalSegs.size(); k-- > 0; )
     {
@@ -4388,6 +4391,52 @@ static U64 palette_address(U32 offset)
         }
     }
     return 0;
+}
+
+// what a record names a shared palette by: an id when the viewer sent this frame's ids (kind 40), else the float offset in the frame's list. 0 = not found (the draw is skipped, as before)
+static U64 palette_address(U32 value)
+{
+    if (gFrameState.mPalIdFrame != gFrameState.mPalFrame)
+    {
+        return palette_segment_address(value);
+    }
+    const U32 index = value & 0xFFFFFFu;
+    if (index < gFrameState.mPalIds.size())
+    {
+        const PalIdSlot& s = gFrameState.mPalIds[index];
+        if (s.mId == value && s.mFrame == gFrameState.mPalFrame && s.mAddress)
+        {
+            return s.mAddress;
+        }
+    }
+    static U64 misses = 0;
+    if (++misses <= 5)
+    {
+        LL_WARNS("PalId") << "palette id " << value << " has no address in frame " << gFrameState.mPalFrame << " (" << misses << " so far)" << LL_ENDL;
+    }
+    return 0;
+}
+
+// <FS> P1 step 3: kind 40: the palettes the viewer stamped into the frame's list, as (id, float offset) pairs (mEntries of them in the blob); each offset is resolved to an address now, the records that follow name the palette by its id
+static void on_palette_ids(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    if (h.mPass != gFrameState.mPalFrame)
+    {
+        gFrameState.mPalFrame = h.mPass;
+        gFrameState.mPalSegs.clear();
+    }
+    gFrameState.mPalIdFrame = h.mPass;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        U32 pair[2];
+        memcpy(pair, blob + (size_t)i * sizeof(pair), sizeof(pair));
+        const U32 index = pair[0] & 0xFFFFFFu;
+        if (index >= gFrameState.mPalIds.size())
+        {
+            gFrameState.mPalIds.resize((size_t)index + 1024, PalIdSlot{ 0, ~0u, 0 });
+        }
+        gFrameState.mPalIds[index] = PalIdSlot{ pair[0], h.mPass, palette_segment_address(pair[1]) };
+    }
 }
 
 // <FS> PLAN-avatars.md rigged draws as rows, P1: kind 39: part of the frame's palette list that the viewer wrote straight into a palette arena (mEntries = the arena, mFragment = the first float, mPaletteFloats = how many):
@@ -11020,6 +11069,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 39)
     {
         on_palette_arena(h);
+        return;
+    }
+    if (h.mKind == 40)
+    {
+        on_palette_ids(h, blob);
         return;
     }
     if (h.mKind == 33)

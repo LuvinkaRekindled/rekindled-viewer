@@ -14589,7 +14589,7 @@ void LLVOAvatar::buildPalettesInJob()
         {
             // <FS> P1 step 2: the palette goes straight into the coming frame's arena (the request at render time finds the slot stamped: no copy under the list's mutex)
             U32 at = 0;
-            if (ll_frame_palette_write(entry.mGLMp.data(), (U32)entry.mGLMp.size(), target, at))
+            if (ll_frame_palette_write(entry.mGLMp.data(), (U32)entry.mGLMp.size(), target, at, entry.mPaletteId))
             {
                 entry.mListSlot.store(((U64)target << 32) | at, std::memory_order_release);
             }
@@ -14607,6 +14607,11 @@ void LLVOAvatar::buildPalettesInJob()
         mFlatSkel->mFrame = ~0u;            // (the render's own palette requests fill it again at their frame)
         mFlatSkel->mFromJob = false;
     }
+}
+
+LLVOAvatar::MatrixPaletteCache::~MatrixPaletteCache()
+{
+    ll_palette_id_free(mPaletteId.load(std::memory_order_relaxed));
 }
 
 void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinInfo* skin, U32 stamp, bool had_last_frame, bool swap_prev)

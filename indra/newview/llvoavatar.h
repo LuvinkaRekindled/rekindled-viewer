@@ -1107,10 +1107,14 @@ public:
         U32 mJobFor = 0xFFFFFFFFu;
         bool mJobChecked = false;               // (LL_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request
 
+        // <FS> P1 step 3: the palette's id (0 = none yet): what a record names the palette by instead of a float offset in a frame's list; made at the first write into a list, given back with the entry
+        mutable std::atomic<U32> mPaletteId{ 0 };
+
         MatrixPaletteCache() :
             mFrame(gFrameCount - 1)
         {
         }
+        ~MatrixPaletteCache();
     };
 
     // Accessor for Matrix Palette Cache

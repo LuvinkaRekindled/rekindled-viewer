@@ -862,6 +862,7 @@ static bool rigged_verify()
 }
 
 // S4 A2: the frame's shared palette list (see lldrawpool.h)
+static constexpr U32 PALETTE_PAIR_CAP = 32768;      // palettes a frame's list can log (a crowd frame holds a few hundred)
 static struct FramePalettes
 {
     std::mutex mMutex;
@@ -881,12 +882,143 @@ static struct FramePalettes
     U64 mIdleRequests = 0;                              // requests that came in the idle phase while the coming frame's list was prepared (they are refused, not allowed to reset it)
     U32 mDataBase = 0;                                  // the list offset of mData[0]: the arena's capacity when an arena serves the frame, else 0
     U64 mArenaFrames = 0, mArenaFallbackFrames = 0, mArenaOverflows = 0, mArenaVerified = 0, mArenaWrong = 0;
+    // <FS> P1 step 3 (palette ids, LL_VK_PALID: 1 default, 0 = offsets as before): every palette stamped into the frame's list is logged as a pair (its entry's id, its float offset); the pairs go to the worker (kind 40)
+    // after the data they point into, the worker resolves each to an address once, and the records name a palette by its id
+    U32 mPairs[2 * PALETTE_PAIR_CAP];
+    std::atomic<U32> mPairCursor{ 0 };
+    U32 mPairSent = 0;
 } sFramePal;
+
+static std::atomic<U64> sPairOverflows{ 0 };
 
 static int palette_arena_mode()
 {
     static const int mode = getenv("LL_VK_PALARENA") ? atoi(getenv("LL_VK_PALARENA")) : 1;
     return mode;
+}
+
+static int palette_id_mode()
+{
+    static const int mode = getenv("LL_VK_PALID") ? atoi(getenv("LL_VK_PALID")) : 1;
+    return mode;
+}
+
+// <FS> P1 step 3: palette ids. An id is (generation << 24) | index, made for a palette entry the first time the entry is written into a frame's list and given back when the entry goes (the avatar's map
+// destroys it). The generation (1..254) changes each time an index is reused, so an id that was given back never names the palette that took its index. Never 0, never ~0u.
+namespace
+{
+struct PaletteIds
+{
+    std::mutex mMutex;
+    std::vector<U8> mGen{ 0 };          // by index (index 0 is not used)
+    std::vector<U32> mFree;
+};
+PaletteIds& palette_ids()
+{
+    static PaletteIds* ids = new PaletteIds();      // (not destroyed: entries are given back from avatar destructors, which may run after static destruction has begun)
+    return *ids;
+}
+}
+
+U32 ll_palette_id_alloc()
+{
+    PaletteIds& ids = palette_ids();
+    std::lock_guard<std::mutex> lock(ids.mMutex);
+    U32 index;
+    if (!ids.mFree.empty())
+    {
+        index = ids.mFree.back();
+        ids.mFree.pop_back();
+    }
+    else
+    {
+        if (ids.mGen.size() >= 0xFFFFFFu)
+        {
+            return 0;
+        }
+        index = (U32)ids.mGen.size();
+        ids.mGen.push_back(1);
+    }
+    return ((U32)ids.mGen[index] << 24) | index;
+}
+
+void ll_palette_id_free(U32 id)
+{
+    if (!id)
+    {
+        return;
+    }
+    PaletteIds& ids = palette_ids();
+    std::lock_guard<std::mutex> lock(ids.mMutex);
+    const U32 index = id & 0xFFFFFFu;
+    if (index == 0 || index >= ids.mGen.size())
+    {
+        return;
+    }
+    U8 gen = (U8)(ids.mGen[index] + 1);
+    if (gen == 0 || gen >= 255)
+    {
+        gen = 1;
+    }
+    ids.mGen[index] = gen;
+    ids.mFree.push_back(index);
+}
+
+// the id of a palette entry (made on first use; two threads that race give one of the two back)
+static U32 palette_id_of(std::atomic<U32>& cell)
+{
+    const U32 have = cell.load(std::memory_order_acquire);
+    if (have)
+    {
+        return have;
+    }
+    const U32 fresh = ll_palette_id_alloc();
+    if (!fresh)
+    {
+        return 0;
+    }
+    U32 expected = 0;
+    if (cell.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
+    {
+        return fresh;
+    }
+    ll_palette_id_free(fresh);
+    return expected;
+}
+
+// logs (id, offset) for the frame's list; false = the log is full (the palette is not named, the item is not drawn this frame, like any other failed request)
+static bool palette_pair_push(U32 id, U32 offset)
+{
+    const U32 i = sFramePal.mPairCursor.fetch_add(1, std::memory_order_relaxed);
+    if (i >= PALETTE_PAIR_CAP)
+    {
+        if (++sPairOverflows <= 5)
+        {
+            LL_WARNS("PalArena") << "the palette id log of a frame is full (" << PALETTE_PAIR_CAP << " palettes)" << LL_ENDL;
+        }
+        return false;
+    }
+    sFramePal.mPairs[2 * i] = id;
+    sFramePal.mPairs[2 * i + 1] = offset;
+    return true;
+}
+
+// the float offset a palette id was logged with in this frame's list (the diagnostics read palettes by it); ~0u = not found. Offsets pass through when ids are off.
+static U32 palette_real_offset(U32 value)
+{
+    if (!palette_id_mode())
+    {
+        return value;
+    }
+    const U32 n = std::min<U32>(sFramePal.mPairCursor.load(std::memory_order_acquire), PALETTE_PAIR_CAP);
+    for (U32 i = n; i-- > 0; )
+    {
+        if (sFramePal.mPairs[2 * i] == value)
+        {
+            return sFramePal.mPairs[2 * i + 1];
+        }
+    }
+    return ~0u;
 }
 
 U64 ll_frame_palette_frame()
@@ -932,6 +1064,8 @@ static void palette_frame_begin_locked(U64 frame)
     sFramePal.mSent = 0;
     sFramePal.mArenaCursor.store(0, std::memory_order_relaxed);
     sFramePal.mArenaSent = 0;
+    sFramePal.mPairCursor.store(0, std::memory_order_relaxed);
+    sFramePal.mPairSent = 0;
     sFramePal.mArenaOn = palette_arena_mode() != 0 && LLVkBridge::paletteArenaAcquire((U32)frame, sFramePal.mArena);
     sFramePal.mDataBase = sFramePal.mArenaOn ? sFramePal.mArena.mFloats : 0;
     ++(sFramePal.mArenaOn ? sFramePal.mArenaFrames : sFramePal.mArenaFallbackFrames);
@@ -955,7 +1089,7 @@ void ll_frame_palette_prepare(U32 frame)
 }
 
 // a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
-bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset)
+bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
 {
     if (!count || sFramePal.mPreparedFrame != frame || !sFramePal.mArenaOn)
     {
@@ -971,6 +1105,14 @@ bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset
     }
     while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + count, std::memory_order_acq_rel));
     memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
+    if (palette_id_mode())
+    {
+        const U32 id = palette_id_of(id_cell);
+        if (!id || !palette_pair_push(id, cur))
+        {
+            return false;
+        }
+    }
     ++sArenaJobWrites;
     offset = cur;
     return true;
@@ -1027,6 +1169,10 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
                 LL_INFOS("VkScene") << "[palette] list slots checked " << checked.load() << ", wrong " << wrong.load() << LL_ENDL;
             }
         }
+        if (palette_id_mode())
+        {
+            offset = mpc.mPaletteId.load(std::memory_order_acquire);        // (a stamped entry has an id: it was logged when it was stamped)
+        }
         return true;
     }
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
@@ -1048,7 +1194,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     const U64 again = mpc.mListSlot.load(std::memory_order_acquire);        // (another thread may have added it while this one waited)
     if ((U32)(again >> 32) == (U32)gFrameCount)
     {
-        offset = (U32)again;
+        offset = palette_id_mode() ? mpc.mPaletteId.load(std::memory_order_acquire) : (U32)again;
         return true;
     }
     const size_t need = (size_t)joints * 12;
@@ -1080,8 +1226,17 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + need);
     }
     ++sFramePal.mAdded;
+    U32 id = 0;
+    if (palette_id_mode())
+    {
+        id = palette_id_of(mpc.mPaletteId);
+        if (!id || !palette_pair_push(id, at))
+        {
+            return false;
+        }
+    }
     mpc.mListSlot.store(((U64)(U32)gFrameCount << 32) | at, std::memory_order_release);
-    offset = at;
+    offset = palette_id_mode() ? id : at;
     return true;
 }
 
@@ -1089,6 +1244,11 @@ bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
+    {
+        return false;
+    }
+    offset = palette_real_offset(offset);
+    if (offset == ~0u)
     {
         return false;
     }
@@ -1113,6 +1273,11 @@ bool ll_frame_palette_first_joint(U32 offset, F32* out12)
     {
         return false;
     }
+    offset = palette_real_offset(offset);
+    if (offset == ~0u)
+    {
+        return false;
+    }
     if (sFramePal.mArenaOn && (size_t)offset + 12 <= sFramePal.mArenaCursor.load())
     {
         memcpy(out12, sFramePal.mArena.mPtr + offset, 12 * sizeof(F32));
@@ -1134,6 +1299,21 @@ void ll_frame_palette_flush()
         return;
     }
     const U32 arena_used = sFramePal.mArenaCursor.load(std::memory_order_acquire);
+    // <FS> P1 step 3: the palettes stamped since the last flush are named by id (kind 40), after the data they point into (the worker resolves each offset when it reads the record)
+    auto send_pairs = [&]()
+    {
+        const U32 total = std::min<U32>(sFramePal.mPairCursor.load(std::memory_order_acquire), PALETTE_PAIR_CAP);
+        if (total <= sFramePal.mPairSent)
+        {
+            return;
+        }
+        LLVkBridge::ShadowPacketsHeader pair_header;
+        pair_header.mKind = 40;
+        pair_header.mPass = (U32)gFrameCount;
+        pair_header.mEntries = total - sFramePal.mPairSent;
+        LLVkBridge::shadowPackets(pair_header, sFramePal.mPairs + 2 * sFramePal.mPairSent, (size_t)pair_header.mEntries * 2 * sizeof(U32));
+        sFramePal.mPairSent = total;
+    };
     if (sFramePal.mArenaOn && arena_used > sFramePal.mArenaSent)
     {
         // <FS> P1: the part of the list that was written into the arena is named, not sent (kind 39)
@@ -1150,6 +1330,7 @@ void ll_frame_palette_flush()
     }
     if (sFramePal.mSent >= sFramePal.mData.size())
     {
+        send_pairs();
         return;
     }
     LLVkBridge::ShadowPacketsHeader header;
@@ -1160,6 +1341,7 @@ void ll_frame_palette_flush()
     LLVkBridge::shadowPackets(header, sFramePal.mData.data() + sFramePal.mSent, (size_t)header.mPaletteFloats * sizeof(F32));
     sFramePal.mFlushedFloats += header.mPaletteFloats;
     sFramePal.mSent = sFramePal.mData.size();
+    send_pairs();
 }
 
 // A1 census (log tag RiggedPackets, every 600 frames): what the rigged records carried and what they left to the old path
