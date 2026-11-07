@@ -970,7 +970,9 @@ bool LLDrawable::updateMove()
 // held at the avatar's box nothing is queued either. So this is that matrix and the faces' centres, for the loop of the avatar. False when anything differs: the full move is made.
 bool LLDrawable::updateMoveFast(const LLVector3* parent_pos, const LLQuaternion* parent_rot, const LLVector3* parent_scale, bool parent_sco)
 {
-    if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || mVObjp->isFlexible() || mVObjp->isAnimatedObject())
+    // (C5b, LL_VK_ATTFLEXI: 0 default = a flexible object takes the full move (unverified), 1 = the fast move: its simulation and rebuild are the object's own and run from its idle update)
+    static const bool flexi_fast = getenv("LL_VK_ATTFLEXI") && atoi(getenv("LL_VK_ATTFLEXI")) != 0;
+    if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || (mVObjp->isFlexible() && !flexi_fast) || mVObjp->isAnimatedObject())
     {
         return false;
     }
