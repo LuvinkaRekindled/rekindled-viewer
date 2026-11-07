@@ -473,7 +473,7 @@ namespace
 {
 int blend_flat_mode()
 {
-    static const int mode = getenv("LL_VK_BLENDFLAT") ? atoi(getenv("LL_VK_BLENDFLAT")) : 0;
+    static const int mode = getenv("LL_VK_BLENDFLAT") ? atoi(getenv("LL_VK_BLENDFLAT")) : 1;       // 1 (default since 2026-11-07: laps bl3 / bl4, 0 numerically different of 35.5 M joints, the user: everyone dances, walks, idles; the dog avatar too) the flat slots, 0 the pool, 2 both compared
     return mode;
 }
 std::atomic<U64> sFlatStates{ 0 }, sFlatInvalid{ 0 }, sFlatBlends{ 0 }, sFlatCompared{ 0 }, sFlatDiffer{ 0 }, sFlatDiffPos{ 0 }, sFlatDiffScale{ 0 }, sFlatDiffRot{ 0 }, sFlatOverridden{ 0 }, sFlatBitsOnly{ 0 };
