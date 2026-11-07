@@ -31,6 +31,7 @@
 #include "llhandletable.h"
 #include <atomic>
 #include <mutex>
+#include <shared_mutex>
 #include <map>
 #include <deque>
 #include <string>
@@ -350,6 +351,7 @@ public:
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
     void            buildPalettesInJob();
+    static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)
     static void     sPalJobWallNsAdd(U64 ns);       // (LL_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();
     static S32      sAttachmentSelectedForJobs;     // -1: ask the selection manager; 0/1: what the main thread found before the jobs started (getObjectCount() cleans the selection's node list: not for several threads)
@@ -1070,6 +1072,8 @@ public:
 
         // <FS> stage B3a: the skin this entry was built from (kept so the avatar's job can rebuild it without a request), and the frame the avatar's job built it for (0xFFFFFFFF: not by a job)
         LLSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
+        // <FS> stage B3b: where this palette sits in the frame's shared palette list (ll_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
+        mutable std::atomic<U64> mListSlot{ ~0ull };
         U32 mJobFor = 0xFFFFFFFFu;
         bool mJobChecked = false;               // (LL_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request
 
@@ -1092,7 +1096,7 @@ public:
     // Map of LLMeshSkinInfo::mHash to MatrixPaletteCache
     typedef std::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;
     matrix_palette_cache_t mMatrixPaletteCache;
-    mutable std::mutex mPaletteMutex;           // <FS> stage B3a: this avatar's palette entries (the job and the lazy path both take it; the lazy path takes the global palette lock first)
+    mutable std::shared_mutex mPaletteMutex;    // <FS> stage B3a/b: this avatar's palette entries: a request that hits reads under a shared lock; a build (the job, or the lazy path after the global palette lock) writes under an exclusive one
     void buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinInfo* skin, U32 stamp, bool had_last_frame, bool swap_prev);
 
 protected:

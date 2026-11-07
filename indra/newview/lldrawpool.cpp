@@ -906,7 +906,7 @@ bool ll_palette_shared()
 }
 
 // census (a rigged outfit that disappears for a frame now and then): why a palette request fails. An item without a palette is not drawn (the old path draws nothing for it either)
-static std::atomic<U64> sPalFailNoAvatar{ 0 }, sPalFailEmpty{ 0 }, sPalFailShort{ 0 }, sPalRequests{ 0 };
+static std::atomic<U64> sPalFailNoAvatar{ 0 }, sPalFailEmpty{ 0 }, sPalFailShort{ 0 }, sPalRequests{ 0 }, sPalFastRequests{ 0 };
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
 {
     ++sPalRequests;
@@ -930,6 +930,32 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         }
         return false;
     }
+    // <FS> PLAN-avatars.md stage B3b: the palette entry remembers where it sits in this frame's list (frame << 32 | offset): a request after the first one reads that and takes no lock
+    const U64 slot = mpc.mListSlot.load(std::memory_order_acquire);
+    if ((U32)(slot >> 32) == (U32)gFrameCount)
+    {
+        offset = (U32)slot;
+        sPalFastRequests.fetch_add(1, std::memory_order_relaxed);
+        static const bool verify = getenv("LL_VK_PALLIST") && atoi(getenv("LL_VK_PALLIST")) == 2;
+        if (verify)
+        {
+            // compare mode: what the list holds at that offset is this palette, float for float
+            static std::atomic<U64> checked{ 0 }, wrong{ 0 };
+            std::lock_guard<std::mutex> check_lock(sFramePal.mMutex);
+            const bool ok = sFramePal.mFrame == gFrameCount && (size_t)offset + (size_t)joints * 12 <= sFramePal.mData.size()
+                && memcmp(sFramePal.mData.data() + offset, mpc.mGLMp.data(), (size_t)joints * 12 * sizeof(F32)) == 0;
+            ++checked;
+            if (!ok && ++wrong <= 6)
+            {
+                LL_WARNS("VkScene") << "[palette] list slot does not hold the palette: frame " << gFrameCount << " offset " << offset << " joints " << joints << LL_ENDL;
+            }
+            if (checked % 200000 == 0)
+            {
+                LL_INFOS("VkScene") << "[palette] list slots checked " << checked.load() << ", wrong " << wrong.load() << LL_ENDL;
+            }
+        }
+        return true;
+    }
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
     {
@@ -939,14 +965,17 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         sFramePal.mSent = 0;
     }
     ++sFramePal.mRequests;
-    auto it = sFramePal.mOffsets.find(mpc.mGLMp.data());
-    if (it == sFramePal.mOffsets.end())
+    const U64 again = mpc.mListSlot.load(std::memory_order_acquire);        // (another thread may have added it while this one waited)
+    if ((U32)(again >> 32) == (U32)gFrameCount)
     {
-        it = sFramePal.mOffsets.emplace(mpc.mGLMp.data(), (U32)sFramePal.mData.size()).first;
-        sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
-        ++sFramePal.mAdded;
+        offset = (U32)again;
+        return true;
     }
-    offset = it->second;
+    const U32 at = (U32)sFramePal.mData.size();
+    sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+    ++sFramePal.mAdded;
+    mpc.mListSlot.store(((U64)(U32)gFrameCount << 32) | at, std::memory_order_release);
+    offset = at;
     return true;
 }
 

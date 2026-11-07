@@ -1314,6 +1314,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
                 avatar->buildPalettesInJob();
             }
         }
+        LLVOAvatar::sPalJobDone();
         if (pal_time)
         {
             LLVOAvatar::sPalJobWallNsAdd((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pal_t0).count());
