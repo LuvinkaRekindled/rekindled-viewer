@@ -11087,7 +11087,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
         // C5 J4: a draw with a texture matrix is a row too: the matrix is a slot of the moving matrix table (as the alpha items'), the row's pad.x names it; the pull programs of the static opaque types apply it (the
         // per-frame packet records did the same). LL_VK_GEO_TEXMAT=0 = those draws stay on the per-frame records as before
         static const bool texmat_env = !getenv("LL_VK_GEO_TEXMAT") || getenv("LL_VK_GEO_TEXMAT")[0] != '0';
-        const bool texmat_ok = texmat_env && !rigged && !kGeoTypes[t].mPbr && scene_geo_moving_on();
+        // <FS> P3 (rigged draws as rows): the rigged variants take a texture matrix slot too (LL_VK_RIGTEXMAT, default on, 0 = they stay on the per frame records): the skin pull programs apply the row's pad.x the same way
+        // (the census of 2026-11-07 showed 16 rigged G-buffer draws a frame in per frame records for this reason alone)
+        static const bool rigtex_env = !getenv("LL_VK_RIGTEXMAT") || getenv("LL_VK_RIGTEXMAT")[0] != '0';
+        const bool texmat_ok = texmat_env && (!rigged || rigtex_env) && !kGeoTypes[t].mPbr && scene_geo_moving_on();
         for (LLDrawInfo* params : it->second)
         {
             if (!params->mCount)
@@ -14337,6 +14340,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame (sent as " << (double)sGeoRiggedUpdates / n << "), " << (double)sGeoRiggedNs / 1000.0 / n << " us (palette jobs taken " << sBindJobTaken << ", made inline " << sBindJobInline << ") | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
             << sMovingSlot.size() << ", acquired " << sMovingAcquired << ", no slot free " << sMovingFull << LL_ENDL;
         sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = sGeoRiggedUpdates = 0;
+        ll_rig_census_log();
     }
 }
 
@@ -15234,6 +15238,7 @@ static void rt_skin_material(LLVkBridge::ShadowSkinEntry& e, LLDrawInfo* params,
 
 static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
 {
+    ll_rig_census_add(7, 1);
     out = LLPipeline::ShadowSkinBuild();
     std::vector<LLVkBridge::ShadowSkinEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
@@ -15272,6 +15277,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                 {
                     continue;       // the skin is not loaded yet: not drawn, as before
                 }
+                ll_rig_census_add(6, 1);
                 palettes_used.insert(e.mPaletteOffset);
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
