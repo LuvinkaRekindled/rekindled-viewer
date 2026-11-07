@@ -249,7 +249,7 @@ void LLAvatarJointCollisionVolume::renderCollision()
     updateWorldMatrix();
 
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &mXform.getWorldMatrix().mMatrix[0][0]);
+    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &getWorldMatrix().mMatrix[0][0]);
 
     gRender.diffuseColor3f( 0.f, 0.f, 1.f );
 

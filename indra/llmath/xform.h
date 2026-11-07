@@ -64,6 +64,8 @@ protected:
     U32           mChanged;
 
     bool          mScaleChildOffset;
+    const LLVector3*    mViewWorldPos = nullptr;
+    const LLQuaternion* mViewWorldRot = nullptr;
 
 public:
     typedef enum e_changed_flags
@@ -90,6 +92,8 @@ public:
         mWorldPosition.clearVec();
         mWorldRotation.loadIdentity();
         mScaleChildOffset = false;
+        mViewWorldPos = nullptr;
+        mViewWorldRot = nullptr;
     }
 
      LLXform();
@@ -136,9 +140,13 @@ public:
     const LLVector3&    getPosition()  const        { return mPosition; }
     const LLVector3&    getScale() const            { return mScale; }
     const LLQuaternion& getRotation() const         { return mRotation; }
-    const LLVector3&    getPositionW() const        { return mWorldPosition; }
-    const LLQuaternion& getWorldRotation() const    { return mWorldRotation; }
-    const LLVector3&    getWorldPosition() const    { return mWorldPosition; }
+    const LLVector3&    getPositionW() const        { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
+    const LLQuaternion& getWorldRotation() const    { return mViewWorldRot ? *mViewWorldRot : mWorldRotation; }
+    const LLVector3&    getWorldPosition() const    { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
+    // <FS> PLAN-avatars.md stage C: a joint's xform while the joint is a view of the avatar's flat world array: the world position and rotation are the array's slot (set by the avatar's pass, cleared by LLJoint::touch)
+    const LLVector3&    getWorldPositionField() const   { return mWorldPosition; }        // (the xform's own field: what the verify mode compares the array with)
+    const LLQuaternion& getWorldRotationField() const   { return mWorldRotation; }
+    void                setWorldView(const LLVector3* pos, const LLQuaternion* rot) { mViewWorldPos = pos; mViewWorldRot = rot; }
 };
 
 class LLXformMatrix : public LLXform

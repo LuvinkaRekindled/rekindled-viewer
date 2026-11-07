@@ -355,6 +355,7 @@ public:
     void            buildPalettesInJob();
     // <FS> PLAN-avatars.md stage C (LL_VK_FLATFILL: 1 default, 0 the palette job fills it as before, 2 compared): the flat world array (LLFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
     // walk's result; the attachment rows and the palette job read it, and the palette job fills it again only when a joint was touched after (skeletonDirty)
+    void            releaseJointViews();        // the joints stop pointing into this avatar's arrays
     void            walkWorldAfterPass(bool rerun_pass);   // the xform chain walked outside the pose job (a root move, a lazy clean): the flat array of this frame no longer holds, so it is made stale, or the pass runs again
     bool            flatWorldPass();            // the flat world pass over the joints in array order; false: the walk does it
     bool            skeletonDirty() const;

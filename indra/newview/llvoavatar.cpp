@@ -925,6 +925,7 @@ void LLVOAvatar::debugAvatarRezTime(std::string notification_name, std::string c
 //------------------------------------------------------------------------
 LLVOAvatar::~LLVOAvatar()
 {
+    releaseJointViews();        // <FS> stage C: the joints stop pointing into the arrays that go with this avatar (the joints are deleted after the members)
     LLAvatarHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4d: handles of this avatar stop resolving
     sInstances.remove(this);
 
@@ -1829,7 +1830,7 @@ void LLVOAvatar::renderCollisionVolumes()
         collision_volume.updateWorldMatrix();
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &collision_volume.getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &collision_volume.getWorldMatrix().mMatrix[0][0]);
 
         LLVector3 begin_pos(0,0,0);
         LLVector3 end_pos(collision_volume.getEnd());
@@ -1945,7 +1946,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         render_sphere_and_line(begin_pos, end_pos, sphere_scale, occ_color, visible_color);
 
@@ -1973,7 +1974,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
                 continue;
             }
             LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
 
             LLVector4a pos;
             LLVector4a size;
@@ -2076,7 +2077,7 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
         visible_color = SELECTED_COLOR_VISIBLE;
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2164,7 +2165,7 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
     //             continue;
     //         }
     //         gRender.pushMatrix();
-    //         gRender.multMatrix(&joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+    //         gRender.multMatrix(&joint->getWorldMatrix().mMatrix[0][0]);
 
     //         LLVector4a pos;
     //         LLVector4a size;
@@ -2238,7 +2239,7 @@ void LLVOAvatar::renderBoxAroundJointAttachments(LLJoint * joint)
     {
         LLViewerJointAttachment* as_joint_attach = dynamic_cast<LLViewerJointAttachment*>(joint);
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
 
         LLVector4a pos;
         LLVector4a size;
@@ -2276,7 +2277,7 @@ void LLVOAvatar::renderJoints()
         jointp->updateWorldMatrix();
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getXform()->getWorldMatrix().mMatrix[0][0]);
+        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2371,7 +2372,7 @@ bool LLVOAvatar::lineSegmentIntersect(const LLVector4a& start, const LLVector4a&
         {
             mCollisionVolumes[i].updateWorldMatrix();
 
-            glm::mat4 mat(glm::make_mat4((F32*) mCollisionVolumes[i].getXform()->getWorldMatrix().mMatrix));
+            glm::mat4 mat(glm::make_mat4((F32*) mCollisionVolumes[i].getWorldMatrix().mMatrix));
             glm::mat4 inverse = glm::inverse(mat);
             glm::mat4 norm_mat = glm::transpose(inverse);
 
@@ -4110,9 +4111,9 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                     const F32* b = &drawable->getXform()->getWorldMatrix().mMatrix[0][0];
                                     for (int k = 0; k < 16; ++k) { worst = std::max(worst, fabsf(a[k] - b[k])); }
                                     LLXformMatrix* pxf = row.mPoint->getXform();
-                                    const LLVector3 dpos = *ppos - pxf->getWorldPosition();
+                                    const LLVector3 dpos = *ppos - row.mPoint->getWorldPosition();
                                     LL_INFOS("AttArr") << "attachment " << row.mPoint->getName() << " (joint " << row.mPoint->getJointNum() << ") of " << getFullname() << ": matrix differs by " << worst << "; the array's point position minus the xform's "
-                                        << dpos << ", rotation dot " << dot(*prot, pxf->getWorldRotation()) << ", point dirty 0x" << std::hex << row.mPoint->mDirtyFlags << std::dec << ", mUpdateXform " << row.mPoint->mUpdateXform
+                                        << dpos << ", rotation dot " << dot(*prot, row.mPoint->getWorldRotation()) << ", point dirty 0x" << std::hex << row.mPoint->mDirtyFlags << std::dec << ", mUpdateXform " << row.mPoint->mUpdateXform
                                         << ", the drawable xform's parent is the point's xform " << (drawable->getXform()->getParent() == pxf) << LL_ENDL;
                                 }
                             }
@@ -13807,6 +13808,20 @@ std::atomic<U64> sFlatFillJob{ 0 }, sFlatFillReused{ 0 }, sFlatFillRedone{ 0 }, 
 // without palettes: the walk does those. True when it did the pass.
 // <FS> stage C: every writer of the joints' world data outside the pose job must reach the array or say it no longer holds. Found by the attachment compare lap: a sitting-on-ground avatar's root is moved by
 // the hover offset after the pass and the chain walked again, the array kept the old position (6 cm) and 6 % of the attachment matrices from it differed from the chain
+void LLVOAvatar::releaseJointViews()
+{
+    if (mFlatSkel)
+    {
+        for (LLJoint* joint : mFlatSkel->mJoint)
+        {
+            if (joint)
+            {
+                joint->setView(nullptr, nullptr, nullptr, false, 0, 0);
+            }
+        }
+    }
+}
+
 void LLVOAvatar::walkWorldAfterPass(bool rerun_pass)
 {
     if (rerun_pass && flatWorldPass())
@@ -13899,7 +13914,14 @@ bool LLVOAvatar::flatWorldPass()
             flat.mWorld[k].loadu(m);
             if (writeback)
             {
-                joint->setWorldFromPass(pos, rot);
+                if (LLJoint::sViewMode == 3)
+                {
+                    joint->setCleanFromPass();      // (the joint is a view: its world data is this slot of the arrays, the xform's world fields are not written)
+                }
+                else
+                {
+                    joint->setWorldFromPass(pos, rot);
+                }
                 view_kind = 1;
             }
         }
@@ -13908,20 +13930,17 @@ bool LLVOAvatar::flatWorldPass()
             // (the main thread may clean this joint lazily while this runs: the flags are read before and after the copy, and the view is taken only when the joint was clean on both sides)
             clean_before = joint->mDirtyFlags == 0;
             std::atomic_thread_fence(std::memory_order_acquire);
-            wpos[k] = xf->getWorldPosition();
-            wrot[k] = xf->getWorldRotation();
+            // (a clean joint answers through itself: the array's slot while it is a view, the xform's fields when it is not; a dirty one outside the walk keeps what the xform holds)
+            wpos[k] = clean_before ? joint->getWorldPosition() : xf->getWorldPosition();
+            wrot[k] = clean_before ? joint->getWorldRotation() : xf->getWorldRotation();
             flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
             std::atomic_thread_fence(std::memory_order_acquire);
         }
         if (writeback)
         {
             // the joint as a view (LLJoint::mViewValid): its slot in the arrays is what it is, as long as nothing touches it; a joint still dirty (outside the walk's subtree) is not
-            joint->mViewPos = &wpos[k];
-            joint->mViewRot = &wrot[k];
-            joint->mViewMat = &flat.mWorld[k];
-            joint->mViewValid = joint->mDirtyFlags == 0 && clean_before;
-            joint->mViewKind = view_kind ? view_kind : (joint->mViewValid ? 2 : 3);
-            joint->mViewPass = pass_serial;
+            const bool view_valid = joint->mDirtyFlags == 0 && clean_before;
+            joint->setView(&wpos[k], &wrot[k], &flat.mWorld[k], view_valid, view_kind ? view_kind : (view_valid ? 2 : 3), pass_serial);
         }
     }
     flat.mFrame = gFrameCount;
