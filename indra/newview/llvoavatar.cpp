@@ -6652,6 +6652,54 @@ const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
     return found == sAvatarRows.end() ? nullptr : &found->second;
 }
 
+const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
+{
+    if (switchMode() != 1)
+    {
+        return nullptr;
+    }
+    auto found = sAvatarRows.find(av);
+    return (found == sAvatarRows.end() || !found->second.mFinal) ? nullptr : &found->second;
+}
+
+void LLAvatarTable::endFrame()
+{
+    if (switchMode() != 1)
+    {
+        return;
+    }
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    for (auto& entry : sAvatarRows)
+    {
+        // (the avatar may have died in the loop: its row is dropped at the next beginFrame, and nothing asks a dead avatar)
+        LLVOAvatar* av = const_cast<LLVOAvatar*>(entry.first);
+        if (av->isDead())
+        {
+            continue;
+        }
+        entry.second.mImpostor = av->isImpostor();      // (not final yet: the live answer, the virtual one: a control avatar follows the avatar it is attached to)
+    }
+    for (auto& entry : sAvatarRows)
+    {
+        entry.second.mFinal = true;
+    }
+}
+
+void LLAvatarTable::noteImpostorCheck(bool same)
+{
+    static U64 reads = 0, different = 0;
+    static U32 last = 0;
+    ++reads;
+    different += same ? 0 : 1;
+    if (LLFrameTimer::getFrameCount() >= last + 600)
+    {
+        const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
+        last = LLFrameTimer::getFrameCount();
+        LL_INFOS("AvTable") << "impostor reads from the row per frame over " << (U32)frames << " frames: " << reads / frames << ", different from the live answer " << different / frames << " (" << different << " in all this window)" << LL_ENDL;
+        reads = different = 0;
+    }
+}
+
 void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
 {
     if (!switchMode())
@@ -13823,6 +13871,21 @@ void LLVOAvatar::updateImpostors()
 
 // virtual
 bool LLVOAvatar::isImpostor()
+{
+    // <FS> PLAN-avatars.md stage A step 4: after the avatars' update the table holds the answer (one owner for the decision; the 30 readers of the render side, the pools and the cull, read it)
+    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    {
+        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        if (verify && !isControlAvatar())
+        {
+            LLAvatarTable::noteImpostorCheck(row->mImpostor == computeImpostorLive());
+        }
+        return row->mImpostor;
+    }
+    return computeImpostorLive();
+}
+
+bool LLVOAvatar::computeImpostorLive()
 {
 // <FS:Beq> render time handling using tooSlow()
 //  return isVisuallyMuted() || (sLimitNonImpostors && (mUpdatePeriod > 1));
