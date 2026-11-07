@@ -3249,6 +3249,11 @@ inline bool att_plain(const LLViewerObject* root)
     }
     return true;
 }
+static bool flexi_allowed()
+{
+    static const int flexi = getenv("LL_VK_ATTFLEXI") ? atoi(getenv("LL_VK_ATTFLEXI")) : 0;     // (0 default until a lap with a flexible root shows the fast move compare clean)
+    return flexi != 0;
+}
 // <FS> stage C5a (LL_VK_ATTLIGHT: 1 default, 0 = a light, a sound or a particle emitter keeps the walk): an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
 // (a light: calc_light_dist; a sound: the audio source's object position; a particle emitter: the source's getRenderPosition) from the drawable the row keeps up to date, none of them through the moved list. Not rowable:
 // selected, flexible, animated (animesh) and HUD attachments, and linksets with one of those.
@@ -3259,9 +3264,11 @@ inline bool att_rowable(const LLViewerObject* root)
     {
         return att_plain(root);
     }
+    // (C5b, LL_VK_ATTFLEXI: 0 default = a flexible attachment keeps the walk (unverified), 1 = rows: the flexible object's simulation and rebuild belong to the object and run from its own idle update, whether or not it moved; the
+    // avatar's part is the root's world matrix)
     auto ok = [](const LLViewerObject* o)
     {
-        return !(o->isSelected() || o->isFlexible() || o->isAnimatedObject());
+        return !(o->isSelected() || (!flexi_allowed() && o->isFlexible()) || o->isAnimatedObject());
     };
     if (root->isHUDAttachment() || !ok(root))
     {
@@ -4384,6 +4391,44 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             {
                                 LL_INFOS("AttArr") << "attachment matrices from the flat array: checked against the xform chain " << sAttArrChecked.load() << ", different " << sAttArrDifferent.load() << LL_ENDL;
                             }
+                        }
+                    }
+                    if (!fast_done && obj->isFlexible() && xf_mode)
+                    {
+                        // <FS> stage C5b diagnostic: why the fast move refused a flexible attachment (the full move was made)
+                        static std::atomic<U64> fx_n{ 0 }, fx_moved{ 0 }, fx_pos{ 0 }, fx_rot{ 0 }, fx_scale{ 0 }, fx_state{ 0 }, fx_inactive{ 0 };
+                        const LLXformMatrix* dxf = drawable->getXform();
+                        const LLVector3 target_pos = dxf->isRoot() ? obj->getPositionAgent() : obj->getPosition();
+                        ++fx_n;
+                        fx_moved += obj->isChanged(LLXform::MOVED);
+                        fx_pos += !(dxf->getPosition() == target_pos);
+                        fx_rot += !(dxf->getRotation() == obj->getRotation());
+                        fx_scale += !(drawable->getScale() == obj->getScale());
+                        fx_state += drawable->isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD);
+                        fx_inactive += !drawable->isActive();
+                        if (fx_n <= 3 || (fx_n % 2000) == 0)
+                        {
+                            LL_INFOS("FlexiMove") << "flexible attachment refused by the fast move " << fx_n.load() << " times: object changed MOVED " << fx_moved.load() << ", position differs " << fx_pos.load() << ", rotation differs " << fx_rot.load()
+                                << ", scale differs " << fx_scale.load() << ", drawable invisible or animated child " << fx_state.load() << ", not active " << fx_inactive.load() << LL_ENDL;
+                        }
+                    }
+                    if (fast_done && xf_mode == 2)
+                    {
+                        // <FS> stage C5 (LL_VK_ATTXF=2 in the rows): the full move after the fast one, the matrices compared bit for bit
+                        static std::atomic<U64> rx_checked{ 0 }, rx_diff{ 0 }, rx_flexi{ 0 }, rx_flexi_diff{ 0 };
+                        LLMatrix4 before = drawable->getXform()->getWorldMatrix();
+                        gPipeline.updateMoveDampedAsync(drawable);
+                        const bool differs = memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0;
+                        ++rx_checked;
+                        rx_diff += differs;
+                        if (obj->isFlexible())
+                        {
+                            ++rx_flexi;
+                            rx_flexi_diff += differs;
+                        }
+                        if ((rx_checked % 100000) == 0)
+                        {
+                            LL_INFOS("RowXf") << "row attachment matrix by the fast move checked against the full move " << rx_checked.load() << ", different " << rx_diff.load() << " (flexible ones: " << rx_flexi.load() << ", different " << rx_flexi_diff.load() << ")" << LL_ENDL;
                         }
                     }
                     if (!fast_done)
