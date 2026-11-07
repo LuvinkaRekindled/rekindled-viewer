@@ -3883,6 +3883,7 @@ void LLVOAvatar::rebuildAttRows()
 {
     mAttRows.clear();
     mAttRowsRevision = LLViewerJointAttachment::sRevision;
+    U32 rigged_order = 0;
     for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
     {
         if (!attachment || !attachment->getValid())
@@ -3897,7 +3898,16 @@ void LLVOAvatar::rebuildAttRows()
             }
             LLDrawable* drawable = attached_object->mDrawable;
             LLSpatialBridge* bridge = drawable->getSpatialBridge();
-            if (!bridge || drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) || !att_plain(attached_object.get()))
+            const bool rigged = drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD);
+            static const int rig_rows = getenv("LL_VK_RIGROWS") ? atoi(getenv("LL_VK_RIGROWS")) : 1;
+            if (bridge && rigged)
+            {
+                // <FS> stage C4: every rigged attachment of the avatar, in the order the attachment loop visits them, gets its place in the draw order of the avatar's rigged groups here, once for this attachment set
+                // (the walk used to count them again every frame); the rows and the walk both stamp the groups with it
+                drawable->mAttOrder = rigged_order++;
+                drawable->mAttOrderRev = LLViewerJointAttachment::sRevision;
+            }
+            if (!bridge || (rigged && !rig_rows) || !att_plain(attached_object.get()))
             {
                 continue;
             }
@@ -3906,8 +3916,27 @@ void LLVOAvatar::rebuildAttRows()
             row.mDrawable = drawable;
             row.mBridge = bridge;
             row.mPoint = attachment;
+            row.mRigged = rigged;
             mAttRows.push_back(row);
         }
+    }
+}
+
+// <FS> stage C4: the stamp of a rigged attachment's spatial group (the avatar and the place among the avatar's rigged groups, read by the alpha sort): written only when the group does not hold it
+static void fs_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSpatialGroup* group, U32 order)
+{
+    if (group->mAvatarp == avatar && group->mRenderOrder == order)
+    {
+        return;
+    }
+    if (LLPipeline::sAvSink)
+    {
+        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, drawable, avatar, group, order });
+    }
+    else
+    {
+        group->mAvatarp = avatar;
+        group->mRenderOrder = order;
     }
 }
 
@@ -4041,6 +4070,43 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     ++gAttStats.rigid;
                 }
                 drawable->mAttRowFrame = rigid_frame;
+                if (row.mRigged)
+                {
+                    // <FS> stage C4 (LL_VK_RIGROWS): a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
+                    // not changed: skip_rigged_this_frame), its drawable move, its bridge move, then the stamp of its group with its place in the draw order (written only when the group does not hold it), the text
+                    const bool skip_update = skip_rigged_this_frame;
+                    if (!skip_update)
+                    {
+                        LLVector4a extents[2];
+                        bridge->transformExtents(mDrawable->getSpatialExtents(), extents);
+                        override_bbox(drawable, extents);
+                        if (attachment_selected)
+                        {
+                            gPipeline.updateMoveNormalAsync(drawable);
+                        }
+                        else
+                        {
+                            gPipeline.updateMoveDampedAsync(drawable);
+                        }
+                    }
+                    bridge = drawable->getSpatialBridge();      // (override_bbox may have changed it)
+                    if (bridge)
+                    {
+                        if (!skip_update)
+                        {
+                            bridge->setState(LLDrawable::MOVE_UNDAMPED);
+                            bridge->updateMove();
+                            bridge->setState(LLDrawable::EARLY_MOVE);
+                        }
+                        LLSpatialGroup* group = drawable->getSpatialGroup();
+                        if (group && drawable->mAttOrderRev == LLViewerJointAttachment::sRevision)
+                        {
+                            fs_stamp_rigged_group(this, drawable, group, drawable->mAttOrder);
+                        }
+                    }
+                    obj->updateText();
+                    continue;
+                }
                 bool skip_rigid = false;
                 if (skip_static_rigid)
                 {
@@ -4186,9 +4252,9 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 {
                     continue;       // (the avatar's rows moved it this frame)
                 }
-                if (rows_run && mAttRowsRevision != ~0u && attached_object->mDrawable->getSpatialBridge() && !attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && att_plain(attached_object.get()))
+                if (rows_run && mAttRowsRevision != ~0u && attached_object->mDrawable->getSpatialBridge() && att_plain(attached_object.get()))
                 {
-                    mAttRowsRevision = ~0u;     // (a plain rigid attachment the rows do not hold yet - its drawable or bridge came after them: the walk moves it this frame, the rows are made again at the next visit)
+                    mAttRowsRevision = ~0u;     // (a plain attachment, rigid or rigged, that the rows do not hold yet - its drawable or bridge came after them: the walk moves it this frame, the rows are made again at the next visit)
                 }
 
                 LLSpatialBridge* bridge = attached_object->mDrawable->getSpatialBridge();
@@ -4447,14 +4513,20 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                 // while the attachment list and the groups stay: it is written only when the group does not hold it already. The group's two fields are only written for this avatar's own groups.
                                 static const int order_mode = getenv("LL_VK_RIGORDER") ? atoi(getenv("LL_VK_RIGORDER")) : 1;
                                 static std::atomic<U64> order_same{ 0 }, order_changed{ 0 };
-                                const U32 this_order = draw_order++;
+                                // (with the rows running, the place in the draw order is the one the rows were numbered with, so that the rows' stamps and this walk's agree; not numbered yet: no stamp this frame, the rows are made again)
+                                const bool numbered = attached_object->mDrawable->mAttOrderRev == LLViewerJointAttachment::sRevision;
+                                if (rows_run && !numbered)
+                                {
+                                    mAttRowsRevision = ~0u;
+                                }
+                                const U32 this_order = rows_run ? (numbered ? attached_object->mDrawable->mAttOrder : ~0u) : draw_order++;
                                 const bool holds = group->mAvatarp == this && group->mRenderOrder == this_order;
                                 (holds ? order_same : order_changed)++;
                                 if (order_mode == 2 && (((order_same + order_changed) % 200000) == 0))
                                 {
                                     LL_INFOS("RigOrder") << "rigged draw order stamps: already held by the group " << order_same.load() << ", written " << order_changed.load() << LL_ENDL;
                                 }
-                                if (!(order_mode == 1 && holds))
+                                if (!(order_mode == 1 && holds) && this_order != ~0u)
                                 {
                                     if (LLPipeline::sAvSink)
                                     {
