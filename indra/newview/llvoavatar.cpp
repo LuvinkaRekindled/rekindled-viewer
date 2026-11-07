@@ -6639,7 +6639,7 @@ U32 sAvTableLast = 0;
 
 int LLAvatarTable::switchMode()
 {
-    static const int mode = getenv("LL_VK_AVTABLE") ? atoi(getenv("LL_VK_AVTABLE")) : 0;
+    static const int mode = getenv("LL_VK_AVTABLE") ? atoi(getenv("LL_VK_AVTABLE")) : 1;       // 1 (default since 2026-11-07: Adam looked at the avt2 lap, nothing differed) the loop reads the row, 0 the old gates, 2 both and count
     return mode;
 }
 
