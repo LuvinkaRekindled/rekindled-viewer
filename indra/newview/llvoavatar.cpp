@@ -12766,6 +12766,238 @@ LLViewerTexture* LLVOAvatar::getBakedTexture(const U8 te)
 
 }
 
+
+//------------------------------------------------------------------------
+// <FS> PLAN-avatars.md stage B0: the avatar's world matrices as a flat array by joint number, once per avatar per frame (the palettes of all its skins read it), and the flat world pass checked against it
+//------------------------------------------------------------------------
+struct LLFlatSkeleton
+{
+    U32 mFrame = ~0u;
+    std::vector<LLMatrix4a> mWorld;         // by joint number: the joint's world matrix (what getWorldMatrix4a() gives)
+    std::vector<U8> mHas;                   // the joint exists
+    std::vector<LLJoint*> mJoint;
+    std::vector<S16> mParent;               // the parent's joint number (-1: none, or a parent that is not in the array)
+    std::vector<S16> mOrder;                // the joints, parents before children
+    U32 mJointCount = 0;
+};
+
+static int fs_skelflat_mode()
+{
+    static const int mode = getenv("LL_VK_SKELFLAT") ? atoi(getenv("LL_VK_SKELFLAT")) : 0;
+    return mode;
+}
+
+namespace
+{
+std::atomic<U64> sFlatPalettes{ 0 }, sFlatPalettesDiffer{ 0 }, sFlatJoints{ 0 }, sFlatJointsDiffer{ 0 }, sFlatFallbacks{ 0 }, sFlatFills{ 0 };
+std::atomic<U32> sFlatLast{ 0 };
+std::atomic<U32> sFlatWorstMilli{ 0 };
+}
+
+static void fs_flat_report()
+{
+    if (gFrameCount >= sFlatLast.load() + 600)
+    {
+        const double frames = (double)std::max<U32>(1, gFrameCount - sFlatLast.load());
+        sFlatLast = gFrameCount;
+        LL_INFOS("SkelFlat") << "flat skeleton per frame over " << (U32)frames << " frames: world arrays filled " << sFlatFills.exchange(0) / frames << ", palettes made from the array " << sFlatPalettes.load() / frames
+            << " (not bit-equal to the old build: " << sFlatPalettesDiffer.load() << "), fell back to the old build " << sFlatFallbacks.exchange(0) / frames << "; flat world pass joints checked " << sFlatJoints.load() / frames
+            << " (differ by more than 1e-5: " << sFlatJointsDiffer.load() << ", worst " << sFlatWorstMilli.exchange(0) / 1.0e6 << ")" << LL_ENDL;
+        sFlatPalettes = sFlatPalettesDiffer = sFlatJoints = sFlatJointsDiffer = 0;
+    }
+}
+
+static void fs_flat_fill(LLVOAvatar* av, LLFlatSkeleton& flat)
+{
+    const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
+    if (flat.mWorld.size() != N)
+    {
+        flat.mWorld.assign(N, LLMatrix4a());
+        flat.mHas.assign(N, 0);
+        flat.mJoint.assign(N, nullptr);
+        flat.mParent.assign(N, -1);
+        flat.mJointCount = 0;
+    }
+    bool structure_changed = false;
+    for (U32 k = 0; k < N; ++k)
+    {
+        LLJoint* joint = av->getJoint((S32)k);
+        if (joint != flat.mJoint[k])
+        {
+            flat.mJoint[k] = joint;
+            structure_changed = true;
+        }
+        flat.mHas[k] = joint ? 1 : 0;
+        if (joint)
+        {
+            flat.mWorld[k] = joint->getWorldMatrix4a();
+        }
+    }
+    if (structure_changed)
+    {
+        // the parents by joint number, and the order (parents first)
+        flat.mOrder.clear();
+        for (U32 k = 0; k < N; ++k)
+        {
+            flat.mParent[k] = -1;
+            if (flat.mJoint[k] && flat.mJoint[k]->getParent())
+            {
+                for (U32 p = 0; p < N; ++p)
+                {
+                    if (flat.mJoint[p] == flat.mJoint[k]->getParent())
+                    {
+                        flat.mParent[k] = (S16)p;
+                        break;
+                    }
+                }
+            }
+        }
+        std::vector<U8> done(N, 0);
+        size_t placed = 0, before = ~(size_t)0;
+        while (placed != before)
+        {
+            before = placed;
+            for (U32 k = 0; k < N; ++k)
+            {
+                if (flat.mJoint[k] && !done[k] && (flat.mParent[k] < 0 || done[flat.mParent[k]]))
+                {
+                    done[k] = 1;
+                    flat.mOrder.push_back((S16)k);
+                    ++placed;
+                }
+            }
+        }
+        flat.mJointCount = (U32)placed;
+    }
+    ++sFlatFills;
+}
+
+// the world pass from the joints' LOCAL transforms, exactly what LLXformMatrix::update / updateMatrix do (the world position composes with the parent's scale only when the parent's scale-child-offset
+// flag is set; the world matrix has the joint's own scale, the world rotation and the world position), compared with the world matrices the joints gave
+static void fs_flat_pass_check(LLFlatSkeleton& flat)
+{
+    const U32 N = (U32)flat.mWorld.size();
+    std::vector<LLVector3> wpos(N);
+    std::vector<LLQuaternion> wrot(N);
+    for (S16 k : flat.mOrder)
+    {
+        LLJoint* joint = flat.mJoint[k];
+        LLXformMatrix* xf = joint->getXform();
+        const S16 p = flat.mParent[k];
+        if (p >= 0)
+        {
+            LLJoint* parent = flat.mJoint[p];
+            LLVector3 pos = xf->getPosition();
+            if (parent->getXform()->getScaleChildOffset())
+            {
+                pos.scaleVec(parent->getXform()->getScale());
+            }
+            pos *= wrot[p];
+            pos += wpos[p];
+            wpos[k] = pos;
+            wrot[k] = xf->getRotation() * wrot[p];
+        }
+        else if (joint->getParent())
+        {
+            // a parent that is not in the array (the avatar's root joint above the skeleton): its world state is the start of the chain, taken from the joint object
+            LLJoint* parent = joint->getParent();
+            LLVector3 pos = xf->getPosition();
+            if (parent->getXform()->getScaleChildOffset())
+            {
+                pos.scaleVec(parent->getXform()->getScale());
+            }
+            const LLQuaternion parent_rot = parent->getWorldRotation();
+            pos *= parent_rot;
+            pos += parent->getWorldPosition();
+            wpos[k] = pos;
+            wrot[k] = xf->getRotation() * parent_rot;
+        }
+        else
+        {
+            wpos[k] = xf->getPosition();
+            wrot[k] = xf->getRotation();
+        }
+        LLMatrix4 m;
+        m.initAll(xf->getScale(), wrot[k], wpos[k]);
+        LLMatrix4a ma;
+        ma.loadu(m);
+        const F32* a = ma.getF32ptr();
+        const F32* b = flat.mWorld[k].getF32ptr();
+        F32 worst = 0.f;
+        for (int i = 0; i < 16; ++i)
+        {
+            worst = std::max(worst, fabsf(a[i] - b[i]));
+        }
+        ++sFlatJoints;
+        if (!(worst <= 1e-5f))
+        {
+            ++sFlatJointsDiffer;
+            static std::atomic<U32> said{ 0 };
+            if (said++ < 8)
+            {
+                LL_INFOS("SkelFlat") << "flat world pass differs: joint " << k << " '" << joint->getName() << "' parent number " << p << " (" << (joint->getParent() ? joint->getParent()->getName() : std::string("none")) << "), worst " << worst
+                    << "; flat translation (" << a[12] << ", " << a[13] << ", " << a[14] << ") joint's (" << b[12] << ", " << b[13] << ", " << b[14] << "); local position " << xf->getPosition() << LL_ENDL;
+            }
+        }
+        const U32 milli = (U32)std::min<F32>(worst * 1.0e6f, 4.0e9f);
+        U32 seen = sFlatWorstMilli.load();
+        while (milli > seen && !sFlatWorstMilli.compare_exchange_weak(seen, milli)) {}
+    }
+}
+
+void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin)
+{
+    const int mode = fs_skelflat_mode();
+    if (mode == 0)
+    {
+        LLSkinningUtil::initSkinningMatrixPalette(mat, count, skin, this);
+        return;
+    }
+    // (called under the palette mutex of updateSkinInfoMatrixPalette: one at a time)
+    if (!mFlatSkel)
+    {
+        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+    }
+    LLFlatSkeleton& flat = *mFlatSkel;
+    if (flat.mFrame != gFrameCount)
+    {
+        fs_flat_fill(this, flat);
+        flat.mFrame = gFrameCount;
+        if (mode == 2)
+        {
+            fs_flat_pass_check(flat);
+        }
+    }
+    LLSkinningUtil::initJointNums(const_cast<LLMeshSkinInfo*>(skin), this);
+    const bool ok = LLSkinningUtil::initSkinningMatrixPaletteFlat(mat, count, skin, flat.mWorld.data(), flat.mHas.data(), (S32)flat.mWorld.size());
+    if (!ok || mode == 2)
+    {
+        LLMeshSkinInfo::matrix_list_t reference(count);
+        LLSkinningUtil::initSkinningMatrixPalette(reference.data(), count, skin, this);
+        if (ok)
+        {
+            ++sFlatPalettes;
+            if (memcmp(reference.data(), mat, sizeof(LLMatrix4a) * (size_t)count) != 0)
+            {
+                ++sFlatPalettesDiffer;
+            }
+        }
+        else
+        {
+            ++sFlatFallbacks;
+        }
+        if (!ok || mode == 2)
+        {
+            memcpy(mat, reference.data(), sizeof(LLMatrix4a) * (size_t)count);      // (the old result stands in compare mode, and where the array lacks a joint)
+        }
+    }
+    else
+    {
+        ++sFlatPalettes;
+    }
+    fs_flat_report();
+}
+
 const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skin)
 {
     // <FS> the packet builders of the shadow cascades run on pool threads and ask for palettes at the same time: the lazy cache (and the lazy joint matrices and joint numbers it fills in) is one at a time.
@@ -12800,7 +13032,7 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         //build matrix palette
         U32 count = LLSkinningUtil::getMeshJointCount(skin);
         entry.mMatrixPalette.resize(count);
-        LLSkinningUtil::initSkinningMatrixPalette(&(entry.mMatrixPalette[0]), count, skin, this);
+        flatPalette(&(entry.mMatrixPalette[0]), (S32)count, skin);
 
         const LLMatrix4a* mat = &(entry.mMatrixPalette[0]);
 
