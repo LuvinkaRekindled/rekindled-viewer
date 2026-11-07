@@ -505,7 +505,7 @@ struct FrameState
     std::map<U32, U32> mSampledLast;
     std::vector<PalSeg> mPalSegs;       // S4 A2: the palette list of the viewer's frame mPalFrame, by float offset
     U32 mPalFrame = ~0u;
-    std::vector<PalIdSlot> mPalIds;     // <FS> P1 step 3: by the index of a palette id (kind 40 fills it), valid for the frame in the slot
+    std::vector<PalIdSlot> mPalIds[2];  // <FS> P1 step 3: by the index of a palette id (kind 40 fills it), valid for the frame in the slot; P3: one table for the even and one for the odd viewer frames, so the frame before is still there (the velocity pass reads last frame's palette by the same id)
     U32 mPalIdFrame = ~0u - 1;            // the frame whose records name their shared palettes by id (a kind 40 came for it); else by offset
 };
 FrameState gFrameState;
@@ -4401,9 +4401,10 @@ static U64 palette_address(U32 value)
         return palette_segment_address(value);
     }
     const U32 index = value & 0xFFFFFFu;
-    if (index < gFrameState.mPalIds.size())
+    const std::vector<PalIdSlot>& table = gFrameState.mPalIds[gFrameState.mPalFrame & 1];
+    if (index < table.size())
     {
-        const PalIdSlot& s = gFrameState.mPalIds[index];
+        const PalIdSlot& s = table[index];
         if (s.mId == value && s.mFrame == gFrameState.mPalFrame && s.mAddress)
         {
             return s.mAddress;
@@ -4425,10 +4426,28 @@ static U64 palette_id_address(U32 id)
         return 0;
     }
     const U32 index = id & 0xFFFFFFu;
-    if (index < gFrameState.mPalIds.size())
+    const std::vector<PalIdSlot>& table = gFrameState.mPalIds[gFrameState.mPalFrame & 1];
+    if (index < table.size())
     {
-        const PalIdSlot& s = gFrameState.mPalIds[index];
+        const PalIdSlot& s = table[index];
         if (s.mId == id && s.mFrame == gFrameState.mPalFrame && s.mAddress)
+        {
+            return s.mAddress;
+        }
+    }
+    return 0;
+}
+
+// P3: the palette an id had in the viewer frame BEFORE the frame in hand (its arena is held until frameCount() + 3 renderer frames after its last record: still there); 0 = it was not in that frame's table
+static U64 palette_id_address_prev(U32 id, U32 viewer_frame)
+{
+    const U32 prev_frame = viewer_frame - 1;
+    const U32 index = id & 0xFFFFFFu;
+    const std::vector<PalIdSlot>& table = gFrameState.mPalIds[prev_frame & 1];
+    if (index < table.size())
+    {
+        const PalIdSlot& s = table[index];
+        if (s.mId == id && s.mFrame == prev_frame && s.mAddress)
         {
             return s.mAddress;
         }
@@ -4450,11 +4469,12 @@ static void on_palette_ids(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
         U32 pair[2];
         memcpy(pair, blob + (size_t)i * sizeof(pair), sizeof(pair));
         const U32 index = pair[0] & 0xFFFFFFu;
-        if (index >= gFrameState.mPalIds.size())
+        std::vector<PalIdSlot>& table = gFrameState.mPalIds[h.mPass & 1];
+        if (index >= table.size())
         {
-            gFrameState.mPalIds.resize((size_t)index + 1024, PalIdSlot{ 0, ~0u, 0 });
+            table.resize((size_t)index + 1024, PalIdSlot{ 0, ~0u, 0 });
         }
-        gFrameState.mPalIds[index] = PalIdSlot{ pair[0], h.mPass, palette_segment_address(pair[1]) };
+        table[index] = PalIdSlot{ pair[0], h.mPass, palette_segment_address(pair[1]) };
     }
 }
 
@@ -5544,7 +5564,9 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || h.mPaletteFloats == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    // P3: mFragment == 1: the entries name their palettes by id (the frame's kind 40 pairs, this frame's table and last frame's), nothing is copied; else this frame's palettes and then last frame's follow the entries
+    const bool by_id = h.mFragment == 1;
+    if (h.mEntries == 0 || (h.mPaletteFloats == 0 && !by_id) || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
     {
         ++sStats.mNoProgram;
         return;
@@ -5552,12 +5574,20 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
     const F32* palette_data = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(VelocityGpu) * (size_t)h.mEntries);
-    Renderer::ScratchAlloc palettes = r.allocVertexScratch(8 * (size_t)h.mPaletteFloats);      // this frame's, then last frame's
-    if (!table.mPtr || !palettes.mPtr || !table.mAddress || !palettes.mAddress)
+    Renderer::ScratchAlloc palettes;
+    if (!by_id)
+    {
+        palettes = r.allocVertexScratch(8 * (size_t)h.mPaletteFloats);      // this frame's, then last frame's
+    }
+    if (!table.mPtr || !table.mAddress || (!by_id && (!palettes.mPtr || !palettes.mAddress)))
     {
         return;
     }
-    memcpy(palettes.mPtr, palette_data, 8 * (size_t)h.mPaletteFloats);
+    const bool ids_this_frame = by_id && gFrameState.mPalFrame == h.mViewerFrame && gFrameState.mPalIdFrame == h.mViewerFrame;
+    if (!by_id)
+    {
+        memcpy(palettes.mPtr, palette_data, 8 * (size_t)h.mPaletteFloats);
+    }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     velocity_index_buffers.assign(h.mEntries, nullptr);
@@ -5575,8 +5605,25 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         const U64 wa = pa + e.mWeightOffset;
-        const U64 pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
-        const U64 prev = pal + 4ull * h.mPaletteFloats;
+        U64 pal, prev;
+        if (by_id)
+        {
+            pal = ids_this_frame ? palette_id_address(e.mPaletteOffset) : 0;
+            if (!pal)
+            {
+                continue;       // no palette in this frame's table: the draw is skipped
+            }
+            prev = palette_id_address_prev(e.mPaletteOffset, h.mViewerFrame);
+            if (!prev)
+            {
+                prev = pal;     // no history (the palette was not in last frame's table): no motion, as an entry whose previous palette is its own
+            }
+        }
+        else
+        {
+            pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
+            prev = pal + 4ull * h.mPaletteFloats;
+        }
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
         g.mIndices[0] = (U32)ia;
