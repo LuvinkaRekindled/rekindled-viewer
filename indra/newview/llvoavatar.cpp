@@ -3857,6 +3857,7 @@ struct AvJobLedger
 {
     std::vector<LLPipeline::AvOp> mOps;
     std::vector<LLPipeline::SortDelta> mSort;
+    std::vector<LLFace*> mStamps;       // the faces whose centre the loop's drawable moves refreshed: their textures are stamped when the job's writes are made (LLFace::updateCenterAgent)
 };
 }
 
@@ -4268,9 +4269,15 @@ void LLVOAvatar::runAttachmentJob()
     std::vector<LLPipeline::SortDelta>* saved_sort = LLPipeline::sSortSink;
     led.mOps.clear();
     led.mSort.clear();
+    led.mStamps.clear();
+    std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
     LLPipeline::sAvSink = &led.mOps;
     LLPipeline::sSortSink = &led.mSort;
+    // <FS> stage C: the drawable moves of the loop stamp the textures of every face they move (stampTextures marks the face's texture record dirty and bumps the textures' face stamps: shared state of the
+    // main thread); on this pool thread they are listed and stamped by the replay, as the moved list jobs of the pipeline do
+    LLFace::sStampSink = &led.mStamps;
     idleUpdateAttachments(isVisible() || mNeedsAnimUpdate);
+    LLFace::sStampSink = saved_stamps;
     LLPipeline::sAvSink = saved_av;
     LLPipeline::sSortSink = saved_sort;
     mAttJobDone = true;
@@ -4283,6 +4290,11 @@ void LLVOAvatar::replayAttachmentJob()
     gPipeline.applyAvOps(led.mOps);
     gPipeline.applySortDeltas(led.mSort);
     led.mSort.clear();
+    for (LLFace* face : led.mStamps)
+    {
+        face->stampTextures();      // (the faces the loop's drawable moves refreshed; the main thread owns the texture records)
+    }
+    led.mStamps.clear();
 }
 
 void LLVOAvatar::idleUpdateMisc(bool detailed_update)
