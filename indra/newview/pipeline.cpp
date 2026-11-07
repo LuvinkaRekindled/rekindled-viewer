@@ -10953,7 +10953,7 @@ static bool scene_fragment_behind(const LLSceneFragment* f)
 
 // S4 B / C: the draw infos of a pass type of the MAIN view, for the passes that are not drawn by the scene table but need to know the draws (the avatar motion vectors, the ray scene's naming of rigged
 // casters): the render map, and, where postSort left a type of a group out because the table serves all of it, those items of the group's fragment (the render map no longer holds them)
-static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out)
+static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out, bool with_items = true)
 {
     out.clear();
     if (rm_alpha_mode() == 2 && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
@@ -11022,6 +11022,10 @@ static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out
         out.push_back(*i);
         LLCullResult::increment_iterator(i, end);
     }
+    if (!with_items)
+    {
+        return;         // J1 K2b: the caller reads the served rigged items through their sources (collect_main_view_rig_sources)
+    }
     LLCullResult* cull = gPipeline.getCull();
     if (!cull || !cull->mGeoElided)
     {
@@ -11060,6 +11064,56 @@ static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out
                 if (item.mServed && item.mType < 2 * kGeoTypeCount && (f->mGeoServedMask & (1ull << item.mType)))
                 {
                     lists[item.mType].push_back(item.mInfo);
+                }
+            }
+        }
+    }
+    out.insert(out.end(), lists[tn].begin(), lists[tn].end());
+}
+
+// J1 K2b: the served RIGGED items of the main view that postSort left out of the render map (the same set collect_main_view_draw_infos adds from the fragments), as their sources: the avatar and the skin, the
+// buffer and the range, with no draw info read. The pointers are into the fragments' own vectors (valid until the fragment is made again: the same life as the draw infos' pointers had).
+static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSource*>& out)
+{
+    out.clear();
+    LLCullResult* cull = gPipeline.getCull();
+    if (!cull || !cull->mGeoElided)
+    {
+        return;
+    }
+    const int tn = ll_scene_geo_type_number(type);
+    if (tn < 0)
+    {
+        return;
+    }
+    static std::vector<const GeoRigSource*> lists[2 * kGeoTypeCount];
+    static LLCullResult* key_cull = nullptr;
+    static U64 key_frame = ~0ull;
+    static size_t key_handles = 0;
+    static U64 key_epoch = ~0ull;
+    if (key_cull != cull || key_frame != gFrameCount || key_handles != cull->mGeoHandles.size() || key_epoch != sGeoItemsEpoch.load())
+    {
+        key_cull = cull;
+        key_frame = gFrameCount;
+        key_epoch = sGeoItemsEpoch.load();
+        key_handles = cull->mGeoHandles.size();
+        for (std::vector<const GeoRigSource*>& l : lists)
+        {
+            l.clear();
+        }
+        for (U32 handle : cull->mGeoHandles)
+        {
+            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (!f || !f->mGeoServedMask)
+            {
+                continue;
+            }
+            for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
+            {
+                const LLSceneFragment::GeoItem& item = f->mGeo[f->mGeoRigged[rk]];
+                if (item.mServed && item.mType < 2 * kGeoTypeCount && (f->mGeoServedMask & (1ull << item.mType)))
+                {
+                    lists[item.mType].push_back(&f->mGeoRiggedSrc[rk]);
                 }
             }
         }
@@ -21559,6 +21613,13 @@ static bool velocity_ids_on()
     return on;
 }
 
+// J1 K2b (LL_VK_VELRIG, default on; 0 = the draw infos of the fragments' items are read as before): the served rigged items are read through their sources
+static bool velocity_rig_on()
+{
+    static const bool on = !getenv("LL_VK_VELRIG") || atoi(getenv("LL_VK_VELRIG")) != 0;
+    return on;
+}
+
 static void build_velocity_rigged(VelocityRiggedWork& w)
 {
     LL_CPU_ZONE("avatar velocity: rigged draws (collect, palettes, motion test)");
@@ -21571,107 +21632,126 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
     const bool use_packets = w.mUsePackets;
     const F32 min_motion_px = w.mMinMotionPx;
     const U32 vel_frame = w.mFrame;
+    // J1 K2b: the per draw work takes (avatar, skin, buffer, range) so the served rigged items of the fragments can be read through their sources, and only the draws left in the render map through their draw infos
+    struct VelDraw { LLVOAvatar* avatar; const LLMeshSkinInfo* skin; const LLVertexBuffer* vb; U32 offset, count; LLDrawInfo* info; };
+    auto consume = [&](const VelDraw& d)
+    {
+        LLVOAvatar* avatar = d.avatar;
+        const LLVertexBuffer* vb = d.vb;
+        if (!d.count || !avatar || !d.skin || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+        {
+            return;
+        }
+        if (avatar->mVelocityFrame != vel_frame)
+        {
+            const F32 distance = (avatar->getRenderPosition() - w.mCameraOrigin).length();
+            const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= w.mRange;
+            avatar->mVelocityFrame = vel_frame;
+            avatar->mVelocityOk = ok;
+            avatar->mVelocityDistance = distance;
+            if (vel_census && ok)
+            {
+                ++vc_avatars;
+                vc_moving += avatar->getVelocity().magVecSquared() > 0.01f;
+                vc_motions += avatar->getMotionController().getActiveMotions().size();
+            }
+        }
+        if (!avatar->mVelocityOk)
+        {
+            ++w.mSkipped;
+            return;
+        }
+        const LLVOAvatar::MatrixPaletteCache* mpc_ptr;
+        { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(d.skin); }
+        const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
+        const U32 joints = (U32)mpc.mMatrixPalette.size();
+        if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
+        {
+            return;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
+        }
+        if (min_motion_px > 0.f)
+        {
+            if (mpc.mMotionFrame != vel_frame)
+            {
+                F32 px;
+                {
+                    LL_CPU_ZONE("avatar velocity: motion test");
+                    const F32* cur = mpc.mGLMp.data();
+                    const F32* prev = mpc.mPrevGLMp.data();
+                    F32 biggest = 0.f;
+                    for (size_t k = 0, count = (size_t)joints * 12; k < count; ++k)
+                    {
+                        biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
+                    }
+                    px = biggest * 1.5f * w.mFocalPx / llmax(avatar->mVelocityDistance, 0.5f);
+                }
+                if (vel_census)
+                {
+                    ++vc_palettes;
+                    ++vc_hist[px < 0.f + 0.01f ? 0 : px < 0.05f ? 1 : px < 0.15f ? 2 : px < 0.3f ? 3 : px < 1.f ? 4 : px < 3.f ? 5 : 6];
+                }
+                mpc.mMotionStill = px < min_motion_px;
+                mpc.mMotionFrame = vel_frame;
+            }
+            if (mpc.mMotionStill)
+            {
+                ++w.mStill;
+                return;
+            }
+        }
+        if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
+        {
+            if (velocity_ids_on())
+            {
+                // P3: the palette is named by its id (this frame's palette list, and last frame's by the same id at the worker): nothing is copied
+                U32 id = 0, id_joints = 0;
+                if (!ll_frame_palette(avatar, d.skin, id, id_joints))
+                {
+                    return;
+                }
+                mpc.mOffset = id;
+                mpc.mOffsetFrame = vel_frame;
+            }
+            else if (mpc.mOffsetFrame != vel_frame)
+            {
+                mpc.mOffset = (U32)w.mPalettes.size();
+                mpc.mOffsetFrame = vel_frame;
+                w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+                w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
+            }
+            LLVkBridge::ShadowSkinEntry e = {};
+            e.mVertexBuffer = vb->getVertexBufferId();
+            e.mIndexBuffer = vb->getIndexBufferId();
+            e.mFirstIndex = d.offset;
+            e.mIndexCount = d.count;
+            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+            e.mPaletteOffset = mpc.mOffset;
+            e.mJoints = joints;
+            w.mEntries.push_back(e);
+            return;
+        }
+        if (d.info)
+        {
+            w.mFallback.push_back(d.info);
+        }
+    };
+    const bool rig_mode = velocity_rig_on() && use_packets;
     std::vector<LLDrawInfo*> infos;
+    std::vector<const GeoRigSource*> rigs;
     for (U32 type : kVelocityRiggedTypes)
     {
-        { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos); }       // (S4 B: the render map and the draws the scene table serves)
+        { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos, !rig_mode); }       // (S4 B: the render map and, unless the sources are read, the draws the scene table serves)
         for (LLDrawInfo* params : infos)
         {
-            LLVOAvatar* avatar = params->mAvatar.get();
-            const LLVertexBuffer* vb = params->mVertexBuffer.get();
-            if (!params->mCount || !avatar || params->mSkinInfo.isNull() || !vb || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+            consume({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, params });
+        }
+        if (rig_mode)
+        {
+            { LL_CPU_ZONE("avatar velocity: collect rigged item sources"); collect_main_view_rig_sources(type, rigs); }
+            for (const GeoRigSource* rig : rigs)
             {
-                continue;
+                consume({ rig->mAvatar.get(), rig->mSkin.get(), rig->mVb.get(), rig->mOffset, rig->mCount, nullptr });
             }
-            if (avatar->mVelocityFrame != vel_frame)
-            {
-                const F32 distance = (avatar->getRenderPosition() - w.mCameraOrigin).length();
-                const bool ok = !avatar->isDead() && !avatar->isImpostor() && avatar->getOverallAppearance() == LLVOAvatar::AOA_NORMAL && distance <= w.mRange;
-                avatar->mVelocityFrame = vel_frame;
-                avatar->mVelocityOk = ok;
-                avatar->mVelocityDistance = distance;
-                if (vel_census && ok)
-                {
-                    ++vc_avatars;
-                    vc_moving += avatar->getVelocity().magVecSquared() > 0.01f;
-                    vc_motions += avatar->getMotionController().getActiveMotions().size();
-                }
-            }
-            if (!avatar->mVelocityOk)
-            {
-                ++w.mSkipped;
-                continue;
-            }
-            const LLVOAvatar::MatrixPaletteCache* mpc_ptr;
-            { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(params->mSkinInfo); }
-            const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
-            const U32 joints = (U32)mpc.mMatrixPalette.size();
-            if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
-            {
-                continue;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
-            }
-            if (min_motion_px > 0.f)
-            {
-                if (mpc.mMotionFrame != vel_frame)
-                {
-                    F32 px;
-                    {
-                        LL_CPU_ZONE("avatar velocity: motion test");
-                        const F32* cur = mpc.mGLMp.data();
-                        const F32* prev = mpc.mPrevGLMp.data();
-                        F32 biggest = 0.f;
-                        for (size_t k = 0, count = (size_t)joints * 12; k < count; ++k)
-                        {
-                            biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
-                        }
-                        px = biggest * 1.5f * w.mFocalPx / llmax(avatar->mVelocityDistance, 0.5f);
-                    }
-                    if (vel_census)
-                    {
-                        ++vc_palettes;
-                        ++vc_hist[px < 0.f + 0.01f ? 0 : px < 0.05f ? 1 : px < 0.15f ? 2 : px < 0.3f ? 3 : px < 1.f ? 4 : px < 3.f ? 5 : 6];
-                    }
-                    mpc.mMotionStill = px < min_motion_px;
-                    mpc.mMotionFrame = vel_frame;
-                }
-                if (mpc.mMotionStill)
-                {
-                    ++w.mStill;
-                    continue;
-                }
-            }
-            if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
-            {
-                if (velocity_ids_on())
-                {
-                    // P3: the palette is named by its id (this frame's palette list, and last frame's by the same id at the worker): nothing is copied
-                    U32 id = 0, id_joints = 0;
-                    if (!ll_frame_palette(avatar, params->mSkinInfo.get(), id, id_joints))
-                    {
-                        continue;
-                    }
-                    mpc.mOffset = id;
-                    mpc.mOffsetFrame = vel_frame;
-                }
-                else if (mpc.mOffsetFrame != vel_frame)
-                {
-                    mpc.mOffset = (U32)w.mPalettes.size();
-                    mpc.mOffsetFrame = vel_frame;
-                    w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
-                    w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
-                }
-                LLVkBridge::ShadowSkinEntry e = {};
-                e.mVertexBuffer = vb->getVertexBufferId();
-                e.mIndexBuffer = vb->getIndexBufferId();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
-                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                e.mPaletteOffset = mpc.mOffset;
-                e.mJoints = joints;
-                w.mEntries.push_back(e);
-                continue;
-            }
-            w.mFallback.push_back(params);
         }
     }
 
