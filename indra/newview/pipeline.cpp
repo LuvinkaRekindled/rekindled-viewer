@@ -15290,7 +15290,7 @@ struct LLPipeline::ShadowSkinBuild
     std::vector<F32> mMatrices;
     std::vector<F32> mPalettes;         // the record's own palettes (LL_VK_PALETTE_SHARED=0; empty when they are in the frame's shared list)
     std::vector<LLDrawInfo*> mFallback;
-    std::vector<LLDrawInfo*> mDraws;    // the draw behind each entry (LL_VK_SHADOWLOD_DRY reads their index and vertex data)
+    std::vector<GeoRange> mDraws;       // the range behind each entry: what the shadow LOD and LL_VK_SHADOWLOD_DRY read (J1 K3a: from a draw info or from a fragment item)
     size_t mPaletteCount = 0;
     bool mShared = false;               // S4 A2: the entries' palette offsets belong to the shared list of mPaletteFrame
     U64 mPaletteFrame = ~0ull;
@@ -15309,6 +15309,19 @@ static void rt_skin_material(LLVkBridge::ShadowSkinEntry& e, LLDrawInfo* params,
     e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
 }
 
+// J1 K3a (LL_VK_SHADOW_RIGFRAG: 1 default, 0 = the draw info lists only): the cascades' rigged casters that a group's fragment names are read from the fragment's items (their sources), not from the render
+// map's draw infos. 2 = compare: builds both and compares them (a mismatch is logged), the entries sent are the list-built ones; 3 = compare and send the item-built ones (the job still pushes every draw, the
+// builder leaves out the list-built entries of the draws a fragment names: what mode 1 does, with the proof that the items give the same entries). Not with ray scene materials (they read the draw info's cache: K5).
+static int shadow_rigfrag_mode()
+{
+    static const int mode = getenv("LL_VK_SHADOW_RIGFRAG") ? atoi(getenv("LL_VK_SHADOW_RIGFRAG")) : 1;
+    return mode;
+}
+static bool shadow_rigfrag_usable()
+{
+    return shadow_rigfrag_mode() != 0 && !rt_materials_on() && scene_geo_rigged_on();
+}
+
 static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
 {
     ll_rig_census_add(7, 1);
@@ -15319,79 +15332,162 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     std::vector<LLDrawInfo*>& fallback = out.mFallback;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-                std::unordered_map<const void*, U32> matrix_numbers;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        std::unordered_set<U32> palettes_used;
-        const bool shared_palettes = ll_palette_shared();
-        out.mShared = shared_palettes;
-        out.mPaletteFrame = ll_frame_palette_frame();
-        for (size_t t = 0; t < count; ++t)
+    std::unordered_map<const void*, U32> matrix_numbers;
+    std::unordered_map<const F32*, U32> palette_offsets;
+    std::unordered_set<U32> palettes_used;
+    const bool shared_palettes = ll_palette_shared();
+    out.mShared = shared_palettes;
+    out.mPaletteFrame = ll_frame_palette_frame();
+    // the entry of one rigged draw, from its parts (a draw info's, or a fragment item's source): false = the skin is not loaded yet, not drawn
+    auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLDrawInfo* info, LLVkBridge::ShadowSkinEntry& e) -> bool
+    {
+        e = {};
+        if (!(shared_palettes ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
+                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
         {
-            auto begin = result.beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
-            auto end = result.endRenderMap(list[t] + 1);
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            return false;       // the skin is not loaded yet: not drawn, as before
+        }
+        palettes_used.insert(e.mPaletteOffset);
+        e.mVertexBuffer = vb->getVertexBufferId();
+        e.mIndexBuffer = vb->getIndexBufferId();
+        e.mFirstIndex = offset;
+        e.mIndexCount = index_count;
+        e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+        e.mVertexFirst = first_vertex;
+        e.mVertexCount = last_vertex + 1u - first_vertex;
+        e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
+        e.mSkinId = (U32)(((uintptr_t)skin) >> 4);
+        {
+            const LLVector3 avatar_position = avatar ? avatar->getRenderPosition() : LLVector3();
+            e.mAvatarPos[0] = avatar_position.mV[0];
+            e.mAvatarPos[1] = avatar_position.mV[1];
+            e.mAvatarPos[2] = avatar_position.mV[2];
+            e.mAvatarKind = rt_avatar_kind(avatar);
+        }
+        if (info)
+        {
+            rt_skin_material(e, info, vb);
+        }
+        return true;
+    };
+    auto buffer_fits = [](const LLVertexBuffer* vb)
+    {
+        return vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+            && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0 && vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4);
+    };
+    const int rig_mode = (shadow_rigfrag_usable() && result.mRigFromFragments) ? shadow_rigfrag_mode() : 0;      // (a result another path made, the spot shadows' or the main view's, holds every rigged draw in its lists)
+    std::vector<LLVkBridge::ShadowSkinEntry> served_by_list;        // (mode 2) the list-built entries of the draws a fragment names
+    for (size_t t = 0; t < count; ++t)
+    {
+        auto begin = result.beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
+        auto end = result.endRenderMap(list[t] + 1);
+        for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+        {
+            LLDrawInfo* params = *i;
+            LLCullResult::increment_iterator(i, end);
+            if (!params->mCount || !params->mAvatar)
             {
-                LLDrawInfo* params = *i;
-                LLCullResult::increment_iterator(i, end);
-                if (!params->mCount || !params->mAvatar)
+                continue;       // nothing to draw, or no palette: the old path draws nothing either
+            }
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            if (!buffer_fits(vb) || params->mSkinInfo.isNull())
+            {
+                fallback.push_back(params);
+                continue;
+            }
+            LLVkBridge::ShadowSkinEntry e;
+            if (!make_entry(params->mAvatar.get(), params->mSkinInfo.get(), vb, params->mOffset, params->mCount, params->mStart, params->mEnd, params, e))
+            {
+                continue;
+            }
+            ll_rig_census_add(6, 1);
+            if (params->mModelMatrix)
+            {
+                auto it = matrix_numbers.find(params->mModelMatrix);
+                if (it == matrix_numbers.end())
                 {
-                    continue;       // nothing to draw, or no palette: the old path draws nothing either
+                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
+                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                    matrices.insert(matrices.end(), m, m + 16);
                 }
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
-                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
+                e.mMatrix = it->second;
+            }
+            if (rig_mode >= 2 && params->mGeoServed)
+            {
+                served_by_list.push_back(e);
+                if (rig_mode == 3)
                 {
-                    fallback.push_back(params);
+                    continue;       // (the items below give it)
+                }
+            }
+            entries.push_back(e);
+            out.mDraws.push_back(ll_geo_range(params));
+        }
+        if (rig_mode)
+        {
+            // the draws the cascade's group fragments name: the items' sources, in the order of the groups (mode 2: only to compare, the entries above are the ones sent)
+            std::vector<LLVkBridge::ShadowSkinEntry> item_entries;
+            std::vector<GeoRange> item_ranges;
+            std::vector<LLVkBridge::ShadowSkinEntry>& into = rig_mode == 1 ? entries : item_entries;
+            for (const auto& named : result.mRigSources)
+            {
+                if (named.first != list[t] + 1)
+                {
                     continue;
                 }
-                LLVkBridge::ShadowSkinEntry e = {};
-                if (!(shared_palettes ? ll_frame_palette(params->mAvatar, params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
-                                      : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+                const GeoRigSource& rig = *named.second;
+                const LLVertexBuffer* vb = rig.mVb.get();
+                LLVOAvatar* avatar = rig.mAvatar.get();
+                const LLMeshSkinInfo* skin = rig.mSkin.get();
+                if (!rig.mCount || !avatar || !skin || !buffer_fits(vb))
                 {
-                    continue;       // the skin is not loaded yet: not drawn, as before
+                    continue;
+                }
+                LLVkBridge::ShadowSkinEntry e;
+                if (!make_entry(avatar, skin, vb, rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, e))
+                {
+                    continue;
                 }
                 ll_rig_census_add(6, 1);
-                palettes_used.insert(e.mPaletteOffset);
-                e.mVertexBuffer = vb->getVertexBufferId();
-                e.mIndexBuffer = vb->getIndexBufferId();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
-                e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                e.mVertexFirst = params->mStart;
-                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                into.push_back(e);
+                (rig_mode == 1 ? out.mDraws : item_ranges).push_back(rig.range());
+            }
+            if (rig_mode == 3)
+            {
+                entries.insert(entries.end(), item_entries.begin(), item_entries.end());        // (before the compare sorts them)
+                out.mDraws.insert(out.mDraws.end(), item_ranges.begin(), item_ranges.end());
+            }
+            if (rig_mode >= 2)
+            {
+                // compare: what the lists built for the draws a fragment names against what the items give (as multisets of entries: the order between the list and the items need not be the same)
+                // (the draws a fragment names are only in the lists because mode 2 still pushes them)
+                static std::atomic<U64> checks{ 0 }, wrong{ 0 };
+                std::vector<LLVkBridge::ShadowSkinEntry> a, b;
+                a.swap(served_by_list);
+                b.swap(item_entries);
+                auto less = [](const LLVkBridge::ShadowSkinEntry& x, const LLVkBridge::ShadowSkinEntry& y) { return memcmp(&x, &y, sizeof(x)) < 0; };
+                std::sort(a.begin(), a.end(), less);
+                std::sort(b.begin(), b.end(), less);
+                ++checks;
+                const bool same = a.size() == b.size() && (a.empty() || memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0);
+                if (!same && ++wrong <= 6)
                 {
-                    const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
-                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
-                    e.mAvatarPos[0] = avatar_position.mV[0];
-                    e.mAvatarPos[1] = avatar_position.mV[1];
-                    e.mAvatarPos[2] = avatar_position.mV[2];
-                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                    LL_WARNS("ShadowRigFrag") << "pass type " << list[t] + 1 << ": the lists built " << a.size() << " entries for the draws a fragment names, the fragments' items " << b.size() << " (" << wrong.load() << " of " << checks.load() << " builds differ)" << LL_ENDL;
                 }
-                rt_skin_material(e, params, vb);
-                if (params->mModelMatrix)
+                if (checks % 2000 == 0)
                 {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
-                    if (it == matrix_numbers.end())
-                    {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                        matrices.insert(matrices.end(), m, m + 16);
-                    }
-                    e.mMatrix = it->second;
+                    LL_INFOS("ShadowRigFrag") << "rigged casters from the fragments: " << wrong.load() << " of " << checks.load() << " type builds differed from the lists" << LL_ENDL;
                 }
-                entries.push_back(e);
-                out.mDraws.push_back(params);
             }
         }
+    }
     out.mPaletteCount = palettes_used.size();
 }
 
 // LL_VK_SHADOWLOD_DRY=1 (a measurement, nothing drawn differently): what simplifying the rigged casters of the sun cascades would remove. For each rigged draw the index range is simplified by
 // meshoptimizer (positions only, no skin weights: as the bind pose) to a given absolute error, 1 / 2 / 4 / 8 / 16 cm (the mesh is taken to be in metres: an approximation), and the triangles left
 // are counted. The first result of a draw is kept (by buffer, offset and count); the work per call is budgeted (1.5 ms), draws not measured yet only count in the totals. Logged every 600 calls of a pass.
-static void shadow_lod_dry_run(U32 pass, const std::vector<LLDrawInfo*>& draws)
+static void shadow_lod_dry_run(U32 pass, const std::vector<GeoRange>& draws)
 {
     static const bool on = getenv("LL_VK_SHADOWLOD_DRY") != nullptr;
     if (!on || pass > 3)
@@ -15411,14 +15507,14 @@ static void shadow_lod_dry_run(U32 pass, const std::vector<LLDrawInfo*>& draws)
     const auto t0 = std::chrono::steady_clock::now();
     Acc& a = acc[pass];
     ++a.mCalls;
-    for (LLDrawInfo* params : draws)
+    for (const GeoRange& params : draws)
     {
-        if (!params || !params->mCount || params->mVertexBuffer.isNull())
+        if (!params.mCount || !params.mVb)
         {
             continue;
         }
-        const LLVertexBuffer* vb = params->mVertexBuffer.get();
-        Result& r = cache[std::make_tuple((const void*)vb, (U32)params->mOffset, (U32)params->mCount)];
+        const LLVertexBuffer* vb = params.mVb;
+        Result& r = cache[std::make_tuple((const void*)vb, (U32)params.mOffset, (U32)params.mCount)];
         if (!r.mDone && std::chrono::steady_clock::now() - t0 < std::chrono::microseconds(1500))
         {
             const U16* indices = (const U16*)vb->getMappedIndices();
@@ -15426,9 +15522,9 @@ static void shadow_lod_dry_run(U32 pass, const std::vector<LLDrawInfo*>& draws)
             if (indices && data && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX))
             {
                 const LLVector4a* positions = (const LLVector4a*)(data + vb->getOffset(LLVertexBuffer::TYPE_VERTEX));
-                const U32 vertex_count = (U32)params->mEnd + 1u;
+                const U32 vertex_count = (U32)params.mEnd + 1u;
                 F32 lo[3] = { 1.0e30f, 1.0e30f, 1.0e30f }, hi[3] = { -1.0e30f, -1.0e30f, -1.0e30f };
-                for (U32 v = params->mStart; v < vertex_count; ++v)
+                for (U32 v = params.mStart; v < vertex_count; ++v)
                 {
                     const F32* p = positions[v].getF32ptr();
                     for (int k = 0; k < 3; ++k)
@@ -15440,12 +15536,12 @@ static void shadow_lod_dry_run(U32 pass, const std::vector<LLDrawInfo*>& draws)
                 const F32 extent = llmax(hi[0] - lo[0], llmax(hi[1] - lo[1], hi[2] - lo[2]));
                 if (extent > 1.0e-4f)
                 {
-                    std::vector<U16> out(params->mCount);
-                    r.mTris = params->mCount / 3;
+                    std::vector<U16> out(params.mCount);
+                    r.mTris = params.mCount / 3;
                     for (int l = 0; l < LEVELS; ++l)
                     {
                         F32 result_error = 0.f;
-                        const U64 n = LLMeshOptimizer::simplify(out.data(), indices + params->mOffset, params->mCount, positions, vertex_count, sizeof(LLVector4a), 0, error_m[l] / extent, false, &result_error);
+                        const U64 n = LLMeshOptimizer::simplify(out.data(), indices + params.mOffset, params.mCount, positions, vertex_count, sizeof(LLVector4a), 0, error_m[l] / extent, false, &result_error);
                         r.mKept[l] = (U32)(n / 3);
                     }
                 }
@@ -15453,7 +15549,7 @@ static void shadow_lod_dry_run(U32 pass, const std::vector<LLDrawInfo*>& draws)
             r.mDone = true;         // (a draw without CPU data or extent stays unmeasured: mTris 0)
         }
         ++a.mDraws;
-        a.mTris += params->mCount / 3;
+        a.mTris += params.mCount / 3;
         if (r.mDone && r.mTris)
         {
             ++a.mMeasuredDraws;
@@ -15847,7 +15943,7 @@ bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& cou
 }
 
 // returns true when at least one entry of the cascade pass names a simplified list
-static bool shadow_lod_apply(U32 pass, const std::vector<LLDrawInfo*>& draws, std::vector<LLVkBridge::ShadowSkinEntry>& entries)
+static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::vector<LLVkBridge::ShadowSkinEntry>& entries)
 {
     if (pass > 3 || !shadow_lod_on() || draws.size() != entries.size())
     {
@@ -15876,7 +15972,7 @@ static bool shadow_lod_apply(U32 pass, const std::vector<LLDrawInfo*>& draws, st
     for (size_t i = 0; i < draws.size(); ++i)
     {
         U32 ib_name = 0, count = 0;
-        if (!shadow_lod_one(ll_geo_range(draws[i]), lvl, error, snapshots, ib_name, count))
+        if (!shadow_lod_one(draws[i], lvl, error, snapshots, ib_name, count))
         {
             continue;
         }
@@ -15884,7 +15980,7 @@ static bool shadow_lod_apply(U32 pass, const std::vector<LLDrawInfo*>& draws, st
         entries[i].mFirstIndex = 0;
         entries[i].mIndexCount = count;
         ++patched;
-        tris_before += draws[i]->mCount / 3;
+        tris_before += draws[i].mCount / 3;
         tris_after += count / 3;
         any = true;
     }
@@ -16019,7 +16115,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         {
             plan_inputs = (plan_inputs ^ (hasRenderType(t) ? 0x9Eu + t : 0x31u)) * 1099511628211ull;
         }
-        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull)) * 1099511628211ull;
+        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0) << 5)) * 1099511628211ull;
     }
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
@@ -16083,6 +16179,37 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
         }
 
+        // J1 K3a: the rigged casters the group's current fragment names go into the cascade's result as the items' sources (the render map keeps only the draws no fragment names, in mode 1)
+        const LLSceneFragment* rig_fragment = group->mSceneFragment;
+        const int rig_mode = shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0;
+        local.mRigFromFragments = local.mRigFromFragments || rig_mode != 0;
+        const bool rig_current = rig_mode && rig_fragment && rig_fragment->mSerial == group->mDrawMapSerial && !rig_fragment->mGeoRigged.empty();
+        if (rig_current)
+        {
+            for (size_t rk = 0; rk < rig_fragment->mGeoRigged.size(); ++rk)
+            {
+                const LLSceneFragment::GeoItem& item = rig_fragment->mGeo[rig_fragment->mGeoRigged[rk]];
+                if (!item.mServed || item.mType < kGeoTypeCount || item.mType >= 2 * kGeoTypeCount)
+                {
+                    continue;
+                }
+                const U32 rigged_type = kGeoTypes[item.mType - kGeoTypeCount].mType + 1;     // (the rigged variant of a pass type is the next number)
+                if (shadow_view_class(rigged_type) != 1 || !hasRenderType(rigged_type))
+                {
+                    continue;
+                }
+                const GeoRigSource& rig = rig_fragment->mGeoRiggedSrc[rk];
+                if (cascade_cull_active && rig.mAvatar.notNull() && shadow_cascade_skips_avatar(rig.mAvatar.get(), cascade_cull))
+                {
+                    ++plan_avatar_skips;
+                    continue;
+                }
+                ++plan_pushed;
+                ++n_rigged;
+                local.mRigSources.push_back({ rigged_type, &rig });
+            }
+        }
+
         for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
         {
             LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
@@ -16131,6 +16258,11 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                             continue;
                         }
                     }
+                }
+
+                if (rig_current && rig_mode == 1 && info->mGeoServed && shadow_view_class(j->first) == 1)
+                {
+                    continue;           // J1 K3a: a fragment names this draw (above): the builder reads its item
                 }
 
                 ++plan_pushed;
@@ -30116,6 +30248,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
                 into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
                 into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
+                into.mRigSources.insert(into.mRigSources.end(), from.mRigSources.begin(), from.mRigSources.end());
+                into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
                 if (!from.mGeoOwner.empty())
                 {
                     into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());

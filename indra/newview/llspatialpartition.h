@@ -764,6 +764,8 @@ public:
     // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
     // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
     std::vector<LLSpatialGroup*> mSceneGroups;
+    bool mRigFromFragments = false;     // <FS> J1 K3a: the cascade's render map job made this result and named the rigged casters of the groups' fragments in mRigSources (a result made by another path has none: its lists hold every rigged draw)
+    std::vector<std::pair<U32, const GeoRigSource*>> mRigSources;       // <FS> J1 K3a: a cascade's rigged casters that its group's fragment names (pass type of the rigged variant, the item's source), in the order the draw infos would have been pushed; the skin builder reads them
     std::vector<LLSpatialGroup*> mAlphaFragGroups;     // <FS> C5 J3: a cascade's groups whose alpha casters the render map job left out because the group's fragment names them and the worker does not hold them yet (renderShadow makes their entries from the fragments)
     // <FS> C4.4: the visible groups of a shadow cascade's cull whose changeLOD() answered true when the cull walk stamped them (the row was hot there), in the walk's order: the only ones the mark job
     // (shadowPrepMark) still has to look at (a few dozen of ~1800 a frame). Filled by LLPipeline::markNotCulled for the cascade culls; cleared with the lists.
