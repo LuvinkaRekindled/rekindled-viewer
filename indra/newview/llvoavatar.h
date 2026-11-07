@@ -1261,6 +1261,7 @@ public:
     bool                hasHUDAttachment() const;
     LLBBox              getHUDBBox() const;
     void                resetHUDAttachments();
+    void                resetChangedHUDAttachments();      // <FS> stage C5f: only the HUD attachments that are changing or flagged for an undamped move (see LLVOAvatarSelf::updateCharacter)
     S32                 getMaxAttachments() const;
     bool                canAttachMoreObjects(U32 n=1) const;
     S32                 getMaxAnimatedObjectAttachments() const;

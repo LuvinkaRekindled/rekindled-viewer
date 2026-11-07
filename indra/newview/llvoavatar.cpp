@@ -11292,6 +11292,28 @@ void LLVOAvatar::resetHUDAttachments()
     }
 }
 
+// <FS> stage C5f: what resetHUDAttachments does to a HUD attachment that is changing: markMoved clears the drawable's undamped flag and queues it, so that a position the server sets (a script's slide) is
+// reached by the damped move, over several frames, not in one. The every-frame call did this for every HUD attachment, which is how a HUD prim's scripted slide showed; the attachments that do not change are left
+// alone (the full call is made when the screen's aspect or the attachment set changes).
+void LLVOAvatar::resetChangedHUDAttachments()
+{
+    for (auto& [point_id, attachment] : mAttachmentPoints)
+    {
+        if (!attachment || !attachment->getIsHUDAttachment())
+        {
+            continue;
+        }
+        for (auto& attached : attachment->mAttachedObjects)
+        {
+            LLViewerObject* object = attached.get();
+            if (object && object->mDrawable.notNull() && (object->isChanged(LLXform::MOVED) || object->mDrawable->isState(LLDrawable::MOVE_UNDAMPED)))
+            {
+                gPipeline.markMoved(object->mDrawable);
+            }
+        }
+    }
+}
+
 void LLVOAvatar::rebuildRiggedAttachments( void )
 {
     for ( attachment_map_t::iterator iter = mAttachmentPoints.begin(); iter != mAttachmentPoints.end(); ++iter )

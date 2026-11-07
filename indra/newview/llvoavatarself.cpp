@@ -995,9 +995,31 @@ bool LLVOAvatarSelf::updateCharacter(LLAgent &agent)
     {
         F32 aspect = LLViewerCamera::getInstance()->getAspect();
         LLVector3 scale(1.f, aspect, 1.f);
-        mScreenp->setScale(scale);
-        mScreenp->updateWorldMatrixChildren();
-        resetHUDAttachments();
+        // <FS> stage C5f: the HUD attachment points hang off the standalone screen joint, not under the skeleton root, so the avatar's attachment loop never sees them (updateJointLODs only walks the root: the points are
+        // never valid); this is where the avatar moves them. Their only inputs are the screen's aspect (the sidebar opening, the window) and which objects are attached; an edit of a HUD object marks the object itself.
+        // So they are moved when one of those changed, and every 240 frames as a safety, not every frame (LL_VK_HUDEVENT=0: every frame, as before).
+        static const bool hud_event = !getenv("LL_VK_HUDEVENT") || atoi(getenv("LL_VK_HUDEVENT")) != 0;
+        static U64 hud_moved = 0, hud_kept = 0;
+        const U32 frame = (U32)LLFrameTimer::getFrameCount();
+        if (!hud_event || aspect != mHudAspect || LLViewerJointAttachment::sRevision != mHudRevision || frame - mHudResetFrame >= 240)
+        {
+            mScreenp->setScale(scale);
+            mScreenp->updateWorldMatrixChildren();
+            resetHUDAttachments();
+            mHudAspect = aspect;
+            mHudRevision = LLViewerJointAttachment::sRevision;
+            mHudResetFrame = frame;
+            ++hud_moved;
+        }
+        else
+        {
+            ++hud_kept;
+            resetChangedHUDAttachments();       // (the ones that are changing: a scripted slide is damped as it was)
+        }
+        if (((hud_moved + hud_kept) % 20000) == 0)
+        {
+            LL_INFOS("HudEvent") << "HUD attachments: moved " << hud_moved << " frames (aspect or attachment set changed, or the 240 frame safety), left alone " << hud_kept << LL_ENDL;
+        }
     }
 
     return LLVOAvatar::updateCharacter(agent);
