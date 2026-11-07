@@ -326,6 +326,9 @@ public:
         ScaleCurve();
         ~ScaleCurve();
         LLVector3 getValue(F32 time, F32 duration);
+        LLVector3 getValueMap(F32 time, F32 duration);
+        LLVector3 getValueFlat(F32 time, F32 duration) const;
+        void buildFlat();       // <FS> stage B2: the keys as sorted arrays (built once when the animation is loaded, on the loading thread; read only afterwards: the curves are shared by every avatar playing the animation)
         LLVector3 interp(F32 u, ScaleKey& before, ScaleKey& after);
 
         InterpolationType   mInterpolationType;
@@ -334,6 +337,9 @@ public:
         key_map_t           mKeys;
         ScaleKey            mLoopInKey;
         ScaleKey            mLoopOutKey;
+        std::vector<F32>    mFlatTimes;
+        std::vector<LLVector3> mFlatValues;
+        bool                mFlatBuilt = false;
     };
 
     //-------------------------------------------------------------------------
@@ -345,6 +351,9 @@ public:
         RotationCurve();
         ~RotationCurve();
         LLQuaternion getValue(F32 time, F32 duration);
+        LLQuaternion getValueMap(F32 time, F32 duration);
+        LLQuaternion getValueFlat(F32 time, F32 duration) const;
+        void buildFlat();
         LLQuaternion interp(F32 u, RotationKey& before, RotationKey& after);
 
         InterpolationType   mInterpolationType;
@@ -353,6 +362,9 @@ public:
         key_map_t       mKeys;
         RotationKey     mLoopInKey;
         RotationKey     mLoopOutKey;
+        std::vector<F32>    mFlatTimes;
+        std::vector<LLQuaternion> mFlatValues;
+        bool                mFlatBuilt = false;
     };
 
     //-------------------------------------------------------------------------
@@ -364,6 +376,9 @@ public:
         PositionCurve();
         ~PositionCurve();
         LLVector3 getValue(F32 time, F32 duration);
+        LLVector3 getValueMap(F32 time, F32 duration);
+        LLVector3 getValueFlat(F32 time, F32 duration) const;
+        void buildFlat();
         LLVector3 interp(F32 u, PositionKey& before, PositionKey& after);
 
         InterpolationType   mInterpolationType;
@@ -372,6 +387,9 @@ public:
         key_map_t       mKeys;
         PositionKey     mLoopInKey;
         PositionKey     mLoopOutKey;
+        std::vector<F32>    mFlatTimes;
+        std::vector<LLVector3> mFlatValues;
+        bool                mFlatBuilt = false;
     };
 
     //-------------------------------------------------------------------------

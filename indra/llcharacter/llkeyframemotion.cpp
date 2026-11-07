@@ -38,6 +38,8 @@
 #include "lldir.h"
 #include "llendianswizzle.h"
 #include "llkeyframemotion.h"
+#include <algorithm>
+#include <atomic>
 #include "llquantize.h"
 #include "m3math.h"
 #include "message.h"
@@ -130,6 +132,33 @@ U32 LLKeyframeMotion::JointMotionList::dumpDiagInfo()
 //-----------------------------------------------------------------------------
 
 
+
+//-----------------------------------------------------------------------------
+// <FS> stage B2 (PLAN-avatars.md): the curves' keys as sorted arrays. LL_VK_CURVEFLAT: 0 the std::map (the red-black tree walked by lower_bound for every curve of every joint of every motion of every
+// avatar every frame), 1 (default) the arrays: std::lower_bound on contiguous times, the same four cases and the same interpolation, 2 both, compared bit for bit.
+//-----------------------------------------------------------------------------
+namespace
+{
+int curve_flat_mode()
+{
+    static const int mode = getenv("LL_VK_CURVEFLAT") ? atoi(getenv("LL_VK_CURVEFLAT")) : 1;
+    return mode;
+}
+std::atomic<U64> sCurveCalls{ 0 }, sCurveCompared{ 0 }, sCurveDiffer{ 0 };
+void curve_note_compare(bool same)
+{
+    ++sCurveCompared;
+    if (!same)
+    {
+        ++sCurveDiffer;
+    }
+    if (sCurveCalls.fetch_add(1) % 4000000 == 3999999)
+    {
+        LL_INFOS("CurveFlat") << "keyframe curves compared with the std::map lookups so far: " << sCurveCompared.load() << ", different " << sCurveDiffer.load() << LL_ENDL;
+    }
+}
+}
+
 //-----------------------------------------------------------------------------
 // ScaleCurve::ScaleCurve()
 //-----------------------------------------------------------------------------
@@ -151,7 +180,69 @@ LLKeyframeMotion::ScaleCurve::~ScaleCurve()
 //-----------------------------------------------------------------------------
 // getValue()
 //-----------------------------------------------------------------------------
+void LLKeyframeMotion::ScaleCurve::buildFlat()
+{
+    mFlatTimes.clear();
+    mFlatValues.clear();
+    mFlatTimes.reserve(mKeys.size());
+    mFlatValues.reserve(mKeys.size());
+    for (const auto& kv : mKeys)
+    {
+        mFlatTimes.push_back(kv.first);
+        mFlatValues.push_back(kv.second.mScale);
+    }
+    mFlatBuilt = true;
+}
+
+LLVector3 LLKeyframeMotion::ScaleCurve::getValueFlat(F32 time, F32 duration) const
+{
+    const size_t n = mFlatTimes.size();
+    if (n == 0)
+    {
+        LLVector3 value;
+        value.clearVec();
+        return value;
+    }
+    const size_t right = (size_t)(std::lower_bound(mFlatTimes.begin(), mFlatTimes.end(), time) - mFlatTimes.begin());
+    if (right == n)
+    {
+        return mFlatValues[n - 1];
+    }
+    if (right == 0 || mFlatTimes[right] == time)
+    {
+        return mFlatValues[right];
+    }
+    const F32 index_before = mFlatTimes[right - 1];
+    const F32 index_after = mFlatTimes[right];
+    const F32 u = (time - index_before) / (index_after - index_before);
+    switch (mInterpolationType)
+    {
+    case IT_STEP:
+        return mFlatValues[right - 1];
+    default:
+    case IT_LINEAR:
+    case IT_SPLINE:
+        return lerp(mFlatValues[right - 1], mFlatValues[right], u);
+    }
+}
+
 LLVector3 LLKeyframeMotion::ScaleCurve::getValue(F32 time, F32 duration)
+{
+    const int mode = curve_flat_mode();
+    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    {
+        return getValueMap(time, duration);
+    }
+    if (mode == 1)
+    {
+        return getValueFlat(time, duration);
+    }
+    const LLVector3 a = getValueMap(time, duration), b = getValueFlat(time, duration);
+    curve_note_compare(memcmp(&a, &b, sizeof(LLVector3)) == 0);
+    return a;
+}
+
+LLVector3 LLKeyframeMotion::ScaleCurve::getValueMap(F32 time, F32 duration)
 {
     LLVector3 value;
 
@@ -231,7 +322,67 @@ LLKeyframeMotion::RotationCurve::~RotationCurve()
 //-----------------------------------------------------------------------------
 // RotationCurve::getValue()
 //-----------------------------------------------------------------------------
+void LLKeyframeMotion::RotationCurve::buildFlat()
+{
+    mFlatTimes.clear();
+    mFlatValues.clear();
+    mFlatTimes.reserve(mKeys.size());
+    mFlatValues.reserve(mKeys.size());
+    for (const auto& kv : mKeys)
+    {
+        mFlatTimes.push_back(kv.first);
+        mFlatValues.push_back(kv.second.mRotation);
+    }
+    mFlatBuilt = true;
+}
+
+LLQuaternion LLKeyframeMotion::RotationCurve::getValueFlat(F32 time, F32 duration) const
+{
+    const size_t n = mFlatTimes.size();
+    if (n == 0)
+    {
+        return LLQuaternion::DEFAULT;
+    }
+    const size_t right = (size_t)(std::lower_bound(mFlatTimes.begin(), mFlatTimes.end(), time) - mFlatTimes.begin());
+    if (right == n)
+    {
+        return mFlatValues[n - 1];
+    }
+    if (right == 0 || mFlatTimes[right] == time)
+    {
+        return mFlatValues[right];
+    }
+    const F32 index_before = mFlatTimes[right - 1];
+    const F32 index_after = mFlatTimes[right];
+    const F32 u = (time - index_before) / (index_after - index_before);
+    switch (mInterpolationType)
+    {
+    case IT_STEP:
+        return mFlatValues[right - 1];
+    default:
+    case IT_LINEAR:
+    case IT_SPLINE:
+        return nlerp(u, mFlatValues[right - 1], mFlatValues[right]);
+    }
+}
+
 LLQuaternion LLKeyframeMotion::RotationCurve::getValue(F32 time, F32 duration)
+{
+    const int mode = curve_flat_mode();
+    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    {
+        return getValueMap(time, duration);
+    }
+    if (mode == 1)
+    {
+        return getValueFlat(time, duration);
+    }
+    const LLQuaternion a = getValueMap(time, duration), b = getValueFlat(time, duration);
+    curve_note_compare(memcmp(&a, &b, sizeof(LLQuaternion)) == 0);
+    return a;
+}
+
+LLQuaternion LLKeyframeMotion::RotationCurve::getValueMap(F32 time, F32 duration)
 {
     LLQuaternion value;
 
@@ -312,7 +463,69 @@ LLKeyframeMotion::PositionCurve::~PositionCurve()
 //-----------------------------------------------------------------------------
 // PositionCurve::getValue()
 //-----------------------------------------------------------------------------
+void LLKeyframeMotion::PositionCurve::buildFlat()
+{
+    mFlatTimes.clear();
+    mFlatValues.clear();
+    mFlatTimes.reserve(mKeys.size());
+    mFlatValues.reserve(mKeys.size());
+    for (const auto& kv : mKeys)
+    {
+        mFlatTimes.push_back(kv.first);
+        mFlatValues.push_back(kv.second.mPosition);
+    }
+    mFlatBuilt = true;
+}
+
+LLVector3 LLKeyframeMotion::PositionCurve::getValueFlat(F32 time, F32 duration) const
+{
+    const size_t n = mFlatTimes.size();
+    if (n == 0)
+    {
+        LLVector3 value;
+        value.clearVec();
+        return value;
+    }
+    const size_t right = (size_t)(std::lower_bound(mFlatTimes.begin(), mFlatTimes.end(), time) - mFlatTimes.begin());
+    if (right == n)
+    {
+        return mFlatValues[n - 1];
+    }
+    if (right == 0 || mFlatTimes[right] == time)
+    {
+        return mFlatValues[right];
+    }
+    const F32 index_before = mFlatTimes[right - 1];
+    const F32 index_after = mFlatTimes[right];
+    const F32 u = (time - index_before) / (index_after - index_before);
+    switch (mInterpolationType)
+    {
+    case IT_STEP:
+        return mFlatValues[right - 1];
+    default:
+    case IT_LINEAR:
+    case IT_SPLINE:
+        return lerp(mFlatValues[right - 1], mFlatValues[right], u);
+    }
+}
+
 LLVector3 LLKeyframeMotion::PositionCurve::getValue(F32 time, F32 duration)
+{
+    const int mode = curve_flat_mode();
+    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    {
+        return getValueMap(time, duration);
+    }
+    if (mode == 1)
+    {
+        return getValueFlat(time, duration);
+    }
+    const LLVector3 a = getValueMap(time, duration), b = getValueFlat(time, duration);
+    curve_note_compare(memcmp(&a, &b, sizeof(LLVector3)) == 0);
+    return a;
+}
+
+LLVector3 LLKeyframeMotion::PositionCurve::getValueMap(F32 time, F32 duration)
 {
     LLVector3 value;
 
@@ -1789,6 +2002,11 @@ bool LLKeyframeMotion::deserialize(LLDataPacker& dp, const LLUUID& asset_id, boo
         }
 
         joint_motion->mUsage = joint_state->getUsage();
+
+        // <FS> stage B2: the keys of this joint motion are complete: the sorted arrays the lookups use (this runs on the loading thread, before any avatar samples the animation)
+        joint_motion->mRotationCurve.buildFlat();
+        joint_motion->mPositionCurve.buildFlat();
+        joint_motion->mScaleCurve.buildFlat();
     }
 
     if (rotation_duplicates > 0)
