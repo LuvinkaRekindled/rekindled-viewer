@@ -1151,6 +1151,14 @@ void LLVOAvatarSelf::writeWearablesToAvatar()
 /*virtual*/
 void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
 {
+    // <FS> PLAN-avatars.md stage 0 (lap avi3): this override wrote every worn wearable's visual parameters to the avatar EVERY frame, 122 us of the main thread. Nothing has to be written unless the avatar is
+    // morphing (the base function below does nothing else either), the appearance editor is open (the sliders change the wearables' parameters), or a wearable changed: the last is caught by the write every
+    // 30th frame. LL_VK_SELF_APPEARANCE=0 = every frame as before.
+    static const bool gate = !getenv("LL_VK_SELF_APPEARANCE") || getenv("LL_VK_SELF_APPEARANCE")[0] != '0';
+    if (gate && !getIsAppearanceAnimating() && !isEditingAppearance() && (LLFrameTimer::getFrameCount() % 30) != 0)
+    {
+        return;
+    }
     // Animate all top-level wearable visual parameters
     // <FS:Ansariel> [Legacy Bake]
     //gAgentWearables.animateAllWearableParams(calcMorphAmount());
