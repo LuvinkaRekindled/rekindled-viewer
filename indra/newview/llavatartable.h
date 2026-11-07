@@ -32,6 +32,7 @@ public:
     // what the presentation of the avatar has to do this frame (step 2: one bit at a time, each decided here and read by the piece)
     enum Bits : U16
     {
+        BIT_ATTACHMENT_LOOP = 2,        // the attachment loop and the detailed presentation (lip sync, loading effect, wind) run this frame: the full update of a visible avatar (what updateCharacter's result was)
         BIT_NAME_TAG = 1,               // idleUpdateNameTag: the tag can be on the screen (the avatar is in the camera's frustum, occlusion does NOT count: tags show through walls), or it is the viewer's own, or chat / typing shows
     };
 
@@ -55,6 +56,7 @@ public:
     static void endFrame();                                                          // after the avatars' update (the motion batch and the completions): the facts the render side reads
     static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
     static void noteImpostorCheck(bool same);                                        // LL_VK_AVTABLE_VERIFY=1: the cached answer against the live one
+    static bool attachmentLoop(const LLVOAvatar* av, bool from_update);              // step 3: the loop's gate, from the row (the result of updateCharacter is only compared with it)
     static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
 };
 

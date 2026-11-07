@@ -3511,6 +3511,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         gFSAvStatCount[AV_IDLE_PRE]++;
     }
     bool detailed_update = updateCharacter(agent);
+    detailed_update = LLAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
 
     if (mMotionUpdateDeferred)
     {
@@ -6735,8 +6736,35 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
             r.mInFrustum = LLViewerCamera::getInstance()->AABBInFrustum(center, half) != 0;
         }
         r.mBits = (av->isSelf() || r.mInFrustum || av->nameTagBusy()) ? BIT_NAME_TAG : 0;
+        r.mBits |= (r.mMode == MODE_POSE && r.mVisible) ? BIT_ATTACHMENT_LOOP : 0;
         sAvatarRows[av] = r;
     }
+}
+
+bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
+{
+    if (switchMode() != 1)
+    {
+        return from_update;
+    }
+    const Row* r = row(av);
+    if (!r)
+    {
+        return from_update;
+    }
+    const bool bit = (r->mBits & BIT_ATTACHMENT_LOOP) != 0;
+    static U64 reads = 0, different = 0;
+    static U32 last = 0;
+    ++reads;
+    different += bit != from_update ? 1 : 0;
+    if (LLFrameTimer::getFrameCount() >= last + 600)
+    {
+        const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
+        last = LLFrameTimer::getFrameCount();
+        LL_INFOS("AvTable") << "attachment loop gate from the row per frame over " << (U32)frames << " frames: " << reads / frames << " avatars, different from updateCharacter's result " << different / frames << " (" << different << " in this window)" << LL_ENDL;
+        reads = different = 0;
+    }
+    return bit;
 }
 
 bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
