@@ -569,7 +569,12 @@ void LLFace::updateCenterAgent()
     }
     if (mDrawablep->isActive())
     {
-        row().centerAgent = row().centerLocal * getRenderMatrix();
+        // <FS> PLAN-avatars.md stage C: nobody reads row().centerAgent of an active drawable (getPositionAgent() works the position out from centerLocal and the render matrix when it is asked for), and an
+        // attachment never becomes static (LLDrawable::makeStatic leaves it active), so its stored centre is not kept up to date every move
+        if (!(mVObjp.notNull() && mVObjp->isAttachment()))
+        {
+            row().centerAgent = row().centerLocal * getRenderMatrix();
+        }
     }
     else
     {
