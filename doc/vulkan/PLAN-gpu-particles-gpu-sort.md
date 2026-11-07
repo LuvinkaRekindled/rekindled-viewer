@@ -1,4 +1,4 @@
-# Plan: particles evaluated, culled and sorted on the GPU (design, 2026-11-02) — not started
+# Plan: particles evaluated, culled and sorted on the GPU (design 2026-11-02) — G0 and G1 built and on by default (see the status of PLAN-gpu-particles.md, 2026-11-07)
 
 Follows `PLAN-gpu-particles.md` (stages 1, 1b, 2, 3 built and looked at by Adam). Adam, 2026-11-02: having all particles on the GPU is "more efficient and simpler to deal with"; he asked for the design before any code.
 
