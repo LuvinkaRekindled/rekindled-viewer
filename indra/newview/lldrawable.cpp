@@ -1005,11 +1005,19 @@ bool LLDrawable::updateMove()
 // <FS> PLAN-avatars.md stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform has not changed, which is all that follows its joint needs: updateXform of such a drawable finds the object's local
 // position, rotation and scale equal to what the xform holds (nothing to damp, no rebuild), sets the same values again and recomputes the world matrix from the parent's (the attachment point's); with the bridge
 // held at the avatar's box nothing is queued either. So this is that matrix and the faces' centres, for the loop of the avatar. False when anything differs: the full move is made.
+// (C5e, LL_VK_ATTANIM: 1 default) an animated object whose control avatar is placed by the avatar it is worn by: the drawable's update does not place the skeleton's root (LL_VK_ANIMROOT), so the fast move is the full move
+static bool animesh_fast(LLViewerObject* o)
+{
+    static const int mode = getenv("LL_VK_ATTANIM") ? atoi(getenv("LL_VK_ATTANIM")) : 1;
+    LLControlAvatar* cav = mode ? o->getControlAvatar() : nullptr;
+    return cav && cav->hostJobOwned() && LLControlAvatar::animRootMode() == 1;
+}
+
 bool LLDrawable::updateMoveFast(const LLVector3* parent_pos, const LLQuaternion* parent_rot, const LLVector3* parent_scale, bool parent_sco)
 {
     // (C5b, LL_VK_ATTFLEXI: 0 default = a flexible object takes the full move (unverified), 1 = the fast move: its simulation and rebuild are the object's own and run from its idle update)
     static const bool flexi_fast = getenv("LL_VK_ATTFLEXI") && atoi(getenv("LL_VK_ATTFLEXI")) != 0;
-    if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || (mVObjp->isFlexible() && !flexi_fast) || mVObjp->isAnimatedObject())
+    if (mVObjp.isNull() || isDead() || !isActive() || isState(LLDrawable::INVISIBLE | LLDrawable::ANIMATED_CHILD) || mVObjp->isChanged(LLXform::MOVED) || (mVObjp->isFlexible() && !flexi_fast) || (mVObjp->isAnimatedObject() && !animesh_fast(mVObjp.get())))
     {
         return false;
     }

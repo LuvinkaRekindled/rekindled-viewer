@@ -3249,6 +3249,12 @@ inline bool att_plain(const LLViewerObject* root)
     }
     return true;
 }
+static bool animesh_rowable(const LLViewerObject* o)
+{
+    static const int mode = getenv("LL_VK_ATTANIM") ? atoi(getenv("LL_VK_ATTANIM")) : 1;
+    const LLControlAvatar* cav = mode ? o->getControlAvatar() : nullptr;
+    return cav && cav->hostJobOwned();
+}
 static bool flexi_allowed()
 {
     static const int flexi = getenv("LL_VK_ATTFLEXI") ? atoi(getenv("LL_VK_ATTFLEXI")) : 0;     // (0 default until a lap with a flexible root shows the fast move compare clean)
@@ -3266,9 +3272,11 @@ inline bool att_rowable(const LLViewerObject* root)
     }
     // (C5b, LL_VK_ATTFLEXI: 0 default = a flexible attachment keeps the walk (unverified), 1 = rows: the flexible object's simulation and rebuild belong to the object and run from its own idle update, whether or not it moved; the
     // avatar's part is the root's world matrix)
+    // (C5e, LL_VK_ATTANIM: 1 default, 0 = animesh keep the walk: an animated object whose control avatar is placed by the avatar it is worn by (C5d: LLControlAvatar::hostJobOwned) is a row with the fast move: the
+    // drawable's update no longer places the skeleton's root, so nothing is left in the full move that the fast one does not do)
     auto ok = [](const LLViewerObject* o)
     {
-        return !(o->isSelected() || (!flexi_allowed() && o->isFlexible()) || o->isAnimatedObject());
+        return !(o->isSelected() || (!flexi_allowed() && o->isFlexible()) || (o->isAnimatedObject() && !animesh_rowable(o)));
     };
     if (root->isHUDAttachment() || !ok(root))
     {
@@ -4164,17 +4172,20 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             fast = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
                             if (fast && rigmove_mode == 2)
                             {
-                                static std::atomic<U64> mv_checked{ 0 }, mv_diff{ 0 };
+                                static std::atomic<U64> mv_checked{ 0 }, mv_diff{ 0 }, mv_anim{ 0 }, mv_anim_diff{ 0 };
                                 LLMatrix4 before = drawable->getXform()->getWorldMatrix();
                                 gPipeline.updateMoveDampedAsync(drawable);
                                 ++mv_checked;
-                                if (memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
+                                const bool differs = memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0;
+                                mv_diff += differs;
+                                if (obj->isAnimatedObject())
                                 {
-                                    ++mv_diff;
+                                    ++mv_anim;
+                                    mv_anim_diff += differs;
                                 }
-                                if ((mv_checked % 100000) == 0)
+                                if ((mv_checked % 100000) == 0 || (mv_anim % 5000) == 1)
                                 {
-                                    LL_INFOS("RigMove") << "rigged attachment matrix by the fast move checked against the full move " << mv_checked.load() << ", different " << mv_diff.load() << LL_ENDL;
+                                    LL_INFOS("RigMove") << "rigged attachment matrix by the fast move checked against the full move " << mv_checked.load() << ", different " << mv_diff.load() << " (animated objects: " << mv_anim.load() << ", different " << mv_anim_diff.load() << ")" << LL_ENDL;
                                 }
                             }
                         }
