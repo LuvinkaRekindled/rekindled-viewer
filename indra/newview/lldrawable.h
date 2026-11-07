@@ -220,6 +220,7 @@ protected:
 
 public:
     bool mBridgeFrozen = false;     // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): this attachment's bridge sits at the avatar's box and is not queued to move with every update of the attachment
+    bool updateMoveFast();          // <FS> stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform is unchanged: its matrix and its faces' centres; false: make the full move
     friend class LLPipeline;
     friend class LLDrawPool;
     friend class LLSpatialBridge;
