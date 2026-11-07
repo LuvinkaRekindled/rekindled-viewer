@@ -4075,11 +4075,13 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     // <FS> stage C4 (LL_VK_RIGROWS): a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
                     // not changed: skip_rigged_this_frame), its drawable move, its bridge move, then the stamp of its group with its place in the draw order (written only when the group does not hold it), the text
                     const bool skip_update = skip_rigged_this_frame;
+                    // <FS> stage C4b (LL_VK_RIGBOX: 1 default, 0 = the box of the avatar taken into the attachment's space and set every update, as before, 2 = held boxes and the old ones checked): the attachment holds two boxes that
+                    // contain what the old calculation gave, and they are fitted again only when that stops being true. The BRIDGE holds the avatar's world box with a margin (its octree entry in the region's avatar partition);
+                    // the attachment's own octree entry holds a cube around its origin that reaches every point of the avatar from there (the distance does not depend on the rotation).
+                    static const int rigbox_mode = getenv("LL_VK_RIGBOX") ? atoi(getenv("LL_VK_RIGBOX")) : 1;
+                    bool bridge_refit = false;
                     if (!skip_update)
                     {
-                        LLVector4a extents[2];
-                        bridge->transformExtents(mDrawable->getSpatialExtents(), extents);
-                        override_bbox(drawable, extents);
                         if (attachment_selected)
                         {
                             gPipeline.updateMoveNormalAsync(drawable);
@@ -4088,11 +4090,88 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         {
                             gPipeline.updateMoveDampedAsync(drawable);
                         }
+                        if (rigbox_mode == 0)
+                        {
+                            LLVector4a extents[2];
+                            bridge->transformExtents(mDrawable->getSpatialExtents(), extents);
+                            override_bbox(drawable, extents);
+                            bridge_refit = true;
+                        }
+                        else
+                        {
+                            const LLVector4a* abox = mDrawable->getSpatialExtents();
+                            const F32* amin = abox[0].getF32ptr();
+                            const F32* amax = abox[1].getF32ptr();
+                            // the bridge's world box
+                            bool inside = bridge->mConservative;
+                            for (S32 k = 0; k < 3 && inside; ++k)
+                            {
+                                inside = amin[k] >= bridge->mConsMin[k] && amax[k] <= bridge->mConsMax[k]
+                                    && (bridge->mConsMax[k] - bridge->mConsMin[k]) <= (amax[k] - amin[k]) * 2.f + 2.f;        // (and not much larger than the avatar: the margin is given again once it is)
+                            }
+                            if (!inside)
+                            {
+                                for (S32 k = 0; k < 3; ++k)
+                                {
+                                    const F32 pad = llmax(0.5f, 0.25f * (amax[k] - amin[k]));
+                                    bridge->mConsMin[k] = amin[k] - pad;
+                                    bridge->mConsMax[k] = amax[k] + pad;
+                                }
+                                bridge->mConservative = true;
+                                bridge_refit = true;
+                            }
+                            // the attachment's own octree entry: a cube around its origin
+                            const LLVector3 origin = drawable->getXform()->getWorldPosition();
+                            const F32 dx = llmax(fabsf(amin[0] - origin.mV[0]), fabsf(amax[0] - origin.mV[0]));
+                            const F32 dy = llmax(fabsf(amin[1] - origin.mV[1]), fabsf(amax[1] - origin.mV[1]));
+                            const F32 dz = llmax(fabsf(amin[2] - origin.mV[2]), fabsf(amax[2] - origin.mV[2]));
+                            const F32 reach = sqrtf(dx * dx + dy * dy + dz * dz);
+                            const F32 held = drawable->mRigR;
+                            const F32* cur_lo = drawable->getSpatialExtents()[0].getF32ptr();
+                            const F32* cur_hi = drawable->getSpatialExtents()[1].getF32ptr();
+                            bool cube_held = held > 0.f && drawable->getSpatialGroup();
+                            for (S32 k = 0; k < 3 && cube_held; ++k)
+                            {
+                                cube_held = fabsf(cur_lo[k] + held) < 1e-3f && fabsf(cur_hi[k] - held) < 1e-3f;        // (a rebuild of the geometry gives the drawable its own box again: then it is fitted again)
+                            }
+                            if (!cube_held || reach > held || held > 1.6f * reach)
+                            {
+                                drawable->mRigR = reach * 1.25f + 0.05f;
+                                const F32 r = drawable->mRigR;
+                                drawable->setSpatialExtents(LLVector4a(-r, -r, -r), LLVector4a(r, r, r));
+                                drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
+                                drawable->movePartition();
+                            }
+                            if (rigbox_mode == 2)
+                            {
+                                // compare: what the old calculation gave (the avatar's box in the attachment's space; the avatar's box in the world) lies inside the held boxes
+                                static std::atomic<U64> checked{ 0 }, bad_inner{ 0 }, bad_bridge{ 0 }, refits{ 0 }, cube_refits{ 0 };
+                                LLVector4a old_ext[2];
+                                bridge->transformExtents(mDrawable->getSpatialExtents(), old_ext);
+                                const F32* lo = old_ext[0].getF32ptr();
+                                const F32* hi = old_ext[1].getF32ptr();
+                                const F32 r = drawable->mRigR;
+                                bool inner_ok = true, bridge_ok = true;
+                                for (S32 k = 0; k < 3; ++k)
+                                {
+                                    inner_ok = inner_ok && lo[k] >= -r && hi[k] <= r;
+                                    bridge_ok = bridge_ok && amin[k] >= bridge->mConsMin[k] && amax[k] <= bridge->mConsMax[k];
+                                }
+                                ++checked;
+                                bad_inner += !inner_ok;
+                                bad_bridge += !bridge_ok;
+                                refits += bridge_refit;
+                                if ((checked % 100000) == 0)
+                                {
+                                    LL_INFOS("RigBox") << "rigged attachment boxes held: updates checked " << checked.load() << ", old attachment-space box outside the held cube " << bad_inner.load() << ", avatar box outside the held bridge box " << bad_bridge.load() << ", bridge refits " << refits.load() << LL_ENDL;
+                                }
+                            }
+                        }
                     }
-                    bridge = drawable->getSpatialBridge();      // (override_bbox may have changed it)
+                    bridge = drawable->getSpatialBridge();
                     if (bridge)
                     {
-                        if (!skip_update)
+                        if (bridge_refit)
                         {
                             bridge->setState(LLDrawable::MOVE_UNDAMPED);
                             bridge->updateMove();
@@ -4283,6 +4362,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             {
                                 const auto t = att_now();
                                 override_bbox(attached_object->mDrawable, extents);
+                                attached_object->mDrawable->mRigR = 0.f;        // (the exact box is set: a held cube is not)
                                 gAttStats.nsOverride += att_ns(t);
                             }
                         }

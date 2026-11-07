@@ -220,6 +220,7 @@ protected:
 
 public:
     bool mBridgeFrozen = false;     // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): this attachment's bridge sits at the avatar's box and is not queued to move with every update of the attachment
+    F32 mRigR = 0.f;                // <FS> stage C4b (LL_VK_RIGBOX): the half size of the cube around this rigged attachment's origin that its octree entry holds (the avatar is within it from the origin, in any rotation); 0: not held
     U32 mAttOrder = 0;              // <FS> stage C4: this rigged attachment's place among its avatar's rigged attachments (the alpha sort order of their groups), numbered when the avatar's attachment rows are made
     U32 mAttOrderRev = ~0u;         // ... for this attachment set (LLViewerJointAttachment::sRevision); ~0: not numbered
     U32 mAttRowFrame = 0;           // <FS> stage C (LL_VK_ATTROWS): the frame the avatar's attachment rows moved this drawable (the loop that finds attachments by walking skips it)
