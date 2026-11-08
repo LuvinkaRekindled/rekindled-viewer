@@ -105,13 +105,11 @@ void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder dra
 struct LLAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; U32 mRank; };      // mRank: served segments: the number of the first item among the fragment's alpha items
 struct LLAlphaPlanView
 {
-    const class LLDrawInfo* const* mOrder = nullptr;
-    U32 mOrderCount = 0;
     const LLAlphaPlanSeg* mSegs = nullptr;
     U32 mSegCount = 0;
     U32 mHandle = 0;            // the fragment's handle at the worker (0: not attached, nothing is served)
-    bool mDirect = false;       // the draw map holds exactly these draw infos in this order (no draw of an avatar among them): a segment can be stepped over by its draw count
     const U32* mGlowIdx = nullptr;      // the plan indices of the served draws that have a glow buffer, ascending
+    const U8* mGlowCls = nullptr;       // J1 K6 S5d: per glow index, 0 = a plain draw, 1 = a glTF material, 2 = a double sided glTF material (the class of its glow draw): the plan keeps no draw info
     const struct GeoRigSource* mItemRig = nullptr;          // J1 K2: per served rigged item (by rank): what its palette binding reads (avatar, skin, range); no draw info
     const U32* mItemWire = nullptr;
     U32* mItemBound = nullptr;  // P2: per served item (by rank), 5 U32: the binding the worker holds (epoch, palette id, joints, simplified list, its count); the rigged alpha runs send only what changed
