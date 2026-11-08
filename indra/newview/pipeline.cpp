@@ -10739,6 +10739,9 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, -1, 1 },
     { LLRenderPass::PASS_GLTF_GLOW, -1, 2 },
     { LLRenderPass::PASS_INVISIBLE, -1 },           // C5: the water exclusion pool's invisible draws (positions only, the colour program's pull twin), see LLDrawPoolWaterExclusion::render
+    { LLRenderPass::PASS_FULLBRIGHT_SHINY, -1 },    // J1 K4: the post deferred fullbright shiny pass (LLDrawPoolBump::renderFullbrightShiny): the diffuse entries, the eye space normal
+    { LLRenderPass::PASS_BUMP, -1 },                // J1 K4: the deferred bump pass (not served yet)
+    { LLRenderPass::PASS_POST_BUMP, -1 },           // J1 K4: the post deferred emboss pass (not served yet)
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -10797,6 +10800,15 @@ static bool geo_type_available(size_t t, bool rigged)
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
         return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPullReady && (!rigged || ll_rigged_packets_enabled());       // (gAlphaGlowPullReady: the plain and the skinned emissive pull programs)
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_SHINY)
+    {
+        static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';      // (0 = the pull batches of the render map, as before)
+        return shiny_table && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP || kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
+    {
+        return false;       // (J1 K4: served when their pull programs and entries are there)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
     {

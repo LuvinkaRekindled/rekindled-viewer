@@ -265,6 +265,10 @@ extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
 extern bool                    gFullbrightPullReady;
 extern bool                    gFullbrightPullSkinReady;
+extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
+extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
+extern bool                    gFullbrightShinyPullReady;
+extern bool                    gFullbrightShinyPullSkinReady;
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;

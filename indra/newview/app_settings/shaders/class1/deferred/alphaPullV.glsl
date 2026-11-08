@@ -178,6 +178,9 @@ void calcAtmospherics(vec3 inPositionEye);
 out vec3 vary_position;
 out vec4 vertex_color;
 out vec2 vary_texcoord0;
+#ifdef IS_SHINY_PULL
+out vec3 vary_texcoord1;            // J1 K4: the fullbright shiny pass (fullbrightShinyV.glsl): the eye space normal rides in vary_texcoord1
+#endif
 #else
 uniform float near_clip;
 out vec3 vary_fragcoord;
@@ -272,6 +275,16 @@ void main()
 
 #ifdef IS_FULLBRIGHT_PULL
     calcAtmospherics(pos.xyz);
+#ifdef IS_SHINY_PULL
+    {
+        vec3 shiny_normal = GeoVec4(pk.normals).v[index].xyz;
+#ifdef HAS_SKIN
+        vary_texcoord1 = normalize(mat3(m.mv) * (sm * shiny_normal));
+#else
+        vary_texcoord1 = normalize(mat3(m.n0.xyz, m.n1.xyz, m.n2.xyz) * shiny_normal);
+#endif
+    }
+#endif
 #else
     vec3 normal = GeoVec4(pk.normals).v[index].xyz;
 #ifdef HAS_SKIN

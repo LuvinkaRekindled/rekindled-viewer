@@ -281,7 +281,14 @@ void LLDrawPoolBump::unbindCubeMap(LLShaderProgram* shader, S32 shader_level, S3
     }
 }
 
-void LLDrawPoolBump::beginFullbrightShiny()
+// J1 K4: the fullbright shiny draws come from the scene table (one record of rows, the shiny pull program: alphaPullV + fullbrightShinyF); HUDs and what the table cannot carry take the old pass
+static bool fullbright_shiny_table(bool rigged)
+{
+    static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';
+    return shiny_table && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+}
+
+void LLDrawPoolBump::beginFullbrightShiny(bool table)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
 
@@ -291,7 +298,11 @@ void LLDrawPoolBump::beginFullbrightShiny()
     // S6.6: the static draws take the pull twin; the rigged variant is a program of its own (the twin has none)
     LLShaderProgram* base_shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyProgram : &gDeferredFullbrightShinyProgram;
     shader = base_shader;
-    if (mRigged)
+    if (table)
+    {
+        shader = mRigged ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
+    }
+    else if (mRigged)
     {
         llassert(shader->mRiggedVariant);
         shader = shader->mRiggedVariant;
@@ -352,9 +363,37 @@ void LLDrawPoolBump::beginFullbrightShiny()
     shiny = true;
 }
 
-void LLDrawPoolBump::renderFullbrightShiny()
+void LLDrawPoolBump::renderFullbrightShiny(bool table)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
+
+    if (table)
+    {
+        LLRenderState::BlendScope blend_enable(true);
+        std::vector<LLDrawInfo*> fallback;
+        pushGeometryPackets(mRigged ? LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED : LLRenderPass::PASS_FULLBRIGHT_SHINY, fallback, nullptr, mRigged);
+        if (!fallback.empty())
+        {
+            // what the rows cannot carry: the old program, set up again with its own uniforms
+            endFullbrightShiny();
+            beginFullbrightShiny(false);
+            const LLVOAvatar* lastAvatar = nullptr;
+            U64 lastMeshId = 0;
+            bool skipLastSkin = false;
+            for (LLDrawInfo* params : fallback)
+            {
+                if (mRigged)
+                {
+                    if (params->mSkinInfo.isNull() || !uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        continue;
+                    }
+                }
+                pushBatch(*params, true, true);
+            }
+        }
+        return;
+    }
 
     {
         LLRenderState::BlendScope blend_enable(true);
@@ -613,8 +652,9 @@ void LLDrawPoolBump::renderPostDeferred(S32 pass)
         mRigged = (i == 1);
 
         // render shiny
-        beginFullbrightShiny();
-        renderFullbrightShiny();
+        const bool shiny_table = fullbright_shiny_table(mRigged);
+        beginFullbrightShiny(shiny_table);
+        renderFullbrightShiny(shiny_table);
         endFullbrightShiny();
 
         //render bump
