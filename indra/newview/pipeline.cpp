@@ -31807,7 +31807,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     sImpostorRender = true;
     {
         static const bool impostor_table = !getenv("LL_VK_IMPOSTOR_TABLE") || getenv("LL_VK_IMPOSTOR_TABLE")[0] != '0';
-        sImpostorTableView = impostor_table && !preview_avatar && !for_profile && !sJobView;
+        sImpostorTableView = impostor_table && !sJobView;       // (J1 K6 A1: the shape editor preview and the profile renders too: their groups have fragments like any avatar's)
     }
 
     LLViewerCamera* viewer_camera = LLViewerCamera::getInstance();
