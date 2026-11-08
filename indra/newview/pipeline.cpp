@@ -15697,20 +15697,13 @@ bool shadow_lod_on()
     return live >= 0 ? live != 0 : env;
 }
 
-U64 shadow_lod_fingerprint(const GeoRange& p, const LLVertexBuffer* vb, const U16* indices, const LLVector4a* positions)
+// <FS> J1 K3b: what tells a mesh rebuilt in place from the one a list was made for: the range, the buffer's sizes and its data serial (bumped by every strider request: the way every write goes). It sampled 16 indices and
+// 16 positions of the mesh before, each frame for every draw asked about: about 100 us a record in the cascades, cold reads of big meshes
+U64 shadow_lod_fingerprint(const GeoRange& p, const LLVertexBuffer* vb, const U16*, const LLVector4a*)
 {
     U64 h = 1469598103934665603ull;
     auto mix = [&h](U64 v) { h = (h ^ v) * 1099511628211ull; };
-    mix(p.mCount); mix(p.mStart); mix(p.mEnd); mix(vb->getNumVerts()); mix(vb->getNumIndices());
-    const U32 steps = 16;
-    for (U32 k = 0; k < steps; ++k)
-    {
-        mix(indices[p.mOffset + (U64)p.mCount * k / steps]);
-        const F32* f = positions[p.mStart + (U64)(p.mEnd - p.mStart) * k / steps].getF32ptr();
-        U32 b[3];
-        memcpy(b, f, sizeof(b));
-        mix(b[0]); mix(b[1]); mix(b[2]);
-    }
+    mix(p.mCount); mix(p.mStart); mix(p.mEnd); mix(vb->getNumVerts()); mix(vb->getNumIndices()); mix(vb->getDataSerial());
     return h;
 }
 } // namespace
@@ -15907,6 +15900,7 @@ static bool shadow_lod_one(const GeoRange& r, U32 lvl, F32 error, int& snapshots
     return true;
 }
 
+
 // the main view's rigged draws (item E): the simplified list of a draw for a geometric error in metres (below half a pixel at its distance), true with its index buffer and count when it is ready.
 // LL_VK_RIGGEDLOD (default off while measuring) or rt-debug.txt riggedlod=0/1 decide in the caller.
 bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
@@ -15969,10 +15963,11 @@ static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::
     const F32 error = 0.001f * (F32)(1 << lvl);
 
     static U64 calls = 0, patched = 0, tris_before = 0, tris_after = 0;
-    shadow_lod_pump();
+    { LL_CPU_ZONE("shadow LOD: pump"); shadow_lod_pump(); }
 
     bool any = false;
     int snapshots = 3;      // a snapshot copies the draw's vertex data (about 100 us for a big one): a few a frame
+    LL_CPU_ZONE("shadow LOD: entries");
     for (size_t i = 0; i < draws.size(); ++i)
     {
         U32 ib_name = 0, count = 0;
@@ -27429,9 +27424,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             verify_shadow_skin(*source, built);
         }
         // <FS> shadow caster LOD: a cascade's rigged draws that have a simplified index list name it (a copy of the entries: the builder's are shared)
-        std::vector<LLVkBridge::ShadowSkinEntry> lod_entries;
+        static thread_local std::vector<LLVkBridge::ShadowSkinEntry> lod_scratch;       // (reused: the entries were copied into a fresh vector for every record)
+        std::vector<LLVkBridge::ShadowSkinEntry>& lod_entries = lod_scratch;
+        lod_entries.clear();
         if (!rt_skip && !source->mEntries.empty())
         {
+            LL_CPU_ZONE("packets: shadow rigged: LOD");
             lod_entries = source->mEntries;
             if (!shadow_lod_apply(shadow_pass_index(), source->mDraws, lod_entries))
             {
@@ -27455,8 +27453,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (source->mShared)
             {
                 header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
+                LL_CPU_ZONE("packets: shadow rigged: palette flush");
                 ll_frame_palette_flush();
             }
+            LL_CPU_ZONE("packets: shadow rigged: record");
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
@@ -27831,13 +27831,15 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         if (!rigged && !rt_skip && alpha_frag_mode() && !result.mAlphaFragGroups.empty())
         {
+            LL_CPU_ZONE("packets: shadow alpha: fragment entries");
             append_fragment_alpha(*build_owned, result.mAlphaFragGroups, alpha_frag_mode() == 2);
         }
-        finish_shadow_alpha(*build_owned);
+        { LL_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent
         const bool res_raster = !rt_skip && !rigged && alpha_res_wanted() && sResidentPassRan;
         if ((rt_skip && !rigged && scene_alpha_on() && sResidentPassRan && !rt_materials_on()) || res_raster)
         {
+            LL_CPU_ZONE("packets: shadow alpha: resident filter");
             // S2 alpha: the casters the worker holds as resident fragments are not named again. With LL_VK_SCENE_VERIFY=1 every builder entry must be one the worker holds (the fragment is in
             // range of the cascades' frusta) with the textures the builder resolved (a stale name would be a missed update)
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
@@ -27929,6 +27931,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             auto send_record = [&](const LLVkBridge::ShadowAlphaEntry* first, size_t count)
             {
+                LL_CPU_ZONE("packets: shadow alpha: record");
                 LLVkBridge::ShadowPacketsHeader header;
                 header.mKind = rt_skip ? (rigged ? 7 : 5) : 1;       // 5 and 7: the same record, only named to the ray scene
                 header.mTargetWidth = (F32)target_width;

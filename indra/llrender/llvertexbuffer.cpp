@@ -1353,6 +1353,7 @@ U8* LLVertexBuffer::mapVertexBuffer(LLVertexBuffer::AttributeType type, U32 inde
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
     _mapBuffer();
+    ++mDataSerial;
 
     if (count == -1)
     {
@@ -1390,6 +1391,7 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
     _mapBuffer();
+    ++mDataSerial;
 
     if (count == -1)
     {
