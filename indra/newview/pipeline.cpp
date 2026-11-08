@@ -29566,6 +29566,45 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     }
 }
 
+// J1 hotspots: the extents of what the main camera sees, from the groups its cull already listed (the object extents of each visible group, the same box the octree walk of getVisibleExtents makes from the groups it
+// reaches, without walking). A group inside a spatial bridge keeps its extents in the bridge's own space: the bridge's drawable (in the region's bridge partition, a visible group of its own) has the box in the world.
+// False when no group gave one (the caller walks the octree).
+static bool cull_visible_extents(LLCullResult* cull, LLVector3& min, LLVector3& max)
+{
+    if (!cull)
+    {
+        return false;
+    }
+    const F32 X = 65536.f;
+    LLVector4a mn(X, X, X, 0.f), mx(-X, -X, -X, 0.f);
+    bool any = false;
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (!group || group->isDead() || group->isEmpty())
+        {
+            continue;
+        }
+        LLSpatialPartition* partition = group->getSpatialPartition();
+        if (!partition || partition->asBridge())
+        {
+            continue;
+        }
+        const LLVector4a* e = group->getObjectExtents();
+        mn.setMin(mn, e[0]);
+        mn.setMin(mn, e[1]);
+        mx.setMax(mx, e[0]);
+        mx.setMax(mx, e[1]);
+        any = true;
+    }
+    if (any)
+    {
+        min.set(mn.getF32ptr());
+        max.set(mx.getF32ptr());
+    }
+    return any;
+}
+
 bool LLPipeline::getVisiblePointCloud(LLCamera& camera, LLVector3& min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -30288,7 +30327,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     // J1 hotspots: the extents of everything the main camera sees (the walk below, made every frame anyway) fit every cascade (LL_VK_SHADOW_FIT=0: each cascade walks the octree for the extents inside its own slice, as
     // before: four more walks of every partition, 12% of the main thread's time). The cascade's point cloud is then the slice's frustum cut by that box: a little looser than the slice's own extents.
-    static const bool fit_scene = !getenv("LL_VK_SHADOW_FIT") || getenv("LL_VK_SHADOW_FIT")[0] != '0';
+    static const bool fit_scene = !getenv("LL_VK_SHADOW_FIT") || atoi(getenv("LL_VK_SHADOW_FIT")) != 0;
     LLVector3 scene_min, scene_max;
     bool scene_have = false;
 
@@ -30300,7 +30339,41 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         main_camera.calcAgentFrustumPlanes(main_camera.mAgentFrustum);
 
         LLVector3 min,max;
-        getVisiblePointCloud(main_camera,min,max,fp);
+        static const int fit_mode = getenv("LL_VK_SHADOW_FIT") ? atoi(getenv("LL_VK_SHADOW_FIT")) : 3;       // 3 = no scene box (the slices of the view frustum: what the octree walk's box gave wherever it was larger than the frustum, 3 km wide at the crowd spot), 2 = the box from the main cull's groups (a tight fit), 1 = the main camera's octree walk, 0 = also each slice's own walk
+        static const bool fit_check = getenv("LL_VK_SHADOW_FIT_CHECK") != nullptr;
+        bool from_cull = fit_mode == 2 && !gCubeSnapshot && cull_visible_extents(sCull, min, max);
+        if (fit_mode >= 3)
+        {
+            // no scene box: a box larger than anything (the cascades are the view frustum's slices)
+            min = LLVector3(-1.0e6f, -1.0e6f, -1.0e6f);
+            max = LLVector3(1.0e6f, 1.0e6f, 1.0e6f);
+            pointCloudFromExtents(main_camera, min, max, fp);
+        }
+        else if (from_cull)
+        {
+            if (fit_check)
+            {
+                LLVector3 wmin, wmax;
+                std::vector<LLVector3> wfp;
+                getVisiblePointCloud(main_camera, wmin, wmax, wfp);
+                static U64 checks = 0;
+                static F32 worst = 0.f, sum = 0.f;
+                const F32 d = std::max((min - wmin).length(), (max - wmax).length());
+                worst = std::max(worst, d);
+                sum += d;
+                if (++checks % 600 == 0)
+                {
+                    LL_INFOS("ShadowPrep") << "shadow fit check: the box from the cull differs from the walk's by " << sum / 600.f << " m on average, " << worst << " m at most (over 600 frames); walk box " << wmin << " .. " << wmax
+                        << ", cull box " << min << " .. " << max << LL_ENDL;
+                    worst = sum = 0.f;
+                }
+            }
+            pointCloudFromExtents(main_camera, min, max, fp);
+        }
+        else
+        {
+            getVisiblePointCloud(main_camera,min,max,fp);
+        }
         scene_min = min;
         scene_max = max;
         scene_have = !fp.empty();
