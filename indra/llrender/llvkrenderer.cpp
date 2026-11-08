@@ -268,16 +268,16 @@ std::string variants_path()
     return cache.empty() ? std::string() : cache.substr(0, cache.find_last_of("/\\") + 1) + "vk_pipeline_variants.txt";
 }
 
-void load_variants()
+// the variants of one file (the user's, recorded by this machine's earlier sessions, or the list that ships with the viewer): returns how many lines were read; false = no such file
+bool load_variants_file(const std::string& path, U32& loaded)
 {
-    const std::string path = variants_path();
     FILE* f = path.empty() ? nullptr : fopen(path.c_str(), "rb");
     if (!f)
     {
-        return;
+        return false;
     }
     char line[1024];
-    U32 loaded = 0;
+    loaded = 0;
     std::lock_guard<std::mutex> lock(gVariantMutex);
     while (fgets(line, sizeof(line), f))
     {
@@ -315,11 +315,47 @@ void load_variants()
         ++loaded;
     }
     fclose(f);
-    LL_INFOS("Vulkan") << "pipeline variants recorded by earlier sessions: " << loaded << " for " << gVariants.size() << " programs" << LL_ENDL;
+    return true;
+}
+
+void load_variants()
+{
+    U32 loaded = 0, shipped = 0;
+    const bool had_user_file = load_variants_file(variants_path(), loaded);
+    // J1 (the user, 2026-11-07: a first start must not be two minutes of darkness): the viewer ships a list of the variants it uses (app_settings/vk_pipeline_variants_default.txt, made with
+    // LL_VK_VARIANTS_EXPORT), so the very first start on a machine, whose own list does not exist yet, builds them all at start-up (behind the progress screen, see llstartup.cpp) instead of when the
+    // first draw asks and is dropped
+    load_variants_file(gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "vk_pipeline_variants_default.txt"), shipped);
+    LL_INFOS("Vulkan") << "pipeline variants recorded by earlier sessions: " << loaded << (had_user_file ? "" : " (no list of this machine yet)") << ", shipped list: " << shipped << ", " << gVariants.size() << " programs" << LL_ENDL;
+}
+
+// every variant known, to a file (LL_VK_VARIANTS_EXPORT=<path>: the shipped list is made from a session that used everything)
+void export_variants()
+{
+    const char* path = getenv("LL_VK_VARIANTS_EXPORT");
+    if (!path || !path[0])
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(gVariantMutex);
+    if (FILE* f = fopen(path, "wb"))
+    {
+        for (const auto& kv : gVariants)
+        {
+            for (const PipelineKey& k : kv.second)
+            {
+                fprintf(f, "%s\t%d\t%u\t", kv.first.c_str(), (int)k.mTopology, k.mColorCount);
+                for (U32 i = 0; i < k.mColorCount; ++i) fprintf(f, "%s%d", i ? " " : "", (int)k.mColor[i]);
+                fprintf(f, "\t%d\n", (int)k.mDepth);
+            }
+        }
+        fclose(f);
+    }
 }
 
 void save_variants()
 {
+    export_variants();
     const std::string path = variants_path();
     std::lock_guard<std::mutex> lock(gVariantMutex);
     if (path.empty() || !gVariantsDirty)
@@ -941,6 +977,12 @@ void Program::drainCompletedPipelines()
         {
             gSyncStats.mPipePrewarmDone.fetch_add(1, std::memory_order_relaxed);
             gSyncStats.mPipePrewarmMicros.fetch_add(d.mMicros, std::memory_order_relaxed);
+            if (d.mMicros > 1000000)
+            {
+                // (a pre-warm build the driver had to compile: after a shader change the lit alpha programs take minutes; the draws that need it are dropped until it is done)
+                LL_INFOS("VkPipeline") << "pre-warm pipeline built: " << p.mName << " (" << d.mKey.mColorCount << " colour targets) took " << (double)d.mMicros / 1000.0
+                                       << " ms; draws dropped meanwhile: " << skipped << LL_ENDL;
+            }
         }
         else
         {

@@ -31,6 +31,7 @@ bool LLVkBridge::neuralRenderAvailable() { return false; }
 void LLVkBridge::setUpscaleLodBias(float) {}
 bool LLVkBridge::shadowPacketsAvailable() { return false; }
 bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
+void LLVkBridge::pipelineBuilds(U64& pending, U64& total) { pending = 0; total = 0; }
 bool LLVkBridge::sceneGeoAvailable() { return false; }
 bool LLVkBridge::hizAvailable() { return false; }
 U32 LLVkBridge::hizSend(const HizBox*, U32, const F32*, const F32*, U32) { return 0; }
@@ -1184,6 +1185,15 @@ namespace LLVkWorker
 {
     void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& header, const U8* blob);
     void on_rt_scene(const LLVkBridge::RtSceneArgs& args);
+}
+
+void LLVkBridge::pipelineBuilds(U64& pending, U64& total)
+{
+    const LLVk::SyncStats& s = LLVk::gSyncStats;
+    const U64 queued = s.mPipePrewarmQueued.load(std::memory_order_relaxed) + s.mPipeMisses.load(std::memory_order_relaxed);
+    const U64 done = s.mPipePrewarmDone.load(std::memory_order_relaxed) + s.mPipeBgDone.load(std::memory_order_relaxed);
+    total = queued;
+    pending = queued > done ? queued - done : 0;
 }
 
 U32 LLVkBridge::rtShadowMode()

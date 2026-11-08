@@ -1,0 +1,238 @@
+ PBR Glow Shader	3	1	97	126
+ PBR Glow Shader	3	4	37 37 91 97	126
+Alpha Mask Shader	3	1	37	0
+Alpha Mask Shader	3	1	37	126
+Avatar Velocity (body)	3	1	97	0
+Avatar Velocity (rigged, packets)	3	1	97	0
+Brdf Gen Shader	4	1	83	0
+Bump Shader pull	3	1	97	126
+Bump Shader pull	3	4	37 37 91 97	126
+Contrast Adaptive Sharpening Legacy Gamma Shader	3	1	37	0
+Contrast Adaptive Sharpening Legacy Gamma Shader	3	1	97	0
+Contrast Adaptive Sharpening Shader	3	1	37	0
+Copy Depth Shader	3	1	97	126
+Copy Shader	3	1	76	0
+Copy Shader	3	1	97	0
+Debug Shader	3	1	37	126
+Debug Shader	4	1	37	126
+Debug Shader	5	1	37	126
+Deferred Alpha Impostor Pull Shader	3	1	37	126
+Deferred Alpha Impostor Pull Shader	3	4	37 37 91 97	126
+Deferred Alpha Pull Shader	3	1	97	126
+Deferred Alpha Pull Skin Shader	3	1	97	126
+Deferred Alpha Uber Material Pull Shader	3	1	97	126
+Deferred Alpha Uber Material Pull Skin Shader	3	1	97	126
+Deferred Alpha Uber Pull Shader	3	1	97	126
+Deferred Alpha Uber Pull Skin Shader	3	1	97	126
+Deferred Avatar Alpha Mask Shadow Shader pull	3	0		126
+Deferred Avatar Alpha Mask Shadow Shader pull	3	1	37	126
+Deferred Avatar Alpha Shader pull	3	1	37	126
+Deferred Avatar Alpha Shader pull	3	1	97	126
+Deferred Avatar Alpha Shader pull	3	4	37 37 91 97	126
+Deferred Avatar Alpha Shadow Shader pull	3	0		126
+Deferred Avatar Alpha Shadow Shader pull	3	1	37	126
+Deferred Avatar Shader pull	3	1	37	126
+Deferred Avatar Shader pull	3	4	37 37 91 97	126
+Deferred Avatar Shadow Shader pull	3	0		126
+Deferred Blur Light Shader	3	1	97	0
+Deferred Blur Light Shader	3	1	97	126
+Deferred Blur Light Shader	3	2	97 76	0
+Deferred Bump Pull Shader	3	4	37 37 91 97	126
+Deferred Bump Shader pull	3	4	37 37 91 97	126
+Deferred Diffuse Alpha Mask Pull Shader	3	1	37	126
+Deferred Diffuse Alpha Mask Pull Shader	3	4	37 37 91 97	126
+Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull	3	1	37	126
+Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull	3	4	37 37 91 97	126
+Deferred Diffuse Non-Indexed Alpha Mask Shader	3	4	37 37 91 97	126
+Deferred Diffuse Pull Shader	3	1	37	126
+Deferred Diffuse Pull Shader	3	4	37 37 91 97	126
+Deferred Diffuse Pull Skin Shader	3	4	37 37 91 97	126
+Deferred Emboss Pull Shader	3	1	97	126
+Deferred Emissive Pull Shader	3	1	97	126
+Deferred Emissive Pull Shader	3	4	37 37 91 97	126
+Deferred Emissive Pull Skin Shader	3	1	97	126
+Deferred Emissive Pull Skin Shader	3	4	37 37 91 97	126
+Deferred Fullbright Alpha Mask Pull Shader	3	1	97	126
+Deferred Fullbright Alpha Mask Pull Shader	3	4	37 37 91 97	126
+Deferred Fullbright Alpha Mask Pull Skin Shader	3	1	97	126
+Deferred Fullbright Alpha Mask Pull Skin Shader	3	4	37 37 91 97	126
+Deferred Fullbright Alpha Pull Shader	3	1	97	126
+Deferred Fullbright Alpha Pull Skin Shader	3	1	97	126
+Deferred Fullbright Pull Shader	3	1	97	126
+Deferred Fullbright Pull Shader	3	4	37 37 91 97	126
+Deferred Fullbright Pull Skin Shader	3	1	97	126
+Deferred Fullbright Pull Skin Shader	3	4	37 37 91 97	126
+Deferred Fullbright Shiny Pull Shader	3	1	97	126
+Deferred Fullbright Shiny Pull Shader	3	4	37 37 91 97	126
+Deferred FullbrightShiny Shader pull	3	1	97	126
+Deferred FullbrightShiny Shader pull	3	4	37 37 91 97	126
+Deferred GLTF Shadow Alpha Blend Shader pull	3	0		126
+Deferred GLTF Shadow Alpha Blend Shader pull	3	1	37	126
+Deferred GLTF Shadow Alpha Mask Shader	3	0		126
+Deferred GLTF Shadow Alpha Mask Shader	3	1	37	126
+Deferred Impostor Shader	3	4	37 37 91 97	126
+Deferred Light Pull Shader	5	1	97	126
+Deferred MultiLight Shader 0	3	1	97	126
+Deferred MultiLight Shader 1	3	1	97	126
+Deferred MultiLight Shader 10	3	1	97	126
+Deferred MultiLight Shader 11	3	1	97	126
+Deferred MultiLight Shader 12	3	1	97	126
+Deferred MultiLight Shader 13	3	1	97	126
+Deferred MultiLight Shader 14	3	1	97	126
+Deferred MultiLight Shader 15	3	1	97	126
+Deferred MultiLight Shader 2	3	1	97	126
+Deferred MultiLight Shader 3	3	1	97	126
+Deferred MultiLight Shader 4	3	1	97	126
+Deferred MultiLight Shader 5	3	1	97	126
+Deferred MultiLight Shader 6	3	1	97	126
+Deferred MultiLight Shader 7	3	1	97	126
+Deferred MultiLight Shader 8	3	1	97	126
+Deferred MultiLight Shader 9	3	1	97	126
+Deferred MultiSpotLight Shader	3	1	97	126
+Deferred PBR Alpha Pull Shader	3	1	97	126
+Deferred PBR Alpha Pull Shader	3	4	37 37 91 97	126
+Deferred PBR Alpha Pull Skin Shader	3	1	97	126
+Deferred PBR Alpha Pull Skin Shader	3	4	37 37 91 97	126
+Deferred PBR Opaque Pull Shader	3	4	37 37 91 97	126
+Deferred PBR Opaque Pull Skin Shader	3	4	37 37 91 97	126
+Deferred PBR Opaque Shader pull	3	4	37 37 91 97	126
+Deferred PBR Terrain Shader 0 heightmap-with-noise triplanar pull	3	4	37 37 91 97	126
+Deferred Post NoDoF Noise Shader	3	1	37	126
+Deferred Post NoDoF Shader	3	1	97	0
+Deferred Shadow Alpha Mask Shader	3	0		126
+Deferred Shadow Alpha Mask Shader pull	3	0		126
+Deferred Shadow Alpha Mask Shader pull	3	1	37	126
+Deferred Shadow Alpha Pull Shader	3	0		126
+Deferred Shadow Alpha Pull Shader	3	1	37	126
+Deferred Shadow Fullbright Alpha Mask Shader	3	0		126
+Deferred Shadow Fullbright Alpha Mask Shader pull	3	0		126
+Deferred Shadow Fullbright Alpha Mask Shader pull	3	1	37	126
+Deferred Shadow Pull Shader	3	0		126
+Deferred Shadow Pull Shader	3	1	37	126
+Deferred Shadow Shader	3	0		126
+Deferred Shadow Shader pull	3	0		126
+Deferred Shadow Shader pull	3	1	37	126
+Deferred Shadow Skin Pull Shader	3	0		126
+Deferred Shadow Skin Pull Shader	3	1	37	126
+Deferred Skinned Shadow Shader	3	0		126
+Deferred Skinned Tree Shadow Shader	3	0		126
+Deferred Skinned Tree Shadow Shader	3	1	37	126
+Deferred Soften Shader	3	1	97	126
+Deferred SpotLight Pull Shader	5	1	97	126
+Deferred Star Program pull	3	4	37 37 91 97	126
+Deferred Sun Probe Shader	3	1	97	0
+Deferred Sun Probe Shader	3	2	97 76	0
+Deferred Sun Shader	3	1	97	0
+Deferred Sun Shader	3	2	97 76	0
+Deferred Terrain Pull Shader	3	4	37 37 91 97	126
+Deferred Tonemap Post Process	3	1	97	0
+Deferred Tonemap Post Process	3	2	97 76	0
+Deferred Tree Shader	3	4	37 37 91 97	126
+Deferred Tree Shadow Shader	3	0		126
+Deferred Tree Shadow Shader pull	3	0		126
+Deferred Tree Shadow Shader pull	3	1	37	126
+Deferred Windlight Cloud Program pull	4	4	37 37 91 97	126
+Deferred Windlight Moon Program pull	3	4	37 37 91 97	126
+Deferred Windlight Sky Shader pull	4	4	37 37 91 97	126
+Deferred Windlight Sun Program pull	3	4	37 37 91 97	126
+Draw Color Shader pull	3	1	9	126
+Exposure	3	1	76	0
+Glow Combine Shader	3	1	37	0
+Glow Combine Shader	3	1	97	0
+Glow Extract Shader (Post) (+Noise)	3	1	37	0
+Glow Shader (Post)	3	1	37	0
+HUD Fullbright Alpha Masking Shader pull	3	1	37	126
+HUD Fullbright Alpha Pull Shader	3	1	37	126
+HUD Fullbright Shader pull	3	1	37	126
+Haze Shader	3	1	97	126
+Hero Radiance Gen Shader	4	1	97	0
+Highlight Shader	3	1	37	126
+Highlight Shader	3	1	97	126
+Highlight Shader	3	4	37 37 91 97	126
+Irradiance Gen Shader	4	1	122	0
+Luminance	3	1	76	0
+Material Pull Shader 0	3	4	37 37 91 97	126
+Material Pull Shader 1	3	1	97	126
+Material Pull Shader 1	3	4	37 37 91 97	126
+Material Pull Shader 10	3	4	37 37 91 97	126
+Material Pull Shader 11	3	4	37 37 91 97	126
+Material Pull Shader 12	3	4	37 37 91 97	126
+Material Pull Shader 13	3	1	97	126
+Material Pull Shader 13	3	4	37 37 91 97	126
+Material Pull Shader 14	3	4	37 37 91 97	126
+Material Pull Shader 15	3	4	37 37 91 97	126
+Material Pull Shader 2	3	4	37 37 91 97	126
+Material Pull Shader 3	3	4	37 37 91 97	126
+Material Pull Shader 4	3	4	37 37 91 97	126
+Material Pull Shader 5	3	1	97	126
+Material Pull Shader 5	3	4	37 37 91 97	126
+Material Pull Shader 6	3	4	37 37 91 97	126
+Material Pull Shader 7	3	4	37 37 91 97	126
+Material Pull Shader 8	3	4	37 37 91 97	126
+Material Pull Shader 9	3	1	97	126
+Material Pull Shader 9	3	4	37 37 91 97	126
+Material Pull Skin Shader 0	3	4	37 37 91 97	126
+Material Pull Skin Shader 1	3	1	97	126
+Material Pull Skin Shader 1	3	4	37 37 91 97	126
+Material Pull Skin Shader 10	3	4	37 37 91 97	126
+Material Pull Skin Shader 12	3	4	37 37 91 97	126
+Material Pull Skin Shader 13	3	1	97	126
+Material Pull Skin Shader 13	3	4	37 37 91 97	126
+Material Pull Skin Shader 14	3	4	37 37 91 97	126
+Material Pull Skin Shader 15	3	4	37 37 91 97	126
+Material Pull Skin Shader 2	3	4	37 37 91 97	126
+Material Pull Skin Shader 3	3	4	37 37 91 97	126
+Material Pull Skin Shader 4	3	4	37 37 91 97	126
+Material Pull Skin Shader 5	3	1	97	126
+Material Pull Skin Shader 5	3	4	37 37 91 97	126
+Material Pull Skin Shader 6	3	4	37 37 91 97	126
+Material Pull Skin Shader 7	3	4	37 37 91 97	126
+Material Pull Skin Shader 8	3	4	37 37 91 97	126
+Material Pull Skin Shader 9	3	1	97	126
+Material Pull Skin Shader 9	3	4	37 37 91 97	126
+Motion Vectors	3	1	83	0
+No Post Tonemap Post Process	3	1	97	0
+No Post Tonemap Post Process	3	2	97 76	0
+Normal Map Generation Program	4	1	37	0
+Object Velocity (packets)	3	1	97	0
+PBR Glow Pull Shader	3	1	97	126
+PBR Glow Pull Shader	3	4	37 37 91 97	126
+PBR Glow Pull Skin Shader	3	1	97	126
+PBR Glow Pull Skin Shader	3	4	37 37 91 97	126
+RT Shadow Penumbra Filter	3	1	97	0
+RT Shadow Penumbra Filter	3	2	97 76	0
+RT Shadow Penumbra Prep	3	1	97	0
+Radiance Gen Shader	4	1	122	0
+Ray Reconstruction Guides	3	4	97 97 97 83	0
+Ray Scene Material Debug	3	1	37	0
+Reflection Mip Shader	3	1	97	0
+Reflection Mip Shader	3	1	97	126
+Reflection Mip Shader	3	1	122	0
+Reflection Mip Shader	3	1	122	126
+Shadow Accumulation	3	2	97 97	0
+Skinned  PBR Glow Shader	3	1	97	126
+Skinned  PBR Glow Shader	3	4	37 37 91 97	126
+Skinned Deferred Alpha Impostor Pull Shader	3	4	37 37 91 97	126
+Skinned Deferred Bump Shader	3	4	37 37 91 97	126
+Skinned Deferred Diffuse Shader	3	4	37 37 91 97	126
+Skinned Deferred Emissive Shader	3	1	97	126
+Skinned Deferred Emissive Shader	3	4	37 37 91 97	126
+Skinned Deferred Fullbright Alpha Mask Pull Shader	3	4	37 37 91 97	126
+Skinned Deferred Fullbright Alpha Masking Shader	3	1	97	126
+Skinned Deferred Fullbright Alpha Masking Shader	3	4	37 37 91 97	126
+Skinned Deferred Fullbright Shader	3	1	97	126
+Skinned Deferred FullbrightShiny Shader	3	1	97	126
+Skinned Deferred FullbrightShiny Shader	3	4	37 37 91 97	126
+Skinned Deferred GLTF Shadow Alpha Mask Shader	3	0		126
+Skinned Deferred PBR Opaque Shader	3	4	37 37 91 97	126
+Skinned Deferred Shadow Fullbright Alpha Mask Shader	3	0		126
+Skinned Deferred Shadow Fullbright Alpha Mask Shader	3	1	37	126
+Solid Color Shader	3	1	37	126
+UI Shader	1	1	37	126
+UI Shader	2	1	37	126
+UI Shader	3	1	37	126
+UI Shader	4	1	37	126
+UI Shader	5	1	37	126
+Underwater Shader	3	1	97	126
+Water Haze Shader	3	1	97	126
+Water Shader	3	1	97	126

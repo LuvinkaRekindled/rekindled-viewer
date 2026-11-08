@@ -2218,6 +2218,7 @@ set(viewer_APPSETTINGS_FILES
     app_settings/settings_files.xml
     app_settings/settings_per_account.xml
     app_settings/std_bump.ini
+    app_settings/vk_pipeline_variants_default.txt   # <FS> J1: the GPU pipeline variants the viewer uses, built at start-up on a machine with no list of its own yet
     #app_settings/toolbars.xml  FS:AO moved to skins
     app_settings/trees.xml
     app_settings/viewerart.xml
