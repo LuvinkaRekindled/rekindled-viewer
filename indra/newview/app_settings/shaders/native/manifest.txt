@@ -2,3 +2,4 @@
 #   override | <name of the viewer program it stands in for> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE] [| spec ID=VALUE]
 # The family is the live key native_<family>=1 in rt-debug.txt (0 or missing: the old program). native_reload=0 turns the watching of the files off.
 override | Copy Shader | copy.vert | copy.frag | copy
+override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur
