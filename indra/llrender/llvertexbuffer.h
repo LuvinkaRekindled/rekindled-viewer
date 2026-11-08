@@ -284,6 +284,8 @@ public:
     U32 getSize() const                     { return mSize; }
     U32 getIndicesSize() const              { return mIndicesSize; }
     U8* getMappedData() const               { return mMappedData; }
+    // <FS> J1 K3b: a number that changes whenever a strider was asked for a range of the buffer (the way every write goes): the shadow LOD cache tells a mesh rebuilt in place from the one a list was made for by it, instead of sampling the mesh's data every frame
+    U32 getDataSerial() const               { return mDataSerial; }
     U8* getMappedIndices() const            { return mMappedIndexData; }
     U32 getOffset(AttributeType type) const { return mOffsets[type]; }
     U32 getVertexBufferId() const                 { return mVertexBufferId; }       // <FS> GL names and index format (render packets)
@@ -331,6 +333,7 @@ protected:
     U32     mSize = 0;          // size in bytes of mMappedData
     U32     mIndicesSize = 0;   // size in bytes of mMappedIndexData
 
+    U32 mDataSerial = 0;
     std::vector<MappedRegion> mMappedVertexRegions;  // list of mMappedData byte ranges that must be sent to GL
     std::vector<MappedRegion> mMappedIndexRegions;   // list of mMappedIndexData byte ranges that must be sent to GL
 
