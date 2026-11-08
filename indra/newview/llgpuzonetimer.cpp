@@ -996,7 +996,8 @@ namespace
         std::unordered_map<DWORD64, unsigned> inclusive;    // J1 hotspots: every function on the stack once per sample (the stack is 32 frames deep from the leaf)
         std::unordered_map<DWORD64, std::unordered_map<DWORD64, unsigned>> callers;     // J1 hotspots: for a function, who called it when it was the leaf
         // J1 hotspots: the samples whose leaf is outside the executable (the allocator, waits, the CRT, kernel calls) are attributed to the nearest frame INSIDE it, with the leaf functions they were in
-        std::unordered_map<DWORD64, std::pair<unsigned, std::unordered_map<DWORD64, unsigned>>> outside_sites;
+        struct OutsideSample { DWORD64 mLeaf; DWORD64 mInside[6]; int mCount; };
+        std::vector<OutsideSample> outside_samples;
         const DWORD64 exe_base = (DWORD64)GetModuleHandleA(nullptr);
         auto function_start = [](DWORD64 pc) -> DWORD64
         {
@@ -1059,17 +1060,20 @@ namespace
                     }
                     if (base != exe_base)
                     {
-                        for (int k = 1; k < cap.mCount; ++k)
+                        OutsideSample sample = {};
+                        sample.mLeaf = leaf;
+                        for (int k = 1; k < cap.mCount && sample.mCount < 6; ++k)
                         {
                             DWORD64 b2 = 0;
                             PRUNTIME_FUNCTION f2 = RtlLookupFunctionEntry(cap.mPc[k], &b2, nullptr);
                             if (f2 && b2 == exe_base)
                             {
-                                auto& entry = outside_sites[b2 + f2->BeginAddress];
-                                ++entry.first;
-                                ++entry.second[leaf];
-                                break;
+                                sample.mInside[sample.mCount++] = b2 + f2->BeginAddress;
                             }
+                        }
+                        if (sample.mCount)
+                        {
+                            outside_samples.push_back(sample);
                         }
                     }
                 }
@@ -1173,8 +1177,39 @@ namespace
                     }
                 }
                 LL_INFOS("Sampler") << "main thread, window " << windows << ", callers of the top self time functions:" << ctext << LL_ENDL;
-                std::vector<std::pair<unsigned, DWORD64>> otop;
-                for (const auto& kv : outside_sites)
+                // the first frame inside the executable that is not the allocator's own plumbing is the site; its caller is shown with it
+                auto plumbing = [](const std::string& n)
+                {
+                    return n.find("ll_tracy_") == 0 || n.find("operator new") == 0 || n.find("operator delete") == 0 || n.find("malloc") != std::string::npos || n.find("free") == 0
+                        || n.find("_Allocate") != std::string::npos || n.find("_Deallocate") != std::string::npos || n.find("::allocate") != std::string::npos || n.find("::deallocate") != std::string::npos
+                        || n.find("_Change_array") != std::string::npos || n.find("_Reallocate") != std::string::npos;
+                };
+                std::unordered_map<std::string, std::pair<unsigned, std::unordered_map<std::string, unsigned>>> sites;
+                for (const OutsideSample& os : outside_samples)
+                {
+                    int at = 0;
+                    std::string site;
+                    for (; at < os.mCount; ++at)
+                    {
+                        site = name_of(os.mInside[at]);
+                        if (!plumbing(site))
+                        {
+                            break;
+                        }
+                    }
+                    if (at >= os.mCount)
+                    {
+                        site = name_of(os.mInside[0]);
+                        at = 0;
+                    }
+                    const std::string caller = at + 1 < os.mCount ? name_of(os.mInside[at + 1]) : std::string("-");
+                    auto& entry = sites[site];
+                    ++entry.first;
+                    ++entry.second[name_of(os.mLeaf)];
+                    (void)caller;
+                }
+                std::vector<std::pair<unsigned, std::string>> otop;
+                for (const auto& kv : sites)
                 {
                     otop.emplace_back(kv.second.first, kv.first);
                 }
@@ -1182,26 +1217,26 @@ namespace
                 std::string otext;
                 for (size_t i = 0; i < otop.size() && i < 30; ++i)
                 {
-                    const auto& entry = outside_sites[otop[i].second];
-                    std::vector<std::pair<unsigned, DWORD64>> leaves;
+                    const auto& entry = sites[otop[i].second];
+                    std::vector<std::pair<unsigned, std::string>> leaves;
                     for (const auto& kv : entry.second)
                     {
                         leaves.emplace_back(kv.second, kv.first);
                     }
                     std::sort(leaves.begin(), leaves.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-                    otext += llformat(" | %s %.2f%% in", name_of(otop[i].second).c_str(), 100.0 * otop[i].first / total);
+                    otext += llformat(" | %s %.2f%% in", otop[i].second.c_str(), 100.0 * otop[i].first / total);
                     for (size_t q = 0; q < leaves.size() && q < 3; ++q)
                     {
-                        otext += llformat(" %s %u%%", name_of(leaves[q].second).c_str(), (unsigned)(100.0 * leaves[q].first / otop[i].first + 0.5));
+                        otext += llformat(" %s %u%%", leaves[q].second.c_str(), (unsigned)(100.0 * leaves[q].first / otop[i].first + 0.5));
                     }
                 }
-                LL_INFOS("Sampler") << "main thread, window " << windows << ", time outside the executable (allocator, waits, CRT, kernel) by the nearest function inside it:" << otext << LL_ENDL;
+                LL_INFOS("Sampler") << "main thread, window " << windows << ", time outside the executable (allocator, waits, CRT, kernel) by the nearest function inside it that is not the allocator's plumbing:" << otext << LL_ENDL;
             }
             counts.clear();
             modules.clear();
             inclusive.clear();
             callers.clear();
-            outside_sites.clear();
+            outside_samples.clear();
             total = 0;
         }
     }
