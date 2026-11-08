@@ -286,6 +286,30 @@ inline GeoRange ll_geo_range(const LLDrawInfo* p)
     return r;
 }
 
+// <FS> J1 K5: what the ray scene's material registry (pipeline.cpp, rt_material_id) reads of a draw, kept by a fragment's item instead of read through the draw info: the glTF material and the textures as
+// handles, the batch, the flags, the cutoff, the specular values; and the row cache of the registry (the row in the low 32 bits, its generation in the high 32, 0 = not looked up yet: atomic, the packet builders of
+// several cascades meet the same item). mSet: filled (only when ray scene materials are on).
+struct RtMatCache
+{
+    std::atomic<U64> mValue{ 0 };
+    RtMatCache() = default;
+    RtMatCache(const RtMatCache& o) : mValue(o.mValue.load(std::memory_order_relaxed)) {}
+    RtMatCache& operator=(const RtMatCache& o) { mValue.store(o.mValue.load(std::memory_order_relaxed), std::memory_order_relaxed); return *this; }
+};
+struct RtMatSource
+{
+    LLGLTFMatRef mGltf;
+    LLTexRef mTexture;
+    LLTexRef mList[4];
+    U32 mListSize = 0;
+    LLTexRef mNormalMap, mSpecularMap;
+    bool mFullbright = false, mEmissiveLegacy = false, mSet = false;
+    F32 mCutoff = 0.5f;
+    F32 mSpec[4] = { 1.f, 1.f, 1.f, 0.5f };
+    F32 mEnv = 0.f;
+    mutable RtMatCache mCache;
+};
+
 // <FS> J1 K2: what the per frame readers of a RIGGED fragment item need, kept with the item instead of read through its draw info every frame: the avatar and the skin (handles: a gone one reads as null),
 // the buffer (held, so the range stays valid) and the range. The palette bindings, the LOD choices and their census read this; the draw info is only read when the fragment is made.
 struct GeoRigSource
@@ -303,6 +327,7 @@ struct GeoRigSource
     const LLMatrix4* mTextureMatrix = nullptr;
     F32 mAlphaCutoff = 0.5f;
     bool mAlphaOk = false;
+    RtMatSource mMat;                   // J1 K5: the ray scene material source (filled only with ray scene materials)
     GeoRange range() const
     {
         GeoRange r;
