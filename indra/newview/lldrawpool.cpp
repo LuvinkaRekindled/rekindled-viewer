@@ -971,6 +971,7 @@ void ll_palette_id_free(U32 id)
 static std::atomic<U64> sRigCensus[12];
 static std::atomic<U64> sRigReasonEntry[16], sRigReasonFallback[16];       // why the table did not take a rigged draw the per frame records built (ll_geometry_reject_reason, texture matrix not allowed as for table rows), and why a draw went to the old path
 static std::atomic<U64> sRigWithModel{ 0 };
+static std::atomic<U64> sStaticFallbackReason[16], sStaticFallbackType[64];       // J1 K6 S4: the non rigged draws of the per frame records that went to the old path, by reason (ll_geometry_reject_reason) and by pass type
 static std::atomic<U64> sRigGltf[4];       // the rigged glTF draws that went to the old path: all / double sided / with a texture matrix / the glow pass without an emissive array
 static bool rig_census_on()
 {
@@ -1011,6 +1012,27 @@ void ll_rig_census_log()
         LL_INFOS("RigCensus") << "rigged G-buffer draws a frame by reason the table did not take them (0 = it would, 12 = texture matrix, 2 avatar mismatch, 10 no skin)," << text << " with a model matrix " << (double)sRigWithModel.exchange(0) / frames
             << "; rigged glTF draws on the old path " << (double)sRigGltf[0].exchange(0) / frames << ": double sided " << (double)sRigGltf[1].exchange(0) / frames << ", texture matrix " << (double)sRigGltf[2].exchange(0) / frames
             << ", glow without emissive " << (double)sRigGltf[3].exchange(0) / frames << LL_ENDL;
+    }
+    {
+        std::string text;
+        for (int k = 0; k < 16; ++k)
+        {
+            const U64 f = sStaticFallbackReason[k].exchange(0);
+            if (f)
+            {
+                text += " r" + std::to_string(k) + " " + std::to_string((double)f / frames) + ";";
+            }
+        }
+        std::string types;
+        for (int k = 0; k < 64; ++k)
+        {
+            const U64 f = sStaticFallbackType[k].exchange(0);
+            if (f)
+            {
+                types += " type " + std::to_string(k) + " " + std::to_string((double)f / frames) + ";";
+            }
+        }
+        LL_INFOS("RigCensus") << "non rigged draws a frame on the old path by reason (J1 K6 S4):" << text << " by pass type:" << types << LL_ENDL;
     }
     LL_INFOS("RigCensus") << "rigged draws per frame over " << (U64)frames << " frames: G-buffer records own " << v[0] << " others " << v[1] << " animesh " << v[2] << " | left out (table) " << v[3] << ", not drawn " << v[4]
         << ", old path " << v[5] << " | cascade shadow records: entries " << v[6] << " in " << v[7] << " builds | transient rigged alpha entries " << v[8] << LL_ENDL;
@@ -1753,6 +1775,11 @@ static void build_geometry(LLGeometryBuild& out)
         {
             out.mFallback.push_back(params);        // (J1 K4: the bump pass's per frame records have no bump image: what no row serves is drawn the old way)
             ll_rig_census_add(5, out.mRigged ? 1 : 0);
+            if (!out.mRigged && rig_census_on())
+            {
+                ++sStaticFallbackReason[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, false, true, ll_pass_arrays(out.mType)))];
+                ++sStaticFallbackType[std::min<U32>(63u, out.mType)];
+            }
             if (out.mRigged && rig_census_on())
             {
                 ++sRigReasonFallback[std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, true, texmat_ok, ll_pass_arrays(out.mType)))];

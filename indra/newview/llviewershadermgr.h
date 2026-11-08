@@ -275,6 +275,8 @@ extern LLShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 
 extern bool                    gHUDFullbrightMaskPullReady;
 extern LLShaderProgram         gHUDFullbrightShinyPullProgram;
 extern bool                    gHUDFullbrightShinyPullReady;
+extern LLShaderProgram         gHUDPBROpaquePullProgram;         // <FS> J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table (the PBR opaque pull program with IS_HUD)
+extern bool                    gHUDPBROpaquePullReady;
 extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
 extern LLShaderProgram         gDeferredBumpPullSkinProgram;
 extern bool                    gBumpPullReady;

@@ -283,6 +283,8 @@ LLShaderProgram            gHUDFullbrightMaskPullProgram;
 bool                       gHUDFullbrightMaskPullReady = false;
 LLShaderProgram            gHUDFullbrightShinyPullProgram;
 bool                       gHUDFullbrightShinyPullReady = false;
+LLShaderProgram            gHUDPBROpaquePullProgram;        // J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table
+bool                       gHUDPBROpaquePullReady = false;
 LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
 LLShaderProgram            gDeferredBumpPullSkinProgram;
 bool                       gBumpPullReady = false;
@@ -1529,6 +1531,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPBROpaquePullProgram.unload();
         gDeferredPBROpaquePullSkinProgram.unload();
         gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
+        gHUDPBROpaquePullProgram.unload();
+        gHUDPBROpaquePullReady = false;
         gDeferredLightPullProgram.unload();
         gLightPullReady = false;
         gDeferredSpotLightPullProgram.unload();
@@ -3172,6 +3176,37 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->unload();
                 break;
             }
+        }
+    }
+
+    // <FS> J1 K6 S1: the HUD's glTF opaque and mask pass from the table: the PBR opaque pull program with IS_HUD (pbropaqueF has no lighting outputs in a HUD). Optional: without it the HUD pool draws the old way.
+    gHUDPBROpaquePullReady = false;
+    if (success && gPbrOpaquePullReady)
+    {
+        LLShaderProgram* shader = &gHUDPBROpaquePullProgram;
+        shader->mName = "HUD PBR Opaque Pull Shader";
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.isDeferred = true;
+        shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+        shader->mShaderFiles.clear();
+        shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
+        shader->clearPermutations();
+        shader->addPermutation("LL_BINDLESS_PBR", "1");
+        shader->addPermutation("IS_HUD", "1");
+        add_common_permutations(shader);
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (shader->createShader())
+        {
+            gHUDPBROpaquePullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's glTF objects are drawn the old way" << LL_ENDL;
+            shader->unload();
         }
     }
 

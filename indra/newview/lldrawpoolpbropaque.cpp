@@ -30,6 +30,7 @@
 #include "lldrawpoolpbropaque.h"
 #include "llviewershadermgr.h"
 #include "pipeline.h"
+#include "llspatialpartition.h"
 #include "gltfscenemanager.h"
 
 LLDrawPoolGLTFPBR::LLDrawPoolGLTFPBR(U32 type) :
@@ -119,6 +120,22 @@ void LLDrawPoolGLTFPBR::renderPostDeferred(S32 pass)
 {
     if (LLPipeline::sRenderingHUDs)
     {
+        // <FS> J1 K6 S1: the HUD's glTF opaque / mask draws from the scene table (the HUD's cull result was told to the worker before the passes), what the rows cannot carry the old way
+        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(mRenderType)))
+        {
+            std::vector<LLDrawInfo*> fallback;
+            gHUDPBROpaquePullProgram.bind();
+            pushGeometryPackets(mRenderType, fallback);
+            if (!fallback.empty())
+            {
+                gHUDPBROpaqueProgram.bind();
+                for (LLDrawInfo* params : fallback)
+                {
+                    pushGLTFBatch(*params);
+                }
+            }
+            return;
+        }
         gHUDPBROpaqueProgram.bind();
         pushGLTFBatches(mRenderType);
     }
