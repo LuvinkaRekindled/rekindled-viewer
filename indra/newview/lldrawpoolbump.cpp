@@ -542,7 +542,7 @@ bool LLDrawPoolBump::bindBumpMap(U8 bump_code, LLViewerTexture* texture, S32 cha
 }
 
 //static
-void LLDrawPoolBump::beginBump()
+void LLDrawPoolBump::beginBump(bool table)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
     sVertexMask = VERTEX_MASK_BUMP;
@@ -550,7 +550,11 @@ void LLDrawPoolBump::beginBump()
 
     shader = &gObjectBumpProgram;
 
-    if (mRigged)
+    if (table)
+    {
+        shader = mRigged ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;       // J1 K4: the rows' program
+    }
+    else if (mRigged)
     {
         llassert(shader->mRiggedVariant);
         shader = shader->mRiggedVariant;
@@ -565,8 +569,16 @@ void LLDrawPoolBump::beginBump()
     gRender.setSceneBlendType(LLRender::BT_MULT_X2);
 }
 
+// J1 K4: the post deferred emboss draws come from the scene table in the main view (rows with the bump image's slot, the emboss pull program); every other view, and what the rows cannot carry, draws the old way
+static bool emboss_table(bool rigged)
+{
+    static const bool emboss_table_env = !getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0';
+    return emboss_table_env && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
+        && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
+}
+
 //static
-void LLDrawPoolBump::renderBump(U32 pass)
+void LLDrawPoolBump::renderBump(U32 pass, bool table)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
     LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::LessEqual);
@@ -575,6 +587,31 @@ void LLDrawPoolBump::renderBump(U32 pass)
     /// Get rid of z-fighting with non-bump pass.
     LLRenderState::PolygonOffsetScope polyOffset(true);
     gRender.setPolygonOffset(-1.0f, -1.0f);
+    if (table)
+    {
+        std::vector<LLDrawInfo*> fallback;
+        pushGeometryPackets(mRigged ? LLRenderPass::PASS_POST_BUMP_RIGGED : LLRenderPass::PASS_POST_BUMP, fallback, nullptr, mRigged);
+        if (!fallback.empty())
+        {
+            // what the rows cannot carry: the old program, the old way (a draw with no bump image is skipped, as before)
+            beginBump(false);
+            const LLVOAvatar* lastAvatar = nullptr;
+            U64 lastMeshId = 0;
+            bool skipLastSkin = false;
+            for (LLDrawInfo* params : fallback)
+            {
+                if (LLDrawPoolBump::bindBumpMap(*params))
+                {
+                    if (mRigged && !uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                    {
+                        continue;
+                    }
+                    pushBumpBatch(*params, false);
+                }
+            }
+        }
+        return;
+    }
     pushBumpBatches(pass);
 }
 
@@ -703,8 +740,9 @@ void LLDrawPoolBump::renderPostDeferred(S32 pass)
         endFullbrightShiny();
 
         //render bump
-        beginBump();
-        renderBump(LLRenderPass::PASS_POST_BUMP);
+        const bool emboss = emboss_table(mRigged);
+        beginBump(emboss);
+        renderBump(LLRenderPass::PASS_POST_BUMP, emboss);
         endBump();
     }
 }

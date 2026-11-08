@@ -10815,7 +10815,8 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
     {
-        return false;       // (J1 K4: served when its pull programs and entries are there)
+        static const bool emboss_table_env = !getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0';      // (0 = the pass reads the render map, as before)
+        return emboss_table_env && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
     {
@@ -11296,7 +11297,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             item.mServed = (!params->mModelMatrix || item.mE.mMatrix != 0) && texmat_served;
             params->mGeoServed = item.mServed;
             f.mGeoServedCount += item.mServed ? 1 : 0;
-            if (item.mServed && kGeoTypes[t].mType == LLRenderPass::PASS_BUMP && params->mBump != 0)
+            if (item.mServed && (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP || kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP) && params->mBump != 0)
             {
                 f.mBump.push_back({ LLPointer<LLViewerTexture>(params->mTexture.get()), params->mBump });
             }

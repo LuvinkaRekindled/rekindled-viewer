@@ -1032,6 +1032,10 @@ U32 LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_level,
                 replace("texture(diffuseMap,", "llFbTex(vary_slot,");
                 replace("texture(bumpMap,", "llFbTex(vary_slot_normal,");
                 replace("texture(specularMap,", "llFbTex(vary_slot_specular,");
+                replace("uniform sampler2D texture0;", "");       // (J1 K4: the emboss pass samples one image, the bump image, twice)
+                replace("uniform sampler2D texture1;", "");
+                replace("texture(texture0,", "llFbTex(vary_slot,");
+                replace("texture(texture1,", "llFbTex(vary_slot,");
                 replace("uniform float emissive_brightness;", "flat in float emissive_brightness;");
                 replace("uniform float env_intensity;", "flat in float env_intensity;");
                 replace("uniform vec4 specular_color;", "flat in vec4 specular_color;");

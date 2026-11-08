@@ -281,6 +281,10 @@ LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferre
 LLShaderProgram            gDeferredBumpPullSkinProgram;
 bool                       gBumpPullReady = false;
 bool                       gBumpPullSkinReady = false;
+LLShaderProgram            gDeferredEmbossPullProgram;       // J1 K4: the post deferred emboss pass from the scene table
+LLShaderProgram            gDeferredEmbossPullSkinProgram;
+bool                       gEmbossPullReady = false;
+bool                       gEmbossPullSkinReady = false;
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
@@ -1501,6 +1505,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredBumpPullSkinProgram.unload();
         gBumpPullReady = false;
         gBumpPullSkinReady = false;
+        gDeferredEmbossPullProgram.unload();
+        gDeferredEmbossPullSkinProgram.unload();
+        gEmbossPullReady = false;
+        gEmbossPullSkinReady = false;
         gDeferredDiffuseAlphaMaskPullProgram.unload();
         gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
         gDeferredFullbrightAlphaMaskPullProgram.unload();
@@ -2883,6 +2891,52 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             else
             {
                 gBumpPullReady = true;
+            }
+        }
+    }
+
+    // <FS> J1 K4: the post deferred emboss pass from the table: the pull vertex shader with the second texture coordinate set (IS_EMBOSS_PULL) and the object bump fragment shader, its two samplers both reading the
+    // bump image's slot of the row (the materials rewrite). Optional: without it the old pass draws.
+    gEmbossPullReady = false;
+    gEmbossPullSkinReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
+            shader->mName = skin ? "Deferred Emboss Pull Skin Shader" : "Deferred Emboss Pull Shader";
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("objects/bumpF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("IS_EMBOSS_PULL", "1");
+            shader->addPermutation("LL_BINDLESS_MATERIAL", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_OBJECT];
+            ok = shader->createShader();
+            if (!ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "embossed objects are drawn the old way" << LL_ENDL;
+                shader->unload();
+            }
+            else if (skin)
+            {
+                gEmbossPullSkinReady = true;
+            }
+            else
+            {
+                gEmbossPullReady = true;
             }
         }
     }
