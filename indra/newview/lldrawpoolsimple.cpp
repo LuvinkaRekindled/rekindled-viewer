@@ -296,6 +296,32 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
+    // <FS> J1 K6 S1: the HUD's fullbright draws from the scene table (the HUD's cull result was told to the worker before the passes), what the rows cannot carry the old way
+    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)))
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gHUDFullbrightPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT, fallback);
+        {
+            static U64 calls = 0, fallbacks = 0;
+            ++calls;
+            fallbacks += fallback.size();
+            if (calls % 600 == 0)
+            {
+                LL_INFOS("HudTable") << "the HUD's fullbright pass from rows: " << calls << " passes so far, " << fallbacks << " draws left to the old path" << LL_ENDL;
+            }
+        }
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                pushBatch(*params, true, true);
+            }
+        }
+        return;
+    }
+
     // <FS> S6 X1: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass); what it cannot carry is drawn the old way. HUDs stay on the old path.
     if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightPullReady)
     {
@@ -367,6 +393,24 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     }
 
     LLRenderState::BlendScope blend(false);
+
+    // <FS> J1 K6 S1: the HUD's alpha masked fullbright draws from the scene table, what the rows cannot carry the old way
+    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)))
+    {
+        std::vector<LLDrawInfo*> fallback;
+        gHUDFullbrightMaskPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, fallback);
+        if (!fallback.empty())
+        {
+            shader->bind();
+            for (LLDrawInfo* params : fallback)
+            {
+                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
+                pushBatch(*params, true, true);
+            }
+        }
+        return;
+    }
 
     // <FS> S6 X3: the alpha masked fullbright draws from the scene table; what it cannot carry is drawn the old way. HUDs stay on the old path.
     if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightMaskPullReady)

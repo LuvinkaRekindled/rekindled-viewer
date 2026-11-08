@@ -269,6 +269,12 @@ extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <F
 extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
 extern bool                    gFullbrightShinyPullReady;
 extern bool                    gFullbrightShinyPullSkinReady;
+extern LLShaderProgram         gHUDFullbrightPullProgram;        // <FS> J1 K6 S1: the HUD's fullbright pass from the scene table (the fullbright pull program with IS_HUD)
+extern bool                    gHUDFullbrightPullReady;
+extern LLShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 K6 S1: the HUD's alpha masked fullbright and fullbright shiny passes from the scene table
+extern bool                    gHUDFullbrightMaskPullReady;
+extern LLShaderProgram         gHUDFullbrightShinyPullProgram;
+extern bool                    gHUDFullbrightShinyPullReady;
 extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
 extern LLShaderProgram         gDeferredBumpPullSkinProgram;
 extern bool                    gBumpPullReady;

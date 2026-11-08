@@ -8093,7 +8093,8 @@ void LLPipeline::postSort(LLCamera &camera)
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && !LLPipeline::shadowRender();
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
-    const bool geo_list = geo_collect && view.mViewerCamera && ll_scene_geo_main_view() && ll_scene_geo_serving() && !view.mRenderingHUDs;       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
+    const bool hud_table = view.mRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any();       // J1 K6 S1: the HUD view with a HUD pool that draws from rows
+    const bool geo_list = geo_collect && ll_scene_geo_serving() && (hud_table || (view.mViewerCamera && ll_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
     const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
     if (geo_elide)
@@ -8196,7 +8197,7 @@ void LLPipeline::postSort(LLCamera &camera)
                             if (geo_elide && group->mGeoServedMask)
                             {
                                 const int tn = ll_scene_geo_type_number(j->first);
-                                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
+                                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)) && (!view.mRenderingHUDs || ll_scene_geo_hud_type(tn)))
                                 {
                                     ++chunk.mElideTypes;
                                     continue;
@@ -8437,7 +8438,7 @@ void LLPipeline::postSort(LLCamera &camera)
             if (geo_elide && group->mGeoServedMask)
             {
                 const int tn = ll_scene_geo_type_number(j->first);
-                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
+                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)) && (!view.mRenderingHUDs || ll_scene_geo_hud_type(tn)))
                 {
                     ++sGeoElideTypes;       // every draw info of this type in this group is the scene table's
                     continue;
@@ -14214,6 +14215,31 @@ bool ll_scene_geo_main_view()
     return !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
+// J1 K6 S1: the HUD pass is a view of its own (render_hud_attachments: updateCull + stateSort of the HUD camera, then the post deferred passes): its cull result gets the list of the visible fragments, the table is told
+// about it before the passes (renderGeomPostDeferred), and the pass types whose HUD pools draw from rows (ll_scene_geo_hud_type) are left out of its render map. LL_VK_HUD_TABLE=0 = the old HUD pools.
+bool ll_scene_geo_hud_view()
+{
+    return LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+}
+
+bool ll_scene_geo_hud_type(int tn)
+{
+    static const bool env = !getenv("LL_VK_HUD_TABLE") || getenv("LL_VK_HUD_TABLE")[0] != '0';
+    if (!env || tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
+    {
+        return false;
+    }
+    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady);
+}
+
+bool ll_scene_geo_hud_any()
+{
+    return ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
+        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
+}
+
 void ll_scene_geo_count(U32 what, U64 n)
 {
     if (what < 6)
@@ -17338,6 +17364,12 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LL_PROFILE_GPU_ZONE("renderGeomPostDeferred");
+
+    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any() && getCull() && getCull()->mGeoElided)
+    {
+        LL_CPU_ZONE("HUD: scene geometry prepare");
+        ll_scene_geo_frame(getCull());       // J1 K6 S1: the HUD's visible fragments, named to the worker's table (the HUD pools draw the types in ll_scene_geo_hud_type from it)
+    }
 
     if (gUseWireframe)
     {
