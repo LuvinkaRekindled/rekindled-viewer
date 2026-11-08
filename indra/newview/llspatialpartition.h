@@ -734,6 +734,7 @@ public:
     }
 
     void clear();
+    void clearRenderLists();       // J1 K6 B: the draw lists, the alpha group lists and what the render map job makes, not the visible groups (a serial shadow pass makes them again from the fragments)
     void clearLists();      // <FS> only the lists a cull fills
 
     sg_iterator beginVisibleGroups();

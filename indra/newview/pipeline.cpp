@@ -28082,6 +28082,58 @@ static void shadow_census_report(U32 frames)
     }
 }
 
+// J1 K6 B: appends what a render map job (a chunk of it) made to the pass's result, in the job's order
+static void merge_render_lists(LLCullResult& into, LLCullResult& from)
+{
+    for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
+    {
+        for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
+        {
+            into.pushDrawInfo(type, *d);
+        }
+    }
+    for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
+    {
+        into.pushAlphaGroup(*g);
+    }
+    for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
+    {
+        into.pushRiggedAlphaGroup(*g);
+    }
+    into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
+    into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
+    into.mRigSources.insert(into.mRigSources.end(), from.mRigSources.begin(), from.mRigSources.end());
+    into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
+    into.mRigAlphaOn = into.mRigAlphaOn || from.mRigAlphaOn;
+    into.mAlphaResSkipped = into.mAlphaResSkipped || from.mAlphaResSkipped;
+    if (!from.mGeoOwner.empty())
+    {
+        into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
+    }
+}
+
+// J1 K6 B: the flags of the render map job of a shadow pass (what the batch of the sun cascades and a serial pass both set before the job runs)
+void LLPipeline::setShadowJobFlags()
+{
+    // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
+    bool all_static = true;
+    for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
+    {
+        all_static = hasRenderType(kShadowStaticTypes[k]);
+    }
+    // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
+    // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
+    // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
+    // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
+    // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
+    const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
+    const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
+    sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
+    // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
+    static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
+    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
+}
+
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
     LL_CPU_ZONE("renderShadow (all passes)");
@@ -28161,6 +28213,27 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             {
                 lap.mark(PH_SERIAL_SORT);
                 note_shadow_prep_time(false, prep_start);
+            }
+            // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
+            // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
+            static const bool serial_fragments = !getenv("LL_VK_SHADOW_SERIAL") || getenv("LL_VK_SHADOW_SERIAL")[0] != '0';
+            if (serial_fragments && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !LLVkBridge::rtShadowMode() && shadow_packets_enabled() && shadow_kind_on(0))
+            {
+                LL_CPU_ZONE("renderShadow: serial pass render map job");
+                static ShadowCascadePrep serial_prep;
+                static LLCullResult serial_local;
+                serial_prep = ShadowCascadePrep();
+                serial_prep.mIndex = std::min<S32>((S32)shadow_pass_index(), 5);
+                serial_prep.mCamera = shadow_cam;
+                serial_prep.mResult = &result;
+                serial_prep.mView = view;
+                serial_prep.mProj = proj;
+                setShadowJobFlags();
+                result.clearRenderLists();
+                serial_local.clear();
+                shadowPrepRenderMap(serial_prep, 0, result.getVisibleGroupsSize(), serial_local);
+                merge_render_lists(result, serial_local);
+                prepared = &serial_prep;
             }
         }
     }
@@ -30415,23 +30488,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         lap.reset();
 
         {
-            // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
-            bool all_static = true;
-            for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
-            {
-                all_static = hasRenderType(kShadowStaticTypes[k]);
-            }
-            // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
-            // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
-            // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
-            // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
-            // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
-            const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
-            const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
-            sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
-            // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
-            static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
-            sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
+            setShadowJobFlags();
         }
         // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
         // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
@@ -30464,33 +30521,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         // appends one chunk's result to its cascade's, in chunk order
         const auto merge_map_chunk = [&](MapChunk& c)
         {
-            LLCullResult& into = *pending[c.mPrep].mResult;
-            LLCullResult& from = *c.mLocal;
-            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-            {
-                for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
-                {
-                    into.pushDrawInfo(type, *d);
-                }
-            }
-            for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
-            {
-                into.pushAlphaGroup(*g);
-            }
-            for (LLCullResult::sg_iterator g = from.beginRiggedAlphaGroups(); g != from.endRiggedAlphaGroups(); ++g)
-            {
-                into.pushRiggedAlphaGroup(*g);
-            }
-            into.mSceneGroups.insert(into.mSceneGroups.end(), from.mSceneGroups.begin(), from.mSceneGroups.end());
-            into.mAlphaFragGroups.insert(into.mAlphaFragGroups.end(), from.mAlphaFragGroups.begin(), from.mAlphaFragGroups.end());
-            into.mRigSources.insert(into.mRigSources.end(), from.mRigSources.begin(), from.mRigSources.end());
-            into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
-            into.mRigAlphaOn = into.mRigAlphaOn || from.mRigAlphaOn;
-            into.mAlphaResSkipped = into.mAlphaResSkipped || from.mAlphaResSkipped;
-            if (!from.mGeoOwner.empty())
-            {
-                into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
-            }
+            merge_render_lists(*pending[c.mPrep].mResult, *c.mLocal);
         };
         // <FS> LL_VK_PREP_PIPELINE (default OFF, 1 = on; 0 = the stages one after the other as before): the render map of every cascade is launched at once, and the cascades are then taken in order (the nearest, smallest one first): join its map,
         // merge, submit its builders, record it, while the pool is still making the maps of the later ones. The main thread's wait for the maps is hidden behind the recording of the earlier cascades. The flags

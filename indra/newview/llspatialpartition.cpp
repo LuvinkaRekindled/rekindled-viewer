@@ -5556,6 +5556,40 @@ void LLCullResult::clear()
     }
 }
 
+void LLCullResult::clearRenderLists()
+{
+    mAlphaListsSkipped = false;
+    if (mLazyTypes)
+    {
+        for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t) { mLazyGroups[t].clear(); mLazyDone[t] = false; }
+        mLazyTypes = false;
+    }
+    mAlphaGroupsSize = 0;
+    mAlphaGroupsEnd = &mAlphaGroups[0];
+    mRiggedAlphaGroupsSize = 0;
+    mRiggedAlphaGroupsEnd = &mRiggedAlphaGroups[0];
+    mSceneGroups.clear();
+    mAlphaFragGroups.clear();
+    mRigSources.clear();
+    mRigFromFragments = false;
+    mRigAlphaOn = false;
+    mAlphaResSkipped = false;
+    mGeoHandles.clear();
+    mGeoElided = false;
+    mGeoOwner.clear();
+    for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
+    {
+        drawinfo_list_t& render_map = mRenderMap[i];
+        U32 render_map_size = llmin((U32)render_map.size(), mRenderMapSize[i]);
+        for (U32 j = 0; j < render_map_size; j++)
+        {
+            render_map[j] = 0;
+        }
+        mRenderMapSize[i] = 0;
+        mRenderMapEnd[i] = &render_map.front();
+    }
+}
+
 LLCullResult::sg_iterator LLCullResult::beginVisibleGroups()
 {
     return &mVisibleGroups[0];
