@@ -8022,6 +8022,35 @@ static int rm_alpha_mode()
     return mode;
 }
 
+// J1 K6 S5a: the pass types no pool draws from the render map in a view the table serves: PASS_SHINY (a shadow caster: the shadow job reads the draw map itself; no pool draws it), PASS_ALPHA_INVISIBLE (the "highlight
+// alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (mGeoAlphaBits).
+static bool render_map_inert_type(U32 type)
+{
+    return type == LLRenderPass::PASS_SHINY || type == LLRenderPass::PASS_SHINY_RIGGED || type == LLRenderPass::PASS_ALPHA_INVISIBLE || type == LLRenderPass::PASS_ALPHA_INVISIBLE_RIGGED
+        || type == LLRenderPass::PASS_INVISI_SHINY || type == LLRenderPass::PASS_INVISI_SHINY_RIGGED;
+}
+
+// what the render map would have taken of a group the all-served shortcut skips (LL_VK_R2_VERIFY): the draw infos of the types this view draws that are neither the table's, nor alpha, nor inert; 0 when the group's
+// flags are current
+static U64 r2_left_over(const LLSpatialGroup* group, const LLPipeline::View& view)
+{
+    U64 left = 0;
+    for (const auto& kv : group->mDrawMap)
+    {
+        if (kv.second.empty() || !view.hasRenderType(kv.first) || kv.first == LLRenderPass::PASS_ALPHA || kv.first == LLRenderPass::PASS_ALPHA_RIGGED || render_map_inert_type(kv.first))
+        {
+            continue;
+        }
+        const int tn = ll_scene_geo_type_number(kv.first);
+        if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
+        {
+            continue;
+        }
+        left += kv.second.size();
+    }
+    return left;
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8097,6 +8126,7 @@ void LLPipeline::postSort(LLCamera &camera)
     const bool geo_list = geo_collect && ll_scene_geo_serving() && (hud_table || (view.mViewerCamera && ll_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
     const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
+    static const bool r2_verify = getenv("LL_VK_R2_VERIFY") != nullptr;       // (J1 K6 S5a: counts the draw infos a skipped group still holds that the render map would have taken)
     if (geo_elide)
     {
         sCull->mGeoElided = true;
@@ -8139,7 +8169,7 @@ void LLPipeline::postSort(LLCamera &camera)
                 static const bool lazy_env = !getenv("LL_VK_LAZY_TYPES") || getenv("LL_VK_LAZY_TYPES")[0] != '0';
                 const bool lazy_types_ok = lazy_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on();
                 const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on() && !getenv("LL_VK_RMCENSUS");
-                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
+                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; U64 mVerifyLeft = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
                 std::vector<MapChunk> chunks;
                 for (U32 b = 0; b < n_groups; b += chunk_size)
@@ -8181,9 +8211,15 @@ void LLPipeline::postSort(LLCamera &camera)
                                 chunk.mElideTris += group->mGeoServedTris;
                                 chunk.mIndices += group->mGeoServedTris;
                             }
-                            if (geo_elide && group->mGeoAllServed && r2_whole_groups)
+                            if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
                             {
                                 ++chunk.mElideWhole;
+                                if (group->mGeoAlphaBits && view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                                {
+                                    if (group->mGeoAlphaBits & 1) { local.pushAlphaGroup(group); }            // (the distance is updated by the main thread when the lists are joined)
+                                    if (group->mGeoAlphaBits & 2) { local.pushRiggedAlphaGroup(group); }
+                                }
+                                if (r2_verify) { chunk.mVerifyLeft += r2_left_over(group, view); }
                                 continue;
                             }
                         }
@@ -8308,6 +8344,14 @@ void LLPipeline::postSort(LLCamera &camera)
                         sGeoElideWhole += chunk.mElideWhole;
                         sGeoElideTris += chunk.mElideTris;
                         indices += chunk.mIndices;
+                        if (chunk.mVerifyLeft)
+                        {
+                            static U64 reported = 0;
+                            if (reported++ < 16)
+                            {
+                                LL_WARNS("VkScene") << "R2 verify: " << chunk.mVerifyLeft << " draw infos of a skipped all-served group are not the table's and not inert (the draw map changed since the fragment was attached?)" << LL_ENDL;
+                            }
+                        }
                     }
                     addTrianglesDrawn(indices);
                     sCull->mAlphaListsSkipped = skip_alpha_lists;
@@ -8416,13 +8460,52 @@ void LLPipeline::postSort(LLCamera &camera)
                 sGeoElideTris += group->mGeoServedTris;
                 addTrianglesDrawn(group->mGeoServedTris);          // (the statistic counted every draw info of the types the table draws)
             }
-            if (geo_elide && group->mGeoAllServed && r2_whole_groups)
+            if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
             {
-                // R2: nothing of this group is left for the render map (no alpha, no unserved type): the draw map is not walked
+                // R2: nothing of this group is left for the render map (only alpha, which the alpha group lists take): the draw map is not walked
                 ++sGeoElideWhole;
                 if (scene_stats)
                 {
                     scene_stats_group(group);
+                }
+                if (r2_verify)
+                {
+                    const U64 left = r2_left_over(group, view);
+                    if (left)
+                    {
+                        static U64 reported = 0;
+                        if (reported++ < 16)
+                        {
+                            LL_WARNS("VkScene") << "R2 verify: " << left << " draw infos of a skipped all-served group are not the table's and not inert" << LL_ENDL;
+                        }
+                    }
+                }
+                if (group->mGeoAlphaBits && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                {
+                    if (group->mGeoAlphaBits & 1)
+                    {
+                        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+                        {
+                            LLSpatialBridge* bridge = group->getSpatialPartition()->asBridge();
+                            if (bridge)
+                            {
+                                LLCamera trans_camera = bridge->transformCamera(camera);
+                                group->updateDistance(trans_camera);
+                            }
+                            else
+                            {
+                                group->updateDistance(camera);
+                            }
+                        }
+                        if (hasRenderType(LLDrawPool::POOL_ALPHA))
+                        {
+                            sCull->pushAlphaGroup(group);
+                        }
+                    }
+                    if ((group->mGeoAlphaBits & 2) && hasRenderType(LLDrawPool::POOL_ALPHA))
+                    {
+                        sCull->pushRiggedAlphaGroup(group);
+                    }
                 }
                 continue;
             }
@@ -10588,7 +10671,7 @@ bool scene_resident_on()
 // LL_VK_VIEWJOBS_AB=<s> alternates them (with LL_VK_VIEWJOBS unset the alternation is R1a)
 int view_jobs_bits()
 {
-    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 1; }();
+    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 3; }();       // (J1 K6 S5a: R2 on by default)
     static const int period = []() { const char* v = getenv("LL_VK_VIEWJOBS_AB"); return v ? atoi(v) : 0; }();
     if (period <= 0)
     {
@@ -12356,11 +12439,20 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
     group->mGeoServedMask = f->mGeoServedMask;
     group->mGeoServedTris = f->mGeoServedTris;
     {
-        // R2: all-served = every non-empty draw map type of the group is a table type whose draw infos the table all serves
-        bool all = group->mGeoServedMask != 0;
+        // R2: all-served = every non-empty draw map type of the group is a table type whose draw infos the table all serves, or a type no pool reads from the render map (J1 K6 S5a): the alpha draws (the alpha
+        // pool draws them from the group's own lists, the group is named by the alpha group lists below), and PASS_SHINY / PASS_ALPHA_INVISIBLE / PASS_INVISI_SHINY (caster or debug view only; the shadow job reads
+        // the draw map itself)
+        bool all = true;
+        U8 alpha_bits = 0;
         for (const auto& kv : group->mDrawMap)
         {
             if (kv.second.empty())
+            {
+                continue;
+            }
+            if (kv.first == LLRenderPass::PASS_ALPHA) { alpha_bits |= 1; continue; }
+            if (kv.first == LLRenderPass::PASS_ALPHA_RIGGED) { alpha_bits |= 2; continue; }
+            if (render_map_inert_type(kv.first))
             {
                 continue;
             }
@@ -12372,6 +12464,7 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
             }
         }
         group->mGeoAllServed = all;
+        group->mGeoAlphaBits = alpha_bits;
     }
     ++sGeoReg.mAttached;
     sGeoReg.mRetainWireBytes += blob.size();
@@ -12412,6 +12505,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     group->mGeoServedMask = 0;
     group->mGeoServedTris = 0;
     group->mGeoAllServed = false;
+    group->mGeoAlphaBits = 0;
     if (scene_geo_mode() >= 2)
     {
         scene_geo_attach(group, f);
