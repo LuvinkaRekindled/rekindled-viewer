@@ -15,6 +15,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkbridge.h"
+#include "llvknative.h"
 #include "llvktexanim.h"
 #include "llshaderprogram.h"
 #include "llshadermgr.h"
@@ -2940,9 +2941,14 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
     if (LLVkBridge::isReady())
     {
         Renderer& r = Renderer::instance();
-        if (r.getProgram() != (Program*)program)
+        Program* use = (Program*)program;
+        if (use && use->nativeIdx() != -1)
         {
-            r.setProgram((Program*)program);
+            use = nativeOverride(use);          // a native stand-in (llvknative.h), when its family is on
+        }
+        if (r.getProgram() != use)
+        {
+            r.setProgram(use);
         }
     }
     if (!binding)

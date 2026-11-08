@@ -53,6 +53,10 @@ public:
     const ProgramInfo& getInfo() const { return mInfo; }
     bool isValid() const { return mValid; }
     bool isBindless() const { return mBindless; }
+    // native shaders (llvknative.h): which native program stands in for this one (-2: not looked up yet, -1: none), and the copy of this program's current uniform values and sampler units into a native stand-in
+    S32 nativeIdx() const { return mNativeIdx; }
+    void setNativeIdx(S32 i) { mNativeIdx = i; }
+    void adoptFrom(const Program& src);
 
     // loose uniforms (write into the shadow copy; uploaded to the uniform ring on the next draw)
     bool hasUniform(const std::string& name) const { return mUniformIndex.count(name) != 0; }
@@ -110,6 +114,7 @@ private:
         int fetch_sub(int v, std::memory_order o) { return mN.fetch_sub(v, o); }
         int load(std::memory_order o) const { return mN.load(o); }
     } mJobs;
+    S32 mNativeIdx = -2;
     std::string mName;
     U32 mNameTag = ~0u;                 // the name as a draw stamp tag (set at its first draw, see Renderer::noteDraw)
     ProgramInfo mInfo;

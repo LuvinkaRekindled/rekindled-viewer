@@ -1,0 +1,623 @@
+/**
+ * @file llvknative.cpp
+ * @brief The native shader path: compile Vulkan GLSL written from scratch, and stand in for the viewer's translated programs at the draw. See llvknative.h.
+ */
+
+#if defined(LL_VULKAN)
+
+#include "linden_common.h"
+
+#include "llvknative.h"
+#include "llvkrenderer.h"
+#include "llvkcontext.h"
+
+#include <glslang/Public/ShaderLang.h>
+#include <regex>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
+
+#include <chrono>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <unordered_map>
+
+#include <windows.h>
+
+namespace LLVk
+{
+
+namespace
+{
+
+const char* const kBlockNames[UC_COUNT] = { "LLLooseUniforms", "LLLooseDraw", "LLLooseMaterial", "LLLooseLight", "LLLooseSkin" };
+
+bool read_file(const std::string& path, std::string& out)
+{
+    std::ifstream f(path, std::ios::binary);
+    if (!f)
+    {
+        return false;
+    }
+    std::ostringstream s;
+    s << f.rdbuf();
+    out = s.str();
+    return true;
+}
+
+// #include "lib/x.glsl": paths are relative to the native directory; every file read is remembered for hot reload
+class NativeIncluder : public glslang::TShader::Includer
+{
+public:
+    NativeIncluder(const std::string& root, std::vector<std::string>* files) : mRoot(root), mFiles(files) {}
+    IncludeResult* includeLocal(const char* header, const char* /*includer*/, size_t /*depth*/) override { return load(header); }
+    IncludeResult* includeSystem(const char* header, const char* /*includer*/, size_t /*depth*/) override { return load(header); }
+    void releaseInclude(IncludeResult* r) override
+    {
+        if (r)
+        {
+            delete static_cast<std::string*>(r->userData);
+            delete r;
+        }
+    }
+
+private:
+    IncludeResult* load(const char* header)
+    {
+        const std::string path = mRoot + "/" + header;
+        std::string* text = new std::string();
+        if (!read_file(path, *text))
+        {
+            delete text;
+            return nullptr;
+        }
+        if (mFiles)
+        {
+            mFiles->push_back(path);
+        }
+        return new IncludeResult(header, text->data(), text->size(), text);
+    }
+    std::string mRoot;
+    std::vector<std::string>* mFiles;
+};
+
+// the GLSL name of a reflected uniform from its GL type enum (the public part of glslang's reflection)
+std::string glsl_type_name(int gl)
+{
+    switch (gl)
+    {
+    case 0x1406: return "float";
+    case 0x8B50: return "vec2";
+    case 0x8B51: return "vec3";
+    case 0x8B52: return "vec4";
+    case 0x1404: return "int";
+    case 0x8B53: return "ivec2";
+    case 0x8B54: return "ivec3";
+    case 0x8B55: return "ivec4";
+    case 0x1405: return "uint";
+    case 0x8DC6: return "uvec2";
+    case 0x8DC7: return "uvec3";
+    case 0x8DC8: return "uvec4";
+    case 0x8B5A: return "mat2";
+    case 0x8B5B: return "mat3";
+    case 0x8B5C: return "mat4";
+    default: return "unknown";
+    }
+}
+
+// std140 bytes a member occupies (an array counts every element at a 16 byte stride)
+U32 std140_bytes(const std::string& type, U32 array_size)
+{
+    U32 elem = 4;
+    if (type == "vec2" || type == "ivec2" || type == "uvec2") elem = 8;
+    else if (type == "vec3" || type == "ivec3" || type == "uvec3") elem = 12;
+    else if (type == "vec4" || type == "ivec4" || type == "uvec4") elem = 16;
+    else if (type == "mat2") elem = 32;
+    else if (type == "mat3") elem = 48;
+    else if (type == "mat4") elem = 64;
+    if (array_size > 0)
+    {
+        return (elem + 15) / 16 * 16 * array_size;
+    }
+    return elem;
+}
+
+std::string stage_head(bool vertex, const std::vector<std::pair<std::string, std::string>>& defines)
+{
+    std::string head = "#version 460\n#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : require\n";
+    head += vertex ? "#define LL_VERTEX_STAGE 1\n" : "#define LL_FRAGMENT_STAGE 1\n";
+    for (const auto& d : defines)
+    {
+        head += "#define " + d.first + " " + d.second + "\n";
+    }
+    head += "#include \"ll_native.glsl\"\n";
+    return head;
+}
+
+} // namespace
+
+bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
+                          const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error)
+{
+    const auto t0 = std::chrono::steady_clock::now();
+    auto fail = [&](const std::string& why)
+    {
+        out.mError = why;
+        if (error)
+        {
+            *error = why;
+        }
+        LL_WARNS("VkNative") << "native program '" << name << "': " << why << LL_ENDL;
+        return false;
+    };
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return fail("glslang did not start");
+    }
+    out = ProgramInfo();
+    std::vector<std::string> read_files;
+    NativeIncluder includer(root, &read_files);
+    std::vector<std::unique_ptr<glslang::TShader>> shaders;
+    std::vector<std::string> keep;      // the text glslang points into
+    glslang::TProgram program;
+    bool have_stage[2] = { false, false };
+    const std::string stage_files[2] = { vertex_file, fragment_file };
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    keep.reserve(8);
+    for (int s = 0; s < 2; ++s)
+    {
+        if (stage_files[s].empty())
+        {
+            continue;
+        }
+        const std::string path = root + "/" + stage_files[s];
+        std::string body;
+        if (!read_file(path, body))
+        {
+            return fail("cannot read " + path);
+        }
+        read_files.push_back(path);
+        const EShLanguage lang = s == 0 ? EShLangVertex : EShLangFragment;
+        keep.push_back(stage_head(s == 0, defines));
+        keep.push_back(body);
+        const char* strings[2] = { keep[keep.size() - 2].c_str(), keep[keep.size() - 1].c_str() };
+        const int lengths[2] = { (int)keep[keep.size() - 2].size(), (int)keep[keep.size() - 1].size() };
+        const char* names[2] = { "native-prelude", stage_files[s].c_str() };
+        auto sh = std::make_unique<glslang::TShader>(lang);
+        sh->setStringsWithLengthsAndNames(strings, lengths, names, 2);
+        sh->setEnvInput(glslang::EShSourceGlsl, lang, glslang::EShClientVulkan, 460);
+        sh->setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+        sh->setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+        if (!sh->parse(GetDefaultResources(), 460, ECoreProfile, false, false, msgs, includer))
+        {
+            return fail("compile failed for " + stage_files[s] + ": " + sh->getInfoLog());
+        }
+        program.addShader(sh.get());
+        shaders.push_back(std::move(sh));
+        have_stage[s] = true;
+    }
+    if (!have_stage[0] && !have_stage[1])
+    {
+        return fail("no stages");
+    }
+    if (!program.link(msgs))
+    {
+        return fail(std::string("link failed: ") + program.getInfoLog());
+    }
+    program.buildReflection(EShReflectionAllBlockVariables);
+
+    // the loose blocks and the members in them
+    for (int bi = 0; bi < program.getNumUniformBlocks(); ++bi)
+    {
+        for (U32 k = 0; k < UC_COUNT; ++k)
+        {
+            if (program.getUniformBlock(bi).name == kBlockNames[k])
+            {
+                out.mBlockSizes[k] = (U32)program.getUniformBlock(bi).size;
+            }
+        }
+    }
+    for (int ui = 0; ui < program.getNumUniformVariables(); ++ui)
+    {
+        const glslang::TObjectReflection& r = program.getUniform(ui);
+        // a block without an instance name reports its members by their own names; the block they belong to says the class
+        const int bidx = program.getUniformBlockIndex(ui);
+        if (bidx < 0)
+        {
+            continue;
+        }
+        U32 k = UC_COUNT;
+        for (U32 c = 0; c < UC_COUNT; ++c)
+        {
+            if (program.getUniformBlock(bidx).name == kBlockNames[c])
+            {
+                k = c;
+            }
+        }
+        if (k == UC_COUNT)
+        {
+            continue;
+        }
+        std::string member = r.name;
+        const std::string prefix = std::string(kBlockNames[k]) + ".";
+        if (member.compare(0, prefix.size(), prefix) == 0)
+        {
+            member = member.substr(prefix.size());
+        }
+        const size_t br = member.find('[');
+        if (br != std::string::npos)
+        {
+            member.resize(br);
+        }
+        bool seen = false;
+        for (const LooseUniform& e : out.mUniforms)
+        {
+            seen = seen || e.mName == member;
+        }
+        if (seen)
+        {
+            continue;
+        }
+        LooseUniform lu;
+        lu.mName = member;
+        lu.mType = glsl_type_name(r.glDefineType);
+        lu.mArraySize = br != std::string::npos ? (U32)std::max(r.size, 1) : 0;
+        lu.mOffset = (U32)r.offset;
+        lu.mClass = (U8)k;
+        lu.mSize = std140_bytes(lu.mType, lu.mArraySize);
+        out.mUniforms.push_back(lu);
+    }
+    if (out.mUniforms.empty())
+    {
+        std::string dump;
+        for (int bi = 0; bi < program.getNumUniformBlocks(); ++bi) dump += " block[" + program.getUniformBlock(bi).name + "]";
+        for (int ui = 0; ui < program.getNumUniformVariables(); ++ui) dump += " uniform[" + program.getUniform(ui).name + "]";
+        LL_INFOS("VkNative") << "native program '" << name << "': no loose uniforms found; the reflection has:" << dump << LL_ENDL;
+    }
+    // texture slots: `uint ll_ti_<name>` in the draw block (ll_ti_cube_<name>: a cube map)
+    for (size_t i = 0; i < out.mUniforms.size(); ++i)
+    {
+        const LooseUniform& u = out.mUniforms[i];
+        if (u.mClass != UC_DRAW || u.mName.compare(0, 6, "ll_ti_") != 0)
+        {
+            continue;
+        }
+        SamplerInfo si;
+        si.mName = u.mName.substr(6);
+        si.mType = "sampler2D";
+        if (si.mName.compare(0, 5, "cube_") == 0)
+        {
+            si.mName = si.mName.substr(5);
+            si.mType = "samplerCube";
+        }
+        si.mBinding = (U32)out.mSamplers.size();
+        si.mIndexUniform = (S32)i;
+        out.mSamplers.push_back(si);
+    }
+    out.mBindless = !out.mSamplers.empty();
+    // vertex inputs and fragment outputs are read from the declarations (explicit locations are the contract)
+    {
+        static const std::regex in_re(R"(layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*in\s+(\w+)\s+(\w+)\s*;)");
+        static const std::regex out_re(R"(layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*out\s+(\w+)\s+(\w+)\s*;)");
+        if (have_stage[0])
+        {
+            const std::string& body = keep[1];
+            for (std::sregex_iterator it(body.begin(), body.end(), in_re), end; it != end; ++it)
+            {
+                out.mAttributeLocations.push_back((U32)atoi((*it)[1].str().c_str()));
+                out.mAttributeTypes.push_back((*it)[2].str());
+                out.mAttributes.push_back((*it)[3].str());
+            }
+        }
+        if (have_stage[1])
+        {
+            const std::string& body = keep.back();
+            for (std::sregex_iterator it(body.begin(), body.end(), out_re), end; it != end; ++it)
+            {
+                out.mOutputs.push_back((*it)[3].str());
+            }
+        }
+    }
+
+    for (int s = 0; s < 2; ++s)
+    {
+        if (!have_stage[s])
+        {
+            continue;
+        }
+        glslang::TIntermediate* inter = program.getIntermediate(s == 0 ? EShLangVertex : EShLangFragment);
+        if (!inter)
+        {
+            return fail("no intermediate for a stage");
+        }
+        spv::SpvBuildLogger logger;
+        glslang::SpvOptions options;
+        options.validate = false;
+        glslang::GlslangToSpv(*inter, out.mSpirv[s], &logger, &options);
+        if (out.mSpirv[s].empty())
+        {
+            return fail("SPIR-V generation produced nothing: " + logger.getAllMessages());
+        }
+    }
+    if (files)
+    {
+        *files = read_files;
+    }
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    const size_t words = out.mSpirv[0].size() + out.mSpirv[1].size();
+    LL_INFOS("VkNative") << "native program '" << name << "': " << out.mSpirv[0].size() << " + " << out.mSpirv[1].size() << " SPIR-V words, " << out.mUniforms.size() << " uniforms, " << out.mSamplers.size()
+        << " texture slots, compiled in " << ms << " ms" << LL_ENDL;
+    if (words > 20000 || ms > 150.0)
+    {
+        LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (20000 SPIR-V words, 150 ms): split it" << LL_ENDL;
+    }
+    return true;
+}
+
+// ---- the manifest, the families, the swap at the draw -------------------------------------------------------------------------
+
+namespace
+{
+
+// rt-debug.txt keys (the file the other live keys use), read at most twice a second
+int debug_key(const std::string& key, int def)
+{
+    struct Entry { int mValue; std::chrono::steady_clock::time_point mRead; };
+    static std::unordered_map<std::string, Entry> cache;
+    const auto now = std::chrono::steady_clock::now();
+    auto it = cache.find(key);
+    if (it != cache.end() && now - it->second.mRead < std::chrono::milliseconds(500))
+    {
+        return it->second.mValue;
+    }
+    static const std::string path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return std::string(e && e[0] ? e : "<work>/rt-debug.txt"); }();
+    int value = def;
+    std::string text;
+    if (read_file(path, text))
+    {
+        std::istringstream in(text);
+        std::string line;
+        const std::string prefix = key + "=";
+        while (std::getline(in, line))
+        {
+            if (line.compare(0, prefix.size(), prefix) == 0)
+            {
+                value = atoi(line.c_str() + prefix.size());
+            }
+        }
+    }
+    cache[key] = { value, now };
+    return value;
+}
+
+U64 file_stamp(const std::string& path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &d))
+    {
+        return 0;
+    }
+    return ((U64)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
+}
+
+struct Def
+{
+    std::string mTarget, mVertex, mFragment, mFamily;
+    std::vector<std::pair<std::string, std::string>> mDefines;
+    std::vector<std::pair<U32, U32>> mSpec;
+    std::unique_ptr<Program> mProgram;
+    std::vector<std::pair<std::string, U64>> mFiles;       // every file the program was built from and its time stamp
+    std::chrono::steady_clock::time_point mChecked;
+    bool mTried = false;
+    U64 mUses = 0;             // draws made with the native program (logged every 2000)
+};
+
+struct Manager
+{
+    std::string mRoot;
+    std::vector<std::unique_ptr<Def>> mDefs;
+    std::vector<std::pair<std::unique_ptr<Program>, U64>> mRetired;     // replaced programs, destroyed some frames later (the GPU may still draw with them)
+    bool mReady = false;
+};
+
+Manager& manager()
+{
+    static Manager m;
+    return m;
+}
+
+std::string trim(const std::string& s)
+{
+    size_t a = s.find_first_not_of(" \t\r\n");
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+void load_manifest(Manager& m)
+{
+    m.mReady = true;
+    const char* e = getenv("LL_VK_NATIVE_DIR");
+    if (e && e[0])
+    {
+        m.mRoot = e;
+    }
+    else
+    {
+        char exe[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        std::string dir = exe;
+        dir.resize(dir.find_last_of("\\/"));
+        m.mRoot = dir + "/app_settings/shaders/native";
+    }
+    for (char& c : m.mRoot)
+    {
+        if (c == '\\') c = '/';
+    }
+    std::string text;
+    if (!read_file(m.mRoot + "/manifest.txt", text))
+    {
+        LL_INFOS("VkNative") << "no native shaders (" << m.mRoot << "/manifest.txt)" << LL_ENDL;
+        return;
+    }
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line))
+    {
+        line = trim(line);
+        if (line.empty() || line[0] == '#')
+        {
+            continue;
+        }
+        std::vector<std::string> f;
+        std::istringstream ls(line);
+        std::string part;
+        while (std::getline(ls, part, '|'))
+        {
+            f.push_back(trim(part));
+        }
+        if (f.size() < 5 || f[0] != "override")
+        {
+            continue;
+        }
+        auto d = std::make_unique<Def>();
+        d->mTarget = f[1];
+        d->mVertex = f[2];
+        d->mFragment = f[3];
+        d->mFamily = f[4];
+        for (size_t i = 5; i < f.size(); ++i)
+        {
+            const size_t sp = f[i].find(' ');
+            const std::string kind = f[i].substr(0, sp);
+            const std::string rest = sp == std::string::npos ? "" : trim(f[i].substr(sp + 1));
+            const size_t eq = rest.find('=');
+            if (eq == std::string::npos)
+            {
+                continue;
+            }
+            if (kind == "define")
+            {
+                d->mDefines.push_back({ rest.substr(0, eq), rest.substr(eq + 1) });
+            }
+            else if (kind == "spec")
+            {
+                d->mSpec.push_back({ (U32)atoi(rest.c_str()), (U32)atoi(rest.c_str() + eq + 1) });
+            }
+        }
+        m.mDefs.push_back(std::move(d));
+    }
+    LL_INFOS("VkNative") << m.mDefs.size() << " native program(s) in " << m.mRoot << "/manifest.txt" << LL_ENDL;
+}
+
+bool stale(const Def& d)
+{
+    for (const auto& f : d.mFiles)
+    {
+        if (file_stamp(f.first) != f.second)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void build(Manager& m, Def& d)
+{
+    d.mTried = true;
+    ProgramInfo info;
+    std::vector<std::string> files;
+    std::string error;
+    d.mFiles.clear();
+    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, d.mDefines, info, &files, &error);
+    files.push_back(m.mRoot + "/manifest.txt");
+    for (const std::string& f : files)
+    {
+        d.mFiles.push_back({ f, file_stamp(f) });
+    }
+    if (!ok)
+    {
+        return;         // the old program of the same name keeps drawing (and the files are watched: the next save tries again)
+    }
+    info.mSpec = d.mSpec;
+    auto p = std::make_unique<Program>();
+    if (!p->create(d.mTarget + " (native)", info))
+    {
+        return;
+    }
+    if (d.mProgram)
+    {
+        m.mRetired.push_back({ std::move(d.mProgram), Context::instance().getFrameNumber() });
+    }
+    d.mProgram = std::move(p);
+}
+
+} // namespace
+
+Program* nativeOverride(Program* p)
+{
+    Manager& m = manager();
+    S32 idx = p->nativeIdx();
+    if (idx == -1)
+    {
+        return p;
+    }
+    if (!m.mReady)
+    {
+        load_manifest(m);
+    }
+    if (idx == -2)
+    {
+        idx = -1;
+        for (size_t i = 0; i < m.mDefs.size(); ++i)
+        {
+            if (m.mDefs[i]->mTarget == p->getName())
+            {
+                idx = (S32)i;
+            }
+        }
+        p->setNativeIdx(idx);
+        if (idx < 0)
+        {
+            return p;
+        }
+    }
+    Def& d = *m.mDefs[(size_t)idx];
+    if (debug_key("native_" + d.mFamily, 0) == 0)
+    {
+        return p;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!d.mTried)
+    {
+        build(m, d);
+        d.mChecked = now;
+    }
+    else if (now - d.mChecked > std::chrono::milliseconds(500))
+    {
+        d.mChecked = now;
+        if (debug_key("native_reload", 1) != 0 && stale(d))
+        {
+            LL_INFOS("VkNative") << "native program '" << d.mTarget << "': a source changed, rebuilding" << LL_ENDL;
+            build(m, d);
+        }
+        const U64 frame = Context::instance().getFrameNumber();
+        while (!m.mRetired.empty() && m.mRetired.front().second + 16 < frame)
+        {
+            m.mRetired.erase(m.mRetired.begin());
+        }
+    }
+    if (!d.mProgram || !d.mProgram->isValid())
+    {
+        return p;
+    }
+    d.mProgram->adoptFrom(*p);
+    if (++d.mUses % 2000 == 1)
+    {
+        LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
+    }
+    return d.mProgram.get();
+}
+
+} // namespace LLVk
+
+#endif // LL_VULKAN

@@ -719,6 +719,39 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
+// A native stand-in (llvknative.h) draws with the values the viewer set on the program it replaces: every loose uniform of the same name is copied (a texture slot is not: the draw writes
+// the stand-in's own), and the sampler units of the samplers of the same name.
+void Program::adoptFrom(const Program& src)
+{
+    for (const LooseUniform& u : mInfo.mUniforms)
+    {
+        if (u.mName.compare(0, 6, "ll_ti_") == 0)
+        {
+            continue;
+        }
+        auto it = src.mUniformIndex.find(u.mName);
+        if (it == src.mUniformIndex.end())
+        {
+            continue;
+        }
+        const LooseUniform& s = src.mInfo.mUniforms[it->second];
+        const U32 bytes = std::min(u.mSize, s.mSize);
+        if ((size_t)s.mOffset + bytes > src.mShadow[s.mClass].size() || (size_t)u.mOffset + bytes > mShadow[u.mClass].size())
+        {
+            continue;
+        }
+        writeRange(u.mClass, u.mOffset, bytes, &src.mShadow[s.mClass][s.mOffset]);
+    }
+    for (size_t i = 0; i < mInfo.mSamplers.size(); ++i)
+    {
+        const S32 j = src.findSampler(mInfo.mSamplers[i].mName);
+        if (j >= 0)
+        {
+            mSamplerUnits[i] = src.mSamplerUnits[(size_t)j];
+        }
+    }
+}
+
 void Program::writeRange(U32 cls, U32 offset, U32 size, const U8* data)
 {
     if (cls >= UC_COUNT || (size_t)offset + size > mShadow[cls].size())
@@ -802,6 +835,23 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
     VkPipelineShaderStageCreateInfo stages[3] = {};
     U32 stage_count = 0;
     const VkShaderStageFlagBits bits[3] = { VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT };
+    // native programs: specialization constants
+    VkSpecializationMapEntry spec_entries[16] = {};
+    U32 spec_data[16] = {};
+    VkSpecializationInfo spec_info = {};
+    if (!mInfo.mSpec.empty())
+    {
+        const U32 n = (U32)std::min<size_t>(mInfo.mSpec.size(), 16);
+        for (U32 i = 0; i < n; ++i)
+        {
+            spec_entries[i] = { mInfo.mSpec[i].first, i * 4, 4 };
+            spec_data[i] = mInfo.mSpec[i].second;
+        }
+        spec_info.mapEntryCount = n;
+        spec_info.pMapEntries = spec_entries;
+        spec_info.dataSize = n * 4;
+        spec_info.pData = spec_data;
+    }
     for (U32 s = 0; s < 3; ++s)
     {
         if (mModules[s])
@@ -810,6 +860,7 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
             stages[stage_count].stage = bits[s];
             stages[stage_count].module = mModules[s];
             stages[stage_count].pName = "main";
+            stages[stage_count].pSpecializationInfo = mInfo.mSpec.empty() ? nullptr : &spec_info;
             ++stage_count;
         }
     }
