@@ -455,6 +455,7 @@ public:
     void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class LLForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
     void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
+    void setShadowJobFlags();          // J1 K6 B: sViewJobsSkipStatic / sViewJobsSkipAlpha for the render map job of the shadow pass about to be prepared (the batch and the serial pass)
     void shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local);      // the visible groups [begin, end) of the cascade into `local` (a chunk of the render map job)
     void shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps);
     void shadowPrepSubmitBuilds(ShadowCascadePrep& prep);
