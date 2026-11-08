@@ -5534,6 +5534,7 @@ void LLCullResult::clear()
     mAlphaFragGroups.clear();
     mRigSources.clear();
     mRigFromFragments = false;
+    mRigAlphaOn = false;
     mAlphaResSkipped = false;
     mLodGroups.clear();
     mGeoGroups.clear();

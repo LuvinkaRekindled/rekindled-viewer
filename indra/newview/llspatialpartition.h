@@ -169,6 +169,7 @@ public:
     bool mAlphaFragTex = false;        // <FS> C5 J3: this alpha caster has a texture matrix and the group's fragment holds it in its texture matrix list (the cascades' shadow records carry it)
     // <FS> C4.1 alpha: this draw info's alpha caster entry went into the group's scene fragment (scene_fragment_fill_alpha): the cascades' render map job asks the fragment whether the worker holds it, no lookup by buffer ids
     bool mAlphaInFragment = false;
+    bool mRigAlphaSrc = false;          // <FS> J1 K3d: this rigged alpha masked caster is read by the cascades' alpha builder from its fragment item (GeoRigSource: mAlphaOk), not from the render map list
 
     // PBR material parameters
     LLGLTFMatRef mGLTFMaterial;        // <FS> C2.4: a handle (llfetchedgltfmaterial.h), not a counted pointer
@@ -293,6 +294,15 @@ struct GeoRigSource
     LLSkinRef mSkin;
     LLPointer<LLVertexBuffer> mVb;
     U32 mOffset = 0, mCount = 0, mStart = 0, mEnd = 0;
+    // J1 K3d: what a cascade's alpha caster entry needs besides that (the draw's textures as handles, the batch of textures if it has more than one, the texture matrix, the cutoff): the alpha builder makes the
+    // entry of a rigged alpha masked caster from this, without the draw info. mAlphaOk: the draw is one a record can carry (shadow_alpha_packet_ok when the fragment was made)
+    LLTexRef mTextures[4];
+    LLTexRef mTexture;
+    LLGLTFMatRef mGltf;                 // (the rigged glTF casters: the material is read when the entry is made, as the list path does)
+    U32 mTextureListSize = 0;
+    const LLMatrix4* mTextureMatrix = nullptr;
+    F32 mAlphaCutoff = 0.5f;
+    bool mAlphaOk = false;
     GeoRange range() const
     {
         GeoRange r;
@@ -316,6 +326,15 @@ inline GeoRigSource ll_geo_rig_source(const LLDrawInfo* p)
         s.mCount = p->mCount;
         s.mStart = p->mStart;
         s.mEnd = p->mEnd;
+        s.mTexture = p->mTexture;
+        s.mGltf = p->mGLTFMaterial;
+        s.mTextureListSize = (U32)p->mTextureList.size();
+        for (size_t t = 0; t < p->mTextureList.size() && t < 4; ++t)
+        {
+            s.mTextures[t] = p->mTextureList[t];
+        }
+        s.mTextureMatrix = p->mTextureMatrix;
+        s.mAlphaCutoff = p->mAlphaMaskCutoff;
     }
     return s;
 }
@@ -765,6 +784,7 @@ public:
     // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
     std::vector<LLSpatialGroup*> mSceneGroups;
     bool mAlphaResSkipped = false;      // <FS> J1 K3c: the render map job left out the alpha casters the worker holds as resident rows (the viewer's filter for them has nothing to drop)
+    bool mRigAlphaOn = false;           // <FS> J1 K3d: the render map job named the rigged alpha masked casters of the groups' fragments in mRigSources too (their draw infos are not in the lists, mode 1)
     bool mRigFromFragments = false;     // <FS> J1 K3a: the cascade's render map job made this result and named the rigged casters of the groups' fragments in mRigSources (a result made by another path has none: its lists hold every rigged draw)
     std::vector<std::pair<U32, const GeoRigSource*>> mRigSources;       // <FS> J1 K3a: a cascade's rigged casters that its group's fragment names (pass type of the rigged variant, the item's source), in the order the draw infos would have been pushed; the skin builder reads them
     std::vector<LLSpatialGroup*> mAlphaFragGroups;     // <FS> C5 J3: a cascade's groups whose alpha casters the render map job left out because the group's fragment names them and the worker does not hold them yet (renderShadow makes their entries from the fragments)
