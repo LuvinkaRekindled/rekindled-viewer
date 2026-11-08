@@ -367,6 +367,10 @@ namespace LLVkBridge
     bool shadowPacketsAvailable();
     // ... and the device can index sampled images at run time (the textured kind)
     bool shadowAlphaPacketsAvailable();
+    // J1 (Adam, 2026-11-07: "there has to be a way to get it to refresh after a shader loads"): the GPU pipelines the renderer builds in the background at start-up (the variants earlier sessions recorded) or for a draw
+    // that asked: how many are still being built, and how many there are (pre-warm queued + draw misses). After a shader change the heavy ones (ray queries inlined in the lit alpha programs) take minutes, and every
+    // draw that needs one is dropped until it is done: the world is lit wrong or not at all. The start-up waits for them (llstartup.cpp).
+    void pipelineBuilds(U64& pending, U64& total);
     // blob: mEntries ShadowPacketEntry, then mMatrices * 16 floats
     void shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes);
     // <FS> PLAN-avatars.md, rigged draws as rows, P1 (LL_VK_PALARENA): the frame's palettes are written by the viewer straight into memory the renderer owns (a host visible, mapped buffer with a device address),

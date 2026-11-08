@@ -26,6 +26,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "llvkbridge.h"       // <FS> J1: the start-up waits for the GPU pipelines (LLVkBridge::pipelineBuilds)
+
 #include "llappviewer.h"
 #include "llstartup.h"
 
@@ -1705,6 +1707,35 @@ bool idle_startup()
     // <FS:Techwolf Lupindo> fsdata support
     if (STATE_AGENTS_WAIT == LLStartUp::getStartupState())
     {
+        // <FS> J1: the login goes on when the GPU pipelines of the shaders are built, and BEFORE the region is connected (a first version of this wait stood at the end of the start-up, with the agent already in the
+        // region: the simulator dropped the connection after 150 s without agent updates). After a shader change, or on the first start on a machine, the heavy ones (the lighting pass with the ray queries inlined: about 3
+        // minutes) compile in the background and every draw that needs one is dropped until it is done: the world came up lit wrong or black (the black mirror). Nothing to wait for on a warm start (the driver's cache
+        // answers). The progress screen is up meanwhile, with the count. LL_VK_STARTUP_PIPELINE_WAIT=0 = as before; the wait ends after 15 minutes whatever.
+        {
+            static const bool wait_on = !getenv("LL_VK_STARTUP_PIPELINE_WAIT") || getenv("LL_VK_STARTUP_PIPELINE_WAIT")[0] != '0';
+            static LLTimer wait_timer;
+            static bool wait_started = false;
+            U64 pending = 0, total = 0;
+            LLVkBridge::pipelineBuilds(pending, total);
+            if (wait_on && pending > 0 && (!wait_started || wait_timer.getElapsedTimeF32() < 900.f))
+            {
+                if (!wait_started)
+                {
+                    wait_started = true;
+                    wait_timer.reset();
+                    LL_INFOS("AppInit") << "login waits for " << pending << " of " << total << " GPU pipelines to be built" << LL_ENDL;
+                }
+                set_startup_status(0.05f, llformat("Preparing the graphics for your GPU (first start or after an update only): %llu of %llu left", (unsigned long long)pending, (unsigned long long)total), "");
+                do_startup_frame();
+                ms_sleep(20);
+                return false;
+            }
+            if (wait_started)
+            {
+                wait_started = false;
+                LL_INFOS("AppInit") << "login waited " << wait_timer.getElapsedTimeF32() << " s for the GPU pipelines" << LL_ENDL;
+            }
+        }
         static LLFrameTimer agents_timer;
         const F32 agents_time = agents_timer.getElapsedTimeF32();
         const F32 MAX_AGENTS_TIME = 15.f;
