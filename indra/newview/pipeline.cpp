@@ -11805,7 +11805,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     }
     const LLSpatialPartition* partition = group->getSpatialPartition();
     const U32 ptype = partition ? partition->mPartitionType : 0;
-    const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD || group->isHUDGroup();
+    const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE;       // (J1 K6 S1: the HUD's alpha draws have plans too: the HUD alpha pass draws them from the fragments)
     const bool table = scene_geo_mode() >= 2 && !whole_old && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed() && (scene_alpha_only() & 64)));
     for (LLDrawInfo* p : it->second)
     {
