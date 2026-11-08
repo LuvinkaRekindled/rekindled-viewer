@@ -5416,6 +5416,27 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     }
     const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
+    static thread_local std::vector<LLVkBridge::ShadowSkinEntry> expanded;
+    if (h.mEntryBytes == sizeof(LLVkBridge::ShadowSkinSlim))
+    {
+        // J1 K3b: the slim entries of a record no ray scene reads: expanded here, the rest of the handler is as it was
+        const LLVkBridge::ShadowSkinSlim* slim = (const LLVkBridge::ShadowSkinSlim*)blob;
+        expanded.assign(h.mEntries, LLVkBridge::ShadowSkinEntry{});
+        for (U32 k = 0; k < h.mEntries; ++k)
+        {
+            LLVkBridge::ShadowSkinEntry& x = expanded[k];
+            x.mVertexBuffer = slim[k].mVertexBuffer;
+            x.mIndexBuffer = slim[k].mIndexBuffer;
+            x.mFirstIndex = slim[k].mFirstIndex;
+            x.mIndexCount = slim[k].mIndexCount;
+            x.mMatrix = slim[k].mMatrix;
+            x.mWeightOffset = slim[k].mWeightOffset;
+            x.mPaletteOffset = slim[k].mPaletteOffset;
+            x.mJoints = slim[k].mJoints;
+        }
+        entries = expanded.data();
+        matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinSlim) * h.mEntries);
+    }
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(SkinGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     Renderer::ScratchAlloc palettes;

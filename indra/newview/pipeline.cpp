@@ -15592,7 +15592,16 @@ struct ShadowLodKey
 {
     const void* mVb;
     U32 mOffset, mCount, mLevel;
-    bool operator<(const ShadowLodKey& o) const { return std::tie(mVb, mOffset, mCount, mLevel) < std::tie(o.mVb, o.mOffset, o.mCount, o.mLevel); }
+    bool operator==(const ShadowLodKey& o) const { return mVb == o.mVb && mOffset == o.mOffset && mCount == o.mCount && mLevel == o.mLevel; }
+};
+struct ShadowLodKeyHash
+{
+    size_t operator()(const ShadowLodKey& k) const
+    {
+        size_t h = (size_t)(uintptr_t)k.mVb * 1099511628211ull;
+        h ^= ((size_t)k.mOffset << 20) ^ ((size_t)k.mCount << 3) ^ k.mLevel;
+        return h * 0x9E3779B97F4A7C15ull;
+    }
 };
 struct ShadowLodJob
 {
@@ -15710,7 +15719,7 @@ U64 shadow_lod_fingerprint(const GeoRange& p, const LLVertexBuffer* vb, const U1
 
 // the cache, the thread and the lists waiting for their buffer: one set for the cascades and the main view (a list is keyed by buffer, range and level of the error in mm, whoever asks)
 static ShadowLodThread* sSlThread = new ShadowLodThread();        // (never freed: the thread outlives the statics at exit)
-static std::map<ShadowLodKey, ShadowLodEntry> sSlCache;
+static std::unordered_map<ShadowLodKey, ShadowLodEntry, ShadowLodKeyHash> sSlCache;       // (a hash table: a lookup per entry per cascade per frame)
 static std::vector<ShadowLodKey> sSlPending;                      // results whose buffer is not made yet
 static U64 sSlTicket = 0, sSlNotWorth = 0, sSlQueued = 0, sSlUnready = 0;
 
@@ -15940,10 +15949,12 @@ bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& cou
     return hit;
 }
 
-// returns true when at least one entry of the cascade pass names a simplified list
-static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::vector<LLVkBridge::ShadowSkinEntry>& entries)
+// J1 K3b: the entries of a cascade pass that name a simplified list, as patches (entry number, the list's index buffer, its count): the record is made with them, no copy of the entries; true when there is one
+struct ShadowLodPatch { U32 mIndex, mIndexBuffer, mCount; };
+static bool shadow_lod_patches(U32 pass, const std::vector<GeoRange>& draws, size_t entry_count, std::vector<ShadowLodPatch>& patches)
 {
-    if (pass > 3 || !shadow_lod_on() || draws.size() != entries.size())
+    patches.clear();
+    if (pass > 3 || !shadow_lod_on() || draws.size() != entry_count)
     {
         return false;
     }
@@ -15975,9 +15986,7 @@ static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::
         {
             continue;
         }
-        entries[i].mIndexBuffer = ib_name;
-        entries[i].mFirstIndex = 0;
-        entries[i].mIndexCount = count;
+        patches.push_back({ (U32)i, ib_name, count });
         ++patched;
         tris_before += draws[i].mCount / 3;
         tris_after += count / 3;
@@ -15993,6 +16002,23 @@ static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::
         sSlQueued = sSlUnready = sSlNotWorth = 0;
     }
     return any;
+}
+
+// (the patches applied to a copy of the entries: the record the ray scene reads and the one a pass sends with the full entries)
+static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::vector<LLVkBridge::ShadowSkinEntry>& entries)
+{
+    static thread_local std::vector<ShadowLodPatch> patches;
+    if (!shadow_lod_patches(pass, draws, entries.size(), patches))
+    {
+        return false;
+    }
+    for (const ShadowLodPatch& p : patches)
+    {
+        entries[p.mIndex].mIndexBuffer = p.mIndexBuffer;
+        entries[p.mIndex].mFirstIndex = 0;
+        entries[p.mIndex].mIndexCount = p.mCount;
+    }
+    return true;
 }
 
 static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPipeline::ShadowSkinBuild& b)
@@ -27424,16 +27450,29 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             verify_shadow_skin(*source, built);
         }
         // <FS> shadow caster LOD: a cascade's rigged draws that have a simplified index list name it (a copy of the entries: the builder's are shared)
+        // J1 K3b (LL_VK_SHADOW_SLIM, default on): a record no ray scene reads (and whose palettes are ids of the frame's list) carries the slim entries, a third of the size, and the LOD is applied as patches while they
+        // are made: no copy of the entries; else the full entries with a patched copy as before
+        static const bool slim_env = !getenv("LL_VK_SHADOW_SLIM") || atoi(getenv("LL_VK_SHADOW_SLIM")) != 0;
+        const bool slim = slim_env && !rt_skip && source->mShared && source->mPalettes.empty() && LLVkBridge::rtShadowMode() == 0;
         static thread_local std::vector<LLVkBridge::ShadowSkinEntry> lod_scratch;       // (reused: the entries were copied into a fresh vector for every record)
+        static thread_local std::vector<ShadowLodPatch> lod_patches;
         std::vector<LLVkBridge::ShadowSkinEntry>& lod_entries = lod_scratch;
         lod_entries.clear();
+        lod_patches.clear();
         if (!rt_skip && !source->mEntries.empty())
         {
             LL_CPU_ZONE("packets: shadow rigged: LOD");
-            lod_entries = source->mEntries;
-            if (!shadow_lod_apply(shadow_pass_index(), source->mDraws, lod_entries))
+            if (slim)
             {
-                lod_entries.clear();
+                shadow_lod_patches(shadow_pass_index(), source->mDraws, source->mEntries.size(), lod_patches);
+            }
+            else
+            {
+                lod_entries = source->mEntries;
+                if (!shadow_lod_apply(shadow_pass_index(), source->mDraws, lod_entries))
+                {
+                    lod_entries.clear();
+                }
             }
         }
         const std::vector<LLVkBridge::ShadowSkinEntry>& entries = lod_entries.empty() ? source->mEntries : lod_entries;
@@ -27459,11 +27498,38 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LL_CPU_ZONE("packets: shadow rigged: record");
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
-            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
-            memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
-            LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+            if (slim)
+            {
+                header.mEntryBytes = sizeof(LLVkBridge::ShadowSkinSlim);
+                static thread_local std::vector<U8> slim_blob;      // (the stream copies a record: the buffer is reused)
+                const size_t slim_bytes = entries.size() * sizeof(LLVkBridge::ShadowSkinSlim);
+                slim_blob.resize(slim_bytes + matrices.size() * sizeof(F32));
+                LLVkBridge::ShadowSkinSlim* out_slim = (LLVkBridge::ShadowSkinSlim*)slim_blob.data();
+                size_t next_patch = 0;
+                for (size_t k = 0; k < entries.size(); ++k)
+                {
+                    const LLVkBridge::ShadowSkinEntry& e = entries[k];
+                    LLVkBridge::ShadowSkinSlim x = { e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount, e.mMatrix, e.mWeightOffset, e.mPaletteOffset, e.mJoints };
+                    if (next_patch < lod_patches.size() && lod_patches[next_patch].mIndex == (U32)k)
+                    {
+                        x.mIndexBuffer = lod_patches[next_patch].mIndexBuffer;
+                        x.mFirstIndex = 0;
+                        x.mIndexCount = lod_patches[next_patch].mCount;
+                        ++next_patch;
+                    }
+                    out_slim[k] = x;
+                }
+                memcpy(slim_blob.data() + slim_bytes, matrices.data(), matrices.size() * sizeof(F32));
+                LLVkBridge::shadowPackets(header, slim_blob.data(), slim_blob.size());
+            }
+            else
+            {
+                std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+                memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
+                memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
+                memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
+                LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+            }
             gShadowDrawStats.mSkinEntries += entries.size();
             gShadowDrawStats.mSkinPalettes += palette_count;
             ++gShadowDrawStats.mSkinRecords;
