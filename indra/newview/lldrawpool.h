@@ -432,9 +432,6 @@ public:
     static bool pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
     static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
-    static void kickGeometryBuild(U32 type, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
-    static std::string geometryBuildStats();      // what became of the builds since the last call, for the log
-    static void finishGeometryBuilds(LLCullResult* cull = nullptr);     // those of this cull result (all when null)
     void pushUntexturedBatch(LLDrawInfo& params);
     void pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     static bool uploadMatrixPalette(LLDrawInfo& params);

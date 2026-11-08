@@ -1226,7 +1226,7 @@ void LLViewerTextureList::logSummary()
             << wants_data << "; deleted: " << deleted << "); by boost level" << boost_text << "; by fetched texture type" << ft_text << "; first ones:" << samples << LL_ENDL;
     }
     extern U32 gEarlySortResorts;
-    LL_INFOS("VkTex") << LLRenderPass::geometryBuildStats() << "; the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
+    LL_INFOS("VkTex") << "the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }
 
 // <FS> doc/vulkan/EXPIRY-design.md: where the video memory the OS reports goes. Textures are the per-texture sums of the images with a GL texture; the rest are the arena blocks (bytes alive, bytes in use), the

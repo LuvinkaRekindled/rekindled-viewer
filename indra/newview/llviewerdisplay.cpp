@@ -967,7 +967,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
-        LLRenderPass::finishGeometryBuilds();       // <FS> builds of the last frame that nobody took must be done before the cull result is cleared
         LLBuilderGuard::sMainMapLive = false;
         {
             LL_CPU_ZONE("display: updateCull");
@@ -992,10 +991,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gPipeline.stateSort(camera, result, true);
             early_epoch = LLBuilderGuard::sEpoch.load();
             LLBuilderGuard::sMainMapLive = true;        // from here a change to a group of the main view is noticed (see LLBuilderGuard)
-            {
-                LL_CPU_ZONE("display: start geometry builds (early)");
-                LLDrawPoolMaterials::kickGeometryBuilds();
-            }
         }
 
 
@@ -1103,7 +1098,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 {
                     LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << gEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
                 }
-                LLRenderPass::finishGeometryBuilds();
                 LLBuilderGuard::sMainMapLive = false;
                 gPipeline.dropOcclusionMarks(result);       // the groups marked for a query by the first cull would never be queried again
                 LL_CPU_ZONE("display: cull + stateSort (again)");
