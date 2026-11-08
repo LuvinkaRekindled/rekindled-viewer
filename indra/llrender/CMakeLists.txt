@@ -46,6 +46,7 @@ set(llrender_SOURCE_FILES
     llvkrenderer.cpp
     llvkrt.cpp
     llvkshader.cpp
+    llvknative.cpp
     llvkstate.cpp
     llvkvma.cpp
     llrendercommonfunc.cpp
@@ -99,6 +100,7 @@ set(llrender_HEADER_FILES
     llvkrenderer.h
     llvkrt.h
     llvkshader.h
+    llvknative.h
     llvkstate.h
     llvktex.h
     llvkformat.h

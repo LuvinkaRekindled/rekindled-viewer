@@ -84,6 +84,7 @@ struct ProgramInfo
     std::vector<std::string> mAttributeTypes;   // their GLSL types ("vec4", "int", ...)
     std::vector<std::string> mOutputs;          // fragment outputs
     std::vector<U32> mSpirv[3];                 // indexed by StageSource::Stage
+    std::vector<std::pair<U32, U32>> mSpec;     // native programs: specialization constants (constant_id, value), applied to every stage when a pipeline is made
     std::string mError;
 };
 
