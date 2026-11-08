@@ -426,7 +426,7 @@ public:
     // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
     // (a pull program); the draws it cannot carry are returned to be drawn the old way
     static bool deferredPacketsEnabled();
-    static void pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials = nullptr, bool rigged = false);
+    static void pushGeometryPackets(U32 type, bool rigged = false);
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
     static bool pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)

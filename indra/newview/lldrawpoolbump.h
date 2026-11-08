@@ -60,11 +60,11 @@ public:
     S32 numBumpPasses();
 
     void beginFullbrightShiny(bool table = false);
-    void renderFullbrightShiny(bool table = false);
+    void renderFullbrightShiny();
     void endFullbrightShiny();
 
     void beginBump(bool table = false);
-    void renderBump(U32 pass = LLRenderPass::PASS_BUMP, bool table = false);
+    void renderBump();
     void endBump(U32 pass = LLRenderPass::PASS_BUMP);
 
     static void bindCubeMap(LLShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel);

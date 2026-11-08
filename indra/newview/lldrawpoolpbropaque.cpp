@@ -60,55 +60,20 @@ void LLDrawPoolGLTFPBR::renderDeferred(S32 pass)
         LL::GLTFSceneManager::instance().renderOpaque();
     }
 
-    // <FS> S6 X4: the glTF draws from the scene table (pbr pull program, rows with the PBR values); what it cannot carry (double sided, texture matrix) is drawn the old way
-    if (deferredPacketsEnabled() && gPbrOpaquePullReady)
+    // <FS> J1 K6 A3: the glTF draws are scene table records (pbr pull programs, rows with the PBR values)
+    if (gPbrOpaquePullReady)
     {
-        std::vector<LLDrawInfo*> fallback;
         gDeferredPBROpaquePullProgram.bind();
-        pushGeometryPackets(mRenderType, fallback);
-        if (!fallback.empty())
-        {
-            ll_pull_or(&gDeferredPBROpaqueProgram)->bind();       // S6.6
-            for (LLDrawInfo* params : fallback)
-            {
-                pushGLTFBatch(*params);
-            }
-        }
-
-        LL::GLTFSceneManager::instance().render(true, true);
-
-        if (ll_rigged_packets_enabled() && gPbrOpaquePullSkinReady)
-        {
-            fallback.clear();
-            gDeferredPBROpaquePullSkinProgram.bind();
-            pushGeometryPackets(mRenderType + 1, fallback, nullptr, true);
-            if (!fallback.empty())
-            {
-                gDeferredPBROpaqueProgram.bind(true);
-                const LLVOAvatar* lastAvatar = nullptr;
-                U64 lastMeshId = 0;
-                bool skipLastSkin = false;
-                for (LLDrawInfo* params : fallback)
-                {
-                    pushRiggedGLTFBatch(*params, lastAvatar, lastMeshId, skipLastSkin);
-                }
-            }
-        }
-        else
-        {
-            gDeferredPBROpaqueProgram.bind(true);
-            pushRiggedGLTFBatches(mRenderType + 1);
-        }
-        return;
+        pushGeometryPackets(mRenderType);
     }
-
-    gDeferredPBROpaqueProgram.bind();
-    pushGLTFBatches(mRenderType);
 
     LL::GLTFSceneManager::instance().render(true, true);
 
-    gDeferredPBROpaqueProgram.bind(true);
-    pushRiggedGLTFBatches(mRenderType + 1);
+    if (gPbrOpaquePullReady && ll_rigged_packets_enabled() && gPbrOpaquePullSkinReady)
+    {
+        gDeferredPBROpaquePullSkinProgram.bind();
+        pushGeometryPackets(mRenderType + 1, true);
+    }
 }
 
 S32 LLDrawPoolGLTFPBR::getNumPostDeferredPasses()
@@ -120,73 +85,26 @@ void LLDrawPoolGLTFPBR::renderPostDeferred(S32 pass)
 {
     if (LLPipeline::sRenderingHUDs)
     {
-        // <FS> J1 K6 S1: the HUD's glTF opaque / mask draws from the scene table (the HUD's cull result was told to the worker before the passes), what the rows cannot carry the old way
+        // <FS> J1 K6 S1: the HUD's glTF opaque / mask draws from the scene table (the HUD's cull result was told to the worker before the passes)
         if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(mRenderType)))
         {
-            std::vector<LLDrawInfo*> fallback;
             gHUDPBROpaquePullProgram.bind();
-            pushGeometryPackets(mRenderType, fallback);
-            if (!fallback.empty())
-            {
-                gHUDPBROpaqueProgram.bind();
-                for (LLDrawInfo* params : fallback)
-                {
-                    pushGLTFBatch(*params);
-                }
-            }
-            return;
+            pushGeometryPackets(mRenderType);
         }
-        gHUDPBROpaqueProgram.bind();
-        pushGLTFBatches(mRenderType);
     }
     else if (mRenderType == LLPipeline::RENDER_TYPE_PASS_GLTF_PBR) // HACK -- don't render glow except for the non-alpha masked implementation
     {
         gRender.setColorMask(false, true);
-        if (deferredPacketsEnabled() && gAlphaGlowPbrReady)
-        {   // S6 X4: the glTF glow from the scene table (the PBR glow pull programs of the alpha glow, the same rows)
-            std::vector<LLDrawInfo*> fallback;
+        if (gAlphaGlowPbrReady)
+        {   // J1 K6 A3: the glTF glow from the scene table (the PBR glow pull programs of the alpha glow, the same rows)
             gPBRGlowPullProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW, fallback);
-            if (!fallback.empty())
-            {
-                gPBRGlowProgram.bind();
-                for (LLDrawInfo* params : fallback)
-                {
-                    pushGLTFBatch(*params);
-                }
-            }
+            pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW);
             if (ll_rigged_packets_enabled())
             {
-                fallback.clear();
                 gPBRGlowPullSkinProgram.bind();
-                pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW_RIGGED, fallback, nullptr, true);
-                if (!fallback.empty())
-                {
-                    gPBRGlowProgram.bind(true);
-                    const LLVOAvatar* lastAvatar = nullptr;
-                    U64 lastMeshId = 0;
-                    bool skipLastSkin = false;
-                    for (LLDrawInfo* params : fallback)
-                    {
-                        pushRiggedGLTFBatch(*params, lastAvatar, lastMeshId, skipLastSkin);
-                    }
-                }
+                pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW_RIGGED, true);
             }
-            else
-            {
-                gPBRGlowProgram.bind(true);
-                pushRiggedGLTFBatches(LLRenderPass::PASS_GLTF_GLOW_RIGGED);
-            }
-            gRender.setColorMask(true, false);
-            return;
         }
-        gPBRGlowProgram.bind();
-        pushGLTFBatches(LLRenderPass::PASS_GLTF_GLOW);
-
-        gPBRGlowProgram.bind(true);
-        pushRiggedGLTFBatches(LLRenderPass::PASS_GLTF_GLOW_RIGGED);
-
         gRender.setColorMask(true, false);
     }
 }
-
