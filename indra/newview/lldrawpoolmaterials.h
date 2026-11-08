@@ -65,7 +65,6 @@ public:
     S32 getNumDeferredPasses() override;
     void beginDeferredPass(S32 pass) override;
     void endDeferredPass(S32 pass) override;
-    static void kickGeometryBuilds();     // <FS> see lldrawpoolmaterials.cpp
     void renderDeferred(S32 pass) override;
 };
 

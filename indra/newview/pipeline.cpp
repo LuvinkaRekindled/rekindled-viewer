@@ -17438,11 +17438,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             checkRenderMapLive(*sCull);
         }
 
-        // <FS> the geometry records of the passes below start building now, on the async pool; pushGeometryPackets() takes each when its pass draws
-        {
-            LL_CPU_ZONE("deferred: start geometry builds");
-            LLDrawPoolMaterials::kickGeometryBuilds();       // (nothing when the early sort already started them for this cull result)
-        }
         if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
         {
             {
@@ -17541,7 +17536,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         gRender.setColorMask(true, false);
 
-        LLRenderPass::finishGeometryBuilds(getCull());       // <FS> builds no pass asked for (a hidden pool) must not run on into the next frame's cull
         if (&camera == LLViewerCamera::getInstance() && !gCubeSnapshot)
         {
             ll_scene_geo_frame_end();       // <FS> S3 G3
