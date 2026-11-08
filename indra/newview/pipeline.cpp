@@ -25664,63 +25664,79 @@ static void rt_name_rigged_main_view()
         std::unordered_map<const F32*, U32> palette_offsets;
         const bool note_shared = ll_palette_shared();       // P3: the notes name their palettes by id like the shadow records (kind 6 with mFragment = 1)
         // <FS> one rigged draw named to the ray scene (S4 B: the render map or, for the draws the scene table serves, the visible fragments' items)
-        auto name_one = [&](LLDrawInfo* params)
+        // J1 K6 R1: what one rigged draw is named from: a draw info (the render map's leftovers) or a fragment item's source (GeoRigSource, with its own material source): the same fields either way
+        struct RigNamed
         {
-                const LLVertexBuffer* vb = params->mVertexBuffer.get();
-                if (!params->mCount || !params->mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
-                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || params->mSkinInfo.isNull())
+            LLVOAvatar* mAvatar; const LLMeshSkinInfo* mSkin; const LLVertexBuffer* mVb; U32 mOffset, mCount, mStart, mEnd;
+            const LLMatrix4* mModel; LLDrawInfo* mInfo; const RtMatSource* mMat;
+        };
+        auto name_view = [&](const RigNamed& d)
+        {
+                const LLVertexBuffer* vb = d.mVb;
+                if (!d.mCount || !d.mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
+                    || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4) || !d.mSkin)
                 {
                     return;
                 }
-                if (!rt_name_avatar_due(params->mAvatar.get()))
+                if (!rt_name_avatar_due(d.mAvatar))
                 {
                     return;
                 }
                 LLVkBridge::ShadowSkinEntry e = {};
-                if (!(note_shared ? ll_frame_palette(params->mAvatar.get(), params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
-                                  : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+                if (!(note_shared ? ll_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints)
+                                  : shadow_palette(d.mAvatar, d.mSkin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
                 {
                     return;
                 }
-                if (pose_census && params->mAvatar.get() && params->mSkinInfo.get())
+                if (pose_census)
                 {
-                    const LLVOAvatar::MatrixPaletteCache& mpc = params->mAvatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
-                    auto best = pose_best.find(params->mAvatar.get());
+                    const LLVOAvatar::MatrixPaletteCache& mpc = d.mAvatar->updateSkinInfoMatrixPalette(d.mSkin);
+                    auto best = pose_best.find(d.mAvatar);
                     if (best == pose_best.end() || best->second->size() < mpc.mGLMp.size())
                     {
-                        pose_best[params->mAvatar.get()] = &mpc.mGLMp;
+                        pose_best[d.mAvatar] = &mpc.mGLMp;
                     }
                 }
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
-                e.mFirstIndex = params->mOffset;
-                e.mIndexCount = params->mCount;
+                e.mFirstIndex = d.mOffset;
+                e.mIndexCount = d.mCount;
                 e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                e.mVertexFirst = params->mStart;
-                e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-                e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-                e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
+                e.mVertexFirst = d.mStart;
+                e.mVertexCount = (U32)d.mEnd + 1u - d.mStart;
+                e.mAvatarId = (U32)(((uintptr_t)d.mAvatar) >> 4);
+                e.mSkinId = (U32)(((uintptr_t)d.mSkin) >> 4);
                 {
-                    const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
-                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
+                    const LLVector3 avatar_position = d.mAvatar->getRenderPosition();
                     e.mAvatarPos[0] = avatar_position.mV[0];
                     e.mAvatarPos[1] = avatar_position.mV[1];
                     e.mAvatarPos[2] = avatar_position.mV[2];
-                    e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
+                    e.mAvatarKind = rt_avatar_kind(d.mAvatar);
                 }
-                rt_skin_material(e, params, vb);
-                if (params->mModelMatrix)
+                if (d.mInfo)
                 {
-                    auto it = matrix_numbers.find(params->mModelMatrix);
+                    rt_skin_material(e, d.mInfo, vb);
+                }
+                else if (d.mMat)
+                {
+                    rt_skin_material_src(e, *d.mMat, vb);
+                }
+                if (d.mModel)
+                {
+                    auto it = matrix_numbers.find(d.mModel);
                     if (it == matrix_numbers.end())
                     {
-                        it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                        const F32* m = (const F32*)params->mModelMatrix->mMatrix;
+                        it = matrix_numbers.emplace(d.mModel, (U32)(matrices.size() / 16)).first;
+                        const F32* m = (const F32*)d.mModel->mMatrix;
                         matrices.insert(matrices.end(), m, m + 16);
                     }
                     e.mMatrix = it->second;
                 }
                 entries.push_back(e);
+        };
+        auto name_one = [&](LLDrawInfo* params)
+        {
+            name_view({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, (U32)params->mStart, (U32)params->mEnd, params->mModelMatrix, params, nullptr });
         };
         {
             LL_CPU_ZONE("rt name: opaque render maps");
@@ -25750,9 +25766,10 @@ static void rt_name_rigged_main_view()
                     {
                         continue;
                     }
-                    for (U32 index : f->mGeoRigged)
+                    for (const GeoRigSource& rig : f->mGeoRiggedSrc)
                     {
-                        name_one(f->mGeo[index].mInfo);
+                        // (J1 K6 R1: the served rigged items are named from their sources, no draw info read)
+                        name_view({ rig.mAvatar.get(), rig.mSkin.get(), rig.mVb.get(), rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, nullptr, &rig.mMat });
                     }
                 }
             }
