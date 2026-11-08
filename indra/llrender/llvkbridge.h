@@ -148,6 +148,7 @@ namespace LLVkBridge
         U32 mTexmats = 0;           // kind 1: texture matrices (16 floats each) after the palettes; an entry names its matrix by mTexMatrix
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
         U32 mViewerFrame = 0;       // P3: the viewer's frame (gFrameCount) a record that names palettes by id is made in: the id table it is resolved in (kind 8: mFragment == 1)
+        U32 mEntryBytes = 0;        // J1 K3b: kind 2: 0 = ShadowSkinEntry entries, sizeof(ShadowSkinSlim) = the slim ones (the fields the shadow skin pull program reads; palettes by id, no ray scene fields)
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
     // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.
@@ -169,6 +170,9 @@ namespace LLVkBridge
     // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
     // ray scene materials (LL_VK_RT_MATERIALS): mMaterial = RtMaterialDef id of the draw (0 = none), mNormalOffset / mTexcoordOffset / mColorOffset = byte offsets of those arrays in the vertex
     // buffer (0 = none)
+    // <FS> J1 K3b: what a cascade's rigged record needs per draw when no ray scene reads it (a third of ShadowSkinEntry): the buffers, the index range, the model matrix number, the weights' offset, the palette (an id of the
+    // frame's shared list) and its joints. The worker expands it to a ShadowSkinEntry (mEntryBytes in the header says which a record carries).
+    struct ShadowSkinSlim { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints; };
     struct ShadowSkinEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mWeightOffset, mPaletteOffset, mJoints, mVertexFirst, mVertexCount, mAvatarId, mSkinId, mAvatarKind; F32 mAvatarPos[3]; U32 mMaterial, mNormalOffset, mTexcoordOffset, mColorOffset; };
     // kind 1: the same, with what the alpha test needs
     enum ShadowAlphaFlags : U32
