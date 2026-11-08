@@ -16679,6 +16679,25 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
         }
         const bool fast = walk_ok && !walk_verify;
+        {
+            // why a group is walked (counted over all jobs, logged every 20000 groups): 0 fast, 1 modes off, 2 no current fragment, 3 a rendered pass type no mechanism names
+            static std::atomic<U64> why[4], by_type[128], groups{ 0 };
+            U32 reason = 0;
+            if (!walk_modes_ok) { reason = 1; }
+            else if (!(walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid)) { reason = 2; }
+            else if (!walk_ok)
+            {
+                reason = 3;
+                for (U32 t : walk_frag->mWalkUnnamed) { if (hasRenderType(t)) { by_type[std::min<U32>(t, 127u)].fetch_add(1, std::memory_order_relaxed); } }
+            }
+            why[reason].fetch_add(1, std::memory_order_relaxed);
+            if (groups.fetch_add(1, std::memory_order_relaxed) % 20000 == 19999)
+            {
+                std::string text;
+                for (U32 t = 0; t < 128; ++t) { const U64 n = by_type[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
+                LL_INFOS("ShadowPrep") << "shadow walk: groups by way over the run: fast " << why[0].load() << ", modes off " << why[1].load() << ", no current fragment " << why[2].load() << ", unnamed rendered type " << why[3].load() << " (types:" << text << ")" << LL_ENDL;
+            }
+        }
         bool expect_frag = false;
         if (walk_ok)
         {
