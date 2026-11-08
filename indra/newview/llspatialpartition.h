@@ -90,6 +90,9 @@ bool ll_scene_geo_verify_on();                                  // ... with LL_V
 bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this frame (LL_VK_SCENE_GEO_AB=<seconds> alternates it)
 bool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
 bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
+bool ll_scene_geo_hud_view();                                   // J1 K6 S1: the HUD pass (its own cull result: the table is told about it before the HUD's post deferred passes)
+bool ll_scene_geo_hud_any();                                    // ... any of them
+bool ll_scene_geo_hud_type(int tn);                             // ... and a table type the HUD pools draw from rows (the others stay in the HUD's render map)
 bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
 int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
 void ll_scene_geo_palette_kick(LLCullResult* cull);               // S4 B: end of postSort: the palettes of the rigged items of the listed fragments are made on the pool (ll_scene_geo_frame takes them)

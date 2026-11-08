@@ -277,6 +277,12 @@ LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: 
 LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
 bool                       gFullbrightShinyPullReady = false;
 bool                       gFullbrightShinyPullSkinReady = false;
+LLShaderProgram            gHUDFullbrightPullProgram;       // J1 K6 S1: the HUD's fullbright pass from the scene table
+bool                       gHUDFullbrightPullReady = false;
+LLShaderProgram            gHUDFullbrightMaskPullProgram;
+bool                       gHUDFullbrightMaskPullReady = false;
+LLShaderProgram            gHUDFullbrightShinyPullProgram;
+bool                       gHUDFullbrightShinyPullReady = false;
 LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
 LLShaderProgram            gDeferredBumpPullSkinProgram;
 bool                       gBumpPullReady = false;
@@ -1501,6 +1507,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightShinyPullSkinProgram.unload();
         gFullbrightShinyPullReady = false;
         gFullbrightShinyPullSkinReady = false;
+        gHUDFullbrightPullProgram.unload();
+        gHUDFullbrightPullReady = false;
+        gHUDFullbrightMaskPullProgram.unload();
+        gHUDFullbrightMaskPullReady = false;
+        gHUDFullbrightShinyPullProgram.unload();
+        gHUDFullbrightShinyPullReady = false;
         gDeferredBumpPullProgram.unload();
         gDeferredBumpPullSkinProgram.unload();
         gBumpPullReady = false;
@@ -2795,6 +2807,69 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
+    // <FS> J1 K6 S1: the HUD's fullbright pass from the table: the fullbright pull program of the world with IS_HUD (no atmospherics, as the HUD fullbright shader). Optional: without it the HUD pool draws the old way.
+    gHUDFullbrightPullReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        LLShaderProgram* shader = &gHUDFullbrightPullProgram;
+        shader->mName = "HUD Fullbright Pull Shader";
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.isDeferred = true;
+        shader->mShaderFiles.clear();
+        shader->clearPermutations();
+        shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
+        shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+        shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+        shader->addPermutation("IS_HUD", "1");
+        add_common_permutations(shader);
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (shader->createShader())
+        {
+            gHUDFullbrightPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's fullbright objects are drawn the old way" << LL_ENDL;
+            shader->unload();
+        }
+    }
+
+    // <FS> J1 K6 S1: the HUD's fullbright shiny pass from the table (the shiny pull program with IS_HUD: no environment lighting, as the HUD shiny shader)
+    gHUDFullbrightShinyPullReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        LLShaderProgram* shader = &gHUDFullbrightShinyPullProgram;
+        shader->mName = "HUD Fullbright Shiny Pull Shader";
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.hasReflectionProbes = true;
+        shader->mShaderFiles.clear();
+        shader->clearPermutations();
+        shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+        shader->mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
+        shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+        shader->addPermutation("IS_SHINY_PULL", "1");
+        shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+        shader->addPermutation("IS_HUD", "1");
+        add_common_permutations(shader);
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (shader->createShader())
+        {
+            gHUDFullbrightShinyPullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's shiny objects are drawn the old way" << LL_ENDL;
+            shader->unload();
+        }
+    }
+
     // <FS> J1 K4: the fullbright shiny pass from the table: the fullbright pull vertex shader with the eye space normal (IS_SHINY_PULL) and the shiny fragment shader (environment map or reflection probes, bound by the
     // pool to whichever program draws), the diffuse texture of each row from the bindless table. Optional: without it the old pass draws.
     gFullbrightShinyPullReady = false;
@@ -2946,7 +3021,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
-        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright, bool skin) -> bool
+        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright, bool skin, bool hud = false) -> bool
         {
             shader->mName = name;
             shader->mShaderFiles.clear();
@@ -2962,6 +3037,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
                 shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
+                if (hud)
+                {
+                    shader->addPermutation("IS_HUD", "1");        // (J1 K6 S1: the HUD's alpha masked fullbright pass)
+                }
             }
             else
             {
@@ -2988,6 +3067,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         };
         gDiffuseMaskPullReady = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false, false);
         gFullbrightMaskPullReady = make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true, false);
+        gHUDFullbrightMaskPullReady = make_mask(&gHUDFullbrightMaskPullProgram, "HUD Fullbright Alpha Mask Pull Shader", true, false, true);
         if (gAlphaLitSkinReady && ll_rigged_indexed())
         {
             gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);

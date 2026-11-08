@@ -285,7 +285,12 @@ void LLDrawPoolBump::unbindCubeMap(LLShaderProgram* shader, S32 shader_level, S3
 static bool fullbright_shiny_table(bool rigged)
 {
     static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';
-    return shiny_table && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+    if (LLPipeline::sRenderingHUDs)
+    {
+        // J1 K6 S1: the HUD's shiny draws from the scene table (the HUD's cull result was told to the worker before the passes)
+        return shiny_table && !rigged && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
+    }
+    return shiny_table && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
 }
 
 void LLDrawPoolBump::beginFullbrightShiny(bool table)
@@ -300,7 +305,7 @@ void LLDrawPoolBump::beginFullbrightShiny(bool table)
     shader = base_shader;
     if (table)
     {
-        shader = mRigged ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
+        shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyPullProgram : (mRigged ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram);
     }
     else if (mRigged)
     {
