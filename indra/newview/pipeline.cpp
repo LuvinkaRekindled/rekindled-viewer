@@ -10126,6 +10126,32 @@ static bool rt_textures_ready(const LLDrawInfo& p, bool batch_textures)
     return ready;
 }
 
+// J1 K6 R2: the same test for a rigged fragment item's source
+static bool rt_source_textures_ready(const GeoRigSource& r, bool batch_textures)
+{
+    if (LLVkBridge::rtShadowMode() != 1 || !LLVkBridge::rtLoadingGates())
+    {
+        return true;
+    }
+    bool ready = true;
+    if (batch_textures && r.mTextureListSize > 1)
+    {
+        for (U32 t = 0; t < r.mTextureListSize && t < 4; ++t)
+        {
+            ready = ready && rt_texture_ready(r.mTextures[t].get());
+        }
+    }
+    else
+    {
+        ready = rt_texture_ready(r.mTexture.get());
+        if (ready && r.mTexture.isNull() && r.mGltf.notNull())
+        {
+            ready = rt_texture_ready(r.mGltf->mBaseColorTexture.get());
+        }
+    }
+    return ready;
+}
+
 // hint: 1 = the draw is alpha masked, 2 = alpha blended, 4 = the mask test ignores the vertex alpha (materials passes). Returns 0 when materials are off or the registry is full.
 static U32 rt_material_id(LLDrawInfo* p, U32 hint)
 {
@@ -25963,21 +25989,174 @@ static void rt_name_rigged_main_view()
             }
             entries.push_back(e);
         };
+        // J1 K6 R2: the same entry made from a rigged fragment item's source (the avatar, the skin, the buffer range, the textures as handles, the glTF material, the cutoff and the ray scene material source the item kept):
+        // no draw info read. A blended item is one the alpha plan serves (the layout checks passed when the plan was made); a masked or glTF one is checked by mAlphaOk when the fragment was made.
+        auto add_entry_src = [&](const GeoRigSource& rig, const Source& source)
+        {
+            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+            const LLVertexBuffer* vb = rig.mVb.get();
+            LLVOAvatar* avatar = rig.mAvatar.get();
+            const LLMeshSkinInfo* skin = rig.mSkin.get();
+            if (!rig.mCount || !avatar || !skin || !vb || (source.kind == KIND_ALPHA && rig.mGltf.notNull()) || (source.kind == KIND_GLTF && rig.mGltf.isNull()))
+            {
+                return;
+            }
+            if (!rt_name_avatar_due(avatar))
+            {
+                return;
+            }
+            if (source.kind != KIND_ALPHA && !rig.mAlphaOk)
+            {
+                return;
+            }
+            if (!rt_source_textures_ready(rig, batch))
+            {
+                return;
+            }
+            LLVkBridge::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getVertexBufferId();
+            e.mIndexBuffer = vb->getIndexBufferId();
+            e.mFirstIndex = rig.mOffset;
+            e.mIndexCount = rig.mCount;
+            e.mMatrixId = rt_matrix_id(nullptr);
+            if (!(note_shared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
+                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+            {
+                return;
+            }
+            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+            e.mVertexFirst = rig.mStart;
+            e.mVertexCount = (U32)rig.mEnd + 1u - rig.mStart;
+            e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
+            e.mSkinId = (U32)(((uintptr_t)skin) >> 4);
+            {
+                const LLVector3 avatar_position = avatar->getRenderPosition();
+                e.mAvatarPos[0] = avatar_position.mV[0];
+                e.mAvatarPos[1] = avatar_position.mV[1];
+                e.mAvatarPos[2] = avatar_position.mV[2];
+                e.mAvatarKind = rt_avatar_kind(avatar);
+            }
+            U32 flags = LLVkBridge::ALPHA_RIGGED;
+            if (source.kind == KIND_GLTF)
+            {
+                flags |= LLVkBridge::ALPHA_HARD;
+            }
+            if (source.kind == KIND_FULLBRIGHT)
+            {
+                flags |= LLVkBridge::ALPHA_FULLBRIGHT;
+            }
+            if (source.kind == KIND_MATERIAL)
+            {
+                flags |= LLVkBridge::ALPHA_TREE;
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_COLOR;
+                e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+            }
+            if (batch && rig.mTextureListSize > 1)
+            {
+                for (U32 t = 0; t < rig.mTextureListSize && t < 4; ++t)
+                {
+                    if (rig.mTextures[t].notNull())
+                    {
+                        e.mTextures[t] = texture_name(rig.mTextures[t].get());
+                    }
+                }
+            }
+            else
+            {
+                flags |= LLVkBridge::ALPHA_NO_INDEX;
+                if (source.kind == KIND_GLTF)
+                {
+                    LLFetchedGLTFMaterial* gm = rig.mGltf.get();
+                    LLViewerTexture* base = rig.mTexture.notNull() ? rig.mTexture.get() : gm->mBaseColorTexture.get();
+                    if (base)
+                    {
+                        e.mTextures[0] = texture_name(base);
+                    }
+                    rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], e.mUv);
+                }
+                else if (rig.mTexture.notNull())
+                {
+                    e.mTextures[0] = texture_name(rig.mTexture.get());
+                }
+            }
+            e.mFlags = flags;
+            e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : (source.kind == KIND_GLTF ? rig.mGltf->mAlphaCutoff : rig.mAlphaCutoff);
+            if (rt_materials_on() && rig.mMat.mSet)
+            {
+                e.mMaterial = rt_material_id(rt_mat_view(rig.mMat), source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
+                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+            }
+            entries.push_back(e);
+        };
+        // (LL_VK_RT_RIGALPHA=0: the rigged alpha casters from the draw infos as before, a visual A/B of this step)
+        static const bool src_path = !getenv("LL_VK_RT_RIGALPHA") || getenv("LL_VK_RT_RIGALPHA")[0] != '0';
         {
             LL_CPU_ZONE("rt name: alpha sources");
             for (const Source& source : sources)
             {
                 const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
                 static std::vector<LLDrawInfo*> alpha_infos;
-                collect_main_view_draw_infos(type, alpha_infos);       // (S4 B: the render map and the draws the scene table serves)
+                if (src_path && source.kind == KIND_ALPHA)
+                {
+                    continue;       // (J1 K6 R2: the blended rigged draws come from the rigged alpha plans below)
+                }
+                collect_main_view_draw_infos(type, alpha_infos, !src_path);       // (S4 B: the render map and, unless the sources are read below, the draws the scene table serves)
                 for (LLDrawInfo* params : alpha_infos)
                 {
                     add_entry(params, source);
+                }
+                if (src_path)
+                {
+                    static std::vector<const GeoRigSource*> rigs;
+                    collect_main_view_rig_sources(type, rigs);
+                    for (const GeoRigSource* rig : rigs)
+                    {
+                        add_entry_src(*rig, source);
+                    }
                 }
             }
         }
         // alpha BLENDED rigged draws (the blond hair layer of a mesh head, clothes) are not in the render maps: the alpha pool walks the rigged alpha groups and their draw maps (LLDrawPoolAlpha::renderAlpha),
         // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
+        if (src_path)
+        {
+            // J1 K6 R2: the blended rigged draws (the hair layer of a mesh head, clothes) are the items of the groups' rigged alpha plans: the sources they kept, each group once
+            LL_CPU_ZONE("rt name: blended groups");
+            static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
+            static std::unordered_set<const LLSpatialGroup*> seen;
+            seen.clear();
+            for (int list = 0; list < 2; ++list)
+            {
+                LLCullResult::sg_iterator begin = list == 0 ? gPipeline.beginRiggedAlphaGroups() : gPipeline.beginAlphaGroups();
+                LLCullResult::sg_iterator end = list == 0 ? gPipeline.endRiggedAlphaGroups() : gPipeline.endAlphaGroups();
+                for (LLCullResult::sg_iterator g = begin; g != end; ++g)
+                {
+                    LLSpatialGroup* group = *g;
+                    if (!group || group->isDead() || !seen.insert(group).second)
+                    {
+                        continue;
+                    }
+                    const LLSceneFragment* f = group->mSceneFragment;
+                    if (!f || f->mSerial != group->mDrawMapSerial || !f->mAlphaPlanned)
+                    {
+                        continue;
+                    }
+                    for (const GeoRigSource& rig : f->mAlphaSet[1].mItemRig)
+                    {
+                        add_entry_src(rig, blended);
+                    }
+                }
+            }
+        }
+        else
         {
             LL_CPU_ZONE("rt name: blended groups");
             static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
