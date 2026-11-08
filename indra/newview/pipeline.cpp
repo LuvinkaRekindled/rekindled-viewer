@@ -8022,6 +8022,8 @@ static int rm_alpha_mode()
     return mode;
 }
 
+static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves (it sets sShadowRender too: the gates of postSort that say "not a shadow pass" take this as well)
+
 // J1 K6 S5a: the pass types no pool draws from the render map in a view the table serves: PASS_SHINY (a shadow caster: the shadow job reads the draw map itself; no pool draws it), PASS_ALPHA_INVISIBLE (the "highlight
 // alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (mGeoAlphaBits).
 static bool render_map_inert_type(U32 type)
@@ -8120,11 +8122,20 @@ void LLPipeline::postSort(LLCamera &camera)
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
-    const bool geo_collect = ll_scene_geo_on() && !LLPipeline::shadowRender();
+    const bool geo_collect = ll_scene_geo_on() && (!LLPipeline::shadowRender() || sImpostorTableView);       // (an impostor image is drawn with sShadowRender set: its fragments are listed and elided like the main view's, else the pools skip the served draws and nothing draws them: the far avatars lost their bodies)
     const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
     const bool hud_table = view.mRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any();       // J1 K6 S1: the HUD view with a HUD pool that draws from rows
     const bool geo_list = geo_collect && ll_scene_geo_serving() && (hud_table || (view.mViewerCamera && ll_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
+    if (gCubeSnapshot)
+    {
+        static U64 cube_sorts = 0;
+        if (++cube_sorts % 600 == 1)
+        {
+            LL_INFOS("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << ll_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << ll_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
+                << ", geo_list " << geo_list << ", geo_elide " << geo_elide << ", visible groups " << sCull->getVisibleGroupsSize() << ", shadow render " << LLPipeline::shadowRender() << ", camera id " << (S32)LLViewerCamera::sCurCameraID << LL_ENDL;
+        }
+    }
     const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
     static const bool r2_verify = getenv("LL_VK_R2_VERIFY") != nullptr;       // (J1 K6 S5a: counts the draw infos a skipped group still holds that the render map would have taken)
     if (geo_elide)
@@ -8640,7 +8651,7 @@ void LLPipeline::postSort(LLCamera &camera)
 
     mMeshDirtyGroup.clear();
 
-    if (!LLPipeline::shadowRender())
+    if (!LLPipeline::shadowRender() || sImpostorTableView)
     {
         ll_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
     }
@@ -14333,8 +14344,6 @@ int ll_scene_geo_type_number(U32 type)
     return type < lut.size() ? lut[type] : -1;
 }
 
-static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves
-
 bool ll_scene_geo_main_view()
 {
     // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view (LL_VK_PROBE_TABLE=0 = they take the old pools)
@@ -17297,11 +17306,13 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
         {
             {
-                static U64 prepares[3] = {};
+                static U64 prepares[3] = {}, handles[3] = {};
                 const int kind = gCubeSnapshot ? 1 : (sImpostorTableView ? 2 : 0);
+                handles[kind] += getCull() ? getCull()->mGeoHandles.size() : 0;
                 if (++prepares[kind] % 3000 == 0)
                 {
-                    LL_INFOS("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << LL_ENDL;
+                    LL_INFOS("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << "; fragments listed per prepare: main " << (double)handles[0] / std::max<U64>(prepares[0], 1)
+                        << ", probe " << (double)handles[1] / std::max<U64>(prepares[1], 1) << ", impostor " << (double)handles[2] / std::max<U64>(prepares[2], 1) << LL_ENDL;
                 }
             }
             LL_CPU_ZONE("deferred: scene geometry prepare");
