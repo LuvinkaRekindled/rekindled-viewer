@@ -10613,6 +10613,11 @@ struct LLSceneFragment
     bool mAlphaRegistered = false;                      // in the texture registry, the key map and the alpha sweep
     bool mAlphaSent = false;
     bool mAlphaResSent = false;                         // item B: its alpha entries' indices went to the worker (kind 38): the worker draws them itself (kind 37)
+    // J1 K6 S5b: what the cascades' render map job reads of the group's draw map, kept here when the fragment is made (scene_fragment_walk_summary): the job then does not walk the draw map
+    bool mWalkValid = false, mWalkNonEmpty = false;
+    U8 mWalkAlphaBits = 0;                              // 1 = the draw map has a PASS_ALPHA entry, 2 = PASS_ALPHA_RIGGED
+    std::vector<std::array<U32, 3>> mWalkAlphaTypes;    // per alpha source pass type: { type, non rigged draws whose entry is in the fragment, those with a texture matrix the fragment holds }
+    std::vector<U32> mWalkUnnamed;                      // the pass types of the draws no fragment mechanism names (the old walk pushes them)
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
@@ -12149,6 +12154,65 @@ bool ll_alpha_serving()
 }
 
 static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f);
+// J1 K6 S5b: the answer of the cascades' render map job walk, made once when the fragment is made: for each draw info of the group that is not a static caster (those are left out under skip_static), is it NAMED by a
+// fragment mechanism (a served rigged item, a rigged alpha source, an alpha entry or a texture matrix entry in the fragment) or would the walk push it? The draw map keeps the same infos until the fragment is made again.
+static bool alpha_source_type(U32 type);
+static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    f.mWalkValid = true;
+    f.mWalkNonEmpty = !group->mDrawMap.empty();
+    f.mWalkAlphaBits = 0;
+    f.mWalkAlphaTypes.clear();
+    f.mWalkUnnamed.clear();
+    for (const auto& kv : group->mDrawMap)
+    {
+        const U32 type = kv.first;
+        if (type == LLRenderPass::PASS_ALPHA) { f.mWalkAlphaBits |= 1; }
+        if (type == LLRenderPass::PASS_ALPHA_RIGGED) { f.mWalkAlphaBits |= 2; }
+        const int cls = shadow_view_class(type);
+        if (cls == 0)
+        {
+            continue;
+        }
+        const bool alpha_src = alpha_source_type(type);
+        U32 in_frag = 0, frag_tex = 0;
+        bool unnamed = false;
+        for (const LLDrawInfo* info : kv.second)
+        {
+            if (info->mAvatar.notNull())
+            {
+                unnamed = unnamed || !(info->mGeoServed && (cls == 1 || info->mRigAlphaSrc));
+            }
+            else if (alpha_src)
+            {
+                if (info->mAlphaInFragment) { ++in_frag; }
+                else if (info->mAlphaFragTex) { ++frag_tex; }
+                else { unnamed = true; }
+            }
+            else
+            {
+                unnamed = true;
+            }
+        }
+        if (in_frag || frag_tex)
+        {
+            f.mWalkAlphaTypes.push_back({ type, in_frag, frag_tex });
+        }
+        if (unnamed)
+        {
+            f.mWalkUnnamed.push_back(type);
+            static U64 by_type[128] = {}, builds = 0;
+            ++by_type[std::min<U32>(type, 127u)];
+            if (++builds % 500 == 0)
+            {
+                std::string text;
+                for (U32 t = 0; t < 128; ++t) { if (by_type[t]) { text += " " + std::to_string(t) + ":" + std::to_string(by_type[t]); } }
+                LL_INFOS("ShadowPrep") << "fragment walk summary: pass types with draws no fragment names (type: fragments made), PASS_SHINY_RIGGED is " << (U32)LLRenderPass::PASS_SHINY_RIGGED << ":" << text << LL_ENDL;
+            }
+        }
+    }
+}
+
 static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mBuffers.clear();
@@ -12236,6 +12300,7 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
         scene_geo_fill(group, f);
     }
     scene_alpha_plan_fill(group, f);        // <FS> S5a-1 (only with LL_VK_SCENE_ALPHA=1)
+    scene_fragment_walk_summary(group, f);
     f.mResident = false;
     f.mSlots.clear();
     U8 non_res_why = 4;
@@ -16567,6 +16632,12 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
     U64 n_alpha_skipped = 0, n_alpha_would = 0;
     const int plan_mode = map_plan_mode();
+    // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
+    // casters left out, rigged and alpha casters named by the fragments); LL_VK_SHADOW_WALK_VERIFY=1 walks as before and compares, LL_VK_SHADOW_WALK=0 walks as before
+    static const bool walk_verify = getenv("LL_VK_SHADOW_WALK_VERIFY") != nullptr;
+    static const bool walk_off = getenv("LL_VK_SHADOW_WALK") && getenv("LL_VK_SHADOW_WALK")[0] == '0';
+    const int walk_rig = shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0;
+    const bool walk_modes_ok = skip_static && walk_rig == 1 && shadow_rigalpha_mode() == 1 && skip_alpha == 1 && alpha_frag_mode() == 1 && !walk_off;
     U64 n_plan_skipped = 0;
     U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
     if (plan_mode)
@@ -16597,8 +16668,28 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         }
 
         ++n_groups;
+        const LLSceneFragment* walk_frag = group->mSceneFragment;
+        bool walk_ok = walk_modes_ok;
+        walk_ok = walk_ok && walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid;
+        if (walk_ok)
+        {
+            for (U32 t : walk_frag->mWalkUnnamed)
+            {
+                if (hasRenderType(t)) { walk_ok = false; break; }
+            }
+        }
+        const bool fast = walk_ok && !walk_verify;
+        bool expect_frag = false;
+        if (walk_ok)
+        {
+            for (const auto& at : walk_frag->mWalkAlphaTypes)
+            {
+                if (hasRenderType(at[0]) && ((at[1] && !walk_frag->mAlphaResSent) || at[2])) { expect_frag = true; }
+            }
+        }
+        U64 walk_pushed = 0;
         U64 plan_key = 0;
-        if (plan_mode)
+        if (plan_mode && !fast)
         {
             const LLSceneFragment* f = group->mSceneFragment;
             plan_key = plan_inputs;
@@ -16626,7 +16717,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         U64 plan_pushed = 0;
         U64 plan_avatar_skips = 0;
         bool plan_frag = false;
-        if (scene_resident_on() && !group->mDrawMap.empty())
+        if (scene_resident_on() && (fast ? walk_frag->mWalkNonEmpty : !group->mDrawMap.empty()))
         {
             // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
             const LLSceneFragment* fragment = group->mSceneFragment;
@@ -16679,7 +16770,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
         }
 
-        for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
+        for (LLSpatialGroup::draw_map_t::iterator j = fast ? group->mDrawMap.end() : group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
         {
             LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
             if (!hasRenderType(j->first))
@@ -16739,6 +16830,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
 
                 ++plan_pushed;
+                ++walk_pushed;
                 if (sCascadeTypeCensus) { sCascadeTypePushed[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); if (info->mAvatar.notNull()) { sCascadeTypeAvatar[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); } }
                 sCull->pushDrawInfo(j->first, info);
                 if (ll_scene_geo_on() && ll_scene_geo_verify_on())
@@ -16749,7 +16841,24 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         }
 
         bool plan_alpha = false, plan_rigged_alpha = false;
-        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+        if (fast)
+        {
+            if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+            {
+                if (walk_frag->mWalkAlphaBits & 1)
+                {
+                    plan_alpha = true;
+                    if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); }
+                }
+                if (walk_frag->mWalkAlphaBits & 2)
+                {
+                    plan_rigged_alpha = true;
+                    if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); }
+                }
+            }
+            plan_frag = expect_frag;
+        }
+        else if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LLSpatialGroup::draw_map_t::iterator alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
 
@@ -16773,11 +16882,25 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
             }
         }
+        if (walk_verify && walk_ok)
+        {
+            // the walk above ran: what the summary said must be what it found
+            static std::atomic<U64> checked{ 0 }, wrong{ 0 };
+            ++checked;
+            if (checked % 50000 == 0)
+            {
+                LL_INFOS("ShadowPrep") << "shadow walk verify: " << checked.load() << " groups checked against the fragment summary, " << wrong.load() << " different" << LL_ENDL;
+            }
+            if ((walk_pushed != 0 || plan_frag != expect_frag) && wrong++ < 16)
+            {
+                LL_WARNS("ShadowPrep") << "shadow walk verify: the fragment's summary said no draw info to push and " << (expect_frag ? "an" : "no") << " alpha entries group, the walk pushed " << walk_pushed << " and found " << (plan_frag ? "an" : "no") << " alpha entries group (checked " << checked.load() << ")" << LL_ENDL;
+            }
+        }
         if (plan_frag)
         {
             local.mAlphaFragGroups.push_back(group);
         }
-        if (plan_mode)
+        if (plan_mode && !fast)
         {
             const bool empty = plan_pushed == 0 && plan_avatar_skips == 0 && local.mSceneGroups.size() == plan_cull_mark;
             if (plan_mode == 2)
