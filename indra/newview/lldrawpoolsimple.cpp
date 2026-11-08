@@ -265,6 +265,23 @@ void LLDrawPoolGrass::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     {
+        // <FS> J1 K6 S4: the grass draws from the scene table (the alpha masked diffuse pull program, the 0.5 cutoff in each row); what the rows cannot carry is drawn the old way
+        if (deferredPacketsEnabled() && gDiffuseMaskPullReady)
+        {
+            std::vector<LLDrawInfo*> fallback;
+            gDeferredDiffuseAlphaMaskPullProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_GRASS, fallback);
+            if (!fallback.empty())
+            {
+                gDeferredNonIndexedDiffuseAlphaMaskProgram.bind();
+                gDeferredNonIndexedDiffuseAlphaMaskProgram.setMinimumAlpha(0.5f);
+                for (LLDrawInfo* params : fallback)
+                {
+                    pushBatch(*params, true, false);
+                }
+            }
+            return;
+        }
         gDeferredNonIndexedDiffuseAlphaMaskProgram.bind();
         gDeferredNonIndexedDiffuseAlphaMaskProgram.setMinimumAlpha(0.5f);
 

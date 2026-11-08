@@ -10893,6 +10893,7 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_FULLBRIGHT_SHINY, -1 },    // J1 K4: the post deferred fullbright shiny pass (LLDrawPoolBump::renderFullbrightShiny): the diffuse entries, the eye space normal
     { LLRenderPass::PASS_BUMP, -1 },                // J1 K4: the deferred bump pass (not served yet)
     { LLRenderPass::PASS_POST_BUMP, -1 },           // J1 K4: the post deferred emboss pass (not served yet)
+    { LLRenderPass::PASS_GRASS, -1 },               // J1 K6 S4: the grass G-buffer pass (LLDrawPoolGrass): alpha masked diffuse draws, cutoff in the row; no rigged variant (the next pass number is another pass)
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
@@ -10928,6 +10929,11 @@ static int geo_type_number(U32 type)
 // S6: a pass type the table serves only when the pool that draws it has the pull program for it (else the pool draws the old way and the draws must stay in the render map)
 static bool geo_type_available(size_t t, bool rigged)
 {
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_GRASS)
+    {
+        static const bool grass_table = !getenv("LL_VK_GRASS_TABLE") || getenv("LL_VK_GRASS_TABLE")[0] != '0';      // (0 = the pull batches of the render map)
+        return grass_table && !rigged && LLRenderPass::deferredPacketsEnabled() && gDiffuseMaskPullReady;
+    }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
         return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
@@ -11498,8 +11504,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             f.mGeo.push_back(item);
         }
     }
+    static U64 type_served[2 * kGeoTypeCount] = {};       // J1 K6 S4: the items the fills made, by table type (logged with the fragment G entry builds)
     for (size_t t = 0; t < 2 * kGeoTypeCount; ++t)
     {
+        type_served[t] += served_infos[t];
         if (total_infos[t] && served_infos[t] == total_infos[t])
         {
             f.mGeoServedMask |= 1ull << t;
@@ -11515,6 +11523,15 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     {
         LL_INFOS("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
             << sGeoFillFallback << " fallback draws, " << sGeoTexmatRows << " rows with a texture matrix slot, " << sGeoFillNonRegion << " fragments not region-only, region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
+        std::string by_type;
+        for (size_t t = 0; t < 2 * kGeoTypeCount; ++t)
+        {
+            if (type_served[t])
+            {
+                by_type += " " + std::to_string(t < kGeoTypeCount ? kGeoTypes[t].mType : kGeoTypes[t - kGeoTypeCount].mType + 1) + (t >= kGeoTypeCount ? "r" : "") + ":" + std::to_string(type_served[t]);
+            }
+        }
+        LL_INFOS("VkScene") << "items made by pass type number (r = the rigged variant; PASS_GRASS is " << (U32)LLRenderPass::PASS_GRASS << "):" << by_type << LL_ENDL;
     }
 }
 
@@ -14213,7 +14230,7 @@ int ll_scene_geo_type_number(U32 type)
         for (size_t t = 0; t < kGeoTypeCount; ++t)
         {
             lut[kGeoTypes[t].mType] = (S8)t;
-            if (scene_geo_rigged_on())
+            if (scene_geo_rigged_on() && kGeoTypes[t].mType != LLRenderPass::PASS_GRASS)
             {
                 lut[kGeoTypes[t].mType + 1] = (S8)(kGeoTypeCount + t);        // S4 B: the rigged variant
             }
