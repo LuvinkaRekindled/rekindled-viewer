@@ -30286,6 +30286,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     LLCamera main_camera = camera;
 
+    // J1 hotspots: the extents of everything the main camera sees (the walk below, made every frame anyway) fit every cascade (LL_VK_SHADOW_FIT=0: each cascade walks the octree for the extents inside its own slice, as
+    // before: four more walks of every partition, 12% of the main thread's time). The cascade's point cloud is then the slice's frustum cut by that box: a little looser than the slice's own extents.
+    static const bool fit_scene = !getenv("LL_VK_SHADOW_FIT") || getenv("LL_VK_SHADOW_FIT")[0] != '0';
+    LLVector3 scene_min, scene_max;
+    bool scene_have = false;
+
     F32 near_clip = 0.f;
     {
         //get visible point cloud
@@ -30295,6 +30301,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
         LLVector3 min,max;
         getVisiblePointCloud(main_camera,min,max,fp);
+        scene_min = min;
+        scene_max = max;
+        scene_have = !fp.empty();
 
         if (fp.empty())
         {
@@ -30972,6 +30981,18 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             {
                 clouds[j].mCam = make_cascade_camera(j);
             }
+            const bool scene_fit = fit_scene && scene_have;
+            if (scene_fit)
+            {
+                for (S32 j = 0; j < cloud_count; ++j)
+                {
+                    clouds[j].mMin = scene_min;
+                    clouds[j].mMax = scene_max;
+                    clouds[j].mHave = pointCloudFromExtents(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp);
+                }
+            }
+            else
+            {
             for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
             {
                 for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
@@ -31008,6 +31029,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
                 };
                 { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->runLabeled("shadow prep: point cloud jobs", (size_t)cloud_count, cloud_job); }
+            }
             }
             cloud_lap.mark(PH_POINT_CLOUD);
         }
@@ -31150,7 +31172,16 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
             else
             {
-                have_point_cloud = gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir);
+                if (fit_scene && scene_have)
+                {
+                    min = scene_min;
+                    max = scene_max;
+                    have_point_cloud = gPipeline.pointCloudFromExtents(shadow_cam, min, max, fp);
+                }
+                else
+                {
+                    have_point_cloud = gPipeline.getVisiblePointCloud(shadow_cam, min, max, fp, lightDir);
+                }
             }
             point_cloud_lap.mark(PH_POINT_CLOUD);
             if (!have_point_cloud

@@ -736,7 +736,7 @@ namespace
     {
         DWORD mTid = 0;
         int mCount = 0;
-        DWORD64 mPc[20] = {};
+        DWORD64 mPc[32] = {};
     };
 
     std::atomic<long long> sHwLastFrame{ 0 };
@@ -756,7 +756,7 @@ namespace
     {
         __try
         {
-            for (int i = 0; i < 20 && ctx.Rip; i++)
+            for (int i = 0; i < 32 && ctx.Rip; i++)
             {
                 cap.mPc[cap.mCount++] = ctx.Rip;
                 DWORD64 base = 0;
@@ -993,6 +993,17 @@ namespace
         }
         std::unordered_map<DWORD64, unsigned> counts;       // by the start of the function (or the address itself when it has no unwind data)
         std::unordered_map<DWORD64, unsigned> modules;      // by module base
+        std::unordered_map<DWORD64, unsigned> inclusive;    // J1 hotspots: every function on the stack once per sample (the stack is 32 frames deep from the leaf)
+        std::unordered_map<DWORD64, std::unordered_map<DWORD64, unsigned>> callers;     // J1 hotspots: for a function, who called it when it was the leaf
+        // J1 hotspots: the samples whose leaf is outside the executable (the allocator, waits, the CRT, kernel calls) are attributed to the nearest frame INSIDE it, with the leaf functions they were in
+        std::unordered_map<DWORD64, std::pair<unsigned, std::unordered_map<DWORD64, unsigned>>> outside_sites;
+        const DWORD64 exe_base = (DWORD64)GetModuleHandleA(nullptr);
+        auto function_start = [](DWORD64 pc) -> DWORD64
+        {
+            DWORD64 base = 0;
+            PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(pc, &base, nullptr);
+            return fn ? base + fn->BeginAddress : pc;
+        };
         unsigned total = 0, windows = 0;
         LARGE_INTEGER f, window_start;
         QueryPerformanceFrequency(&f);
@@ -1021,9 +1032,47 @@ namespace
             {
                 DWORD64 base = 0;
                 PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(cap.mPc[0], &base, nullptr);
-                ++counts[fn ? base + fn->BeginAddress : cap.mPc[0]];
+                const DWORD64 leaf = fn ? base + fn->BeginAddress : cap.mPc[0];
+                ++counts[leaf];
                 ++modules[base];
                 ++total;
+                {
+                    DWORD64 seen[32];
+                    int n_seen = 0;
+                    for (int k = 0; k < cap.mCount; ++k)
+                    {
+                        const DWORD64 start = function_start(cap.mPc[k]);
+                        bool dup = false;
+                        for (int q = 0; q < n_seen && !dup; ++q)
+                        {
+                            dup = seen[q] == start;
+                        }
+                        if (!dup)
+                        {
+                            seen[n_seen++] = start;
+                            ++inclusive[start];
+                        }
+                    }
+                    if (cap.mCount > 1)
+                    {
+                        ++callers[leaf][function_start(cap.mPc[1])];
+                    }
+                    if (base != exe_base)
+                    {
+                        for (int k = 1; k < cap.mCount; ++k)
+                        {
+                            DWORD64 b2 = 0;
+                            PRUNTIME_FUNCTION f2 = RtlLookupFunctionEntry(cap.mPc[k], &b2, nullptr);
+                            if (f2 && b2 == exe_base)
+                            {
+                                auto& entry = outside_sites[b2 + f2->BeginAddress];
+                                ++entry.first;
+                                ++entry.second[leaf];
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             LARGE_INTEGER now;
             QueryPerformanceCounter(&now);
@@ -1074,8 +1123,85 @@ namespace
                 mods += llformat(" | %s %.1f%%", mtop[i].second ? (slash ? slash + 1 : mod) : "(unknown)", 100.0 * mtop[i].first / total);
             }
             LL_INFOS("Sampler") << "main thread, window " << ++windows << ": " << total << " samples, by module:" << mods << " ; by function:" << text << LL_ENDL;
+            {
+                auto name_of = [&](DWORD64 pc) -> std::string
+                {
+                    if (sym_from_addr)
+                    {
+                        alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 256] = {};
+                        SYMBOL_INFO* info = (SYMBOL_INFO*)buffer;
+                        info->SizeOfStruct = sizeof(SYMBOL_INFO);
+                        info->MaxNameLen = 255;
+                        DWORD64 displacement = 0;
+                        if (sym_from_addr(GetCurrentProcess(), pc, &displacement, info))
+                        {
+                            return info->Name;
+                        }
+                    }
+                    return llformat("0x%llx", (unsigned long long)pc);
+                };
+                std::vector<std::pair<unsigned, DWORD64>> itop;
+                for (const auto& kv : inclusive)
+                {
+                    itop.emplace_back(kv.second, kv.first);
+                }
+                std::sort(itop.begin(), itop.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                std::string itext;
+                for (size_t i = 0; i < itop.size() && i < 60; ++i)
+                {
+                    itext += llformat(" | %s %.1f%%", name_of(itop[i].second).c_str(), 100.0 * itop[i].first / total);
+                }
+                LL_INFOS("Sampler") << "main thread, window " << windows << ", inclusive (a function and everything it calls):" << itext << LL_ENDL;
+                std::string ctext;
+                for (size_t i = 0; i < top.size() && i < 20; ++i)
+                {
+                    const auto found = callers.find(top[i].second);
+                    if (found == callers.end())
+                    {
+                        continue;
+                    }
+                    std::vector<std::pair<unsigned, DWORD64>> who;
+                    for (const auto& kv : found->second)
+                    {
+                        who.emplace_back(kv.second, kv.first);
+                    }
+                    std::sort(who.begin(), who.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                    ctext += llformat(" | %s (%.1f%%) called by", name_of(top[i].second).c_str(), 100.0 * top[i].first / total);
+                    for (size_t q = 0; q < who.size() && q < 3; ++q)
+                    {
+                        ctext += llformat(" %s %u%%", name_of(who[q].second).c_str(), (unsigned)(100.0 * who[q].first / top[i].first + 0.5));
+                    }
+                }
+                LL_INFOS("Sampler") << "main thread, window " << windows << ", callers of the top self time functions:" << ctext << LL_ENDL;
+                std::vector<std::pair<unsigned, DWORD64>> otop;
+                for (const auto& kv : outside_sites)
+                {
+                    otop.emplace_back(kv.second.first, kv.first);
+                }
+                std::sort(otop.begin(), otop.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                std::string otext;
+                for (size_t i = 0; i < otop.size() && i < 30; ++i)
+                {
+                    const auto& entry = outside_sites[otop[i].second];
+                    std::vector<std::pair<unsigned, DWORD64>> leaves;
+                    for (const auto& kv : entry.second)
+                    {
+                        leaves.emplace_back(kv.second, kv.first);
+                    }
+                    std::sort(leaves.begin(), leaves.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                    otext += llformat(" | %s %.2f%% in", name_of(otop[i].second).c_str(), 100.0 * otop[i].first / total);
+                    for (size_t q = 0; q < leaves.size() && q < 3; ++q)
+                    {
+                        otext += llformat(" %s %u%%", name_of(leaves[q].second).c_str(), (unsigned)(100.0 * leaves[q].first / otop[i].first + 0.5));
+                    }
+                }
+                LL_INFOS("Sampler") << "main thread, window " << windows << ", time outside the executable (allocator, waits, CRT, kernel) by the nearest function inside it:" << otext << LL_ENDL;
+            }
             counts.clear();
             modules.clear();
+            inclusive.clear();
+            callers.clear();
+            outside_sites.clear();
             total = 0;
         }
     }
