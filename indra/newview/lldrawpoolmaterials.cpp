@@ -193,195 +193,21 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         return;         // <FS> S3 G4: beginDeferredPass found nothing to draw
     }
 
-    // <FS> render packets: the static draws as one record (the pull program of this pass bound instead of the old one); what it cannot carry is drawn the old way below
-    // (S4 A1: the rigged draws too, with the rigged pull program)
-    std::vector<LLDrawInfo*> packet_fallback;
-    bool packets_used = false;
-    if (rigged ? ll_rigged_packets_enabled() : deferredPacketsEnabled())
+    // <FS> J1 K6 A3: the draws of this pass are one scene table record (the pull program of this pass bound; S4 A1: the rigged draws too, with the rigged pull program)
+    if (rigged ? ll_rigged_packets_enabled() : true)
     {
         const U32 idx = sMaterialPassShader[pass];
         LLShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
         if (pull->mProgramObject != 0)
         {
-            LLGeometryPassInfo info;
-            info.mNormalMap = (idx & 0x8) != 0;
-            info.mSpecularMap = (idx & 0x4) != 0;
             {
                 LL_CPU_ZONE("materials: bind pull program");
                 gPipeline.bindDeferredShader(*pull);
             }
             {
                 LL_CPU_ZONE("materials: push packets");
-                pushGeometryPackets(type, packet_fallback, &info, rigged);
-            }
-            packets_used = true;
-            if (packet_fallback.empty())
-            {
-                return;
-            }
-            gPipeline.bindDeferredShader(*mShader);
-        }
-    }
-
-    LLCullResult::drawinfo_iterator begin = gPipeline.beginRenderMap(type);
-    LLCullResult::drawinfo_iterator end = gPipeline.endRenderMap(type);
-
-    F32 lastIntensity = 0.f;
-    F32 lastFullbright = 0.f;
-    F32 lastMinimumAlpha = 0.f;
-    LLVector4 lastSpecular = LLVector4(0, 0, 0, 0);
-
-    S32 intensity = mShader->getUniformLocation(LLShaderMgr::ENVIRONMENT_INTENSITY);
-    S32 brightness = mShader->getUniformLocation(LLShaderMgr::EMISSIVE_BRIGHTNESS);
-    S32 minAlpha = mShader->getUniformLocation(LLShaderMgr::MINIMUM_ALPHA);
-    S32 specular = mShader->getUniformLocation(LLShaderMgr::SPECULAR_COLOR);
-
-    S32 diffuseChannel = mShader->enableTexture(LLShaderMgr::DIFFUSE_MAP);
-    S32 specChannel = mShader->enableTexture(LLShaderMgr::SPECULAR_MAP);
-    S32 normChannel = mShader->enableTexture(LLShaderMgr::BUMP_MAP);
-
-    LLTexture* lastNormalMap = nullptr;
-    LLTexture* lastSpecMap = nullptr;
-    LLTexture* lastDiffuse = nullptr;
-
-    gRender.getTexUnit(diffuseChannel)->bindWhiteFast();
-
-    if (intensity > -1)
-    {
-        LLShaderProgram::uniform1fAt(intensity, lastIntensity);
-    }
-
-    if (brightness > -1)
-    {
-        LLShaderProgram::uniform1fAt(brightness, lastFullbright);
-    }
-
-    if (minAlpha > -1)
-    {
-        LLShaderProgram::uniform1fAt(minAlpha, lastMinimumAlpha);
-    }
-
-    if (specular > -1)
-    {
-        LLShaderProgram::uniform4fvAt(specular, 1, lastSpecular.mV);
-    }
-
-    const LLVOAvatar* lastAvatar = nullptr;
-    U64 lastMeshId = 0;
-    bool skipLastSkin = false;
-
-    auto draw_one = [&](LLDrawInfo& params)
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_MATERIAL("materials draw loop");
-
-        if (specular > -1 && params.mSpecColor != lastSpecular)
-        {
-            lastSpecular = params.mSpecColor;
-            LLShaderProgram::uniform4fvAt(specular, 1, lastSpecular.mV);
-        }
-
-        if (intensity != -1 && lastIntensity != params.mEnvIntensity)
-        {
-            lastIntensity = params.mEnvIntensity;
-            LLShaderProgram::uniform1fAt(intensity, lastIntensity);
-        }
-
-        if (minAlpha > -1 && lastMinimumAlpha != params.mAlphaMaskCutoff)
-        {
-            lastMinimumAlpha = params.mAlphaMaskCutoff;
-            LLShaderProgram::uniform1fAt(minAlpha, lastMinimumAlpha);
-        }
-
-        F32 fullbright = params.mFullbright ? 1.f : 0.f;
-        if (brightness > -1 && lastFullbright != fullbright)
-        {
-            lastFullbright = fullbright;
-            LLShaderProgram::uniform1fAt(brightness, lastFullbright);
-        }
-
-        if (normChannel > -1 && params.mNormalMap != lastNormalMap)
-        {
-            lastNormalMap = params.mNormalMap;
-            llassert(lastNormalMap);
-            gRender.getTexUnit(normChannel)->bindFast(lastNormalMap);
-        }
-
-        if (specChannel > -1 && params.mSpecularMap != lastSpecMap)
-        {
-            lastSpecMap = params.mSpecularMap;
-            llassert(lastSpecMap);
-            gRender.getTexUnit(specChannel)->bindFast(lastSpecMap);
-        }
-
-        if (params.mTexture != lastDiffuse)
-        {
-            lastDiffuse = params.mTexture;
-            if (lastDiffuse)
-            {
-                gRender.getTexUnit(diffuseChannel)->bindFast(lastDiffuse);
-            }
-            else
-            {
-                gRender.getTexUnit(diffuseChannel)->bindWhiteFast();
+                pushGeometryPackets(type, rigged);
             }
         }
-
-        // upload matrix palette to shader
-        if (rigged)
-        {
-            if (!uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-            {
-                return;
-            }
-        }
-
-        applyModelMatrix(params);
-
-        bool tex_setup = false;
-
-        //not batching textures or batch has only 1 texture -- might need a texture matrix
-        if (params.mTextureMatrix)
-        {
-
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)params.mTextureMatrix->mMatrix);
-            gPipeline.mTextureMatrixOps++;
-
-            tex_setup = true;
-        }
-
-        /*if (params.mGroup)  // TOO LATE
-        {
-            params.mGroup->rebuildMesh();
-        }*/
-
-        params.mVertexBuffer->setBuffer();
-        params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
-
-        if (tex_setup)
-        {
-            LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);      // tex_setup: the texture matrix of unit 0 was made the current one above
-        }
-    };
-
-    if (packets_used)
-    {
-        for (LLDrawInfo* params : packet_fallback)
-        {
-            if (rigged && params->mSkinInfo.isNull())
-            {
-                continue;       // (no skin: nothing to draw with a palette)
-            }
-            draw_one(*params);
-        }
-        return;
-    }
-
-    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-    {
-        LLDrawInfo& params = **i;
-
-        LLCullResult::increment_iterator(i, end);
-
-        draw_one(params);
     }
 }

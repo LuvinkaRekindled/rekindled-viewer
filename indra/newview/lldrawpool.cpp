@@ -1657,11 +1657,8 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
 
 // J1 K6 A2: a deferred geometry pass draws from the scene table and from nothing else: the draw record names the pass type, the worker draws the commands of the fragments the view's prepare listed with the program the
 // pool bound. (The per frame records built from the render map, the fallback draws and the async builds that made them are gone: every view that draws is a view the table serves, every draw a fragment item.)
-// `fallback` and `materials` stay in the signature until the pools' fallback loops are deleted; the vector is never filled.
-void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallback, const LLGeometryPassInfo* materials, bool rigged)
+void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
 {
-    (void)fallback;
-    (void)materials;
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LLCullResult* cull = gPipeline.getCull();
     const int tn = ll_scene_geo_type_number(type);

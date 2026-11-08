@@ -45,7 +45,6 @@ static LLTrace::BlockTimerStatHandle FTM_RENDER_GRASS_DEFERRED("Deferred Grass")
 void LLDrawPoolGlow::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLShaderProgram* shader = &gDeferredEmissiveProgram;
 
     LLRenderState::BlendScope blend(true);
     gRender.flush();
@@ -57,59 +56,17 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     LLRenderState::DepthScope depth(true, false);
     gRender.setColorMask(false, true);
 
-    // <FS> S6 X2: the glow draws from the scene table (the emissive pull programs of the alpha glow, the same rows); what it cannot carry is drawn the old way
-    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gAlphaGlowPullReady)
+    // <FS> J1 K6 A3: the glow draws come from the scene table (the emissive pull programs of the alpha glow, the same rows); a HUD has no glow pool
+    if (!LLPipeline::sRenderingHUDs && gAlphaGlowPullReady)
     {
-        std::vector<LLDrawInfo*> fallback;
         gDeferredEmissivePullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_GLOW, fallback);
-        if (!fallback.empty())
-        {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                pushBatch(*params, true, true);
-            }
-        }
-        shader = shader->mRiggedVariant;
+        pushGeometryPackets(LLRenderPass::PASS_GLOW);
         if (ll_rigged_packets_enabled())
         {
-            fallback.clear();
             gDeferredEmissivePullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_GLOW_RIGGED, fallback, nullptr, true);
-            if (!fallback.empty())
-            {
-                shader->bind();
-                const LLVOAvatar* lastAvatar = nullptr;
-                U64 lastMeshId = 0;
-                bool skipLastSkin = false;
-                for (LLDrawInfo* params : fallback)
-                {
-                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        pushBatch(*params, true, true);
-                    }
-                }
-            }
+            pushGeometryPackets(LLRenderPass::PASS_GLOW_RIGGED, true);
         }
-        else
-        {
-            shader->bind();
-            pushRiggedBatches(LLRenderPass::PASS_GLOW_RIGGED, true, true);
-        }
-        gRender.setColorMask(true, false);
-        gRender.setSceneBlendType(LLRender::BT_ALPHA);
-        return;
     }
-
-    //first pass -- static objects
-    shader->bind();
-    pushBatches(LLRenderPass::PASS_GLOW, true, true);
-
-    // second pass -- rigged objects
-    shader = shader->mRiggedVariant;
-    shader->bind();
-    pushRiggedBatches(LLRenderPass::PASS_GLOW_RIGGED, true, true);
 
     gRender.setColorMask(true, false);
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
@@ -146,53 +103,15 @@ void LLDrawPoolSimple::renderDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SIMPLE_DEFERRED);
     LLRenderState::BlendScope blend(false);
 
-    //render static
-    if (deferredPacketsEnabled())
-    {
-        // <FS> render packets: the static draws as one record; what it cannot carry is drawn the old way
-        std::vector<LLDrawInfo*> fallback;
-        gDeferredDiffusePullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_SIMPLE, fallback);
-        if (!fallback.empty())
-        {
-            gDeferredDiffuseProgram.bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                pushBatch(*params, true, true);
-            }
-        }
-    }
-    else
-    {
-        gDeferredDiffuseProgram.bind();
-        pushBatches(LLRenderPass::PASS_SIMPLE, true, true);
-    }
+    // <FS> J1 K6 A3: the static and the rigged draws, each as one draw record of the scene table
+    gDeferredDiffusePullProgram.bind();
+    pushGeometryPackets(LLRenderPass::PASS_SIMPLE);
 
-    //render rigged
     if (ll_rigged_packets_enabled())
     {
-        // <FS> S4 A1: the rigged draws as one record (the rigged pull program); what it cannot carry is drawn the old way
-        std::vector<LLDrawInfo*> fallback;
         gDeferredDiffusePullSkinProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_SIMPLE_RIGGED, fallback, nullptr, true);
-        if (!fallback.empty())
-        {
-            gDeferredDiffuseProgram.bind(true);
-            const LLVOAvatar* lastAvatar = nullptr;
-            U64 lastMeshId = 0;
-            bool skipLastSkin = false;
-            for (LLDrawInfo* params : fallback)
-            {
-                if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                {
-                    pushBatch(*params, true, true);
-                }
-            }
-        }
-        return;
+        pushGeometryPackets(LLRenderPass::PASS_SIMPLE_RIGGED, true);
     }
-    gDeferredDiffuseProgram.bind(true);
-    pushRiggedBatches(LLRenderPass::PASS_SIMPLE_RIGGED, true, true);
 }
 
 static LLTrace::BlockTimerStatHandle FTM_RENDER_ALPHA_MASK_DEFERRED("Deferred Alpha Mask");
@@ -201,57 +120,18 @@ static LLTrace::BlockTimerStatHandle FTM_RENDER_ALPHA_MASK_DEFERRED("Deferred Al
 void LLDrawPoolAlphaMask::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_ALPHA_MASK_DEFERRED);
-    LLShaderProgram* shader = &gDeferredDiffuseAlphaMaskProgram;
 
-    // <FS> S6 X3: the alpha masked draws from the scene table (the cutoff of each draw in its row); what it cannot carry is drawn the old way
-    if (deferredPacketsEnabled() && gDiffuseMaskPullReady)
+    // <FS> J1 K6 A3: the alpha masked draws from the scene table (the cutoff of each draw in its row)
+    if (gDiffuseMaskPullReady)
     {
-        std::vector<LLDrawInfo*> fallback;
         gDeferredDiffuseAlphaMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK, fallback);
-        if (!fallback.empty())
-        {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
-                pushBatch(*params, true, true);
-            }
-        }
+        pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
         if (ll_rigged_packets_enabled() && gDiffuseMaskPullSkinReady)
         {
-            fallback.clear();
             gDeferredDiffuseAlphaMaskPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, fallback, nullptr, true);
-            if (!fallback.empty())
-            {
-                shader->bind(true);
-                const LLVOAvatar* lastAvatar = nullptr;
-                U64 lastMeshId = 0;
-                bool skipLastSkin = false;
-                for (LLDrawInfo* params : fallback)
-                {
-                    LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
-                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        pushBatch(*params, true, true);
-                    }
-                }
-            }
-            return;
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true);
         }
-        shader->bind(true);
-        pushRiggedMaskBatches(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true, true);
-        return;
     }
-
-    //render static
-    shader->bind();
-    pushMaskBatches(LLRenderPass::PASS_ALPHA_MASK, true, true);
-
-    //render rigged
-    shader->bind(true);
-    pushRiggedMaskBatches(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true, true);
 }
 
 // grass drawpool
@@ -264,29 +144,11 @@ LLDrawPoolGrass::LLDrawPoolGrass() :
 void LLDrawPoolGrass::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
+    // <FS> J1 K6 A3: the grass draws from the scene table (the alpha masked diffuse pull program, the 0.5 cutoff in each row)
+    if (gDiffuseMaskPullReady)
     {
-        // <FS> J1 K6 S4: the grass draws from the scene table (the alpha masked diffuse pull program, the 0.5 cutoff in each row); what the rows cannot carry is drawn the old way
-        if (deferredPacketsEnabled() && gDiffuseMaskPullReady)
-        {
-            std::vector<LLDrawInfo*> fallback;
-            gDeferredDiffuseAlphaMaskPullProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_GRASS, fallback);
-            if (!fallback.empty())
-            {
-                gDeferredNonIndexedDiffuseAlphaMaskProgram.bind();
-                gDeferredNonIndexedDiffuseAlphaMaskProgram.setMinimumAlpha(0.5f);
-                for (LLDrawInfo* params : fallback)
-                {
-                    pushBatch(*params, true, false);
-                }
-            }
-            return;
-        }
-        gDeferredNonIndexedDiffuseAlphaMaskProgram.bind();
-        gDeferredNonIndexedDiffuseAlphaMaskProgram.setMinimumAlpha(0.5f);
-
-        //render grass
-        LLRenderPass::pushBatches(LLRenderPass::PASS_GRASS, getVertexDataMask());
+        gDeferredDiffuseAlphaMaskPullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_GRASS);
     }
 }
 
@@ -301,93 +163,29 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_FULLBRIGHT);
 
-    LLShaderProgram* shader = nullptr;
-    if (LLPipeline::sRenderingHUDs)
-    {
-        shader = ll_pull_or(&gHUDFullbrightProgram);        // S6.6
-    }
-    else
-    {
-        shader = &gDeferredFullbrightProgram;
-    }
-
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
-    // <FS> J1 K6 S1: the HUD's fullbright draws from the scene table (the HUD's cull result was told to the worker before the passes), what the rows cannot carry the old way
-    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)))
+    if (LLPipeline::sRenderingHUDs)
     {
-        std::vector<LLDrawInfo*> fallback;
-        gHUDFullbrightPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT, fallback);
+        // <FS> J1 K6 S1: the HUD's fullbright draws from the scene table (the HUD's cull result was told to the worker before the passes); a HUD has no rigged draws
+        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)))
         {
-            static U64 calls = 0, fallbacks = 0;
-            ++calls;
-            fallbacks += fallback.size();
-            if (calls % 600 == 0)
-            {
-                LL_INFOS("HudTable") << "the HUD's fullbright pass from rows: " << calls << " passes so far, " << fallbacks << " draws left to the old path" << LL_ENDL;
-            }
-        }
-        if (!fallback.empty())
-        {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                pushBatch(*params, true, true);
-            }
+            gHUDFullbrightPullProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
         }
         return;
     }
 
-    // <FS> S6 X1: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass); what it cannot carry is drawn the old way. HUDs stay on the old path.
-    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightPullReady)
+    // <FS> J1 K6 A3: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass)
+    if (gFullbrightPullReady)
     {
-        std::vector<LLDrawInfo*> fallback;
         gDeferredFullbrightPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT, fallback);
-        if (!fallback.empty())
-        {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                pushBatch(*params, true, true);
-            }
-        }
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
         if (ll_rigged_packets_enabled() && gFullbrightPullSkinReady)
         {
-            fallback.clear();
             gDeferredFullbrightPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, fallback, nullptr, true);
-            if (!fallback.empty())
-            {
-                shader->bind(true);
-                const LLVOAvatar* lastAvatar = nullptr;
-                U64 lastMeshId = 0;
-                bool skipLastSkin = false;
-                for (LLDrawInfo* params : fallback)
-                {
-                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        pushBatch(*params, true, true);
-                    }
-                }
-            }
-            return;
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true);
         }
-        shader->bind(true);
-        pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true, true);
-        return;
-    }
-
-    // render static
-    shader->bind();
-    pushBatches(LLRenderPass::PASS_FULLBRIGHT, true, true);
-
-    if (!LLPipeline::sRenderingHUDs)
-    {
-        // render rigged
-        shader->bind(true);
-        pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true, true);
     }
 }
 
@@ -399,87 +197,28 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     LL::GLTFSceneManager::instance().render(true, false, true);
     LL::GLTFSceneManager::instance().render(true, true, true);
 
-    LLShaderProgram* shader = nullptr;
-    if (LLPipeline::sRenderingHUDs)
-    {
-        shader = ll_pull_or(&gHUDFullbrightAlphaMaskProgram);       // S6.6
-    }
-    else
-    {
-        shader = &gDeferredFullbrightAlphaMaskProgram;
-    }
-
     LLRenderState::BlendScope blend(false);
 
-    // <FS> J1 K6 S1: the HUD's alpha masked fullbright draws from the scene table, what the rows cannot carry the old way
-    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)))
+    if (LLPipeline::sRenderingHUDs)
     {
-        std::vector<LLDrawInfo*> fallback;
-        gHUDFullbrightMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, fallback);
-        if (!fallback.empty())
+        // <FS> J1 K6 S1: the HUD's alpha masked fullbright draws from the scene table
+        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)))
         {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
-                pushBatch(*params, true, true);
-            }
+            gHUDFullbrightMaskPullProgram.bind();
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
         }
         return;
     }
 
-    // <FS> S6 X3: the alpha masked fullbright draws from the scene table; what it cannot carry is drawn the old way. HUDs stay on the old path.
-    if (!LLPipeline::sRenderingHUDs && deferredPacketsEnabled() && gFullbrightMaskPullReady)
+    // <FS> J1 K6 A3: the alpha masked fullbright draws from the scene table
+    if (gFullbrightMaskPullReady)
     {
-        std::vector<LLDrawInfo*> fallback;
         gDeferredFullbrightAlphaMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, fallback);
-        if (!fallback.empty())
-        {
-            shader->bind();
-            for (LLDrawInfo* params : fallback)
-            {
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
-                pushBatch(*params, true, true);
-            }
-        }
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
         if (ll_rigged_packets_enabled() && gFullbrightMaskPullSkinReady)
         {
-            fallback.clear();
             gDeferredFullbrightAlphaMaskPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, fallback, nullptr, true);
-            if (!fallback.empty())
-            {
-                shader->bind(true);
-                const LLVOAvatar* lastAvatar = nullptr;
-                U64 lastMeshId = 0;
-                bool skipLastSkin = false;
-                for (LLDrawInfo* params : fallback)
-                {
-                    LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params->mAlphaMaskCutoff);
-                    if (params->mSkinInfo.notNull() && uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        pushBatch(*params, true, true);
-                    }
-                }
-            }
-            return;
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true);
         }
-        shader->bind(true);
-        pushRiggedMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true, true);
-        return;
-    }
-
-    // render static
-    shader->bind();
-    pushMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, true, true);
-
-    if (!LLPipeline::sRenderingHUDs)
-    {
-        // render rigged
-        shader->bind(true);
-        pushRiggedMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true, true);
     }
 }
-

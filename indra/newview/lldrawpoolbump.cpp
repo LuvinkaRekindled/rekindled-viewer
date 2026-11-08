@@ -368,64 +368,13 @@ void LLDrawPoolBump::beginFullbrightShiny(bool table)
     shiny = true;
 }
 
-void LLDrawPoolBump::renderFullbrightShiny(bool table)
+void LLDrawPoolBump::renderFullbrightShiny()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
 
-    if (table)
-    {
-        LLRenderState::BlendScope blend_enable(true);
-        std::vector<LLDrawInfo*> fallback;
-        pushGeometryPackets(mRigged ? LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED : LLRenderPass::PASS_FULLBRIGHT_SHINY, fallback, nullptr, mRigged);
-        if (!fallback.empty())
-        {
-            // what the rows cannot carry: the old program, set up again with its own uniforms
-            endFullbrightShiny();
-            beginFullbrightShiny(false);
-            const LLVOAvatar* lastAvatar = nullptr;
-            U64 lastMeshId = 0;
-            bool skipLastSkin = false;
-            for (LLDrawInfo* params : fallback)
-            {
-                if (mRigged)
-                {
-                    if (params->mSkinInfo.isNull() || !uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        continue;
-                    }
-                }
-                pushBatch(*params, true, true);
-            }
-        }
-        return;
-    }
-
-    {
-        LLRenderState::BlendScope blend_enable(true);
-
-        if (mShaderLevel > 1)
-        {
-            if (mRigged)
-            {
-                LLRenderPass::pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED, true, true);
-            }
-            else
-            {
-                LLRenderPass::pushBatches(LLRenderPass::PASS_FULLBRIGHT_SHINY, true, true);
-            }
-        }
-        else
-        {
-            if (mRigged)
-            {
-                LLRenderPass::pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED);
-            }
-            else
-            {
-                LLRenderPass::pushBatches(LLRenderPass::PASS_FULLBRIGHT_SHINY);
-            }
-        }
-    }
+    // J1 K6 A3: the scene table's draw record (the shiny pull program is bound), nothing else draws this pass
+    LLRenderState::BlendScope blend_enable(true);
+    pushGeometryPackets(mRigged ? LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED : LLRenderPass::PASS_FULLBRIGHT_SHINY, mRigged);
 }
 
 void LLDrawPoolBump::endFullbrightShiny()
@@ -585,7 +534,7 @@ static bool emboss_table(bool rigged)
 }
 
 //static
-void LLDrawPoolBump::renderBump(U32 pass, bool table)
+void LLDrawPoolBump::renderBump()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
     LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::LessEqual);
@@ -594,32 +543,8 @@ void LLDrawPoolBump::renderBump(U32 pass, bool table)
     /// Get rid of z-fighting with non-bump pass.
     LLRenderState::PolygonOffsetScope polyOffset(true);
     gRender.setPolygonOffset(-1.0f, -1.0f);
-    if (table)
-    {
-        std::vector<LLDrawInfo*> fallback;
-        pushGeometryPackets(mRigged ? LLRenderPass::PASS_POST_BUMP_RIGGED : LLRenderPass::PASS_POST_BUMP, fallback, nullptr, mRigged);
-        if (!fallback.empty())
-        {
-            // what the rows cannot carry: the old program, the old way (a draw with no bump image is skipped, as before)
-            beginBump(false);
-            const LLVOAvatar* lastAvatar = nullptr;
-            U64 lastMeshId = 0;
-            bool skipLastSkin = false;
-            for (LLDrawInfo* params : fallback)
-            {
-                if (LLDrawPoolBump::bindBumpMap(*params))
-                {
-                    if (mRigged && !uploadMatrixPalette(params->mAvatar, params->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                    {
-                        continue;
-                    }
-                    pushBumpBatch(*params, false);
-                }
-            }
-        }
-        return;
-    }
-    pushBumpBatches(pass);
+    // J1 K6 A3: the scene table's draw record (the emboss pull program is bound)
+    pushGeometryPackets(mRigged ? LLRenderPass::PASS_POST_BUMP_RIGGED : LLRenderPass::PASS_POST_BUMP, mRigged);
 }
 
 //static
@@ -648,85 +573,18 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
 
-    shiny = true;
+    // J1 K6 A3: the deferred bump draws are scene table records (rows with the diffuse and bump image slots, the bump pull programs)
     for (int i = 0; i < 2; ++i)
     {
-        bool rigged = i == 1;
-        const bool table = bump_table(rigged);
-        std::vector<LLDrawInfo*> fallback;
-        if (table)
+        const bool rigged = i == 1;
+        if (!bump_table(rigged))
         {
-            (rigged ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram)->bind();
-            pushGeometryPackets(rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP, fallback, nullptr, rigged);
-            LLShaderProgram::sCurBoundShaderPtr->unbind();
-            if (fallback.empty())
-            {
-                continue;
-            }
+            continue;
         }
-        if (rigged)
-        {
-            gDeferredBumpProgram.bind(true);
-        }
-        else
-        {
-            ll_pull_or(&gDeferredBumpProgram)->bind();      // S6.6
-        }
-        diffuse_channel = LLShaderProgram::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
-        bump_channel = LLShaderProgram::sCurBoundShaderPtr->enableTexture(LLViewerShaderMgr::BUMP_MAP);
-        gRender.getTexUnit(diffuse_channel)->bindWhite();
-        gRender.getTexUnit(bump_channel)->bindWhite();
-
-        U32 type = rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP;
-        LLCullResult::drawinfo_iterator begin = gPipeline.beginRenderMap(type);
-        LLCullResult::drawinfo_iterator end = gPipeline.endRenderMap(type);
-
-        const LLVOAvatar* lastAvatar = nullptr;
-        U64 lastMeshId = 0;
-        bool skipLastSkin = false;
-
-        auto draw_one = [&](LLDrawInfo& params)
-        {
-            LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params.mAlphaMaskCutoff);
-            LLDrawPoolBump::bindBumpMap(params, bump_channel);
-
-            if (rigged)
-            {
-                if (uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                {
-                    pushBumpBatch(params, true, false);
-                }
-            }
-            else
-            {
-                pushBumpBatch(params, true, false);
-            }
-        };
-        if (table)
-        {
-            for (LLDrawInfo* params : fallback)
-            {
-                draw_one(*params);      // (what the rows could not carry)
-            }
-        }
-        else
-        {
-            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-            {
-                LLDrawInfo& params = **i;
-
-                LLCullResult::increment_iterator(i, end);
-
-                draw_one(params);
-            }
-        }
-
-        LLShaderProgram::sCurBoundShaderPtr->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
-        LLShaderProgram::sCurBoundShaderPtr->disableTexture(LLViewerShaderMgr::BUMP_MAP);
+        (rigged ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram)->bind();
+        pushGeometryPackets(rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP, rigged);
         LLShaderProgram::sCurBoundShaderPtr->unbind();
     }
-
-    shiny = false;
 }
 
 
@@ -740,17 +598,20 @@ void LLDrawPoolBump::renderPostDeferred(S32 pass)
     { // two passes -- static and rigged
         mRigged = (i == 1);
 
-        // render shiny
-        const bool shiny_table = fullbright_shiny_table(mRigged);
-        beginFullbrightShiny(shiny_table);
-        renderFullbrightShiny(shiny_table);
-        endFullbrightShiny();
+        // J1 K6 A3: render shiny and bump (emboss) from the scene table; a pass whose table is not available draws nothing
+        if (fullbright_shiny_table(mRigged))
+        {
+            beginFullbrightShiny(true);
+            renderFullbrightShiny();
+            endFullbrightShiny();
+        }
 
-        //render bump
-        const bool emboss = emboss_table(mRigged);
-        beginBump(emboss);
-        renderBump(LLRenderPass::PASS_POST_BUMP, emboss);
-        endBump();
+        if (emboss_table(mRigged))
+        {
+            beginBump(true);
+            renderBump();
+            endBump();
+        }
     }
 }
 
