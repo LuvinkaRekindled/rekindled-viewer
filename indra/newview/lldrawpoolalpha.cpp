@@ -1256,9 +1256,87 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
             }
 
+            // S5f F3: the table does not keep this draw (or this view has no fragments): a transient entry (the same pull program as a fragment item of its key), in the pass's order
+            auto transient_draw = [&](LLDrawInfo& params) -> bool
+            {
+                if (!transient_ok)
+                {
+                    return false;
+                }
+                LLAlphaTransient transient;
+                if (!ll_alpha_transient(&params, rigged, depth_only, transient))
+                {
+                    return false;
+                }
+                int key = run_key(transient.mKey);
+                if (is_particle_or_hud_particle)
+                {
+                    key |= 1 << 18;         // (particle groups draw with culling off)
+                }
+                if (pending_key != key || !pending.empty())
+                {
+                    run_flush();
+                    run_begin(key);
+                }
+                tr_add(transient, &params);
+                ++sAlphaScene.mTrFromInfo;
+                if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                {
+                    const bool pbr_draw = params.mGLTFMaterial.notNull();
+                    if (pbr_draw ? glow_pbr_table : glow_plain_table)
+                    {
+                        glow_draws[pbr_draw ? (params.mGLTFMaterial->mDoubleSided ? 2 : 1) : 0].push_back(&params);
+                    }
+                }
+                return true;
+            };
+
+            // J1 K6 S5c: a group with a plan draws from the plan's segments, in their order: a served segment is one range of one run, an old segment (none in the laps: 0 transient entries from draw infos) draws the plan's own
+            // list of its draws as transient entries. The group's draw map is not iterated.
+            if (group_plan)
+            {
+                U32 glow_at_p = 0;
+                for (U32 sg = 0; sg < plan.mSegCount; ++sg)
+                {
+                    const LLAlphaPlanSeg& seg = plan.mSegs[sg];
+                    if (seg.mServed)
+                    {
+                        if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
+                        {
+                            run_flush();
+                            run_begin(run_key(seg.mKey));
+                        }
+                        add_range(plan, seg);
+                        sAlphaScene.mServed += seg.mCount;
+                        if (glow_pass)
+                        {
+                            while (glow_at_p < plan.mGlowCount && plan.mGlowIdx[glow_at_p] < seg.mFirst)
+                            {
+                                ++glow_at_p;
+                            }
+                            while (glow_at_p < plan.mGlowCount && plan.mGlowIdx[glow_at_p] < seg.mFirst + seg.mCount)
+                            {
+                                LLDrawInfo* glow_draw = const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at_p]]);
+                                glow_add(plan, glow_draw, seg.mRank + (plan.mGlowIdx[glow_at_p] - seg.mFirst));       // (drawn from the table after the group)
+                                ++glow_at_p;
+                            }
+                        }
+                        continue;
+                    }
+                    for (U32 o = seg.mFirst; o < seg.mFirst + seg.mCount && o < plan.mOrderCount; ++o)
+                    {
+                        LLDrawInfo& params = const_cast<LLDrawInfo&>(*plan.mOrder[o]);
+                        if (!transient_draw(params))
+                        {
+                            ++sAlphaScene.mDropped;
+                        }
+                    }
+                }
+            }
+
             const bool plan_direct = group_plan && plan.mDirect;
             U32 glow_at = 0;
-            for (LLSpatialGroup::drawmap_elem_t::iterator k = draw_info.begin(); k != draw_info.end(); ++k)
+            for (LLSpatialGroup::drawmap_elem_t::iterator k = group_plan ? draw_info.end() : draw_info.begin(); k != draw_info.end(); ++k)
             {
                 if (plan_direct)
                 {
@@ -1335,33 +1413,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         ++sAlphaScene.mMismatch;        // (the plan does not list this draw here: it is a transient entry)
                     }
                 }
-                if (transient_ok)
-                {   // S5f F3: the table does not keep this draw (or this view has no fragments): a transient entry (the same pull program as a fragment item of its key), in the pass's order
-                    LLAlphaTransient transient;
-                    if (ll_alpha_transient(&params, rigged, depth_only, transient))
-                    {
-                        int key = run_key(transient.mKey);
-                        if (is_particle_or_hud_particle)
-                        {
-                            key |= 1 << 18;         // (particle groups draw with culling off)
-                        }
-                        if (pending_key != key || !pending.empty())
-                        {
-                            run_flush();
-                            run_begin(key);
-                        }
-                        tr_add(transient, &params);
-                        ++sAlphaScene.mTrFromInfo;
-                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
-                        {
-                            const bool pbr_draw = params.mGLTFMaterial.notNull();
-                            if (pbr_draw ? glow_pbr_table : glow_plain_table)
-                            {
-                                glow_draws[pbr_draw ? (params.mGLTFMaterial->mDoubleSided ? 2 : 1) : 0].push_back(&params);
-                            }
-                        }
-                        continue;
-                    }
+                if (transient_draw(params))
+                {
+                    continue;
                 }
                 // S5g: no old path: a draw neither the fragments nor a transient entry can draw is not drawn
                 ++sAlphaScene.mDropped;
