@@ -273,6 +273,10 @@ extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: t
 extern LLShaderProgram         gDeferredBumpPullSkinProgram;
 extern bool                    gBumpPullReady;
 extern bool                    gBumpPullSkinReady;
+extern LLShaderProgram         gDeferredEmbossPullProgram;        // <FS> J1 K4: the post deferred emboss (post bump) pass from the scene table, static and rigged (alphaPullV with IS_EMBOSS_PULL + objects/bumpF)
+extern LLShaderProgram         gDeferredEmbossPullSkinProgram;
+extern bool                    gEmbossPullReady;
+extern bool                    gEmbossPullSkinReady;
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;

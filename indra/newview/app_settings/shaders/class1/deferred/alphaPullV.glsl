@@ -181,6 +181,12 @@ out vec2 vary_texcoord0;
 #ifdef IS_SHINY_PULL
 out vec3 vary_texcoord1;            // J1 K4: the fullbright shiny pass (fullbrightShinyV.glsl): the eye space normal rides in vary_texcoord1
 #endif
+#elif defined(IS_EMBOSS_PULL)
+// J1 K4: the post deferred emboss pass (objects/bumpV.glsl): both texture coordinate sets through the texture matrix, the bump image's slot in vary_slot (it is sampled twice)
+out vec3 vary_position;
+out vec4 vertex_color;
+out vec2 vary_texcoord0;
+out vec2 vary_texcoord1;
 #elif defined(IS_BUMP_PULL)
 // J1 K4: the deferred bump pass (bumpV.glsl): the tangent frame rows, the diffuse slot in vary_slot and the bump image's slot in vary_slot_normal (the row's map slots)
 out vec3 vary_position;
@@ -294,6 +300,8 @@ void main()
 #endif
     }
 #endif
+#elif defined(IS_EMBOSS_PULL)
+    vary_texcoord1 = (ll_tm * vec4(GeoVec2(pk.texcoords1).t[index], 0.0, 1.0)).xy;
 #elif defined(IS_BUMP_PULL)
     {
         vec3 bump_normal = GeoVec4(pk.normals).v[index].xyz;

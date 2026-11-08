@@ -7478,7 +7478,7 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                 { //invisiprim+shiny
                     if (!facep->getViewerObject()->isAttachment() && !facep->getViewerObject()->isRiggedMesh())
                     {
-                        registerFace(group, facep, LLRenderPass::PASS_INVISI_SHINY, &batch_map);
+                        // (J1 K4: PASS_INVISI_SHINY was registered here and drawn by no pool at all: a draw info made and kept for nothing; the invisible draw is the one that is drawn)
                         registerFace(group, facep, LLRenderPass::PASS_INVISIBLE, &batch_map);
                     }
                 }
