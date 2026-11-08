@@ -14241,13 +14241,15 @@ bool ll_scene_geo_hud_type(int tn)
     return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady)
-        || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady);
+        || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady && (!getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0'));       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
 }
 
 bool ll_scene_geo_hud_any()
 {
     return ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
-        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR));
+        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR))
+        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP));
 }
 
 void ll_scene_geo_count(U32 what, U64 n)
