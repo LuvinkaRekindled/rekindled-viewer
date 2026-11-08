@@ -59,8 +59,8 @@ public:
 
     S32 numBumpPasses();
 
-    void beginFullbrightShiny();
-    void renderFullbrightShiny();
+    void beginFullbrightShiny(bool table = false);
+    void renderFullbrightShiny(bool table = false);
     void endFullbrightShiny();
 
     void beginBump();

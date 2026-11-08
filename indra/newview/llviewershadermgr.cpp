@@ -273,6 +273,10 @@ static bool alpha_noshadow()
 LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
 LLShaderProgram            gDeferredFullbrightPullSkinProgram;
 bool                       gFullbrightPullReady = false;
+LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
+LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
+bool                       gFullbrightShinyPullReady = false;
+bool                       gFullbrightShinyPullSkinReady = false;
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
@@ -1485,6 +1489,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightPullSkinProgram.unload();
         gFullbrightPullReady = false;
         gFullbrightPullSkinReady = false;
+        gDeferredFullbrightShinyPullProgram.unload();
+        gDeferredFullbrightShinyPullSkinProgram.unload();
+        gFullbrightShinyPullReady = false;
+        gFullbrightShinyPullSkinReady = false;
         gDeferredDiffuseAlphaMaskPullProgram.unload();
         gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
         gDeferredFullbrightAlphaMaskPullProgram.unload();
@@ -2767,6 +2775,58 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             else
             {
                 gFullbrightPullReady = true;
+            }
+        }
+    }
+
+    // <FS> J1 K4: the fullbright shiny pass from the table: the fullbright pull vertex shader with the eye space normal (IS_SHINY_PULL) and the shiny fragment shader (environment map or reflection probes, bound by the
+    // pool to whichever program draws), the diffuse texture of each row from the bindless table. Optional: without it the old pass draws.
+    gFullbrightShinyPullReady = false;
+    gFullbrightShinyPullSkinReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
+            shader->mName = skin ? "Deferred Fullbright Shiny Pull Skin Shader" : "Deferred Fullbright Shiny Pull Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.hasReflectionProbes = true;
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
+            shader->addPermutation("IS_SHINY_PULL", "1");
+            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            ok = shader->createShader();
+            if (!ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "fullbright shiny objects are drawn the old way" << LL_ENDL;
+                shader->unload();
+            }
+            else if (skin)
+            {
+                gFullbrightShinyPullSkinReady = true;
+            }
+            else
+            {
+                gFullbrightShinyPullReady = true;
             }
         }
     }
