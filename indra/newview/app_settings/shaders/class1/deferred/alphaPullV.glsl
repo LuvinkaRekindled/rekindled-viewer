@@ -181,6 +181,15 @@ out vec2 vary_texcoord0;
 #ifdef IS_SHINY_PULL
 out vec3 vary_texcoord1;            // J1 K4: the fullbright shiny pass (fullbrightShinyV.glsl): the eye space normal rides in vary_texcoord1
 #endif
+#elif defined(IS_BUMP_PULL)
+// J1 K4: the deferred bump pass (bumpV.glsl): the tangent frame rows, the diffuse slot in vary_slot and the bump image's slot in vary_slot_normal (the row's map slots)
+out vec3 vary_position;
+out vec4 vertex_color;
+out vec2 vary_texcoord0;
+out vec3 vary_mat0;
+out vec3 vary_mat1;
+out vec3 vary_mat2;
+flat out uint vary_slot_normal;
 #else
 uniform float near_clip;
 out vec3 vary_fragcoord;
@@ -285,6 +294,24 @@ void main()
 #endif
     }
 #endif
+#elif defined(IS_BUMP_PULL)
+    {
+        vec3 bump_normal = GeoVec4(pk.normals).v[index].xyz;
+        vec4 bump_tangent = GeoVec4(pk.tangents).v[index];
+#ifdef HAS_SKIN
+        vec3 n = normalize(mat3(m.mv) * (sm * bump_normal));
+        vec3 t = normalize(mat3(m.mv) * (sm * bump_tangent.xyz));
+#else
+        mat3 nm = mat3(m.n0.xyz, m.n1.xyz, m.n2.xyz);
+        vec3 n = normalize(nm * bump_normal);
+        vec3 t = normalize(nm * bump_tangent.xyz);
+#endif
+        vec3 b = cross(n, t) * bump_tangent.w;
+        vary_mat0 = vec3(t.x, b.x, n.x);
+        vary_mat1 = vec3(t.y, b.y, n.y);
+        vary_mat2 = vec3(t.z, b.z, n.z);
+        vary_slot_normal = pk.mapSlots & 0xFFFFu;
+    }
 #else
     vec3 normal = GeoVec4(pk.normals).v[index].xyz;
 #ifdef HAS_SKIN

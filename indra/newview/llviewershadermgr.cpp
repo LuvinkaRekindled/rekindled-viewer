@@ -277,6 +277,10 @@ LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: 
 LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
 bool                       gFullbrightShinyPullReady = false;
 bool                       gFullbrightShinyPullSkinReady = false;
+LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
+LLShaderProgram            gDeferredBumpPullSkinProgram;
+bool                       gBumpPullReady = false;
+bool                       gBumpPullSkinReady = false;
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
@@ -1493,6 +1497,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightShinyPullSkinProgram.unload();
         gFullbrightShinyPullReady = false;
         gFullbrightShinyPullSkinReady = false;
+        gDeferredBumpPullProgram.unload();
+        gDeferredBumpPullSkinProgram.unload();
+        gBumpPullReady = false;
+        gBumpPullSkinReady = false;
         gDeferredDiffuseAlphaMaskPullProgram.unload();
         gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
         gDeferredFullbrightAlphaMaskPullProgram.unload();
@@ -2827,6 +2835,54 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             else
             {
                 gFullbrightShinyPullReady = true;
+            }
+        }
+    }
+
+    // <FS> J1 K4: the deferred bump pass from the table: the pull vertex shader with the tangent frame (IS_BUMP_PULL) and bumpF with its diffuse and bump images from the bindless table by the row's slots
+    // (the materials rewrite, LL_BINDLESS_MATERIAL), the cutoff of each draw from its row (LL_MASK_CUTOFF). Optional: without it the old pass draws.
+    gBumpPullReady = false;
+    gBumpPullSkinReady = false;
+    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        bool ok = true;
+        for (int i = 0; i < 2 && ok; ++i)
+        {
+            const bool skin = i == 1;
+            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
+            {
+                break;
+            }
+            LLShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
+            shader->mName = skin ? "Deferred Bump Pull Skin Shader" : "Deferred Bump Pull Shader";
+            shader->mShaderFiles.clear();
+            shader->clearPermutations();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
+            shader->mShaderFiles.push_back(make_pair("deferred/bumpF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("IS_BUMP_PULL", "1");
+            shader->addPermutation("LL_BINDLESS_MATERIAL", "1");
+            shader->addPermutation("HAS_NORMAL_MAP", "1");
+            shader->addPermutation("LL_MASK_CUTOFF", "1");
+            if (skin)
+            {
+                shader->addPermutation("HAS_SKIN", "1");
+                shader->addPermutation("HAS_INDEXED_DRAW", "1");
+            }
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            ok = shader->createShader();
+            if (!ok)
+            {
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "bump mapped objects are drawn the old way" << LL_ENDL;
+                shader->unload();
+            }
+            else if (skin)
+            {
+                gBumpPullSkinReady = true;
+            }
+            else
+            {
+                gBumpPullReady = true;
             }
         }
     }

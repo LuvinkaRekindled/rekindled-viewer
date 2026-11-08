@@ -10381,6 +10381,8 @@ struct LLSceneFragment
         U32 mBoundEpoch; U32 mBoundId, mBoundJoints, mBoundLodIb, mBoundLodCount; };      // P2: the binding the worker holds for this rigged item (valid when mBoundEpoch is sRebindEpoch; 0 = none sent)
     std::vector<GeoItem> mGeo;
     std::vector<LLPointer<LLViewerTexture>> mGeoTex;
+    struct BumpSource { LLPointer<LLViewerTexture> mTexture; U8 mCode; };
+    std::vector<BumpSource> mBump;                      // J1 K4: the bump images of the served bump items: made current every frame the fragment is listed (LLDrawPoolBump::refreshBumpImage)
     std::vector<std::pair<U32, LLDrawInfo*>> mGeoFallback;      // (type number, draw info) the packet layout cannot take
     bool mGeoRegion = true;                             // all its matrices are region matrices (the worker can hold it)
     U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
@@ -10806,9 +10808,14 @@ static bool geo_type_available(size_t t, bool rigged)
         static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';      // (0 = the pull batches of the render map, as before)
         return shiny_table && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
     }
-    if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP || kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP)
     {
-        return false;       // (J1 K4: served when their pull programs and entries are there)
+        static const bool bump_table_env = !getenv("LL_VK_BUMP_TABLE") || getenv("LL_VK_BUMP_TABLE")[0] != '0';      // (0 = the pass reads the render map, as before)
+        return bump_table_env && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
+    }
+    if (kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
+    {
+        return false;       // (J1 K4: served when its pull programs and entries are there)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
     {
@@ -11161,6 +11168,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     ++sGeoItemsEpoch;
     f.mGeo.clear();
     f.mGeoTex.clear();
+    f.mBump.clear();
     f.mGeoFallback.clear();
     f.mGeoRegion = true;
     f.mGeoServedCount = 0;
@@ -11288,6 +11296,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             item.mServed = (!params->mModelMatrix || item.mE.mMatrix != 0) && texmat_served;
             params->mGeoServed = item.mServed;
             f.mGeoServedCount += item.mServed ? 1 : 0;
+            if (item.mServed && kGeoTypes[t].mType == LLRenderPass::PASS_BUMP && params->mBump != 0)
+            {
+                f.mBump.push_back({ LLPointer<LLViewerTexture>(params->mTexture.get()), params->mBump });
+            }
             if (item.mServed)
             {
                 ++served_infos[t2];
@@ -14161,6 +14173,21 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
     }
     const std::vector<U32>& handles = cull->mGeoHandles;
+    {
+        // J1 K4: the bump images of the listed fragments' bump items are made current here (a render pass inside, before the passes), as the old pass did for each draw it drew
+        LL_CPU_ZONE("deferred: bump images");
+        for (U32 handle : handles)
+        {
+            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+            if (f && !f->mBump.empty())
+            {
+                for (const LLSceneFragment::BumpSource& b : f->mBump)
+                {
+                    LLDrawPoolBump::refreshBumpImage(b.mCode, b.mTexture.get());
+                }
+            }
+        }
+    }
     if (scene_geo_moving_on())
     {
         static U32 prepare_seq = 0;

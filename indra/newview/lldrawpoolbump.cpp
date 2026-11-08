@@ -481,15 +481,13 @@ bool LLDrawPoolBump::bindBumpMap(LLFace* face, S32 channel)
 }
 
 //static
-bool LLDrawPoolBump::bindBumpMap(U8 bump_code, LLViewerTexture* texture, S32 channel)
+LLViewerTexture* LLDrawPoolBump::bumpImageFor(U8 bump_code, LLViewerTexture* texture, bool generate)
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    //Note: texture atlas does not support bump texture now.
     LLViewerFetchedTexture* tex = LLViewerTextureManager::staticCastToFetchedTexture(texture) ;
     if(!tex)
     {
         //if the texture is not a fetched texture
-        return false;
+        return nullptr;
     }
 
     LLViewerTexture* bump = NULL;
@@ -500,17 +498,29 @@ bool LLDrawPoolBump::bindBumpMap(U8 bump_code, LLViewerTexture* texture, S32 cha
         break;
     case BE_BRIGHTNESS:
     case BE_DARKNESS:
-        bump = gBumpImageList.getBrightnessDarknessImage( tex, bump_code );
+        bump = generate ? gBumpImageList.getBrightnessDarknessImage( tex, bump_code ) : gBumpImageList.getBrightnessDarknessEntry( tex, bump_code );
         break;
 
     default:
         if( bump_code < LLStandardBumpmap::sStandardBumpmapCount )
         {
             bump = gStandardBumpmapList[bump_code].mImage;
-            gBumpImageList.addTextureStats(bump_code, tex->getID(), tex->getMaxVirtualSize());
+            if (generate)
+            {
+                gBumpImageList.addTextureStats(bump_code, tex->getID(), tex->getMaxVirtualSize());
+            }
         }
         break;
     }
+    return bump;
+}
+
+//static
+bool LLDrawPoolBump::bindBumpMap(U8 bump_code, LLViewerTexture* texture, S32 channel)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
+    //Note: texture atlas does not support bump texture now.
+    LLViewerTexture* bump = bumpImageFor(bump_code, texture, true);
 
     if (bump)
     {
@@ -581,6 +591,15 @@ S32 LLDrawPoolBump::getNumDeferredPasses()
     return 1;
 }
 
+// J1 K4: the deferred bump draws come from the scene table (rows with the diffuse and bump image slots, the bump pull program) in the main view, whose fragments the table was told; every other view, and what
+// the rows cannot carry, draws the old way
+static bool bump_table(bool rigged)
+{
+    static const bool bump_table_env = !getenv("LL_VK_BUMP_TABLE") || getenv("LL_VK_BUMP_TABLE")[0] != '0';
+    return bump_table_env && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
+        && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
+}
+
 void LLDrawPoolBump::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
@@ -589,6 +608,18 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
     for (int i = 0; i < 2; ++i)
     {
         bool rigged = i == 1;
+        const bool table = bump_table(rigged);
+        std::vector<LLDrawInfo*> fallback;
+        if (table)
+        {
+            (rigged ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram)->bind();
+            pushGeometryPackets(rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP, fallback, nullptr, rigged);
+            LLShaderProgram::sCurBoundShaderPtr->unbind();
+            if (fallback.empty())
+            {
+                continue;
+            }
+        }
         if (rigged)
         {
             gDeferredBumpProgram.bind(true);
@@ -610,12 +641,8 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
         U64 lastMeshId = 0;
         bool skipLastSkin = false;
 
-        for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+        auto draw_one = [&](LLDrawInfo& params)
         {
-            LLDrawInfo& params = **i;
-
-            LLCullResult::increment_iterator(i, end);
-
             LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(params.mAlphaMaskCutoff);
             LLDrawPoolBump::bindBumpMap(params, bump_channel);
 
@@ -629,6 +656,24 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
             else
             {
                 pushBumpBatch(params, true, false);
+            }
+        };
+        if (table)
+        {
+            for (LLDrawInfo* params : fallback)
+            {
+                draw_one(*params);      // (what the rows could not carry)
+            }
+        }
+        else
+        {
+            for (LLCullResult::drawinfo_iterator i = begin; i != end; )
+            {
+                LLDrawInfo& params = **i;
+
+                LLCullResult::increment_iterator(i, end);
+
+                draw_one(params);
             }
         }
 
@@ -798,6 +843,18 @@ void LLBumpImageList::updateImages()
 
 
 // Note: the caller SHOULD NOT keep the pointer that this function returns.  It may be updated as more data arrives.
+LLViewerTexture* LLBumpImageList::getBrightnessDarknessEntry(LLViewerFetchedTexture* src_image, U8 bump_code)
+{
+    bump_image_map_t& entries_list = bump_code == BE_BRIGHTNESS ? mBrightnessEntries : mDarknessEntries;
+    bump_image_map_t::iterator iter = entries_list.find(src_image->getID());
+    if (iter == entries_list.end() || iter->second.isNull())
+    {
+        entries_list[src_image->getID()] = LLViewerTextureManager::getLocalTexture(true);       // (as onSourceUpdated makes an entry: the image is generated when the pass draws)
+        iter = entries_list.find(src_image->getID());
+    }
+    return iter->second;
+}
+
 LLViewerTexture* LLBumpImageList::getBrightnessDarknessImage(LLViewerFetchedTexture* src_image, U8 bump_code )
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
