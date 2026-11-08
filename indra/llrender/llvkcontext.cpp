@@ -755,6 +755,7 @@ bool Context::pickDevice()
             mCaps.mMultiDrawIndirect = chain.f2.features.multiDrawIndirect != VK_FALSE;
             mCaps.mBufferDeviceAddress = chain.f12.bufferDeviceAddress != VK_FALSE;
             mCaps.mDrawIndirectFirstInstance = chain.f2.features.drawIndirectFirstInstance != VK_FALSE;
+            mCaps.mDrawIndirectCount = chain.f12.drawIndirectCount != VK_FALSE;
             mCaps.mMaxAnisotropy = props.limits.maxSamplerAnisotropy;
             mCaps.mTimestampPeriodNs = props.limits.timestampPeriod;
             mCaps.mTimestampValidBits = families[(U32)family].timestampValidBits;
