@@ -578,7 +578,9 @@ void LLDrawPoolBump::beginBump(bool table)
 static bool emboss_table(bool rigged)
 {
     static const bool emboss_table_env = !getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0';
-    return emboss_table_env && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
+    // J1 K6 S1: the HUD's post bump pass too (no rigged draws in a HUD; the HUD's cull result was told to the worker before the passes)
+    const bool view_ok = !LLPipeline::sRenderingHUDs || (!rigged && ll_scene_geo_hud_view() && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP)));
+    return emboss_table_env && view_ok && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
         && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
 }
 
