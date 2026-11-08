@@ -2016,7 +2016,9 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
     {
         ll_scene_geo_count(3, 1);       // postSort left the table's draws out of this render map and the table was not told: they are missing from this frame (should stay 0)
     }
-    if (build->mSkipServed && !ll_scene_geo_prepared(cull))
+    // J1 (a lead of 2026-11-07: about one pass a frame was built again): the HUD pass asked for the water exclusion draws (INVISIBLE) of its own cull result, which the table was not told about, and built them
+    // again, the old way, with nothing in them. A build that walked no draw at all (an empty render map) would be the same build again: not made.
+    if (build->mSkipServed && !ll_scene_geo_prepared(cull) && build->mInMap != 0)
     {
         // S3: the build left out what the table serves, and the table was not told this cull result's fragments (an impostor, a snapshot, a frame boundary in between): built again with everything in it
         build = std::make_shared<LLGeometryBuild>();
@@ -2025,6 +2027,27 @@ void LLRenderPass::pushGeometryPackets(U32 type, std::vector<LLDrawInfo*>& fallb
         build->mSkipServed = false;
         build_geometry(*build);
         ll_scene_geo_count(2, 1);
+        if (rig_census_on())
+        {
+            // which passes are built again for want of a prepare (a lead of 2026-11-07: about one a frame): by HUD, impostor, camera id, rigged; with the draws the second build holds
+            static U64 again = 0, hud = 0, impostor = 0, rigged_n = 0, draws = 0, pass_types[128] = {};
+            static U64 cameras[16] = {};
+            ++again;
+            hud += LLPipeline::sRenderingHUDs ? 1 : 0;
+            impostor += LLPipeline::sImpostorRender ? 1 : 0;
+            rigged_n += rigged ? 1 : 0;
+            draws += build->mEntries.size() + build->mFallback.size();
+            ++pass_types[std::min<U32>((U32)type, 127u)];
+            ++cameras[std::min<U32>((U32)LLViewerCamera::sCurCameraID, 15u)];
+            if (again % 600 == 0)
+            {
+                std::string types, cams;
+                for (U32 t = 0; t < 128; ++t) { if (pass_types[t]) { types += " " + std::to_string(t) + ":" + std::to_string(pass_types[t]); } }
+                for (U32 c = 0; c < 16; ++c) { if (cameras[c]) { cams += " " + std::to_string(c) + ":" + std::to_string(cameras[c]); } }
+                LL_INFOS("RigCensus") << "geometry passes built again for want of a prepare, over " << again << ": in the HUD pass " << hud << ", impostor " << impostor << ", rigged " << rigged_n << ", draws in them " << draws
+                    << ", by pass type" << types << ", by camera id" << cams << LL_ENDL;
+            }
+        }
     }
     ll_scene_geo_count(0, build->mSkipped);
     finish_geometry_build(*build);
