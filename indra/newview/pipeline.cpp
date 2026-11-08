@@ -9895,7 +9895,93 @@ inline U32 rt_float_bits(F32 f)
 }
 } // namespace
 
-static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, LLDrawInfo* cache_on);
+static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on);
+
+// J1 K5: what rt_material_id reads, as plain pointers and values (no counted references): made from a draw info (its own cache) or from the source a fragment's item keeps (its own cache)
+struct RtMatView
+{
+    LLFetchedGLTFMaterial* mGltf = nullptr;
+    LLViewerTexture* mTexture = nullptr;
+    LLViewerTexture* mList[4] = {};
+    size_t mListSize = 0;
+    LLViewerTexture* mNormalMap = nullptr;
+    LLViewerTexture* mSpecularMap = nullptr;
+    bool mFullbright = false, mEmissiveLegacy = false;
+    F32 mCutoff = 0.5f;
+    F32 mSpec[4] = {};
+    F32 mEnv = 0.f;
+    std::atomic<U64>* mCache = nullptr;
+};
+static RtMatView rt_mat_view(LLDrawInfo* p)
+{
+    RtMatView v;
+    v.mGltf = p->mGLTFMaterial.get();
+    v.mTexture = p->mTexture.get();
+    v.mListSize = p->mTextureList.size();
+    for (size_t t = 0; t < v.mListSize && t < 4; ++t)
+    {
+        v.mList[t] = p->mTextureList[t].get();
+    }
+    v.mNormalMap = p->mNormalMap.get();
+    v.mSpecularMap = p->mSpecularMap.get();
+    v.mFullbright = p->mFullbright;
+    v.mEmissiveLegacy = p->mDiffuseAlphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
+    v.mCutoff = p->mAlphaMaskCutoff;
+    for (int k = 0; k < 4; ++k)
+    {
+        v.mSpec[k] = p->mSpecColor.mV[k];
+    }
+    v.mEnv = p->mEnvIntensity;
+    v.mCache = &p->mRtMaterial;
+    return v;
+}
+static RtMatView rt_mat_view(const RtMatSource& m)
+{
+    RtMatView v;
+    v.mGltf = m.mGltf.get();
+    v.mTexture = m.mTexture.get();
+    v.mListSize = m.mListSize;
+    for (size_t t = 0; t < m.mListSize && t < 4; ++t)
+    {
+        v.mList[t] = m.mList[t].get();
+    }
+    v.mNormalMap = m.mNormalMap.get();
+    v.mSpecularMap = m.mSpecularMap.get();
+    v.mFullbright = m.mFullbright;
+    v.mEmissiveLegacy = m.mEmissiveLegacy;
+    v.mCutoff = m.mCutoff;
+    for (int k = 0; k < 4; ++k)
+    {
+        v.mSpec[k] = m.mSpec[k];
+    }
+    v.mEnv = m.mEnv;
+    v.mCache = &m.mCache.mValue;
+    return v;
+}
+static RtMatSource rt_mat_source(const LLDrawInfo* p)
+{
+    RtMatSource m;
+    m.mGltf = p->mGLTFMaterial;
+    m.mTexture = p->mTexture;
+    m.mListSize = (U32)p->mTextureList.size();
+    for (size_t t = 0; t < p->mTextureList.size() && t < 4; ++t)
+    {
+        m.mList[t] = p->mTextureList[t];
+    }
+    m.mNormalMap = p->mNormalMap;
+    m.mSpecularMap = p->mSpecularMap;
+    m.mFullbright = p->mFullbright;
+    m.mEmissiveLegacy = p->mDiffuseAlphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE;
+    m.mCutoff = p->mAlphaMaskCutoff;
+    for (int k = 0; k < 4; ++k)
+    {
+        m.mSpec[k] = p->mSpecColor.mV[k];
+    }
+    m.mEnv = p->mEnvIntensity;
+    m.mSet = true;
+    return m;
+}
+static U32 rt_material_id(const RtMatView& v, U32 hint);
 
 // <FS> ray scene: a masked caster whose texture has no data yet would be traced with the viewer's default image (opaque: the whole card casts, see LLTexUnit::prepareFast). In ray shadow mode
 // such a draw is not named until its textures are there; it joins the scene the frame they arrive. Builders run on several threads: read only.
@@ -9950,8 +10036,17 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     {
         return 0;
     }
+    return rt_material_id(rt_mat_view(p), hint);
+}
+
+static U32 rt_material_id(const RtMatView& v, U32 hint)
+{
+    if (!rt_materials_on())
+    {
+        return 0;
+    }
     const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
-    const U64 cached = p->mRtMaterial.load(std::memory_order_relaxed);
+    const U64 cached = v.mCache->load(std::memory_order_relaxed);
     if (cached)
     {
         const U32 id = (U32)cached;
@@ -9963,7 +10058,7 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     }
     LLVkBridge::RtMaterialDef d = {};
     LLPointer<LLViewerTexture> tex[7];
-    LLFetchedGLTFMaterial* gm = p->mGLTFMaterial.get();
+    LLFetchedGLTFMaterial* gm = v.mGltf;
     U32 flags = 0;
     d.mColor[0] = d.mColor[1] = d.mColor[2] = d.mColor[3] = 1.f;
     d.mUv[0] = 1.f;
@@ -9972,7 +10067,7 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     if (gm)
     {
         flags |= LLVkBridge::RTM_GLTF;
-        tex[0] = p->mTexture.notNull() ? p->mTexture : LLPointer<LLViewerTexture>(gm->mBaseColorTexture.get());
+        tex[0] = v.mTexture ? LLPointer<LLViewerTexture>(v.mTexture) : LLPointer<LLViewerTexture>(gm->mBaseColorTexture.get());
         tex[4] = gm->mNormalTexture.get();
         tex[5] = gm->mMetallicRoughnessTexture.get();
         tex[6] = gm->mEmissiveTexture.get();
@@ -9999,34 +10094,34 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     }
     else
     {
-        if (p->mTextureList.size() > 1)
+        if (v.mListSize > 1)
         {
             flags |= LLVkBridge::RTM_BATCH;
-            for (size_t t = 0; t < p->mTextureList.size() && t < 4; ++t)
+            for (size_t t = 0; t < v.mListSize && t < 4; ++t)
             {
-                tex[t] = p->mTextureList[t];
+                tex[t] = v.mList[t];
             }
         }
         else
         {
-            tex[0] = p->mTexture;
+            tex[0] = v.mTexture;
         }
-        tex[4] = p->mNormalMap;
-        tex[5] = p->mSpecularMap;
-        if (p->mFullbright)
+        tex[4] = v.mNormalMap;
+        tex[5] = v.mSpecularMap;
+        if (v.mFullbright)
         {
             flags |= LLVkBridge::RTM_FULLBRIGHT;
         }
-        if (p->mDiffuseAlphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_EMISSIVE)
+        if (v.mEmissiveLegacy)
         {
             flags |= LLVkBridge::RTM_EMISSIVE_LEGACY;
         }
-        d.mCutoff = p->mAlphaMaskCutoff;
+        d.mCutoff = v.mCutoff;
         for (int k = 0; k < 4; ++k)
         {
-            d.mSpecular[k] = p->mSpecColor.mV[k];
+            d.mSpecular[k] = v.mSpec[k];
         }
-        d.mMetallic = p->mEnvIntensity;                 // the legacy environment intensity rides along
+        d.mMetallic = v.mEnv;                 // the legacy environment intensity rides along
     }
     if (hint & 1)
     {
@@ -10041,12 +10136,12 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
         flags |= LLVkBridge::RTM_NO_VERTEX_ALPHA;
     }
     d.mFlags = flags;
-    return rt_material_intern(d, tex, gm, p);
+    return rt_material_intern(d, tex, gm, v.mCache);
 }
 
 // the registry part shared by draws (rt_material_id) and the body meshes of avatars (rt_body_material): finds or creates the row of a definition. cache_on (may be null): the draw info
 // that remembers the row.
-static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, LLDrawInfo* cache_on)
+static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on)
 {
     const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
     const U32 flags = d.mFlags;
@@ -10109,7 +10204,7 @@ static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTe
     row.mUsed.store(stamp, std::memory_order_relaxed);
     if (cache_on)
     {
-        cache_on->mRtMaterial.store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
+        cache_on->store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
     }
     return id;
 }
@@ -11309,6 +11404,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 {
                     f.mGeoRigged.push_back((U32)f.mGeo.size());
                     f.mGeoRiggedSrc.push_back(ll_geo_rig_source(params));
+                    if (rt_materials_on())
+                    {
+                        f.mGeoRiggedSrc.back().mMat = rt_mat_source(params);        // J1 K5
+                    }
                     params->mRigAlphaSrc = false;
                     if (shadow_riggltf_type(kGeoTypes[t].mType + 1) && shadow_gltf_env() && !LLVkBridge::rtShadowMode())
                     {
@@ -15385,6 +15484,19 @@ static void rt_skin_material(LLVkBridge::ShadowSkinEntry& e, LLDrawInfo* params,
     e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
 }
 
+// J1 K5: the same for a fragment item's source (its own material source and cache)
+static void rt_skin_material_src(LLVkBridge::ShadowSkinEntry& e, const RtMatSource& mat, const LLVertexBuffer* vb)
+{
+    if (!rt_materials_on() || !mat.mSet)
+    {
+        return;
+    }
+    e.mMaterial = rt_material_id(rt_mat_view(mat), 0);
+    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+    e.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
+    e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
+}
+
 // J1 K3a (LL_VK_SHADOW_RIGFRAG: 1 default, 0 = the draw info lists only): the cascades' rigged casters that a group's fragment names are read from the fragment's items (their sources), not from the render
 // map's draw infos. 2 = compare: builds both and compares them (a mismatch is logged), the entries sent are the list-built ones; 3 = compare and send the item-built ones (the job still pushes every draw, the
 // builder leaves out the list-built entries of the draws a fragment names: what mode 1 does, with the proof that the items give the same entries). Not with ray scene materials (they read the draw info's cache: K5).
@@ -15395,7 +15507,7 @@ static int shadow_rigfrag_mode()
 }
 static bool shadow_rigfrag_usable()
 {
-    return shadow_rigfrag_mode() != 0 && !rt_materials_on() && scene_geo_rigged_on();
+    return shadow_rigfrag_mode() != 0 && scene_geo_rigged_on();       // (J1 K5: with ray scene materials too: the item's source carries the material)
 }
 
 // J1 K3d (LL_VK_SHADOW_RIGALPHA: 1 default, 0 = the draw info lists; 2 = compare: the lists still hold the draws and the alpha builder compares what the items give with what the lists gave, the list-built entries are sent):
@@ -15431,7 +15543,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     out.mShared = shared_palettes;
     out.mPaletteFrame = ll_frame_palette_frame();
     // the entry of one rigged draw, from its parts (a draw info's, or a fragment item's source): false = the skin is not loaded yet, not drawn
-    auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLDrawInfo* info, LLVkBridge::ShadowSkinEntry& e) -> bool
+    auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLDrawInfo* info, LLVkBridge::ShadowSkinEntry& e, const RtMatSource* mat = nullptr) -> bool
     {
         e = {};
         if (!(shared_palettes ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
@@ -15459,6 +15571,10 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
         if (info)
         {
             rt_skin_material(e, info, vb);
+        }
+        else if (mat)
+        {
+            rt_skin_material_src(e, *mat, vb);
         }
         return true;
     };
@@ -15536,7 +15652,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     continue;
                 }
                 LLVkBridge::ShadowSkinEntry e;
-                if (!make_entry(avatar, skin, vb, rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, e))
+                if (!make_entry(avatar, skin, vb, rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, e, &rig.mMat))
                 {
                     continue;
                 }
