@@ -30339,7 +30339,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         main_camera.calcAgentFrustumPlanes(main_camera.mAgentFrustum);
 
         LLVector3 min,max;
-        static const int fit_mode = getenv("LL_VK_SHADOW_FIT") ? atoi(getenv("LL_VK_SHADOW_FIT")) : 3;       // 3 = no scene box (the slices of the view frustum: what the octree walk's box gave wherever it was larger than the frustum, 3 km wide at the crowd spot), 2 = the box from the main cull's groups (a tight fit), 1 = the main camera's octree walk, 0 = also each slice's own walk
+        static const int fit_mode = getenv("LL_VK_SHADOW_FIT") ? atoi(getenv("LL_VK_SHADOW_FIT")) : 2;       // (default 2 since 2026-11-08, the user: sharper up close, no shimmer seen; same cost as 3) 3 = no scene box (the slices of the view frustum: what the octree walk's box gave wherever it was larger than the frustum, 3 km wide at the crowd spot), 2 = the box from the main cull's groups (a tight fit), 1 = the main camera's octree walk, 0 = also each slice's own walk
         static const bool fit_check = getenv("LL_VK_SHADOW_FIT_CHECK") != nullptr;
         bool from_cull = fit_mode == 2 && !gCubeSnapshot && cull_visible_extents(sCull, min, max);
         if (fit_mode >= 3)
