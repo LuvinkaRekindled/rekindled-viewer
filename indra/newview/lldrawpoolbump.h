@@ -78,6 +78,9 @@ public:
 
     static bool bindBumpMap(LLDrawInfo& params, S32 channel = -2);
     static bool bindBumpMap(LLFace* face, S32 channel = -2);
+    // J1 K4: the bump image of a draw: generate = false finds or makes the (empty) entry only (a fragment's row names it), true also makes it current (a render pass inside)
+    static LLViewerTexture* bumpImageFor(U8 bump_code, LLViewerTexture* tex, bool generate);
+    static void refreshBumpImage(U8 bump_code, LLViewerTexture* tex) { bumpImageFor(bump_code, tex, true); }
 
 private:
     static bool bindBumpMap(U8 bump_code, LLViewerTexture* tex, S32 channel);
@@ -138,6 +141,7 @@ public:
 
 
     LLViewerTexture*    getBrightnessDarknessImage(LLViewerFetchedTexture* src_image, U8 bump_code);
+    LLViewerTexture*    getBrightnessDarknessEntry(LLViewerFetchedTexture* src_image, U8 bump_code);       // J1 K4: the entry of the image (made empty when there is none), no generation
     void        addTextureStats(U8 bump, const LLUUID& base_image_id, F32 virtual_size);
 
     static void onSourceStandardLoaded( bool success, LLViewerFetchedTexture *src_vi, LLImageRaw* src, LLImageRaw* aux_src, S32 discard_level, bool final, void* userdata );

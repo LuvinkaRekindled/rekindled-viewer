@@ -269,6 +269,10 @@ extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <F
 extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
 extern bool                    gFullbrightShinyPullReady;
 extern bool                    gFullbrightShinyPullSkinReady;
+extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
+extern LLShaderProgram         gDeferredBumpPullSkinProgram;
+extern bool                    gBumpPullReady;
+extern bool                    gBumpPullSkinReady;
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;

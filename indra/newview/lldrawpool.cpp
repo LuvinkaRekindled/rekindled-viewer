@@ -1425,6 +1425,9 @@ U32 ll_pass_arrays(U32 type)
     case LLRenderPass::PASS_GLOW:
     case LLRenderPass::PASS_GLOW_RIGGED:
         return LL_PASS_ARRAY_EMISSIVE;
+    case LLRenderPass::PASS_BUMP:
+    case LLRenderPass::PASS_BUMP_RIGGED:
+        return LL_PASS_ARRAY_NORMALS | LL_PASS_ARRAY_BUMP;
     default:
         return LL_PASS_ARRAY_NORMALS;
     }
@@ -1439,6 +1442,10 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
         || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
+    }
+    if ((arrays & LL_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1))
+    {
+        return false;       // (J1 K4: the bump pass needs the tangents and draws one texture)
     }
     if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4)))
     {
@@ -1480,6 +1487,7 @@ int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LL
     if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) return 6;
     if ((arrays & LL_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
     if ((arrays & LL_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) return 14;
+    if ((arrays & LL_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1)) return 15;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)) return 8;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) return 9;
     if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))) return 10;
@@ -1596,6 +1604,12 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
         }
     }
     e.mCutoff = params.mAlphaMaskCutoff;        // S6 X3: (the alpha masked passes without materials read it from the row too)
+    if (arrays & LL_PASS_ARRAY_BUMP)
+    {
+        // J1 K4: the deferred bump pass: the tangent array and the bump image of the draw (made when the pass draws: LLDrawPoolBump::refreshBumpImage; here only the entry of it, a null one is the stand-in)
+        e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
+        textures[4] = LLDrawPoolBump::bumpImageFor(params.mBump, params.mTexture.get(), false);
+    }
     return true;
 }
 
@@ -1715,9 +1729,9 @@ static void build_geometry(LLGeometryBuild& out)
         // S6.6b: a draw with a texture matrix is an entry too (the record carries the matrix; every pull program of the geometry passes reads its slot); the rigged records with palettes of their own keep
         // the texture matrix draws old (their blob has the palettes where the matrices would go)
         const bool texmat_ok = !out.mRigged || out.mShared;
-        if (!geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, texmat_ok, ll_pass_arrays(out.mType)))
+        if ((ll_pass_arrays(out.mType) & LL_PASS_ARRAY_BUMP) || !geometry_packet_ok(*params, materials == nullptr, materials, out.mRigged, texmat_ok, ll_pass_arrays(out.mType)))
         {
-            out.mFallback.push_back(params);
+            out.mFallback.push_back(params);        // (J1 K4: the bump pass's per frame records have no bump image: what no row serves is drawn the old way)
             ll_rig_census_add(5, out.mRigged ? 1 : 0);
             if (out.mRigged && rig_census_on())
             {

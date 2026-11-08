@@ -142,7 +142,7 @@ struct LLGeometryPassInfo
 
 // <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs); LL_VK_RIGGED_PACKETS=1, LL_VK_RIGGED_PACKETS_AB=<s> alternates
 bool ll_rigged_packets_enabled();
-enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2 };
+enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
 U32 ll_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
 int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigged draws are served by the scene table (the rigged records stay for the frames it does not serve)
