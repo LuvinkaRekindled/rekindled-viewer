@@ -551,6 +551,7 @@ struct LLShadowDrawStats
     U64 mRiggedUntex = 0, mTextured = 0, mGLTF = 0;
     U64 mStaticMatrixChanges = 0;
     U64 mPacketEntries = 0, mPacketFallback = 0, mPacketRecords = 0;      // shadow packets: draws sent in records, draws left to the old path, records
+    U64 mAlphaFragEntries = 0, mAlphaFragGroups = 0;      // J1 K3c: entries made from the fragments of groups the worker does not hold (and the groups they came from)
     U64 mAlphaEntries = 0, mAlphaFallback = 0, mAlphaRecords = 0, mAlphaTextures = 0;      // the same for the alpha masked casters; distinct textures bound for them
     U64 mSkinEntries = 0, mSkinFallback = 0, mSkinRecords = 0, mSkinPalettes = 0;      // the same for the rigged untextured casters; distinct palettes sent
     U64 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;      // why alpha masked casters were left to the old path (every pass)
