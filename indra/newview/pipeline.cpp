@@ -9822,7 +9822,7 @@ static U32 rt_matrix_id(const LLMatrix4* m);
 // Rows not named for a long time are released. Texture animation matrices are ignored (a scrolling texture would make a material per frame): legacy draws use the identity transform.
 namespace
 {
-constexpr U32 kRtMatCap = 16384;
+constexpr U32 kRtMatCap = 32768;       // (J1 K5b: the retained entries pin their rows: about 14,600 in London City; the same capacity as the worker's table, llvkrt.cpp kMatCap)
 constexpr U64 kRtMatIdleFrames = 900;
 struct RtMatRow
 {
@@ -9834,6 +9834,7 @@ struct RtMatRow
     std::atomic<U32> mGen{0};                           // 0 = free row; changes whenever the row is given to another material
     U32 mSent[8] = {};                                  // the texture names last sent (same order as mTex)
     bool mDirty = false;
+    U32 mPins = 0;                                      // J1 K5b: retained fragment entries that name this row (the worker keeps them for as long as the fragment lives): a pinned row is not released (guarded by sRtMatLock)
 };
 RtMatRow sRtMatRows[kRtMatCap];
 std::mutex sRtMatLock;
@@ -9842,6 +9843,7 @@ std::vector<U32> sRtMatFree;
 U32 sRtMatHigh = 1;                                     // rows below it have been used (row 0 = no material)
 U32 sRtMatGenCounter = 0;
 std::atomic<U64> sRtMatFrame{0};
+std::vector<std::pair<U64, std::vector<U32>>> sRtMatUnpin;       // J1 K5b: pins to give back (the frame they were asked in, the rows): given back a few frames later, the worker still draws the old retained entries meanwhile
 struct RtMatStats { U64 mCreated = 0, mReleased = 0, mSent = 0, mFlushes = 0, mFull = 0, mLegacy = 0, mGltf = 0, mUsedNow = 0; } sRtMatStats;
 
 bool rt_materials_on()
@@ -9895,7 +9897,7 @@ inline U32 rt_float_bits(F32 f)
 }
 } // namespace
 
-static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on);
+static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on, bool pin = false);
 
 // J1 K5: what rt_material_id reads, as plain pointers and values (no counted references): made from a draw info (its own cache) or from the source a fragment's item keeps (its own cache)
 struct RtMatView
@@ -9981,7 +9983,7 @@ static RtMatSource rt_mat_source(const LLDrawInfo* p)
     m.mSet = true;
     return m;
 }
-static U32 rt_material_id(const RtMatView& v, U32 hint);
+static U32 rt_material_id(const RtMatView& v, U32 hint, bool pin = false);
 
 // <FS> ray scene: a masked caster whose texture has no data yet would be traced with the viewer's default image (opaque: the whole card casts, see LLTexUnit::prepareFast). In ray shadow mode
 // such a draw is not named until its textures are there; it joins the scene the frame they arrive. Builders run on several threads: read only.
@@ -10039,14 +10041,14 @@ static U32 rt_material_id(LLDrawInfo* p, U32 hint)
     return rt_material_id(rt_mat_view(p), hint);
 }
 
-static U32 rt_material_id(const RtMatView& v, U32 hint)
+static U32 rt_material_id(const RtMatView& v, U32 hint, bool pin)
 {
     if (!rt_materials_on())
     {
         return 0;
     }
     const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
-    const U64 cached = v.mCache->load(std::memory_order_relaxed);
+    const U64 cached = pin ? 0 : v.mCache->load(std::memory_order_relaxed);
     if (cached)
     {
         const U32 id = (U32)cached;
@@ -10136,12 +10138,33 @@ static U32 rt_material_id(const RtMatView& v, U32 hint)
         flags |= LLVkBridge::RTM_NO_VERTEX_ALPHA;
     }
     d.mFlags = flags;
-    return rt_material_intern(d, tex, gm, v.mCache);
+    return rt_material_intern(d, tex, gm, v.mCache, pin);
+}
+
+// J1 K5b: the row of a draw's material for an entry a fragment RETAINS (the worker keeps it and names it to the ray scene every frame, the viewer does not look at it again): pinned, so the registry does not release
+// the row and give its id to another material while the entry lives. The fragment gives the pins back (rt_material_unpin) when it is made again or freed.
+static U32 rt_material_pin(LLDrawInfo* p, U32 hint)
+{
+    if (!rt_materials_on() || !p)
+    {
+        return 0;
+    }
+    return rt_material_id(rt_mat_view(p), hint, true);
+}
+static void rt_material_unpin(std::vector<U32>& ids)
+{
+    if (ids.empty())
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sRtMatLock);
+    sRtMatUnpin.emplace_back(sRtMatFrame.load(std::memory_order_relaxed), std::move(ids));
+    ids.clear();
 }
 
 // the registry part shared by draws (rt_material_id) and the body meshes of avatars (rt_body_material): finds or creates the row of a definition. cache_on (may be null): the draw info
 // that remembers the row.
-static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on)
+static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTexture>* tex, LLFetchedGLTFMaterial* gm, std::atomic<U64>* cache_on, bool pin)
 {
     const U64 stamp = sRtMatFrame.load(std::memory_order_relaxed);
     const U32 flags = d.mFlags;
@@ -10202,6 +10225,10 @@ static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTe
     }
     RtMatRow& row = sRtMatRows[id];
     row.mUsed.store(stamp, std::memory_order_relaxed);
+    if (pin)
+    {
+        ++row.mPins;
+    }
     if (cache_on)
     {
         cache_on->store(((U64)row.mGen.load(std::memory_order_relaxed) << 32) | id, std::memory_order_relaxed);
@@ -10246,6 +10273,27 @@ static void rt_flush_materials()
     {
         std::lock_guard<std::mutex> lock(sRtMatLock);
         U64 used_now = 0, legacy = 0, gltf = 0;
+        {
+            // J1 K5b: pins asked to be given back at least 8 frames ago (the worker's old retained entries are gone by then)
+            size_t keep = 0;
+            for (size_t k = 0; k < sRtMatUnpin.size(); ++k)
+            {
+                if (frame < sRtMatUnpin[k].first + 8)
+                {
+                    if (keep != k) { sRtMatUnpin[keep] = std::move(sRtMatUnpin[k]); }
+                    ++keep;
+                    continue;
+                }
+                for (U32 id : sRtMatUnpin[k].second)
+                {
+                    if (id < kRtMatCap && sRtMatRows[id].mPins > 0)
+                    {
+                        --sRtMatRows[id].mPins;
+                    }
+                }
+            }
+            sRtMatUnpin.resize(keep);
+        }
         for (U32 id = 1; id < sRtMatHigh; ++id)
         {
             RtMatRow& row = sRtMatRows[id];
@@ -10255,7 +10303,7 @@ static void rt_flush_materials()
             }
             const U64 used = row.mUsed.load(std::memory_order_relaxed);
             const U64 age = frame > used ? frame - used : 0;
-            if (age > kRtMatIdleFrames)
+            if (age > kRtMatIdleFrames && row.mPins == 0)
             {
                 sRtMatByKey.erase(row.mKey);
                 for (auto& t : row.mTex)
@@ -10449,6 +10497,7 @@ struct LLSceneFragment
     struct BufferRef { const LLVertexBuffer* mBuffer; U32 mVertex, mIndex; };
     std::vector<BufferRef> mBuffers;                    // the buffers its entries name, with the ids they had
     std::vector<LLVkBridge::ShadowPacketEntry> mEntries;    // mMatrix: 0 = none, else 1 + index into mMatrices
+    std::vector<U32> mRtPins;                           // J1 K5b: the pinned registry rows of the ray scene materials its retained entries (mEntries, mAlpha, mAlphaTex) name
     std::vector<const LLMatrix4*> mMatrices;
     std::vector<U32> mMatrixIds;                        // rt_matrix_id of each
     std::vector<LLDrawInfo*> mFallback;                 // draws the packet layout cannot take
@@ -10781,6 +10830,7 @@ void ll_scene_fragment_free(LLSceneFragment*& fragment)
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
         sFragmentReleases.push_back(fragment->mId);
     }
+    rt_material_unpin(fragment->mRtPins);       // (J1 K5b)
     ++sGeoItemsEpoch;
     scene_moving_release(fragment);
     if (fragment->mGeoHandle)
@@ -11978,6 +12028,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
 static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mBuffers.clear();
+    rt_material_unpin(f.mRtPins);       // (J1 K5b: the pins of the entries it had)
     f.mEntries.clear();
     f.mMatrices.clear();
     f.mMatrixIds.clear();
@@ -12035,6 +12086,15 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 matrix_id = f.mMatrixIds[k];
             }
             LLVkBridge::ShadowPacketEntry entry = { vb->getVertexBufferId(), vb->getIndexBufferId(), params->mOffset, params->mCount, matrix, matrix_id };
+            if (rt_materials_on())
+            {
+                // J1 K5b: the entry the worker retains names its material (pinned) as the builder's entry does (build_shadow_static)
+                entry.mMaterial = rt_material_pin(params, 0);
+                f.mRtPins.push_back(entry.mMaterial);
+                entry.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
+                entry.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
+                entry.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+            }
             f.mEntries.push_back(entry);
         }
     }
@@ -15392,7 +15452,7 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
 // the entries the fragments make against the builder's, as sets (the fragments' order is by group, the builder's by type)
 static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStaticBuild& source)
 {
-    struct Key { U32 mVb, mIb, mFirst, mCount, mId; F32 mMatrix[16]; };
+    struct Key { U32 mVb, mIb, mFirst, mCount, mId; F32 mMatrix[16]; U32 mMaterial; };
     auto less = [](const Key& a, const Key& b)
     {
         if (a.mVb != b.mVb) return a.mVb < b.mVb;
@@ -15400,6 +15460,7 @@ static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStat
         if (a.mFirst != b.mFirst) return a.mFirst < b.mFirst;
         if (a.mCount != b.mCount) return a.mCount < b.mCount;
         if (a.mId != b.mId) return a.mId < b.mId;
+        if (a.mMaterial != b.mMaterial) return a.mMaterial < b.mMaterial;
         return memcmp(a.mMatrix, b.mMatrix, sizeof(a.mMatrix)) < 0;
     };
     auto same = [](const Key& a, const Key& b) { return memcmp(&a, &b, sizeof(Key)) == 0; };
@@ -15411,7 +15472,7 @@ static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStat
         for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
         {
             Key k = {};
-            k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId;
+            k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId; k.mMaterial = e.mMaterial;
             memcpy(k.mMatrix, e.mMatrix ? (const F32*)f->mMatrices[e.mMatrix - 1]->mMatrix : identity, sizeof(k.mMatrix));
             mine.push_back(k);
         }
@@ -15419,7 +15480,7 @@ static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStat
     for (const LLVkBridge::ShadowPacketEntry& e : source.mEntries)
     {
         Key k = {};
-        k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId;
+        k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId; k.mMaterial = e.mMaterial;
         memcpy(k.mMatrix, source.mMatrices.data() + 16 * (size_t)e.mMatrix, sizeof(k.mMatrix));
         theirs.push_back(k);
     }
@@ -21274,6 +21335,13 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             }
             e.mFlags = flags;
             e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+            if (rt_materials_on())
+            {
+                // J1 K5b: the entry the worker retains names its material (pinned) as the builder's entry does (build_shadow_alpha)
+                e.mMaterial = rt_material_pin(params, (source.kind == KIND_ALPHA) ? 2u : ((source.kind == KIND_MATERIAL) ? 5u : 1u));
+                f.mRtPins.push_back(e.mMaterial);
+                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+            }
             e.mUv[0] = 1.f;       // identity texture coordinate transform (the matrix-free entries of the kind 5 record)
             e.mUv[3] = 1.f;
             if (texmat_draw)
@@ -27815,7 +27883,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // S1: the cascade's casters from the groups' retained fragments (LL_VK_SCENE_FRAGMENTS=1), compared with the builder's when LL_VK_SCENE_VERIFY=1 (then the builder's record is the one drawn)
         ShadowStaticBuild from_fragments;       // ray shadows with resident fragments: the entries of the groups the worker does not hold, expanded here
         bool fragment_source = false;
-        if ((!rt_skip || scene_resident_on()) && prepared && (scene_fragments_use() || scene_verify_on()) && !rt_materials_on() && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
+        if ((!rt_skip || scene_resident_on()) && prepared && (scene_fragments_use() || scene_verify_on()) && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
             bool all_types = true;
             for (size_t t = 0; t < count && all_types; ++t)
@@ -28453,7 +28521,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // J1 K3c: when the render map job left the resident casters out itself (result.mAlphaResSkipped), the builder's list holds none the worker has (a check lap made the filter anyway: 0 drops in a lap, the
         // fragment verify clean too) and the lookup per entry is not made; only a result made another way (no job) is filtered
         const bool filter_needed = !result.mAlphaResSkipped;
-        if (((rt_skip && !rigged && scene_alpha_on() && sResidentPassRan && !rt_materials_on()) || res_raster) && filter_needed)
+        if (((rt_skip && !rigged && scene_alpha_on() && sResidentPassRan) || res_raster) && filter_needed)
         {
             LL_CPU_ZONE("packets: shadow alpha: resident filter");
             // S2 alpha: the casters the worker holds as resident fragments are not named again. With LL_VK_SCENE_VERIFY=1 every builder entry must be one the worker holds (the fragment is in
@@ -30039,7 +30107,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
             // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
             const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
-            const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !rt_materials_on() && all_static;
+            const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
             sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
             // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
             static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
