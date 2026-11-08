@@ -14210,10 +14210,17 @@ int ll_scene_geo_type_number(U32 type)
     return type < lut.size() ? lut[type] : -1;
 }
 
+static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves
+
 bool ll_scene_geo_main_view()
 {
     // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view (LL_VK_PROBE_TABLE=0 = they take the old pools)
     static const bool probe_table = !getenv("LL_VK_PROBE_TABLE") || getenv("LL_VK_PROBE_TABLE")[0] != '0';
+    // ... and the avatar impostor images (generateImpostor sets sShadowRender and sImpostorRender; its cull result holds the avatar's visible groups, it sorts with the viewer's own camera; LL_VK_IMPOSTOR_TABLE=0 = the old pools)
+    if (sImpostorTableView)
+    {
+        return LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+    }
     return (!gCubeSnapshot || probe_table) && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
@@ -17161,8 +17168,16 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             LL_CPU_ZONE("deferred: start geometry builds");
             LLDrawPoolMaterials::kickGeometryBuilds();       // (nothing when the early sort already started them for this cull result)
         }
-        if (&camera == LLViewerCamera::getInstance() && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces too)
+        if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
         {
+            {
+                static U64 prepares[3] = {};
+                const int kind = gCubeSnapshot ? 1 : (sImpostorTableView ? 2 : 0);
+                if (++prepares[kind] % 3000 == 0)
+                {
+                    LL_INFOS("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << LL_ENDL;
+                }
+            }
             LL_CPU_ZONE("deferred: scene geometry prepare");
             ll_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
         }
@@ -31513,6 +31528,10 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     sShadowRender = true;
     sImpostorRender = true;
+    {
+        static const bool impostor_table = !getenv("LL_VK_IMPOSTOR_TABLE") || getenv("LL_VK_IMPOSTOR_TABLE")[0] != '0';
+        sImpostorTableView = impostor_table && !preview_avatar && !for_profile && !sJobView;
+    }
 
     LLViewerCamera* viewer_camera = LLViewerCamera::getInstance();
 
@@ -31799,6 +31818,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     sUseOcclusion = occlusion;
     sReflectionRender = false;
     sImpostorRender = false;
+    sImpostorTableView = false;
     sShadowRender = false;
     popRenderTypeMask();
 
