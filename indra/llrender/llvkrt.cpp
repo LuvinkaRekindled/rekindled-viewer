@@ -48,7 +48,7 @@ constexpr U32 kCalls = 6;
 constexpr U32 kInstanceCapacity = 32768;                    // per call
 constexpr VkDeviceSize kGeomBytesBase = 2u << 20;           // per call: the geometry records of the alpha masked structures
 constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (LL_VK_RT_MATERIALS=1): a record for every geometry
-constexpr U32 kMatCap = 16384;                              // rows of the material table (the viewer's registry has the same capacity)
+constexpr U32 kMatCap = 32768;                              // rows of the material table (the viewer's registry has the same capacity)
 constexpr VkDeviceSize kMatBytes = 96ull * kMatCap;
 constexpr U32 kPinCap = 32768;                              // pin indices (a pin = a texture with a permanent bindless slot, see LLVkWorker::rtPinAcquire)
 constexpr VkDeviceSize kPinBytes = 4ull * kPinCap;          // the pin table of a call's region: slot by pin index
