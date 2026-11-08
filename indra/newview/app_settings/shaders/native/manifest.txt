@@ -1,5 +1,6 @@
 # Native programs (llrender/llvknative.h). One line each:
 #   override | <name of the viewer program it stands in for> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE] [| spec ID=VALUE]
 # The family is the live key native_<family>=1 in rt-debug.txt (0 or missing: the old program). native_reload=0 turns the watching of the files off.
-override | Copy Shader | copy.vert | copy.frag | copy
-override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur
+override | Copy Shader | copy.vert | copy.frag | copy | default on
+override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur | default on
+override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | require ssao_radius | require ll_ti_shadowMap0 | default on

@@ -735,9 +735,15 @@ void Program::adoptFrom(const Program& src)
             continue;
         }
         const LooseUniform& s = src.mInfo.mUniforms[it->second];
-        const U32 bytes = std::min(u.mSize, s.mSize);
-        if ((size_t)s.mOffset + bytes > src.mShadow[s.mClass].size() || (size_t)u.mOffset + bytes > mShadow[u.mClass].size())
+        // the bytes of the native uniform (its std140 size counts every element of an array); the old program's own size field is not trusted: it is not always the whole array
+        const U32 bytes = u.mSize;
+        if (u.mType != s.mType || u.mArraySize != s.mArraySize || (size_t)s.mOffset + bytes > src.mShadow[s.mClass].size() || (size_t)u.mOffset + bytes > mShadow[u.mClass].size())
         {
+            static std::set<std::string> warned;
+            if (warned.insert(mName + "/" + u.mName).second)
+            {
+                LL_WARNS("VkNative") << "native program '" << mName << "': the uniform '" << u.mName << "' is a " << u.mType << "[" << u.mArraySize << "] here and a " << s.mType << "[" << s.mArraySize << "] in the program it stands in for: not copied" << LL_ENDL;
+            }
             continue;
         }
         writeRange(u.mClass, u.mOffset, bytes, &src.mShadow[s.mClass][s.mOffset]);

@@ -262,7 +262,12 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         LooseUniform lu;
         lu.mName = member;
         lu.mType = glsl_type_name(r.glDefineType);
-        lu.mArraySize = br != std::string::npos ? (U32)std::max(r.size, 1) : 0;
+        // glslang names an array member without its [0] here: a stride says it is an array and the size is the number of elements
+        lu.mArraySize = (br != std::string::npos || r.arrayStride > 0) ? (U32)std::max(r.size, 1) : 0;
+        if (lu.mArraySize > 0)
+        {
+            LL_INFOS("VkNative") << "native program '" << name << "': array uniform " << member << " " << lu.mType << "[" << lu.mArraySize << "] (reflection size " << r.size << ", stride " << r.arrayStride << ", offset " << r.offset << ")" << LL_ENDL;
+        }
         lu.mOffset = (U32)r.offset;
         lu.mClass = (U8)k;
         lu.mSize = std140_bytes(lu.mType, lu.mArraySize);
@@ -290,6 +295,11 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         {
             si.mName = si.mName.substr(5);
             si.mType = "samplerCube";
+        }
+        else if (si.mName.compare(0, 7, "shadow_") == 0)
+        {
+            si.mName = si.mName.substr(7);
+            si.mType = "sampler2DShadow";       // a depth texture read with a comparison
         }
         si.mBinding = (U32)out.mSamplers.size();
         si.mIndexUniform = (S32)i;
@@ -406,6 +416,8 @@ struct Def
     std::string mTarget, mVertex, mFragment, mFamily;
     std::vector<std::pair<std::string, std::string>> mDefines;
     std::vector<std::pair<U32, U32>> mSpec;
+    bool mDefaultOn = false;                                // `default on` in the manifest: the family is on unless rt-debug.txt says native_<family>=0
+    std::vector<std::string> mRequire;                      // the program is a stand-in only for old programs that have all of these loose uniforms (a variant test: the old sun program with SSAO has ssao_radius)
     std::unique_ptr<Program> mProgram;
     std::vector<std::pair<std::string, U64>> mFiles;       // every file the program was built from and its time stamp
     std::chrono::steady_clock::time_point mChecked;
@@ -490,6 +502,16 @@ void load_manifest(Manager& m)
             const size_t sp = f[i].find(' ');
             const std::string kind = f[i].substr(0, sp);
             const std::string rest = sp == std::string::npos ? "" : trim(f[i].substr(sp + 1));
+            if (kind == "require")
+            {
+                d->mRequire.push_back(rest);
+                continue;
+            }
+            if (kind == "default" && rest == "on")
+            {
+                d->mDefaultOn = true;
+                continue;
+            }
             const size_t eq = rest.find('=');
             if (eq == std::string::npos)
             {
@@ -582,9 +604,20 @@ Program* nativeOverride(Program* p)
         }
     }
     Def& d = *m.mDefs[(size_t)idx];
-    if (debug_key("native_" + d.mFamily, 0) == 0)
+    if (debug_key("native_" + d.mFamily, d.mDefaultOn ? 1 : 0) == 0)
     {
         return p;
+    }
+    for (const std::string& r : d.mRequire)
+    {
+        if (!p->hasUniform(r))
+        {
+            return p;           // a variant of the old program this one does not replace
+        }
+    }
+    if (p->getInfo().mUsesRt)
+    {
+        return p;               // the ray traced variants are the RT track
     }
     const auto now = std::chrono::steady_clock::now();
     if (!d.mTried)
@@ -609,6 +642,10 @@ Program* nativeOverride(Program* p)
     if (!d.mProgram || !d.mProgram->isValid())
     {
         return p;
+    }
+    if (p->getInfo().mOutputs.size() != d.mProgram->getInfo().mOutputs.size())
+    {
+        return p;               // another set of outputs (the sun program with the blocker distance of the ray traced shadows)
     }
     d.mProgram->adoptFrom(*p);
     if (++d.mUses % 2000 == 1)
