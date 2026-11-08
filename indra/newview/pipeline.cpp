@@ -10644,7 +10644,7 @@ struct LLSceneFragment
     // S5a / S5d: the plan of the group's alpha draws, one set for the static draws (PASS_ALPHA, items of type 26) and one for the rigged ones (PASS_ALPHA_RIGGED, type 27)
     struct AlphaSet
     {
-        std::vector<const LLDrawInfo*> mOrder;
+        U32 mCount = 0;                                 // the draws of the plan (served or not), in the group's order: the plan indices count them
         std::vector<LLAlphaPlanSeg> mPlan;
         std::vector<GeoItem> mItems;                    // the served draws as table items, in plan order
         std::vector<GeoRigSource> mItemRig;             // J1 K2: the rigged set only: what the bindings of the items read, by rank, for the view
@@ -10652,7 +10652,8 @@ struct LLSceneFragment
         std::vector<U32> mBound;                        // P2: 5 U32 per item: the binding the worker holds (see LLAlphaPlanView::mItemBound); epoch 0 = none
         std::vector<AlphaPbr> mPbr;
         std::vector<U32> mGlowIdx;                      // plan indices of the served draws with a glow buffer
-        bool mGlow = false, mDirect = false;
+        std::vector<U8> mGlowCls;                       // J1 K6 S5d: per glow index, 0 plain, 1 glTF, 2 double sided glTF
+        bool mGlow = false;
     };
     AlphaSet mAlphaSet[2];
     bool mAlphaPlanned = false;
@@ -11916,15 +11917,15 @@ bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaT
 static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f, bool rigged)
 {
     LLSceneFragment::AlphaSet& ps = f.mAlphaSet[rigged ? 1 : 0];
-    ps.mOrder.clear();
+    ps.mCount = 0;
     ps.mPlan.clear();
     ps.mItems.clear();
     ps.mItemRig.clear();
     ps.mItemWire.clear();
     ps.mPbr.clear();
     ps.mGlow = false;
-    ps.mDirect = false;
     ps.mGlowIdx.clear();
+    ps.mGlowCls.clear();
     const auto t0 = std::chrono::steady_clock::now();
     auto it = group->mDrawMap.find(rigged ? LLRenderPass::PASS_ALPHA_RIGGED : LLRenderPass::PASS_ALPHA);
     if (it == group->mDrawMap.end())
@@ -12010,13 +12011,13 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         }
         ++sAlphaWhy[rigged ? 1 : 0][served ? WHY_SERVED : why];
         const U32 key = ac.mKey;
-        const U32 index = (U32)ps.mOrder.size();
-        ps.mOrder.push_back(p);
+        const U32 index = ps.mCount++;
         if (served)
         {
             if (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
             {
                 ps.mGlowIdx.push_back(index);
+                ps.mGlowCls.push_back(p->mGLTFMaterial.notNull() ? (p->mGLTFMaterial->mDoubleSided ? 2 : 1) : 0);
             }
             if (vb)
             {
@@ -12055,7 +12056,6 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         }
         (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
     }
-    ps.mDirect = ps.mOrder.size() == it->second.size();
     if (rigged)
     {
         for (const LLSceneFragment::GeoItem& gi : ps.mItems)
@@ -12126,8 +12126,6 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
         return 2;
     }
     const LLSceneFragment::AlphaSet& ps = f->mAlphaSet[rigged ? 1 : 0];
-    out.mOrder = ps.mOrder.data();
-    out.mOrderCount = (U32)ps.mOrder.size();
     out.mSegs = ps.mPlan.data();
     out.mSegCount = (U32)ps.mPlan.size();
     out.mGlow = ps.mGlow;
@@ -12135,8 +12133,8 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
     out.mItemWire = ps.mItemWire.data();
     out.mItemBound = const_cast<U32*>(ps.mBound.data());
     out.mHandle = f->mGeoHandle;
-    out.mDirect = ps.mDirect;
     out.mGlowIdx = ps.mGlowIdx.data();
+    out.mGlowCls = ps.mGlowCls.data();
     out.mGlowCount = (U32)ps.mGlowIdx.size();
     return 1;
 }

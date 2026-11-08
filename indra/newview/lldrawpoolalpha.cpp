@@ -965,14 +965,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
     };
     // S5e: a served draw with a glow buffer: into the group's glow ranges when the table draws its glow (true); false when its class has no glow pull program (no glow is drawn for it)
-    auto glow_add = [&](const LLAlphaPlanView& pv, const LLDrawInfo* draw, U32 rank) -> bool
+    auto glow_add = [&](const LLAlphaPlanView& pv, int cls, U32 rank) -> bool
     {
-        const bool pbr_draw = draw->mGLTFMaterial.notNull();
+        const bool pbr_draw = cls != 0;
         if (!(pbr_draw ? glow_pbr_table : glow_plain_table))
         {
             return false;
         }
-        const int cls = pbr_draw ? (draw->mGLTFMaterial->mDoubleSided ? 2 : 1) : 0;
         std::vector<PendingRange>& r = glow_range[cls];
         std::vector<PendingSrc>& src = glow_src[cls];
         if (!r.empty() && r.back().mHandle == pv.mHandle && r.back().mFirst + r.back().mCount == rank)
@@ -1213,7 +1212,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 group_plan = alpha_table && !is_particle_or_hud_particle && ll_alpha_plan(group, plan, rigged) == 1 && plan.mHandle != 0;
                 ItemCensus::add(ItemCensus::ALPHA_PLAN, group_plan ? 1 : 0);
             }
-            U32 plan_ord = 0, plan_seg = 0;
             if (!group_plan)
             {
                 run_flush();        // (the culling state of a group the table does not continue is its own)
@@ -1316,64 +1314,20 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             }
                             while (glow_at_p < plan.mGlowCount && plan.mGlowIdx[glow_at_p] < seg.mFirst + seg.mCount)
                             {
-                                LLDrawInfo* glow_draw = const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at_p]]);
-                                glow_add(plan, glow_draw, seg.mRank + (plan.mGlowIdx[glow_at_p] - seg.mFirst));       // (drawn from the table after the group)
+                                glow_add(plan, plan.mGlowCls[glow_at_p], seg.mRank + (plan.mGlowIdx[glow_at_p] - seg.mFirst));       // (drawn from the table after the group)
                                 ++glow_at_p;
                             }
                         }
                         continue;
                     }
-                    for (U32 o = seg.mFirst; o < seg.mFirst + seg.mCount && o < plan.mOrderCount; ++o)
-                    {
-                        LLDrawInfo& params = const_cast<LLDrawInfo&>(*plan.mOrder[o]);
-                        if (!transient_draw(params))
-                        {
-                            ++sAlphaScene.mDropped;
-                        }
-                    }
+                    // an old segment: a draw the table cannot carry (none in the laps: the refusal reasons are producer invariants, the tables grow). Not drawn, counted.
+                    sAlphaScene.mDropped += seg.mCount;
                 }
             }
 
-            const bool plan_direct = group_plan && plan.mDirect;
-            U32 glow_at = 0;
+            // groups without a plan (the HUD without table alpha, the reflection renders, a fragment that is not current): the draws as transient entries, in the group's order
             for (LLSpatialGroup::drawmap_elem_t::iterator k = group_plan ? draw_info.end() : draw_info.begin(); k != draw_info.end(); ++k)
             {
-                if (plan_direct)
-                {
-                    // S5a-2: a served segment is stepped over as a whole (its draw infos are the plan's, in the plan's order: the group's draw map has no draw of an avatar)
-                    const U32 o = plan_ord;
-                    while (plan_seg < plan.mSegCount && o >= plan.mSegs[plan_seg].mFirst + plan.mSegs[plan_seg].mCount)
-                    {
-                        ++plan_seg;
-                    }
-                    if (plan_seg < plan.mSegCount && plan.mSegs[plan_seg].mServed && o == plan.mSegs[plan_seg].mFirst)
-                    {
-                        const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
-                        if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
-                        {
-                            run_flush();
-                            run_begin(run_key(seg.mKey));
-                        }
-                        add_range(plan, seg);
-                        sAlphaScene.mServed += seg.mCount;
-                        if (glow_pass)
-                        {
-                            while (glow_at < plan.mGlowCount && plan.mGlowIdx[glow_at] < seg.mFirst)
-                            {
-                                ++glow_at;
-                            }
-                            while (glow_at < plan.mGlowCount && plan.mGlowIdx[glow_at] < seg.mFirst + seg.mCount)
-                            {
-                                LLDrawInfo* glow_draw = const_cast<LLDrawInfo*>(plan.mOrder[plan.mGlowIdx[glow_at]]);
-                                glow_add(plan, glow_draw, seg.mRank + (plan.mGlowIdx[glow_at] - seg.mFirst));       // (drawn from the table after the group)
-                                ++glow_at;
-                            }
-                        }
-                        plan_ord = seg.mFirst + seg.mCount;
-                        k += seg.mCount - 1;
-                        continue;
-                    }
-                }
                 LLDrawInfo& params = **k;
                 if ((bool)params.mAvatar != rigged)
                 {
@@ -1381,38 +1335,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
 
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
-                if (group_plan)
-                {
-                    const U32 o = plan_ord++;
-                    while (plan_seg < plan.mSegCount && o >= plan.mSegs[plan_seg].mFirst + plan.mSegs[plan_seg].mCount)
-                    {
-                        ++plan_seg;
-                    }
-                    if (plan_seg < plan.mSegCount && plan.mSegs[plan_seg].mServed && o < plan.mOrderCount && plan.mOrder[o] == &params)
-                    {
-                        // S5a-2: a served draw: its segment is one range of one run (the first draw of the segment adds it); a glow buffer is still drawn by the old glow pass after the group
-                        const LLAlphaPlanSeg& seg = plan.mSegs[plan_seg];
-                        if (o == seg.mFirst)
-                        {
-                            if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
-                            {
-                                run_flush();
-                                run_begin(run_key(seg.mKey));
-                            }
-                            add_range(plan, seg);
-                        }
-                        ++sAlphaScene.mServed;
-                        if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
-                        {
-                            glow_add(plan, &params, seg.mRank + (o - seg.mFirst));       // (drawn from the table after the group)
-                        }
-                        continue;
-                    }
-                    if (!(plan_seg < plan.mSegCount && !plan.mSegs[plan_seg].mServed && o < plan.mOrderCount && plan.mOrder[o] == &params))
-                    {
-                        ++sAlphaScene.mMismatch;        // (the plan does not list this draw here: it is a transient entry)
-                    }
-                }
                 if (transient_draw(params))
                 {
                     continue;
