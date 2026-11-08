@@ -14212,7 +14212,9 @@ int ll_scene_geo_type_number(U32 type)
 
 bool ll_scene_geo_main_view()
 {
-    return !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+    // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view (LL_VK_PROBE_TABLE=0 = they take the old pools)
+    static const bool probe_table = !getenv("LL_VK_PROBE_TABLE") || getenv("LL_VK_PROBE_TABLE")[0] != '0';
+    return (!gCubeSnapshot || probe_table) && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
 // J1 K6 S1: the HUD pass is a view of its own (render_hud_attachments: updateCull + stateSort of the HUD camera, then the post deferred passes): its cull result gets the list of the visible fragments, the table is told
@@ -17159,7 +17161,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             LL_CPU_ZONE("deferred: start geometry builds");
             LLDrawPoolMaterials::kickGeometryBuilds();       // (nothing when the early sort already started them for this cull result)
         }
-        if (&camera == LLViewerCamera::getInstance() && !gCubeSnapshot)
+        if (&camera == LLViewerCamera::getInstance() && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces too)
         {
             LL_CPU_ZONE("deferred: scene geometry prepare");
             ll_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
