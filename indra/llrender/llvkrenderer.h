@@ -318,9 +318,9 @@ public:
     void setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range);
     bool draw(U32 vertex_count, U32 first_vertex);
     bool drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset);
-    bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);      // <FS> render packets
+    bool drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0, VkBuffer count_buffer = VK_NULL_HANDLE, VkDeviceSize count_offset = 0);      // <FS> render packets
     // <FS> S4 A1: indexed packet draws: the commands (VkDrawIndexedIndirectCommand, the draw number as first instance) of one run that share the index buffer set with setIndexBuffer(); the hardware reads the indices (vertex reuse)
-    bool drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0);
+    bool drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect = VK_NULL_HANDLE, VkDeviceSize indirect_offset = 0, VkBuffer count_buffer = VK_NULL_HANDLE, VkDeviceSize count_offset = 0);
     // <FS> texture handles (doc/vulkan/PLAN-texture-handles.md, H3). Set 2 holds tables of sampled images that shaders index; a program reads a texture through its HANDLE: a dense number that rows,
     // records and uniforms carry ((table << 16) | handle), which the shader turns into a descriptor index with the frame's map. A descriptor is written once and never changed: a handle that shows
     // something else gets a new descriptor index, and every frame in flight sees the old or the new mapping as a whole (HandleTable). Table 0 2D, 1 cube, 2 cube array, 3 2D shadow; handle 0 is the placeholder.

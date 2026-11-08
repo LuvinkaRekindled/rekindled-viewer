@@ -6972,8 +6972,8 @@ layout(local_size_x = 64) in;
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Table { uint t[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Bounds { vec4 b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Models { mat4 m[]; };
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; };
-layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Cmds { uint c[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; uint compact; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Cmds { uint n; uint pad0; uint pad1; uint pad2; uint c[]; };
 layout(push_constant) uniform PC { uvec2 table; uvec2 bounds; uvec2 models; uvec2 params; uvec2 cmds; } pc;
 void main()
 {
@@ -6996,6 +6996,19 @@ void main()
         {
             if (dot(p.planes[k].xyz, c) + p.planes[k].w < -b.w) { visible = false; break; }
         }
+    }
+    if (p.compact != 0u)
+    {
+        if (visible)
+        {
+            uint s = atomicAdd(cm.n, 1u);
+            cm.c[s * 5u + 0u] = count;
+            cm.c[s * 5u + 1u] = 1u;
+            cm.c[s * 5u + 2u] = first;
+            cm.c[s * 5u + 3u] = 0u;
+            cm.c[s * 5u + 4u] = i;
+        }
+        return;
     }
     cm.c[i * 5u + 0u] = visible ? count : 0u;
     cm.c[i * 5u + 1u] = visible ? 1u : 0u;
@@ -7099,7 +7112,7 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     alpha_res_reclaim(frame_now);
     const U32 n = sAR.mHigh;
     Renderer::ScratchAlloc params = r.allocVertexScratch(112);
-    Renderer::ScratchAlloc commands = r.allocVertexScratch(20ull * n);
+    Renderer::ScratchAlloc commands = r.allocVertexScratch(16ull + 20ull * n);       // (a 16 byte header with the count of the visible draws, then the commands)
     if (!params.mPtr || !commands.mPtr || !params.mAddress || !commands.mAddress)
     {
         return;
@@ -7132,6 +7145,12 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     memcpy(params.mPtr, blob, 96);
     ((U32*)params.mPtr)[24] = n;
     ((U32*)params.mPtr)[25] = plane_count;
+    // J2 shader pass: the cull appends the visible draws and the pass draws that many (vkCmdDraw*IndirectCount) instead of every row with the culled ones zero sized (a row costs about 8 ns of front end even empty).
+    // rt-debug.txt residentcompact=0: the old way, every row (temporary switch, delete after a week of use)
+    static WorkerDebugKey compact_key = { "residentcompact", 1, {} };
+    const bool compact = Context::instance().getCaps().mDrawIndirectCount && worker_debug_key(compact_key) != 0;
+    memset(commands.mPtr, 0, 16);
+    ((U32*)params.mPtr)[26] = compact ? 1u : 0u;
     const U64 ta = (U64)sAR.mCopyRows.mAddress, ba = (U64)sAR.mCopyBounds.mAddress, ma = (U64)sAR.mCopyMatrices.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
     const U32 push[10] = { (U32)ta, (U32)(ta >> 32), (U32)ba, (U32)(ba >> 32), (U32)ma, (U32)(ma >> 32), (U32)pa, (U32)(pa >> 32), (U32)ca, (U32)(ca >> 32) };
     r.recordExternal({}, [&](VkCommandBuffer cmd) {
@@ -7174,7 +7193,7 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     r.setIndexBuffer(sAR.mPool.mBuffer, 0, VK_INDEX_TYPE_UINT16);
-    if (r.drawPacketsIndexed(nullptr, n, commands.mBuffer, commands.mOffset))
+    if (r.drawPacketsIndexed(nullptr, n, commands.mBuffer, commands.mOffset + 16, compact ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
     {
         sDraws += n;
         sDrawsTotal += n;
@@ -7198,8 +7217,8 @@ layout(local_size_x = 64) in;
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Table { uint t[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Bounds { vec4 b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Models { mat4 m[]; };
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; };
-layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Cmds { uint c[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 planes[6]; uint count; uint planeCount; uint compact; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Cmds { uint n; uint pad0; uint pad1; uint pad2; uint c[]; };
 layout(push_constant) uniform PC { uvec2 table; uvec2 bounds; uvec2 models; uvec2 params; uvec2 cmds; } pc;
 void main()
 {
@@ -7221,6 +7240,19 @@ void main()
         {
             if (dot(p.planes[k].xyz, c) + p.planes[k].w < -b.w) { visible = false; break; }
         }
+    }
+    if (p.compact != 0u)
+    {
+        // the visible draws are appended and the header word counts them (vkCmdDrawIndirectCount reads it): a culled row costs no draw
+        if (visible)
+        {
+            uint s = atomicAdd(cm.n, 1u);
+            cm.c[s * 4u + 0u] = count;
+            cm.c[s * 4u + 1u] = 1u;
+            cm.c[s * 4u + 2u] = 0u;
+            cm.c[s * 4u + 3u] = i;
+        }
+        return;
     }
     cm.c[i * 4u + 0u] = visible ? count : 0u;
     cm.c[i * 4u + 1u] = visible ? 1u : 0u;
@@ -7609,7 +7641,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     Renderer::ScratchAlloc params = r.allocVertexScratch(112);
-    Renderer::ScratchAlloc commands = r.allocVertexScratch(16ull * n);
+    Renderer::ScratchAlloc commands = r.allocVertexScratch(16ull + 16ull * n);       // (a 16 byte header with the count of the visible draws, then the commands)
     if (!params.mPtr || !commands.mPtr || !params.mAddress || !commands.mAddress)
     {
         return;
@@ -7635,6 +7667,12 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     memcpy(params.mPtr, blob, 96);
     ((U32*)params.mPtr)[24] = n;
     ((U32*)params.mPtr)[25] = plane_count;
+    // J2 shader pass: the cull appends the visible draws and the pass draws that many (vkCmdDraw*IndirectCount) instead of every row with the culled ones zero sized (a row costs about 8 ns of front end even empty).
+    // rt-debug.txt residentcompact=0: the old way, every row (temporary switch, delete after a week of use)
+    static WorkerDebugKey compact_key = { "residentcompact", 1, {} };
+    const bool compact = Context::instance().getCaps().mDrawIndirectCount && worker_debug_key(compact_key) != 0;
+    memset(commands.mPtr, 0, 16);
+    ((U32*)params.mPtr)[26] = compact ? 1u : 0u;
     const U64 ta = (U64)sRes.mCopyT.mAddress, ba = (U64)sRes.mCopyB.mAddress, ma = (U64)sRes.mCopyM.mAddress, pa = (U64)params.mAddress, ca = (U64)commands.mAddress;
     const U32 push[10] = { (U32)ta, (U32)(ta >> 32), (U32)ba, (U32)(ba >> 32), (U32)ma, (U32)(ma >> 32), (U32)pa, (U32)(pa >> 32), (U32)ca, (U32)(ca >> 32) };
     r.recordExternal({}, [&](VkCommandBuffer cmd) {
@@ -7669,7 +7707,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     r.setVertexInput(vi);
     r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
-    if (r.drawPackets(nullptr, n, commands.mBuffer, commands.mOffset))
+    if (r.drawPackets(nullptr, n, commands.mBuffer, commands.mOffset + 16, compact ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
     {
         sDraws += n;
         sDrawsTotal += n;

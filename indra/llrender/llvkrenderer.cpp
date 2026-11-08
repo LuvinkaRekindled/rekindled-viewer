@@ -4261,7 +4261,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 
 // <FS> Render packets: the draws of one record share everything but their vertex count and their instance index (the shader finds the rest by it): the state is
 // applied once and every draw is one command
-bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset)
+bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset, VkBuffer count_buffer, VkDeviceSize count_offset)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || draws == 0)
     {
@@ -4276,7 +4276,13 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     }
     startPendingQuery();
     noteDraw(2, draws, 0, 0);
-    if (indirect != VK_NULL_HANDLE)
+    if (indirect != VK_NULL_HANDLE && count_buffer != VK_NULL_HANDLE)
+    {
+        // the cull appended the visible draws and counted them in the count buffer ('draws' is the most there can be): the hardware reads the count, the culled draws cost nothing
+        vkCmdDrawIndirectCount(mCmd, indirect, indirect_offset, count_buffer, count_offset, draws, (U32)sizeof(VkDrawIndirectCommand));
+        mDrawCount += draws;
+    }
+    else if (indirect != VK_NULL_HANDLE)
     {
         // the arguments (vertex count, one instance, first vertex 0, first instance = the draw number) are in the buffer: one command for the whole record
         for (U32 done = 0; done < draws; )
@@ -4307,7 +4313,7 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     return true;
 }
 
-bool Renderer::drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset)
+bool Renderer::drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, U32 draws, VkBuffer indirect, VkDeviceSize indirect_offset, VkBuffer count_buffer, VkDeviceSize count_offset)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget) || !mIndexBuffer || draws == 0)
     {
@@ -4329,7 +4335,12 @@ bool Renderer::drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, 
     }
     startPendingQuery();
     noteDraw(2, draws, 0, 0);
-    if (indirect != VK_NULL_HANDLE)
+    if (indirect != VK_NULL_HANDLE && count_buffer != VK_NULL_HANDLE)
+    {
+        vkCmdDrawIndexedIndirectCount(mCmd, indirect, indirect_offset, count_buffer, count_offset, draws, (U32)sizeof(VkDrawIndexedIndirectCommand));
+        mDrawCount += draws;
+    }
+    else if (indirect != VK_NULL_HANDLE)
     {
         vkCmdDrawIndexedIndirect(mCmd, indirect, indirect_offset, draws, (U32)sizeof(VkDrawIndexedIndirectCommand));
         mDrawCount += draws;

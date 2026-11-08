@@ -78,6 +78,7 @@ struct Capabilities
     bool mGeometryShader = false;
     bool mMultiDrawIndirect = false;
     bool mBufferDeviceAddress = false;  // shaders can read buffers by address (render packets)
+    bool mDrawIndirectCount = false;            // vkCmdDraw(Indexed)IndirectCount: the draw count is read from a buffer (a GPU cull appends the visible draws and the pass draws only those)
     bool mDrawIndirectFirstInstance = false;    // indirect draws may use a first instance (render packets: the draw number)
     U32 mBindlessSmall = 2048;      // slots of each of the cube, cube array and shadow tables
     bool mBindlessUpdateUnused = false;     // descriptorBindingUpdateUnusedWhilePending: entries of the bindless tables may be written while earlier work that does not use them is pending

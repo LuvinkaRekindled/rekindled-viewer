@@ -145,6 +145,8 @@ LL_VK_DEVICE_FN(vkCmdDraw)
 LL_VK_DEVICE_FN(vkCmdDrawIndirect)
 LL_VK_DEVICE_FN(vkCmdDrawIndexed)
 LL_VK_DEVICE_FN(vkCmdDrawIndexedIndirect)
+LL_VK_DEVICE_FN(vkCmdDrawIndirectCount)
+LL_VK_DEVICE_FN(vkCmdDrawIndexedIndirectCount)
 LL_VK_DEVICE_FN(vkGetBufferDeviceAddress)
 LL_VK_DEVICE_FN(vkCmdDispatch)
 
