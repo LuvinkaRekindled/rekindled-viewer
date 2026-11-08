@@ -10675,12 +10675,15 @@ struct GeoRegStats
 } sGeoReg;
 std::vector<U32> sGeoHandleFree;
 U32 sGeoHandleNext = 1;
-// S4 C: model matrices that are not region matrices (active objects, animated children, attachments of avatars) get table slots of their own: 256-2047, reference counted by the fragments that
+// S4 C: model matrices that are not region matrices (active objects, animated children, attachments of avatars) get table slots of their own: 256 and up, reference counted by the fragments that
 // use them, lowest free slot first (the worker's per-pass matrix scratch is as large as the highest slot). The values of the slots the listed fragments use are sent every frame.
-constexpr U32 kMovingBase = 256, kMovingMax = 2048;
-std::vector<const LLMatrix4*> sMovingMatrix(kMovingMax - kMovingBase, nullptr);
-std::vector<U32> sMovingRefs(kMovingMax - kMovingBase, 0);
-std::vector<U32> sMovingStamp(kMovingMax - kMovingBase, 0);
+// J1 K6 S4: the tables grow with the slots in use (they were 1,792 moving slots: a draw with no slot to get stayed on the old path); kMovingMax is a sanity bound (the worker's kSlotLimit)
+constexpr U32 kMovingBase = 256, kMovingMax = 1u << 16;
+static U32 moving_start_slots() { return getenv("LL_VK_MOVING_START") ? (U32)std::max(1, atoi(getenv("LL_VK_MOVING_START"))) : 2048 - kMovingBase; }       // (LL_VK_MOVING_START=<n>: begin with n slots, a test of the growth)
+std::vector<const LLMatrix4*> sMovingMatrix(moving_start_slots(), nullptr);
+std::vector<U32> sMovingRefs(moving_start_slots(), 0);
+std::vector<U32> sMovingStamp(moving_start_slots(), 0);
+U32 sMovingFreeHint = 0;       // no free slot below this index
 std::unordered_map<const LLMatrix4*, U32> sMovingSlot;
 U64 sMovingAcquired = 0, sMovingFull = 0;
 static std::atomic<U64> sGeoItemsEpoch{0};          // S4: counts every change of a fragment's item lists (filled again, released): a cached list of draw infos is only good for the epoch it was made in
@@ -11038,16 +11041,24 @@ static U32 scene_moving_acquire(const LLMatrix4* m, LLSceneFragment& f)
     auto it = sMovingSlot.find(m);
     if (it == sMovingSlot.end())
     {
-        U32 k = 0;
+        U32 k = sMovingFreeHint;
         while (k < sMovingMatrix.size() && sMovingMatrix[k])
         {
             ++k;
         }
         if (k == sMovingMatrix.size())
         {
-            ++sMovingFull;
-            return 0;
+            if (kMovingBase + k >= kMovingMax)
+            {
+                ++sMovingFull;
+                return 0;
+            }
+            const size_t grown = sMovingMatrix.size() + 512;       // (grown in steps: the three tables stay the same size)
+            sMovingMatrix.resize(grown, nullptr);
+            sMovingRefs.resize(grown, 0);
+            sMovingStamp.resize(grown, 0);
         }
+        sMovingFreeHint = k + 1;
         sMovingMatrix[k] = m;
         sMovingRefs[k] = 0;
         it = sMovingSlot.emplace(m, kMovingBase + k).first;
@@ -11075,6 +11086,7 @@ static void scene_moving_release(LLSceneFragment* f)
         {
             sMovingSlot.erase(sMovingMatrix[k]);
             sMovingMatrix[k] = nullptr;
+            sMovingFreeHint = std::min(sMovingFreeHint, k);
         }
     }
     f->mGeoMoving.clear();
@@ -22695,7 +22707,7 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
                     }
                     for (const LLSceneFragment::GeoItem& item : f->mGeo)
                     {
-                        if (!item.mServed || item.mType >= kGeoTypeCount || !wanted_type[item.mType] || !(f->mGeoServedMask & (1ull << item.mType)) || item.mE.mMatrix < kMovingBase || item.mE.mMatrix >= kMovingMax)
+                        if (!item.mServed || item.mType >= kGeoTypeCount || !wanted_type[item.mType] || !(f->mGeoServedMask & (1ull << item.mType)) || item.mE.mMatrix < kMovingBase || item.mE.mMatrix >= kMovingBase + sMovingMatrix.size())
                         {
                             continue;
                         }

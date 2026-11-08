@@ -7795,8 +7795,24 @@ static struct GeoState
     Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
     U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0, mRLodCmds = 0, mRLodTris = 0, mRLodTrisFull = 0;       // (item E, opaque rigged: commands that drew a simplified list, their triangles, the same commands' own triangles)
     std::vector<U32> mRLodNames;                                // the simplified lists the frame's rigged commands draw from (made current before the draws)
-    F32 mRegionM[2048][16] = {};       // S4 C: slots 1-255 region matrices, 256-2047 the moving ones (the viewer sends the values of the slots the listed fragments use, every frame)
-    U8 mHaveM[2048] = {};
+    // S4 C / J1 K6 S4: slots 1-255 region matrices, 256 and up the moving ones (the viewer sends the values of the slots the listed fragments use, every frame); the tables grow with the highest slot sent
+    // (they were 2048 slots, and a draw whose slot did not exist stayed on the old path: the limit is a sanity bound now)
+    static constexpr U32 kSlotLimit = 1u << 16;
+    std::vector<F32> mRegionMv;
+    std::vector<U8> mHaveMv;
+    bool have(U32 slot) const { return slot < mHaveMv.size() && mHaveMv[slot]; }
+    const F32* region(U32 slot) const { return mRegionMv.data() + 16 * (size_t)slot; }
+    void setMatrix(U32 slot, const F32* m)
+    {
+        if (slot >= mHaveMv.size())
+        {
+            const size_t n = ((size_t)slot + 256) / 256 * 256;
+            mHaveMv.resize(n, 0);
+            mRegionMv.resize(16 * n, 0.f);
+        }
+        memcpy(mRegionMv.data() + 16 * (size_t)slot, m, 64);
+        mHaveMv[slot] = 1;
+    }
     U32 mMaxSlot = 0;
     U32 mMaxSlotAll = 0;           // the highest matrix slot any fragment ever named (the alpha passes draw fragments the G-buffer list does not name: their tables must cover them)
     size_t mFragCount = 0;
@@ -8005,7 +8021,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mMatrix);
         f->mMaxModel = std::max(f->mMaxModel, items[i].mE.mPad3);          // S5a: the texture matrix slot indexes the pass's tables too (C5: every item type; 0 = none)
     }
-    sGeo.mMaxSlotAll = std::max(sGeo.mMaxSlotAll, std::min<U32>(f->mMaxModel, 2047u));
+    sGeo.mMaxSlotAll = std::max(sGeo.mMaxSlotAll, std::min<U32>(f->mMaxModel, GeoState::kSlotLimit - 1));
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -8630,15 +8646,14 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (timed) s.mNsPins += geo_ns(t0);
     // matrices
     t0 = std::chrono::steady_clock::now();
-    memset(sGeo.mHaveM, 0, sizeof(sGeo.mHaveM));
+    std::fill(sGeo.mHaveMv.begin(), sGeo.mHaveMv.end(), (U8)0);
     sGeo.mMaxSlot = 0;
     for (U32 i = 0; i < h.mMatrices; ++i)
     {
         const U32 slot = matrices[i].mSlot;
-        if (slot < 2048)
+        if (slot < GeoState::kSlotLimit)
         {
-            memcpy(sGeo.mRegionM[slot], matrices[i].mM, 64);
-            sGeo.mHaveM[slot] = 1;
+            sGeo.setMatrix(slot, matrices[i].mM);
             sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, slot);
         }
     }
@@ -8684,7 +8699,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             geo_rebuild(*f, frame_now, false);
         }
         f->mListedFrame = frame_now;
-        sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, 2047u));
+        sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, GeoState::kSlotLimit - 1));
         // (S4 B: a rigged item draws only with a palette of THIS frame's table: every rigged command is set below, from the item's binding)
         for (VkDrawIndexedIndirectCommand& c : f->mARCmds)
         {
@@ -9085,9 +9100,9 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         geo_matrix(view, proj, nullptr, out);               // slot 0: the view alone
         for (U32 slot = 1; slot < slots; ++slot)
         {
-            if (sGeo.mHaveM[slot])
+            if (sGeo.have(slot))
             {
-                geo_matrix(view, proj, sGeo.mRegionM[slot], out + 44 * (size_t)slot);
+                geo_matrix(view, proj, sGeo.region(slot), out + 44 * (size_t)slot);
             }
         }
         shared.mFrame = frame_now;
@@ -9114,9 +9129,9 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 for (U32 slot = 0; slot < slots; ++slot)
                 {
                     F32* t = tex + 16 * (size_t)slot;
-                    if (slot && sGeo.mHaveM[slot])
+                    if (slot && sGeo.have(slot))
                     {
-                        memcpy(t, sGeo.mRegionM[slot], 64);
+                        memcpy(t, sGeo.region(slot), 64);
                     }
                     else
                     {
@@ -9377,10 +9392,10 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         for (U32 slot = 0; slot < slots; ++slot)
         {
             F32* t = tex + 16 * (size_t)slot;
-            if (slot && sGeo.mHaveM[slot])
+            if (slot && sGeo.have(slot))
             {
-                geo_matrix(view, proj, sGeo.mRegionM[slot], out + 44 * (size_t)slot);
-                memcpy(t, sGeo.mRegionM[slot], 64);         // (a texture matrix slot holds the raw matrix the viewer sent)
+                geo_matrix(view, proj, sGeo.region(slot), out + 44 * (size_t)slot);
+                memcpy(t, sGeo.region(slot), 64);         // (a texture matrix slot holds the raw matrix the viewer sent)
             }
             else
             {
