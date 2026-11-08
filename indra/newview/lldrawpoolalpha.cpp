@@ -523,7 +523,7 @@ bool ll_particle_sort_on()
 // <FS> S5a: what the alpha loop sent to the scene table (log tag VkScene, every 600 frames)
 static struct AlphaSceneStats
 {
-    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mDropped = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0, mTrRecords = 0, mTrEntries = 0;
+    U64 mCalls = 0, mRecords = 0, mRanges = 0, mServed = 0, mDropped = 0, mMismatch = 0, mBytes = 0, mGlowServed = 0, mTrRecords = 0, mTrEntries = 0, mTrFromInfo = 0;       // (mTrFromInfo: transient entries made from a group's draw infos, J1 K6 S5c; the rest are particle runs and glow second draws)
     U32 mLast = 0;
 } sAlphaScene;
 
@@ -607,7 +607,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
     // diagnostics (crash / blink hunt 2026-10-22): LL_VK_ALPHA_NO_FRAGMENTS=1 draws every alpha draw as a transient entry (the fragments' plans are not used), LL_VK_ALPHA_NO_TRANSIENT=1 draws no transient entry (what only they draw is missing)
     static const bool dbg_no_fragments = getenv("LL_VK_ALPHA_NO_FRAGMENTS") != nullptr, dbg_no_transient = getenv("LL_VK_ALPHA_NO_TRANSIENT") != nullptr;
-    const bool alpha_table = !dbg_no_fragments && !LLPipeline::sImpostorRender && (!LLPipeline::sRenderingHUDs || ll_scene_geo_hud_any()) && !gCubeSnapshot && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
+    // J1 K6 S5c: the impostor images and the probes' cube faces are views the table serves (their cull results are prepared): their alpha draws come from the fragments' plans too (LL_VK_ALPHA_VIEWS=0 = transient entries from the draw infos as before)
+    static const bool alpha_views = !getenv("LL_VK_ALPHA_VIEWS") || getenv("LL_VK_ALPHA_VIEWS")[0] != '0';
+    const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || ll_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
     // S5f F4: the draws the fragments do not keep are sent as transient entries in EVERY view that has its pull programs (HUD, impostor render, probe and reflection renders, the depth only passes): a pass
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
     const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && !(LLPipeline::sRenderingHUDs && rigged);
@@ -1349,6 +1351,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             run_begin(key);
                         }
                         tr_add(transient, &params);
+                        ++sAlphaScene.mTrFromInfo;
                         if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
                         {
                             const bool pbr_draw = params.mGLTFMaterial.notNull();
@@ -1459,7 +1462,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         LL_INFOS("VkScene") << "alpha from the scene table, viewer side per frame (main view's passes): " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served from fragments, " << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served "
             << (double)sAlphaScene.mGlowServed / frames << ", transient " << (double)sAlphaScene.mTrEntries / frames << " draws in " << (double)sAlphaScene.mTrRecords / frames << " records, plan mismatches "
-            << sAlphaScene.mMismatch << ", draws not drawn (neither fragment nor transient) " << (double)sAlphaScene.mDropped / frames << LL_ENDL;
+            << sAlphaScene.mMismatch << ", draws not drawn (neither fragment nor transient) " << (double)sAlphaScene.mDropped / frames << "; transient entries made from draw infos (not particle runs) " << (double)sAlphaScene.mTrFromInfo / frames << LL_ENDL;
+        sAlphaScene.mTrFromInfo = 0;
         sAlphaScene.mCalls = sAlphaScene.mRecords = sAlphaScene.mRanges = sAlphaScene.mServed = sAlphaScene.mDropped = sAlphaScene.mBytes = sAlphaScene.mGlowServed = sAlphaScene.mTrRecords = sAlphaScene.mTrEntries = 0;
     }
 
