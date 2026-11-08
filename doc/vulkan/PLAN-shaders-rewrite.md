@@ -131,3 +131,20 @@ Rules that follow:
 
 Built and verified: the native loader (glslang, own includer, reflection into the renderer's ProgramInfo), the manifest and the per-family live key, the swap at the draw with the old program's uniform values and sampler units copied by name (callers unchanged), specialization constants (implemented, not exercised), hot reload from the source directory (tested: edit and revert both rebuilt in about 1 ms after the first compile), size/compile-time budget logging, screenshot compare tool and the old/new lap driver, first program (`Copy Shader`) matching the old one by eye and frame time. How to use it: NATIVE-SHADERS.md.
 Changed from the plan: the per-frame data block is NOT in slice 0 (it needs main-thread values through the bridge; slice 1 says what the lighting resolve needs and builds it then), and the in-frame GPU compare of a full target comes with the first family that writes one.
+
+## 14. A wanted improvement: transparent surfaces lit by the same lights as opaque ones (Adam, 2026-11-08)
+
+Adam: in rooms with 4 light objects, hair is one shade at one zoom level and a darker shade one scroll click out; it bothered him in the stock lighting.
+Cause found in the code (not yet confirmed in a room): opaque surfaces (deferred) are lit per pixel by EVERY light whose volume touches the pixel, but alpha blended surfaces (hair, alpha clothes, glass: the alpha pass, forward lit) get only the 8 hardware light slots of `setupHWLights`: slot 0 the sun/moon, slot 1 the avatar backlight, slots 2-7 the six nearest lights, ranked by distance minus radius from the CAMERA (`calc_light_dist`, `mNearbyLights`), with a fade in/out when the ranking changes, and spot lights taking slots in the same list. Zooming moves the camera, which re-ranks the lights: a light enters or leaves the six, the hair's shade jumps, while the body (deferred) never changes. In the sun-lit case the hair also crosses a cascade split with the zoom (self shadow of a different resolution).
+Fix (family 2, the alpha pass): the shared clustered light list (decision 6 of section 10): the alpha shader reads the lights of its own cell, the same list the lighting resolve reads, so hair is lit like the body and does not depend on the camera distance. This is a visible change (hair in a lit room gets the lights it was missing); it is the improvement Adam asked for. Keep list: opaque lighting unchanged; hair far from any room light unchanged.
+To confirm before building: log the six slots (`LL_VK_LIGHTLOG=1`, the diagnostic of 2026-11 in llrender.cpp) in such a room at two zoom levels.
+
+## 15. Rule: our own code wherever the picture is the same and the time is not worse (Adam, 2026-11-08)
+
+Adam: "i'd rather we keep the new one. it seemed identical and the time was the same. as long as the time isn't worse and the result is the same i'd rather we have our own code where possible."
+So a native program that matches the old one by eye and by the old/new window times (not slower) is made the default (`default on` in the manifest) even when it is not faster: it is code we own, small, and reads the way the rest of the new set reads. Old programs are deleted on this branch once their native replacement has been the default for a while. The family keys still turn a family off live (`native_<family>=0`) for an A/B.
+Record 2026-11-08: Copy Shader (identical, 6.1 ms both) and the lightmap blur (identical by eye, 0.290 ms both, with the whole kernel copied; the first "-15%" result was a truncated kernel and is void) become default on. Sun lightmap: lap pending.
+
+## 16. Tolerance: the same feel, not pixel perfect (Adam, 2026-11-08)
+
+New approaches are welcome; output only has to be close. Small differences in noise, rounding, filter shape or tap pattern are fine. Anything that changes how a scene READS (how bright the lights look, how soft the shadows are, how deep the corners get, the plaza ground shine, hair against the body) is shown to Adam first. Programs are judged on: the keep list, the feel at the test spots (the plaza, a lit room, his home with the 4 lights and the hair), and the zone times.
