@@ -41,6 +41,8 @@ public:
     static const U32 ADV_ATMO_SKY_VERTEX_DATA_MASK = LLVertexBuffer::MAP_VERTEX
                                                    | LLVertexBuffer::MAP_TEXCOORD0;
     LLDrawPoolWLSky(void);
+    // <FS> the sky drawn after the opaque pools (pipeline.cpp, sky_late): no depth writes and no depth clear, so the depth of the surfaces stays and the sky pixels stay at the far plane
+    static bool sSkyLate;
     /*virtual*/ ~LLDrawPoolWLSky();
 
     /*virtual*/ bool isDead() { return false; }

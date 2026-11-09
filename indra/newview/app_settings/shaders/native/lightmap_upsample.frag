@@ -41,8 +41,8 @@ void main()
 
     vec4 sum = vec4(0.0);
     float wsum = 0.0;
-    vec4 nearest = vec4(1.0);
-    float nearest_w = -1.0;
+    vec4 nearest = vec4(1.0);           // the fallback when no tap is on this surface: the one that is closest to this pixel's tangent plane (not the one with the biggest bilinear weight: at a silhouette that is often the surface behind)
+    float nearest_dd = 1.0e30;
     for (int k = 0; k < 4; ++k)
     {
         const vec2 off = vec2(float(k & 1), float(k >> 1));
@@ -51,16 +51,18 @@ void main()
         const vec4 col = texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], (idx + 0.5) / half_res);
         const vec2 tap_uv = (min(idx * 2.0 + 1.0, screen_res - 1.0) + 0.5) / screen_res;
         const float tap_depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tap_uv).r;
-        if (w > nearest_w)
-        {
-            nearest_w = w;
-            nearest = col;
-        }
         if (tap_depth >= 1.0)
         {
             continue;                   // a sky pixel's lightmap value (1.0) is not a lighting value of this surface
         }
-        const float d = dot(norm, ll_view_pos(inv_proj, tap_uv, tap_depth) - pos);
+        const vec3 tap_pos = ll_view_pos(inv_proj, tap_uv, tap_depth);
+        const float d = dot(norm, tap_pos - pos);
+        const float dd = dot(tap_pos - pos, tap_pos - pos);
+        if (dd < nearest_dd)
+        {
+            nearest_dd = dd;
+            nearest = col;
+        }
         if (d * d <= tolerance2)
         {
             sum += col * w;

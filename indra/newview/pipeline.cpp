@@ -86,6 +86,7 @@
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
 #include "llvkbridge.h"
+#include "lldrawpoolwlsky.h"
 #include "llalphatransient.h"
 #include "llvkasync.h"
 #include "llviewermediafocus.h"
@@ -17507,11 +17508,25 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         pool_set_t::iterator iter1 = mPools.begin();
 
+        // <FS> shaders from scratch (SHADERS-F1-lighting.md): the sky is drawn AFTER the opaque pools of the main view, not before them. Its depth test is less-equal at the far plane (the squashed clip of the
+        // sky box), so the depth test now throws away every pixel a surface already covers before the sky shader runs: the haze and the clouds used to shade the whole screen (about 1.1 fragments per pixel
+        // each) and be drawn over. The same picture. rt-debug.txt sky_late=0 draws it first as before.
+        const bool sky_late = &camera == LLViewerCamera::getInstance() && !gCubeSnapshot && LLVkBridge::nativeKey("sky_late", 1) != 0;
+
         while ( iter1 != mPools.end() )
         {
             LLDrawPool *poolp = *iter1;
 
             cur_type = poolp->getType();
+
+            if (sky_late && cur_type == LLDrawPool::POOL_WL_SKY)
+            {
+                while (iter1 != mPools.end() && (*iter1)->getType() == LLDrawPool::POOL_WL_SKY)
+                {
+                    ++iter1;
+                }
+                continue;
+            }
 
             if (occlude && cur_type >= LLDrawPool::POOL_GRASS)
             {
@@ -17570,6 +17585,38 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         gRenderLastMatrix = NULL;
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+
+        if (sky_late)
+        {
+            LLDrawPoolWLSky::sSkyLate = true;
+            // the sky pools, now that the opaque pools have written their depth (see above)
+            for (pool_set_t::iterator sky_it = mPools.begin(); sky_it != mPools.end(); ++sky_it)
+            {
+                LLDrawPool* sky_pool = *sky_it;
+                if (sky_pool->getType() != LLDrawPool::POOL_WL_SKY || !hasRenderType(sky_pool->getType()) || sky_pool->getNumDeferredPasses() <= 0)
+                {
+                    continue;
+                }
+                gRenderLastMatrix = NULL;
+                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                for (S32 i = 0; i < sky_pool->getNumDeferredPasses(); i++)
+                {
+                    LL_GPU_TIMER_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
+                    LL_CPU_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
+                    LLVertexBuffer::unbind();
+                    sky_pool->beginDeferredPass(i);
+                    if (!sky_pool->getSkipRenderFlag())
+                    {
+                        sky_pool->renderDeferred(i);
+                    }
+                    sky_pool->endDeferredPass(i);
+                    LLVertexBuffer::unbind();
+                }
+            }
+            LLDrawPoolWLSky::sSkyLate = false;
+            gRenderLastMatrix = NULL;
+            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+        }
 
         gRender.setColorMask(true, false);
 
