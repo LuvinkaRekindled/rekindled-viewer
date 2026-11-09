@@ -26,6 +26,9 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float ao_noise_frame;
     int sun_up_factor;
     int spot_shadow_mask;       // bit 0 / 1: the projector with a shadow map in slot 0 / 1 exists this frame
+#ifdef LL_HALF
+    vec2 half_offset;           // which pixel of its 2x2 block a half resolution pixel reads: (1, 1) the lower right one, or one of the four, a different one each frame with the upscaler (lightmap_upsample.frag uses the same)
+#endif
 };
 
 layout(std140, set = 0, binding = 5) uniform LLLooseDraw
@@ -115,9 +118,9 @@ float ambient_occlusion(vec3 pos, vec3 norm, vec2 uv)
 void main()
 {
 #ifdef LL_HALF
-    // half resolution: this pixel stands for a 2x2 block of the full resolution picture and reads the full resolution pixel at its lower right (2i + 1); lightmap_upsample.frag reads the same pixel's depth
+    // half resolution: this pixel stands for a 2x2 block of the full resolution picture and reads the full resolution pixel half_offset of the block (2i + half_offset: the lower right one, or a different one each frame with the upscaler); lightmap_upsample.frag reads the same pixel's depth
     const vec2 half_res = floor((screen_res + 1.0) * 0.5);
-    const vec2 uv = (floor(vary_fragcoord * half_res) * 2.0 + 1.5) / screen_res;
+    const vec2 uv = (floor(vary_fragcoord * half_res) * 2.0 + half_offset + 0.5) / screen_res;
 #else
     const vec2 uv = vary_fragcoord;
 #endif

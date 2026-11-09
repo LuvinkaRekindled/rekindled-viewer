@@ -26544,6 +26544,7 @@ void LLPipeline::renderDeferredLighting()
         mTransformedMoonDir.set(tc_moon);
 
         bool lightmap_half = false;         // <FS> the sun lightmap was made at half resolution (the upsample below puts it back)
+        F32 half_offset[2] = { 1.f, 1.f };   // <FS> which pixel of its 2x2 block a half resolution lightmap pixel stands for (sun_lightmap.frag, lightmap_upsample.frag): the lower right one, or with the upscaler a different one every frame
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
@@ -26551,6 +26552,16 @@ void LLPipeline::renderDeferredLighting()
             // Only where the full resolution path would blur the cascade shadows and the occlusion: no probe capture, no ray traced shadows, shadows and SSAO on, the native programs built.
             lightmap_half = !gCubeSnapshot && RenderDeferredSSAO && RenderShadowDetail > 0 && !LLVkBridge::rtShadowMode() && mLightMapHalf.isComplete() && mLightMapHalf2.isComplete()
                             && gNativeSunHalfProgram.isComplete() && gNativeLightUpsampleProgram.isComplete() && LLVkBridge::nativeKey("lightmap_half", 1) != 0;
+            if (lightmap_half)
+            {
+                // <FS> the half resolution lightmap point samples the shadow at ONE pixel of each 2x2 block (half_offset, shared with lightmap_upsample.frag). Which pixel matters: the lower right one (1, 1) gave stepped
+                // shadow edges on an arm against leaf shadows (the user, 2026-11-09); the upper left one (0, 0) is clean, no blink. rt-debug.txt half_fixed picks the pixel (0 upper left, 1 lower right, 2 upper right, 3 lower
+                // left); half_jitter=1 with the upscaler moves through the four, one a frame (the upscaler's frame blend then integrates them: the user's idea), default off.
+                static const F32 sPattern[4][2] = { { 0.f, 0.f }, { 1.f, 1.f }, { 1.f, 0.f }, { 0.f, 1.f } };
+                const U32 k = (sDLSS && LLVkBridge::nativeKey("half_jitter", 0) != 0) ? (mJitterIndex & 3) : ((U32)LLVkBridge::nativeKey("half_fixed", 0) & 3);
+                half_offset[0] = sPattern[k][0];
+                half_offset[1] = sPattern[k][1];
+            }
             RenderPassScope pass(lightmap_half ? mLightMapHalf : *deferred_light_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
@@ -26563,6 +26574,11 @@ void LLPipeline::renderDeferredLighting()
                 sun_shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
                                               (F32)deferred_light_target->getWidth(),
                                               (F32)deferred_light_target->getHeight());
+                if (lightmap_half)
+                {
+                    static const LLStaticHashedString half_offset_s("half_offset");
+                    sun_shader.uniform2f(half_offset_s, half_offset[0], half_offset[1]);
+                }
 
                 {
                     // <FS> the noise of the SSAO (aoUtil.glsl, its own uniform: the cascade shadow's PCF rotation never moves). It moves every frame only with the ray traced sun shadows under the upscaler, where the
@@ -26746,6 +26762,8 @@ void LLPipeline::renderDeferredLighting()
             LLRenderState::DepthReadOnlyScope up_depth_read_only(true);
             bindDeferredShader(gNativeLightUpsampleProgram, &mLightMapHalf);
             gNativeLightUpsampleProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)deferred_light_target->getWidth(), (F32)deferred_light_target->getHeight());
+            { static const LLStaticHashedString ups_mode("ups_mode"); gNativeLightUpsampleProgram.uniform1i(ups_mode, LLVkBridge::nativeKey("ups_mode", 0)); }       // <FS> the upsample's bisect switch (rt-debug.txt ups_mode)
+            { static const LLStaticHashedString half_offset_s("half_offset"); gNativeLightUpsampleProgram.uniform2f(half_offset_s, half_offset[0], half_offset[1]); }
             {
                 LLRenderState::BlendScope blend(false);
                 LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
