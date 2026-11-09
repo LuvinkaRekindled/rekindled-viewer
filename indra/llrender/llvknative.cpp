@@ -428,6 +428,7 @@ struct Def
     std::vector<std::pair<U32, U32>> mSpec;
     bool mDefaultOn = false;                                // `default on` in the manifest: the family is on unless rt-debug.txt says native_<family>=0
     std::vector<std::string> mRequire;                      // the program is a stand-in only for old programs that have all of these loose uniforms (a variant test: the old sun program with SSAO has ssao_radius)
+    std::vector<std::pair<std::string, S32>> mWhen;         // `when name=value`: and only while the old program's uniform holds this value at the draw (a case of the old shader the native one does not do yet, e.g. classic_mode=1)
     std::unique_ptr<Program> mProgram;
     std::vector<std::pair<std::string, U64>> mFiles;       // every file the program was built from and its time stamp
     std::chrono::steady_clock::time_point mChecked;
@@ -535,6 +536,10 @@ void load_manifest(Manager& m)
             {
                 d->mSpec.push_back({ (U32)atoi(rest.c_str()), (U32)atoi(rest.c_str() + eq + 1) });
             }
+            else if (kind == "when")
+            {
+                d->mWhen.push_back({ rest.substr(0, eq), (S32)atoi(rest.c_str() + eq + 1) });
+            }
         }
         m.mDefs.push_back(std::move(d));
     }
@@ -638,6 +643,14 @@ Program* nativeOverride(Program* p)
         if (!p->hasUniform(r))
         {
             return p;           // a variant of the old program this one does not replace
+        }
+    }
+    for (const auto& w : d.mWhen)
+    {
+        S32 v = 0;
+        if (!p->uniformWord(w.first, v) || v != w.second)
+        {
+            return p;           // a case the native program does not cover (yet)
         }
     }
     if (p->getInfo().mUsesRt)

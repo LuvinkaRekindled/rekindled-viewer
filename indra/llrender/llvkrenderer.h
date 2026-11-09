@@ -57,9 +57,30 @@ public:
     S32 nativeIdx() const { return mNativeIdx; }
     void setNativeIdx(S32 i) { mNativeIdx = i; }
     void adoptFrom(const Program& src);
+    // (adoptFrom runs at every draw record of a native stand-in: the names are matched to the source's uniforms and samplers once per source program, not per record)
+    const Program* mAdoptSrc = nullptr;
+    size_t mAdoptSrcUniforms = 0, mAdoptSrcSamplers = 0;
+    std::vector<S32> mAdoptUniformMap;          // per uniform of this program: the index among the source's uniforms (-1: none, or a texture slot)
+    std::vector<S32> mAdoptSamplerMap;          // per sampler of this program: the source's sampler index (-1: none)
 
     // loose uniforms (write into the shadow copy; uploaded to the uniform ring on the next draw)
     bool hasUniform(const std::string& name) const { return mUniformIndex.count(name) != 0; }
+    // the current value of a one word loose uniform (an int or a float's bits) as the program holds it now; false when the program has no such uniform (llvknative: a manifest `when` condition)
+    bool uniformWord(const std::string& name, S32& out) const
+    {
+        auto it = mUniformIndex.find(name);
+        if (it == mUniformIndex.end())
+        {
+            return false;
+        }
+        const LooseUniform& u = mInfo.mUniforms[it->second];
+        if (u.mClass >= UC_COUNT || (size_t)u.mOffset + 4 > mShadow[u.mClass].size())
+        {
+            return false;
+        }
+        memcpy(&out, &mShadow[u.mClass][u.mOffset], 4);
+        return true;
+    }
     // S6 (alpha run cost): the indices of the packet table uniforms (~0u: the program has none), looked up by name once per program, not per record
     struct PacketUniforms { bool mResolved = false; U32 mTable = ~0u, mModels = ~0u, mTexmats = ~0u, mPbr = ~0u, mLights = ~0u; };
     const PacketUniforms& packetUniforms();

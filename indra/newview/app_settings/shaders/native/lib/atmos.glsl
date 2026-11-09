@@ -41,3 +41,29 @@ void atmos_terms(vec3 pos_eye, vec3 light_dir, out vec3 sunlit, out vec3 amblit,
     sunlit = sunlight;
     amblit = pow(ambient, vec3(0.9)) * 0.57;
 }
+
+#ifdef ALPHA_LIT
+// ---- the lit version: the same terms with the light a surface of normal `norm` gets from the sun (or moon) and the ambient sky, in linear colour. Needs color.glsl and, from the includer, classic_mode,
+// sky_sunlight_scale and sky_ambient_scale. classic mode keeps the colours in sRGB-ish form (the lit shader mixes them in sRGB), the other mode works in linear.
+
+// a little light from the side opposite the sun, so that areas in shadow keep some detail
+float ambient_lighting(vec3 norm, vec3 light_dir)
+{
+    float a = min(abs(dot(norm, light_dir)), 1.0) * 0.5;
+    return 1.0 - a * a;
+}
+
+void atmos_terms_lit(vec3 pos_eye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 additive, out vec3 atten)
+{
+    atmos_terms(pos_eye, light_dir, sunlit, amblit, additive, atten);
+    amblit *= ambient_lighting(norm, light_dir);
+    if (classic_mode < 1)
+    {
+        amblit = srgb_to_linear(amblit);
+        amblit = vec3(dot(amblit, vec3(0.2126, 0.7152, 0.0722)));
+        sunlit = srgb_to_linear(sunlit);
+    }
+    sunlit *= sky_sunlight_scale;
+    amblit *= sky_ambient_scale;
+}
+#endif
