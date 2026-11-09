@@ -1,0 +1,97 @@
+// alpha_pbr.vert: the vertex shader of the glTF (PBR) blended transparent surfaces. A draw is one row of the scene table (alpha_pass.inc: ll_packet_table) and its material is one row of the PBR table
+// (ll_packet_pbr: 10 vec4 = the transforms of the four textures, then roughness / metallic / emissive colour, then the cutoff); the vertex reads its own data from the arrays the row names.
+// Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw: the hardware reads the indices, the vertex number is the index), ALPHA_PBR_HUD (the fullbright HUD form: only the base colour and the emissive
+// texture are used, so no normals or tangents are made).
+// Outputs (alpha_pbr.frag and alpha_pbr_hud.frag read these): eye space position, vertex colour (sRGB), the four texture coordinates, the TBN frame, and flat: the four texture slots and the material factors.
+
+#include "alpha_pass.inc"
+#include "lib/rows.glsl"
+#include "lib/gltf.glsl"
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer PbrTable { vec4 q[]; };
+
+layout(location = 0) out vec3 vary_position;
+layout(location = 1) out vec4 vertex_color;
+layout(location = 2) out vec2 vary_tc_base;
+layout(location = 5) out vec2 vary_tc_emissive;
+layout(location = 9) flat out uvec4 vary_slots;         // base colour, normal, occlusion roughness metallic, emissive
+layout(location = 11) flat out vec3 vary_emissive;      // the emissive colour factor (linear)
+#ifndef ALPHA_PBR_HUD
+layout(location = 3) out vec2 vary_tc_normal;
+layout(location = 4) out vec2 vary_tc_orm;
+layout(location = 6) out vec3 vary_normal;
+layout(location = 7) out vec3 vary_tangent;
+layout(location = 8) flat out float vary_sign;
+layout(location = 10) flat out vec2 vary_factors;       // roughness, metallic
+#endif
+
+#if defined(HAS_SKIN) && !defined(HAS_INDEXED_DRAW)
+#error "a rigged draw of the alpha family is an indexed one"
+#endif
+
+void main()
+{
+    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+
+#ifdef HAS_SKIN
+    const uint index = uint(gl_VertexIndex);
+#else
+    const uint at = row.first + uint(gl_VertexIndex);
+    const uint word = RowWords(row.indices).w[at >> 1];
+    const uint index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
+#endif
+    const vec4 position = RowVec4(row.positions).v[index];
+
+    // the material row
+    PbrTable table = PbrTable(ll_packet_pbr);       // (not const: a buffer reference variable cannot be)
+    const uint at_row = row.pad.y * 10u;
+    const vec4 base0 = table.q[at_row + 0u];
+    const vec4 base1 = table.q[at_row + 1u];
+    const vec4 misc0 = table.q[at_row + 8u];
+    const vec4 misc1 = table.q[at_row + 9u];
+
+    const mat4 animation = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const vec2 texcoord = RowVec2(row.texcoords).t[index];
+
+#ifdef HAS_SKIN
+    mat3 skin_rotation;
+    vec3 skin_translation;
+    row_skin(row, index, skin_rotation, skin_translation);
+    const vec3 vertex = skin_rotation * position.xyz + skin_translation;
+#else
+    const vec3 vertex = position.xyz;
+#endif
+    const vec4 eye = model.mv * vec4(vertex, 1.0);
+    gl_Position = model.mvp * vec4(vertex, 1.0);
+    // (the table's matrices are GL clip space: see alpha.vert)
+    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+
+    vary_position = eye.xyz;
+    vertex_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
+    vary_tc_base = gltf_texcoord(texcoord, base0, base1, animation);
+    vary_tc_emissive = gltf_texcoord(texcoord, table.q[at_row + 6u], table.q[at_row + 7u], animation);
+    vary_slots = uvec4(row.slots.x & 0xFFFFu, row.slots.x >> 16, row.slots.y & 0xFFFFu, row.slots.y >> 16);
+    vary_emissive = vec3(misc0.z, misc0.w, misc1.x);
+
+#ifndef ALPHA_PBR_HUD
+    const vec4 normal_tr0 = table.q[at_row + 2u];
+    vary_tc_normal = gltf_texcoord(texcoord, normal_tr0, table.q[at_row + 3u], animation);
+    vary_tc_orm = gltf_texcoord(texcoord, table.q[at_row + 4u], table.q[at_row + 5u], animation);
+    const vec3 normal = RowVec4(row.normals).v[index].xyz;
+    const vec4 tangent = RowVec4(row.tangents).v[index];
+#ifdef HAS_SKIN
+    const vec3 n = normalize(mat3(model.mv) * (skin_rotation * normal));
+    const vec3 t = mat3(model.mv) * (skin_rotation * tangent.xyz);
+#else
+    const mat3 normal_matrix = mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz);
+    const vec3 n = normalize(normal_matrix * normal);
+    const vec3 t = normal_matrix * tangent.xyz;
+#endif
+    const vec4 frame = gltf_tangent(vec4(t, tangent.w), n, normal_tr0, animation);
+    vary_normal = n;
+    vary_tangent = normalize(frame.xyz);
+    vary_sign = frame.w;
+    vary_factors = misc0.xy;
+#endif
+}

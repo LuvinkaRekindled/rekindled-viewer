@@ -79,6 +79,11 @@ uniform vec4 light_attenuation[8]; // linear, quadratic, is omni, unused, See: L
 uniform vec3 light_diffuse[8];
 uniform vec2 light_deferred_attenuation[8]; // light size and falloff
 
+// <FS> shaders family 2: the light list of the view (LLRender::setAlphaLights), see alphaF.glsl. Three vec4 a light: (centre xyz, size), (colour rgb, falloff), (spot axis xyz, 1 = point light / 0 = spot), eye space.
+// alpha_light_count -1: no list, the hardware slots 2-7 are used. (The native glTF blend program takes the list through these two uniforms too: the renderer feeds the program that is bound.)
+uniform int alpha_light_count;
+uniform vec4 alpha_lights[192];
+
 vec3 srgb_to_linear(vec3 c);
 vec3 linear_to_srgb(vec3 c);
 
@@ -202,12 +207,30 @@ void main()
 #define LIGHT_LOOP(i) light += pbrCalcPointLightOrSpotLight(diffuseColor, specularColor, perceptualRoughness, metallic, norm.xyz, pos.xyz, v, light_position[i].xyz, light_direction[i].xyz, light_diffuse[i].rgb, light_deferred_attenuation[i].x, light_deferred_attenuation[i].y, light_attenuation[i].z, light_attenuation[i].w);
 
     LIGHT_LOOP(1)
-    LIGHT_LOOP(2)
-    LIGHT_LOOP(3)
-    LIGHT_LOOP(4)
-    LIGHT_LOOP(5)
-    LIGHT_LOOP(6)
-    LIGHT_LOOP(7)
+    if (alpha_light_count >= 0)
+    {
+        for (int i = 0; i < alpha_light_count; ++i)
+        {
+            const vec4 l0 = alpha_lights[i * 3];
+            const vec3 lvec = l0.xyz - pos.xyz;
+            if (dot(lvec, lvec) >= l0.w * l0.w)
+            {
+                continue;       // beyond the light's size: nothing reaches the surface
+            }
+            const vec4 l1 = alpha_lights[i * 3 + 1];
+            const vec4 l2 = alpha_lights[i * 3 + 2];
+            light += pbrCalcPointLightOrSpotLight(diffuseColor, specularColor, perceptualRoughness, metallic, norm.xyz, pos.xyz, v, l0.xyz, l2.xyz, l1.rgb, l0.w, l1.w, l2.w, 0.0);
+        }
+    }
+    else
+    {
+        LIGHT_LOOP(2)
+        LIGHT_LOOP(3)
+        LIGHT_LOOP(4)
+        LIGHT_LOOP(5)
+        LIGHT_LOOP(6)
+        LIGHT_LOOP(7)
+    }
 
     color.rgb += light.rgb;
 

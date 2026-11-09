@@ -20,3 +20,7 @@ override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | 
 # the merged program with the material draws too (the program the alpha runs use by default): fullbright, lit and material draws in one native program; the probes are used by the material path in every sky
 override | Deferred Alpha Uber Material Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | require shadow_matrix | default on
 override | Deferred Alpha Uber Material Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | default on
+# the glTF (PBR) blend surfaces: lit with the probes in every sky (classic skies keep their own mixing at run time), static and rigged, and the HUD's fullbright form
+override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | require shadow_matrix | default on
+override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | default on
+override | HUD PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr_hud.frag | alpha | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | default on
