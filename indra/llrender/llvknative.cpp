@@ -307,6 +307,13 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         out.mSamplers.push_back(si);
     }
     out.mBindless = !out.mSamplers.empty();
+    for (const std::string& text : keep)
+    {
+        if (text.find("ll_tbl") != std::string::npos)
+        {
+            out.mBindless = true;       // a program that reads the tables with a slot it is given (a varying) has no ll_ti_ sampler but needs the bindless set
+        }
+    }
     // vertex inputs and fragment outputs are read from the declarations (explicit locations are the contract)
     {
         static const std::regex in_re(R"(layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*in\s+(\w+)\s+(\w+)\s*;)");

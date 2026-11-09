@@ -27466,7 +27466,8 @@ void LLPipeline::renderDeferredLighting()
 
     // <FS> shaders family 2: the light list of this view for the transparent surfaces drawn below; -1 when the local light loop did not run this time (the programs then use the hardware light slots)
     const bool alpha_list_on = sAlphaLightsBuilt && LLVkBridge::nativeKey("alpha_list", 1) != 0;       // (rt-debug.txt alpha_list=0: the hardware slots, for a comparison)
-    gRender.setAlphaLights(sAlphaLights, alpha_list_on ? sAlphaLightCount : -1);
+    const S32 alpha_list_limit = alpha_list_on ? LLVkBridge::nativeKey("alpha_list_max", LLRender::kAlphaLightMax) : -1;        // (alpha_list_max: a measuring key, the cost of the loop by its length; -1 = no list)
+    gRender.setAlphaLights(sAlphaLights, alpha_list_limit >= 0 ? llmin(sAlphaLightCount, alpha_list_limit) : -1);
 
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLRenderState::BlendScope blend(false);

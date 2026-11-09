@@ -78,3 +78,40 @@ Not the record route of the first sketch (kind 41 to the worker, dropped: it onl
 Adam, at his home with another avatar's hair (fullbright and materials off): "picks up the light but doesn't switch on walk or camera move like the stock issue". The zoom/walk shade jump is gone.
 
 Open: main thread cost of the per-program uploads (not measured; a shared block is the fix if it shows); GPU ms of the loop vs six slots (not measured); `pbralphaF` (glTF blend) still on the six slots; a light fading out is drawn at full strength by the list (as by the opaque pass).
+
+### 9.2 Cost of the list in the plaza (2026-11-08, GPU-bound, RT off, 440 nearby lights so the list is at its 64 cap)
+
+Alternating windows of `alpha_list` 0 / 1 (keycycle, 25 s, three pairs, `<work>\alist-read.py`): GPU ms per viewer frame 5.82 -> 6.33 (pairs +0.45, +0.50, +0.64), main thread frame start 5.97 -> 6.44. Same again with the exact early reject in the loop (a light beyond its size skips the rest): 5.75 -> 6.41. So the loop's arithmetic is not the cost. Stepped lap by list length (`alpha_list_max` = -1 old slots, 0 empty list, 6, 16, 32, 64): results in 9.3.
+
+### 9.3 Cost by list length (plaza, GPU ms per viewer frame, one 25 s window each; the -1 value has two windows that agree to 0.004)
+
+| alpha_list_max | -1 (old slots) | 0 (empty list) | 6 | 16 | 32 | 64 |
+|---|---|---|---|---|---|---|
+| GPU ms | 6.37 | 6.29 | 6.57 | 6.60 | 6.64 | 6.84 |
+
+No fixed cost (an empty list is not slower than the old slots); the cost is per light that reaches a pixel: +0.3 ms for the first six, about +0.27 more for the next 58. The lap's still rounds are 60 s + 120 s; twelve 25 s windows need `H6_STILL2_EXTRA=150` (seven windows ran, the rest had no viewer). Conclusion: the native program bins lights per tile (few lights a pixel, unrolled early reject) instead of looping over up to 64 uniforms; the loop in alphaF.glsl stays only until it is accepted.
+
+### 9.4 Native fullbright alpha (2026-11-08, first piece of the native alpha program; `native_alpha=1`, needs `alphauber=0`, default off)
+
+Files: `native/alpha.vert` (row pull: static, rigged with HAS_SKIN + HAS_INDEXED_DRAW, particles, texture animation), `alpha_fullbright.frag`, `alpha_pass.inc` (the loose blocks both stages share), `lib/rows.glsl`, `lib/color.glsl`, `lib/clip.glsl`, `lib/atmos.glsl`, `lib/fog.glsl`; manifest lines for "Deferred Fullbright Alpha Pull Shader" and its Skin variant. Worker: `NativeDrawSwap` swaps the program for a native stand-in at the two packet draw sites (`geo_alpha_draw`, the transient `on_geometry_packets`) after the record has written its uniforms; the loader marks a program that reads `ll_tbl*` with a slot from a varying as bindless.
+
+Found on the way: (1) the translator appends `gl_Position.z = (z + w) * 0.5` to every viewer vertex shader and the scene table's matrices are GL clip space, so a native vertex shader that takes its matrix from the table must do the same (first test: a sign drawn over the tree in front of it); (2) `const` on a buffer reference is a compile error in GLSL.
+
+Picture (still camera in the plaza, native p2 vs old b 15 s later; noise floor = old vs old): sign area mean error 0.52 (floor 1.29), store front 2.26 (floor 4.08); the whole image 3.27 vs floor 1.11 is moving avatars and wind-moved leaf shadows on the ground (ground regions 0.7-1.7 native laps, 0.3-0.6 old/old: three laps, not explained, not plausibly this program). Cost: GPU 5.737 ms native vs 5.747 ms old (six 12 s windows each), main thread the same.
+
+## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
+
+What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):
+
+| module | content | old source read |
+|---|---|---|
+| `lib/atmos.glsl` | sky terms (sunlit, amblit, additive, atten) from the pass uniforms; ambient lighting term; classic mode and linear/sRGB rules | windlight/atmosphericsFuncs.glsl |
+| `lib/fog.glsl` | `applySkyAndWaterFog` (above/below water cases, `atmosFragLighting` soft clip) | environment/waterFogF.glsl, windlight/gammaF.glsl |
+| `lib/clip.glsl` | `waterClip` (waterSign, waterPlane), `mirrorClip` (mirror_flag, clipPlane) | deferred/deferredUtil.glsl, globalF.glsl |
+| `lib/shadow.glsl` | the cascade lookup for a transparent surface (shared with sun_lightmap.frag's cascade function) | deferred/shadowUtil.glsl `sampleDirectionalShadow` |
+| `lib/probe.glsl` | probe list, `preProbeSample`, `sampleProbeAmbient` (irradiance taps, weights) | deferred/reflectionProbeF.glsl |
+| `lib/light.glsl` | the light list loop (point and spot, early reject), the material point light with specular | alphaF.glsl, pointLightF.glsl |
+| `alpha.vert` | row pull (positions, normals, colours, texture slots, skin: weights + palette, texture animation, particles) | alphaPullV.glsl (about 100 lines for the alpha cases) |
+| `alpha.frag` | plain, fullbright and material cases by specialization constant, not by an uber branch | alphaF.glsl |
+
+Order: clip + atmos + fog (checked on the fullbright case first: no lights, no shadow, no probe), then shadow, then the light list, then probes, then materials. The old loop in alphaF.glsl is deleted when the native program is accepted.
