@@ -62,6 +62,12 @@ uniform vec3 light_direction[8];
 uniform vec4 light_attenuation[8];
 uniform vec3 light_diffuse[8];
 
+// <FS> shaders family 2 (doc/vulkan/SHADERS-F2-alpha.md): the light list of the view (LLRender::setAlphaLights): every light in view that the opaque surfaces are lit by, not the six nearest to the camera.
+// Three vec4 a light: (centre xyz, size), (colour rgb, falloff), (spot axis xyz, 1 = point light / 0 = spot), in eye space. alpha_light_count -1: no list, the hardware slots 2-7 are used (as before).
+// The size and falloff are the ones the opaque pass uses; the two light functions below take the attenuation in the form of the hardware slots, so it is rebuilt: la = (12 fa - 9) / size.
+uniform int alpha_light_count;
+uniform vec4 alpha_lights[192];
+
 void waterClip(vec3 pos);
 
 vec3 srgb_to_linear(vec3 c);
@@ -407,12 +413,26 @@ vec4 materialAlpha()
 #define MAT_LIGHT_LOOP(i) light.rgb += matPointLight(light_diffuse[i].rgb, npos, diffuse.rgb, spec, pos.xyz, norm.xyz, light_position[i], light_direction[i].xyz, light_attenuation[i].x, light_attenuation[i].y, light_attenuation[i].z, glare, light_attenuation[i].w );
 
     MAT_LIGHT_LOOP(1)
-    MAT_LIGHT_LOOP(2)
-    MAT_LIGHT_LOOP(3)
-    MAT_LIGHT_LOOP(4)
-    MAT_LIGHT_LOOP(5)
-    MAT_LIGHT_LOOP(6)
-    MAT_LIGHT_LOOP(7)
+    if (alpha_light_count >= 0)
+    {
+        for (int i = 0; i < alpha_light_count; ++i)
+        {
+            const vec4 l0 = alpha_lights[i * 3];
+            const vec4 l1 = alpha_lights[i * 3 + 1];
+            const vec4 l2 = alpha_lights[i * 3 + 2];
+            const float fa = l1.w + 1.0;
+            light.rgb += matPointLight(l1.rgb, npos, diffuse.rgb, spec, pos.xyz, norm.xyz, vec4(l0.xyz, 1.0), l2.xyz, (12.0 * fa - 9.0) / l0.w, fa, l2.w, glare, 0.0);
+        }
+    }
+    else
+    {
+        MAT_LIGHT_LOOP(2)
+        MAT_LIGHT_LOOP(3)
+        MAT_LIGHT_LOOP(4)
+        MAT_LIGHT_LOOP(5)
+        MAT_LIGHT_LOOP(6)
+        MAT_LIGHT_LOOP(7)
+    }
 
     color += light;
 
@@ -589,12 +609,26 @@ void main()
    #define LIGHT_LOOP(i) light.rgb += calcPointLightOrSpotLight(light_diffuse[i].rgb, diffuse_linear.rgb, pos.xyz, norm, light_position[i], light_direction[i].xyz, light_attenuation[i].x, light_attenuation[i].y, light_attenuation[i].z, light_attenuation[i].w);
 
     LIGHT_LOOP(1)
-    LIGHT_LOOP(2)
-    LIGHT_LOOP(3)
-    LIGHT_LOOP(4)
-    LIGHT_LOOP(5)
-    LIGHT_LOOP(6)
-    LIGHT_LOOP(7)
+    if (alpha_light_count >= 0)
+    {
+        for (int i = 0; i < alpha_light_count; ++i)
+        {
+            const vec4 l0 = alpha_lights[i * 3];
+            const vec4 l1 = alpha_lights[i * 3 + 1];
+            const vec4 l2 = alpha_lights[i * 3 + 2];
+            const float fa = l1.w + 1.0;
+            light.rgb += calcPointLightOrSpotLight(l1.rgb, diffuse_linear.rgb, pos.xyz, norm, vec4(l0.xyz, 1.0), l2.xyz, (12.0 * fa - 9.0) / l0.w, fa, l2.w, 0.0);
+        }
+    }
+    else
+    {
+        LIGHT_LOOP(2)
+        LIGHT_LOOP(3)
+        LIGHT_LOOP(4)
+        LIGHT_LOOP(5)
+        LIGHT_LOOP(6)
+        LIGHT_LOOP(7)
+    }
 
     // sum local light contrib in linear colorspace
     color.rgb += light.rgb;

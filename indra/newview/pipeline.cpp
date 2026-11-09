@@ -26420,6 +26420,11 @@ void LLPipeline::rtSceneEarly(int where)
     mRtSceneEarly = true;
 }
 
+// <FS> shaders family 2: the lights of the view's transparent surfaces (filled by the local light loop of renderDeferredLighting, given to LLRender before the post-deferred geometry and taken back after it)
+static F32 sAlphaLights[LLRender::kAlphaLightMax * 12];
+static S32 sAlphaLightCount = 0;
+static bool sAlphaLightsBuilt = false;
+
 void LLPipeline::renderDeferredLighting()
 {
     static int sBrdfFrames = 0;
@@ -27038,8 +27043,12 @@ void LLPipeline::renderDeferredLighting()
         static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
         static LLCachedControl<S32> probe_level(gSavedSettings, "RenderReflectionProbeLevel", 0);
 
+        sAlphaLightCount = 0;
+        sAlphaLightsBuilt = false;
+
         if (local_light_count > 0 && (!gCubeSnapshot || probe_level > 0))
         {
+            sAlphaLightsBuilt = true;
             gRender.setSceneBlendType(LLRender::BT_ADD);
             std::list<LLVector4>        fullscreen_lights;
             LLDrawable::drawable_list_t spot_lights;
@@ -27172,6 +27181,36 @@ void LLPipeline::renderDeferredLighting()
                     }
 
                     sVisibleLightCount++;
+
+                    // <FS> shaders family 2: the light list of the transparent surfaces: every light this loop draws for the opaque ones (nearest first, the set is sorted), in view space
+                    if (sAlphaLightCount < LLRender::kAlphaLightMax)
+                    {
+                        F32* ar = sAlphaLights + 12 * sAlphaLightCount++;
+                        const glm::vec3 vc = mul_mat4_vec3(mat, glm::vec3(c[0], c[1], c[2]));
+                        ar[0] = vc.x;
+                        ar[1] = vc.y;
+                        ar[2] = vc.z;
+                        ar[3] = s;
+                        ar[4] = col.mV[0];
+                        ar[5] = col.mV[1];
+                        ar[6] = col.mV[2];
+                        ar[7] = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
+                        if (volume->isLightSpotlight())
+                        {
+                            LLVector3 at_axis(0.f, 0.f, -1.f);      // the axis the spot light of setupHWLights uses
+                            at_axis *= volume->getRenderRotation();
+                            const glm::vec3 vd = glm::mat3(mat) * glm::vec3(at_axis.mV[0], at_axis.mV[1], at_axis.mV[2]);
+                            ar[8] = vd.x;
+                            ar[9] = vd.y;
+                            ar[10] = vd.z;
+                            ar[11] = 0.f;           // a spot
+                        }
+                        else
+                        {
+                            ar[8] = ar[9] = ar[10] = 0.f;
+                            ar[11] = 1.f;           // a point light
+                        }
+                    }
 
                     if (camera->getOrigin().mV[0] > c[0] + s + 0.2f || camera->getOrigin().mV[0] < c[0] - s - 0.2f ||
                         camera->getOrigin().mV[1] > c[1] + s + 0.2f || camera->getOrigin().mV[1] < c[1] - s - 0.2f ||
@@ -27425,6 +27464,10 @@ void LLPipeline::renderDeferredLighting()
 
     lighting_depth_read_only.setEnabled(false);
 
+    // <FS> shaders family 2: the light list of this view for the transparent surfaces drawn below; -1 when the local light loop did not run this time (the programs then use the hardware light slots)
+    const bool alpha_list_on = sAlphaLightsBuilt && LLVkBridge::nativeKey("alpha_list", 1) != 0;       // (rt-debug.txt alpha_list=0: the hardware slots, for a comparison)
+    gRender.setAlphaLights(sAlphaLights, alpha_list_on ? sAlphaLightCount : -1);
+
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLRenderState::BlendScope blend(false);
 
@@ -27463,6 +27506,7 @@ void LLPipeline::renderDeferredLighting()
         { LL_CPU_ZONE("lighting: post-deferred geometry"); renderGeomPostDeferred(*LLViewerCamera::getInstance()); }
         popRenderTypeMask();
     }
+    gRender.setAlphaLights(nullptr, -1);       // (the list is in the view space of this view only)
 
     screen_pass.end();
 

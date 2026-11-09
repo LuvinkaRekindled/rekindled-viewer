@@ -301,6 +301,8 @@ public:
     U32 mMatHash[LLRender::NUM_MATRIX_MODES];
     U32 mMatEpoch = 0;                  // <FS> LLRender::sSegmentEpoch when mMatHash was last valid (UI record cache: a segment boundary makes the hashes unknown)
     U32 mLightHash;
+    U32 mAlphaLightStamp = 0;           // <FS> the LLRender::mAlphaLightStamp this program was last given (0: never)
+    S8 mHasAlphaLights = -1;            // -1: not looked up yet, 1: declares alpha_lights / alpha_light_count
 
     U32 mProgramObject;
 #if LL_RELEASE_WITH_DEBUG_INFO
