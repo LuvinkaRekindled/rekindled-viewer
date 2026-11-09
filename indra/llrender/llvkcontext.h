@@ -273,10 +273,7 @@ public:
     // S4: the dedicated (non arena) buffers with a device address, alive and recently destroyed: after a device lost, a fault address in one of them says which (size, usage, memory, created and destroyed frame)
     struct DedicatedBuffer { unsigned long long mAddress, mSize; unsigned mUsage, mMemory; unsigned long long mCreated, mDestroyed; bool mAlive; };
     std::mutex mDedicatedMutex;
-    // <FS> LL_VK_IMAGE_HOLD=N (a device lost experiment): a released image is held N more frames before it goes on the destroy list (the replaced textures of a crowded sim: the same 8 MB ranges are freed and reused every few frames)
-    std::function<void(U64)> mViewReleaseHook;
-    std::mutex mHeldMutex;
-    std::deque<std::pair<U64, std::function<void()>>> mHeldImages;
+    std::function<void(U64)> mViewReleaseHook;      // called when an image is really destroyed: no handle may show its view any more
     std::mutex mDeferredNextMutex;
     std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
     std::vector<DedicatedBuffer> mDedicated;
