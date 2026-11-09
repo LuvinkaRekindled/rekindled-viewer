@@ -131,3 +131,54 @@ vec4 ssr_transparent(vec2 tc, vec3 view_pos, vec3 norm, float glossiness)
     }
     return vec4(hit, vignette * glossiness);
 }
+
+#ifdef RESOLVE_PASS
+// ---- the reflection in an opaque glossy surface (the lighting resolve): the same marcher, with the scatter the old call used. Needs poisson.glsl and the uniform glossySampleCount.
+float ssr_random(vec2 uv)
+{
+    return fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+// tc: the pixel's screen position (0..1), gloss: 1 = a mirror. rgb: the colour, a: how much of it to use (0 = nothing: dull surface, off screen, nothing hit). Rays leave the reflection direction by up to (1 - gloss) of
+// a random offset; as in the old call a surface that is not glossy enough (below 0.65) is not traced at all, a mirror is one ray (every sample of the old call was the same ray).
+vec4 ssr_opaque(vec2 tc, vec3 view_pos, vec3 norm, float gloss)
+{
+    const vec3 n = normalize(norm);
+    const vec2 edge = 1.0 - abs(tc * 2.0 - 1.0);
+    float vignette = clamp(abs(edge.x) * abs(edge.y) * 16.0, 0.0, 1.0);
+    vignette *= clamp((dot(normalize(view_pos), n) * 0.5 + 0.5) * 5.5 - 0.8, 0.0, 1.0);
+    vignette *= clamp(1.0 + view_pos.z / 128.0, 0.0, 1.0);
+    vignette *= clamp(gloss * 3.0 - 1.7, 0.0, 1.0);
+    const float rough = 1.0 - gloss;
+    if (!(rough < 0.35) || !(vignette > 0.0))
+    {
+        return vec4(0.0);
+    }
+    int samples = max(int(max(glossySampleCount, glossySampleCount * rough * vignette)), 1);
+    if (rough <= 0.0)
+    {
+        samples = 1;
+    }
+    const vec3 dir = normalize(reflect(view_pos, n));
+    vec3 collected = vec3(0.0);
+    int hits = 0;
+    for (int i = 0; i < samples; ++i)
+    {
+        const vec3 first = normalize(cross(getPoissonSample(i), dir));
+        const vec3 second = normalize(cross(dir, first));
+        const vec2 coeffs = vec2(ssr_random(tc + vec2(0.0, float(i))) + ssr_random(tc + vec2(float(i), 0.0)));
+        const vec3 scattered = dir + (first * coeffs.x + second * coeffs.y) * rough;
+        vec3 hit;
+        if (ssr_trace(view_pos, normalize(scattered), hit))
+        {
+            ++hits;
+            collected += hit;
+        }
+    }
+    if (hits == 0)
+    {
+        return vec4(0.0);
+    }
+    return vec4(collected / float(hits), float(hits) / float(samples) * vignette);
+}
+#endif

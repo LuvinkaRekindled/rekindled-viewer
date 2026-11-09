@@ -108,6 +108,7 @@ vec3 pbr_local_light(PbrSurface s, vec3 pos, vec3 light_col, vec3 center, float 
     return light_col * (spot * spot * atten * 3.0 * (classic_mode > 0 ? 0.9 : 1.0)) * clamp(nl * punctual, vec3(0.0), vec3(10.0));
 }
 
+#ifdef ALPHA_PBR
 // a hardware light slot (the avatar backlight; the nearest lights when there is no list): the slot carries its attenuation as (linear, quadratic) with the size and falloff folded in
 vec3 pbr_slot_light(int i, PbrSurface s, vec3 pos)
 {
@@ -149,3 +150,4 @@ vec3 pbr_lights_sum(PbrSurface s, vec3 pos)
     }
     return sum;
 }
+#endif

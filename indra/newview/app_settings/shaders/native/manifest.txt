@@ -4,6 +4,12 @@
 override | Copy Shader | copy.vert | copy.frag | copy | default on
 override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur | default on
 override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | require ssao_radius | require ll_ti_shadowMap0 | default on
+# family 1: the lighting resolve (doc/vulkan/SHADERS-F1-lighting.md): the variant without ray tracing (the ray traced variants of the soften program stay old), the screen space reflection of the original marcher only
+# ssrTraceMode is a float (bit 0: the improved trace for water, bit 1: for other surfaces, bit 2: the water trace adaptive); a `when` compares the float's bits: the native resolve only has the original marcher for surfaces, so it stands in for the modes without bit 1: 0, 1, 4, 5
+override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | require ssao_irradiance_scale | require ll_ti_lightMap | when ssrTraceMode=0 | default on
+override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | require ssao_irradiance_scale | require ll_ti_lightMap | when ssrTraceMode=1065353216 | default on
+override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | require ssao_irradiance_scale | require ll_ti_lightMap | when ssrTraceMode=1082130432 | default on
+override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | require ssao_irradiance_scale | require ll_ti_lightMap | when ssrTraceMode=1084227584 | default on
 # family 2: the transparent surfaces (doc/vulkan/SHADERS-F2-alpha.md). Fullbright first (rt-debug.txt alphauber=0 keeps the fullbright draws in their own program); native_alpha=1 turns it on.
 override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | default on
 override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
