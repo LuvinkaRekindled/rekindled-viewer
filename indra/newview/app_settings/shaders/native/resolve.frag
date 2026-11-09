@@ -5,7 +5,7 @@
 // What is different is the cost: a sky pixel reads nothing but its colour, the view position comes from the depth with the few multiplications the projection leaves (lib/viewpos.glsl), and the pixel
 // runs only the branch of its own kind.
 
-// RESOLVE_DBG: a bisect switch (0 = the program; 1 = classes in colour, 2 = lightmap, 3 = albedo, 4 = flag, 5 = normal, 6 = specular); resolve-bisect.ps1 in the work directory rewrites it while a lap runs
+// RESOLVE_DBG: a bisect switch (0 = the program; 1 = classes in colour, 2 = lightmap, 3 = albedo, 4 = flag, 5 = normal, 6 = specular, 7 = light direction, 8 = sunlit, 9 = amblit, 10 = sun up / classic flags, 11 = probe ambient, 12 = n.l, 13 = probe counts); resolve-bisect.ps1 in the work directory rewrites it while a lap runs
 #define RESOLVE_DBG 0
 
 #include "resolve_pass.inc"
@@ -109,6 +109,36 @@ void main()
         sunlit *= 1.35;
     }
 
+#if RESOLVE_DBG == 7
+    frag_color = vec4(normalize(light_dir) * 0.5 + 0.5, 0.0);           // the light direction (eye space)
+    return;
+#elif RESOLVE_DBG == 8
+    frag_color = vec4(clamp(sunlit, vec3(0.0), vec3(1.0)), 0.0);        // the sun's colour after the air
+    return;
+#elif RESOLVE_DBG == 9
+    frag_color = vec4(clamp(amblit, vec3(0.0), vec3(1.0)), 0.0);        // the sky's ambient colour
+    return;
+#elif RESOLVE_DBG == 10
+    frag_color = vec4(sun_up_factor == 1 ? 1.0 : 0.0, classic_mode > 0 ? 1.0 : 0.0, 0.0, 0.0);      // red: sun up, green: classic sky
+    return;
+#elif RESOLVE_DBG == 11
+    probe_gather(pos);
+    frag_color = vec4(clamp(probe_ambient(pos, norm, amblit), vec3(0.0), vec3(1.0)), 0.0);        // the probes' ambient light
+    return;
+#elif RESOLVE_DBG == 12
+    frag_color = vec4(vec3(clamp(dot(norm, normalize(light_dir)), 0.0, 1.0)), 0.0);              // the angle of the surface to the light
+    return;
+#elif RESOLVE_DBG == 14
+    frag_color = vec4(sun_dir * 0.5 + 0.5, 0.0);                                    // the raw sun_dir uniform as a colour
+    return;
+#elif RESOLVE_DBG == 15
+    frag_color = vec4(length(sun_dir) * 0.5, length(moon_dir) * 0.5, 0.0, 0.0);      // the lengths of sun_dir and moon_dir (a unit vector gives 0.5)
+    return;
+#elif RESOLVE_DBG == 13
+    probe_gather(pos);
+    frag_color = vec4(float(refmapCount) / 32.0, float(probe_count) / 8.0, probe_automatic ? 1.0 : 0.0, 0.0);      // probes in the frame, probes that reach the pixel, automatic probes on
+    return;
+#endif
     probe_gather(pos);
     const vec3 v = -normalize(pos);
     const vec3 reflect_dir = normalize(reflect(pos, norm));
