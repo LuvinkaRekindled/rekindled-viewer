@@ -11075,8 +11075,7 @@ static bool geo_type_available(size_t t, bool rigged)
 {
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GRASS)
     {
-        static const bool grass_table = !getenv("LL_VK_GRASS_TABLE") || getenv("LL_VK_GRASS_TABLE")[0] != '0';      // (0 = the pull batches of the render map)
-        return grass_table && !rigged && LLRenderPass::deferredPacketsEnabled() && gDiffuseMaskPullReady;
+        return !rigged && LLRenderPass::deferredPacketsEnabled() && gDiffuseMaskPullReady;
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
@@ -11104,23 +11103,19 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_SHINY)
     {
-        static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';      // (0 = the pull batches of the render map, as before)
-        return shiny_table && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP)
     {
-        static const bool bump_table_env = !getenv("LL_VK_BUMP_TABLE") || getenv("LL_VK_BUMP_TABLE")[0] != '0';      // (0 = the pass reads the render map, as before)
-        return bump_table_env && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
     {
-        static const bool emboss_table_env = !getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0';      // (0 = the pass reads the render map, as before)
-        return emboss_table_env && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE)
     {
-        static const bool inv_table = !getenv("LL_VK_INV_TABLE") || getenv("LL_VK_INV_TABLE")[0] != '0';      // (0 = the pull batch of the render map, as before)
-        return inv_table && !rigged && LLRenderPass::deferredPacketsEnabled() && ll_pull_twin(&gDrawColorProgram) != nullptr;      // (the water exclusion pool draws it with the colour program's pull twin; the rigged ones stay in the render map)
+        return !rigged && LLRenderPass::deferredPacketsEnabled() && ll_pull_twin(&gDrawColorProgram) != nullptr;      // (the water exclusion pool draws it with the colour program's pull twin; the rigged ones stay in the render map)
     }
     return true;
 }
@@ -11500,12 +11495,10 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
         const LLGeometryPassInfo info = geo_pass_info(kGeoTypes[t]);
         const LLGeometryPassInfo* materials = kGeoTypes[t].mShader >= 0 ? &info : nullptr;
         // C5 J4: a draw with a texture matrix is a row too: the matrix is a slot of the moving matrix table (as the alpha items'), the row's pad.x names it; the pull programs of the static opaque types apply it (the
-        // per-frame packet records did the same). LL_VK_GEO_TEXMAT=0 = those draws stay on the per-frame records as before
-        static const bool texmat_env = !getenv("LL_VK_GEO_TEXMAT") || getenv("LL_VK_GEO_TEXMAT")[0] != '0';
-        // <FS> P3 (rigged draws as rows): the rigged variants take a texture matrix slot too (LL_VK_RIGTEXMAT, default on, 0 = they stay on the per frame records): the skin pull programs apply the row's pad.x the same way
+        // per-frame packet records did the same).
+        // <FS> P3 (rigged draws as rows): the rigged variants take a texture matrix slot too: the skin pull programs apply the row's pad.x the same way
         // (the census of 2026-11-07 showed 16 rigged G-buffer draws a frame in per frame records for this reason alone)
-        static const bool rigtex_env = !getenv("LL_VK_RIGTEXMAT") || getenv("LL_VK_RIGTEXMAT")[0] != '0';
-        const bool texmat_ok = texmat_env && (!rigged || rigtex_env) && !kGeoTypes[t].mPbr && scene_geo_moving_on();
+        const bool texmat_ok = !kGeoTypes[t].mPbr && scene_geo_moving_on();
         for (LLDrawInfo* params : it->second)
         {
             if (!params->mCount)
@@ -14453,18 +14446,17 @@ int ll_scene_geo_type_number(U32 type)
 
 bool ll_scene_geo_main_view()
 {
-    // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view (LL_VK_PROBE_TABLE=0 = they take the old pools)
-    static const bool probe_table = !getenv("LL_VK_PROBE_TABLE") || getenv("LL_VK_PROBE_TABLE")[0] != '0';
-    // ... and the avatar impostor images (generateImpostor sets sShadowRender and sImpostorRender; its cull result holds the avatar's visible groups, it sorts with the viewer's own camera; LL_VK_IMPOSTOR_TABLE=0 = the old pools)
+    // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view
+    // ... and the avatar impostor images (generateImpostor sets sShadowRender and sImpostorRender; its cull result holds the avatar's visible groups, it sorts with the viewer's own camera)
     if (sImpostorTableView)
     {
         return LLPipeline::sImpostorRender && !gCubeSnapshot && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
     }
-    return (!gCubeSnapshot || probe_table) && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
+    return !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
 // J1 K6 S1: the HUD pass is a view of its own (render_hud_attachments: updateCull + stateSort of the HUD camera, then the post deferred passes): its cull result gets the list of the visible fragments, the table is told
-// about it before the passes (renderGeomPostDeferred), and the pass types whose HUD pools draw from rows (ll_scene_geo_hud_type) are left out of its render map. LL_VK_HUD_TABLE=0 = the old HUD pools.
+// about it before the passes (renderGeomPostDeferred), and the pass types whose HUD pools draw from rows (ll_scene_geo_hud_type) are left out of its render map.
 bool ll_scene_geo_hud_view()
 {
     return LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
@@ -14472,8 +14464,7 @@ bool ll_scene_geo_hud_view()
 
 bool ll_scene_geo_hud_type(int tn)
 {
-    static const bool env = !getenv("LL_VK_HUD_TABLE") || getenv("LL_VK_HUD_TABLE")[0] != '0';
-    if (!env || tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
+    if (tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
     {
         return false;
     }
@@ -14481,7 +14472,7 @@ bool ll_scene_geo_hud_type(int tn)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady)
         || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady && (!getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0'));       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady);       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
 }
 
 bool ll_scene_geo_hud_any()
@@ -32379,10 +32370,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     sShadowRender = true;
     sImpostorRender = true;
-    {
-        static const bool impostor_table = !getenv("LL_VK_IMPOSTOR_TABLE") || getenv("LL_VK_IMPOSTOR_TABLE")[0] != '0';
-        sImpostorTableView = impostor_table && !sJobView;       // (J1 K6 A1: the shape editor preview and the profile renders too: their groups have fragments like any avatar's)
-    }
+    sImpostorTableView = !sJobView;       // (J1 K6 A1: the shape editor preview and the profile renders too: their groups have fragments like any avatar's)
 
     LLViewerCamera* viewer_camera = LLViewerCamera::getInstance();
 
