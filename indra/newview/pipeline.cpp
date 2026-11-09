@@ -26556,9 +26556,9 @@ void LLPipeline::renderDeferredLighting()
             {
                 // <FS> the half resolution lightmap point samples the shadow at ONE pixel of each 2x2 block (half_offset, shared with lightmap_upsample.frag). Which pixel matters: the lower right one (1, 1) gave stepped
                 // shadow edges on an arm against leaf shadows (the user, 2026-11-09); the upper left one (0, 0) is clean, no blink. rt-debug.txt half_fixed picks the pixel (0 upper left, 1 lower right, 2 upper right, 3 lower
-                // left); half_jitter=1 with the upscaler moves through the four, one a frame (the upscaler's frame blend then integrates them: the user's idea), default off.
+                // left); with the upscaler on the pixel moves through the four, one a frame (the upscaler's frame blend then integrates them: the user's idea; his eye 2026-11-09: no jagged edge, no ghosts, no blink; the fixed upper left pixel left a little ghosting), half_jitter=0 keeps the fixed pixel.
                 static const F32 sPattern[4][2] = { { 0.f, 0.f }, { 1.f, 1.f }, { 1.f, 0.f }, { 0.f, 1.f } };
-                const U32 k = (sDLSS && LLVkBridge::nativeKey("half_jitter", 0) != 0) ? (mJitterIndex & 3) : ((U32)LLVkBridge::nativeKey("half_fixed", 0) & 3);
+                const U32 k = (sDLSS && LLVkBridge::nativeKey("half_jitter", 1) != 0) ? (mJitterIndex & 3) : ((U32)LLVkBridge::nativeKey("half_fixed", 0) & 3);
                 half_offset[0] = sPattern[k][0];
                 half_offset[1] = sPattern[k][1];
             }
