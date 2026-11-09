@@ -80,6 +80,7 @@ void LLVkBridge::stopAsync() {}
 #include <psapi.h>
 #endif
 #include "llvkcontext.h"
+#include "llvknative.h"
 #include "llvkupscale.h"
 #include "llvkdlssnr.h"
 #include "llvkrenderer.h"
@@ -1246,6 +1247,11 @@ S32 LLVkBridge::rtSunNoise()
 S32 LLVkBridge::rtEarly()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::rtEarly() : -1;
+}
+
+S32 LLVkBridge::nativeKey(const char* key, S32 def)
+{
+    return LLVk::nativeKey(key, def);
 }
 
 S32 LLVkBridge::rtSunFilter()

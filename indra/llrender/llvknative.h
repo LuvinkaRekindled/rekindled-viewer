@@ -35,6 +35,12 @@ class Program;
 bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
                           const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error);
 
+// The directory the native shaders are read from (LL_VK_NATIVE_DIR, else app_settings/shaders/native next to the executable).
+const std::string& nativeRoot();
+
+// A live key of rt-debug.txt (read at most twice a second; any thread): the value of `key=N`, or 'def' when the line is missing.
+int nativeKey(const std::string& key, int def);
+
 // The program to draw with in place of 'p' (p itself when no native program stands in for it or its family is off). Called on the worker thread for every draw.
 Program* nativeOverride(Program* p);
 

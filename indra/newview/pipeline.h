@@ -208,6 +208,8 @@ public:
     LLRenderTarget          mAvatarVelocityMap;
     LLRenderTarget          mRtSunHard;                         // <FS> the centre ray's hard sun shadow alone, with a mip chain (R16F): the penumbra filter's taps read the level of their spacing
     LLRenderTarget          mRtShadowTemp;                      // <FS> PLAN-rt-shadow-penumbra.md step 2b: the penumbra filter's horizontal pass writes here, the vertical one reads it and writes the lightmap
+    LLRenderTarget          mLightMapHalf2;                     // <FS> the second half resolution lightmap (the blur at half resolution ping-pongs between the two)
+    LLRenderTarget          mLightMapHalf;                      // <FS> shaders from scratch (PLAN-shaders-rewrite.md): the sun lightmap at half resolution (native sun program, upsampled by the native upsample program), key lightmap_half
     LLRenderTarget          mRtBlocker;                         // <FS> PLAN-rt-shadow-penumbra.md step 1: the blocker distance of the sun lightmap's centre ray (R16F, copied from the lightmap's attachment 1 right after the sun pass)
     bool                    mAvatarVelocityActive = false;      // begin said yes for this frame
     bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target

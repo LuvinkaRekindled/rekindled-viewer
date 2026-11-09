@@ -19,6 +19,7 @@
 #include <chrono>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 
@@ -375,6 +376,8 @@ int debug_key(const std::string& key, int def)
 {
     struct Entry { int mValue; std::chrono::steady_clock::time_point mRead; };
     static std::unordered_map<std::string, Entry> cache;
+    static std::mutex cache_lock;       // (the main thread asks for keys too)
+    std::lock_guard<std::mutex> guard(cache_lock);
     const auto now = std::chrono::steady_clock::now();
     auto it = cache.find(key);
     if (it != cache.end() && now - it->second.mRead < std::chrono::milliseconds(500))
@@ -574,6 +577,21 @@ void build(Manager& m, Def& d)
 }
 
 } // namespace
+
+const std::string& nativeRoot()
+{
+    Manager& m = manager();
+    if (!m.mReady)
+    {
+        load_manifest(m);
+    }
+    return m.mRoot;
+}
+
+int nativeKey(const std::string& key, int def)
+{
+    return debug_key(key, def);
+}
 
 Program* nativeOverride(Program* p)
 {

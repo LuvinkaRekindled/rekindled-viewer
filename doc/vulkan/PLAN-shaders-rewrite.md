@@ -148,3 +148,5 @@ Record 2026-11-08: Copy Shader (identical, 6.1 ms both) and the lightmap blur (i
 ## 16. Tolerance: the same feel, not pixel perfect (Adam, 2026-11-08)
 
 New approaches are welcome; output only has to be close. Small differences in noise, rounding, filter shape or tap pattern are fine. Anything that changes how a scene READS (how bright the lights look, how soft the shadows are, how deep the corners get, the plaza ground shine, hair against the body) is shown to Adam first. Programs are judged on: the keep list, the feel at the test spots (the plaza, a lit room, his home with the 4 lights and the hair), and the zone times.
+
+Note for the hair test (Adam, 2026-11-08): his own avatar's hair currently renders fullbright (a hair HUD option set wrong in his outfit; he will fix it when hair needs troubleshooting), so it cannot show the zoom-dependent shade of section 14. Test the lit-room hair at his home with another avatar's hair, or after he sets his own hair right.

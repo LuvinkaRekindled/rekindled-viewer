@@ -37,6 +37,7 @@
 #include "llrendertarget.h"
 #if defined(LL_VULKAN)
 #include "llvkshader.h"
+#include "llvknative.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
 #include <emmintrin.h>
@@ -890,7 +891,7 @@ bool LLShaderProgram::createShader()
     }
     mLightHash = 0xFFFFFFFF;
 
-    llassert_always(!mShaderFiles.empty());
+    llassert_always(!mShaderFiles.empty() || !mNativeFragment.empty());
 
 #if LL_DARWIN
     if(!gDeviceCaps.mIsApple)
@@ -910,7 +911,7 @@ bool LLShaderProgram::createShader()
 
     mUsingBinaryProgram = false;
 
-    if (!mUsingBinaryProgram)
+    if (!mUsingBinaryProgram && mNativeFragment.empty())
     {
 
         //compile new source
@@ -931,7 +932,7 @@ bool LLShaderProgram::createShader()
     }
 
     // Attach existing objects
-    if (!LLShaderMgr::instance()->attachShaderFeatures(this))
+    if (mNativeFragment.empty() && !LLShaderMgr::instance()->attachShaderFeatures(this))
     {
         unloadInternal();
         return false;
@@ -1570,7 +1571,14 @@ bool LLShaderProgram::link(bool suppress_errors)
             return;
         }
         LLVk::ProgramInfo info;
-        if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
+        if (!mNativeFragment.empty())
+        {
+            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, mNativeDefines, info, nullptr, &error))
+            {
+                return;
+            }
+        }
+        else if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
         {
             error = info.mError;
             return;
@@ -1583,7 +1591,7 @@ bool LLShaderProgram::link(bool suppress_errors)
         }
         program = made.release();
     };
-    if (stages.empty())
+    if (stages.empty() && mNativeFragment.empty())
     {
         error = "no shader objects attached";
     }
