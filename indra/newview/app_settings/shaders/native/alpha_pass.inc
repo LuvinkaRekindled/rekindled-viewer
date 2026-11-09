@@ -61,19 +61,54 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int alpha_light_count;
     vec4 alpha_lights[192];
 #endif
+
+#ifdef ALPHA_PROBES
+    mat3 env_mat;               // world to the probes' frame (the sky's rotation)
+    float max_probe_lod;
+    int cube_snapshot;
+#endif
 };
+
+#ifdef ALPHA_PROBES
+// the reflection probes of the view: one block for the whole frame, bound by the renderer (named block 0 = binding 1). The members and their order are the viewer's (the CPU side writes the block).
+#define MAX_REFMAP_COUNT 256
+layout(std140, set = 0, binding = 1) uniform ReflectionProbes
+{
+    mat4 refBox[MAX_REFMAP_COUNT];          // the box of a user override probe: three outward planes and the box's thickness along them
+    mat4 heroBox;
+    vec4 refSphere[MAX_REFMAP_COUNT];       // bounding spheres of the probes, the closest to the camera first
+    vec4 refParams[MAX_REFMAP_COUNT];       // x irradiance scale, y radiance scale, z fade in, w near
+    vec4 heroSphere;
+    ivec4 refIndex[MAX_REFMAP_COUNT];       // x cube map layer, y index of the neighbour list (in ivec4s), z neighbour count, w priority (negative: a box probe)
+    ivec4 refNeighbor[1024];
+    ivec4 refBucket[256];                   // by depth: the first and the one past the last probe that can reach it
+    int refmapCount;
+    int heroShape;
+    int heroMipCount;
+    int heroProbeCount;
+};
+#endif
 
 layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
 {
     float minimum_alpha;        // the alpha cutoff of the draw (changes with the draw: its own block)
 };
 
-#ifdef ALPHA_LIT
+#if defined(ALPHA_LIT) || defined(ALPHA_PROBES)
 layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 {
+#ifdef ALPHA_LIT
     uint ll_ti_shadow_shadowMap0;
     uint ll_ti_shadow_shadowMap1;
     uint ll_ti_shadow_shadowMap2;
     uint ll_ti_shadow_shadowMap3;
+#endif
+#ifdef ALPHA_PROBES
+    uint ll_ti_cubearray_irradianceProbes;
+    uint ll_ti_cubearray_reflectionProbes;
+#ifdef HERO_PROBES
+    uint ll_ti_cubearray_heroProbes;
+#endif
+#endif
 };
 #endif

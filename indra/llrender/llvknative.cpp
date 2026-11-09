@@ -292,7 +292,12 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         SamplerInfo si;
         si.mName = u.mName.substr(6);
         si.mType = "sampler2D";
-        if (si.mName.compare(0, 5, "cube_") == 0)
+        if (si.mName.compare(0, 10, "cubearray_") == 0)
+        {
+            si.mName = si.mName.substr(10);
+            si.mType = "samplerCubeArray";      // `ll_ti_cubearray_<name>`: a cube map array (the reflection probes)
+        }
+        else if (si.mName.compare(0, 5, "cube_") == 0)
         {
             si.mName = si.mName.substr(5);
             si.mType = "samplerCube";
@@ -366,9 +371,9 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     const size_t words = out.mSpirv[0].size() + out.mSpirv[1].size();
     LL_INFOS("VkNative") << "native program '" << name << "': " << out.mSpirv[0].size() << " + " << out.mSpirv[1].size() << " SPIR-V words, " << out.mUniforms.size() << " uniforms, " << out.mSamplers.size()
         << " texture slots, compiled in " << ms << " ms" << LL_ENDL;
-    if (words > 20000 || ms > 150.0)
+    if (words > 30000 || ms > 150.0)
     {
-        LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (20000 SPIR-V words, 150 ms): split it" << LL_ENDL;
+        LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (30000 SPIR-V words, 150 ms): split it" << LL_ENDL;
     }
     return true;
 }
@@ -433,6 +438,8 @@ struct Def
     std::vector<std::pair<std::string, U64>> mFiles;       // every file the program was built from and its time stamp
     std::chrono::steady_clock::time_point mChecked;
     bool mTried = false;
+    U32 mGlobalGen = 0;        // the generation of the viewer's global defines the program was built with
+    S32 mNext = -1;            // the next manifest line that names the same program (a variant), -1: none
     U64 mUses = 0;             // draws made with the native program (logged every 2000)
 };
 
@@ -543,6 +550,17 @@ void load_manifest(Manager& m)
         }
         m.mDefs.push_back(std::move(d));
     }
+    for (size_t i = 0; i < m.mDefs.size(); ++i)
+    {
+        for (size_t j = i + 1; j < m.mDefs.size(); ++j)
+        {
+            if (m.mDefs[j]->mTarget == m.mDefs[i]->mTarget)
+            {
+                m.mDefs[i]->mNext = (S32)j;        // (the chain of variants of one program, in manifest order)
+                break;
+            }
+        }
+    }
     LL_INFOS("VkNative") << m.mDefs.size() << " native program(s) in " << m.mRoot << "/manifest.txt" << LL_ENDL;
 }
 
@@ -558,6 +576,11 @@ bool stale(const Def& d)
     return false;
 }
 
+// the viewer's global defines (set from the main thread, read by the worker)
+std::mutex gGlobalLock;
+std::vector<std::pair<std::string, std::string>> gGlobalDefines;
+U32 gGlobalGen = 1;
+
 void build(Manager& m, Def& d)
 {
     d.mTried = true;
@@ -565,7 +588,14 @@ void build(Manager& m, Def& d)
     std::vector<std::string> files;
     std::string error;
     d.mFiles.clear();
-    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, d.mDefines, info, &files, &error);
+    std::vector<std::pair<std::string, std::string>> defines;
+    {
+        std::lock_guard<std::mutex> guard(gGlobalLock);
+        defines = gGlobalDefines;
+        d.mGlobalGen = gGlobalGen;
+    }
+    defines.insert(defines.end(), d.mDefines.begin(), d.mDefines.end());
+    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, defines, info, &files, &error);
     files.push_back(m.mRoot + "/manifest.txt");
     for (const std::string& f : files)
     {
@@ -589,6 +619,16 @@ void build(Manager& m, Def& d)
 }
 
 } // namespace
+
+void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines)
+{
+    std::lock_guard<std::mutex> guard(gGlobalLock);
+    if (defines != gGlobalDefines)
+    {
+        gGlobalDefines = defines;
+        ++gGlobalGen;
+    }
+}
 
 const std::string& nativeRoot()
 {
@@ -620,11 +660,11 @@ Program* nativeOverride(Program* p)
     if (idx == -2)
     {
         idx = -1;
-        for (size_t i = 0; i < m.mDefs.size(); ++i)
+        for (size_t i = 0; i < m.mDefs.size() && idx < 0; ++i)
         {
             if (m.mDefs[i]->mTarget == p->getName())
             {
-                idx = (S32)i;
+                idx = (S32)i;          // (the first line of the manifest for this program; the others follow by mNext)
             }
         }
         p->setNativeIdx(idx);
@@ -633,26 +673,35 @@ Program* nativeOverride(Program* p)
             return p;
         }
     }
-    Def& d = *m.mDefs[(size_t)idx];
-    if (debug_key("native_" + d.mFamily, d.mDefaultOn ? 1 : 0) == 0)
+    // several manifest lines may name the same program (variants for the cases the old shader covers with a branch: `when classic_mode=1`, ...): the first whose conditions hold is the stand-in
+    Def* chosen = nullptr;
+    for (S32 i = idx; i >= 0 && !chosen; i = m.mDefs[(size_t)i]->mNext)
+    {
+        Def& c = *m.mDefs[(size_t)i];
+        if (debug_key("native_" + c.mFamily, c.mDefaultOn ? 1 : 0) == 0)
+        {
+            continue;
+        }
+        bool fits = true;
+        for (const std::string& r : c.mRequire)
+        {
+            fits = fits && p->hasUniform(r);           // a variant of the old program this one does not replace
+        }
+        for (const auto& w : c.mWhen)
+        {
+            S32 v = 0;
+            fits = fits && p->uniformWord(w.first, v) && v == w.second;       // a case this variant does not cover
+        }
+        if (fits)
+        {
+            chosen = &c;
+        }
+    }
+    if (!chosen)
     {
         return p;
     }
-    for (const std::string& r : d.mRequire)
-    {
-        if (!p->hasUniform(r))
-        {
-            return p;           // a variant of the old program this one does not replace
-        }
-    }
-    for (const auto& w : d.mWhen)
-    {
-        S32 v = 0;
-        if (!p->uniformWord(w.first, v) || v != w.second)
-        {
-            return p;           // a case the native program does not cover (yet)
-        }
-    }
+    Def& d = *chosen;
     if (p->getInfo().mUsesRt)
     {
         return p;               // the ray traced variants are the RT track
@@ -666,7 +715,17 @@ Program* nativeOverride(Program* p)
     else if (now - d.mChecked > std::chrono::milliseconds(500))
     {
         d.mChecked = now;
-        if (debug_key("native_reload", 1) != 0 && stale(d))
+        bool globals_changed = false;
+        {
+            std::lock_guard<std::mutex> guard(gGlobalLock);
+            globals_changed = d.mGlobalGen != gGlobalGen;
+        }
+        if (globals_changed)
+        {
+            LL_INFOS("VkNative") << "native program '" << d.mTarget << "': the viewer's shader settings changed, rebuilding" << LL_ENDL;
+            build(m, d);
+        }
+        else if (debug_key("native_reload", 1) != 0 && stale(d))
         {
             LL_INFOS("VkNative") << "native program '" << d.mTarget << "': a source changed, rebuilding" << LL_ENDL;
             build(m, d);

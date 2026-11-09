@@ -1254,6 +1254,11 @@ S32 LLVkBridge::nativeKey(const char* key, S32 def)
     return LLVk::nativeKey(key, def);
 }
 
+void LLVkBridge::nativeGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines)
+{
+    LLVk::nativeSetGlobalDefines(defines);
+}
+
 S32 LLVkBridge::rtSunFilter()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunFilter() : 0;
