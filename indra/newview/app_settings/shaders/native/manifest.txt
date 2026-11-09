@@ -7,9 +7,13 @@ override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | req
 # family 2: the transparent surfaces (doc/vulkan/SHADERS-F2-alpha.md). Fullbright first (rt-debug.txt alphauber=0 keeps the fullbright draws in their own program); native_alpha=1 turns it on.
 override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha
 override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1
-# the lit case (plain diffuse; classic skies: the probe ambient of the other skies is not written yet, those draws keep the old program)
+# the lit case (plain diffuse), two variants of each program by the sky: classic_mode=1 (small: the ambient light is the sky's) and classic_mode=0 (ALPHA_PROBES: the ambient light comes from the reflection probes)
 override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | require shadow_matrix | when classic_mode=1
+override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | require shadow_matrix | when classic_mode=0
 override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | when classic_mode=1
+override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | when classic_mode=0
 # the merged lit + fullbright program (the row's fullbright flag picks the branch): the program the alpha runs use when alphamat is 0 (the material draws have their own programs then)
 override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_UBER=1 | require shadow_matrix | when classic_mode=1
+override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | require shadow_matrix | when classic_mode=0
 override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | when classic_mode=1
+override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | require shadow_matrix | when classic_mode=0

@@ -11,6 +11,9 @@
 #include "lib/shade.glsl"
 #include "lib/shadow.glsl"
 #include "lib/light.glsl"
+#ifdef ALPHA_PROBES
+#include "lib/probe.glsl"
+#endif
 
 layout(location = 0) in vec3 vary_position;
 layout(location = 1) in vec4 vertex_color;
@@ -67,7 +70,13 @@ void main()
     }
     else
     {
-        color = amblit + min(ndl, shadow) * sunlit;
+        // the ambient light of the other skies comes from the reflection probes
+        vec3 irradiance = amblit;
+#ifdef ALPHA_PROBES
+        probe_gather(pos);
+        irradiance = probe_ambient(pos, norm, amblit);
+#endif
+        color = irradiance + min(ndl, shadow) * sunlit;
     }
     color *= diffuse;
     color += alpha_lights_sum(diffuse, pos, norm);

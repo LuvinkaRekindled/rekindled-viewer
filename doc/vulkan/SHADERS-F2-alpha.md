@@ -115,6 +115,16 @@ Compile: vertex 7467 / 6201 words, fragment 9280 words, 6-10 ms. Picture (still 
 
 Smoke lap (compile + draw, not timing): the fragment shader 9775 words, vertex 6247 words (rigged), 6.9 ms; 400001 static and 66001 rigged draws, no warnings. Timings between the old default (A), the old split (B) and the native uber (C) are left for when all of it is native (Adam, 2026-11-08: "see how the cost is all together when we're done getting it all native"); `<work>lphacycle.ps1` cycles the states in one lap (states separated by slashes).
 
+### 9.8 Native probe module and program variants (2026-11-08)
+
+`lib/probe.glsl` (own code, the viewer's model: the same probe selection, weights, parallax correction): `probe_gather` (the probes that reach a point: the first one in the depth bucket, its neighbour list, the void probe 0), `probe_ambient` (the irradiance cube maps), `probe_reflection` (the radiance maps at a mip level), `probe_hero` (the hero probe for glossiness above 0.75). `alpha_pass.inc` (ALPHA_PROBES) declares the named block `ReflectionProbes` (set 0 binding 1: the renderer binds the named blocks for every draw, a native program only declares it), `env_mat`, `max_probe_lod`, `cube_snapshot` and the cube array slots (`ll_ti_cubearray_<name>`: new sampler naming in the loader). The lit program uses `probe_ambient` for the skies that are not classic (`classic_mode == 0`), as the old one does.
+
+Loader: native programs are built with the defines the graphics settings give the viewer's shaders (SSR, REFMAP_LEVEL, REF_SAMPLE_COUNT, HERO_PROBES, SUN_SHADOW: pushed from `LLViewerShaderManager` through `LLVkBridge::nativeGlobalDefines` each time the shaders are set up; a native program is rebuilt when they change); several manifest lines may name one old program, the first whose `require` / `when` hold is the stand-in (`mNext` chain). The lit and uber programs now have two variants each: `when classic_mode=1` (no probes: fragment 9791 words) and `when classic_mode=0` (ALPHA_PROBES: 14056 words). The size budget of the loader is now 30000 words / 150 ms (the compile time is what hurt in the old shaders: these take 7-9 ms).
+
+Smoke lap (classic sky): the classic variant is chosen, 402001 static and 134001 rigged uber draws, no warnings. The non-classic variant compiled (in the combined version) but has not run: it needs a sky that is not classic.
+
+Screen space reflections on glossy alpha materials (old path: `sampleReflectionProbesLegacy` marches the scene map for a transparent surface, `RenderScreenSpaceReflections` is on in Adam's settings): to be decided with Adam before the material program is written (see below).
+
 ## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
 
 What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):

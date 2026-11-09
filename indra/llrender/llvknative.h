@@ -41,6 +41,10 @@ const std::string& nativeRoot();
 // A live key of rt-debug.txt (read at most twice a second; any thread): the value of `key=N`, or 'def' when the line is missing.
 int nativeKey(const std::string& key, int def);
 
+// The viewer's global shader defines (SSR, REFMAP_LEVEL, REF_SAMPLE_COUNT, HERO_PROBES, SUN_SHADOW: what the graphics settings decide when the viewer's shaders are loaded), pushed from the main thread each time
+// they are set. A native program is built with them (before the manifest's own defines) and rebuilt when they change.
+void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines);
+
 // The program to draw with in place of 'p' (p itself when no native program stands in for it or its family is off). Called on the worker thread for every draw.
 Program* nativeOverride(Program* p);
 

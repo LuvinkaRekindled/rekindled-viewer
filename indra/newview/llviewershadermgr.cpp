@@ -1212,6 +1212,19 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     }
 
     LLShaderProgram::sGlobalDefines = attribs;
+    {   // <FS> the native shaders (llvknative.h) are built with the defines the graphics settings decide, like the viewer's own shaders
+        static const char* const native_keys[] = { "SSR", "REFMAP_LEVEL", "REF_SAMPLE_COUNT", "HERO_PROBES", "SUN_SHADOW" };
+        std::vector<std::pair<std::string, std::string>> native_defines;
+        for (const char* k : native_keys)
+        {
+            auto found = attribs.find(k);
+            if (found != attribs.end())
+            {
+                native_defines.push_back({ k, found->second });
+            }
+        }
+        LLVkBridge::nativeGlobalDefines(native_defines);
+    }
 
     // We no longer have to bind the shaders to global glhandles, they are automatically added to a map now.
     for (U32 i = 0; i < shaders.size(); i++)
