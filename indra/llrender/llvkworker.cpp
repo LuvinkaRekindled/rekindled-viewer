@@ -9296,6 +9296,33 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     r.bindlessFlush();
     if (timed) s.mNsDrawState += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
+    // <FS> shaders family 3 (doc/vulkan/SHADERS-F3-gbuffer.md): the floor of the G-buffer pass. rt-debug.txt gfloor (temporary, a measuring key; 1 = normal, also when the line is missing):
+    // 2 = every command of the table draws is made empty (the cost of the draws alone), 3 = a zero scissor round the draws (the vertex work runs, every triangle is thrown away before it is rasterised).
+    static WorkerDebugKey floor_key = { "gfloor", 1, {} };
+    const S32 floor_mode = worker_debug_key(floor_key);
+    S32 floor_scissor[4] = {};
+    const bool floor_scissor_was = r.getScissorEnabled();
+    r.getScissor(floor_scissor);
+    if (floor_mode == 3)
+    {
+        r.setScissor(0, 0, 0, 0);
+        r.setScissorEnabled(true);
+    }
+    struct FloorRestore
+    {
+        Renderer& mR;
+        const bool mOn;
+        const bool mWas;
+        const S32* mBox;
+        ~FloorRestore()
+        {
+            if (mOn)
+            {
+                mR.setScissor(mBox[0], mBox[1], mBox[2], mBox[3]);
+                mR.setScissorEnabled(mWas);
+            }
+        }
+    } floor_restore = { r, floor_mode == 3, floor_scissor_was, floor_scissor };
     if (rigged_draw)
     {
         U32 drawn = 0, runs = 0;
@@ -9311,7 +9338,24 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 continue;
             }
             r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
-            if (r.drawPacketsIndexed(nullptr, d.mCount, sGeo.mRCommands.mBuffer, sGeo.mRCommands.mOffset + (VkDeviceSize)d.mFirst * sizeof(VkDrawIndexedIndirectCommand)))
+            VkBuffer cmd_buffer = sGeo.mRCommands.mBuffer;
+            VkDeviceSize cmd_offset = sGeo.mRCommands.mOffset + (VkDeviceSize)d.mFirst * sizeof(VkDrawIndexedIndirectCommand);
+            if (floor_mode == 2)
+            {
+                Renderer::ScratchAlloc empty = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)d.mCount);
+                if (empty.mPtr)
+                {
+                    memcpy(empty.mPtr, (const U8*)sGeo.mRCommands.mPtr + (size_t)d.mFirst * sizeof(VkDrawIndexedIndirectCommand), sizeof(VkDrawIndexedIndirectCommand) * (size_t)d.mCount);
+                    VkDrawIndexedIndirectCommand* e = (VkDrawIndexedIndirectCommand*)empty.mPtr;
+                    for (U32 c = 0; c < d.mCount; ++c)
+                    {
+                        e[c].indexCount = 0;
+                    }
+                    cmd_buffer = empty.mBuffer;
+                    cmd_offset = empty.mOffset;
+                }
+            }
+            if (r.drawPacketsIndexed(nullptr, d.mCount, cmd_buffer, cmd_offset))
             {
                 drawn += d.mCount;
                 ++runs;
@@ -9333,7 +9377,24 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     else
     {
-        if (r.drawPackets(nullptr, count, sGeo.mCommands.mBuffer, sGeo.mCommands.mOffset + (VkDeviceSize)(ds_draw ? sGeo.mDsFirst[type] : sGeo.mFirst[type]) * sizeof(VkDrawIndirectCommand)))
+        VkBuffer cmd_buffer = sGeo.mCommands.mBuffer;
+        VkDeviceSize cmd_offset = sGeo.mCommands.mOffset + (VkDeviceSize)(ds_draw ? sGeo.mDsFirst[type] : sGeo.mFirst[type]) * sizeof(VkDrawIndirectCommand);
+        if (floor_mode == 2)
+        {
+            Renderer::ScratchAlloc empty = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)count);
+            if (empty.mPtr)
+            {
+                memcpy(empty.mPtr, (const U8*)sGeo.mCommands.mPtr + (size_t)(ds_draw ? sGeo.mDsFirst[type] : sGeo.mFirst[type]) * sizeof(VkDrawIndirectCommand), sizeof(VkDrawIndirectCommand) * (size_t)count);
+                VkDrawIndirectCommand* e = (VkDrawIndirectCommand*)empty.mPtr;
+                for (U32 c = 0; c < count; ++c)
+                {
+                    e[c].vertexCount = 0;
+                }
+                cmd_buffer = empty.mBuffer;
+                cmd_offset = empty.mOffset;
+            }
+        }
+        if (r.drawPackets(nullptr, count, cmd_buffer, cmd_offset))
         {
             if (sStatsEnabled)
             {
