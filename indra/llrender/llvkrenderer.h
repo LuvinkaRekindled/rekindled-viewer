@@ -312,6 +312,8 @@ public:
     void setViewport(S32 x, S32 y, S32 width, S32 height);
     void setScissor(S32 x, S32 y, S32 width, S32 height);
     void setScissorEnabled(bool enabled);
+    bool getScissorEnabled() const { return mScissorEnabled; }      // <FS> the G-buffer floor key puts a zero scissor round a draw and has to put the old one back
+    void getScissor(S32* out4) const { memcpy(out4, mScissor, sizeof(mScissor)); }
     void clear(U32 bits, const F32 color[4], F32 depth, U32 stencil);
 
     // pipeline state
