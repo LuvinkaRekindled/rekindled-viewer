@@ -569,6 +569,7 @@ private:
     };
     std::vector<HandleInfo> mHandleInfo[BINDLESS_TABLES];
     U64 mViewGuardClears = 0;
+    std::unordered_map<U64, std::vector<U64>> mViewUsers;       // by view id: (table << 48 | handle << 32 | descriptor) of every handleSet that showed it; looked at once, when its image is destroyed (releaseViewHandles)
     std::vector<U64> mDescView[BINDLESS_TABLES];       // by descriptor index: the id of the view last written there (the device lost guard looks for descriptors that hold the view of an image being freed)
     std::unordered_map<BindlessKey, U32, BindlessKeyHash> mKeyedHandles;    // handleForImage: the handle of a (view id, sampler, layout, table)
     std::unordered_map<VkImageView, std::vector<std::pair<U32, U32>>> mViewHandles;       // by view handle: the (table, handle) made for it

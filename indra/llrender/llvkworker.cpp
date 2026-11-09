@@ -6728,7 +6728,10 @@ void alpha_res_reclaim(U64 frame)
 {
     // <FS> device lost audit (2026-11-09): the resident rows of the shadow alpha casters carry the texture handles of their draws for as long as the object is resident (minutes). Every 120 frames each live row's
     // handles are asked of the renderer: a handle that has been released, or whose descriptor holds the view of an image destroyed lately, is a row that would sample the placeholder or freed memory.
-    if (sAR.mReady && frame % 120 == 0)
+    // (LL_VK_ROWAUDIT=1 turns it on: it asked the context's destroyed-view ring (a linear search of 16 thousand entries) for every handle of every row, a few hundred milliseconds to seconds a time
+    // while a world loads; the race it looked for is fixed, see Renderer::handleSet)
+    static const bool row_audit = getenv("LL_VK_ROWAUDIT") != nullptr;
+    if (row_audit && sAR.mReady && frame % 120 == 0)
     {
         U32 rows = 0, released = 0, destroyed = 0, shown = 0;
         Renderer& rr = Renderer::instance();

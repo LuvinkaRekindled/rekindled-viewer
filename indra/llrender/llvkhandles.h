@@ -43,6 +43,11 @@ public:
             mFreeDesc[t].clear();
             mFreeHandle[t].clear();
         }
+        for (uint32_t t = 0; t < TABLES; ++t)
+        {
+            mOwner[t].clear();
+            mPendingRetire[t].clear();
+        }
         mLog.clear();
         mLogBase = 0;
         for (uint32_t f = 0; f < FRAMES; ++f) mApplied[f] = 0;
@@ -100,8 +105,16 @@ public:
         }
         const uint32_t old = mDesc[table][handle];
         mDesc[table][handle] = d;
+        touch(table, d);
+        mOwner[table][d] = handle;
         mLog.push_back({ (uint16_t)table, (uint16_t)handle, d });
-        if (old != 0) mRetired.push_back({ frame, table, 0, old });
+        if (old != 0)
+        {
+            touch(table, old);
+            mOwner[table][old] = 0;
+            mPendingRetire[table][old] = 1;
+            mRetired.push_back({ frame, table, 0, old });
+        }
         ++mSets;
         return d;
     }
@@ -113,6 +126,9 @@ public:
         const uint32_t old = mDesc[table][handle];
         if (old == 0) return;
         mDesc[table][handle] = 0;
+        touch(table, old);
+        mOwner[table][old] = 0;
+        mPendingRetire[table][old] = 1;
         mLog.push_back({ (uint16_t)table, (uint16_t)handle, 0u });
         mRetired.push_back({ frame, table, 0, old });
     }
@@ -125,7 +141,13 @@ public:
         const uint32_t old = mDesc[table][handle];
         mDesc[table][handle] = 0;
         mLog.push_back({ (uint16_t)table, (uint16_t)handle, 0u });
-        if (old != 0) mRetired.push_back({ frame, table, 0, old });
+        if (old != 0)
+        {
+            touch(table, old);
+            mOwner[table][old] = 0;
+            mPendingRetire[table][old] = 1;
+            mRetired.push_back({ frame, table, 0, old });
+        }
         mRetired.push_back({ frame, table, 1, handle });
         --mLiveCount[table];
     }
@@ -156,7 +178,11 @@ public:
         while (!mRetired.empty() && finished(mRetired.front().mFrame))
         {
             const Retired& r = mRetired.front();
-            if (r.mKind == 0) mFreeDesc[r.mTable].push_back(r.mIndex);
+            if (r.mKind == 0)
+            {
+                mFreeDesc[r.mTable].push_back(r.mIndex);
+                if (r.mIndex < mPendingRetire[r.mTable].size()) mPendingRetire[r.mTable][r.mIndex] = 0;
+            }
             else mFreeHandle[r.mTable].push_back(r.mIndex);      // (oldest first: a number is not reused soon, rows that still name it see the placeholder meanwhile)
             mRetired.pop_front();
         }
@@ -165,6 +191,12 @@ public:
     // what a handle shows now (0 = the placeholder); for reports
     uint32_t descriptorOf(uint32_t table, uint32_t handle) const { return table < TABLES && handle < mDesc[table].size() ? mDesc[table][handle] : 0; }
     bool live(uint32_t table, uint32_t handle) const { return table < TABLES && handle < mLive[table].size() && mLive[table][handle]; }
+
+    // for the view release guard (Renderer::releaseViewHandles): a descriptor that a handle shows now, or that frames in flight may still read through their copy of the map (it waits to be given back)
+    bool descriptorReachable(uint32_t table, uint32_t d) const
+    {
+        return table < TABLES && d < mOwner[table].size() && (mOwner[table][d] != 0 || mPendingRetire[table][d] != 0);
+    }
 
     uint32_t liveHandles(uint32_t table) const { return mLiveCount[table]; }
     uint32_t handleLimit(uint32_t table) const { return mNextHandle[table]; }       // one more than the highest handle ever given in the table
@@ -175,6 +207,14 @@ public:
     size_t pendingRetirements() const { return mRetired.size(); }
 
 private:
+    void touch(uint32_t table, uint32_t index)
+    {
+        if (mOwner[table].size() <= index)
+        {
+            mOwner[table].resize((size_t)index + 1024, 0u);
+            mPendingRetire[table].resize((size_t)index + 1024, 0);
+        }
+    }
     struct Entry { uint16_t mTable, mHandle; uint32_t mDesc; };
     struct Retired { uint64_t mFrame; uint32_t mTable; uint32_t mKind; uint32_t mIndex; };      // kind 0: a descriptor index, 1: a handle number
 
@@ -186,6 +226,8 @@ private:
     uint32_t mLiveCount[TABLES] = {};
     std::vector<uint32_t> mDesc[TABLES];                // by handle: its descriptor index
     std::vector<uint8_t> mLive[TABLES];
+    std::vector<uint32_t> mOwner[TABLES];               // by descriptor index: the handle that shows it now (0: none)
+    std::vector<uint8_t> mPendingRetire[TABLES];        // by descriptor index: 1 while it waits in mRetired
     std::vector<uint32_t> mFreeDesc[TABLES];            // (the newest first: a descriptor index is written again before anything can read it)
     std::deque<uint32_t> mFreeHandle[TABLES];           // (the oldest first)
     std::vector<Entry> mLog;
