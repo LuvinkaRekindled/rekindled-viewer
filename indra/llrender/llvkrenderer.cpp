@@ -3215,6 +3215,14 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
         mDescView[table].resize((size_t)d + 1024, 0);
     }
     mDescView[table][d] = image->mViewId;
+    if (image->mViewId)
+    {
+        if (mViewUsers.size() > 40000)
+        {
+            mViewUsers.clear();         // (views that were never destroyed through destroyImage: a bound, the guard misses what it dropped)
+        }
+        mViewUsers[image->mViewId].push_back(((U64)table << 48) | ((U64)handle << 32) | (U64)d);
+    }
     // (not in a split frame: an earlier part of the frame is already submitted and reads this very map while it runs. An entry set here would reach it BEFORE the descriptor is written (the
     // write waits for the next flush, and the index is a recycled one that still holds the view of an image destroyed lately): a shadow alpha draw of that part sampled freed memory, device lost
     // 2026-11-09. The frame's later parts show the handle's old content until the next frame, whose map takes the entry from the log at its start.)
@@ -3278,56 +3286,51 @@ void Renderer::releaseViewHandles(U64 view_id)
     {
         return;
     }
-    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+    // (looked up by the view, not scanned for: a destroyed image used to cost a pass over every handle and every descriptor, thousands of times while a world loads, and stalled the worker for seconds)
+    auto found = mViewUsers.find(view_id);
+    if (found == mViewUsers.end())
     {
-        std::vector<HandleInfo>& infos = mHandleInfo[t];
-        for (U32 h = 1; h < (U32)infos.size(); ++h)
+        return;
+    }
+    const std::vector<U64> users = std::move(found->second);
+    mViewUsers.erase(found);
+    {
+        // (what the finished frames gave back is back before the descriptors are judged: this runs at the start of a frame, before handlesBeginFrame has done it)
+        Context& ctx = Context::instance();
+        mHandles.retire([&ctx](U64 frame) { return ctx.frameFinished(frame); });
+    }
+    for (const U64 packed : users)
+    {
+        const U32 t = (U32)(packed >> 48), h = (U32)((packed >> 32) & 0xFFFFu), d = (U32)(packed & 0xFFFFFFFFu);
+        if (t >= BINDLESS_TABLES)
         {
-            if (infos[h].mViewId == view_id && mHandles.live(t, h))
-            {
-                static U32 said = 0;
-                if (said++ < 40)
-                {
-                    LL_WARNS("VkTex") << "handle guard: handle " << h << " of table " << t << " still showed the view of an image that is being freed (" << infos[h].mW << "x" << infos[h].mH << ", set "
-                                      << (Context::instance().getFrameNumber() - infos[h].mFrame) << " frames ago): it shows the placeholder now" << LL_ENDL;
-                }
-                ++mViewGuardClears;
-                handleClear(t, h);
-                infos[h].mViewId = 0;
-            }
+            continue;
         }
-        // the descriptors themselves: any index that still holds this view, and who still maps to it (the maps of the frame slots are what the shaders read)
-        std::vector<U64>& dv = mDescView[t];
-        for (U32 d = 1; d < (U32)dv.size(); ++d)
+        // a handle that still shows this view shows the placeholder from now on
+        std::vector<HandleInfo>& infos = mHandleInfo[t];
+        if (h < infos.size() && infos[h].mViewId == view_id && mHandles.live(t, h))
         {
-            if (dv[d] != view_id)
+            static U32 said = 0;
+            if (said++ < 40)
             {
-                continue;
+                LL_WARNS("VkTex") << "handle guard: handle " << h << " of table " << t << " still showed the view of an image that is being freed (" << infos[h].mW << "x" << infos[h].mH << ", set "
+                                  << (Context::instance().getFrameNumber() - infos[h].mFrame) << " frames ago): it shows the placeholder now" << LL_ENDL;
             }
-            std::string mapped;
-            const U32 limit = mHandles.handleLimit(t);
-            for (U32 slot = 0; slot < Context::FRAMES_IN_FLIGHT; ++slot)
+            ++mViewGuardClears;
+            handleClear(t, h);
+            infos[h].mViewId = 0;
+        }
+        // the descriptor that was written for it: still holding the view, and still shown by a handle or waiting for its frames to finish (what a frame in flight reads through its map)
+        std::vector<U64>& dv = mDescView[t];
+        if (d < dv.size() && dv[d] == view_id)
+        {
+            if (mHandles.descriptorReachable(t, d))
             {
-                if (!mHandleMap[slot].valid() || !mHandleMap[slot].mMapped)
+                static U32 said_d = 0;
+                if (said_d++ < 60)
                 {
-                    continue;
+                    LL_WARNS("VkTex") << "descriptor guard: table " << t << " index " << d << " holds the view of an image that is being freed and is still reachable (shown by a handle or waiting to be given back)" << LL_ENDL;
                 }
-                const U32* map = (const U32*)mHandleMap[slot].mMapped;
-                for (U32 h = 1; h < limit && h < 65536; ++h)
-                {
-                    if (map[(t << 16) | h] == d)
-                    {
-                        mapped += " slot" + std::to_string(slot) + ":handle" + std::to_string(h) + (mHandles.descriptorOf(t, h) == d ? "(current)" : "(old)");
-                    }
-                }
-            }
-            static U32 said_d = 0;
-            if (said_d++ < 60 && !mapped.empty())
-            {
-                LL_WARNS("VkTex") << "descriptor guard: table " << t << " index " << d << " holds the view of an image that is being freed and is still mapped by" << mapped << LL_ENDL;
-            }
-            if (!mapped.empty())
-            {
                 mPendingWrites.push_back({ t, d, mPlaceholder[t] });        // (the placeholder from now on: never memory that is about to go)
                 ++mViewGuardClears;
             }
