@@ -4,3 +4,6 @@
 override | Copy Shader | copy.vert | copy.frag | copy | default on
 override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur | default on
 override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | require ssao_radius | require ll_ti_shadowMap0 | default on
+# family 2: the transparent surfaces (doc/vulkan/SHADERS-F2-alpha.md). Fullbright first (rt-debug.txt alphauber=0 keeps the fullbright draws in their own program); native_alpha=1 turns it on.
+override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha
+override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1

@@ -418,6 +418,11 @@ vec4 materialAlpha()
         for (int i = 0; i < alpha_light_count; ++i)
         {
             const vec4 l0 = alpha_lights[i * 3];
+            const vec3 lvec = l0.xyz - pos.xyz;
+            if (dot(lvec, lvec) >= l0.w * l0.w)
+            {
+                continue;       // beyond the light's size: the attenuation is 0 there (exactly what the function returns), so nothing else is read or computed
+            }
             const vec4 l1 = alpha_lights[i * 3 + 1];
             const vec4 l2 = alpha_lights[i * 3 + 2];
             const float fa = l1.w + 1.0;
@@ -614,6 +619,11 @@ void main()
         for (int i = 0; i < alpha_light_count; ++i)
         {
             const vec4 l0 = alpha_lights[i * 3];
+            const vec3 lvec = l0.xyz - pos.xyz;
+            if (dot(lvec, lvec) >= l0.w * l0.w)
+            {
+                continue;       // beyond the light's size: the attenuation is 0 there (exactly what the function returns), so nothing else is read or computed
+            }
             const vec4 l1 = alpha_lights[i * 3 + 1];
             const vec4 l2 = alpha_lights[i * 3 + 2];
             const float fa = l1.w + 1.0;

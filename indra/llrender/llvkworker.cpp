@@ -2935,6 +2935,34 @@ void pass_poison()
     }
 }
 
+// <FS> shaders family 2: the packet draws (records that draw from the tables, not through draw_context_apply) take a native stand-in too. Made after the record has written its uniforms into the viewer's program
+// (the packet table, models and texture matrices are copied into the native program by name), put back when the record's draws are done.
+struct NativeDrawSwap
+{
+    Renderer& mR;
+    Program* mOld;
+    bool mOn = false;
+    NativeDrawSwap(Renderer& r, Program* p) : mR(r), mOld(p)
+    {
+        if (p && p->nativeIdx() != -1)
+        {
+            Program* n = nativeOverride(p);
+            if (n != p)
+            {
+                r.setProgram(n);
+                mOn = true;
+            }
+        }
+    }
+    ~NativeDrawSwap()
+    {
+        if (mOn)
+        {
+            mR.setProgram(mOld);
+        }
+    }
+};
+
 // CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
 void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
 {
@@ -5298,6 +5326,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         }
     }
 
+    NativeDrawSwap native_swap(r, program);         // (the transient alpha draws too: a native stand-in when its family is on)
     if (!prepare_draw(vi, used_cache))
     {
         static std::set<std::string> told;
@@ -9692,6 +9721,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         program->setFloatsAt(pu.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
     }
     if (timed) { a.mNsUniforms += geo_ns(t0); t0 = std::chrono::steady_clock::now(); }
+    NativeDrawSwap native_swap(r, program);         // (the alpha run draws with a native stand-in when its family is on)
     if (!prepare_draw(vi, used_cache))
     {
         return;
