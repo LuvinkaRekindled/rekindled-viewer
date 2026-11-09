@@ -1,4 +1,4 @@
-// alpha_pbr.vert: the vertex shader of the glTF (PBR) blended transparent surfaces. A draw is one row of the scene table (alpha_pass.inc: ll_packet_table) and its material is one row of the PBR table
+// alpha_pbr.vert: the vertex shader of the glTF (PBR) blended transparent surfaces, and (PBR_OPAQUE) of the glTF opaque and mask surfaces of the G-buffer pass: the same rows, the same outputs, plus the material's cutoff. A draw is one row of the scene table (alpha_pass.inc: ll_packet_table) and its material is one row of the PBR table
 // (ll_packet_pbr: 10 vec4 = the transforms of the four textures, then roughness / metallic / emissive colour, then the cutoff); the vertex reads its own data from the arrays the row names.
 // Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw: the hardware reads the indices, the vertex number is the index), ALPHA_PBR_HUD (the fullbright HUD form: only the base colour and the emissive
 // texture are used, so no normals or tangents are made).
@@ -16,6 +16,9 @@ layout(location = 2) out vec2 vary_tc_base;
 layout(location = 5) out vec2 vary_tc_emissive;
 layout(location = 9) flat out uvec4 vary_slots;         // base colour, normal, occlusion roughness metallic, emissive
 layout(location = 11) flat out vec3 vary_emissive;      // the emissive colour factor (linear)
+#ifdef PBR_OPAQUE
+layout(location = 12) flat out float vary_cutoff;       // the alpha cutoff of the material (opaque and mask surfaces of the G-buffer pass: pbr_opaque.frag)
+#endif
 #ifndef ALPHA_PBR_HUD
 layout(location = 3) out vec2 vary_tc_normal;
 layout(location = 4) out vec2 vary_tc_orm;
@@ -73,6 +76,9 @@ void main()
     vary_tc_emissive = gltf_texcoord(texcoord, table.q[at_row + 6u], table.q[at_row + 7u], animation);
     vary_slots = uvec4(row.slots.x & 0xFFFFu, row.slots.x >> 16, row.slots.y & 0xFFFFu, row.slots.y >> 16);
     vary_emissive = vec3(misc0.z, misc0.w, misc1.x);
+#ifdef PBR_OPAQUE
+    vary_cutoff = misc1.y;
+#endif
 
 #ifndef ALPHA_PBR_HUD
     const vec4 normal_tr0 = table.q[at_row + 2u];
