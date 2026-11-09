@@ -204,6 +204,35 @@ struct AddrEvent
     U8 mBind;           // 1 bind, 0 unbind
     U8 mInternal;
 };
+// <FS> what each image is (written when it is made, read only by the device lost report): a ring of the last 16384 images
+struct ImageTag
+{
+    U64 mHandle;
+    U64 mFrame;
+    char mText[96];
+};
+std::mutex sImgTagMutex;
+std::vector<ImageTag> sImgTags;
+U64 sImgTagCount = 0;
+constexpr size_t IMG_TAG_RING = 16384;
+
+// "[what it was, made in frame N]" for a VkImage handle, or "" when the ring no longer has it
+std::string image_tag_text(U64 handle, U64 now_frame)
+{
+    std::lock_guard<std::mutex> lock(sImgTagMutex);
+    const U64 total = sImgTagCount;
+    const U64 first = total > IMG_TAG_RING ? total - IMG_TAG_RING : 0;
+    for (U64 i = total; i > first; --i)
+    {
+        const ImageTag& t = sImgTags[(i - 1) % IMG_TAG_RING];
+        if (t.mHandle == handle)
+        {
+            return std::string(" [") + t.mText + ", made " + std::to_string(now_frame - t.mFrame) + " frames before the loss]";
+        }
+    }
+    return std::string();
+}
+
 std::mutex sAddrMutex;
 std::vector<AddrEvent> sAddrRing;
 U64 sAddrCount = 0;
@@ -998,6 +1027,28 @@ bool Context::createDevice()
         }
         tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&fault_features);
     }
+    // <FS> device lost diagnostics (2026-11-09): NVIDIA's VK_NV_device_diagnostics_config makes the driver keep the resources it hands out by address, so the Aftermath decode of a page fault names what used to live
+    // at the faulting address (an image freed lately, with its debug name "GL texture N"); shader debug info lets the decoder map the faulting instruction when it is given the SPIR-V. LL_VK_DIAG=0 turns it off.
+    VkDeviceDiagnosticsConfigCreateInfoNV diag_config = { VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV };
+    {
+        static const bool diag_on = getenv("LL_VK_DIAG") == nullptr || atoi(getenv("LL_VK_DIAG")) != 0;
+        U32 n = 0;
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
+        std::vector<VkExtensionProperties> have_all(n);
+        vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, have_all.data());
+        if (diag_on && has_extension(have_all, VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME))
+        {
+            device_extensions.push_back(VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME);
+            diag_config.flags = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV;
+            VkBaseOutStructure* tail = reinterpret_cast<VkBaseOutStructure*>(&chain.f2);
+            while (tail->pNext)
+            {
+                tail = tail->pNext;
+            }
+            tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&diag_config);
+            LL_INFOS("Vulkan") << "device diagnostics (VK_NV_device_diagnostics_config): resource tracking and shader debug info are on (LL_VK_DIAG=0 turns them off)" << LL_ENDL;
+        }
+    }
     if (LLVkUpscale::requested())
     {
         LLVkUpscale::addDeviceExtensions(mInstance, mPhysical, device_extensions);
@@ -1419,7 +1470,7 @@ void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT
             const AddrEvent& e = touched[k];
             LL_WARNS("Vulkan") << "    " << (e.mBind ? "BIND  " : "UNBIND") << " " << addr_object_name(e.mObjectType) << (e.mInternal ? " (internal)" : "") << " handle 0x" << std::hex << e.mHandle
                                << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", frame " << e.mFrame << " (" << (double)(now_us - e.mMicros) / 1000.0 << " ms ago, "
-                               << (mFrameNumber - e.mFrame) << " frames ago)" << LL_ENDL;
+                               << (mFrameNumber - e.mFrame) << " frames ago)" << (e.mObjectType == (U32)VK_OBJECT_TYPE_IMAGE ? image_tag_text(e.mHandle, mFrameNumber) : std::string()) << LL_ENDL;
         }
         // is it live now, and the neighbours
         // the faults cluster at 0x1_1xxxxxxx: a valid low address with bit 32 set? look the page up as it would be with the high bits cleared
@@ -1483,7 +1534,7 @@ void Context::reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT
             for (size_t k = recent.size(); k > 0; --k)
             {
                 const AddrEvent& e = recent[k - 1];
-                LL_WARNS("Vulkan") << "    UNBIND " << addr_object_name(e.mObjectType) << " handle 0x" << std::hex << e.mHandle << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", " << (mFrameNumber - e.mFrame) << " frames ago" << LL_ENDL;
+                LL_WARNS("Vulkan") << "    UNBIND " << addr_object_name(e.mObjectType) << " handle 0x" << std::hex << e.mHandle << " range 0x" << e.mBase << " + 0x" << e.mSize << std::dec << ", " << (mFrameNumber - e.mFrame) << " frames ago" << (e.mObjectType == (U32)VK_OBJECT_TYPE_IMAGE ? image_tag_text(e.mHandle, mFrameNumber) : std::string()) << LL_ENDL;
             }
             // and the last 40 binds of images and buffers over 64 KB (a texture or mesh that arrived just before the loss)
             LL_WARNS("Vulkan") << "  the last binds of 64 KB or more (newest last):" << LL_ENDL;
@@ -2057,6 +2108,22 @@ VkCommandBuffer Context::beginFrame(bool wait)
     f.mOffscreen = mNextOffscreen;
     mNextOffscreen = false;
 
+    {
+        // LL_VK_IMAGE_HOLD: held images whose time has come join the destroy list (and then wait their usual two rounds)
+        std::vector<std::function<void()>> release;
+        {
+            std::lock_guard<std::mutex> lock(mHeldMutex);
+            while (!mHeldImages.empty() && mHeldImages.front().first <= mFrameNumber)
+            {
+                release.push_back(std::move(mHeldImages.front().second));
+                mHeldImages.pop_front();
+            }
+        }
+        for (auto& fn : release)
+        {
+            destroyLater(std::move(fn));
+        }
+    }
     // What was queued two rounds of this slot ago is destroyed now; what was queued last round waits one more (the frame it was queued in has completed, but a copy or a draw that names it can have
     // been recorded into one of the frames after it: pending writes are flushed late, a rename's copy goes into whichever frame is recording when the buffers are flushed).
     {
@@ -3285,6 +3352,11 @@ bool Context::createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkForma
         out = Image();
         return false;
     }
+    {
+        char tag[96];
+        snprintf(tag, sizeof(tag), "target or image %ux%u fmt %u mips %u layers %u usage 0x%x", width, height, (unsigned)format, mips, layers, (unsigned)usage);
+        noteImageTag((U64)out.mImage, tag);
+    }
     out.mFormat = format;
     out.mAspect = aspectForFormat(format);
     out.mExtent = { width, height, 1 };
@@ -3309,6 +3381,19 @@ bool Context::createImage2D(U32 width, U32 height, U32 mips, U32 layers, VkForma
         }
     }
     return true;
+}
+
+void Context::noteImageTag(U64 image_handle, const char* text)
+{
+    std::lock_guard<std::mutex> lock(sImgTagMutex);
+    if (sImgTags.empty())
+    {
+        sImgTags.resize(IMG_TAG_RING);
+    }
+    ImageTag& t = sImgTags[sImgTagCount++ % IMG_TAG_RING];
+    t.mHandle = image_handle;
+    t.mFrame = mFrameNumber;
+    snprintf(t.mText, sizeof(t.mText), "%s", text);
 }
 
 void Context::noteDestroyedView(U64 view_id)
@@ -3347,10 +3432,26 @@ void Context::destroyImage(Image& image)
     VmaAllocation a = image.mAllocation;
     VmaAllocator alloc = mAllocator;
     VkDevice dev = mDevice;
-    destroyLater([=]() {
+    static const S32 hold_frames = getenv("LL_VK_IMAGE_HOLD") ? std::max(0, atoi(getenv("LL_VK_IMAGE_HOLD"))) : 0;
+    const U64 view_id = image.mViewId;
+    std::function<void(U64)> release_hook = mViewReleaseHook;
+    std::function<void()> fn = [=]() {
+        if (release_hook && view_id)
+        {
+            release_hook(view_id);          // a handle that still shows this view shows the placeholder from now on (never memory that is about to be freed)
+        }
         if (v) vkDestroyImageView(dev, v, nullptr);
         if (a) vmaDestroyImage(alloc, i, a);
-    });
+    };
+    if (hold_frames > 0)
+    {
+        std::lock_guard<std::mutex> lock(mHeldMutex);
+        mHeldImages.push_back({ mFrameNumber + (U64)hold_frames, std::move(fn) });
+    }
+    else
+    {
+        destroyLater(std::move(fn));
+    }
     image = Image();
 }
 

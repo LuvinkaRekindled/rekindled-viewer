@@ -16,6 +16,7 @@
 #include "linden_common.h"
 
 #include <atomic>
+#include <deque>
 #include <map>
 #include <string>
 #include <functional>
@@ -256,6 +257,11 @@ public:
     std::function<std::string(U64)> mDrawDescriber;
     // images destroyed lately (view id, frame number): the bindless audit at a device loss names the slots that still point at one of them
     void noteDestroyedView(U64 view_id);
+    // <FS> device lost diagnostics: what an image is (size, format, levels, who made it), keyed by its VkImage handle, so the fault address history can say what a recycled memory range held
+    void noteImageTag(U64 image_handle, const char* text);
+    // <FS> the guard of the device lost fix (2026-11-09): called with the view id of an image just before its view and memory are freed, so that a bindless handle that still shows that view is pointed at the placeholder
+    // instead of at memory that is about to go (set by the renderer; the call runs on the worker thread with the other frame-begin destroys)
+    void setViewReleaseHook(std::function<void(U64)> hook) { mViewReleaseHook = std::move(hook); }
     U64 destroyedViewCount() const { return mDestroyedCount.load(); }                                  // views destroyed so far (a sequence number)
     U64 destroyedViewIdAt(U64 seq) const { return mDestroyedIds[seq % DESTROYED_RING]; }                // the view destroyed as number seq (valid for the last DESTROYED_RING)
     static constexpr size_t destroyedRing() { return DESTROYED_RING; }
@@ -267,6 +273,10 @@ public:
     // S4: the dedicated (non arena) buffers with a device address, alive and recently destroyed: after a device lost, a fault address in one of them says which (size, usage, memory, created and destroyed frame)
     struct DedicatedBuffer { unsigned long long mAddress, mSize; unsigned mUsage, mMemory; unsigned long long mCreated, mDestroyed; bool mAlive; };
     std::mutex mDedicatedMutex;
+    // <FS> LL_VK_IMAGE_HOLD=N (a device lost experiment): a released image is held N more frames before it goes on the destroy list (the replaced textures of a crowded sim: the same 8 MB ranges are freed and reused every few frames)
+    std::function<void(U64)> mViewReleaseHook;
+    std::mutex mHeldMutex;
+    std::deque<std::pair<U64, std::function<void()>>> mHeldImages;
     std::mutex mDeferredNextMutex;
     std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
     std::vector<DedicatedBuffer> mDedicated;
@@ -387,6 +397,8 @@ public:
     // <FS> E2 (doc/vulkan/PLAN-async-compute.md, LL_VK_RT_EARLY=3): the ray scene work on the compute queue. A semaphore wait holds a whole submission, so the frame's graphics commands are cut into
     // command buffers at the points where the queues meet. asyncOn() is true when the device has the compute queue and the timeline semaphore and the switch asked for it.
     bool asyncOn() const { return mAsyncOn; }
+    // true while the frame being recorded has had a part submitted already (splitFrame: the ray scene built on the compute queue): that part is on the GPU and reads the frame slot's handle map
+    bool frameSplit() const { return mAsyncOn && mInFrame && mFrames[mFrameSlot].mCmdIndex > 0; }
     // ends the current command buffer, submits it (signal: it also signals the next timeline value, which is returned in value, else 0) and carries on recording into the next one of the frame; false on failure
     bool splitFrame(bool signal, U64& value);
     VkCommandBuffer beginCompute();                                     // the slot's compute command buffer, begun

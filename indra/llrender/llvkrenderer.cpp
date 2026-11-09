@@ -3068,6 +3068,7 @@ void Renderer::bindlessStart()
     vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
     mHandles.init(mBindlessCap, Context::frameCount());
     mBindlessFilled = true;
+    Context::instance().setViewReleaseHook([this](U64 view_id) { releaseViewHandles(view_id); });       // <FS> the guard: no handle shows a view whose image is being freed
     LL_INFOS("Vulkan") << "texture handles: every descriptor of the " << Context::frameCount() << " frame sets holds the placeholder (" << mBindlessCap[0] << " 2D descriptors)" << LL_ENDL;
 }
 
@@ -3208,7 +3209,15 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
         return false;
     }
     mPendingWrites.push_back({ table, d, { sampler, image->mView, layout } });
-    if (mCmd != VK_NULL_HANDLE && mSlot < Context::FRAMES_IN_FLIGHT && mHandleMap[mSlot].valid() && mHandleMap[mSlot].mMapped)
+    if (mDescView[table].size() <= d)
+    {
+        mDescView[table].resize((size_t)d + 1024, 0);
+    }
+    mDescView[table][d] = image->mViewId;
+    // (not in a split frame: an earlier part of the frame is already submitted and reads this very map while it runs. An entry set here would reach it BEFORE the descriptor is written (the
+    // write waits for the next flush, and the index is a recycled one that still holds the view of an image destroyed lately): a shadow alpha draw of that part sampled freed memory, device lost
+    // 2026-11-09. The frame's later parts show the handle's old content until the next frame, whose map takes the entry from the log at its start.)
+    if (mCmd != VK_NULL_HANDLE && mSlot < Context::FRAMES_IN_FLIGHT && mHandleMap[mSlot].valid() && mHandleMap[mSlot].mMapped && !Context::instance().frameSplit())
     {
         // the frame that is being recorded applied its map when it began: a handle first shown (or changed) in this frame reaches the frame's own copy now, so that its first draw is not the placeholder.
         // Its descriptor is written (bindlessFlush) before this frame is submitted; the maps of the frames already submitted are not touched (the log gives the next ones the entry).
@@ -3239,6 +3248,90 @@ void Renderer::handleClear(U32 table, U32 handle)
         HandleInfo& hi = mHandleInfo[table][handle];
         hi.mView = VK_NULL_HANDLE;
         hi.mImage = 0;
+    }
+}
+
+U32 Renderer::auditHandleState(U32 table, U32 handle) const
+{
+    if (!mHandles.ready() || table >= BINDLESS_TABLES || !handle)
+    {
+        return 0;
+    }
+    if (!mHandles.live(table, handle))
+    {
+        return 1;
+    }
+    const U32 d = mHandles.descriptorOf(table, handle);
+    if (!d)
+    {
+        return 0;
+    }
+    const U64 view = d < mDescView[table].size() ? mDescView[table][d] : 0;
+    U64 at = 0;
+    return (view && Context::instance().destroyedViewFrame(view, at)) ? 2u : 0u;
+}
+
+void Renderer::releaseViewHandles(U64 view_id)
+{
+    if (!view_id || !mHandles.ready())
+    {
+        return;
+    }
+    for (U32 t = 0; t < BINDLESS_TABLES; ++t)
+    {
+        std::vector<HandleInfo>& infos = mHandleInfo[t];
+        for (U32 h = 1; h < (U32)infos.size(); ++h)
+        {
+            if (infos[h].mViewId == view_id && mHandles.live(t, h))
+            {
+                static U32 said = 0;
+                if (said++ < 40)
+                {
+                    LL_WARNS("VkTex") << "handle guard: handle " << h << " of table " << t << " still showed the view of an image that is being freed (" << infos[h].mW << "x" << infos[h].mH << ", set "
+                                      << (Context::instance().getFrameNumber() - infos[h].mFrame) << " frames ago): it shows the placeholder now" << LL_ENDL;
+                }
+                ++mViewGuardClears;
+                handleClear(t, h);
+                infos[h].mViewId = 0;
+            }
+        }
+        // the descriptors themselves: any index that still holds this view, and who still maps to it (the maps of the frame slots are what the shaders read)
+        std::vector<U64>& dv = mDescView[t];
+        for (U32 d = 1; d < (U32)dv.size(); ++d)
+        {
+            if (dv[d] != view_id)
+            {
+                continue;
+            }
+            std::string mapped;
+            const U32 limit = mHandles.handleLimit(t);
+            for (U32 slot = 0; slot < Context::FRAMES_IN_FLIGHT; ++slot)
+            {
+                if (!mHandleMap[slot].valid() || !mHandleMap[slot].mMapped)
+                {
+                    continue;
+                }
+                const U32* map = (const U32*)mHandleMap[slot].mMapped;
+                for (U32 h = 1; h < limit && h < 65536; ++h)
+                {
+                    if (map[(t << 16) | h] == d)
+                    {
+                        mapped += " slot" + std::to_string(slot) + ":handle" + std::to_string(h) + (mHandles.descriptorOf(t, h) == d ? "(current)" : "(old)");
+                    }
+                }
+            }
+            static U32 said_d = 0;
+            if (said_d++ < 60 && !mapped.empty())
+            {
+                LL_WARNS("VkTex") << "descriptor guard: table " << t << " index " << d << " holds the view of an image that is being freed and is still mapped by" << mapped << LL_ENDL;
+            }
+            if (!mapped.empty())
+            {
+                mPendingWrites.push_back({ t, d, mPlaceholder[t] });        // (the placeholder from now on: never memory that is about to go)
+                ++mViewGuardClears;
+            }
+            dv[d] = 0;
+        }
     }
 }
 
@@ -4715,6 +4808,11 @@ bool Renderer::createTexture(const TextureDesc& d, Image& out)
         }
         out = Image();
         return false;
+    }
+    {
+        char tag[96];
+        snprintf(tag, sizeof(tag), "texture %ux%ux%u fmt %u mips %u layers %u", d.mWidth, d.mHeight, depth, (unsigned)ii.format, (unsigned)ii.mipLevels, (unsigned)layers);
+        ctx.noteImageTag((U64)out.mImage, tag);
     }
     out.mFormat = d.mFormat;
     out.mAspect = aspectForFormat(d.mFormat);

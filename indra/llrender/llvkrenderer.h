@@ -359,6 +359,9 @@ public:
     U32 handleNew(U32 table);                                                            // a handle that shows the placeholder until handleSet; 0 when the table is full
     bool handleSet(U32 table, U32 handle, Image* image, VkSampler sampler, VkImageLayout layout);     // the handle shows this image (a new descriptor is queued; the caller made sure the image is in `layout`)
     void handleClear(U32 table, U32 handle);                                             // the handle shows the placeholder again (its image is gone and nothing replaced it yet)
+    void releaseViewHandles(U64 view_id);                                                // every handle that still shows this view shows the placeholder (the view's image is about to be freed); counted
+    U32 auditHandleState(U32 table, U32 handle) const;                                  // device lost audit: 0 fine, 1 the handle is released, 2 its descriptor holds a view whose image was destroyed lately
+    U64 viewHandleGuardClears() const { return mViewGuardClears; }
     void handleRelease(U32 table, U32 handle);                                           // the handle goes (rows that still name it see the placeholder); its number comes back after the frames that may read it
     bool handleLive(U32 table, U32 handle) const { return mHandles.live(table, handle); }
     // a handle by (image view, sampler, layout) that lives as long as the view: for whoever has no stable owner of its own (the bound-texture path, render targets, cube maps)
@@ -565,6 +568,8 @@ private:
         BindlessKey mKey;
     };
     std::vector<HandleInfo> mHandleInfo[BINDLESS_TABLES];
+    U64 mViewGuardClears = 0;
+    std::vector<U64> mDescView[BINDLESS_TABLES];       // by descriptor index: the id of the view last written there (the device lost guard looks for descriptors that hold the view of an image being freed)
     std::unordered_map<BindlessKey, U32, BindlessKeyHash> mKeyedHandles;    // handleForImage: the handle of a (view id, sampler, layout, table)
     std::unordered_map<VkImageView, std::vector<std::pair<U32, U32>>> mViewHandles;       // by view handle: the (table, handle) made for it
     U32 mBindlessCap[BINDLESS_TABLES] = {};         // descriptor indices per table: the 2D table is the big one

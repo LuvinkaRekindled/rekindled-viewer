@@ -6726,6 +6726,44 @@ bool alpha_res_init()
 
 void alpha_res_reclaim(U64 frame)
 {
+    // <FS> device lost audit (2026-11-09): the resident rows of the shadow alpha casters carry the texture handles of their draws for as long as the object is resident (minutes). Every 120 frames each live row's
+    // handles are asked of the renderer: a handle that has been released, or whose descriptor holds the view of an image destroyed lately, is a row that would sample the placeholder or freed memory.
+    if (sAR.mReady && frame % 120 == 0)
+    {
+        U32 rows = 0, released = 0, destroyed = 0, shown = 0;
+        Renderer& rr = Renderer::instance();
+        for (size_t i = 0; i < sAR.mRows.size(); ++i)
+        {
+            const AlphaRow& row = sAR.mRows[i];
+            if (!row.mCount)
+            {
+                continue;
+            }
+            ++rows;
+            for (U32 k = 0; k < 4; ++k)
+            {
+                const U32 h = (row.mSlots[k >> 1] >> ((k & 1) * 16)) & 0xFFFFu;
+                if (!h)
+                {
+                    continue;
+                }
+                ++shown;
+                const U32 code = rr.auditHandleState(0, h);
+                if (code == 1) ++released;
+                else if (code == 2) ++destroyed;
+                if (code && (released + destroyed) <= 6)
+                {
+                    LL_WARNS("VkScene") << "resident alpha audit: row " << i << " slot " << k << " names handle " << h << (code == 1 ? ", which is released" : ", whose descriptor holds the view of an image destroyed lately")
+                                        << " (row flags 0x" << std::hex << row.mFlags << std::dec << ")" << LL_ENDL;
+                }
+            }
+        }
+        static U32 audits = 0;
+        if (released + destroyed || (audits++ % 10) == 0)
+        {
+            LL_INFOS("VkScene") << "resident alpha audit (frame " << frame << "): " << rows << " live rows, " << shown << " texture handles, " << released << " released, " << destroyed << " with a destroyed view" << LL_ENDL;
+        }
+    }
     const U64 lag = (U64)Context::frameCount() + 1;
     size_t keep = 0;
     for (size_t i = 0; i < sAR.mRetiredRanges.size(); ++i)
