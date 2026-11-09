@@ -5,6 +5,9 @@
 // What is different is the cost: a sky pixel reads nothing but its colour, the view position comes from the depth with the few multiplications the projection leaves (lib/viewpos.glsl), and the pixel
 // runs only the branch of its own kind.
 
+// RESOLVE_DBG: a bisect switch (0 = the program; 1 = classes in colour, 2 = lightmap, 3 = albedo, 4 = flag, 5 = normal, 6 = specular); resolve-bisect.ps1 in the work directory rewrites it while a lap runs
+#define RESOLVE_DBG 0
+
 #include "resolve_pass.inc"
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
@@ -80,6 +83,25 @@ void main()
     float scol = max(lightmap.r, albedo.a);            // (the albedo's alpha is a legacy surface's emissive: lit by itself, so no shadow takes it)
     const float ambocc = lightmap.g;
 
+#if RESOLVE_DBG == 1
+    frag_color = vec4(is_flag(flag, FLAG_HAS_PBR) ? vec3(1.0, 0.0, 1.0) : (is_flag(flag, FLAG_HAS_ATMOS) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 1.0, 0.0)), 0.0);
+    return;
+#elif RESOLVE_DBG == 2
+    frag_color = vec4(lightmap.r, lightmap.g, 0.0, 0.0);
+    return;
+#elif RESOLVE_DBG == 3
+    frag_color = vec4(albedo.rgb, 0.0);
+    return;
+#elif RESOLVE_DBG == 4
+    frag_color = vec4(vec3(flag), 0.0);
+    return;
+#elif RESOLVE_DBG == 5
+    frag_color = vec4(norm * 0.5 + 0.5, 0.0);
+    return;
+#elif RESOLVE_DBG == 6
+    frag_color = vec4(spec.rgb, 0.0);
+    return;
+#endif
     vec3 sunlit, amblit, additive, atten;
     atmos_terms_lit(pos, norm, light_dir, sunlit, amblit, additive, atten);
     if (classic_mode > 0)
