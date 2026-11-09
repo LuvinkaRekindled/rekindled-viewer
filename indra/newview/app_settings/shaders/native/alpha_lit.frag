@@ -8,6 +8,7 @@
 #include "lib/clip.glsl"
 #include "lib/atmos.glsl"
 #include "lib/fog.glsl"
+#include "lib/shade.glsl"
 #include "lib/shadow.glsl"
 #include "lib/light.glsl"
 
@@ -16,6 +17,9 @@ layout(location = 1) in vec4 vertex_color;
 layout(location = 2) in vec2 vary_texcoord0;
 layout(location = 3) flat in uint vary_slot;
 layout(location = 4) in vec3 vary_norm;
+#ifdef ALPHA_UBER
+layout(location = 5) flat in uint vary_fullbright;      // the row's fullbright flag: the lit and the fullbright draws of the blend order are one run (one program)
+#endif
 
 layout(location = 0) out vec4 frag_color;
 
@@ -25,6 +29,13 @@ void main()
     water_clip(vary_position);
 
     const vec4 texel = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+#ifdef ALPHA_UBER
+    if (vary_fullbright != 0u)
+    {
+        frag_color = shade_fullbright(vary_position, texel, vertex_color);
+        return;
+    }
+#endif
     const float alpha = texel.a * vertex_color.a;
     if (alpha < minimum_alpha)
     {

@@ -12,6 +12,9 @@ layout(location = 3) flat out uint vary_slot;
 #ifdef ALPHA_LIT
 layout(location = 4) out vec3 vary_norm;        // the surface normal in eye space (a lit surface)
 #endif
+#ifdef ALPHA_UBER
+layout(location = 5) flat out uint vary_fullbright;     // 1: the draw is a fullbright one (flags bit 5)
+#endif
 
 #if defined(HAS_SKIN) && !defined(HAS_INDEXED_DRAW)
 #error "a rigged draw of the alpha family is an indexed one"
@@ -70,6 +73,9 @@ void main()
     vary_position = eye.xyz;
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
     vary_slot = row_texture_slot(row, position.w);
+#ifdef ALPHA_UBER
+    vary_fullbright = (row.flags & 32u) != 0u ? 1u : 0u;
+#endif
 
 #ifdef ALPHA_LIT
     const vec3 normal = RowVec4(row.normals).v[index].xyz;
