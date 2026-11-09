@@ -1872,25 +1872,9 @@ static U64 sGeoPinEpoch = 0;                 // <FS> S3: bumped when a pin a sce
 void geo_buffer_gone_impl(U32 name);      // (defined with the scene geometry table below)
 bool geo_in_flight_impl(U32 name, U64 frame, U64 min_listed = 0);
 std::string geo_explain_address(unsigned long long at);
-// <FS> the two switches of the host-block race (doc/vulkan/crash-brief/ANALYSIS.md, doc/vulkan/PLAN-texture-handles.md 17.23); both default ON since 2026-10-26 (LL_VK_RENAME_ONCE=0 / LL_VK_GEO_ROWCOPY=0)
-// LL_VK_RENAME_ONCE=1: a buffer renamed in this frame is not renamed again by every further write of the frame unless a fragment listed it after the rename (the chains of 5 to 53 renames that emptied the host arena in one frame)
-// LL_VK_GEO_ROWCOPY=1: the static table draws (the G-buffer types and the alpha run) read rows copied for this frame, as the rigged ones do, not the one table the worker rewrites in place while frames are in flight
-static bool env_default_on(const char* name)
-{
-    char b[8] = {};
-    return GetEnvironmentVariableA(name, b, sizeof(b)) == 0 || atoi(b) != 0;
-}
-static bool geo_rowcopy_on()
-{
-    static const bool on = env_default_on("LL_VK_GEO_ROWCOPY");       // on since 2026-10-26 (0 turns it off)
-    return on;
-}
-static bool rename_once_on()
-{
-    // (not without the row copies: alone, the second write of a frame goes in place into a range an in-flight frame can see through the live table row, which is the race itself)
-    static const bool on = env_default_on("LL_VK_RENAME_ONCE") && env_default_on("LL_VK_GEO_ROWCOPY");       // on since 2026-10-26 (0 turns it off)
-    return on;
-}
+// <FS> the host-block race (doc/vulkan/crash-brief/ANALYSIS.md, doc/vulkan/PLAN-texture-handles.md 17.23) is closed by two rules that are not switches any more (they were, default on since 2026-10-26, and either one
+// off brought the race back): the table draws read rows COPIED for the frame (the static G-buffer types and the alpha runs, as the rigged ones always did) and never a table the worker rewrites in place while frames are
+// in flight; and a buffer renamed in this frame is not renamed again by every further write of the frame unless a fragment listed it after the rename (the chains of 5 to 53 renames that emptied the host arena in one frame)
 std::vector<U32> sGeoChanged;           // S3: names of the buffers a scene geometry fragment reads whose storage changed (causes 0 and 2) since the last prepare
 inline void res_touched(const Buf& b, int cause)
 {
@@ -2106,7 +2090,7 @@ void report_renames()
     }
     // (every 5 s, always: the exposure of the host-block race of doc/vulkan/PLAN-texture-handles.md 17.23 is the chains: a buffer renamed again and again in one frame empties the host arena and forces a new block)
     LL_INFOS("VkGL") << "rename chains in the last 5 s: " << sRenameStats.mCount << " renames, " << sRenameStats.mChained << " of them a repeat in the same frame, the longest chain " << sRenameStats.mMaxChain
-                     << (rename_once_on() ? " (LL_VK_RENAME_ONCE on)" : "") << (geo_rowcopy_on() ? " (LL_VK_GEO_ROWCOPY on)" : "") << LL_ENDL;
+                     << LL_ENDL;
     if (sRenameStats.mMicros > 20000)
     {
         U64 shadow_bytes = 0;
@@ -2154,7 +2138,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = (b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1)
-        || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame, (rename_once_on() && b.mRenamedFrame != ~0ull) ? b.mRenamedFrame : 0ull));
+        || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame, b.mRenamedFrame != ~0ull ? b.mRenamedFrame : 0ull));
     ctx.flight(Context::FL_BUF_WRITE, (unsigned long long)name, offset, size, (unsigned long long)b.mVk.mAddress | (in_flight ? 1ull : 0ull));
     if (in_flight && b.mVk.valid())
     {
@@ -7908,10 +7892,8 @@ struct GeoStats
 };
 static struct GeoState
 {
-    Buffer mTable;
-    GeoGpuG* mT = nullptr;
     std::vector<U32> mRowFrame;         // the frame each row was last written in (the device lost report: which rows name the faulting address, and when they were written)
-    std::vector<GeoGpuG> mTCpu;         // the CPU's copy of every row (the table is write-combined memory: reading it costs about a microsecond a float; the per-frame row copies read this)
+    std::vector<GeoGpuG> mTCpu;         // every row of the scene table: CPU memory only. The GPU never reads this table: a draw reads rows copied for its frame (geo_prepare, the alpha runs) into scratch that is its own
     bool mReady = false, mFailed = false;
     U32 mHigh = 0;
     std::vector<U32> mFree;
@@ -7994,19 +7976,10 @@ bool geo_init()
         LL_WARNS("VkScene") << "scene geometry table: the device lacks buffer addresses or first-instance indirect draws" << LL_ENDL;
         return false;
     }
-    if (!ctx.createBuffer((VkDeviceSize)sizeof(GeoGpuG) * kGeoCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mTable) || !sGeo.mTable.mMapped || !sGeo.mTable.mAddress)
-    {
-        LL_WARNS("VkScene") << "scene geometry table: the table could not be created" << LL_ENDL;
-        return false;
-    }
-    sGeo.mT = (GeoGpuG*)sGeo.mTable.mMapped;
-    memset(sGeo.mT, 0, sizeof(GeoGpuG) * kGeoCapacity);
     sGeo.mTCpu.assign(kGeoCapacity, GeoGpuG());
     memset(sGeo.mTCpu.data(), 0, sizeof(GeoGpuG) * kGeoCapacity);
     sGeo.mRowFrame.assign(kGeoCapacity, 0u);
     ctx.addAddressDescriber(geo_explain_address);
-    LL_INFOS("VkScene") << "host-block race fixes: static table draws read " << (geo_rowcopy_on() ? "rows copied for the frame (LL_VK_GEO_ROWCOPY, on)" : "the live table (LL_VK_GEO_ROWCOPY=0)") << "; a buffer renamed this frame is "
-                        << (rename_once_on() ? "not renamed again (LL_VK_RENAME_ONCE, on)" : "renamed again by every write (LL_VK_RENAME_ONCE off)") << LL_ENDL;
     if (ctx.createBuffer((VkDeviceSize)160 * kPbrCapacity, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mPbrTable) && sGeo.mPbrTable.mMapped && sGeo.mPbrTable.mAddress)
     {
         sGeo.mPbrT = (F32*)sGeo.mPbrTable.mMapped;
@@ -8016,19 +7989,9 @@ bool geo_init()
     {
         LL_WARNS("VkScene") << "scene geometry table: the PBR rows could not be created: PBR alpha draws are not served" << LL_ENDL;
     }
-    ctx.addAddressDescriber([](unsigned long long at) -> std::string
-    {
-        const unsigned long long base = (unsigned long long)sGeo.mTable.mAddress, size = (unsigned long long)sizeof(GeoGpuG) * kGeoCapacity;
-        if (!base || at + 0x10000 < base || at > base + size + 0x100000)
-        {
-            return std::string();
-        }
-        const unsigned long long offset = at - base;
-        return "the scene geometry table, offset " + std::to_string(offset) + " = row " + std::to_string(offset / sizeof(GeoGpuG)) + " of " + std::to_string((unsigned long long)kGeoCapacity) + (offset >= size ? " (PAST THE END)" : "");
-    });
     sGeo.mFailed = false;
     sGeo.mReady = true;
-    LL_INFOS("VkScene") << "scene geometry table ready (" << kGeoCapacity << " entries, " << sizeof(GeoGpuG) * kGeoCapacity / (1024 * 1024) << " MB)" << LL_ENDL;
+    LL_INFOS("VkScene") << "scene geometry table ready (" << kGeoCapacity << " entries, " << sizeof(GeoGpuG) * kGeoCapacity / (1024 * 1024) << " MB of CPU memory; draws read rows copied for their frame)" << LL_ENDL;
     return true;
 }
 
@@ -8440,7 +8403,6 @@ void geo_write_items(GeoFrag& f)
         g.mEnvIntensity = e.mEnvIntensity;
         g.mCutoff = e.mCutoff;
         g.mBrightness = e.mBrightness;
-        sGeo.mT[f.mSlots[i]] = g;
         sGeo.mTCpu[f.mSlots[i]] = g;
         sGeo.mRowFrame[f.mSlots[i]] = (U32)Context::instance().getFrameNumber();
     }
@@ -8908,12 +8870,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             if (pal)
             {
                 const U32 joints = f->mRItemJoints[item];
-                GeoGpuG& row = sGeo.mT[f->mSlots[item]];
                 f->mPalAddr[item] = pal;
                 f->mPalJoints[item] = joints;
-                row.mPalette[0] = (U32)pal;
-                row.mPalette[1] = (U32)(pal >> 32);
-                row.mJoints = joints;
                 GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[item]];
                 cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
                 f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
@@ -8953,31 +8911,31 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (total)
     {
         sGeo.mCommands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * total);
-        if (!sGeo.mCommands.mPtr)
+        // the static draws read rows of their own, copied for this frame (the rows are rewritten in place by the worker while frames in flight would still read them; the commands are copied from the CPU's list, not
+        // read back from the write combined scratch). Without scratch for the commands or for the rows the static types draw nothing this frame.
+        GeoGpuG* static_rows = nullptr;
+        if (sGeo.mCommands.mPtr)
+        {
+            sGeo.mSTable = r.allocVertexScratch(sizeof(GeoGpuG) * total);
+            if (sGeo.mSTable.mPtr && sGeo.mSTable.mAddress)
+            {
+                static_rows = (GeoGpuG*)sGeo.mSTable.mPtr;
+            }
+            else
+            {
+                sGeo.mSTable = Renderer::ScratchAlloc();
+            }
+        }
+        if (!static_rows)
         {
             ++s.mScratchFail;
+            sGeo.mCommands = Renderer::ScratchAlloc();
             std::fill(sGeo.mCount, sGeo.mCount + kGeoTypes, 0u);
             std::fill(sGeo.mDsCount, sGeo.mDsCount + kGeoTypes, 0u);
         }
         else
         {
             VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)sGeo.mCommands.mPtr;
-            GeoGpuG* static_rows = nullptr;
-            if (geo_rowcopy_on())
-            {
-                // the table is one buffer the GPU reads while the next frames are prepared, and the worker rewrites rows in place (a renamed buffer: the row names a new range): the static draws read rows of their own,
-                // copied for this frame, as the rigged ones do (the commands are copied from the CPU's list, not read back from the write combined scratch)
-                sGeo.mSTable = r.allocVertexScratch(sizeof(GeoGpuG) * total);
-                if (sGeo.mSTable.mPtr && sGeo.mSTable.mAddress)
-                {
-                    static_rows = (GeoGpuG*)sGeo.mSTable.mPtr;
-                }
-                else
-                {
-                    sGeo.mSTable = Renderer::ScratchAlloc();
-                    ++s.mScratchFail;
-                }
-            }
             U32 at[kGeoTypes], at_ds[kGeoTypes];
             for (U32 t = 0; t < kGeoTypes; ++t)
             {
@@ -8986,7 +8944,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             }
             auto copy_commands = [&](const GeoFrag* f, U32 first, U32 n, U32& dest)
             {
-                if (n && static_rows)
+                if (n)
                 {
                     const VkDrawIndirectCommand* src = f->mCmds.data() + first;
                     for (U32 k = 0; k < n; ++k)
@@ -8996,11 +8954,6 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         c.firstInstance = dest + k;
                         out[dest + k] = c;
                     }
-                    dest += n;
-                }
-                else if (n)
-                {
-                    memcpy(out + dest, f->mCmds.data() + first, n * sizeof(VkDrawIndirectCommand));
                     dest += n;
                 }
             };
@@ -9302,8 +9255,13 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = (rigged_draw && sGeo.mRTable.mAddress) ? (U64)sGeo.mRTable.mAddress : (!rigged_draw && sGeo.mSTable.mAddress) ? (U64)sGeo.mSTable.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)models.mAddress;
-    Context::instance().flight(Context::FL_GEO_DRAW, 100ull + type, table_address, (unsigned long long)((rigged_draw ? sGeo.mRTable.mAddress : sGeo.mSTable.mAddress) ? 1 : 0), (unsigned long long)count);       // (a static or rigged type draw: which table, 1 = rows copied for the frame)
+    const U64 table_address = rigged_draw ? (U64)sGeo.mRTable.mAddress : (U64)sGeo.mSTable.mAddress, models_address = (U64)models.mAddress;
+    if (!table_address)
+    {
+        ++s.mScratchFail;       // (no rows for this frame's draws: nothing reads the scene table itself, so there is nothing to fall back to)
+        return;
+    }
+    Context::instance().flight(Context::FL_GEO_DRAW, 100ull + type, table_address, 1ull, (unsigned long long)count);       // (a static or rigged type draw: its rows, copied for the frame)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
@@ -9550,12 +9508,8 @@ static void geo_alpha_resolve(GeoFrag& f, U32 first, U32 count)
         if (pal)
         {
             const U32 joints = f.mRItemJoints[item];
-            GeoGpuG& row = sGeo.mT[f.mSlots[item]];
             f.mPalAddr[item] = pal;
             f.mPalJoints[item] = joints;
-            row.mPalette[0] = (U32)pal;
-            row.mPalette[1] = (U32)(pal >> 32);
-            row.mJoints = joints;
             GeoGpuG& cpu_row = sGeo.mTCpu[f.mSlots[item]];
             cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
             f.mARCmds[c].indexCount = f.mARCount0[c];
@@ -9784,18 +9738,15 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         VkDrawIndirectCommand* out = (VkDrawIndirectCommand*)cmds.mPtr;
         GeoGpuG* static_rows = nullptr;
         U32 static_base = 0;
-        if (geo_rowcopy_on())
+        // as the rigged run: rows copied for this draw, into the frame's shared chunk (without it the run is not drawn: see the table address below)
+        if (alpha_rows_reserve(r, (U32)total, static_base, alpha_rows))
         {
-            // as the rigged run: rows copied for this draw (LL_VK_GEO_ROWCOPY, see the switch), now into the frame's shared chunk
-            if (alpha_rows_reserve(r, (U32)total, static_base, alpha_rows))
-            {
-                static_rows = (GeoGpuG*)alpha_rows.mPtr + static_base;
-            }
-            else
-            {
-                alpha_rows = Renderer::ScratchAlloc();
-                ++a.mScratchFail;
-            }
+            static_rows = (GeoGpuG*)alpha_rows.mPtr + static_base;
+        }
+        else
+        {
+            alpha_rows = Renderer::ScratchAlloc();
+            ++a.mScratchFail;
         }
         size_t at = 0;
         for (const auto& t : todo)
@@ -9810,10 +9761,6 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                     c.firstInstance = (U32)(static_base + at + k);
                     out[k] = c;
                 }
-            }
-            else
-            {
-                memcpy(out, src, t.second.mCount * sizeof(VkDrawIndirectCommand));
             }
             for (U32 k = 0; k < t.second.mCount; ++k)
             {
@@ -9846,8 +9793,12 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = alpha_rows.mAddress ? (U64)alpha_rows.mAddress : (U64)sGeo.mTable.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
-    Context::instance().flight(Context::FL_GEO_DRAW, 98ull, table_address, (unsigned long long)(alpha_rows.mAddress ? 1 : 0), (unsigned long long)total);       // (the alpha run: which table, 1 = rows copied for this draw)
+    const U64 table_address = (U64)alpha_rows.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
+    if (!table_address)
+    {
+        return;         // (no rows for this run: counted where the scratch failed)
+    }
+    Context::instance().flight(Context::FL_GEO_DRAW, 98ull, table_address, 1ull, (unsigned long long)total);       // (the alpha run: its rows, copied for this draw)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
@@ -10080,14 +10031,10 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
         f->mARLodIb[cmd] = b.mLodIb;
         f->mARLodCount[cmd] = b.mLodCount;
         const U64 pal = b.mOffset != ~0u ? palette_address(b.mOffset) : 0;
-        GeoGpuG& row = sGeo.mT[f->mSlots[b.mItem]];
         if (pal)
         {
             f->mPalAddr[b.mItem] = pal;
             f->mPalJoints[b.mItem] = b.mJoints;
-            row.mPalette[0] = (U32)pal;
-            row.mPalette[1] = (U32)(pal >> 32);
-            row.mJoints = b.mJoints;
             GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[b.mItem]];
             cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = b.mJoints;
             f->mARCmds[cmd].indexCount = f->mARCount0[cmd];
