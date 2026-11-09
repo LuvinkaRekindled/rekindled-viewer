@@ -997,6 +997,21 @@ void LLRender::refreshState(void)
     mDirty = false;
 }
 
+void LLRender::setAlphaLights(const F32* rows, S32 count)
+{
+    count = count < 0 ? -1 : llmin(count, kAlphaLightMax);
+    const size_t bytes = sizeof(F32) * 12 * (size_t)llmax(count, 0);
+    if (count != mAlphaLightCount || (bytes && memcmp(rows, mAlphaLights, bytes) != 0))
+    {
+        if (bytes)
+        {
+            memcpy(mAlphaLights, rows, bytes);
+        }
+        mAlphaLightCount = count;
+        ++mAlphaLightStamp;
+    }
+}
+
 void LLRender::syncLightState()
 {
     LLShaderProgram *shader = LLShaderProgram::sCurBoundShaderPtr;
@@ -1004,6 +1019,25 @@ void LLRender::syncLightState()
     if (!shader)
     {
         return;
+    }
+
+    if (shader->mAlphaLightStamp != mAlphaLightStamp)
+    {   // <FS> shaders family 2: the light list of the transparent surfaces (only the programs that declare it)
+        static const LLStaticHashedString alpha_lights("alpha_lights");
+        static const LLStaticHashedString alpha_light_count("alpha_light_count");
+        if (shader->mHasAlphaLights < 0)
+        {
+            shader->mHasAlphaLights = shader->getUniformLocation(alpha_light_count) >= 0 ? 1 : 0;
+        }
+        if (shader->mHasAlphaLights == 1)
+        {
+            shader->uniform1i(alpha_light_count, mAlphaLightCount);
+            if (mAlphaLightCount > 0)
+            {
+                shader->uniform4fv(alpha_lights, (U32)mAlphaLightCount * 3, mAlphaLights);
+            }
+        }
+        shader->mAlphaLightStamp = mAlphaLightStamp;
     }
 
     static const bool light_log = getenv("LL_VK_LIGHTLOG") != nullptr;

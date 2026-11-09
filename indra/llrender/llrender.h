@@ -418,6 +418,12 @@ public:
     void syncMatrices();
     void syncLightState();
 
+    // <FS> shaders family 2 (doc/vulkan/SHADERS-F2-alpha.md): the lights the transparent surfaces of the view are lit by, in view space: 'count' rows of 12 floats (centre xyz + size, colour rgb + falloff,
+    // direction xyz + 1 for a point light / 0 for a spot). count -1: no list (the programs use the hardware light slots 2-7). A program with the uniforms alpha_lights / alpha_light_count gets the list when it
+    // is synced after a change.
+    static constexpr S32 kAlphaLightMax = 64;
+    void setAlphaLights(const F32* rows, S32 count);
+
     void translateUI(F32 x, F32 y, F32 z);
     void scaleUI(F32 x, F32 y, F32 z);
     void pushUIMatrix();
@@ -580,6 +586,9 @@ private:
     glm::mat4 mMatrix[NUM_MATRIX_MODES][LL_MATRIX_STACK_DEPTH];
     U32 mCurMatHash[NUM_MATRIX_MODES];
     U32 mLightHash;
+    F32 mAlphaLights[kAlphaLightMax * 12] = {};
+    S32 mAlphaLightCount = -1;
+    U32 mAlphaLightStamp = 1;           // changes with the list (a program remembers the stamp it was given)
     LLColor4 mAmbientLightColor;
 
     bool            mDirty;
