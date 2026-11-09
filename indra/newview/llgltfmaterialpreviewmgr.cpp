@@ -226,8 +226,9 @@ namespace {
 
 struct GLTFPreviewModel
 {
-    GLTFPreviewModel(LLPointer<LLDrawInfo>& info, const LLMatrix4& mat)
-    : mDrawInfo(info)
+    GLTFPreviewModel(LLPointer<LLDrawInfo>& info, const LLMatrix4& mat, LLVertexBuffer* buffer)
+    : mBuffer(buffer)
+    , mDrawInfo(info)
     , mModelMatrix(mat)
     {
         mDrawInfo->mModelMatrix = &mModelMatrix;
@@ -239,6 +240,10 @@ struct GLTFPreviewModel
         llassert(gRenderLastMatrix != &mModelMatrix);
         gRenderLastMatrix = nullptr;
     }
+    // <FS> C3.5: a draw info holds its vertex buffer by handle (LLVBRef), not by reference count, and owns nothing: the owner keeps the buffer alive. The sphere is cached across frames and its buffer used to be
+    // held by a local pointer of create_preview_sphere only: once the retire list had destroyed it, the draw infos resolved to the empty stand-in buffer (no colour attribute) and the next preview render
+    // died in getColorStrider ("VertexBufferStrider could not find valid vertex data"). Declared before mDrawInfo: destroyed after it.
+    LLPointer<LLVertexBuffer> mBuffer;
     LLPointer<LLDrawInfo> mDrawInfo;
     LLMatrix4 mModelMatrix; // Referenced by mDrawInfo
 };
@@ -331,7 +336,7 @@ PreviewSphere create_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, 
         constexpr LLViewerTexture* no_media = nullptr;
         LLPointer<LLDrawInfo> info = new LLDrawInfo(U16(vertex_offset), U16(vertex_offset + face.mNumVertices - 1), face.mNumIndices, index_offset, no_media, buf.get());
         info->mGLTFMaterial = material;
-        preview_sphere.emplace_back(std::make_unique<GLTFPreviewModel>(info, model_matrix));
+        preview_sphere.emplace_back(std::make_unique<GLTFPreviewModel>(info, model_matrix, buf.get()));
         index_offset += face.mNumIndices;
         vertex_offset += face.mNumVertices;
     }
@@ -368,6 +373,18 @@ void set_preview_sphere_material(PreviewSphere& preview_sphere, LLPointer<LLFetc
 PreviewSphere& get_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, const LLMatrix4& model_matrix)
 {
     static PreviewSphere preview_sphere;
+    if (!preview_sphere.empty())
+    {
+        // <FS> a part whose buffer does not carry the colour array (a gone buffer answers the empty stand-in, see GLTFPreviewModel) would die in getColorStrider: the sphere is made again instead
+        for (PreviewSpherePart& part : preview_sphere)
+        {
+            if (!part->mBuffer || !part->mDrawInfo->mVertexBuffer.get()->hasDataType(LLVertexBuffer::TYPE_COLOR))
+            {
+                preview_sphere.clear();
+                break;
+            }
+        }
+    }
     if (preview_sphere.empty())
     {
         preview_sphere = create_preview_sphere(material, model_matrix);
