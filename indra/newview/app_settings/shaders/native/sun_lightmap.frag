@@ -44,22 +44,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 0) out vec4 frag_color;
 
-#define SHADOW_MAP(slot) ll_tbl2dshadow[LL_HM(slot)]
-
-// one cascade: five taps with the weights 4 + 1 + 1 + 1 + 1 over 8; the sample column is snapped to the shadow texels with a jitter that follows the row
-float pcf_sun(uint slot, vec4 stc, vec2 uv)
-{
-    stc.xyz /= stc.w;
-    stc.z += shadow_bias * 2.0;
-    stc.x = floor(stc.x * shadow_res.x + fract(uv.y * shadow_res.y)) / shadow_res.x;
-    const vec2 texel = 1.0 / shadow_res;
-    float shadow = texture(SHADOW_MAP(slot), stc.xyz) * 4.0;
-    shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3( 1.5 * texel.x,  0.5 * texel.y, 0.0));
-    shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3( 0.5 * texel.x, -1.5 * texel.y, 0.0));
-    shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3(-1.5 * texel.x, -0.5 * texel.y, 0.0));
-    shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3(-0.5 * texel.x,  1.5 * texel.y, 0.0));
-    return clamp(shadow * 0.125, 0.0, 1.0);
-}
+#include "lib/shadow.glsl"
 
 float pcf_spot(uint slot, vec4 stc, float bias_scale, vec2 snap_seed)
 {
@@ -74,49 +59,6 @@ float pcf_spot(uint slot, vec4 stc, float bias_scale, vec2 snap_seed)
     shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3(-off.x, off.y, 0.0));
     shadow += texture(SHADOW_MAP(slot), stc.xyz + vec3(-off.x * 2.0, -off.y, 0.0));
     return shadow * 0.2;
-}
-
-// the cascades overlap by a quarter of their range at the ends: a pixel in an overlap takes both and the two are blended by their weights (the old rules)
-float sun_shadow(vec3 pos, vec3 norm, vec2 uv)
-{
-    const vec3 light_dir = normalize(sun_up_factor == 1 ? sun_dir : moon_dir);
-    const float ndl = clamp(dot(norm, light_dir), 0.0, 1.0);
-    const vec4 spos = vec4(pos + light_dir * (1.0 - ndl) * shadow_offset * 2.0, 1.0);
-    if (!(spos.z > -shadow_clip.w))
-    {
-        return 1.0;         // lit beyond the far split
-    }
-    const vec4 near_split = shadow_clip * -0.75;
-    const vec4 far_split = shadow_clip * -1.25;
-    const vec4 transition = near_split - far_split;
-    float shadow = 0.0;
-    float weight = 0.0;
-    if (spos.z < near_split.z)
-    {
-        const float w = 1.0 - max(spos.z - far_split.z, 0.0) / transition.z;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap3, shadow_matrix[3] * spos, uv) * w;
-        weight += w;
-        shadow += max((pos.z + shadow_clip.z) / (shadow_clip.z - shadow_clip.w) * 2.0 - 1.0, 0.0);      // the farthest cascade fades out towards the far clip
-    }
-    if (spos.z < near_split.y && spos.z > far_split.z)
-    {
-        const float w = 1.0 - max(spos.z - far_split.y, 0.0) / transition.y - max(near_split.z - spos.z, 0.0) / transition.z;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap2, shadow_matrix[2] * spos, uv) * w;
-        weight += w;
-    }
-    if (spos.z < near_split.x && spos.z > far_split.y)
-    {
-        const float w = 1.0 - max(spos.z - far_split.x, 0.0) / transition.x - max(near_split.y - spos.z, 0.0) / transition.y;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap1, shadow_matrix[1] * spos, uv) * w;
-        weight += w;
-    }
-    if (spos.z > far_split.x)
-    {
-        const float w = 1.0 - max(near_split.x - spos.z, 0.0) / transition.x;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap0, shadow_matrix[0] * spos, uv) * w;
-        weight += w;
-    }
-    return shadow / weight;
 }
 
 // the shadow of a projector light: only the pixels inside its frustum read it (the light pass discards the rest before it looks at the lightmap)
@@ -189,7 +131,7 @@ void main()
     const vec3 norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], uv).xy);
 
     vec4 col;
-    col.r = sun_shadow(pos, norm, uv);
+    col.r = sun_shadow(pos, norm, uv.y);
     col.g = ambient_occlusion(pos, norm, uv);
     col.b = (spot_shadow_mask & 1) != 0 ? spot_shadow(pos, norm, 0) : 1.0;
     col.a = (spot_shadow_mask & 2) != 0 ? spot_shadow(pos, norm, 1) : 1.0;

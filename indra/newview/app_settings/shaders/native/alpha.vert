@@ -9,6 +9,9 @@ layout(location = 0) out vec3 vary_position;
 layout(location = 1) out vec4 vertex_color;
 layout(location = 2) out vec2 vary_texcoord0;
 layout(location = 3) flat out uint vary_slot;
+#ifdef ALPHA_LIT
+layout(location = 4) out vec3 vary_norm;        // the surface normal in eye space (a lit surface)
+#endif
 
 #if defined(HAS_SKIN) && !defined(HAS_INDEXED_DRAW)
 #error "a rigged draw of the alpha family is an indexed one"
@@ -67,4 +70,13 @@ void main()
     vary_position = eye.xyz;
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
     vary_slot = row_texture_slot(row, position.w);
+
+#ifdef ALPHA_LIT
+    const vec3 normal = RowVec4(row.normals).v[index].xyz;
+#ifdef HAS_SKIN
+    vary_norm = normalize(mat3(model.mv) * (skin_rotation * normal));
+#else
+    vary_norm = particle ? vec3(0.0, 0.0, 1.0) : normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * normal);       // (a particle faces the camera: +z in eye space)
+#endif
+#endif
 }
