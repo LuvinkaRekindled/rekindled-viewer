@@ -135,6 +135,10 @@ THE HANG (three device losses): every smoke lap lost the GPU a few seconds after
 
 Smoke lap after the fix: 600001 static and 70001 rigged material draws, no device loss, no copy warnings; the compile is 13 ms (fragment 24461 words; the size budget is now 40000 words / 150 ms).
 
+### 9.10 Timing: the old default alpha pass against the native one, at Adam's home (2026-11-08, 25 nearby lights, last-location login, 6 alternating pairs of 12 s windows, GPU ms per viewer frame)
+
+old default (uber with materials, the light list loop in alphaF.glsl) 3.862, native (`native_alpha=1`, native fullbright + lit + material, probes, the screen march) 3.646: **-0.216 ms (-5.6%)**; main thread frame interval 3.905 -> 3.705 (-0.200). Every pair agrees (the native windows are 0.20-0.23 below their old neighbours; the old windows differ by 0.04 among themselves). No device loss. Not yet measured: the plaza (440 nearby lights, the list at its 64 cap, where the old loop cost +0.5 ms), a non-classic sky, rigged crowds. `<work>lphacycle.ps1 -StatesFile <work>lphacycle-states.txt` makes this lap (the first four tries ran every window as state A: see the memory note on the case-insensitive variable).
+
 ## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
 
 What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):
