@@ -71,6 +71,8 @@ LLViewerTexture *LLDrawPoolWLSky::getDebugTexture()
     return NULL;
 }
 
+bool LLDrawPoolWLSky::sSkyLate = false;
+
 void LLDrawPoolWLSky::beginDeferredPass(S32 pass)
 {
     sky_shader = ll_pull_or(&gDeferredWLSkyProgram);        // S6.6: the dome, clouds, sun, moon and stars as entries
@@ -88,8 +90,11 @@ void LLDrawPoolWLSky::endDeferredPass(S32 pass)
     sun_shader   = nullptr;
     moon_shader  = nullptr;
 
-    // clear the depth buffer so haze shaders can use unwritten depth as a mask
-    gRender.clearBuffers(ClearBits::Depth);
+    // clear the depth buffer so haze shaders can use unwritten depth as a mask (the late sky wrote none: it must not wipe the depth of the surfaces)
+    if (!sSkyLate)
+    {
+        gRender.clearBuffers(ClearBits::Depth);
+    }
 }
 
 void LLDrawPoolWLSky::renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLShaderProgram * shader) const
@@ -176,7 +181,7 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
             sky_shader->bind();
         }
 
-        LLRenderPresetPipelineDepthTestSkyBox sky(true, true);
+        LLRenderPresetPipelineDepthTestSkyBox sky(true, !sSkyLate);
 
         sky_shader->uniform1i(LLShaderMgr::CUBE_SNAPSHOT, gCubeSnapshot ? 1 : 0);
 
@@ -297,7 +302,7 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
     {
         LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
-        LLRenderPresetPipelineBlendSkyBox pipeline(true, true);
+        LLRenderPresetPipelineBlendSkyBox pipeline(true, !sSkyLate);
 
         cloudshader->bind();
 
@@ -354,7 +359,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 {
     if (!gSky.mVOSkyp || use_hdri_sky()) return;
 
-    LLRenderPresetPipelineBlendSkyBox gls_skybox(true, true); // SL-14113 we need moon to write to depth to clip stars behind
+    LLRenderPresetPipelineBlendSkyBox gls_skybox(true, !sSkyLate); // SL-14113 we need moon to write to depth to clip stars behind (the late sky draws the stars first instead, see renderDeferred)
 
     LLVector3 const & origin = LLViewerCamera::getInstance()->getOrigin();
     LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
@@ -488,14 +493,29 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
             LL_PROFILE_GPU_ZONE("sky haze");
             renderSkyHazeDeferred(origin, camHeightLocal);
         }
+        if (sSkyLate && !gCubeSnapshot)
         {
-            LL_PROFILE_GPU_ZONE("sky sun and moon");
-            renderHeavenlyBodies();
+            // no depth writes: the moon cannot clip the stars behind it, so the stars go first and the moon is drawn over them
+            {
+                LL_PROFILE_GPU_ZONE("sky stars");
+                renderStarsDeferred(origin);
+            }
+            {
+                LL_PROFILE_GPU_ZONE("sky sun and moon");
+                renderHeavenlyBodies();
+            }
         }
-        if (!gCubeSnapshot)
+        else
         {
-            LL_PROFILE_GPU_ZONE("sky stars");
-            renderStarsDeferred(origin);
+            {
+                LL_PROFILE_GPU_ZONE("sky sun and moon");
+                renderHeavenlyBodies();
+            }
+            if (!gCubeSnapshot)
+            {
+                LL_PROFILE_GPU_ZONE("sky stars");
+                renderStarsDeferred(origin);
+            }
         }
 
         if (!gCubeSnapshot || gPipeline.mReflectionMapManager.isRadiancePass()) // don't draw clouds in irradiance maps to avoid popping
