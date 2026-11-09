@@ -496,6 +496,12 @@ collectedColor = vec4(1, 0, 1, 1);
     totalSamples = int(max(glossySampleCount, glossySampleCount * glossiness * vignette));
 
     totalSamples = max(totalSamples, 1);
+    if (glossiness <= 0.0)
+    {
+        // <FS> glossiness 1 (what a transparent surface asks for): the randomized directions below are the reflection ray plus a scatter that is multiplied by this zero, so every sample is the SAME ray. Four
+        // identical traces averaged are the one trace: same colour, same alpha (hits / samples is 1 either way), a quarter of the work.
+        totalSamples = 1;
+    }
     if (glossiness < 0.35)
     {
         if (vignette > 0)

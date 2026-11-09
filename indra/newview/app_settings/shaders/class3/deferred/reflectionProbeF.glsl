@@ -916,7 +916,8 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
     }
 
 #if defined(SSR)
-    if (cube_snapshot != 1)
+    // <FS> a transparent surface that is not glossy: the trace's answer is multiplied by the glossiness below (0): nothing of it would show, so it is not made (same picture)
+    if (cube_snapshot != 1 && (!transparent || glossiness > 0.0))
     {
         vec4 ssr = vec4(0);
 
