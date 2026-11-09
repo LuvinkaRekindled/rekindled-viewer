@@ -109,6 +109,12 @@ Compile: vertex 7467 / 6201 words, fragment 9280 words, 6-10 ms. Picture (still 
 
 "That works great. I can move around and zoom. Walking picks up some of the colour from the different light sources and it doesn't blink solidly between them, just the hints of colour." Same behaviour as the old program with the light list, now from the native program (the log showed 88000 draws of the static and 58000 of the rigged lit program). The glTF material preview crash that had to be fixed first is `293447d952`.
 
+### 9.7 Native uber: lit + fullbright in one program (2026-11-08; `native_alpha=1` with `alphamat=0`, default off)
+
+`alpha.vert` + `alpha_lit.frag` with ALPHA_UBER: the row's fullbright flag (`vary_fullbright`, flags bit 5) picks the fullbright branch (`lib/shade.glsl: shade_fullbright`, shared with `alpha_fullbright.frag`) or the lit one, so the lit and fullbright draws of the blend order are one run, as in the old merged program. Manifest: "Deferred Alpha Uber Pull Shader" and its Skin variant (`when classic_mode=1`). The default old path is the uber WITH materials (alphamat on) and draws every alpha draw; the native uber stands in for the non-material uber, which is used when `alphamat=0` (the material draws then run in their own old programs), so the native alpha pass is only complete when the material draws are native too.
+
+Smoke lap (compile + draw, not timing): the fragment shader 9775 words, vertex 6247 words (rigged), 6.9 ms; 400001 static and 66001 rigged draws, no warnings. Timings between the old default (A), the old split (B) and the native uber (C) are left for when all of it is native (Adam, 2026-11-08: "see how the cost is all together when we're done getting it all native"); `<work>lphacycle.ps1` cycles the states in one lap (states separated by slashes).
+
 ## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
 
 What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):

@@ -6,6 +6,7 @@
 #include "lib/clip.glsl"
 #include "lib/atmos.glsl"
 #include "lib/fog.glsl"
+#include "lib/shade.glsl"
 
 layout(location = 0) in vec3 vary_position;
 layout(location = 1) in vec4 vertex_color;
@@ -18,16 +19,5 @@ void main()
 {
     mirror_clip(vary_position);
     water_clip(vary_position);
-
-    const vec4 texel = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
-    const float alpha = texel.a * vertex_color.a;
-    if (alpha < minimum_alpha)
-    {
-        discard;
-    }
-
-    vec3 sunlit, amblit, additive, atten;
-    atmos_terms(vary_position, vec3(0.0), sunlit, amblit, additive, atten);       // (no sun glow: the surface does not take part in the sun's light)
-    const vec3 color = apply_sky_and_water_fog(vary_position, additive, atten, srgb_to_linear(texel.rgb * vertex_color.rgb));
-    frag_color = max(vec4(color, alpha), vec4(0.0));
+    frag_color = shade_fullbright(vary_position, texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0), vertex_color);
 }
