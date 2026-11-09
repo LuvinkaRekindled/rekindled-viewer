@@ -9405,6 +9405,19 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             ++sStats.mRendererRefused;
         }
+        if (floor_mode == 4)
+        {
+            // 4 = the same draws a second time against the depth the first one wrote (less or equal, no depth write): the fragment shader then runs once for each visible pixel, so the second pass costs what the
+            // pass would cost with no overshading. (first draw minus second = the most a depth pre-pass could win, before its own cost)
+            const DepthStencilState saved_depth = r.getDepthStencilState();
+            DepthStencilState again = saved_depth;
+            again.mDepthTest = true;
+            again.mDepthWrite = false;
+            again.mDepthOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+            r.setDepthStencilState(again);
+            r.drawPackets(nullptr, count, cmd_buffer, cmd_offset);
+            r.setDepthStencilState(saved_depth);
+        }
         sDraws += count;
         sDrawsTotal += count;
     }

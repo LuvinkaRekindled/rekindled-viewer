@@ -320,6 +320,7 @@ public:
     void setProgram(Program* program);
     void setRasterState(const RasterState& s) { mRaster = s; ++mStateGen; }
     void setDepthStencilState(const DepthStencilState& s) { mDepthStencil = s; ++mStateGen; }
+    const DepthStencilState& getDepthStencilState() const { return mDepthStencil; }       // <FS> the G-buffer floor key's second draw changes the depth test and puts it back
     void setBlendState(const BlendState& s) { mBlend = s; ++mStateGen; }
     U32 stateGeneration() const { return mStateGen; }        // <FS> changes whenever the raster / depth / blend / viewport / scissor state is set: lets a caller skip setting what it set last
 
