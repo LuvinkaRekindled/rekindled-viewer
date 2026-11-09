@@ -139,6 +139,10 @@ Smoke lap after the fix: 600001 static and 70001 rigged material draws, no devic
 
 old default (uber with materials, the light list loop in alphaF.glsl) 3.862, native (`native_alpha=1`, native fullbright + lit + material, probes, the screen march) 3.646: **-0.216 ms (-5.6%)**; main thread frame interval 3.905 -> 3.705 (-0.200). Every pair agrees (the native windows are 0.20-0.23 below their old neighbours; the old windows differ by 0.04 among themselves). No device loss. Not yet measured: the plaza (440 nearby lights, the list at its 64 cap, where the old loop cost +0.5 ms), a non-classic sky, rigged crowds. `<work>lphacycle.ps1 -StatesFile <work>lphacycle-states.txt` makes this lap (the first four tries ran every window as state A: see the memory note on the case-insensitive variable).
 
+### 9.11 The native alpha pass is the default (2026-11-08)
+
+Adam, on the home result (no noise in the windows; -0.216 ms GPU, and his fps in the same spot went from about 266 to about 274): make it the default. Every alpha line of the manifest is `default on`; `native_alpha=0` in rt-debug.txt switches back to the old programs live. Smoke lap with no keys and the installed manifest (15 native programs): the native material programs drew 602001 (static) and 70001 (rigged) times, no device loss, no copy warnings. Still the old programs: the glTF blend alpha (`pbralphaF`), the HUD alpha, impostor alpha and the depth only alpha passes (other program names), the non-material uber when `alphamat=0` is covered, and any draw the manifest conditions refuse. Open: the plaza crowd timing, a non-classic sky by eye, glossy transparent materials by eye (Adam's lap looked fine), pbralpha native, the old marcher savings patch (after the timings), retiring the old alphaF light loop and uniform feed once Adam accepts.
+
 ## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
 
 What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):
