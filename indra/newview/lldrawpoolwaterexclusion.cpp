@@ -77,12 +77,8 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
 
     if (pull)
     {
-        static const bool inv_table = !getenv("LL_VK_INV_TABLE") || getenv("LL_VK_INV_TABLE")[0] != '0';
-        if (inv_table)
-        {
-            // C5: the invisible draws are table entries like the other pass types: the worker draws the visible fragments' items with the colour program's pull twin bound now
-            pushGeometryPackets(LLRenderPass::PASS_INVISIBLE);
-        }
+        // C5: the invisible draws are table entries like the other pass types: the worker draws the visible fragments' items with the colour program's pull twin bound now
+        pushGeometryPackets(LLRenderPass::PASS_INVISIBLE);
     }
 
     if (gPipeline.shadersLoaded())

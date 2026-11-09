@@ -284,13 +284,12 @@ void LLDrawPoolBump::unbindCubeMap(LLShaderProgram* shader, S32 shader_level, S3
 // J1 K4: the fullbright shiny draws come from the scene table (one record of rows, the shiny pull program: alphaPullV + fullbrightShinyF); HUDs and what the table cannot carry take the old pass
 static bool fullbright_shiny_table(bool rigged)
 {
-    static const bool shiny_table = !getenv("LL_VK_SHINY_TABLE") || getenv("LL_VK_SHINY_TABLE")[0] != '0';
     if (LLPipeline::sRenderingHUDs)
     {
         // J1 K6 S1: the HUD's shiny draws from the scene table (the HUD's cull result was told to the worker before the passes)
-        return shiny_table && !rigged && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
+        return !rigged && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
     }
-    return shiny_table && LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+    return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
 }
 
 void LLDrawPoolBump::beginFullbrightShiny(bool table)
@@ -526,10 +525,9 @@ void LLDrawPoolBump::beginBump(bool table)
 // J1 K4: the post deferred emboss draws come from the scene table in the main view (rows with the bump image's slot, the emboss pull program); every other view, and what the rows cannot carry, draws the old way
 static bool emboss_table(bool rigged)
 {
-    static const bool emboss_table_env = !getenv("LL_VK_EMBOSS_TABLE") || getenv("LL_VK_EMBOSS_TABLE")[0] != '0';
     // J1 K6 S1: the HUD's post bump pass too (no rigged draws in a HUD; the HUD's cull result was told to the worker before the passes)
     const bool view_ok = !LLPipeline::sRenderingHUDs || (!rigged && ll_scene_geo_hud_view() && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP)));
-    return emboss_table_env && view_ok && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
+    return view_ok && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
         && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
 }
 
@@ -564,8 +562,7 @@ S32 LLDrawPoolBump::getNumDeferredPasses()
 // the rows cannot carry, draws the old way
 static bool bump_table(bool rigged)
 {
-    static const bool bump_table_env = !getenv("LL_VK_BUMP_TABLE") || getenv("LL_VK_BUMP_TABLE")[0] != '0';
-    return bump_table_env && !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
+    return !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
         && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
 }
 
