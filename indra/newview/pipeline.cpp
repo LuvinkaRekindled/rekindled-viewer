@@ -440,6 +440,10 @@ bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
         norm = TexelFormat::RGB10A2;
         emissive = TexelFormat::RGB8;
     }
+    else if (gSavedSettings.getBOOL("FSGBufferSlimNormal"))
+    {
+        norm = TexelFormat::RGB10A2;        // <FS> family 3: half the bytes of the normal target; the emissive target (off by default) keeps its float format
+    }
 
     bool valid = true;
     valid      = valid && target.addColorAttachment(orm);    // frag-data[1] specular OR PBR ORM
