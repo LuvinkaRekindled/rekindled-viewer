@@ -253,6 +253,8 @@ LLShaderProgram            gDeferredSunProbeProgram;
 LLShaderProgram            gHazeProgram;
 LLShaderProgram            gHazeWaterProgram;
 LLShaderProgram            gDeferredBlurLightProgram;
+LLShaderProgram            gNativeSunHalfProgram;
+LLShaderProgram            gNativeLightUpsampleProgram;
 LLShaderProgram            gDeferredSoftenProgram;
 LLShaderProgram            gDeferredShadowProgram;
 LLShaderProgram            gDeferredSkinnedShadowProgram;
@@ -619,6 +621,8 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gObjectAlphaMaskNoColorProgram);
     mShaderList.push_back(&gUnderWaterProgram);
     mShaderList.push_back(&gDeferredSunProgram);
+    mShaderList.push_back(&gNativeSunHalfProgram);
+    mShaderList.push_back(&gNativeLightUpsampleProgram);
     mShaderList.push_back(&gDeferredSunProbeProgram);
     mShaderList.push_back(&gHazeProgram);
     mShaderList.push_back(&gHazeWaterProgram);
@@ -1485,6 +1489,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredMultiSpotLightProgram.unload();
         gDeferredSunProgram.unload();
         gDeferredBlurLightProgram.unload();
+        gNativeSunHalfProgram.unload();
+        gNativeLightUpsampleProgram.unload();
         gDeferredSoftenProgram.unload();
         gDeferredShadowProgram.unload();
         gDeferredSkinnedShadowProgram.unload();
@@ -2271,6 +2277,22 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         success = gDeferredBlurLightProgram.createShader();
         llassert(success);
+
+        // <FS> native only programs (PLAN-shaders-rewrite.md, SHADERS-F1-lighting.md): the half resolution lightmap. A failure leaves them incomplete: the lighting pass then keeps the full resolution path.
+        gNativeSunHalfProgram.mName = "Native Sun Lightmap Half";
+        gNativeSunHalfProgram.mFeatures.isDeferred = true;
+        gNativeSunHalfProgram.mNativeVertex = "fullscreen.vert";
+        gNativeSunHalfProgram.mNativeFragment = "sun_lightmap.frag";
+        gNativeSunHalfProgram.mNativeDefines = { { "LL_HALF", "1" } };
+        gNativeSunHalfProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gNativeSunHalfProgram.createShader();
+
+        gNativeLightUpsampleProgram.mName = "Native Lightmap Upsample";
+        gNativeLightUpsampleProgram.mFeatures.isDeferred = true;
+        gNativeLightUpsampleProgram.mNativeVertex = "fullscreen.vert";
+        gNativeLightUpsampleProgram.mNativeFragment = "lightmap_upsample.frag";
+        gNativeLightUpsampleProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gNativeLightUpsampleProgram.createShader();
     }
 
     if (success)

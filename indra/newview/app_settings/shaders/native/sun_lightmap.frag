@@ -1,7 +1,7 @@
 // sun_lightmap.frag: the lightmap of the main view. r: the sun (or moon) shadow from the four cascades, g: ambient occlusion, b and a: the shadows of the two projector lights that have a shadow map.
 // Same lookups, weights and rules as the old sun program with SSAO; what is different is the cost: the view position of a pixel and of every occlusion tap is rebuilt from its depth with
 // the few multiplications the projection leaves (lib/viewpos.glsl), and the cascade lookup is one function that goes straight to the cascade(s) the pixel is in.
-// This program stands in for the old one only when the old one has shadows and SSAO and no ray tracing (manifest: require).
+// This program stands in for the old one only when the old one has shadows and SSAO and no ray tracing (manifest: require). With LL_HALF it is the half resolution lightmap (gNativeSunHalfProgram).
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
@@ -172,7 +172,13 @@ float ambient_occlusion(vec3 pos, vec3 norm, vec2 uv)
 
 void main()
 {
+#ifdef LL_HALF
+    // half resolution: this pixel stands for a 2x2 block of the full resolution picture and reads the full resolution pixel at its lower right (2i + 1); lightmap_upsample.frag reads the same pixel's depth
+    const vec2 half_res = floor((screen_res + 1.0) * 0.5);
+    const vec2 uv = (floor(vary_fragcoord * half_res) * 2.0 + 1.5) / screen_res;
+#else
     const vec2 uv = vary_fragcoord;
+#endif
     const float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv).r;
     if (depth >= 1.0)
     {

@@ -1028,6 +1028,15 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     // </FS:Beq>
     { //only need mRT->deferredLight for shadows OR ssao OR dof OR fxaa
         if (!mRT->deferredLight.allocate(resX, resY, screenFormat)) return false;
+        if (!gCubeSnapshot)
+        {
+            // <FS> the half resolution sun lightmap (shaders from scratch): its pixel i stands for the 2x2 block 2i, 2i+1
+            if (!mLightMapHalf.allocate((resX + 1) / 2, (resY + 1) / 2, screenFormat) || !mLightMapHalf2.allocate((resX + 1) / 2, (resY + 1) / 2, screenFormat))
+            {
+                mLightMapHalf.release();
+                mLightMapHalf2.release();
+            }
+        }
         // <FS> ray traced shadows (PLAN-rt-shadow-penumbra.md step 1): the sun pass also writes the blocker distance of its centre ray, to a second attachment of the lightmap; it is copied right after
         // the pass into mRtBlocker, since the passes that rewrite the lightmap later (the history's copy, the blur) write attachment 0 only and leave attachment 1 undefined
         if (LLVkBridge::rtShadowMode() && !gCubeSnapshot)      // (the main view's buffers only: the reflection probes' sun pass has one output, and mRtBlocker is one target)
@@ -1540,6 +1549,8 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
+    mLightMapHalf.release();
+    mLightMapHalf2.release();
     mMotionMap.release();
     mAvatarVelocityMap.release();
     mRtBlocker.release();
@@ -26476,15 +26487,20 @@ void LLPipeline::renderDeferredLighting()
         tc_moon = mat * tc_moon;
         mTransformedMoonDir.set(tc_moon);
 
+        bool lightmap_half = false;         // <FS> the sun lightmap was made at half resolution (the upsample below puts it back)
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
-            RenderPassScope pass(*deferred_light_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
+            // <FS> shaders from scratch (SHADERS-F1-lighting.md): the lightmap at half resolution, put back to full resolution by one depth aware upsample instead of the two blur passes. rt-debug.txt lightmap_half=0 turns it off (default on).
+            // Only where the full resolution path would blur the cascade shadows and the occlusion: no probe capture, no ray traced shadows, shadows and SSAO on, the native programs built.
+            lightmap_half = !gCubeSnapshot && RenderDeferredSSAO && RenderShadowDetail > 0 && !LLVkBridge::rtShadowMode() && mLightMapHalf.isComplete() && mLightMapHalf2.isComplete()
+                            && gNativeSunHalfProgram.isComplete() && gNativeLightUpsampleProgram.isComplete() && LLVkBridge::nativeKey("lightmap_half", 1) != 0;
+            RenderPassScope pass(lightmap_half ? mLightMapHalf : *deferred_light_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
                 LL_CPU_ZONE("lighting: sun shadow");
 
-                LLShaderProgram& sun_shader = gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram;
+                LLShaderProgram& sun_shader = lightmap_half ? gNativeSunHalfProgram : (gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram);
                 bindDeferredShader(sun_shader, deferred_light_target);
                 mScreenTriangleVB->setBuffer();
 
@@ -26628,6 +26644,60 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
             // (without the filter the sun pass wrote the lightmap into deferred_light_target already)
+        }
+        else if (lightmap_half)
+        {
+            // <FS> the blur at half resolution (a quarter of the pixels: the same program, the kernel scaled to half the pixels), then one depth aware pass up to the full resolution lightmap (lightmap_upsample.frag)
+            {
+                LL_PROFILE_GPU_ZONE("lightmap blur half");
+                LLRenderState::DepthReadOnlyScope half_blur_depth_read_only(true);
+                LLVector3 go = RenderShadowGaussian;
+                const U32 kern_length = 4;
+                F32 x = 0.f;
+                LLVector3 gauss[32];
+                for (U32 i = 0; i < kern_length; i++)
+                {
+                    gauss[i].mV[0] = llgaussian(x, go.mV[0]);
+                    gauss[i].mV[1] = llgaussian(x, go.mV[1]);
+                    gauss[i].mV[2] = x;
+                    x += 1.f;
+                }
+                const F32 half_w = (F32)mLightMapHalf.getWidth(), half_h = (F32)mLightMapHalf.getHeight();
+                for (int pass_index = 0; pass_index < 2; ++pass_index)
+                {
+                    LLRenderTarget& dst = pass_index == 0 ? mLightMapHalf2 : mLightMapHalf;
+                    LLRenderTarget& src = pass_index == 0 ? mLightMapHalf : mLightMapHalf2;
+                    RenderPassScope pass_half(dst);
+                    bindDeferredShader(gDeferredBlurLightProgram, &src);
+                    gDeferredBlurLightProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, half_w, half_h);
+                    gDeferredBlurLightProgram.uniform1f(sSunPassthrough, 0.f);
+                    gDeferredBlurLightProgram.uniform2f(sDelta, pass_index == 0 ? 1.f : 0.f, pass_index == 0 ? 0.f : 1.f);
+                    gDeferredBlurLightProgram.uniform1f(sDistFactor, RenderShadowBlurDistFactor);
+                    gDeferredBlurLightProgram.uniform3fv(sKern, kern_length, gauss[0].mV);
+                    gDeferredBlurLightProgram.uniform1f(sKernScale, 0.5f * RenderShadowBlurSize * (kern_length / 2.f - 0.5f));
+                    {
+                        LLRenderState::BlendScope blend(false);
+                        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
+                        mScreenTriangleVB->setBuffer();
+                        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                    }
+                    pass_half.end();
+                    unbindDeferredShader(gDeferredBlurLightProgram);
+                }
+            }
+            LL_PROFILE_GPU_ZONE("lightmap upsample");
+            RenderPassScope pass_up(*deferred_light_target);
+            LLRenderState::DepthReadOnlyScope up_depth_read_only(true);
+            bindDeferredShader(gNativeLightUpsampleProgram, &mLightMapHalf);
+            gNativeLightUpsampleProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)deferred_light_target->getWidth(), (F32)deferred_light_target->getHeight());
+            {
+                LLRenderState::BlendScope blend(false);
+                LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            }
+            pass_up.end();
+            unbindDeferredShader(gNativeLightUpsampleProgram);
         }
         else if (RenderDeferredSSAO && !gCubeSnapshot)
         {

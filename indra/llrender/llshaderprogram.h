@@ -329,6 +329,10 @@ public:
     bool mUniformsDirty;
     LLShaderFeatures mFeatures;
     std::vector< std::pair< std::string, ShaderStage > > mShaderFiles;
+    // a native program (llvknative.h): written for Vulkan from scratch, read from the native shader directory, no counterpart among the viewer's translated programs. Set the fragment file (and the vertex file)
+    // instead of mShaderFiles; the defines become `#define NAME VALUE` in front of the files.
+    std::string mNativeVertex, mNativeFragment;
+    std::vector< std::pair< std::string, std::string > > mNativeDefines;
     std::string mName;
     typedef std::map<std::string, std::string> defines_map_t; //NOTE: this must be an ordered map to maintain hash consistency
     defines_map_t mDefines;
