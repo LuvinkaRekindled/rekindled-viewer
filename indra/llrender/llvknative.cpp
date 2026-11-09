@@ -371,9 +371,9 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     const size_t words = out.mSpirv[0].size() + out.mSpirv[1].size();
     LL_INFOS("VkNative") << "native program '" << name << "': " << out.mSpirv[0].size() << " + " << out.mSpirv[1].size() << " SPIR-V words, " << out.mUniforms.size() << " uniforms, " << out.mSamplers.size()
         << " texture slots, compiled in " << ms << " ms" << LL_ENDL;
-    if (words > 30000 || ms > 150.0)
+    if (words > 40000 || ms > 150.0)
     {
-        LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (30000 SPIR-V words, 150 ms): split it" << LL_ENDL;
+        LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (40000 SPIR-V words, 150 ms): split it" << LL_ENDL;
     }
     return true;
 }

@@ -2937,6 +2937,29 @@ void pass_poison()
 
 // <FS> shaders family 2: the packet draws (records that draw from the tables, not through draw_context_apply) take a native stand-in too. Made after the record has written its uniforms into the viewer's program
 // (the packet table, models and texture matrices are copied into the native program by name), put back when the record's draws are done.
+// (LL_VK_NATIVE_LOG=1: once per native program, which texture each sampler of the program and of the program it stands in reads: the unit, the texture's name, size, dimension and handle)
+void log_native_bindings(Program* old_program, Program* native_program)
+{
+    static std::set<const Program*> told;
+    if (!told.insert(native_program).second)
+    {
+        return;
+    }
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        Program* p = pass == 0 ? old_program : native_program;
+        const ProgramInfo& info = p->getInfo();
+        for (size_t k = 0; k < info.mSamplers.size(); ++k)
+        {
+            const U32 unit = p->getSamplerUnit(k);
+            const U32 name = unit < 32 ? gPassState.mUnitTex[unit] : 0;
+            Tex* t = name ? tex_ptr(name) : nullptr;
+            LL_INFOS("VkNative") << (pass == 0 ? "OLD " : "NATIVE ") << p->getName() << ": sampler " << info.mSamplers[k].mName << " (" << info.mSamplers[k].mType << ") unit " << unit << " texture " << name
+                << (t ? std::string(" ") + std::to_string(t->mWidth) + "x" + std::to_string(t->mHeight) + " dim " + std::to_string((int)t->mDim) + " levels " + std::to_string(t->mLevels) + " handle " + std::to_string(t->mHandle) : std::string(" (none)")) << LL_ENDL;
+        }
+    }
+}
+
 struct NativeDrawSwap
 {
     Renderer& mR;
@@ -2949,6 +2972,11 @@ struct NativeDrawSwap
             Program* n = nativeOverride(p);
             if (n != p)
             {
+                static const bool log_on = getenv("LL_VK_NATIVE_LOG") != nullptr;
+                if (log_on)
+                {
+                    log_native_bindings(p, n);
+                }
                 r.setProgram(n);
                 mOn = true;
             }
