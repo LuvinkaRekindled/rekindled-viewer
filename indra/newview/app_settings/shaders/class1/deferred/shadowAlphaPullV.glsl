@@ -92,18 +92,28 @@ void main()
         vec4 joint = clamp(floor(weight4), vec4(0.0), vec4(float(pk.joints - 1u)));
         w *= 1.0 / (w.x + w.y + w.z + w.w);
         AlphaPalette palette = AlphaPalette(pk.palette);
+        // (a joint with no weight is not read: most vertices have one to three; a zero weight adds nothing)
         AlphaJoint j1 = palette.j[int(joint.x)];
-        AlphaJoint j2 = palette.j[int(joint.y)];
-        AlphaJoint j3 = palette.j[int(joint.z)];
-        AlphaJoint j4 = palette.j[int(joint.w)];
         mat3 m = mat3(j1.c0.xyz, j1.c1.xyz, j1.c2.xyz) * w.x;
-        m += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
-        m += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
-        m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
         vec3 trans = vec3(j1.c0.w, j1.c1.w, j1.c2.w) * w.x;
-        trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
-        trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
-        trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+        if (w.y > 0.0)
+        {
+            AlphaJoint j2 = palette.j[int(joint.y)];
+            m += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
+            trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
+        }
+        if (w.z > 0.0)
+        {
+            AlphaJoint j3 = palette.j[int(joint.z)];
+            m += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
+            trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
+        }
+        if (w.w > 0.0)
+        {
+            AlphaJoint j4 = palette.j[int(joint.w)];
+            m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
+            trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+        }
         local = m * position.xyz + trans;
     }
     vec4 pos = ll_view_proj * AlphaModels(ll_packet_models).m[pk.model] * vec4(local, 1.0);

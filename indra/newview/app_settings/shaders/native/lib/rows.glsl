@@ -174,9 +174,12 @@ void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
     translation = vec3(0.0);
     for (int k = 0; k < 4; ++k)
     {
-        const Joint j = palette.j[int(joint[k])];
-        rotation += mat3(j.c0.xyz, j.c1.xyz, j.c2.xyz) * weight[k];
-        translation += vec3(j.c0.w, j.c1.w, j.c2.w) * weight[k];
+        if (weight[k] > 0.0)        // (a joint with no weight is not read: most vertices have one to three, and a zero weight adds nothing)
+        {
+            const Joint j = palette.j[int(joint[k])];
+            rotation += mat3(j.c0.xyz, j.c1.xyz, j.c2.xyz) * weight[k];
+            translation += vec3(j.c0.w, j.c1.w, j.c2.w) * weight[k];
+        }
     }
 }
 #else

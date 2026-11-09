@@ -92,19 +92,28 @@ void skinTransform(GeoPacket pk, uint index, out mat3 sm, out vec3 trans)
     w *= 1.0 / (w.x + w.y + w.z + w.w);
 
     SkinPalette palette = SkinPalette(pk.palette);
+    // (a joint with no weight is not read: most vertices have one to three; a zero weight adds nothing)
     SkinJoint j1 = palette.j[int(joint.x)];
-    SkinJoint j2 = palette.j[int(joint.y)];
-    SkinJoint j3 = palette.j[int(joint.z)];
-    SkinJoint j4 = palette.j[int(joint.w)];
-
     sm = mat3(j1.c0.xyz, j1.c1.xyz, j1.c2.xyz) * w.x;
-    sm += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
-    sm += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
-    sm += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
     trans = vec3(j1.c0.w, j1.c1.w, j1.c2.w) * w.x;
-    trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
-    trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
-    trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+    if (w.y > 0.0)
+    {
+        SkinJoint j2 = palette.j[int(joint.y)];
+        sm += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
+        trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
+    }
+    if (w.z > 0.0)
+    {
+        SkinJoint j3 = palette.j[int(joint.z)];
+        sm += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
+        trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
+    }
+    if (w.w > 0.0)
+    {
+        SkinJoint j4 = palette.j[int(joint.w)];
+        sm += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
+        trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+    }
 }
 #endif
 

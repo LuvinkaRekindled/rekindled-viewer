@@ -44,9 +44,15 @@ mat4 getSkinnedTransform()
     int n = min(i + 1, 14);
     float x = fract(wx);
 
-    ret[0] = mix(matrixPalette[i+0], matrixPalette[n+0], x);
-    ret[1] = mix(matrixPalette[i+15],matrixPalette[n+15], x);
-    ret[2] = mix(matrixPalette[i+30],matrixPalette[n+30], x);
+    ret[0] = matrixPalette[i+0];
+    ret[1] = matrixPalette[i+15];
+    ret[2] = matrixPalette[i+30];
+    if (x > 0.0)        // (the second joint of the pair is not read when the weight is zero: most body vertices belong to one joint)
+    {
+        ret[0] = mix(ret[0], matrixPalette[n+0], x);
+        ret[1] = mix(ret[1], matrixPalette[n+15], x);
+        ret[2] = mix(ret[2], matrixPalette[n+30], x);
+    }
     ret[3] = vec4(0,0,0,1);
 
     return ret;
