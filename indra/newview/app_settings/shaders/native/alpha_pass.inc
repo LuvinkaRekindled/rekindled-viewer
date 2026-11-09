@@ -2,12 +2,20 @@
 // Every name and type is the one the viewer's alpha programs use: the renderer copies the values by name when the native program stands in (Program::adoptFrom).
 // ALPHA_LIT (a define of the manifest line) adds what a lit surface needs: the sun, the shadow cascades, the lights.
 
+// ALPHA_PBR (a glTF blend surface: alpha_pbr.vert / alpha_pbr.frag) uses the same probes and screen space reflections as a material one
+#if defined(ALPHA_MAT) || (defined(ALPHA_PBR) && !defined(ALPHA_PBR_HUD))
+#define ALPHA_REFLECTS 1
+#endif
+
 layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 {
     // the scene table of the record: three buffer addresses (rows, model matrices, texture matrices), written by the draw record
     uvec2 ll_packet_table;
     uvec2 ll_packet_models;
     uvec2 ll_packet_texmats;
+#ifdef ALPHA_PBR
+    uvec2 ll_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
+#endif
 
     // the sky of the pass (the haze and the sun/moon terms)
     vec3 lightnorm;
@@ -68,7 +76,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int cube_snapshot;
 #endif
 
-#if defined(ALPHA_MAT) && defined(SSR)
+#if defined(ALPHA_REFLECTS) && defined(SSR)
     // screen space reflections: the previous frame's camera (the picture and depth are its), the marcher's settings
     mat4 projection_matrix;
     mat4 inv_proj;
@@ -124,10 +132,13 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 #endif
 #ifdef ALPHA_MAT
     uint ll_ti_lightFunc;               // the sun's specular lobe table
-#ifdef SSR
+#endif
+#ifdef ALPHA_PBR
+    uint ll_ti_brdfLut;                 // the split sum lookup of the image based light (x: scale of the specular colour, y: bias)
+#endif
+#if defined(ALPHA_REFLECTS) && defined(SSR)
     uint ll_ti_sceneMap;                // the previous frame's picture and depth
     uint ll_ti_sceneDepth;
-#endif
 #endif
 };
 #endif
