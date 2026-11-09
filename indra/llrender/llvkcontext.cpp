@@ -2108,22 +2108,6 @@ VkCommandBuffer Context::beginFrame(bool wait)
     f.mOffscreen = mNextOffscreen;
     mNextOffscreen = false;
 
-    {
-        // LL_VK_IMAGE_HOLD: held images whose time has come join the destroy list (and then wait their usual two rounds)
-        std::vector<std::function<void()>> release;
-        {
-            std::lock_guard<std::mutex> lock(mHeldMutex);
-            while (!mHeldImages.empty() && mHeldImages.front().first <= mFrameNumber)
-            {
-                release.push_back(std::move(mHeldImages.front().second));
-                mHeldImages.pop_front();
-            }
-        }
-        for (auto& fn : release)
-        {
-            destroyLater(std::move(fn));
-        }
-    }
     // What was queued two rounds of this slot ago is destroyed now; what was queued last round waits one more (the frame it was queued in has completed, but a copy or a draw that names it can have
     // been recorded into one of the frames after it: pending writes are flushed late, a rename's copy goes into whichever frame is recording when the buffers are flushed).
     {
@@ -3432,7 +3416,6 @@ void Context::destroyImage(Image& image)
     VmaAllocation a = image.mAllocation;
     VmaAllocator alloc = mAllocator;
     VkDevice dev = mDevice;
-    static const S32 hold_frames = getenv("LL_VK_IMAGE_HOLD") ? std::max(0, atoi(getenv("LL_VK_IMAGE_HOLD"))) : 0;
     const U64 view_id = image.mViewId;
     std::function<void(U64)> release_hook = mViewReleaseHook;
     std::function<void()> fn = [=]() {
@@ -3443,15 +3426,7 @@ void Context::destroyImage(Image& image)
         if (v) vkDestroyImageView(dev, v, nullptr);
         if (a) vmaDestroyImage(alloc, i, a);
     };
-    if (hold_frames > 0)
-    {
-        std::lock_guard<std::mutex> lock(mHeldMutex);
-        mHeldImages.push_back({ mFrameNumber + (U64)hold_frames, std::move(fn) });
-    }
-    else
-    {
-        destroyLater(std::move(fn));
-    }
+    destroyLater(std::move(fn));
     image = Image();
 }
 

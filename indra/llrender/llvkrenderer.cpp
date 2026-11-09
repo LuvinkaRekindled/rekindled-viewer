@@ -3208,6 +3208,7 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
         ++mStatBindlessRefused;
         return false;
     }
+    static std::atomic<U64> sSplitMapSkips{0}; if (mCmd != VK_NULL_HANDLE && Context::instance().frameSplit()) { const U64 skips = ++sSplitMapSkips; if (skips == 1 || skips % 1000 == 0) { LL_INFOS("VkTex") << "handle map: " << skips << " entries not written into the map of a split frame so far (the first part of the frame is on the GPU; the next frame takes them from the log)" << LL_ENDL; } }
     mPendingWrites.push_back({ table, d, { sampler, image->mView, layout } });
     if (mDescView[table].size() <= d)
     {
