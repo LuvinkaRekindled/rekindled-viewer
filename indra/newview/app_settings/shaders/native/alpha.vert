@@ -15,6 +15,18 @@ layout(location = 4) out vec3 vary_norm;        // the surface normal in eye spa
 #ifdef ALPHA_UBER
 layout(location = 5) flat out uint vary_fullbright;     // 1: the draw is a fullbright one (flags bit 5)
 #endif
+#ifdef ALPHA_MAT
+// a material draw (flags bits 6-8: 1 a material, 2 with a normal map, 4 with a specular map)
+layout(location = 6) flat out uint vary_material;
+layout(location = 7) out vec3 vary_tangent;
+layout(location = 8) out vec2 vary_texcoord1;
+layout(location = 9) out vec2 vary_texcoord2;
+layout(location = 10) flat out float vary_sign;
+layout(location = 11) flat out uint vary_slot_normal;
+layout(location = 12) flat out uint vary_slot_specular;
+layout(location = 13) flat out vec4 vary_specular;      // the specular colour (rgb) and glossiness (a)
+layout(location = 14) flat out vec2 vary_matparams;     // the environment intensity, the glow
+#endif
 
 #if defined(HAS_SKIN) && !defined(HAS_INDEXED_DRAW)
 #error "a rigged draw of the alpha family is an indexed one"
@@ -69,12 +81,49 @@ void main()
         texcoord = vec2((particle_corner_id & 2u) != 0u ? 1.0 : 0.0, (particle_corner_id & 1u) != 0u ? 0.0 : 1.0);
     }
 #endif
-    vary_texcoord0 = (row_texture_matrix(row, TexMatTable(ll_packet_texmats)) * vec4(texcoord, 0.0, 1.0)).xy;
+    const mat4 texmat = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    vary_texcoord0 = (texmat * vec4(texcoord, 0.0, 1.0)).xy;
     vary_position = eye.xyz;
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
     vary_slot = row_texture_slot(row, position.w);
 #ifdef ALPHA_UBER
     vary_fullbright = (row.flags & 32u) != 0u ? 1u : 0u;
+#endif
+#ifdef ALPHA_MAT
+    {
+        const uint flags = (row.flags >> 6u) & 7u;
+        vary_material = flags;
+        vary_tangent = vec3(0.0, 0.0, 1.0);
+        vary_texcoord1 = vec2(0.0);
+        vary_texcoord2 = vec2(0.0);
+        vary_sign = 1.0;
+        vary_slot_normal = 0u;
+        vary_slot_specular = 0u;
+        vary_specular = vec4(0.0);
+        vary_matparams = vec2(0.0);
+        if ((flags & 1u) != 0u)
+        {
+            vary_specular = row.specular;
+            vary_matparams = vec2(row.envIntensity, row.brightness);
+            vary_slot_normal = row.mapSlots & 0xFFFFu;
+            vary_slot_specular = row.mapSlots >> 16;
+            if ((flags & 2u) != 0u)
+            {
+                const vec4 tangent = RowVec4(row.tangents).v[index];
+                vary_texcoord1 = (texmat * vec4(RowVec2(row.texcoords1).t[index], 0.0, 1.0)).xy;
+#ifdef HAS_SKIN
+                vary_tangent = normalize(mat3(model.mv) * (skin_rotation * tangent.xyz));
+#else
+                vary_tangent = normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * tangent.xyz);
+#endif
+                vary_sign = tangent.w;
+            }
+            if ((flags & 4u) != 0u)
+            {
+                vary_texcoord2 = (texmat * vec4(RowVec2(row.texcoords2).t[index], 0.0, 1.0)).xy;
+            }
+        }
+    }
 #endif
 
 #ifdef ALPHA_LIT

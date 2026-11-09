@@ -67,6 +67,18 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float max_probe_lod;
     int cube_snapshot;
 #endif
+
+#if defined(ALPHA_MAT) && defined(SSR)
+    // screen space reflections: the previous frame's camera (the picture and depth are its), the marcher's settings
+    mat4 projection_matrix;
+    mat4 inv_proj;
+    mat4 inv_modelview_delta;
+    float iterationCount;
+    float rayStep;
+    float distanceBias;
+    float depthRejectBias;
+    float adaptiveStepMultiplier;
+#endif
 };
 
 #ifdef ALPHA_PROBES
@@ -108,6 +120,13 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
     uint ll_ti_cubearray_heroProbes;
+#endif
+#endif
+#ifdef ALPHA_MAT
+    uint ll_ti_lightFunc;               // the sun's specular lobe table
+#ifdef SSR
+    uint ll_ti_sceneMap;                // the previous frame's picture and depth
+    uint ll_ti_sceneDepth;
 #endif
 #endif
 };
