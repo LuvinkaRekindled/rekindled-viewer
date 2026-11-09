@@ -9281,6 +9281,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
         program->setFloatsAt(pu.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
     }
+    NativeDrawSwap native_swap(r, program);         // <FS> family 3: the G-buffer table draws with a native stand-in when its family is on (the old program's values are copied by name)
     if (!prepare_draw(vi, used_cache))
     {
         return;
