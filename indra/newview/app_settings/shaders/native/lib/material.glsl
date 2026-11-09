@@ -6,24 +6,7 @@
 // the same mistake in the screen march hung the shader. The table has one level.)
 #define LIGHT_FUNC ll_tbl2d[LL_HM(ll_ti_lightFunc)]
 
-// the gloss environment on a surface: dimmed, by the fresnel of the view, the specular colour and what the surface's own colour already takes (a cheap energy balance)
-void apply_gloss_env(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 norm)
-{
-    glossenv *= 0.5;
-    float fresnel = clamp(1.0 + dot(normalize(pos), norm), 0.3, 1.0);
-    fresnel *= fresnel * spec.a;
-    glossenv *= spec.rgb * fresnel;
-    glossenv *= vec3(1.0) - color;
-    color += glossenv * 0.5;
-}
-
-// the legacy environment (the shiny setting of a face): mixed in by its intensity
-void apply_legacy_env(inout vec3 color, vec3 legacyenv, vec3 pos, vec3 norm, float intensity)
-{
-    float fresnel = 1.0 + dot(normalize(pos), norm);
-    fresnel = min(fresnel * fresnel + intensity, 1.0);
-    color = mix(color, legacyenv * (intensity * fresnel) * 0.5, intensity);
-}
+#include "lib/glossenv.glsl"
 
 // one local light on a material surface: the diffuse of alpha_local_light plus the light's specular (from the lightFunc table). glare collects the brightest specular, which makes the surface more opaque
 vec3 alpha_mat_light(vec3 light_col, vec3 diffuse, vec4 spec, vec3 pos, vec3 n, vec3 view_dir, vec3 center, float size, float falloff, vec3 axis, float point, inout float glare)
