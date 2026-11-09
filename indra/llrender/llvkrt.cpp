@@ -1075,18 +1075,28 @@ void main()
         float weight_sum = w.x + w.y + w.z + w.w;
         w = weight_sum > 1e-6 ? w / weight_sum : vec4(1.0, 0.0, 0.0, 0.0);
         Palette palette = Palette(job.palette);
+        // (a joint with no weight is not read: most vertices have one to three; a zero weight adds nothing)
         Joint j1 = palette.j[int(joint.x)];
-        Joint j2 = palette.j[int(joint.y)];
-        Joint j3 = palette.j[int(joint.z)];
-        Joint j4 = palette.j[int(joint.w)];
         mat3 m = mat3(j1.c0.xyz, j1.c1.xyz, j1.c2.xyz) * w.x;
-        m += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
-        m += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
-        m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
         vec3 trans = vec3(j1.c0.w, j1.c1.w, j1.c2.w) * w.x;
-        trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
-        trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
-        trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+        if (w.y > 0.0)
+        {
+            Joint j2 = palette.j[int(joint.y)];
+            m += mat3(j2.c0.xyz, j2.c1.xyz, j2.c2.xyz) * w.y;
+            trans += vec3(j2.c0.w, j2.c1.w, j2.c2.w) * w.y;
+        }
+        if (w.z > 0.0)
+        {
+            Joint j3 = palette.j[int(joint.z)];
+            m += mat3(j3.c0.xyz, j3.c1.xyz, j3.c2.xyz) * w.z;
+            trans += vec3(j3.c0.w, j3.c1.w, j3.c2.w) * w.z;
+        }
+        if (w.w > 0.0)
+        {
+            Joint j4 = palette.j[int(joint.w)];
+            m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
+            trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
+        }
         pos = m * pos + trans;
         nrm = m * nrm;                  // the same linear part (the viewer's own skinning shaders do the same: no inverse transpose)
     }

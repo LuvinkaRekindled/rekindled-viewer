@@ -34,11 +34,8 @@ out vec4 vary_clip;
 out vec4 vary_cur;
 out vec4 vary_prev;
 
-vec3 skinPosition(vec4 p, vec4 a0, vec4 a1, vec4 a2, vec4 b0, vec4 b1, vec4 b2, float x)
+vec3 dotRows(vec4 r0, vec4 r1, vec4 r2, vec4 p)
 {
-    vec4 r0 = mix(a0, b0, x);
-    vec4 r1 = mix(a1, b1, x);
-    vec4 r2 = mix(a2, b2, x);
     return vec3(dot(r0, p), dot(r1, p), dot(r2, p));
 }
 
@@ -54,8 +51,24 @@ void main()
     float x = fract(wx);
     vec4 p = vec4(position, 1.0);
 
-    vec3 world_cur = skinPosition(p, matrixPalette[i], matrixPalette[i + 15], matrixPalette[i + 30], matrixPalette[n], matrixPalette[n + 15], matrixPalette[n + 30], x);
-    vec3 world_prev = skinPosition(p, matrixPalettePrev[i], matrixPalettePrev[i + 15], matrixPalettePrev[i + 30], matrixPalettePrev[n], matrixPalettePrev[n + 15], matrixPalettePrev[n + 30], x);
+    // (the second joint of the pair is not read when the weight is zero: most body vertices belong to one joint)
+    vec4 c0 = matrixPalette[i];
+    vec4 c1 = matrixPalette[i + 15];
+    vec4 c2 = matrixPalette[i + 30];
+    vec4 p0 = matrixPalettePrev[i];
+    vec4 p1 = matrixPalettePrev[i + 15];
+    vec4 p2 = matrixPalettePrev[i + 30];
+    if (x > 0.0)
+    {
+        c0 = mix(c0, matrixPalette[n], x);
+        c1 = mix(c1, matrixPalette[n + 15], x);
+        c2 = mix(c2, matrixPalette[n + 30], x);
+        p0 = mix(p0, matrixPalettePrev[n], x);
+        p1 = mix(p1, matrixPalettePrev[n + 15], x);
+        p2 = mix(p2, matrixPalettePrev[n + 30], x);
+    }
+    vec3 world_cur = dotRows(c0, c1, c2, p);
+    vec3 world_prev = dotRows(p0, p1, p2, p);
 
     vary_clip = projection_matrix * (modelview_matrix * vec4(world_cur, 1.0));
     vary_cur = view_proj_cur * vec4(world_cur, 1.0);

@@ -35,12 +35,36 @@ out vec4 vary_clip;
 out vec4 vary_cur;
 out vec4 vary_prev;
 
-vec3 skinPosition(vec3 p, mat3x4 a, mat3x4 b, mat3x4 c, mat3x4 d, vec4 w)
+// both palettes, the current and last frame's: a joint with no weight is not read (most vertices have one to three; a zero weight adds nothing)
+void skinBoth(vec3 p, int i1, int i2, int i3, int i4, vec4 w, out vec3 world_cur, out vec3 world_prev)
 {
-    mat3 m = mat3(a) * w.x + mat3(b) * w.y + mat3(c) * w.z + mat3(d) * w.w;
-    vec3 t = vec3(a[0].w, a[1].w, a[2].w) * w.x + vec3(b[0].w, b[1].w, b[2].w) * w.y
-           + vec3(c[0].w, c[1].w, c[2].w) * w.z + vec3(d[0].w, d[1].w, d[2].w) * w.w;
-    return m * p + t;
+    mat3 mc = mat3(matrixPalette[i1]) * w.x;
+    vec3 tc = vec3(matrixPalette[i1][0].w, matrixPalette[i1][1].w, matrixPalette[i1][2].w) * w.x;
+    mat3 mp = mat3(matrixPalettePrev[i1]) * w.x;
+    vec3 tp = vec3(matrixPalettePrev[i1][0].w, matrixPalettePrev[i1][1].w, matrixPalettePrev[i1][2].w) * w.x;
+    if (w.y > 0.0)
+    {
+        mc += mat3(matrixPalette[i2]) * w.y;
+        tc += vec3(matrixPalette[i2][0].w, matrixPalette[i2][1].w, matrixPalette[i2][2].w) * w.y;
+        mp += mat3(matrixPalettePrev[i2]) * w.y;
+        tp += vec3(matrixPalettePrev[i2][0].w, matrixPalettePrev[i2][1].w, matrixPalettePrev[i2][2].w) * w.y;
+    }
+    if (w.z > 0.0)
+    {
+        mc += mat3(matrixPalette[i3]) * w.z;
+        tc += vec3(matrixPalette[i3][0].w, matrixPalette[i3][1].w, matrixPalette[i3][2].w) * w.z;
+        mp += mat3(matrixPalettePrev[i3]) * w.z;
+        tp += vec3(matrixPalettePrev[i3][0].w, matrixPalettePrev[i3][1].w, matrixPalettePrev[i3][2].w) * w.z;
+    }
+    if (w.w > 0.0)
+    {
+        mc += mat3(matrixPalette[i4]) * w.w;
+        tc += vec3(matrixPalette[i4][0].w, matrixPalette[i4][1].w, matrixPalette[i4][2].w) * w.w;
+        mp += mat3(matrixPalettePrev[i4]) * w.w;
+        tp += vec3(matrixPalettePrev[i4][0].w, matrixPalettePrev[i4][1].w, matrixPalettePrev[i4][2].w) * w.w;
+    }
+    world_cur = mc * p + tc;
+    world_prev = mp * p + tp;
 }
 
 void main()
@@ -56,8 +80,8 @@ void main()
     int i3 = int(index.z);
     int i4 = int(index.w);
 
-    vec3 world_cur = skinPosition(position, matrixPalette[i1], matrixPalette[i2], matrixPalette[i3], matrixPalette[i4], w);
-    vec3 world_prev = skinPosition(position, matrixPalettePrev[i1], matrixPalettePrev[i2], matrixPalettePrev[i3], matrixPalettePrev[i4], w);
+    vec3 world_cur, world_prev;
+    skinBoth(position, i1, i2, i3, i4, w, world_cur, world_prev);
 
     vary_clip = projection_matrix * (modelview_matrix * vec4(world_cur, 1.0));
     vary_cur = view_proj_cur * vec4(world_cur, 1.0);
