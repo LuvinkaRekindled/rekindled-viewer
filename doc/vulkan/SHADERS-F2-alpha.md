@@ -105,6 +105,10 @@ Files: `native/alpha_lit.frag` (+ `alpha.vert` with ALPHA_LIT: the eye space nor
 
 Compile: vertex 7467 / 6201 words, fragment 9280 words, 6-10 ms. Picture (still plaza, native p2 vs old b): whole image 2.07 (floor 1.11), ground 0.9 / 0.3, store front 1.09 (floor 4.08); the avatar's region reads 17.9 because the avatar changed pose between the shots (sit it on the ground for a picture lap: Ctrl+Alt+S, Force Ground Sit); the hair's colour and shadow look the same in the crop. Cost, two laps of six 12 s window pairs (the list is on in both): GPU 6.136 -> 6.089 ms and 6.079 -> 6.145 ms (noise: +-0.07), main thread frame interval +0.14 ms in both (6.63 -> 6.78, 6.53 -> 6.67), unexplained, not changed by the adoptFrom cache (windows are mixed: two of six pairs the other way). Not yet checked by Adam's eyes at his home (hair, four lights).
 
+### 9.6 Adam's check of the native lit alpha at his home (2026-11-08, `native_alpha=1`, `alphauber=0`, classic sky, 25 nearby lights)
+
+"That works great. I can move around and zoom. Walking picks up some of the colour from the different light sources and it doesn't blink solidly between them, just the hints of colour." Same behaviour as the old program with the light list, now from the native program (the log showed 88000 draws of the static and 58000 of the rigged lit program). The glTF material preview crash that had to be fixed first is `293447d952`.
+
 ## 10. Decision (Adam, 2026-11-08): the alpha pass goes native, so the old uber shader and its loop do not stay mixed in with the native programs
 
 What a native alpha program needs (all of it reused by later families: fullbright, water, the resolve):
