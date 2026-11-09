@@ -2634,18 +2634,20 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             drawBindingRead(payload + sizeof(DrawHeader2), b);
         }
+        const U32* ids = (const U32*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
+        const U32 id_bytes = (h->mCountTex * (U32)sizeof(U32) + 7) & ~7u;
+        // <FS> the draw's own loose uniform writes come FIRST: draw_context_apply may swap to a native stand-in (llvknative.h), which copies the old program's uniform values at that moment; with the writes after it
+        // the native program drew with the values of the draw before this one (the sun direction of the previous view: Adam's strobe, 2026-11-09). The writes name their program, so they do not depend on the swap.
+        if (h->mUniBytes)
+        {
+            applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes, h->mUniBytes);
+        }
         LLVkWorker::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
         if (LLVkPassCensus::sOn)
         {
             LLVkPassCensus::programAnnounced();
             LLVkPassCensus::drawProgram(h2->mProgram, h2->mProgram ? ((LLVk::Program*)h2->mProgram)->getName().c_str() : nullptr);
             LLVkPassCensus::binding(h2->mBindBytes != 0);
-        }
-        const U32* ids = (const U32*)(payload + sizeof(DrawHeader2) + h2->mBindBytes);
-        const U32 id_bytes = (h->mCountTex * (U32)sizeof(U32) + 7) & ~7u;
-        if (h->mUniBytes)
-        {
-            applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes, h->mUniBytes);
         }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
