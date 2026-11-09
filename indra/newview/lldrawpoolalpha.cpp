@@ -1349,6 +1349,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 const bool glow_served = !glow_range[0].empty() || !glow_range[1].empty() || !glow_range[2].empty() || !glow_draws[0].empty() || !glow_draws[1].empty() || !glow_draws[2].empty() || !glow_particle_runs.empty();
                 if (glow_served)
                 {
+                    LLPipeline::sGlowDrawn = true;      // <FS> the bloom has something to extract this frame
                     run_flush();
                     setup_key = -1;
                     gPipeline.enableLightsDynamic();

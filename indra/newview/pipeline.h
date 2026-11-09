@@ -229,7 +229,7 @@ public:
     void applySMAA(LLRenderTarget* src, LLRenderTarget* dst);
     void renderDoF(LLRenderTarget* src, LLRenderTarget* dst);
     void copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst);
-    void combineGlow(LLRenderTarget* src, LLRenderTarget* dst);
+    bool combineGlow(LLRenderTarget* src, LLRenderTarget* dst);       // false: nothing glows this frame, dst was not written (the caller keeps src)
     void visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 bufferIndex);
 
     void init();
@@ -935,6 +935,7 @@ public:
     static bool             sShowJellyDollAsImpostor;
     static bool             sUnderWaterRender;
     static bool             sRenderGlow;
+    static bool             sGlowDrawn;     // <FS> a glow second draw (the bloom's alpha) was made since the last renderFinalize: with none, the glow passes are skipped
     static bool             sTextureBindTest;
     static bool             sRenderAttachedLights;
     static bool             sRenderAttachedParticles;
@@ -1064,6 +1065,8 @@ public:
 
     //texture for making the glow
     LLRenderTarget              mGlow[3];
+    bool                        mGlowHasContent = true;     // <FS> mGlow[1] may hold something other than zeros (a frame with glow, or a fresh target): cleared once when a frame without glow follows
+    bool                        mGlowCombine = false;       // <FS> this frame's glow passes ran: the combine pass has something to add
 
     // texture for SH indirect sky contribution
     LLRenderTarget              mSkySH;

@@ -378,6 +378,7 @@ bool    LLPipeline::sNoAlpha = false;
 bool    LLPipeline::sUseFarClip = true;
 bool    LLPipeline::sShadowRender = false;
 bool    LLPipeline::sRenderGlow = false;
+bool    LLPipeline::sGlowDrawn = false;
 bool    LLPipeline::sReflectionRender = false;
 bool    LLPipeline::sDistortionRender = false;
 bool    LLPipeline::sImpostorRender = false;
@@ -1627,6 +1628,7 @@ void LLPipeline::createRenderBuffers()
     {
         mGlow[i].allocate(512, glow_res, glow_color_fmt);
     }
+    mGlowHasContent = true;
 
     allocateScreenBuffer(resX, resY);
     // Do not zero out mRT dimensions here. allocateScreenBuffer() above
@@ -22464,8 +22466,23 @@ void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget*
 void LLPipeline::generateGlow(LLRenderTarget* src)
 {
     LL_PROFILE_GPU_ZONE("glow generate");
-    if (sRenderGlow)
+    // <FS> glow comes only from the glow second draws of the alpha pass (the extraction's luminance threshold is 9999): a frame without one has a glow target of zeros, so the
+    // extraction, the blur passes and the combine have nothing to do. The target is cleared once, when a frame with glow (or a new target) was the last.
+    const bool glow_drawn = sGlowDrawn;
+    sGlowDrawn = false;
+    mGlowCombine = false;
+    if (!sRenderGlow || !glow_drawn)
     {
+        if (mGlowHasContent)
+        {
+            RenderPassScope pass(mGlow[1], RenderPass::LoadOp::Clear);
+            mGlowHasContent = false;
+        }
+    }
+    else
+    {
+        mGlowHasContent = true;
+        mGlowCombine = true;
         RenderPassScope pass(mGlow[2], RenderPass::LoadOp::Clear);
 
         gGlowExtractProgram.bind();
@@ -22559,10 +22576,6 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
 
         gGlowProgram.unbind();
 
-    }
-    else // !sRenderGlow, skip the glow ping-pong and just clear the result target
-    {
-        RenderPassScope pass(mGlow[1], RenderPass::LoadOp::Clear);
     }
 }
 
@@ -22729,6 +22742,8 @@ struct VelocityRiggedWork
     bool mObjectsOn = false;            // the moving objects (step 1b) are worked out in the job too
     // out
     std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
+    std::vector<GeoRange> mRanges;              // <FS> by entry: the range of its draw, and its avatar: the main thread looks up the simplified list the G-buffer draws with (the same lists, the same pixels)
+    std::vector<LLVOAvatar*> mEntryAvatars;
     std::vector<F32> mPalettes, mPrevPalettes;
     std::vector<LLDrawInfo*> mFallback;
     U32 mSkipped = 0, mStill = 0;
@@ -22776,6 +22791,8 @@ static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
     w.mObjectsOn = objects_setting && gObjectVelocityPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
     w.mFrame = ++sVelocityPassCount;     // <FS> the avatar frame record: the answers are kept on the avatar and on its palette entries, stamped with this run of the pass (no maps made again every frame; a second run in one frame starts over)
     w.mEntries.clear();
+    w.mRanges.clear();
+    w.mEntryAvatars.clear();
     w.mPalettes.clear();
     w.mPrevPalettes.clear();
     w.mFallback.clear();
@@ -22813,7 +22830,7 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
     const F32 min_motion_px = w.mMinMotionPx;
     const U32 vel_frame = w.mFrame;
     // J1 K2b: the per draw work takes (avatar, skin, buffer, range) so the served rigged items of the fragments can be read through their sources, and only the draws left in the render map through their draw infos
-    struct VelDraw { LLVOAvatar* avatar; const LLMeshSkinInfo* skin; const LLVertexBuffer* vb; U32 offset, count; LLDrawInfo* info; };
+    struct VelDraw { LLVOAvatar* avatar; const LLMeshSkinInfo* skin; const LLVertexBuffer* vb; U32 offset, count; LLDrawInfo* info; GeoRange range; };
     auto consume = [&](const VelDraw& d)
     {
         LLVOAvatar* avatar = d.avatar;
@@ -22908,6 +22925,8 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             e.mPaletteOffset = mpc.mOffset;
             e.mJoints = joints;
             w.mEntries.push_back(e);
+            w.mRanges.push_back(d.range);
+            w.mEntryAvatars.push_back(avatar);
             return;
         }
         if (d.info)
@@ -22923,14 +22942,14 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
         { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos, !rig_mode); }       // (S4 B: the render map and, unless the sources are read, the draws the scene table serves)
         for (LLDrawInfo* params : infos)
         {
-            consume({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, params });
+            consume({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, params, ll_geo_range(params) });
         }
         if (rig_mode)
         {
             { LL_CPU_ZONE("avatar velocity: collect rigged item sources"); collect_main_view_rig_sources(type, rigs); }
             for (const GeoRigSource* rig : rigs)
             {
-                consume({ rig->mAvatar.get(), rig->mSkin.get(), rig->mVb.get(), rig->mOffset, rig->mCount, nullptr });
+                consume({ rig->mAvatar.get(), rig->mSkin.get(), rig->mVb.get(), rig->mOffset, rig->mCount, nullptr, rig->range() });
             }
         }
     }
@@ -23203,6 +23222,44 @@ void LLPipeline::renderAvatarVelocity()
         std::vector<LLDrawInfo*>& fallback = work.mFallback;
         rigged_skipped = work.mSkipped;
         still_draws = work.mStill;
+
+        if (!entries.empty() && work.mRanges.size() == entries.size())
+        {
+            // <FS> the G-buffer draws a far avatar's meshes with a simplified list (under half a pixel of error at its distance; riggedlodopq): the velocity pass takes the same list, so it skins and
+            // rasterises a third of the triangles and covers the pixels the G-buffer put there. (LL_VK_VELLOD=0: the draws' own lists, as before.) The lookup is the main thread's: the lists are
+            // cached by range and level, the G-buffer's rows asked for them first.
+            LL_CPU_ZONE("avatar velocity: simplified lists");
+            static const bool vel_lod = !getenv("LL_VK_VELLOD") || atoi(getenv("LL_VK_VELLOD")) != 0;
+            static U64 passes = 0, asked = 0, patched = 0, tris_before = 0, tris_after = 0;
+            if (vel_lod)
+            {
+                extern bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count);
+                for (size_t i = 0; i < entries.size(); ++i)
+                {
+                    ++asked;
+                    U32 ib_name = 0, count = 0;
+                    if (ll_rigged_lod_opaque(work.mRanges[i], work.mEntryAvatars[i], ib_name, count) && ib_name && count)
+                    {
+                        tris_before += entries[i].mIndexCount / 3;
+                        tris_after += count / 3;
+                        entries[i].mIndexBuffer = ib_name;
+                        entries[i].mFirstIndex = 0;
+                        entries[i].mIndexCount = count;
+                        ++patched;
+                    }
+                    else
+                    {
+                        tris_before += entries[i].mIndexCount / 3;
+                        tris_after += entries[i].mIndexCount / 3;
+                    }
+                }
+                if (++passes % 600 == 0)
+                {
+                    LL_INFOS("ShadowLod") << "velocity pass LOD: " << asked << " entries asked in 600 passes, " << patched << " got a simplified list, triangles " << tris_before << " -> " << tris_after << LL_ENDL;
+                    asked = patched = tris_before = tris_after = 0;
+                }
+            }
+        }
 
         if (!entries.empty())
         {
@@ -24143,8 +24200,12 @@ void LLPipeline::copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst)
 
 }
 
-void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
+bool LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
 {
+    if (!mGlowCombine)
+    {
+        return false;       // <FS> nothing glows: src plus zeros is src
+    }
     LL_PROFILE_GPU_ZONE("glow combine");
 
     // Go ahead and do our glow combine here in our destination.  We blit this later into the front buffer.
@@ -24160,7 +24221,7 @@ void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
-
+    return true;
 }
 
 // <FS:Beq> updated Vignette code (based on original Exo Vignette)
@@ -24741,7 +24802,9 @@ void LLPipeline::renderFinalize()
         }
 
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
-        bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
+        // <FS> the upscaler sharpens by itself and the sharpening here ran BEFORE it, at the render size: with it on the CAS pass is skipped (Adam 2026-11-09; the tonemap then does the gamma itself)
+        static LLCachedControl<bool> cas_with_dlss(gSavedSettings, "FSCASWithUpscaler", false);
+        bool apply_cas = cas_sharpness != 0.0f && (!dlss || cas_with_dlss) && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
         // the CAS pass needs a scratch target of the picture's size: the lighting's at the render size, mRRPong at the window size
         LLRenderTarget* cas_scratch = rr_done ? post_pong : &mRT->deferredLight;
@@ -24765,8 +24828,10 @@ void LLPipeline::renderFinalize()
     LLRenderTarget* sourceBuffer = post_ping;
     LLRenderTarget* targetBuffer = post_pong;
 
-    combineGlow(sourceBuffer, targetBuffer);
-    std::swap(sourceBuffer, targetBuffer);
+    if (combineGlow(sourceBuffer, targetBuffer))
+    {
+        std::swap(sourceBuffer, targetBuffer);
+    }
 
     gRenderViewport[0] = gViewerWindow->getWorldViewRectRaw().mLeft;
     gRenderViewport[1] = gViewerWindow->getWorldViewRectRaw().mBottom;
