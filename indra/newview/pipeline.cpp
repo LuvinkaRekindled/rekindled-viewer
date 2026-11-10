@@ -32231,36 +32231,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     }
 }
 
-void LLPipeline::renderGroups(LLRenderPass* pass, U32 type, bool texture)
-{
-    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
-    {
-        LLSpatialGroup* group = *i;
-        if (!group->isDead() &&
-            (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
-            gPipeline.hasRenderType(group->getSpatialPartition()->mDrawableType) &&
-            group->mDrawMap.find(type) != group->mDrawMap.end())
-        {
-            pass->renderGroup(group,type,texture);
-        }
-    }
-}
-
-void LLPipeline::renderRiggedGroups(LLRenderPass* pass, U32 type, bool texture)
-{
-    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
-    {
-        LLSpatialGroup* group = *i;
-        if (!group->isDead() &&
-            (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED)) &&
-            gPipeline.hasRenderType(group->getSpatialPartition()->mDrawableType) &&
-            group->mDrawMap.find(type) != group->mDrawMap.end())
-        {
-            pass->renderRiggedGroup(group, type, texture);
-        }
-    }
-}
-
 void LLPipeline::profileAvatar(LLVOAvatar* avatar, bool profile_attachments)
 {
     if (gDeviceCaps.mApiVersionNumber < 3.25f)
