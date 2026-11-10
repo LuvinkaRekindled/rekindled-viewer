@@ -11039,11 +11039,11 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_BUMP, -1 },                // J1 K4: the deferred bump pass (not served yet)
     { LLRenderPass::PASS_POST_BUMP, -1 },           // J1 K4: the post deferred emboss pass (not served yet)
     { LLRenderPass::PASS_GRASS, -1 },               // J1 K6 S4: the grass G-buffer pass (LLDrawPoolGrass): alpha masked diffuse draws, cutoff in the row; no rigged variant (the next pass number is another pass)
+    { LLRenderPass::PASS_ALPHA_INVISIBLE, -1 },     // J1 K6 B1: the alpha draws of an invisible texture, positions only (nothing draws them but the Highlight Transparent view, with the colour program's pull twin, as PASS_INVISIBLE)
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
 static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
 // J1 K3d: the rigged variants of the alpha masked pass types whose shadow casters the cascades' alpha builder can make from a fragment item (not the glTF ones, not blended alpha)
-    { LLRenderPass::PASS_ALPHA_INVISIBLE, -1 },     // J1 K6 B1: the alpha draws of an invisible texture, positions only (nothing draws them but the Highlight Transparent view, with the colour program's pull twin, as PASS_INVISIBLE)
 static bool shadow_rigalpha_type(U32 rigged_type)
 {
     const U32 type = rigged_type - 1;       // (the rigged variant of a pass type is the next number)
@@ -14511,14 +14511,14 @@ static bool ll_scene_geo_highlight_type(int tn)
     return false;
 }
 
-        return false;
-    }
-    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
 bool ll_scene_geo_hud_type(int tn)
 {
     if (tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
     {
+        return false;
+    }
+    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady)
         || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady)       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
