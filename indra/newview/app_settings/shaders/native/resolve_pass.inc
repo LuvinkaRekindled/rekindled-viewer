@@ -39,6 +39,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     mat3 env_mat;               // world to the probes' frame (the sky's rotation)
     float max_probe_lod;
     int cube_snapshot;
+    int resolve_dbg;            // live debug view of the resolve (rt-debug.txt resolve_dbg), 0 = none
     vec4 clipPlane;             // the hero probe fades in across a mirror's clip plane
 
 #ifdef SSR
