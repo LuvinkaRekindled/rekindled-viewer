@@ -437,26 +437,28 @@ void LLDrawPoolAlpha::renderDebugAlpha()
         }
         gRender.diffuseColor4f(0, 1, 0, 1);
         // <FS:Beq> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
-        if (sShowDebugAlphaRigged)
+        // <FS> K6 B1 (rigged): the rigged masked and invisible draws are table items too: drawn again with the "Highlight Pull Skin Shader" (its native stand-in: alpha.vert with HAS_SKIN and a flat colour), the
+        // palettes the items have from the frame's own bindings; the colours are the old ones (green: the alpha mask and the invisible draws, cyan: the other masks)
+        if (sShowDebugAlphaRigged && gHighlightPullSkinReady)
         {
-        // </FS:Beq>
-        gHighlightProgram.mRiggedVariant->bind();
-        gRender.diffuseColor4f(0, 1, 0, 1);// <FS:Beq/> FIRE-32132 et al. (can plain PASS_ALPHA_MASK_RIGGED exist?) paint it green if so.
-        pushRiggedBatches(LLRenderPass::PASS_ALPHA_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_ALPHA_INVISIBLE_RIGGED, false);
+            gHighlightPullSkinProgram.bind();
+            static LLStaticHashedString waterSign("waterSign");
+            gHighlightPullSkinProgram.uniform1f(waterSign, 1.f);
+            gHighlightPullSkinProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 1, 0, 1);
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_INVISIBLE_RIGGED, true);
 
-        // Material alpha mask
-        gRender.diffuseColor4f(0, 1, 1, 1);// <FS:Beq/> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
-        pushRiggedBatches(LLRenderPass::PASS_MATERIAL_ALPHA_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_NORMMAP_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_SPECMAP_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_NORMSPEC_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, false);
-        pushRiggedBatches(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK_RIGGED, false);
+            // Material alpha mask
+            gHighlightPullSkinProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 1, 1, 1);
+            pushGeometryPackets(LLRenderPass::PASS_MATERIAL_ALPHA_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_NORMMAP_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_SPECMAP_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_NORMSPEC_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true);
+            pushGeometryPackets(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK_RIGGED, true);
 
-        gRender.diffuseColor4f(0, 1, 0, 1);
-        pushRiggedBatches(LLRenderPass::PASS_INVISIBLE_RIGGED, false);
-        // <FS:Beq> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
+            gHighlightPullSkinProgram.uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 1, 0, 1);
+            pushGeometryPackets(LLRenderPass::PASS_INVISIBLE_RIGGED, true);
         }
         // </FS:Beq>
         LLShaderProgram::sCurBoundShaderPtr->unbind();
@@ -466,18 +468,27 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 // <FS> K6 B1 step 3: the blended alpha draws of the groups that have a current alpha plan (ll_alpha_plan: the fragment's served items) are drawn red from the table: one record of the plans' served ranges
 // (the record the alpha loop sends for a run: kind 29, {fragment handle, first item, count} each), drawn with the colour program's pull twin. Returns the groups it drew all of; the old walk below draws
 // the others (a group without a plan: a fragment that is not current, a view the table does not serve, a segment the table does not carry).
-static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>& drawn)
+static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*> (&drawn)[2])
 {
-    drawn.clear();
-    LLShaderProgram* color = ll_pull_twin(&gDrawColorProgram);
-    if (!color || !ll_alpha_serving() || (LLPipeline::sRenderingHUDs && !ll_scene_geo_hud_any()))
+    drawn[0].clear();
+    drawn[1].clear();
+    if (!ll_alpha_serving() || (LLPipeline::sRenderingHUDs && !ll_scene_geo_hud_any()))
     {
         return;
+    }
+    // pass 0: the static draws (the colour program's pull twin, red); pass 1: the rigged ones, when the rigged highlight is on (the "Highlight Pull Skin Shader", orange; the palette bindings of the
+    // items are the ones the rigged alpha pass sent this frame, persistent at the worker: only the ranges go)
+    for (int rig = 0; rig < 2; ++rig)
+    {
+    LLShaderProgram* color = rig ? (LLShaderProgram*)(gHighlightPullSkinReady && LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : ll_pull_twin(&gDrawColorProgram);
+    if (!color)
+    {
+        continue;
     }
     struct Range { U32 mHandle, mFirst, mCount; };
     static thread_local std::vector<Range> ranges;
     ranges.clear();
-    for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
+    for (LLCullResult::sg_iterator i = rig ? gPipeline.beginRiggedAlphaGroups() : gPipeline.beginAlphaGroups(); i != (rig ? gPipeline.endRiggedAlphaGroups() : gPipeline.endAlphaGroups()); ++i)
     {
         LLSpatialGroup* group = *i;
         if (!group || group->isDead() || !group->getSpatialPartition()->mRenderByGroup)
@@ -490,7 +501,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
             continue;
         }
         LLAlphaPlanView plan;
-        if (ll_alpha_plan(group, plan, false) != 1 || plan.mHandle == 0)
+        if (ll_alpha_plan(group, plan, rig != 0) != 1 || plan.mHandle == 0)
         {
             continue;
         }
@@ -509,17 +520,24 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
         }
         if (all_served)
         {
-            drawn.insert(group);
+            drawn[rig].insert(group);
         }
     }
     if (ranges.empty())
     {
-        return;
+        continue;
     }
     static LLStaticHashedString waterSign("waterSign");
     color->bind();
     color->uniform1f(waterSign, 1.f);
-    color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0, 0, 1);
+    if (rig)
+    {
+        color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0.5f, 0, 1);
+    }
+    else
+    {
+        color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0, 0, 1);
+    }
     F32 matrices[32];
     memcpy(matrices, glm::value_ptr(gRender.getModelviewMatrix()), 16 * sizeof(F32));
     memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
@@ -530,17 +548,18 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 29;
     header.mEntries = (U32)ranges.size();
-    header.mPass = 0;
+    header.mPass = rig ? 1 : 0;
     header.mFragment = 0;
     {
         LLRenderState::CullScope cull_face(false, true);        // (both sides: a highlight, not a surface)
         LLVkBridge::shadowPackets(header, ranges.data(), ranges.size() * sizeof(Range));
     }
+    }
 }
 
 void LLDrawPoolAlpha::renderAlphaHighlight()
 {
-    static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn;
+    static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn[2];
     highlight_alpha_from_table(table_drawn);
     for (int pass = 0; pass < 2; ++pass)
     { //two passes, one rigged and one not
@@ -556,7 +575,7 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
             LLSpatialGroup* group = *i;
             if (group->getSpatialPartition()->mRenderByGroup &&
                 !group->isDead() &&
-                !(pass == 0 && table_drawn.count(group)))       // (drawn from the table above)
+                !table_drawn[pass].count(group))       // (drawn from the table above)
             {
                 LLSpatialGroup::drawmap_elem_t& draw_info = group->mDrawMap[LLRenderPass::PASS_ALPHA+pass]; // <-- hacky + pass to use PASS_ALPHA_RIGGED on second pass
 

@@ -11117,7 +11117,7 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE || kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_INVISIBLE)
     {
-        return !rigged && LLRenderPass::deferredPacketsEnabled() && ll_pull_twin(&gDrawColorProgram) != nullptr;      // (the water exclusion pool draws it with the colour program's pull twin; the rigged ones stay in the render map)
+        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gHighlightPullSkinReady && ll_rigged_packets_enabled()) : ll_pull_twin(&gDrawColorProgram) != nullptr);      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
     }
     return true;
 }

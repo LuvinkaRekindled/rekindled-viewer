@@ -118,6 +118,8 @@ LLShaderProgram        gUnderWaterProgram;
 //interface shaders
 LLShaderProgram        gHighlightProgram;
 LLShaderProgram        gSkinnedHighlightProgram;
+LLShaderProgram        gHighlightPullSkinProgram;       // <FS> K6 B1: "Highlight Pull Skin Shader": a placeholder (the highlight shaders with HAS_SKIN) for its native stand-in (highlight.frag + alpha.vert), which draws the rigged table items of the Highlight Transparent view
+bool                   gHighlightPullSkinReady = false;
 LLShaderProgram        gHighlightNormalProgram;
 LLShaderProgram        gHighlightSpecularProgram;
 
@@ -1563,6 +1565,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
+        gHighlightPullSkinProgram.unload();
+        gHighlightPullSkinReady = false;
         gDeferredPBRAlphaPullSkinProgram.unload();
         gDeferredEmissivePullProgram.unload();
         gDeferredEmissivePullSkinProgram.unload();
@@ -5107,6 +5111,26 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = make_rigged_variant(gHighlightProgram, gSkinnedHighlightProgram);
         success = success && gHighlightProgram.createShader();
+    }
+
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        // <FS> K6 B1: the rigged highlight draws (the table's rigged items, the alpha loop's kind 29 record) go through this program: the native stand-in is the only one that draws, the old shader holds the `color` uniform
+        LLShaderProgram& pull = gHighlightPullSkinProgram;
+        pull.mName = "Highlight Pull Skin Shader";
+        pull.mShaderFiles.clear();
+        pull.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
+        pull.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
+        pull.clearPermutations();
+        pull.addPermutation("HAS_SKIN", "1");
+        pull.mFeatures.hasObjectSkinning = true;
+        pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        gHighlightPullSkinReady = pull.createShader();
+        if (!gHighlightPullSkinReady)
+        {
+            LL_WARNS("ShadowPackets") << "the Highlight Pull Skin Shader could not be made: the rigged part of Highlight Transparent will draw nothing" << LL_ENDL;
+            pull.unload();
+        }
     }
 
     if (success)
