@@ -33,6 +33,16 @@ Adam's goal: move away from NVIDIA proprietary libraries while keeping equivalen
 4. UI: with `LL_DLSS` undefined the DLSS entries and the ray reconstruction box must be hidden or grayed and the neural rendering row absent (check: the stubs report "not available"; the Vulkan panel's labels are static XML today).
 5. DLAA through FSR: make the "100%" mode work with the FSR backend (render size = output size) so FSR users have the equivalent.
 
+## Ray tracing must not need an NVIDIA card (Adam, 2026-11-10: remove the RTX requirement)
+
+Facts from the code: ray tracing is our own Vulkan ray query on the cross-vendor extensions (`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, buffer device address; `rt.mUsable` in `llvkcontext.cpp:865`). The NVIDIA ray tracing extensions (invocation reorder, cluster acceleration structures, opacity micromaps) are queried but forced off at device creation (`llvkcontext.cpp:932`) and used nowhere else. The vendor id (`llvkbridge.cpp:302-317`) only picks the strings of the GL-style vendor and version report. No code gates ray tracing on the vendor. It has only run on one GeForce RTX card.
+
+To do (not done):
+- Reword the preference (`panel_preferences_graphics1.xml:2049, 2053`): the label "Use ray tracing (RTX graphics cards, experimental)" and the tooltip "Needs an NVIDIA RTX graphics card" become "needs a graphics card with Vulkan ray tracing support" (any vendor).
+- Reword the other text that implies it: the DLSS upscaler tooltip (line 1922) is correct as it stands (it says DLSS is for RTX cards and FSR for any), the neural rendering one stays NVIDIA-specific; the About page on the site and any release text say "ray tracing hardware", not "RTX".
+- Check, and let an AMD or Intel tester check (stage C of `PLAN-amd-fsr-sdk2.md`): the viewer must enable the setting on any device with `rt.mUsable`, whatever the vendor; look at the code that decides when the checkbox is enabled and at the device-creation path for the three vendor structs.
+- Keep it off the NVIDIA-only list in `BETA-FEATURES.md`: say "cards with ray tracing hardware" there (already the wording).
+
 ## Checks before deciding
 
 - Build variant A once and run it: FSR on, RT shadows on and off, snapshots, no NVIDIA strings in the log, the Vulkan panel readable.
