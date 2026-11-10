@@ -401,13 +401,8 @@ public:
     static void applyModelMatrix(const LLDrawInfo& params);
     // For rendering that doesn't use LLDrawInfo for some reason
     static void applyModelMatrix(const LLMatrix4* model_matrix);
-    void pushBatches(U32 type, bool texture = true, bool batch_textures = false);
     // S6.6: the draw infos of a render map type as one record of entries, drawn with the pull program bound now (draws its buffers cannot give to the packet path are skipped with a warning)
-    void pushBatchesPull(U32 type);
-    void pushUntexturedBatches(U32 type);
 
-    void pushRiggedBatches(U32 type, bool texture = true, bool batch_textures = false);
-    void pushUntexturedRiggedBatches(U32 type);
 
     // push full GLTF batches
     // assumes draw infos of given type have valid GLTF materials
@@ -431,8 +426,6 @@ public:
     static void pushUntexturedGLTFBatch(LLDrawInfo& params);
     static void pushUntexturedRiggedGLTFBatch(LLDrawInfo& params, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);
 
-    void pushMaskBatches(U32 type, bool texture = true, bool batch_textures = false);
-    void pushRiggedMaskBatches(U32 type, bool texture = true, bool batch_textures = false);
     void pushBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
     // (a pull program); the draws it cannot carry are returned to be drawn the old way

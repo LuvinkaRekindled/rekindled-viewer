@@ -15894,12 +15894,10 @@ static bool shadow_rigfrag_usable()
 // the rigged alpha masked casters a fragment item names are made from the item (its GeoRigSource), the render map job leaves their draw infos out of the cascade's lists. Only where the record carries rigged casters
 // (the packets path) and not for ray shadows or ray scene materials.
 static bool shadow_packets_enabled();
-static bool shadow_rigged_packets_enabled();
-static bool shadow_kind_on(int kind);
 static int shadow_rigalpha_mode()
 {
     static const int mode = getenv("LL_VK_SHADOW_RIGALPHA") ? atoi(getenv("LL_VK_SHADOW_RIGALPHA")) : 1;
-    if (mode == 0 || !shadow_rigfrag_usable() || LLVkBridge::rtShadowMode() || !shadow_packets_enabled() || !shadow_rigged_packets_enabled() || !shadow_kind_on(1) || !shadow_kind_on(2) || !LLVkBridge::shadowAlphaPacketsAvailable())
+    if (mode == 0 || !shadow_rigfrag_usable() || LLVkBridge::rtShadowMode() || !shadow_packets_enabled() || !LLVkBridge::shadowAlphaPacketsAvailable())
     {
         return 0;
     }
@@ -20905,25 +20903,6 @@ void LLPipeline::resetVertexBuffers(LLDrawable* drawable)
     }
 }
 
-void LLPipeline::renderObjects(U32 type, bool texture, bool batch_texture, bool rigged)
-{
-    assertInitialized();
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-
-    if (rigged)
-    {
-        mSimplePool->pushRiggedBatches(type + 1, texture, batch_texture);
-    }
-    else
-    {
-        mSimplePool->pushBatches(type, texture, batch_texture);
-    }
-
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-}
-
 void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 {
     assertInitialized();
@@ -21993,7 +21972,6 @@ static void verify_shadow_alpha(const LLPipeline::ShadowAlphaBuild& a, const LLP
 // main thread, after the render maps of the cascades are built: the packets of the casters of each cascade are built by the async pool while the main thread goes on
 // (the first cascade's are waited for first, the others build while the main thread draws the ones before them)
 static bool shadow_packets_enabled();
-static bool shadow_kind_on(int kind);
 void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
 {
     LLCullResult* result = prep.mResult;
@@ -22007,7 +21985,7 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
         prep.mStaticJob = pool.submit([result, static_build]() { build_shadow_static(*result, kShadowStaticTypes, kShadowStaticTypeCount, *static_build); });
     }
     prep.mSkinJob = pool.submit([result, skin_build]() { build_shadow_skin(*result, kShadowStaticTypes, kShadowStaticTypeCount, *skin_build); });
-    if (LLVkBridge::rtShadowMode() || (shadow_packets_enabled() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()))
+    if (LLVkBridge::rtShadowMode() || (shadow_packets_enabled() && LLVkBridge::shadowAlphaPacketsAvailable()))
     {
         for (int slot = 0; slot < 2; ++slot)
         {
@@ -22133,42 +22111,6 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
         }
     }
 
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-}
-
-// Currently only used for shadows -Cosmic,2023-04-19
-void LLPipeline::renderMaskedObjects(U32 type, bool texture, bool batch_texture, bool rigged)
-{
-    assertInitialized();
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-    if (rigged)
-    {
-        mAlphaMaskPool->pushRiggedMaskBatches(type+1, texture, batch_texture);
-    }
-    else
-    {
-        mAlphaMaskPool->pushMaskBatches(type, texture, batch_texture);
-    }
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-}
-
-// Currently only used for shadows -Cosmic,2023-04-19
-void LLPipeline::renderFullbrightMaskedObjects(U32 type, bool texture, bool batch_texture, bool rigged)
-{
-    assertInitialized();
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-    if (rigged)
-    {
-        mFullbrightAlphaMaskPool->pushRiggedMaskBatches(type+1, texture, batch_texture);
-    }
-    else
-    {
-        mFullbrightAlphaMaskPool->pushMaskBatches(type, texture, batch_texture);
-    }
     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
     gRenderLastMatrix = NULL;
 }
@@ -28318,59 +28260,12 @@ static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_TREE("Alpha Tree");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_GRASS("Alpha Grass");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_FULLBRIGHT_ALPHA_MASKED("Fullbright Alpha Masked");
 
-// <FS> Render packets: the static, untextured casters of a shadow pass leave as one record the Vulkan worker draws by reading the buffers by address.
-// Setting FSShadowPackets, or FS_SHADOW_PACKETS_AB=1 to alternate every 30 seconds (the log says which: tag ShadowPackets).
+// <FS> Render packets: the static, untextured casters of a shadow pass leave as one record the Vulkan worker draws by reading the buffers by address. K6 group C: the switches are gone (FSShadowPackets and its
+// per kind settings, FS_SHADOW_PACKETS_AB, FS_SHADOW_NO_RIGGED, FS_SHADOW_RIGGED_AB: all on since the packets were made, the old per draw loops they chose between are deleted); what is left is whether the worker and
+// its pull program are there.
 static bool shadow_packets_enabled()
 {
-    static LLCachedControl<bool> setting(gSavedSettings, "FSShadowPackets", false);
-    static const bool alternate = getenv("FS_SHADOW_PACKETS_AB") != nullptr;
-    bool on = setting;
-    if (alternate)
-    {
-        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        on = ((seconds / 30) % 2) == 1;
-        static int last = -1;
-        if ((int)on != last)
-        {
-            last = (int)on;
-            LL_INFOS("ShadowPackets") << "[phase] shadow packets now " << (on ? "ON" : "off") << LL_ENDL;
-        }
-    }
-    return on && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
-}
-
-// <FS> debug switches for the kinds of records, changeable live in Debug Settings: 0 static untextured, 1 alpha masked/blended (static and rigged), 2 rigged
-static bool shadow_kind_on(int kind)
-{
-    static LLCachedControl<bool> untextured(gSavedSettings, "FSShadowPacketsStatic", true);
-    static LLCachedControl<bool> alpha(gSavedSettings, "FSShadowPacketsAlpha", true);
-    static LLCachedControl<bool> rigged(gSavedSettings, "FSShadowPacketsRigged", true);
-    return kind == 0 ? (bool)untextured : kind == 1 ? (bool)alpha : (bool)rigged;
-}
-
-// <FS> the rigged casters (avatars and their attachments) go as records too when the packets are on, unless FS_SHADOW_NO_RIGGED is set; FS_SHADOW_RIGGED_AB=1 alternates only
-// them every 30 seconds (half a period out of step with nothing: the static packets stay on)
-static bool shadow_rigged_packets_enabled()
-{
-    static const bool off = getenv("FS_SHADOW_NO_RIGGED") != nullptr;
-    static const bool alternate = getenv("FS_SHADOW_RIGGED_AB") != nullptr;
-    if (off || !shadow_packets_enabled())
-    {
-        return false;
-    }
-    if (alternate)
-    {
-        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        const bool on = ((seconds / 30) % 2) == 1;
-        static int last = -1;
-        if ((int)on != last)
-        {
-            last = (int)on;
-            LL_INFOS("ShadowPackets") << "[phase] rigged shadow packets now " << (on ? "ON" : "off") << LL_ENDL;
-        }
-        return on;
-    }
-    return true;
+    return gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
 }
 
 // <FS> ray query shadows: a stable identity for a draw's model matrix. The top bit says the matrix is a region's own (static geometry of that region): every other
@@ -28615,17 +28510,17 @@ void LLPipeline::setShadowJobFlags()
     {
         all_static = hasRenderType(kShadowStaticTypes[k]);
     }
-    // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled() &&
-    // shadow_kind_on(0)); with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
+    // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled());
+    // with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
     // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
     // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
     // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
-    const bool raster_skip = shadow_packets_enabled() && shadow_kind_on(0) && !builder_verify();
+    const bool raster_skip = shadow_packets_enabled() && !builder_verify();
     const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
     sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
     // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
     static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
-    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && shadow_kind_on(1) && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
+    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
 }
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
@@ -28673,7 +28568,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         explicit GltfRowsScope(bool on) { sShadowGltfRows = on; }
         ~GltfRowsScope() { sShadowGltfRows = false; }
-    } gltf_rows_scope(shadow_gltf_env() && !LLVkBridge::rtShadowMode() && !rt_skip && shadow_packets_enabled() && shadow_kind_on(1) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
+    } gltf_rows_scope(shadow_gltf_env() && !LLVkBridge::rtShadowMode() && !rt_skip && shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
 
     //enable depth clamping if available
     LLRenderState::DepthClampScope clamp_depth(true, depth_clamp);
@@ -28711,7 +28606,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
             static const bool serial_fragments = !getenv("LL_VK_SHADOW_SERIAL") || getenv("LL_VK_SHADOW_SERIAL")[0] != '0';
-            if (serial_fragments && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !LLVkBridge::rtShadowMode() && shadow_packets_enabled() && shadow_kind_on(0))
+            if (serial_fragments && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !LLVkBridge::rtShadowMode() && shadow_packets_enabled())
             {
                 LL_CPU_ZONE("renderShadow: serial pass render map job");
                 static ShadowCascadePrep serial_prep;
@@ -29623,8 +29518,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         bool rigged = j == 1;
         LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
-        const bool packets = !rigged && shadow_packets_enabled() && shadow_kind_on(0);
-        const bool skin_packets = rigged && shadow_rigged_packets_enabled() && shadow_kind_on(2) && gDeferredShadowSkinPullProgram.mProgramObject != 0;
+        const bool packets = !rigged && shadow_packets_enabled();
+        const bool skin_packets = rigged && shadow_packets_enabled() && gDeferredShadowSkinPullProgram.mProgramObject != 0;
         if (packets)
         {
             gDeferredShadowPullProgram.bind();
@@ -29664,13 +29559,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             render_skin_packets(types, kShadowStaticTypeCount);
         }
-        else
-        {
-            for (U32 type : kShadowStaticTypes)
-            {
-                renderObjects(type, false, false, rigged);
-            }
-        }
         if (!rigged)
         {
             gShadowDrawStats.endStaticPass();
@@ -29706,8 +29594,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             bool rigged = i == 1;
             LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
 
-            // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them)
-            if (shadow_packets_enabled() && shadow_kind_on(1) && (!rigged || (shadow_rigged_packets_enabled() && shadow_kind_on(2))) && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable())
+            // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them). K6 group C: the per draw loops this chose between (the alpha mask,
+            // fullbright mask, grass and material mask passes, drawn from the render map one draw at a time) are deleted with the switches
+            if (shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable())
             {
                 render_alpha_packets(sun_up, target_width, rigged);
                 {
@@ -29715,52 +29604,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     LL_PROFILE_GPU_ZONE("shadow alpha blend");
                     LL_CPU_ZONE("renderShadow: alpha blend");
                     renderAlphaObjects(rigged, true);
-                }
-                continue;
-            }
-
-            {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha masked");
-                LL_PROFILE_GPU_ZONE("shadow alpha masked");
-                gDeferredShadowAlphaMaskProgram.bind(rigged);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                renderMaskedObjects(LLRenderPass::PASS_ALPHA_MASK, true, true, rigged);
-            }
-
-            {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha blend");
-                LL_PROFILE_GPU_ZONE("shadow alpha blend");
-                renderAlphaObjects(rigged);
-            }
-
-            {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow fullbright alpha masked");
-                LL_PROFILE_GPU_ZONE("shadow alpha masked");
-                gDeferredShadowFullbrightAlphaMaskProgram.bind(rigged);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                renderFullbrightMaskedObjects(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, true, true, rigged);
-            }
-
-            {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha grass");
-                LL_PROFILE_GPU_ZONE("shadow alpha grass");
-                gDeferredTreeShadowProgram.bind(rigged);
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
-
-                if (i == 0)
-                {
-                    renderObjects(LLRenderPass::PASS_GRASS, true);
-                }
-
-                {
-                    LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha material");
-                    LL_PROFILE_GPU_ZONE("shadow alpha material");
-                    renderMaskedObjects(LLRenderPass::PASS_NORMSPEC_MASK, true, false, rigged);
-                    renderMaskedObjects(LLRenderPass::PASS_MATERIAL_ALPHA_MASK, true, false, rigged);
-                    renderMaskedObjects(LLRenderPass::PASS_SPECMAP_MASK, true, false, rigged);
-                    renderMaskedObjects(LLRenderPass::PASS_NORMMAP_MASK, true, false, rigged);
                 }
             }
         }

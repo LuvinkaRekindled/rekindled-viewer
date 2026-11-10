@@ -471,13 +471,10 @@ public:
     bool mDeferPoolFill = false;
     LLCullResult* getCull() const;        // <FS> the cull result this thread is working with (what beginRenderMap() reads)
 
-    void renderObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);
     void renderGLTFObjects(U32 type, bool texture = true, bool rigged = false);
 
     void renderAlphaObjects(bool rigged = false, bool skip_packet_draws = false);       // <FS> skip_packet_draws: the static draws already sent as an alpha packet record
     void renderFocusPoint(); // <FS:Beq/> FIRE-32023 Add focus point rendering
-    void renderMaskedObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);
-    void renderFullbrightMaskedObjects(U32 type, bool texture = true, bool batch_texture = false, bool rigged = false);
 
     void grabReferences(LLCullResult& result);
     void clearReferences();
