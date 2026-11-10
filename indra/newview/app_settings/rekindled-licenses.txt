@@ -1,12 +1,16 @@
 Rekindled additions
 
-NVIDIA DLSS SDK Copyright (C) NVIDIA Corporation, used under the NVIDIA DLSS SDK License Agreement. NVIDIA, DLSS and RTX are trademarks of NVIDIA Corporation.
+NVIDIA DLSS: This application uses NVIDIA DLSS (Super Resolution, DLAA and Ray Reconstruction) from the NVIDIA RTX SDKs, used under the NVIDIA RTX SDKs License Agreement. NVIDIA, NVIDIA RTX, NVIDIA GeForce RTX and DLSS are trademarks and/or registered trademarks of NVIDIA Corporation in the United States and other countries. Rekindled is not sponsored or endorsed by NVIDIA.
 AMD FidelityFX SDK (FSR) Copyright (C) 2024 Advanced Micro Devices, Inc., MIT License (below).
 Vulkan Memory Allocator Copyright (c) 2017-2026 Advanced Micro Devices, Inc., MIT License (below).
 bc7enc Copyright (c) 2020-2021 Richard Geldreich, Jr., MIT License (below).
 glslang Copyright (C) 3Dlabs Inc. Ltd., LunarG, Inc., Google, Inc., NVIDIA Corporation, the Khronos Group Inc. and others, under BSD 3-Clause, BSD 2-Clause, MIT, Apache 2.0 and NVIDIA preprocessor licences (full text: glslang-license.txt in the viewer's app_settings folder; https://github.com/KhronosGroup/glslang).
 SPIRV-Tools Copyright (c) the Khronos Group Inc., Google Inc. and other contributors, Apache License 2.0 (full text: apache-2.0.txt in the viewer's app_settings folder; https://github.com/KhronosGroup/SPIRV-Tools).
 OpenAL Soft is used as a separate library (OpenAL32.dll beside the viewer) under the GNU Lesser General Public License; its source code is at https://openal-soft.org
+
+Terms for the NVIDIA DLSS components (nvngx_dlss.dll and nvngx_dlssd.dll) that come with this application
+
+These components belong to NVIDIA Corporation and its suppliers, who keep all rights, title and interest in them. You may use them only as part of this application, on systems with NVIDIA graphics hardware. You may not reverse engineer, decompile or disassemble them; remove or change any copyright or other proprietary notice in them; copy, sell, rent, sublicense, transfer or distribute them as a stand-alone product; modify them or create derivative works of them; bypass, disable or circumvent any technical limitation or security mechanism in them; or use them in any system where their use or failure could reasonably be expected to cause personal injury, death or catastrophic loss. NVIDIA may update them. They are provided AS IS: TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW NVIDIA AND ITS AFFILIATES DISCLAIM ALL WARRANTIES AND ARE NOT LIABLE FOR SPECIAL, INCIDENTAL, PUNITIVE OR CONSEQUENTIAL DAMAGES, OR FOR LOST PROFITS, LOSS OF USE, LOSS OF DATA OR LOSS OF GOODWILL, ARISING FROM THEIR USE.
 
 MIT License (AMD FidelityFX SDK, Vulkan Memory Allocator, bc7enc)
 
