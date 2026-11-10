@@ -14494,20 +14494,42 @@ bool ll_scene_geo_hud_type(int tn)
 {
     if (tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
     {
+// <FS> K6 B1 step 1: with "Highlight Transparent" on, the types the highlight redraws from the table (LLDrawPoolAlpha::renderDebugAlpha: the alpha masked passes and the invisible draws) count as HUD types too: the HUD view
+// lists its fragments, tells the table about them and leaves these types out of its render map, and the highlight draws them in the HUD from the table as in the world. (No HUD pool draws these types.)
+static bool ll_scene_geo_highlight_type(int tn)
+{
+    if (tn < 0 || !LLDrawPoolAlpha::sShowDebugAlpha)
+    {
+        return false;
+    }
+    static const U32 types[] = { LLRenderPass::PASS_ALPHA_MASK, LLRenderPass::PASS_MATERIAL_ALPHA_MASK, LLRenderPass::PASS_NORMMAP_MASK, LLRenderPass::PASS_SPECMAP_MASK, LLRenderPass::PASS_NORMSPEC_MASK,
+                                 LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, LLRenderPass::PASS_INVISIBLE };
+    for (U32 type : types)
+    {
+        if (tn == ll_scene_geo_type_number(type))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
         return false;
     }
     return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady)
         || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady);       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady)       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
+        || ll_scene_geo_highlight_type(tn);
 }
 
 bool ll_scene_geo_hud_any()
 {
     return ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
         || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR))
-        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP));
+        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))
+        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_INVISIBLE));       // (true only while the highlight is on: see ll_scene_geo_highlight_type)
 }
 
 void ll_scene_geo_count(U32 what, U64 n)
