@@ -44,6 +44,16 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float mirror_flag;
     vec4 clipPlane;
 
+#ifdef AVATAR_PASS
+    // the system avatar (avatar.vert): the projection (its palette matrices are in eye space) and, with the cloth on, the wind of the clothing
+    mat4 projection_matrix;
+#ifdef AVATAR_CLOTH
+    vec4 gWindDir;
+    vec4 gSinWaveParams;
+    vec4 gGravity;
+#endif
+#endif
+
 #ifdef TERRAIN_PASS
     // the legacy terrain (terrain.vert): the plane the detail textures are projected from (the texture matrix is not a uniform here: the pull path takes it from the row, row_texture_matrix)
     vec4 object_plane_s;
@@ -120,9 +130,12 @@ layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
     float minimum_alpha;        // the alpha cutoff of the draw (changes with the draw: its own block)
 };
 
-#if defined(ALPHA_LIT) || defined(ALPHA_PROBES)
+#if defined(ALPHA_LIT) || defined(ALPHA_PROBES) || defined(AVATAR_PASS)
 layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 {
+#ifdef AVATAR_PASS
+    uint ll_ti_diffuseMap;              // the body part's texture
+#endif
 #ifdef ALPHA_LIT
     uint ll_ti_shadow_shadowMap0;
     uint ll_ti_shadow_shadowMap1;
