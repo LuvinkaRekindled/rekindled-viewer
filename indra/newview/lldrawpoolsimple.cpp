@@ -59,6 +59,12 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     // <FS> J1 K6 A3: the glow draws come from the scene table (the emissive pull programs of the alpha glow, the same rows); a HUD has no glow pool
     if (!LLPipeline::sRenderingHUDs && gAlphaGlowPullReady)
     {
+        // <FS> Rekindled (2026-11-10, Adam: glow blinks): these opaque glow draws write the glow too, so the bloom chain must run in a frame that has only them
+        // (7e383a93be set the flag in the alpha pass alone: opaque glow showed only in frames where some alpha glow draw or glowing particle was also served)
+        if (LLPipeline::sRenderGlow && (ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW) || (ll_rigged_packets_enabled() && ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW_RIGGED))))
+        {
+            LLPipeline::sGlowDrawn = true;
+        }
         gDeferredEmissivePullProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_GLOW);
         if (ll_rigged_packets_enabled())
