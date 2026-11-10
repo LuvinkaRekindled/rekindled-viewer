@@ -158,8 +158,6 @@ public:
     LLTexRef mSpecularMap;
     LLTexRef mNormalMap;
 
-    const LLMatrix4* mSpecularMapMatrix = nullptr;
-    const LLMatrix4* mNormalMapMatrix = nullptr;
     const LLMatrix4* mTextureMatrix = nullptr;
     const LLMatrix4* mModelMatrix = nullptr;
 
@@ -202,66 +200,6 @@ public:
     // <FS> ray scene: the draw's material in the viewer's registry (pipeline.cpp, rt_material_id): the row in the low 32 bits, its generation in the high 32 (0 = not looked up yet).
     // Atomic: the packet builders of several cascades run in parallel and meet the same draw.
     std::atomic<U64> mRtMaterial{0};
-
-    struct CompareTexture
-    {
-        bool operator()(const LLDrawInfo& lhs, const LLDrawInfo& rhs)
-        {
-            return lhs.mTexture > rhs.mTexture;
-        }
-    };
-
-    struct CompareTexturePtr
-    { //sort by texture
-        bool operator()(const LLPointer<LLDrawInfo>& lhs, const LLPointer<LLDrawInfo>& rhs)
-        {
-            // sort by pointer, sort NULL down to the end
-            return lhs.get() != rhs.get()
-                        && (lhs.isNull() || (rhs.notNull() && lhs->mTexture.get() > rhs->mTexture.get()));
-        }
-    };
-
-    struct CompareVertexBuffer
-    { //sort by texture
-        bool operator()(const LLPointer<LLDrawInfo>& lhs, const LLPointer<LLDrawInfo>& rhs)
-        {
-            // sort by pointer, sort NULL down to the end
-            return lhs.get() != rhs.get()
-                    && (lhs.isNull() || (rhs.notNull() && lhs->mVertexBuffer.get() > rhs->mVertexBuffer.get()));
-        }
-    };
-
-    struct CompareTexturePtrMatrix
-    {
-        bool operator()(const LLPointer<LLDrawInfo>& lhs, const LLPointer<LLDrawInfo>& rhs)
-        {
-            return lhs.get() != rhs.get()
-                        && (lhs.isNull() || (rhs.notNull() && (lhs->mTexture.get() > rhs->mTexture.get() ||
-                                                               (lhs->mTexture.get() == rhs->mTexture.get() && lhs->mModelMatrix > rhs->mModelMatrix))));
-        }
-
-    };
-
-    struct CompareMatrixTexturePtr
-    {
-        bool operator()(const LLPointer<LLDrawInfo>& lhs, const LLPointer<LLDrawInfo>& rhs)
-        {
-            return lhs.get() != rhs.get()
-                && (lhs.isNull() || (rhs.notNull() && (lhs->mModelMatrix > rhs->mModelMatrix ||
-                                                       (lhs->mModelMatrix == rhs->mModelMatrix && lhs->mTexture.get() > rhs->mTexture.get()))));
-        }
-
-    };
-
-    struct CompareBump
-    {
-        bool operator()(const LLPointer<LLDrawInfo>& lhs, const LLPointer<LLDrawInfo>& rhs)
-        {
-            // sort by mBump value, sort NULL down to the end
-            return lhs.get() != rhs.get()
-                        && (lhs.isNull() || (rhs.notNull() && lhs->mBump > rhs->mBump));
-        }
-    };
 };
 
 // <FS> J1 K1 (PLAN-clean-core.md, the J1 research note): the geometric range of a draw, all the LOD caches read of it (the shadow caster LOD and the main view's rigged LOD key on the buffer, the first index,
