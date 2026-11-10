@@ -95,3 +95,27 @@ override | Deferred PBR Terrain Shader -4 heightmap-with-noise flat pull | pbrte
 override | Deferred PBR Terrain Shader -4 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
 override | Deferred PBR Terrain Shader -4 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
 override | Deferred PBR Terrain Shader -4 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Luminance | fullscreen.vert | luminance.frag | post | default on
+override | Motion Vectors | fullscreen.vert | motionvectors.frag | post | default on
+override | Deferred Tonemap Post Process | fullscreen.vert | tonemap.frag | post | default on
+override | No Post Tonemap Post Process | fullscreen.vert | tonemap.frag | post | define NO_POST=1 | default on
+override | Deferred Tonemap Gamma Post Process | fullscreen.vert | tonemap.frag | post | define GAMMA_CORRECT=1 | default on
+override | No Post Tonemap Gamma Post Process | fullscreen.vert | tonemap.frag | post | define NO_POST=1 | define GAMMA_CORRECT=1 | default on
+override | Deferred Tonemap Legacy Gamma Post Process | fullscreen.vert | tonemap.frag | post | define GAMMA_CORRECT=1 | define LEGACY_GAMMA=1 | default on
+override | No Post Tonemap Legacy Gamma Post Process | fullscreen.vert | tonemap.frag | post | define NO_POST=1 | define GAMMA_CORRECT=1 | define LEGACY_GAMMA=1 | default on
+override | Glow Shader (Post) | glow.vert | glow.frag | post | default on
+override | Solid Color Shader | solidcolor.vert | solidcolor.frag | post | default on
+override | Copy Depth Shader | copy.vert | copydepth.frag | post | default on
+override | Reflection Mip Shader | reflectionmip.vert | gaussian.frag | post | require resScale | default on
+override | Reflection Mip Shader | reflectionmip.vert | reflectionmip.frag | post | default on
+override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=32 | default on
+override | Hero Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=4 | default on
+override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
+override | UI Shader | ui.vert | ui.frag | post | default on
+override | Haze Shader | fullscreen.vert | haze.frag | post | default on
+override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
+override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
+override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | gbuffer | default on
+override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on
+override | Deferred Windlight Sun Program pull | sundisc.vert | sundisc.frag | gbuffer | default on
+override | Deferred Star Program pull | stars.vert | stars.frag | gbuffer | default on
