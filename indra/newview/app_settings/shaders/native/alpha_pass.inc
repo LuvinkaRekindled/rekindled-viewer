@@ -45,10 +45,9 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec4 clipPlane;
 
 #ifdef TERRAIN_PASS
-    // the legacy terrain (terrain.vert): the plane the detail textures are projected from, and the texture matrix
+    // the legacy terrain (terrain.vert): the plane the detail textures are projected from (the texture matrix is not a uniform here: the pull path takes it from the row, row_texture_matrix)
     vec4 object_plane_s;
     vec4 object_plane_t;
-    mat4 texture_matrix0;
 #endif
 
 #ifdef ALPHA_LIT
