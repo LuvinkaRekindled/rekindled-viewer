@@ -63,9 +63,7 @@ F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
 static LLShaderProgram* sShader = NULL;
 static bool sPull = false;
-static bool sShadowPull = false;     // S6.6c: the shadow pass being drawn takes the pull program (drawShadowPull)      // S6.6a: the pass being drawn is the pull variant (drawPull)
-static const bool pull_wanted = []() { const char* e = getenv("LL_VK_TERRAIN_PULL"); return !(e && e[0] == '0'); }();
-static const bool pull_wanted_pbr = pull_wanted;
+static bool sShadowPull = false;     // S6.6c: the shadow pass being drawn takes the pull program (drawShadowPull)      // S6.6a: sPull: the pass being drawn is the pull variant (drawPull)
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
 
 
@@ -179,7 +177,7 @@ void LLDrawPoolTerrain::beginShadowPass(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_TERRAIN);
     LLFacePool::beginRenderPass(pass);
     gRender.getTexUnit(0)->bindWhite();
-    sShadowPull = pull_wanted && gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+    sShadowPull = gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
     if (sShadowPull)
     {
         gDeferredShadowPullProgram.bind();      // S6.6c
@@ -213,27 +211,11 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
     }
     else
     {
-        drawLoop();
+        ll_pool_draw_dropped("terrain shadow", mDrawFace.size());
     }
     //glCullFace(GL_BACK);
 }
 
-
-void LLDrawPoolTerrain::drawLoop()
-{
-    if (!mDrawFace.empty())
-    {
-        for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
-             iter != mDrawFace.end(); iter++)
-        {
-            LLFace *facep = *iter;
-
-            LLRenderPass::applyModelMatrix(&facep->getDrawable()->getRegion()->mRenderMatrix);
-
-            facep->renderIndexed();
-        }
-    }
-}
 
 // S6.6c: the faces of the pool in a shadow pass as one record of untextured casters (kind 0, the programs of the cascades' packets): the region matrix is the entry's model matrix, the pass's
 // view-projection travels in the header
@@ -320,7 +302,7 @@ void LLDrawPoolTerrain::renderFullShader()
     if (use_textures)
     {
         // Use textures
-        sPull = pull_wanted && gTerrainPullReady;
+        sPull = gTerrainPullReady;
         sShader = sPull ? &gDeferredTerrainPullProgram : &gDeferredTerrainProgram;
         sShader->bind();
         renderFullShaderTextures();
@@ -330,7 +312,7 @@ void LLDrawPoolTerrain::renderFullShader()
         // Use materials
         U32 paint_type = use_local_materials ? gLocalTerrainMaterials.getPaintType() : compp->getPaintType();
         paint_type = llclamp(paint_type, 0, TERRAIN_PAINT_TYPE_COUNT);
-        sPull = pull_wanted_pbr && gTerrainPbrPullReady;
+        sPull = gTerrainPbrPullReady;
         sShader = sPull ? &gDeferredPBRTerrainPullProgram[paint_type] : &gDeferredPBRTerrainProgram[paint_type];
         sShader->bind();
         renderFullShaderPBR(use_local_materials);
@@ -412,7 +394,7 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     }
     else
     {
-        drawLoop();
+        ll_pool_draw_dropped("terrain", mDrawFace.size());
     }
 
     // Disable multitexture
@@ -670,7 +652,7 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
     }
     else
     {
-        drawLoop();
+        ll_pool_draw_dropped("terrain", mDrawFace.size());
     }
 
     // Disable multitexture

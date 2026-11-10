@@ -42,9 +42,9 @@
 
 S32 LLDrawPoolTree::sDiffTex = 0;
 static LLShaderProgram* shader = NULL;
-// <FS> the G-buffer pass of the Linden trees from the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face); LL_VK_TREE_PULL=0 keeps the old loop
+// <FS> the G-buffer pass of the Linden trees from the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face); the old loop of the G-buffer pass is gone (counted drop)
 static bool sTreePull = false;
-static const bool tree_pull_wanted = []() { const char* e = getenv("LL_VK_TREE_PULL"); return !(e && e[0] == '0'); }();
+static bool sTreeShadowPass = false;     // (the pool's own shadow pass still draws the faces one by one with the shadow program)
 
 LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
     LLFacePool(POOL_TREE),
@@ -60,7 +60,8 @@ void LLDrawPoolTree::beginDeferredPass(S32 pass)
 {
     LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
 
-    sTreePull = tree_pull_wanted && gTreePullReady;
+    sTreeShadowPass = false;
+    sTreePull = gTreePullReady;
     shader = sTreePull ? &gDeferredTreePullProgram : &gDeferredTreeProgram;
     shader->bind();
     shader->setMinimumAlpha(0.5f);
@@ -88,6 +89,12 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
     if (sTreePull && shader == &gDeferredTreePullProgram)
     {
         pushWholeBufferFacesPull();
+        return;
+    }
+
+    if (!sTreeShadowPass)
+    {
+        ll_pool_draw_dropped("trees", mDrawFace.size());
         return;
     }
 
@@ -130,6 +137,7 @@ void LLDrawPoolTree::beginShadowPass(S32 pass)
 
     LLEnvironment& environment = LLEnvironment::instance();
 
+    sTreeShadowPass = true;
     sTreePull = false;      // (the shadow pass draws the faces one by one here, with the shadow program: the packet path of the cascades does not come through this pool)
     gDeferredTreeShadowProgram.bind();
     gDeferredTreeShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);

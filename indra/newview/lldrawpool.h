@@ -449,6 +449,7 @@ public:
 };
 
 void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count);       // S6.6d
+void ll_pool_draw_dropped(const char* what, size_t count);       // a draw that has no old path any more because its pull program is not ready: counted, the first one (and every 10000th) logged
 void ll_render_table_debug();       // K6 B1 (lldrawpoolalpha.cpp): the Batch Size and Texture Animation debug views, drawn from the scene table
 int ll_scene_geo_type_count();       // pipeline.cpp: the table's pass types by number
 U32 ll_scene_geo_type_pass(int tn);
