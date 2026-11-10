@@ -1352,6 +1352,7 @@ struct UiUnit
     U32 mRecordedFrame = 0, mActiveFrame = 0, mPhase = 0, mRecords = 0, mDraws = 0;
     float mLiveUs = 0.f, mReplayUs = 0.f;         // moving averages
     bool mValid = false, mUncacheable = false;       // mUncacheable: the draw leaves the render state changed (structural: never again)
+    bool mMediaScanned = false, mHasMedia = false;   // the view is, or holds, a media control (a web page: its picture changes on its own and its texture can be made again): drawn live, never recorded
     unsigned short mBadOp = 0;                       // the last record that made a recording not cacheable
     const char* mWhy = "";
     U32 mRecordings = 0, mRejected = 0, mRejectStreak = 0, mRetryFrame = 0;     // recordings made / not cacheable / in a row / do not record again before this frame
@@ -1446,6 +1447,24 @@ std::string ui_view_path(const LLView* v)
         path = p->getName() + "/" + path;
     }
     return path;
+}
+
+// <FS> a media control (the login screen's start page, the web floaters) shows a texture the plugin changes by itself and can make again (a size change): a recording of it, or of a view that holds it, replayed a
+// stale picture (the start page went black, then transparent). Such a view is drawn live. Asked once for a view (the answer is kept in its unit).
+bool ui_view_holds_media(const LLView* v)
+{
+    if (strstr(typeid(*v).name(), "MediaCtrl"))
+    {
+        return true;
+    }
+    for (const LLView* child : *v->getChildList())
+    {
+        if (ui_view_holds_media(child))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool ui_cache_blacklisted(const LLView* v)
@@ -1602,6 +1621,16 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
         found = sUiUnits.emplace(viewp, std::move(fresh)).first;
     }
     UiUnit& u = found->second;
+    if (!u.mMediaScanned)
+    {
+        u.mMediaScanned = true;
+        u.mHasMedia = ui_view_holds_media(viewp);
+    }
+    if (u.mHasMedia)
+    {
+        viewp->draw();
+        return;
+    }
     const U32 frame = (U32)LLFrameTimer::getFrameCount();
 
     bool named = false;
