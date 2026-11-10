@@ -1176,7 +1176,6 @@ void LLManipTranslate::renderSnapGuides()
             break;
         }
 
-        highlightIntersection(normal, selection_center, grid_rotation, inner_color);
         mManipPart = temp_manip;
         getManipAxis(first_object, mManipPart, translate_axis);
 
@@ -1531,7 +1530,6 @@ void LLManipTranslate::renderSnapGuides()
         }
 
         gRender.getTexUnit(0)->bindWhite();
-        highlightIntersection(normal, selection_center, grid_rotation, inner_color);
 
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
 
@@ -1655,134 +1653,6 @@ void LLManipTranslate::renderGrid(F32 x, F32 y, F32 size, F32 r, F32 g, F32 b, F
     }
 
 
-}
-
-void LLManipTranslate::highlightIntersection(LLVector3 normal,
-                                             LLVector3 selection_center,
-                                             LLQuaternion grid_rotation,
-                                             LLColor4 inner_color)
-{
-#if 0 // DEPRECATED
-    if (!gSavedSettings.getBOOL("GridCrossSections"))
-    {
-        return;
-    }
-
-
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
-
-
-    static const U32 types[] = { LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_ALPHA, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY };
-    static const U32 num_types = LL_ARRAY_SIZE(types);
-
-    U32 stencil_mask = 0xFFFFFFFF;
-    //stencil in volumes
-
-    gRender.flush();
-
-    if (shader)
-    {
-        gClipProgram.bind();
-    }
-
-    {
-        //glStencilMask(stencil_mask); //deprecated
-        //glClearStencil(1);
-        //glClear(ClearBits::Stencil);
-        LLRenderState::CullScope cull_face(true);
-        //LLGLEnable stencil(GL_STENCIL_TEST);
-        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
-        //glStencilFunc(GL_ALWAYS, 0, stencil_mask);
-        gRender.setColorMask(false, false);
-        gRender.getTexUnit(0)->bindWhite();
-
-        gRender.diffuseColor4f(1,1,1,1);
-
-        //setup clip plane
-        normal = normal * grid_rotation;
-        if (normal * (LLViewerCamera::getInstance()->getOrigin()-selection_center) < 0)
-        {
-            normal = -normal;
-        }
-        F32 d = -(selection_center * normal);
-        glm::vec4 plane(normal.mV[0], normal.mV[1], normal.mV[2], d );
-
-        plane = glm::inverse(gRender.getModelviewMatrix()) * plane;
-
-        static LLStaticHashedString sClipPlane("clip_plane");
-        gClipProgram.uniform4fv(sClipPlane, 1, plane.v);
-
-        bool particles = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES);
-        bool clouds = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_CLOUDS);
-
-        if (particles)
-        {
-            LLPipeline::toggleRenderType(LLPipeline::RENDER_TYPE_PARTICLES);
-        }
-        if (clouds)
-        {
-            LLPipeline::toggleRenderType(LLPipeline::RENDER_TYPE_CLOUDS);
-        }
-
-        //stencil in volumes
-        //glStencilOp(GL_INCR, GL_INCR, GL_INCR);
-        gRender.setCullFace(LLRenderState::CullFace::Front);
-        for (U32 i = 0; i < num_types; i++)
-        {
-            gPipeline.renderObjects(types[i], LLVertexBuffer::MAP_VERTEX, false);
-        }
-
-        //glStencilOp(GL_DECR, GL_DECR, GL_DECR);
-        gRender.setCullFace(LLRenderState::CullFace::Back);
-        for (U32 i = 0; i < num_types; i++)
-        {
-            gPipeline.renderObjects(types[i], LLVertexBuffer::MAP_VERTEX, false);
-        }
-
-        if (particles)
-        {
-            LLPipeline::toggleRenderType(LLPipeline::RENDER_TYPE_PARTICLES);
-        }
-        if (clouds)
-        {
-            LLPipeline::toggleRenderType(LLPipeline::RENDER_TYPE_CLOUDS);
-        }
-
-        gRender.setColorMask(true, false);
-    }
-    gRender.color4f(1,1,1,1);
-
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-
-    F32 x,y,z,angle_radians;
-    grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
-    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
-
-    F32 sz = mGridSizeMeters;
-    F32 tiles = sz;
-
-    if (shader)
-    {
-        shader->bind();
-    }
-
-    //draw volume/plane intersections
-    {
-        gRender.getTexUnit(0)->bindWhite();
-        LLRenderState::DepthScope depth(false);
-        //LLGLEnable stencil(GL_STENCIL_TEST);
-        gRender.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep);
-        gRender.setStencilFunc(LLRenderState::CompareOp::Equal, 0, stencil_mask);
-        renderGrid(0,0,tiles,inner_color.mV[0], inner_color.mV[1], inner_color.mV[2], 0.25f);
-    }
-
-    gRender.setStencilFunc(LLRenderState::CompareOp::Always, 255, 0xFFFFFFFF);
-    gRender.setStencilMask(0xFFFFFFFF);
-    gRender.setStencilOp(LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Keep, LLRenderState::StencilOp::Replace);
-
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-#endif
 }
 
 void LLManipTranslate::renderText()
