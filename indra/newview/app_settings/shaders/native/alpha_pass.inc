@@ -138,7 +138,11 @@ layout(std140, set = 0, binding = 1) uniform ReflectionProbes
 
 layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
 {
+#ifdef HIGHLIGHT_PASS
+    vec4 color;                 // the highlight colour of the draw (the Highlight Transparent view: highlight.frag)
+#else
     float minimum_alpha;        // the alpha cutoff of the draw (changes with the draw: its own block)
+#endif
 };
 
 #if defined(ALPHA_LIT) || defined(ALPHA_PROBES) || defined(AVATAR_PASS)

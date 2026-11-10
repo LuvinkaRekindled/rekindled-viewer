@@ -197,6 +197,8 @@ extern LLShaderProgram         gGlowExtractProgram;
 
 //interface shaders
 extern LLShaderProgram         gHighlightProgram;
+extern LLShaderProgram         gHighlightPullSkinProgram;      // K6 B1: the rigged Highlight Transparent draws (native stand-in)
+extern bool                    gHighlightPullSkinReady;
 extern LLShaderProgram         gHighlightNormalProgram;
 extern LLShaderProgram         gHighlightSpecularProgram;
 

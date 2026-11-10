@@ -126,3 +126,5 @@ override | Skinned Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | ful
 override | HUD Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | define IS_HUD=1 | default on
 override | Deferred Emissive Pull Shader | alpha.vert | emissive.frag | post | define GLOW_EMISSIVE=1 | default on
 override | Deferred Emissive Pull Skin Shader | alpha.vert | emissive.frag | post | define GLOW_EMISSIVE=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+# the Highlight Transparent view's skinned draws (rigged masks, invisible and blended alpha) from the scene table: a flat colour, the viewer's program of this name is a placeholder (the highlight shaders with HAS_SKIN) that holds the `color` uniform
+override | Highlight Pull Skin Shader | alpha.vert | highlight.frag | alpha | define HIGHLIGHT_PASS=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
