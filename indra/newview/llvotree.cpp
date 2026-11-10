@@ -451,7 +451,14 @@ void LLVOTree::setPixelAreaAndAngle(LLAgent &agent)
 
     F32 importance = LLFace::calcImportanceToCamera(cos_angle_to_view_dir, dist) ;
     mPixelArea = LLFace::adjustPixelArea(importance, mPixelArea) ;
-    if (mPixelArea > LLViewerCamera::getInstance()->getScreenPixelArea())
+    // <FS> Rekindled (2026-11-10, the user: trees bounce between low and full detail when the camera moves): the old rule gave 180 degrees (= full detail) when this texture-priority pixel area
+    // beat the screen. The area passed adjustPixelArea, which cuts it to 16384 when the camera moves fast or the tree is far from the middle of the view (importance below LEAST_IMPORTANCE),
+    // so the same tree at the same distance read 180 while the camera stood still and its true angle (levels 1 to 3) while it moved or turned: each change rebuilt the tree. The area
+    // beat the screen whenever the cut was off (billboard scales up to 39.5). The cut is off while importance (distance weight x view angle weight, llface.cpp) is at least 0.05: out to
+    // 48.1 m for a tree anywhere in the view, beyond that only for a tree in the middle. So the best case of the old rule for a tree anywhere in the view is kept, made permanent:
+    // every tree within 48.1 m reads 180, farther trees keep the true angle. The level no longer depends on camera motion or on where the tree is on the screen.
+    const F32 TREE_FULL_DETAIL_RANGE = 48.1f;           // = the third distance step of FACE_IMPORTANCE_TO_CAMERA_OVER_DISTANCE in llface.cpp
+    if (dist < TREE_FULL_DETAIL_RANGE)
     {
         mAppAngle = 180.f;
     }
