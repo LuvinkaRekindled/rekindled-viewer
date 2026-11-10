@@ -275,6 +275,7 @@ namespace LLVkBridge
         U32 mPbrRow;                // S5f F3 (kind 32): the number of the entry's PBR row in the record (glTF alpha items)
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
+        U32 mDebugColor;            // K6 B1: the Batch Size debug view's colour of the draw (LLDrawInfo::getDebugColor, made when the entry is built; 0 = none), carried in a spare word of the table row
     };
     // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps
     //   them in scratch memory of the frame (segments by offset); entries of kinds 25 / 26 and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.

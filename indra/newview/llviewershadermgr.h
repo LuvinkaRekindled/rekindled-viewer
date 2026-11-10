@@ -199,6 +199,9 @@ extern LLShaderProgram         gGlowExtractProgram;
 extern LLShaderProgram         gHighlightProgram;
 extern LLShaderProgram         gHighlightPullSkinProgram;      // K6 B1: the rigged Highlight Transparent draws (native stand-in)
 extern bool                    gHighlightPullSkinReady;
+extern LLShaderProgram         gDebugBatchPullProgram;         // K6 B1: the Batch Size / Texture Animation views (native stand-ins)
+extern LLShaderProgram         gDebugBatchPullSkinProgram;
+extern bool                    gDebugBatchPullReady;
 extern LLShaderProgram         gHighlightNormalProgram;
 extern LLShaderProgram         gHighlightSpecularProgram;
 

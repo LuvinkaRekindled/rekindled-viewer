@@ -14474,6 +14474,16 @@ int ll_scene_geo_type_number(U32 type)
     return type < lut.size() ? lut[type] : -1;
 }
 
+// K6 B1: the table's pass types by number (the Batch Size / Texture Animation views draw each of them)
+int ll_scene_geo_type_count()
+{
+    return (int)kGeoTypeCount;
+}
+U32 ll_scene_geo_type_pass(int tn)
+{
+    return tn >= 0 && tn < (int)kGeoTypeCount ? kGeoTypes[tn].mType : 0;
+}
+
 bool ll_scene_geo_main_view()
 {
     // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view
@@ -18828,6 +18838,8 @@ void LLPipeline::renderDebug()
     }
 
     LL::GLTFSceneManager::instance().renderDebug();
+
+    ll_render_table_debug();        // K6 B1: the Batch Size and Texture Animation views, from the scene table
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCCLUSION))
     { //render visible selected group occlusion geometry

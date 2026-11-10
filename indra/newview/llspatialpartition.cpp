@@ -2800,28 +2800,6 @@ void LLVisSetHooks::invalidateAll()
     }
 }
 
-void pushVerts(LLDrawInfo* params)
-{
-    LLRenderPass::applyModelMatrix(*params);
-    params->mVertexBuffer->setBuffer();
-    params->mVertexBuffer->drawRange(LLRender::TRIANGLES,
-                                params->mStart, params->mEnd, params->mCount, params->mOffset);
-}
-
-void pushVerts(LLSpatialGroup* group)
-{
-    LLDrawInfo* params = NULL;
-
-    for (LLSpatialGroup::draw_map_t::iterator i = group->mDrawMap.begin(); i != group->mDrawMap.end(); ++i)
-    {
-        for (LLSpatialGroup::drawmap_elem_t::iterator j = i->second.begin(); j != i->second.end(); ++j)
-        {
-            params = *j;
-            pushVerts(params);
-        }
-    }
-}
-
 void pushVerts(LLFace* face)
 {
     if (face)
@@ -2889,39 +2867,6 @@ void pushBufferVerts(LLSpatialGroup* group, bool push_alpha = true)
         //const LLVector4a* bounds = group->getBounds();
         //drawBox(bounds[0], bounds[1]);
     }*/
-}
-
-void pushVertsColorCoded(LLSpatialGroup* group)
-{
-    LLDrawInfo* params = NULL;
-
-    static const LLColor4 colors[] = {
-        LLColor4::green,
-        LLColor4::green1,
-        LLColor4::green2,
-        LLColor4::green3,
-        LLColor4::green4,
-        LLColor4::green5,
-        LLColor4::green6
-    };
-
-    static const U32 col_count = LL_ARRAY_SIZE(colors);
-
-    U32 col = 0;
-
-    for (LLSpatialGroup::draw_map_t::iterator i = group->mDrawMap.begin(); i != group->mDrawMap.end(); ++i)
-    {
-        for (LLSpatialGroup::drawmap_elem_t::iterator j = i->second.begin(); j != i->second.end(); ++j)
-        {
-            params = *j;
-            LLRenderPass::applyModelMatrix(*params);
-            gRender.diffuseColor4f(colors[col].mV[0], colors[col].mV[1], colors[col].mV[2], 0.5f);
-            params->mVertexBuffer->setBuffer();
-            params->mVertexBuffer->drawRange(LLRender::TRIANGLES,
-                params->mStart, params->mEnd, params->mCount, params->mOffset);
-            col = (col+1)%col_count;
-        }
-    }
 }
 
 // return false if drawable is rigged and:
@@ -4087,44 +4032,6 @@ void renderPoints(LLDrawable* drawablep)
     }
 }
 
-void renderTextureAnim(LLDrawInfo* params)
-{
-    if (!params->mTextureMatrix)
-    {
-        return;
-    }
-
-    LLRenderState::BlendScope blend(true);
-    gRender.diffuseColor4f(1,1,0,0.5f);
-    pushVerts(params);
-}
-
-void renderBatchSize(LLDrawInfo* params)
-{
-    LLRenderState::PolygonOffsetScope offset(true);
-    gRender.setPolygonOffset(-1.f, 1.f);
-    LLShaderProgram* old_shader = LLShaderProgram::sCurBoundShaderPtr;
-    bool bind = false;
-    if (params->mAvatar)
-    {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-        bind = true;
-        old_shader->mRiggedVariant->bind();
-        LLRenderPass::uploadMatrixPalette(*params);
-    }
-
-
-    gRender.diffuseColor4ubv(params->getDebugColor().mV);
-    pushVerts(params);
-
-    if (bind)
-    {
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-        old_shader->bind();
-    }
-}
-
 void renderTexelDensity(LLDrawable* drawable)
 {
     if (LLViewerTexture::sDebugTexelsMode == LLViewerTexture::DEBUG_TEXELS_OFF
@@ -4711,22 +4618,7 @@ public:
 #endif
         }
 
-        for (LLSpatialGroup::draw_map_t::iterator i = group->mDrawMap.begin(); i != group->mDrawMap.end(); ++i)
-        {
-            LLSpatialGroup::drawmap_elem_t& draw_vec = i->second;
-            for (LLSpatialGroup::drawmap_elem_t::iterator j = draw_vec.begin(); j != draw_vec.end(); ++j)
-            {
-                LLDrawInfo* draw_info = *j;
-                if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_ANIM))
-                {
-                    renderTextureAnim(draw_info);
-                }
-                if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BATCH_SIZE))
-                {
-                    renderBatchSize(draw_info);
-                }
-            }
-        }
+        // (K6 B1: Batch Size and Texture Animation are drawn from the scene table once a frame: ll_render_table_debug)
     }
 };
 
@@ -4869,6 +4761,12 @@ public:
         }
     }
 
+    // <FS> K6: a node without a group, or a group that has no row of its own any more (a dead one in the octree), is skipped: reading its row crashed the debug views (reading address FFFFFFFFFFFFFFFF in visit)
+    static bool usable(const LLSpatialGroup* group)
+    {
+        return group && group->ownsRow();
+    }
+
     virtual void traverse(const OctreeNode* node)
     {
         LLSpatialGroup* group = (LLSpatialGroup*) node->getListener(0);
@@ -4878,10 +4776,14 @@ public:
 
         U32 temp[LLViewerCamera::NUM_CAMERAS];
 
+        const bool have_row = usable(group);
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
             temp[i] = mInheritedMask[i];
-            mInheritedMask[i] |= group->row().occlusion[i] & LLSpatialGroup::OCCLUDED;
+            if (have_row)
+            {
+                mInheritedMask[i] |= group->row().occlusion[i] & LLSpatialGroup::OCCLUDED;
+            }
         }
 
         for (U32 i = 0; i < node->getChildCount(); i++)
@@ -4899,12 +4801,21 @@ public:
     virtual void visit(const OctreeNode* state)
     {
         LLSpatialGroup* group = (LLSpatialGroup*) state->getListener(0);
+        if (!usable(group))
+        {
+            return;
+        }
 
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
             if (mInheritedMask[i] && !(group->row().occlusion[i] & mInheritedMask[i]))
             {
-                LL_ERRS() << "Spatial group failed inherited mask test." << LL_ENDL;
+                // <FS> K6: a debug view must not end the viewer: the failed check is logged (the first ones), not a fatal error
+                static U32 told = 0;
+                if (told++ < 5)
+                {
+                    LL_WARNS("SpatialDebug") << "Spatial group failed inherited mask test." << LL_ENDL;
+                }
             }
         }
 
@@ -4917,11 +4828,15 @@ public:
     void assert_parent_state(LLSpatialGroup* group, U32 state)
     {
         LLSpatialGroup* parent = group->getParent();
-        while (parent)
+        while (parent && usable(parent))
         {
             if (!parent->hasState(state))
             {
-                LL_ERRS() << "Spatial group failed parent state check." << LL_ENDL;
+                static U32 told = 0;
+                if (told++ < 5)
+                {
+                    LL_WARNS("SpatialDebug") << "Spatial group failed parent state check." << LL_ENDL;
+                }
             }
             parent = parent->getParent();
         }

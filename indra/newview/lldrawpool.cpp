@@ -1468,6 +1468,10 @@ bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassI
     e.mIndexBuffer = vb->getIndexBufferId();
     e.mFirstIndex = params.mOffset;
     e.mIndexCount = params.mCount;
+    {
+        const LLColor4U debug_color = params.getDebugColor();        // K6 B1: the Batch Size debug view's colour of this draw, made once here (a CRC of the draw info) and read by the debug shader from the row
+        memcpy(&e.mDebugColor, debug_color.mV, sizeof(e.mDebugColor));
+    }
     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);

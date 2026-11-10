@@ -120,6 +120,9 @@ LLShaderProgram        gHighlightProgram;
 LLShaderProgram        gSkinnedHighlightProgram;
 LLShaderProgram        gHighlightPullSkinProgram;       // <FS> K6 B1: "Highlight Pull Skin Shader": a placeholder (the highlight shaders with HAS_SKIN) for its native stand-in (highlight.frag + alpha.vert), which draws the rigged table items of the Highlight Transparent view
 bool                   gHighlightPullSkinReady = false;
+LLShaderProgram        gDebugBatchPullProgram;          // <FS> K6 B1: "Debug Batch Pull Shader" and its skinned twin: placeholders (the highlight shaders) for the native programs of the Batch Size and Texture Animation views
+LLShaderProgram        gDebugBatchPullSkinProgram;
+bool                   gDebugBatchPullReady = false;
 LLShaderProgram        gHighlightNormalProgram;
 LLShaderProgram        gHighlightSpecularProgram;
 
@@ -1567,6 +1570,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaPullSkinProgram.unload();
         gHighlightPullSkinProgram.unload();
         gHighlightPullSkinReady = false;
+        gDebugBatchPullProgram.unload();
+        gDebugBatchPullSkinProgram.unload();
+        gDebugBatchPullReady = false;
         gDeferredPBRAlphaPullSkinProgram.unload();
         gDeferredEmissivePullProgram.unload();
         gDeferredEmissivePullSkinProgram.unload();
@@ -5109,6 +5115,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         pull.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         pull.clearPermutations();
         pull.addPermutation("HAS_SKIN", "1");
+        pull.addPermutation("LL_VERTEX_PULL", "1");     // (the worker draws a table record only with a program that has the table uniform ll_packet_table: a pull program; without it the record is dropped before the native stand-in is looked at)
         pull.mFeatures.hasObjectSkinning = true;
         pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         gHighlightPullSkinReady = pull.createShader();
@@ -5116,6 +5123,31 @@ bool LLViewerShaderMgr::loadShadersInterface()
         {
             LL_WARNS("ShadowPackets") << "the Highlight Pull Skin Shader could not be made: the rigged part of Highlight Transparent will draw nothing" << LL_ENDL;
             pull.unload();
+        }
+
+        // <FS> K6 B1: the Batch Size and Texture Animation views draw the table's items with these (native stand-ins; the old shaders hold the `color` uniform that selects the view)
+        gDebugBatchPullReady = true;
+        for (int skin = 0; skin < 2; ++skin)
+        {
+            LLShaderProgram& debug_program = skin ? gDebugBatchPullSkinProgram : gDebugBatchPullProgram;
+            debug_program.mName = skin ? "Debug Batch Pull Skin Shader" : "Debug Batch Pull Shader";
+            debug_program.mShaderFiles.clear();
+            debug_program.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
+            debug_program.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
+            debug_program.clearPermutations();
+            debug_program.addPermutation("LL_VERTEX_PULL", "1");        // (see the Highlight Pull Skin Shader: a table record needs a pull program)
+            if (skin)
+            {
+                debug_program.addPermutation("HAS_SKIN", "1");
+                debug_program.mFeatures.hasObjectSkinning = true;
+            }
+            debug_program.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+            if (!debug_program.createShader())
+            {
+                LL_WARNS("ShadowPackets") << "the " << debug_program.mName << " could not be made: the Batch Size and Texture Animation views will draw nothing" << LL_ENDL;
+                debug_program.unload();
+                gDebugBatchPullReady = false;
+            }
         }
     }
 

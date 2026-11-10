@@ -468,7 +468,14 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 // <FS> K6 B1 step 3: the blended alpha draws of the groups that have a current alpha plan (ll_alpha_plan: the fragment's served items) are drawn red from the table: one record of the plans' served ranges
 // (the record the alpha loop sends for a run: kind 29, {fragment handle, first item, count} each), drawn with the colour program's pull twin. Returns the groups it drew all of; the old walk below draws
 // the others (a group without a plan: a fragment that is not current, a view the table does not serve, a segment the table does not carry).
-static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*> (&drawn)[2])
+// (K6 B1: the Batch Size / Texture Animation views draw the same ranges with their own programs and colour: a view says which)
+struct AlphaTableView
+{
+    LLShaderProgram* mStatic = nullptr;
+    LLShaderProgram* mRigged = nullptr;
+    F32 mColor[4] = { 0.f, 0.f, 0.f, 1.f };
+};
+static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*> (&drawn)[2], const AlphaTableView* view = nullptr)
 {
     drawn[0].clear();
     drawn[1].clear();
@@ -481,6 +488,10 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     for (int rig = 0; rig < 2; ++rig)
     {
     LLShaderProgram* color = rig ? (LLShaderProgram*)(gHighlightPullSkinReady && LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : ll_pull_twin(&gDrawColorProgram);
+    if (view)
+    {
+        color = rig ? view->mRigged : view->mStatic;
+    }
     if (!color)
     {
         continue;
@@ -530,7 +541,11 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     static LLStaticHashedString waterSign("waterSign");
     color->bind();
     color->uniform1f(waterSign, 1.f);
-    if (rig)
+    if (view)
+    {
+        color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, view->mColor[0], view->mColor[1], view->mColor[2], view->mColor[3]);
+    }
+    else if (rig)
     {
         color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0.5f, 0, 1);
     }
@@ -554,6 +569,56 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
         LLRenderState::CullScope cull_face(false, true);        // (both sides: a highlight, not a surface)
         LLVkBridge::shadowPackets(header, ranges.data(), ranges.size() * sizeof(Range));
     }
+    }
+}
+
+// <FS> K6 B1: the Batch Size and Texture Animation debug views from the scene table (they walked every group's draw infos and drew each with pushVerts). The visible fragments' items of every table type are
+// drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour LLDrawInfo::getDebugColor made for it when its entry was built (carried in the
+// table row), Texture Animation tints the draws that have a texture matrix yellow. The blended alpha draws come from the alpha plans' ranges as in the highlight; the rigged ones use the skinned twin.
+void ll_render_table_debug()
+{
+    const bool batch = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BATCH_SIZE);
+    const bool anim = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_ANIM);
+    if (!(batch || anim) || !gDebugBatchPullReady)
+    {
+        return;
+    }
+    for (int view = 0; view < 2; ++view)
+    {
+        if (view == 0 ? !batch : !anim)
+        {
+            continue;
+        }
+        const F32 mode = view == 1 ? 1.f : 0.f;
+        LLRenderState::PolygonOffsetScope offset(true);
+        gRender.setPolygonOffset(-1.f, 1.f);
+        LLRenderState::BlendScope blend(true);
+        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::LessEqual);
+        LLShaderProgram* programs[2] = { &gDebugBatchPullProgram, &gDebugBatchPullSkinProgram };
+        for (int rig = 0; rig < 2; ++rig)
+        {
+            programs[rig]->bind();
+            programs[rig]->uniform4f(LLShaderMgr::DIFFUSE_COLOR, mode, 0, 0, 1);
+            for (int tn = 0; tn < ll_scene_geo_type_count(); ++tn)
+            {
+                const U32 pass = ll_scene_geo_type_pass(tn);
+                if (!rig)
+                {
+                    LLRenderPass::pushGeometryPackets(pass);
+                }
+                else if (pass != LLRenderPass::PASS_GRASS)
+                {
+                    LLRenderPass::pushGeometryPackets(pass + 1, true);      // (the rigged variant of a pass type is the next number; grass has none)
+                }
+            }
+        }
+        AlphaTableView alpha_view;
+        alpha_view.mStatic = programs[0];
+        alpha_view.mRigged = (gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs) ? programs[1] : nullptr;
+        alpha_view.mColor[0] = mode;
+        static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn[2];
+        highlight_alpha_from_table(table_drawn, &alpha_view);
+        LLShaderProgram::unbind();
     }
 }
 
