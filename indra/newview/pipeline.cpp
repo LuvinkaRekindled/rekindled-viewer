@@ -341,6 +341,7 @@ static LLStaticHashedString sDistFactor("dist_factor");
 static LLStaticHashedString sSunPassthrough("sun_passthrough");     // <FS> blurLightF.glsl
 static LLStaticHashedString sKern("kern");
 static LLStaticHashedString sKernScale("kern_scale");
+static LLStaticHashedString sHalfSrc("half_src");                    // <FS> blur_light.frag, blurLightF.glsl: the blur of the half resolution lightmap reads the G-buffer at the pixel each lightmap pixel was computed at
 static LLStaticHashedString sSmaaRTMetrics("SMAA_RT_METRICS");
 
 //----------------------------------------
@@ -26798,6 +26799,11 @@ void LLPipeline::renderDeferredLighting()
                     RenderPassScope pass_half(dst);
                     bindDeferredShader(gDeferredBlurLightProgram, &src);
                     gDeferredBlurLightProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, half_w, half_h);
+                    // <FS> a half resolution lightmap pixel was computed at ONE pixel of its 2x2 block (half_offset); the blur must test the depth and the normal of THAT pixel, for its own pixel and for every tap.
+                    // It read them at the half pixel's centre instead (a corner between four pixels, so one of the four by rounding): where the two differ (a one pixel gap in a mesh body's seam that shows the sky,
+                    // a silhouette) the blur took a sky pixel's lightmap value (1: fully sunlit) for a value of the skin next to it and spread it over its 13 taps both ways: flecks of sunlight on shadowed skin
+                    // (the user, 2026-11-09; bursts of 40 frames on leg skin in shadow: 8069 and 4232 pixels of sunlit glow with the old reads, 31 and 59 with these, none of them on skin).
+                    gDeferredBlurLightProgram.uniform4f(sHalfSrc, (F32)deferred_light_target->getWidth(), (F32)deferred_light_target->getHeight(), half_offset[0], half_offset[1]);
                     gDeferredBlurLightProgram.uniform1f(sSunPassthrough, 0.f);
                     gDeferredBlurLightProgram.uniform2f(sDelta, pass_index == 0 ? 1.f : 0.f, pass_index == 0 ? 0.f : 1.f);
                     gDeferredBlurLightProgram.uniform1f(sDistFactor, RenderShadowBlurDistFactor);
@@ -26862,6 +26868,7 @@ void LLPipeline::renderDeferredLighting()
             // <FS> the ray traced sun channel has its penumbra from the filter and is never blurred, upscaler or not: the blur leaves it alone and smooths the SSAO and the spot shadows
             const F32 sun_passthrough = LLVkBridge::rtShadowMode() ? 1.f : 0.f;
             gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
+            gDeferredBlurLightProgram.uniform4f(sHalfSrc, 0.f, 0.f, 0.f, 0.f);       // <FS> the lightmap has the G-buffer's size here (the half resolution blur above sets this)
             gDeferredBlurLightProgram.uniform2f(sDelta, 1.f, 0.f);
             gDeferredBlurLightProgram.uniform1f(sDistFactor, dist_factor);
             gDeferredBlurLightProgram.uniform3fv(sKern, kern_length, gauss[0].mV);
@@ -26882,6 +26889,7 @@ void LLPipeline::renderDeferredLighting()
             RenderPassScope pass_12827(*deferred_light_target);
 
             gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
+            gDeferredBlurLightProgram.uniform4f(sHalfSrc, 0.f, 0.f, 0.f, 0.f);
             gDeferredBlurLightProgram.uniform2f(sDelta, 0.f, 1.f);
 
             {

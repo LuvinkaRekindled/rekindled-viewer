@@ -37,16 +37,30 @@ uniform vec3 kern[4];
 uniform float kern_scale;
 uniform float sun_passthrough;   // <FS> 1: the sun shadow channel (r) keeps its own value and only the SSAO (g) and the spot shadows are blurred (the ray traced sun shadow: its penumbra is the filter's)
 
+uniform vec4 half_src;           // <FS> the blur of the half resolution lightmap: xy the size of the G-buffer, zw the pixel of its 2x2 block a lightmap pixel was computed at; x = 0: the lightmap has the G-buffer's size
+
 in vec2 vary_fragcoord;
 
 vec4 getPosition(vec2 pos_screen);
 vec4 getNorm(vec2 pos_screen);
 
+// <FS> where in the G-buffer the surface of a lightmap position is (native/blur_light.frag has the reason): a half resolution lightmap pixel i holds the lighting of the G-buffer pixel 2i + half_src.zw,
+// and the surface tests must read that pixel, not the one under the lightmap position
+vec2 gbufferTC(vec2 tc)
+{
+    if (half_src.x <= 0.0)
+    {
+        return tc;
+    }
+    vec2 idx = clamp(floor(tc * screen_res), vec2(0.0), screen_res - 1.0);
+    return (min(idx * 2.0 + half_src.zw, half_src.xy - 1.0) + 0.5) / half_src.xy;
+}
+
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
-    vec4 norm = getNorm(tc);
-    vec3 pos = getPosition(tc).xyz;
+    vec4 norm = getNorm(gbufferTC(tc));
+    vec3 pos = getPosition(gbufferTC(tc)).xyz;
     vec4 ccol = texture(lightMap, tc).rgba;
 
     vec2 dlt = kern_scale * delta / (1.0+norm.xy*norm.xy);
@@ -80,7 +94,7 @@ void main()
     {
         vec2 samptc = tc + k[i].z*dlt*2.0;
         samptc /= screen_res;
-        vec3 samppos = getPosition(samptc).xyz;
+        vec3 samppos = getPosition(gbufferTC(samptc)).xyz;
 
         float d = dot(norm.xyz, samppos.xyz-pos.xyz);// dist from plane
 
@@ -95,7 +109,7 @@ void main()
     {
         vec2 samptc = tc - k[i].z*dlt*2.0;
         samptc /= screen_res;
-        vec3 samppos = getPosition(samptc).xyz;
+        vec3 samppos = getPosition(gbufferTC(samptc)).xyz;
 
         float d = dot(norm.xyz, samppos.xyz-pos.xyz);// dist from plane
 
