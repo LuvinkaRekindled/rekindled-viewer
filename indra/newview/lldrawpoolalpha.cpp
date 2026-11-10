@@ -410,10 +410,8 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 
         renderAlphaHighlight();
 
-        pushUntexturedBatches(LLRenderPass::PASS_ALPHA_INVISIBLE);
-
         // <FS> K6 B1 step 1: the alpha masked and the invisible draws are table items (the render map no longer lists them in a view the table serves): the same items are drawn again with the colour program's
-        // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: alpha mask, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
+        // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: the alpha mask and the invisible alpha draws, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
         // lists, prepares and elides these types while this view is on (ll_scene_geo_hud_type), so it draws them the same way.
         if (LLShaderProgram* color = ll_pull_twin(&gDrawColorProgram))
         {
@@ -422,6 +420,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
             color->uniform1f(waterSign, 1.f);
             color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0, 0, 1);
             pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_INVISIBLE);
 
             // Material alpha mask
             color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 0, 1, 1);
