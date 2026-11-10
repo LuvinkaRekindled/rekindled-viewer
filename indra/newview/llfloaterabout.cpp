@@ -201,6 +201,27 @@ bool LLFloaterAbout::postBuild()
         // this case will use the (out of date) hard coded value from the XUI
         LL_INFOS("AboutInit") << "Could not read licenses file at " << licenses_path << LL_ENDL;
     }
+
+    // <FS> the credits and licence texts of what Rekindled adds (NVIDIA DLSS, AMD FidelityFX, Vulkan Memory Allocator, bc7enc, glslang, SPIRV-Tools, OpenAL Soft): after the packages' list
+    {
+        std::string rekindled_path = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "rekindled-licenses.txt");
+        llifstream rekindled_file;
+        rekindled_file.open(rekindled_path.c_str());        /* Flawfinder: ignore */
+        if (rekindled_file.is_open())
+        {
+            std::string license_line;
+            licenses_widget->appendText("\n", false, LLStyle::Params().color(about_color));
+            while (std::getline(rekindled_file, license_line))
+            {
+                licenses_widget->appendText(license_line + "\n", false, LLStyle::Params().color(about_color));
+            }
+            rekindled_file.close();
+        }
+        else
+        {
+            LL_INFOS("AboutInit") << "Could not read the Rekindled licenses file at " << rekindled_path << LL_ENDL;
+        }
+    }
     licenses_widget->setEnabled(false);
     licenses_widget->startOfDoc();
 

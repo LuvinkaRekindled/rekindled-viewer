@@ -1,0 +1,29 @@
+Rekindled additions
+
+NVIDIA DLSS SDK Copyright (C) NVIDIA Corporation, used under the NVIDIA DLSS SDK License Agreement. NVIDIA, DLSS and RTX are trademarks of NVIDIA Corporation.
+AMD FidelityFX SDK (FSR) Copyright (C) 2024 Advanced Micro Devices, Inc., MIT License (below).
+Vulkan Memory Allocator Copyright (c) 2017-2026 Advanced Micro Devices, Inc., MIT License (below).
+bc7enc Copyright (c) 2020-2021 Richard Geldreich, Jr., MIT License (below).
+glslang Copyright (C) the Khronos Group Inc. and its contributors, BSD 3-Clause and other permissive licenses (https://github.com/KhronosGroup/glslang).
+SPIRV-Tools Copyright (c) the Khronos Group Inc. and its contributors, Apache License 2.0 (full text: apache-2.0.txt in the viewer's app_settings folder; https://github.com/KhronosGroup/SPIRV-Tools).
+OpenAL Soft is used as a separate library (OpenAL32.dll beside the viewer) under the GNU Lesser General Public License; its source code is at https://openal-soft.org
+
+MIT License (AMD FidelityFX SDK, Vulkan Memory Allocator, bc7enc)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

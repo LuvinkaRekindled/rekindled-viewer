@@ -101,6 +101,9 @@ class ViewerManifest(LLManifest,FSViewerManifest):
                 self.path("*.xml")
                 # <FS> J1: the GPU pipeline variants the viewer uses, built at start-up on a machine with no list of its own yet
                 self.path("vk_pipeline_variants_default.txt")
+                # <FS> the credits and licence texts of what Rekindled adds to the viewer (read by the About floater's Licenses tab)
+                self.path("rekindled-licenses.txt")
+                self.path("apache-2.0.txt")
 
                 # include the entire shaders directory recursively
                 self.path("shaders")
