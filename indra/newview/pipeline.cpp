@@ -17464,7 +17464,7 @@ static void report_pool_draws()
     {
         const LLGeometryPacketStats& g = gGeometryPacketStats;
         LL_INFOS("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
-            << " draws left to the old path, " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
+            << " draws dropped (no old path), " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
     }
     gGeometryPacketStats = LLGeometryPacketStats();
     memset(sPoolDraws.mDraws, 0, sizeof(sPoolDraws.mDraws));
@@ -28268,6 +28268,22 @@ static bool shadow_packets_enabled()
     return gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
 }
 
+// <FS> K6 group C step 2: a caster the record cannot carry is not drawn any more (the old per draw fallbacks are deleted: a daylight session logged 0 of them in every kind, and the refusal reasons are
+// producer invariants as they are for the main view). It is counted (the ShadowDraws statistics, "draws dropped") and the first one is logged with its kind.
+static void shadow_caster_dropped(const char* kind, size_t count)
+{
+    static U64 total = 0;
+    if (count == 0)
+    {
+        return;
+    }
+    if (total == 0)
+    {
+        LL_WARNS("ShadowPackets") << count << " " << kind << " shadow casters the record cannot carry are not drawn (there is no old path any more); the statistics line \"draws dropped\" counts them" << LL_ENDL;
+    }
+    total += count;
+}
+
 // <FS> ray query shadows: a stable identity for a draw's model matrix. The top bit says the matrix is a region's own (static geometry of that region): every other
 // matrix belongs to an object that moves or is attached (an avatar's attachments, a moving linkset)
 static U32 rt_matrix_id(const LLMatrix4* m)
@@ -28727,13 +28743,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     if (!gather.mFallback.empty())
                     {
                         gShadowDrawStats.mPacketFallback += gather.mFallback.size();
-                        ll_pull_or(&gDeferredShadowProgram)->bind();        // S6.6
-                        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-                        gRenderLastMatrix = NULL;
-                        for (LLDrawInfo* params : gather.mFallback)
-                        {
-                            mSimplePool->pushUntexturedBatch(*params);
-                        }
+                        shadow_caster_dropped("static", gather.mFallback.size());
                     }
                     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
                     gRenderLastMatrix = NULL;
@@ -28808,13 +28818,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (!fallback.empty())
         {
             gShadowDrawStats.mPacketFallback += fallback.size();
-            ll_pull_or(&gDeferredShadowProgram)->bind();        // S6.6
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-            for (LLDrawInfo* params : fallback)
-            {
-                mSimplePool->pushUntexturedBatch(*params);
-            }
+            shadow_caster_dropped("static", fallback.size());
         }
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         gRenderLastMatrix = NULL;
@@ -28934,19 +28938,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (!fallback.empty() && !rt_skip)
         {
             gShadowDrawStats.mSkinFallback += fallback.size();
-            gDeferredShadowProgram.bind(true);
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-            const LLVOAvatar* last_avatar = nullptr;
-            U64 last_mesh = 0;
-            bool skip_last = false;
-            for (LLDrawInfo* params : fallback)
-            {
-                if (LLRenderPass::uploadMatrixPalette(params->mAvatar, params->mSkinInfo, last_avatar, last_mesh, skip_last))
-                {
-                    mSimplePool->pushUntexturedBatch(*params);
-                }
-            }
+            shadow_caster_dropped("rigged", fallback.size());
         }
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         gRenderLastMatrix = NULL;
@@ -29462,43 +29454,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
         }
 
-        // what the record cannot carry goes the old way, with the program and cutoff the old code used
-        auto run_fallbacks = [&](std::vector<LLDrawInfo*>& list, LLShaderProgram& program, LLRenderPass* pool, bool batch, bool alpha_uniforms, bool fixed_cutoff)
-        {
-            if (list.empty())
-            {
-                return;
-            }
-            gShadowDrawStats.mAlphaFallback += list.size();
-            (rigged ? &program : ll_pull_or(&program))->bind(rigged);       // S6.6: the static fallbacks through the pull twin (the texture matrix of a draw travels in its record)
-            if (alpha_uniforms)
-            {
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-            }
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-            const LLVOAvatar* last_avatar = nullptr;
-            U64 last_mesh = 0;
-            bool skip_last = false;
-            for (LLDrawInfo* params : list)
-            {
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(fixed_cutoff ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff);
-                if (rigged && !LLRenderPass::uploadMatrixPalette(params->mAvatar, params->mSkinInfo, last_avatar, last_mesh, skip_last))
-                {
-                    continue;
-                }
-                pool->pushBatch(*params, true, batch);
-            }
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-        };
+        // what the record cannot carry is not drawn (see shadow_caster_dropped)
         if (!rt_skip)
         {
-            run_fallbacks(fallback[KIND_MASK], gDeferredShadowAlphaMaskProgram, mAlphaMaskPool, true, true, false);
-            run_fallbacks(fallback[KIND_FULLBRIGHT], gDeferredShadowFullbrightAlphaMaskProgram, mFullbrightAlphaMaskPool, true, true, false);
-            run_fallbacks(fallback[KIND_GRASS], gDeferredTreeShadowProgram, mSimplePool, false, false, true);
-            run_fallbacks(fallback[KIND_MATERIAL], gDeferredTreeShadowProgram, mAlphaMaskPool, false, false, false);
+            const size_t dropped = fallback[KIND_MASK].size() + fallback[KIND_FULLBRIGHT].size() + fallback[KIND_GRASS].size() + fallback[KIND_MATERIAL].size();
+            gShadowDrawStats.mAlphaFallback += dropped;
+            shadow_caster_dropped("alpha", dropped);
         }
     };
 
@@ -29679,19 +29640,19 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (st.mPacketRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
-                    << st.mPacketFallback / frames << " draws left to the old path" << LL_ENDL;
+                    << st.mPacketFallback / frames << " draws dropped (no old path)" << LL_ENDL;
             }
             if (st.mSkinRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
-                    << st.mSkinFallback / frames << " draws left to the old path, " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
+                    << st.mSkinFallback / frames << " draws dropped (no old path), " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
             }
             LL_INFOS("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
             st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
-                    << st.mAlphaFallback / frames << " draws left to the old path, " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
+                    << st.mAlphaFallback / frames << " draws dropped (no old path), " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
                     << st.mAlphaFragGroups / frames << " groups" << LL_ENDL;
             }
             LL_INFOS("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
