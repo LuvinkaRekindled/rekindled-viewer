@@ -95,6 +95,7 @@ bool ll_scene_geo_hud_any();                                    // ... any of th
 bool ll_scene_geo_hud_type(int tn);                             // ... and a table type the HUD pools draw from rows (the others stay in the HUD's render map)
 bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
 int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
+bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type);  // <FS> the result holds a draw of this pass type this frame (its render map, or the served items of its fragments)
 void ll_scene_geo_palette_kick(LLCullResult* cull);               // S4 B: end of postSort: the palettes of the rigged items of the listed fragments are made on the pool (ll_scene_geo_frame takes them)
 void ll_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
 void ll_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame

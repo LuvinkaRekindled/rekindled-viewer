@@ -14427,6 +14427,33 @@ bool ll_scene_geo_prepared(LLCullResult* cull)
     return cull && cull == sGeoPrepared && sGeoPreparedFrame == (U32)gFrameCount;
 }
 
+// <FS> the result holds at least one draw of this pass type: in its render map, or served by the table (a fragment's served mask bit is set only for a type that has items, all served)
+bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
+{
+    if (!cull)
+    {
+        return false;
+    }
+    if (cull->getRenderMapSize(type) > 0)
+    {
+        return true;
+    }
+    const int tn = ll_scene_geo_type_number(type);
+    if (tn < 0 || !cull->mGeoElided)
+    {
+        return false;
+    }
+    for (U32 handle : cull->mGeoHandles)
+    {
+        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+        if (f && (f->mGeoServedMask & (1ull << tn)))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 int ll_scene_geo_type_number(U32 type)
 {
     static std::vector<S8> lut;
