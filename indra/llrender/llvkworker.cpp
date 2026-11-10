@@ -8386,6 +8386,7 @@ void geo_write_items(GeoFrag& f)
             g.mPad[1] = f.mPbrOfItem[i] - 1;       // S5c: its PBR row (S6 X4: the glTF items of the G passes have one too)
         }
         g.mEmissiveOffset = e.mEmissiveOffset;      // S5e (the alpha items' glow draw), S6 X2 (the glow pass items: the emissive array; 0 for everything else)
+        g.mSkinPad[0] = e.mDebugColor;              // K6 B1: the Batch Size view's colour of the draw (the row's skinPad0)
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset;

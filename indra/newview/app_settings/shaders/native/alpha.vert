@@ -9,6 +9,10 @@ layout(location = 0) out vec3 vary_position;
 layout(location = 1) out vec4 vertex_color;
 layout(location = 2) out vec2 vary_texcoord0;
 layout(location = 3) flat out uint vary_slot;
+#ifdef DEBUG_ROW
+layout(location = 5) flat out uint vary_debug_color;        // the Batch Size view's colour of the draw (the row's skinPad0) and its texture matrix slot (pad.x: 0 = none)
+layout(location = 6) flat out uint vary_debug_texmat;
+#endif
 #ifdef ALPHA_LIT
 layout(location = 4) out vec3 vary_norm;        // the surface normal in eye space (a lit surface)
 #endif
@@ -99,6 +103,10 @@ void main()
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
 #endif
     vary_slot = row_texture_slot(row, position.w);
+#ifdef DEBUG_ROW
+    vary_debug_color = row.skinPad0;
+    vary_debug_texmat = row.pad.x;
+#endif
 #ifdef ALPHA_UBER
     vary_fullbright = (row.flags & 32u) != 0u ? 1u : 0u;
 #endif
