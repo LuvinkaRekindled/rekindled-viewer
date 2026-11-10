@@ -44,6 +44,7 @@ void main()
     vec3 skin_translation;
     row_skin(row, index, skin_rotation, skin_translation);
     const vec3 vertex = skin_rotation * position.xyz + skin_translation;
+    const vec3 rig_anchor = row_rig_anchor(row);
     uint color_index = index;
 #else
     const bool particle = (row.flags & 16u) != 0u;
@@ -66,10 +67,11 @@ void main()
         vertex = position.xyz;
     }
     const uint color_index = index;
+    const vec3 rig_anchor = vec3(0.0);
 #endif
 
-    const vec4 eye = model.mv * vec4(vertex, 1.0);
-    gl_Position = model.mvp * vec4(vertex, 1.0);
+    const vec4 eye = rig_transform(model.mv, vertex, rig_anchor);
+    gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
     // the matrices of the scene table are in GL clip space (z in [-w, w], what the viewer's own shaders compute); Vulkan's is [0, w]. Every viewer vertex shader gets this line from the translator; a program
     // that takes its matrix from the table has to do it itself, or its depth is wrong (the first native alpha test drew a sign over the tree in front of it).
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;

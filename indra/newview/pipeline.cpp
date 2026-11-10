@@ -21979,7 +21979,7 @@ static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::
     }
     const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);
     joints = (U32)mpc.mMatrixPalette.size();
-    if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12)
+    if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12)        // (one entry more than the mesh has joints: the tail with the anchor of a relative palette)
     {
         return false;
     }
@@ -21987,7 +21987,7 @@ static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::
     if (it == offsets.end())
     {
         it = offsets.emplace(mpc.mGLMp.data(), (U32)data.size()).first;
-        data.insert(data.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
+        data.insert(data.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)(joints + 1) * 12);
     }
     offset = it->second;
     return true;
@@ -22854,7 +22854,7 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
         { LL_CPU_ZONE("avatar velocity: updateSkinInfoMatrixPalette"); mpc_ptr = &avatar->updateSkinInfoMatrixPalette(d.skin); }
         const LLVOAvatar::MatrixPaletteCache& mpc = *mpc_ptr;
         const U32 joints = (U32)mpc.mMatrixPalette.size();
-        if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
+        if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12 || mpc.mPrevGLMp.size() != mpc.mGLMp.size())
         {
             return;       // the skin is not loaded yet: not drawn, as the G-buffer does not draw it
         }
@@ -22905,8 +22905,8 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             {
                 mpc.mOffset = (U32)w.mPalettes.size();
                 mpc.mOffsetFrame = vel_frame;
-                w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)joints * 12);
-                w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)joints * 12);
+                w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)(joints + 1) * 12);
+                w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)(joints + 1) * 12);
             }
             LLVkBridge::ShadowSkinEntry e = {};
             e.mVertexBuffer = vb->getVertexBufferId();
@@ -23295,11 +23295,11 @@ void LLPipeline::renderAvatarVelocity()
                     last_skin = params->mSkinInfo->mHash;
                     const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
                     const U32 count = (U32)mpc.mMatrixPalette.size();
-                    last_ok = count > 0 && mpc.mGLMp.size() >= (size_t)count * 12 && mpc.mPrevGLMp.size() == mpc.mGLMp.size();
+                    last_ok = count > 0 && mpc.mGLMp.size() >= (size_t)(count + 1) * 12 && mpc.mPrevGLMp.size() == mpc.mGLMp.size();
                     if (last_ok)
                     {
-                        gAvatarVelocityProgram.uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX, count, false, mpc.mGLMp.data());
-                        gAvatarVelocityProgram.uniformMatrix3x4fv(palette_prev_s, count, false, mpc.mPrevGLMp.data());
+                        gAvatarVelocityProgram.uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX, count, false, mpc.absPalette().data());       // (the uniform palette program: world matrices, not the anchored palette)
+                        gAvatarVelocityProgram.uniformMatrix3x4fv(palette_prev_s, count, false, mpc.absPrevPalette().data());
                     }
                 }
                 if (!last_ok)

@@ -96,5 +96,15 @@ void main()
     }
 
     vec3 skinned = m * position.xyz + trans;
-    gl_Position = ll_view_proj * SkinModels(ll_packet_models).m[pk.model] * vec4(skinned, 1.0);
+    mat4 model = SkinModels(ll_packet_models).m[pk.model];
+    // avatar relative skinning (ll_rig_anchor): the skinned vertex is relative to the anchor in the palette's tail entry (zero: a plain palette); the anchor goes through the matrices as one term of its own
+    vec3 rig_a = palette.j[pk.joints].c0.xyz;
+    if (rig_a == vec3(0.0))
+    {
+        gl_Position = ll_view_proj * model * vec4(skinned, 1.0);
+    }
+    else
+    {
+        gl_Position = ll_view_proj * (model * vec4(skinned, 0.0)) + ll_view_proj * (model * vec4(rig_a, 1.0));
+    }
 }

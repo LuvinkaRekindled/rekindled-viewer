@@ -1097,7 +1097,7 @@ void main()
             m += mat3(j4.c0.xyz, j4.c1.xyz, j4.c2.xyz) * w.w;
             trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
         }
-        pos = m * pos + trans;
+        pos = m * pos + trans + palette.j[job.joints].c0.xyz;       // (the tail entry of the palette: the anchor of a relative palette, zero for a plain one: avatar relative skinning, lldrawpool.h)
         nrm = m * nrm;                  // the same linear part (the viewer's own skinning shaders do the same: no inverse transpose)
     }
     else if (skin_mode == 1u)

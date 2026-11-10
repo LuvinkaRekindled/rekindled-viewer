@@ -150,6 +150,16 @@ void main()
     mat3 sm;
     vec3 trans;
     skinTransform(pk, index, sm, trans);
+    {
+        // avatar relative skinning (ll_rig_anchor): the palette is relative to the anchor in the tail entry (zero: a plain palette); the camera matrices take it in their translation, once per draw's worth of
+        // rounding instead of once per vertex
+        vec3 rig_a = SkinPalette(pk.palette).j[pk.joints].c0.xyz;
+        if (rig_a != vec3(0.0))
+        {
+            m.mv[3] += m.mv * vec4(rig_a, 0.0);
+            m.mvp[3] += m.mvp * vec4(rig_a, 0.0);
+        }
+    }
     vec3 placed = sm * position.xyz + trans;
 #else
     vec3 placed = position.xyz;
