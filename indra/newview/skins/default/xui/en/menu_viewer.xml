@@ -2866,7 +2866,8 @@
             </menu_item_call>
         <menu_item_call
              label="Report Problem"
-             name="Report Bug">
+             name="Report Bug"
+             visible="false">
                 <menu_item_call.on_click
                  function="Advanced.ReportBug"/>
             </menu_item_call>
