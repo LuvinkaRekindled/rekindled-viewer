@@ -54,6 +54,17 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 #endif
 
+#ifdef PBR_TERRAIN_PASS
+    // the PBR terrain (pbrterrain.vert / .frag): the four materials' texture transforms (5 floats each: scale, rotation, offset), the paint map's scale, the materials' factors
+    vec4 terrain_texture_transforms[5];
+    float region_scale;
+    vec4 baseColorFactors[4];
+    vec4 metallicFactors;
+    vec4 roughnessFactors;
+    vec3 emissiveColors[4];
+    vec4 minimum_alphas;
+#endif
+
 #ifdef TERRAIN_PASS
     // the legacy terrain (terrain.vert): the plane the detail textures are projected from (the texture matrix is not a uniform here: the pull path takes it from the row, row_texture_matrix)
     vec4 object_plane_s;
