@@ -13855,6 +13855,15 @@ struct LLFlatSkeleton
     U32 mJointCount = 0;
     std::vector<LLXformLocals> mLocals;     // <FS> stage C: the joints' local position, rotation and scale live here (the xforms' slot pointers point into this vector, which is sized once)
     U32 mLocalsKey = ~0u;                   // the structure key the joints were bound for
+    // <FS> avatar relative skinning: the world matrices again, with the world position of every joint relative to an anchor; made from the joints' local transforms (a float world position at 3800 m has a step of 0.24 mm, the chain
+    // from the locals does not). Valid for one fill of the plain array and one anchor.
+    U32 mFillCount = 0;                     // counts the fills of mWorld (fs_flat_fill, the pose job)
+    std::vector<LLMatrix4a> mRelWorld;
+    std::vector<LLVector3> mRelPos;
+    std::vector<LLQuaternion> mRelRot;
+    U32 mRelFill = ~0u;
+    F32 mRelAnchor[3] = { 0.f, 0.f, 0.f };
+    bool mRelOk = false;
 };
 
 static int fs_skelflat_mode()
@@ -13946,6 +13955,7 @@ static void fs_flat_fill(LLVOAvatar* av, LLFlatSkeleton& flat)
         flat.mJointCount = (U32)placed;
     }
     ++sFlatFills;
+    ++flat.mFillCount;
 }
 
 // the world pass from the joints' LOCAL transforms, exactly what LLXformMatrix::update / updateMatrix do (the world position composes with the parent's scale only when the parent's scale-child-offset
@@ -14019,6 +14029,117 @@ static void fs_flat_pass_check(LLFlatSkeleton& flat)
         U32 seen = sFlatWorstMilli.load();
         while (milli > seen && !sFlatWorstMilli.compare_exchange_weak(seen, milli)) {}
     }
+}
+
+// <FS> avatar relative skinning: the chain of fs_flat_pass_check, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
+// subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when LL_VK_RIGREBASE_CHECK=1.
+static bool fs_flat_rel_fill(LLFlatSkeleton& flat, const F32* anchor)
+{
+    if (flat.mOrder.empty() || flat.mWorld.empty())
+    {
+        return false;
+    }
+    if (flat.mRelFill == flat.mFillCount && flat.mRelAnchor[0] == anchor[0] && flat.mRelAnchor[1] == anchor[1] && flat.mRelAnchor[2] == anchor[2])
+    {
+        return flat.mRelOk;
+    }
+    const size_t N = flat.mWorld.size();
+    flat.mRelWorld.resize(N);
+    flat.mRelPos.resize(N);
+    flat.mRelRot.resize(N);
+    const LLVector3 shift(anchor[0], anchor[1], anchor[2]);
+    for (S16 k : flat.mOrder)
+    {
+        LLJoint* joint = flat.mJoint[k];
+        LLXformMatrix* xf = joint->getXform();
+        const S16 p = flat.mParent[k];
+        if (p >= 0)
+        {
+            LLJoint* parent = flat.mJoint[p];
+            LLVector3 pos = xf->getPosition();
+            if (parent->getXform()->getScaleChildOffset())
+            {
+                pos.scaleVec(parent->getXform()->getScale());
+            }
+            pos *= flat.mRelRot[p];
+            pos += flat.mRelPos[p];
+            flat.mRelPos[k] = pos;
+            flat.mRelRot[k] = xf->getRotation() * flat.mRelRot[p];
+        }
+        else if (joint->getParent())
+        {
+            LLJoint* parent = joint->getParent();
+            LLVector3 pos = xf->getPosition();
+            if (parent->getXform()->getScaleChildOffset())
+            {
+                pos.scaleVec(parent->getXform()->getScale());
+            }
+            const LLQuaternion parent_rot = parent->getWorldRotation();
+            pos *= parent_rot;
+            pos += parent->getWorldPosition() - shift;
+            flat.mRelPos[k] = pos;
+            flat.mRelRot[k] = xf->getRotation() * parent_rot;
+        }
+        else
+        {
+            flat.mRelPos[k] = xf->getPosition() - shift;
+            flat.mRelRot[k] = xf->getRotation();
+        }
+        LLMatrix4 m;
+        m.initAll(xf->getScale(), flat.mRelRot[k], flat.mRelPos[k]);
+        flat.mRelWorld[k].loadu(m);
+    }
+    flat.mRelFill = flat.mFillCount;
+    flat.mRelAnchor[0] = anchor[0];
+    flat.mRelAnchor[1] = anchor[1];
+    flat.mRelAnchor[2] = anchor[2];
+    flat.mRelOk = true;
+    static const bool check = getenv("LL_VK_RIGREBASE_CHECK") != nullptr;
+    if (check)
+    {
+        // the relative array against the plain one: the same matrices but for the translation, which differs by the anchor (to the float step of the plain one)
+        static std::atomic<U64> joints_checked{ 0 }, joints_differ{ 0 }, arrays{ 0 };
+        static std::atomic<U32> worst_micro{ 0 };
+        for (S16 k : flat.mOrder)
+        {
+            const F32* a = flat.mRelWorld[k].getF32ptr();
+            const F32* b = flat.mWorld[k].getF32ptr();
+            F32 worst = 0.f;
+            for (int i = 0; i < 16; ++i)
+            {
+                const F32 expect = i >= 12 && i <= 14 ? b[i] - anchor[i - 12] : b[i];
+                worst = std::max(worst, fabsf(a[i] - expect));
+            }
+            ++joints_checked;
+            const U32 micro = (U32)std::min<F32>(worst * 1.0e6f, 4.0e9f);
+            U32 seen = worst_micro.load();
+            while (micro > seen && !worst_micro.compare_exchange_weak(seen, micro)) {}
+            if (!(worst <= 2.0e-3f))
+            {
+                ++joints_differ;
+            }
+        }
+        if (++arrays % 3000 == 0)
+        {
+            LL_INFOS("RigRebase") << "relative world arrays checked " << arrays.load() << ", joints " << joints_checked.load() << ", differing by more than 2 mm " << joints_differ.load() << ", worst " << worst_micro.load() / 1.0e6 << " m" << LL_ENDL;
+        }
+    }
+    return true;
+}
+
+bool LLVOAvatar::flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor)
+{
+    // (called under the palette mutex right after flatPalette: the flat array is the current one)
+    if (!mFlatSkel || fs_skelflat_mode() == 0)
+    {
+        return false;
+    }
+    LLFlatSkeleton& flat = *mFlatSkel;
+    if (!fs_flat_rel_fill(flat, anchor))
+    {
+        return false;
+    }
+    return LLSkinningUtil::initSkinningMatrixPaletteFlat(mat, count, skin, flat.mRelWorld.data(), flat.mHas.data(), (S32)flat.mRelWorld.size());
 }
 
 void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin)
@@ -14440,6 +14561,7 @@ bool LLVOAvatar::flatWorldPass()
     }
     flat.mFrame = gFrameCount;
     flat.mFromJob = true;
+    ++flat.mFillCount;
     ++sFlatFillJob;
     if (LLJoint::sViewMode == 2 && (sFlatFillJob.load() % 20000) == 0)
     {
@@ -14623,6 +14745,9 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
         if (swap_prev)
         {
             entry.mPrevGLMp.swap(entry.mGLMp);
+            entry.mPrevGLMpAbs.swap(entry.mGLMpAbs);
+            memcpy(entry.mPrevAnchor, entry.mAnchor, sizeof(entry.mAnchor));
+            entry.mPrevRebased = entry.mRebased;
         }
         entry.mListSlot.store(~0ull, std::memory_order_relaxed);        // (a new palette: its place in the frame's shared list is not valid)
         entry.mFrame = stamp;
@@ -14642,31 +14767,72 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
 
         const LLMatrix4a* mat = &(entry.mMatrixPalette[0]);
 
-        entry.mGLMp.resize(count * 12);
-
-        F32* mp = &(entry.mGLMp[0]);
-
-        for (U32 i = 0; i < count; ++i)
+        // <FS> avatar relative skinning: above a height the palette the shaders read is made from world matrices relative to the anchor (ll_rig_anchor); the plain one is kept for the programs that take a
+        // uniform palette. The tail (one entry more) names the anchor, all zeros when the palette is plain.
+        const LLRigAnchor rig = ll_rig_anchor(stamp);
+        bool rebase = false;
+        LLMeshSkinInfo::matrix_list_t rel_palette;
+        if (rig.mActive)
         {
-            F32* m = (F32*)mat[i].mMatrix[0].getF32ptr();
-
-            U32 idx = i * 12;
-
-            mp[idx + 0] = m[0];
-            mp[idx + 1] = m[1];
-            mp[idx + 2] = m[2];
-            mp[idx + 3] = m[12];
-
-            mp[idx + 4] = m[4];
-            mp[idx + 5] = m[5];
-            mp[idx + 6] = m[6];
-            mp[idx + 7] = m[13];
-
-            mp[idx + 8] = m[8];
-            mp[idx + 9] = m[9];
-            mp[idx + 10] = m[10];
-            mp[idx + 11] = m[14];
+            rel_palette.resize(count);
+            rebase = flatPaletteRel(rel_palette.data(), (S32)count, skin, rig.mA);
         }
+        auto pack = [count](const LLMatrix4a* palette, F32* mp)
+        {
+            for (U32 i = 0; i < count; ++i)
+            {
+                const F32* m = palette[i].mMatrix[0].getF32ptr();
+
+                U32 idx = i * 12;
+
+                mp[idx + 0] = m[0];
+                mp[idx + 1] = m[1];
+                mp[idx + 2] = m[2];
+                mp[idx + 3] = m[12];
+
+                mp[idx + 4] = m[4];
+                mp[idx + 5] = m[5];
+                mp[idx + 6] = m[6];
+                mp[idx + 7] = m[13];
+
+                mp[idx + 8] = m[8];
+                mp[idx + 9] = m[9];
+                mp[idx + 10] = m[10];
+                mp[idx + 11] = m[14];
+            }
+        };
+        entry.mGLMp.resize((size_t)(count + 1) * 12);
+        if (rebase)
+        {
+            entry.mGLMpAbs.resize((size_t)count * 12);
+            pack(mat, entry.mGLMpAbs.data());
+            pack(rel_palette.data(), entry.mGLMp.data());
+        }
+        else
+        {
+            pack(mat, entry.mGLMp.data());
+            entry.mGLMpAbs.clear();
+        }
+        {
+            F32* tail = entry.mGLMp.data() + (size_t)count * 12;
+            for (int k = 0; k < 12; ++k)
+            {
+                tail[k] = 0.f;
+            }
+            if (rebase)
+            {
+                tail[0] = rig.mA[0];
+                tail[1] = rig.mA[1];
+                tail[2] = rig.mA[2];
+                tail[3] = 1.f;
+            }
+        }
+        entry.mRebased = rebase;
+        for (int k = 0; k < 3; ++k)
+        {
+            entry.mAnchor[k] = rebase ? rig.mA[k] : 0.f;
+        }
+        const F32* mp = entry.absPalette().data();      // (the catcher below looks at world positions)
 
         // <FS> the palette catcher (2026-11-04: spike shadows from random avatars with ray traced shadows, and the jumping triangles of an animated attachment): the draw and the ray scene's
         // skinning both read this palette, so a joint matrix that is not finite, or whose translation lies farther than kPaletteReach from the avatar, is logged with what says where it came
@@ -14799,7 +14965,42 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
         if (!entry.mHasPrev)
         {
             entry.mPrevGLMp = entry.mGLMp;
+            entry.mPrevGLMpAbs = entry.mGLMpAbs;
         }
+        else
+        {
+            // the previous palette is brought to the current anchor, so the velocity pass subtracts the same anchor from both: its plain copy first (for the programs that take a uniform palette), then its
+            // translations (relative to the anchor of its own frame; plain world matrices count as anchor 0)
+            if (entry.mRebased)
+            {
+                if (!entry.mPrevRebased)
+                {
+                    entry.mPrevGLMpAbs.assign(entry.mPrevGLMp.begin(), entry.mPrevGLMp.begin() + (size_t)count * 12);
+                }
+                else if (entry.mPrevGLMpAbs.size() != entry.mGLMpAbs.size())
+                {
+                    entry.mPrevGLMpAbs = entry.mGLMpAbs;
+                }
+            }
+            else
+            {
+                entry.mPrevGLMpAbs.clear();
+            }
+            const F32 dx = entry.mPrevAnchor[0] - entry.mAnchor[0], dy = entry.mPrevAnchor[1] - entry.mAnchor[1], dz = entry.mPrevAnchor[2] - entry.mAnchor[2];
+            if (dx != 0.f || dy != 0.f || dz != 0.f)
+            {
+                F32* prev = entry.mPrevGLMp.data();
+                for (U32 i = 0; i < count; ++i)
+                {
+                    prev[i * 12 + 3] += dx;
+                    prev[i * 12 + 7] += dy;
+                    prev[i * 12 + 11] += dz;
+                }
+            }
+            memcpy(entry.mPrevGLMp.data() + (size_t)count * 12, entry.mGLMp.data() + (size_t)count * 12, 12 * sizeof(F32));
+        }
+        memcpy(entry.mPrevAnchor, entry.mAnchor, sizeof(entry.mAnchor));
+        entry.mPrevRebased = entry.mRebased;
         // LL_VK_PALSTATS=1: how much of the rigged palettes changes from one frame to the next (what a skinning cache could keep). Per palette (avatar and skin) and per joint matrix, exact and within 1e-4;
         // per avatar: the avatars whose palettes are all unchanged. Logged every 600 frames in which a palette was computed.
         {

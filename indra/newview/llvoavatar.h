@@ -315,6 +315,7 @@ public:
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     std::shared_ptr<LLFlatSkeleton> mFlatSkel;          // <FS> stage B0
+    bool            flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor);       // <FS> avatar relative skinning: the same palette from world matrices made relative to the anchor (false: not possible, the plain one stands)
     void            flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin);       // the skin's palette (LL_VK_SKELFLAT: 0 the old per-joint build, 1 from the flat array, 2 both, compared)
     mutable S32     mAvTableSlot = -1;                  // <FS> the avatar's row in LLAvatarTable's array this frame (valid when the row at the slot names this avatar)
     bool            computeTooSlowLive() const;         // isTooSlow() derived from the avatar's state (what the table caches at endFrame)
@@ -1089,6 +1090,15 @@ public:
         // <FS> motion vectors: the same palette as of the frame before (equal to mGLMp when there is no history: first time, not asked for in the last frame, joint count changed).
         // Same layout as mGLMp. mHasPrev says whether it is real.
         std::vector<F32> mPrevGLMp;
+        // <FS> avatar relative skinning (see ll_rig_anchor): mGLMp and mPrevGLMp hold the palette the pull shaders read: 12 floats a joint and one more entry, the tail, whose first row is (anchor x, y, z, 1)
+        // (all zeros: the palette is plain world matrices). While the palette is relative (mRebased) the plain world version, which the uniform palette programs need, is in mGLMpAbs / mPrevGLMpAbs (no tail).
+        // mAnchor / mPrevAnchor: what mGLMp / mPrevGLMp are relative to; the previous palette is always moved to the current anchor, so one anchor serves both in the velocity pass.
+        std::vector<F32> mGLMpAbs, mPrevGLMpAbs;
+        F32 mAnchor[3] = { 0.f, 0.f, 0.f };
+        F32 mPrevAnchor[3] = { 0.f, 0.f, 0.f };
+        bool mRebased = false, mPrevRebased = false;
+        const std::vector<F32>& absPalette() const { return mRebased ? mGLMpAbs : mGLMp; }
+        const std::vector<F32>& absPrevPalette() const { return mRebased ? mPrevGLMpAbs : mPrevGLMp; }
         bool mHasPrev = false;
         bool mComputed = false;     // mFrame is only meaningful after the first computation (the constructor sets it to "last frame")
         bool mBadBindNamed = false; // <FS> the wearer of a mesh whose inverse bind matrices the parse refused was logged once (MeshSkin)

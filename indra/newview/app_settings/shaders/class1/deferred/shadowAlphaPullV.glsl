@@ -84,6 +84,7 @@ void main()
     }
     vec4 position = AlphaPositions(pk.positions).v[index];
     vec3 local = position.xyz;
+    vec3 rig_a = vec3(0.0);
     if ((pk.flags & 32u) != 0u)
     {
         // as getObjectSkinnedTransform() in objectSkinV.glsl; the joint numbers stay inside the palette that was sent
@@ -115,8 +116,18 @@ void main()
             trans += vec3(j4.c0.w, j4.c1.w, j4.c2.w) * w.w;
         }
         local = m * position.xyz + trans;
+        rig_a = palette.j[pk.joints].c0.xyz;      // (avatar relative skinning, see shadowSkinPullV.glsl)
     }
-    vec4 pos = ll_view_proj * AlphaModels(ll_packet_models).m[pk.model] * vec4(local, 1.0);
+    mat4 model = AlphaModels(ll_packet_models).m[pk.model];
+    vec4 pos;
+    if (rig_a == vec3(0.0))
+    {
+        pos = ll_view_proj * model * vec4(local, 1.0);
+    }
+    else
+    {
+        pos = ll_view_proj * (model * vec4(local, 0.0)) + ll_view_proj * (model * vec4(rig_a, 1.0));
+    }
 
     target_pos_x = 0.5 * (ll_target_width - 1.0) * pos.x;
     post_pos = pos;

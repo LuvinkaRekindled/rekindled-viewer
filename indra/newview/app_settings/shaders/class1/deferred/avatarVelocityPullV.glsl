@@ -104,8 +104,11 @@ void main()
     vec3 world_cur = skinPosition(SkinPalette(pk.palette), position.xyz, joint, w);
     vec3 world_prev = skinPosition(SkinPalette(pk.prevPalette), position.xyz, joint, w);
 
-    vary_clip = ll_view_proj * vec4(world_cur, 1.0);
-    vary_cur = view_proj_cur * vec4(world_cur, 1.0);
-    vary_prev = view_proj_prev * vec4(world_prev, 1.0);
+    // avatar relative skinning (ll_rig_anchor): each palette names its own anchor in its tail entry (the one of last frame may differ, it was made then); zero: plain world matrices
+    vec3 anchor_cur = SkinPalette(pk.palette).j[pk.joints].c0.xyz;
+    vec3 anchor_prev = SkinPalette(pk.prevPalette).j[pk.joints].c0.xyz;
+    vary_clip = anchor_cur == vec3(0.0) ? ll_view_proj * vec4(world_cur, 1.0) : ll_view_proj * vec4(world_cur, 0.0) + ll_view_proj * vec4(anchor_cur, 1.0);
+    vary_cur = anchor_cur == vec3(0.0) ? view_proj_cur * vec4(world_cur, 1.0) : view_proj_cur * vec4(world_cur, 0.0) + view_proj_cur * vec4(anchor_cur, 1.0);
+    vary_prev = anchor_prev == vec3(0.0) ? view_proj_prev * vec4(world_prev, 1.0) : view_proj_prev * vec4(world_prev, 0.0) + view_proj_prev * vec4(anchor_prev, 1.0);
     gl_Position = vary_clip;
 }

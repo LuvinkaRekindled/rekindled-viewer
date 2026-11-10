@@ -157,11 +157,28 @@ mat4 row_texture_matrix(Row row, TexMatTable table)
     return m[3][3] == 0.0 ? texanim_matrix(m, table.t[0][0].yz) : m;
 }
 
+// ---- avatar relative skinning (lldrawpool.h, ll_rig_anchor): above a height a rigged palette is relative to an anchor A (a 64 m grid point), the skinned vertex v is relative too, and the
+// camera matrix is applied as M * v + M * (A, 1): the large numbers (the camera is 3800 m up) meet in the second term, which is the same for every vertex of the draw. A is zero for a plain palette.
+vec4 rig_transform(mat4 m, vec3 v, vec3 anchor)
+{
+    if (anchor == vec3(0.0))
+    {
+        return m * vec4(v, 1.0);
+    }
+    return m * vec4(v, 0.0) + (m * vec4(anchor, 1.0));
+}
+
 #ifdef HAS_SKIN
 // ---- a rigged draw: four joints a vertex out of the draw's palette (three rows of a 3x4 matrix a joint); the weights array holds joint number + weight in one float (the integer part is the joint) ----
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SkinVertexWeights { vec4 w[]; };
 struct Joint { vec4 c0; vec4 c1; vec4 c2; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SkinJoints { Joint j[]; };
+
+// the palette has one entry more than the mesh has joints: the tail, whose first row holds the anchor (x, y, z, 1), all zeros for a plain palette
+vec3 row_rig_anchor(Row row)
+{
+    return SkinJoints(row.palette).j[row.joints].c0.xyz;
+}
 
 void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
 {

@@ -62,11 +62,13 @@ void main()
     vec3 skin_translation;
     row_skin(row, index, skin_rotation, skin_translation);
     const vec3 vertex = skin_rotation * position.xyz + skin_translation;
+    const vec3 rig_anchor = row_rig_anchor(row);
 #else
     const vec3 vertex = position.xyz;
+    const vec3 rig_anchor = vec3(0.0);
 #endif
-    const vec4 eye = model.mv * vec4(vertex, 1.0);
-    gl_Position = model.mvp * vec4(vertex, 1.0);
+    const vec4 eye = rig_transform(model.mv, vertex, rig_anchor);
+    gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 

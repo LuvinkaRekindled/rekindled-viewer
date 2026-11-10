@@ -47,13 +47,15 @@ void main()
     vec3 skin_translation;
     row_skin(row, index, skin_rotation, skin_translation);
     const vec3 vertex = skin_rotation * position.xyz + skin_translation;
+    const vec3 rig_anchor = row_rig_anchor(row);
     vary_normal = normalize(mat3(model.mv) * (skin_rotation * normal));
 #else
     const vec3 vertex = position.xyz;
+    const vec3 rig_anchor = vec3(0.0);
     vary_normal = normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * normal);
 #endif
-    vary_position = (model.mv * vec4(vertex, 1.0)).xyz;
-    gl_Position = model.mvp * vec4(vertex, 1.0);
+    vary_position = rig_transform(model.mv, vertex, rig_anchor).xyz;
+    gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 

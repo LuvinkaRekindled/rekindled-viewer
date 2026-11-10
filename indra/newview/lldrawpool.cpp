@@ -904,6 +904,56 @@ static int palette_id_mode()
     return mode;
 }
 
+// <FS> avatar relative skinning: the anchor of a frame (see lldrawpool.h). Decided by the first caller of the frame (the palette job of the frame before, a pool thread, or the render), then read back from a ring
+namespace
+{
+std::mutex sRigAnchorMutex;
+struct RigAnchorSlot { U32 mFrame = ~0u; LLRigAnchor mValue; };
+RigAnchorSlot sRigAnchorRing[8];
+LLRigAnchor sRigAnchorCurrent;
+}
+
+LLRigAnchor ll_rig_anchor(U32 frame)
+{
+    static const int mode = getenv("LL_VK_RIGREBASE") ? atoi(getenv("LL_VK_RIGREBASE")) : 1;
+    if (mode == 0)
+    {
+        return LLRigAnchor();
+    }
+    std::lock_guard<std::mutex> lock(sRigAnchorMutex);
+    RigAnchorSlot& slot = sRigAnchorRing[frame & 7u];
+    if (slot.mFrame == frame)
+    {
+        return slot.mValue;
+    }
+    // (the camera is read from a pool thread too: the origin is a few floats and any value of a nearby frame does: the anchor only has to be near the avatars, and every palette says which one it used)
+    const LLVector3 c = LLViewerCamera::getInstance()->getOrigin();
+    const F32 reach = std::max(fabsf(c.mV[0]), std::max(fabsf(c.mV[1]), fabsf(c.mV[2])));
+    LLRigAnchor next;
+    const bool was = sRigAnchorCurrent.mActive;
+    if (mode == 2 || reach > (was ? 500.f : 700.f))
+    {
+        next.mActive = true;
+        F32 away = 1.0e9f;
+        if (was)
+        {
+            away = 0.f;
+            for (int k = 0; k < 3; ++k)
+            {
+                away = std::max(away, fabsf(c.mV[k] - sRigAnchorCurrent.mA[k]));
+            }
+        }
+        for (int k = 0; k < 3; ++k)
+        {
+            next.mA[k] = away > 96.f ? floorf(c.mV[k] / 64.f + 0.5f) * 64.f : sRigAnchorCurrent.mA[k];
+        }
+    }
+    sRigAnchorCurrent = next;
+    slot.mFrame = frame;
+    slot.mValue = next;
+    return next;
+}
+
 // <FS> P1 step 3: palette ids. An id is (generation << 24) | index, made for a palette entry the first time the entry is written into a frame's list and given back when the entry goes (the avatar's map
 // destroys it). The generation (1..254) changes each time an index is reused, so an id that was given back never names the palette that took its index. Never 0, never ~0u.
 namespace
@@ -1213,7 +1263,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     }
     const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);       // (one at a time inside, and the entry is not written again in this frame)
     joints = (U32)mpc.mMatrixPalette.size();
-    if (joints == 0 || mpc.mGLMp.size() < (size_t)joints * 12)
+    if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12)       // (the palette has one entry more than its mesh: the tail with the anchor, see ll_rig_anchor)
     {
         const U64 n = joints == 0 ? ++sPalFailEmpty : ++sPalFailShort;
         if (n <= 20 || (n % 200) == 0)
@@ -1234,7 +1284,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
             // compare mode: what the list holds at that offset is this palette, float for float
             static std::atomic<U64> checked{ 0 }, wrong{ 0 };
             std::lock_guard<std::mutex> check_lock(sFramePal.mMutex);
-            const size_t n = (size_t)joints * 12;
+            const size_t n = (size_t)(joints + 1) * 12;
             const bool ok = sFramePal.mFrame == gFrameCount
                 && ((sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaCursor.load() && memcmp(sFramePal.mArena.mPtr + offset, mpc.mGLMp.data(), n * sizeof(F32)) == 0)
                     || (offset >= sFramePal.mDataBase && (size_t)(offset - sFramePal.mDataBase) + n <= sFramePal.mData.size() && memcmp(sFramePal.mData.data() + (offset - sFramePal.mDataBase), mpc.mGLMp.data(), n * sizeof(F32)) == 0));
@@ -1276,7 +1326,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         offset = palette_id_mode() ? mpc.mPaletteId.load(std::memory_order_acquire) : (U32)again;
         return true;
     }
-    const size_t need = (size_t)joints * 12;
+    const size_t need = (size_t)(joints + 1) * 12;
     U32 at = 0;
     bool in_arena = false;
     if (sFramePal.mArenaOn)
@@ -1331,7 +1381,7 @@ bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
     {
         return false;
     }
-    const size_t n = (size_t)joints * 12;
+    const size_t n = (size_t)(joints + 1) * 12;
     if (sFramePal.mArenaOn && (size_t)offset + n <= sFramePal.mArenaCursor.load())
     {
         out.assign(sFramePal.mArena.mPtr + offset, sFramePal.mArena.mPtr + offset + n);
@@ -1806,7 +1856,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
         count,
         false,
-        (F32*)&(mpc.mGLMp[0]));
+        (F32*)mpc.absPalette().data());
 
     return true;
 }
@@ -1842,7 +1892,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
-            (F32*)&(mpc.mGLMp[0]));
+            (F32*)mpc.absPalette().data());
     }
 
     return !skipLastSkin;
@@ -1880,7 +1930,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
-            (F32*)&(mpc.mGLMp[0]));
+            (F32*)mpc.absPalette().data());
     }
 
     return !skipLastSkin;
