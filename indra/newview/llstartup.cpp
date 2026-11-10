@@ -1011,7 +1011,7 @@ bool idle_startup()
 
 // <AW: opensim>
 #ifndef SINGLEGRID
-        if(!gSavedSettings.getBOOL("GridListDownload"))
+        if(!FSData::kUseFirestormServer || !gSavedSettings.getBOOL("GridListDownload"))
         {
             sGridListRequestReady = true;
         }
@@ -3459,7 +3459,7 @@ bool idle_startup()
         }
         // </FS:Techwolf Lupindo>
         // <FS:PP>
-        if (gSavedSettings.getBOOL("AutoQueryGridStatus"))
+        if (FSData::kUseFirestormServer && gSavedSettings.getBOOL("AutoQueryGridStatus"))
         {
             FSCoreHttpUtil::callbackHttpGetRaw(gSavedSettings.getString("AutoQueryGridStatusURL"),
                 downloadGridstatusComplete, [](const LLSD& data) { downloadGridstatusError(data, gSavedSettings.getString("AutoQueryGridStatusURL")); });

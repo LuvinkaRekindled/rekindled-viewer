@@ -294,6 +294,14 @@ static void downloadError(LLSD const &aData, std::string const &aURL)
 // call this just before the login screen and after the LLProxy has been setup.
 void FSData::startDownload()
 {
+    if (!kUseFirestormServer)
+    {
+        // nothing is requested, so there is nothing to wait for in the startup states
+        mFSDataDone = true;
+        LL_INFOS("fsdata") << "Firestorm server data is switched off; not downloading fsdata" << LL_ENDL;
+        return;
+    }
+
     mFSdataFilename = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, "fsdata.xml");
     mFSdataDefaultsFilename = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, llformat("fsdata_defaults.%s.xml", LLVersionInfo::getInstance()->getShortVersion().c_str()));
     mClientTagsFilename = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, "client_list_v2.xml");
@@ -353,6 +361,12 @@ void FSData::startDownload()
 // call this _after_ the login screen to pick up grid data.
 void FSData::downloadAgents()
 {
+    if (!kUseFirestormServer)
+    {
+        mAgentsDone = true; // avoid the STATE_AGENT_WAIT delay
+        return;
+    }
+
 #ifdef OPENSIM
     std::string filename_prefix = LLGridManager::getInstance()->getGridId();
 #else
@@ -412,40 +426,46 @@ void FSData::downloadAgents()
 
 void FSData::processData(const LLSD& fs_data)
 {
-    // Set Message Of The Day if present
-    if (fs_data.has("MOTD") && !fs_data["MOTD"].asString().empty())
+    // Rekindled: Firestorm's server messages of the day are not shown. Set this to true to use fsdata MOTDs again
+    // (or a self-hosted data.xml later); with it off gAgent.mMOTD stays empty here and the login server's message is used.
+    constexpr bool use_fsdata_motds = false;
+    if (use_fsdata_motds)
     {
-        mSecondLifeMOTD = fs_data["MOTD"].asString();
-        gAgent.mMOTD.assign(mSecondLifeMOTD);
-    }
-    else if (fs_data.has("RandomMOTD") && fs_data["RandomMOTD"].isArray() && fs_data["RandomMOTD"].size() > 0) // only used if MOTD is not present or empty in the xml file.
-    {
-        mRandomMOTDs = fs_data["RandomMOTD"];
-        LLSD::array_const_iterator iter = mRandomMOTDs.beginArray();
-        gAgent.mMOTD.assign((iter + (ll_rand((S32)mRandomMOTDs.size())))->asString());
-    }
-
-    // If the event falls withen the current date, use that for MOTD instead.
-    if (fs_data.has("EventsMOTD"))
-    {
-        const LLSD& events = fs_data["EventsMOTD"];
-        for(LLSD::map_const_iterator iter = events.beginMap(); iter != events.endMap(); ++iter)
+        // Set Message Of The Day if present
+        if (fs_data.has("MOTD") && !fs_data["MOTD"].asString().empty())
         {
-            std::string name = iter->first;
-            const LLSD& content = iter->second;
-            LL_DEBUGS("fsdata") << "Found event MOTD: " << name << LL_ENDL;
-            if (content["startDate"].asDate() < LLDate::now() && content["endDate"].asDate() > LLDate::now())
+            mSecondLifeMOTD = fs_data["MOTD"].asString();
+            gAgent.mMOTD.assign(mSecondLifeMOTD);
+        }
+        else if (fs_data.has("RandomMOTD") && fs_data["RandomMOTD"].isArray() && fs_data["RandomMOTD"].size() > 0) // only used if MOTD is not present or empty in the xml file.
+        {
+            mRandomMOTDs = fs_data["RandomMOTD"];
+            LLSD::array_const_iterator iter = mRandomMOTDs.beginArray();
+            gAgent.mMOTD.assign((iter + (ll_rand((S32)mRandomMOTDs.size())))->asString());
+        }
+
+        // If the event falls withen the current date, use that for MOTD instead.
+        if (fs_data.has("EventsMOTD"))
+        {
+            const LLSD& events = fs_data["EventsMOTD"];
+            for(LLSD::map_const_iterator iter = events.beginMap(); iter != events.endMap(); ++iter)
             {
-                LL_INFOS("fsdata") << "Setting MOTD to " << name << LL_ENDL;
-                gAgent.mMOTD.assign(content["EventMOTD"]); // note singler instead of plural above
-                break; // Only use the first one found.
+                std::string name = iter->first;
+                const LLSD& content = iter->second;
+                LL_DEBUGS("fsdata") << "Found event MOTD: " << name << LL_ENDL;
+                if (content["startDate"].asDate() < LLDate::now() && content["endDate"].asDate() > LLDate::now())
+                {
+                    LL_INFOS("fsdata") << "Setting MOTD to " << name << LL_ENDL;
+                    gAgent.mMOTD.assign(content["EventMOTD"]); // note singler instead of plural above
+                    break; // Only use the first one found.
+                }
             }
         }
-    }
 
-    if (fs_data.has("OpensimMOTD"))
-    {
-        mOpenSimMOTD.assign(fs_data["OpensimMOTD"]);
+        if (fs_data.has("OpensimMOTD"))
+        {
+            mOpenSimMOTD.assign(fs_data["OpensimMOTD"]);
+        }
     }
 
     if (fs_data.has("BlockedReleases"))
