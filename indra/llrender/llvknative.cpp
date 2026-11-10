@@ -740,9 +740,12 @@ Program* nativeOverride(Program* p)
     {
         return p;
     }
-    if (p->getInfo().mOutputs.size() != d.mProgram->getInfo().mOutputs.size())
+    // another set of outputs (the sun program with the blocker distance of the ray traced shadows). Not for the G-buffer family: the viewer's programs declare one array (`out vec4 frag_data[4]`, one name) and the
+    // native ones one variable a target (frag_albedo, frag_spec, frag_normal, frag_emissive), so the names never counted the same and every G-buffer stand-in was refused here: none of them had ever drawn
+    // (found 2026-11-09 evening, when the native terrain compiled and showed no draws)
+    if (d.mFamily != "gbuffer" && p->getInfo().mOutputs.size() != d.mProgram->getInfo().mOutputs.size())
     {
-        return p;               // another set of outputs (the sun program with the blocker distance of the ray traced shadows)
+        return p;
     }
     d.mProgram->adoptFrom(*p);
     if (d.mTarget == "Deferred Soften Shader")
