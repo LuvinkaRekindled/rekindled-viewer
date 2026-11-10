@@ -2023,7 +2023,14 @@ bool LLAppViewer::doFrame()
                 static LLCachedControl<S32> s_background_yield_time(gSavedSettings, "BackgroundYieldTime", 40);
                 // <FS:Ansariel> FIRE-32722: Make sure to idle if actually minimized
                 //S32 milliseconds_to_sleep = llclamp((S32)s_background_yield_time, 0, 1000);
-                S32 milliseconds_to_sleep = llclamp((S32)s_background_yield_time, (gViewerWindow && gViewerWindow->getWindow()->getMinimized()) ? 1 : 0, 1000);
+                // <FS> Rekindled: a minimised window shows nothing, so it always sleeps at least 100 ms a pass (about 9 passes a second, 9% of a core against 116% at 0 on 2026-11-09);
+                // BackgroundYieldTime only sets the sleep of a window that is still visible but has lost focus (0 there keeps timing tests undisturbed)
+                const S32 minimised_floor_ms = 100;
+                S32 milliseconds_to_sleep = llclamp((S32)s_background_yield_time, 0, 1000);
+                if (gViewerWindow && gViewerWindow->getWindow()->getMinimized())
+                {
+                    milliseconds_to_sleep = llmax(milliseconds_to_sleep, minimised_floor_ms);
+                }
                 // </FS:Ansariel>
                 // don't sleep when BackgroundYieldTime set to 0, since this will still yield to other threads
                 // of equal priority on Windows
