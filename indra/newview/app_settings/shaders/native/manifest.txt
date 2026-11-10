@@ -75,3 +75,23 @@ override | Deferred Emboss Pull Skin Shader | gbuffer.vert | emboss.frag | gbuff
 override | Deferred Impostor Shader | impostor.vert | impostor.frag | gbuffer | default on
 override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | define AVATAR_CLOTH=1 | require gWindDir | default on
 override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | default on
+override | Deferred PBR Terrain Shader 0 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader 0 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader 0 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader 0 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -1 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -1 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -1 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -1 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -2 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -2 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -2 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -2 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -3 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -3 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -3 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -3 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -4 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -4 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
+override | Deferred PBR Terrain Shader -4 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
+override | Deferred PBR Terrain Shader -4 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
