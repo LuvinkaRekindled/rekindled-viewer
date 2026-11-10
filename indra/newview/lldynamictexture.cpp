@@ -221,6 +221,11 @@ bool LLViewerDynamicTexture::updateAllInstances()
                 llassert(dynamicTexture->getFullWidth() <= width);
                 llassert(dynamicTexture->getFullHeight() <= height);
 
+                // <FS> a dynamic texture is drawn with whatever colour mask the last pass left, and a frame ends with the alpha writes off (the HUD's post deferred pass, LLPipeline::renderGeomPostDeferred);
+                // only a reflection probe face before display() turned them on again (every second frame). The clear of this renderer writes all four channels whatever the mask (the GL clear
+                // left a masked channel alone), so on the other frames the picture kept alpha 0: the glTF material preview was transparent (2026-11-10). The caller sets the same mask after any render.
+                gRender.setColorMask(true, true);
+
                 gRender.clearBuffers(ClearBits::Depth);
 
                 gRender.color4f(1.f, 1.f, 1.f, 1.f);

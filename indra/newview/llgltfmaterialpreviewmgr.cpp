@@ -404,6 +404,15 @@ void fixup_shader_constants(LLShaderProgram& shader)
     shader.uniform3fv(LLShaderMgr::SUNLIGHT_COLOR, 1, LLColor3::white.mV);
     shader.uniform1f(LLShaderMgr::DENSITY_MULTIPLIER, 0.0f);
 
+    // <FS> the alpha programs cut every fragment against the water plane (waterClip, deferredUtil.glsl): waterSign above 0 keeps what is on the plane's positive side, anything else keeps the other side.
+    // The alpha pool sets both for the programs it draws with (prepare_alpha_shader, lldrawpoolalpha.cpp), and it used to draw with this program, so the preview inherited a usable pair. The pool draws
+    // with the pull programs now and nothing sets waterSign for this one: it stayed 0, the plane came from the environment update, and the whole sphere was discarded (2026-11-10: an empty preview,
+    // while the same sphere drew with the debug program). The pair the pool gives the HUD: nothing in front of the camera is cut.
+    static LLStaticHashedString water_sign("waterSign");
+    const LLVector4 no_clip(0.f, 0.f, -1.f, 0.f);
+    shader.uniform1f(water_sign, 1.f);
+    shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, no_clip.mV);
+
     // Ignore sun shadow (if enabled)
     for (U32 i = 0; i < 6; i++)
     {
@@ -536,13 +545,24 @@ bool LLGLTFPreviewTexture::render()
     // *HACK: Hide mExposureMap from generateExposure
     gPipeline.mExposureMap.swapFBORefs(gPipeline.mLastExposure);
 
+    // <FS> the post steps below are whole-target copies and need no depth test, but they ran with whatever test the last pass left. The copies into the aux screen (LLPipeline::copyRenderTarget) write
+    // the depth they sample, and the depth they sample is the aux screen's own depth buffer: this renderer cannot read a depth buffer it is writing and hands the program a far plane instead, so the
+    // test failed wherever the sphere had been drawn and those pixels kept the picture from before the gamma correction (stage log 2026-11-10: the sphere's centre unchanged by both copies).
+    // The scope ends with the function; the final draw below sets its own depth state.
+    LLRenderState::DepthScope post_depth_off(false, false);
+
     gPipeline.copyScreenSpaceReflections(&screen, &gPipeline.mSceneMap);
     gPipeline.generateLuminance(&screen, &gPipeline.mLuminanceMap);
     gPipeline.generateExposure(&gPipeline.mLuminanceMap, &gPipeline.mExposureMap, /*use_history = */ false);
     gPipeline.gammaCorrect(&screen, &gPipeline.mPostPingMap);
     LLVertexBuffer::unbind();
     gPipeline.generateGlow(&gPipeline.mPostPingMap);
-    gPipeline.combineGlow(&gPipeline.mPostPingMap, &screen);
+    // <FS> combineGlow writes nothing when nothing glows (and nothing does here: glow is off for the preview), so the gamma corrected picture has to be carried over to the screen target by a copy:
+    // without it the next two steps went on with the picture from before the gamma correction
+    if (!gPipeline.combineGlow(&gPipeline.mPostPingMap, &screen))
+    {
+        gPipeline.copyRenderTarget(&gPipeline.mPostPingMap, &screen);
+    }
     gPipeline.renderDoF(&screen, &gPipeline.mPostPingMap);
     gPipeline.applyFXAA(&gPipeline.mPostPingMap, &screen);
 
