@@ -9983,6 +9983,81 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     sDrawsTotal += h.mEntries;
 }
 
+// kind 41: the avatar impostors of a deferred pass. Blob: mEntries x ImpostorQuadRow (the GL names of the three images become this frame's bindless slots). The program is the viewer's "Deferred Impostor
+// Shader", which has no table of its own: only its native stand-in (impostor.vert / impostor.frag, which declares ll_impostor_table) draws; with the family off or the stand-in not built nothing is drawn and the
+// first such record is logged. One draw of 6 vertices a row, the row chosen by the instance.
+void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    Renderer& r = Renderer::instance();
+    Program* old_program = r.getProgram();
+    if (!h.mEntries || !old_program || !old_program->isValid())
+    {
+        return;
+    }
+    NativeDrawSwap native_swap(r, old_program);
+    Program* program = r.getProgram();
+    const Program::PacketUniforms& pu = program->packetUniforms();
+    if (pu.mImpostors == ~0u)
+    {
+        static bool told = false;
+        if (!told)
+        {
+            told = true;
+            LL_WARNS("VkScene") << "avatar impostors are not drawn: the program '" << program->getName() << "' has no ll_impostor_table (its native stand-in is off or not built: native_gbuffer, impostor.vert)" << LL_ENDL;
+        }
+        ++sStats.mNoProgram;
+        return;
+    }
+    Renderer::ScratchAlloc rows = r.allocVertexScratch(sizeof(LLVkBridge::ImpostorQuadRow) * h.mEntries);
+    Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * h.mEntries);
+    if (!rows.mPtr || !rows.mAddress || !cmds.mPtr)
+    {
+        return;
+    }
+    memcpy(rows.mPtr, blob, sizeof(LLVkBridge::ImpostorQuadRow) * h.mEntries);
+    LLVkBridge::ImpostorQuadRow* rr = (LLVkBridge::ImpostorQuadRow*)rows.mPtr;
+    const LLVkBridge::ImpostorQuadRow* src = (const LLVkBridge::ImpostorQuadRow*)blob;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        rr[i].mDiffuse = packet_texture_slot(r, src[i].mDiffuse);
+        rr[i].mNormal = packet_texture_slot(r, src[i].mNormal);
+        rr[i].mSpecular = packet_texture_slot(r, src[i].mSpecular);
+    }
+    VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)cmds.mPtr;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        c[i] = { 6u, 1u, 0u, i };
+    }
+    static thread_local VertexInput vi;
+    static thread_local std::vector<U32> used;
+    vi.mBindings.clear();
+    vi.mAttributes.clear();
+    used.clear();
+    const U64 address = (U64)rows.mAddress;
+    const S32 words[2] = { (S32)(U32)address, (S32)(U32)(address >> 32) };
+    program->setFloatsAt(pu.mImpostors, reinterpret_cast<const F32*>(words), 2, 1);
+    if (!prepare_draw(vi, used))
+    {
+        return;
+    }
+    r.setVertexInput(vi);
+    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.bindlessFlush();
+    if (r.drawPackets(nullptr, h.mEntries, cmds.mBuffer, cmds.mOffset))
+    {
+        if (sStatsEnabled)
+        {
+            sStats.mDone += h.mEntries;
+        }
+    }
+    else
+    {
+        ++sStats.mRendererRefused;
+    }
+    sDraws += h.mEntries;
+    sDrawsTotal += h.mEntries;
+}
+
 // kind 31 (S5d): the palettes of this frame for the rigged alpha items. Blob: mEntries x { fragment handle, item (its number in the fragment's wire list), the palette's offset in the frame's shared list
 // (~0u: none), joints }. The row of the item gets the palette address and joint count, its command the index count: an item without a binding this frame draws nothing (as the rigged G-buffer items).
 void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
@@ -11486,6 +11561,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 33)
     {
         on_light_volumes(h, blob);
+        return;
+    }
+    if (h.mKind == 41)
+    {
+        on_impostor_quads(h, blob);
         return;
     }
     if (h.mKind == 34)

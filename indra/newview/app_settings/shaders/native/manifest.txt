@@ -72,3 +72,4 @@ override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffe
 override | Deferred Bump Pull Skin Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Deferred Emboss Pull Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | default on
 override | Deferred Emboss Pull Skin Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Impostor Shader | impostor.vert | impostor.frag | gbuffer | default on

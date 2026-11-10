@@ -680,6 +680,7 @@ const Program::PacketUniforms& Program::packetUniforms()
         mPacketU.mTexmats = find("ll_packet_texmats");
         mPacketU.mPbr = find("ll_packet_pbr");
         mPacketU.mLights = find("ll_light_table");
+        mPacketU.mImpostors = find("ll_impostor_table");
         mPacketU.mResolved = true;
     }
     return mPacketU;
