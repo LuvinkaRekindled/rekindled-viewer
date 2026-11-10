@@ -25,7 +25,7 @@ namespace LLVkBridge
 {
     // the deferred geometry pass types the scene table serves (kGeoTypes in pipeline.cpp, the viewer's list of them, has this many): item type t is a static pass type, kGeoPassTypes + t its rigged variant,
     // 2 * kGeoPassTypes the static alpha items and 2 * kGeoPassTypes + 1 the rigged alpha items
-    constexpr unsigned kGeoPassTypes = 25;       // (J1 K4: + fullbright shiny, bump, post bump; J1 K6 S4: + grass, which has no rigged variant)
+    constexpr unsigned kGeoPassTypes = 26;       // (J1 K4: + fullbright shiny, bump, post bump; J1 K6 S4: + grass, which has no rigged variant; J1 K6 B1: + the invisible alpha draws, drawn by the Highlight Transparent view only)
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
     // <FS> LL_VK_SYNC_LOG: names an address in the report of the main thread's waits on the worker (the viewer's symbol lookup)
