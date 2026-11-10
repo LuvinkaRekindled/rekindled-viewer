@@ -119,3 +119,10 @@ override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | g
 override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on
 override | Deferred Windlight Sun Program pull | sundisc.vert | sundisc.frag | gbuffer | default on
 override | Deferred Star Program pull | stars.vert | stars.frag | gbuffer | default on
+override | Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | require minimum_alpha | default on
+override | Deferred Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | default on
+override | Deferred Fullbright Alpha Mask Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | post | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Skinned Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | HUD Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | define IS_HUD=1 | default on
+override | Deferred Emissive Pull Shader | alpha.vert | emissive.frag | post | define GLOW_EMISSIVE=1 | default on
+override | Deferred Emissive Pull Skin Shader | alpha.vert | emissive.frag | post | define GLOW_EMISSIVE=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on

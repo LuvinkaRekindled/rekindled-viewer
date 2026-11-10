@@ -42,6 +42,15 @@ Lap pg2: 101 manifest programs load, no error; Haze Shader 20001 draws, Water Ha
 
 Shared: `sky_pass.inc` (the uniform blocks of all five), `lib/pullvert.glsl` (the pull prologue: row and index), `lib/flags.glsl` (the normal target's flag values the viewer prepends to old shaders). Family `gbuffer` (the output check is skipped for it: the old programs declare one `frag_data[4]` array). HAS_HDRI is not set for the sky program in the viewer (the HDRI sky is the environment map program), so the HDRI branch is not translated. The sun disc's call of `calcAtmospherics` only wrote varyings its fragment shader never reads and is left out. One local `color` of the old vertex shaders is `haze_color` / `sky_color` here (the block has a uniform `color`); same values. Lap pg3: 106 manifest programs, no error; sky dome 22001 draws, clouds 18001, moon and stars 1 each (daytime), the sun disc none in view; the sky of the lap's picture looks right.
 
+## Group B, third part: the fullbright alpha mask and the emissive (glow) passes (2026-11-10, lap pg4)
+
+| program | native files |
+|---|---|
+| Deferred Fullbright Alpha Mask Pull Shader (two programs of this name: the depth only alpha pass with the uniform `minimum_alpha`, told apart by `require minimum_alpha`; the table's mask pass with the cutoff from the row), its Skin variant, Skinned Deferred Fullbright Alpha Mask Pull Shader, HUD Fullbright Alpha Mask Pull Shader | fullbright_mask.frag with gbuffer.vert (the row's cutoff) or alpha.vert (CUTOFF_UNIFORM) |
+| Deferred Emissive Pull Shader, Deferred Emissive Pull Skin Shader | emissive.frag with alpha.vert (GLOW_EMISSIVE: the colour is the emissive array, the first byte of the vertex buffer plus the offset in the row, `pad2`) |
+
+`alpha.vert` gets the `GLOW_EMISSIVE` branch only; its other variants are unchanged (checked offline). Lap pg4: 113 manifest programs, no error; the HUD fullbright alpha mask program drew 14001 times; the other programs of the group did not draw in the lap (no glow surfaces, no non HUD fullbright mask draw in view): compile and link checked offline only.
+
 ## Still to do
 
-Water Shader (waterV + class 3 waterF: it needs the probe, PBR punctual and cascade shadow functions), Underwater Shader, Deferred Emissive Pull (and Skin) (a pull vertex shader with particles, skinning and texture animation, the emissive array by an offset in the row), Deferred Avatar Alpha Shader pull (alphaV + class 2 alphaF, 21 KB), Deferred Fullbright Alpha Mask Pull.
+Deferred Avatar Alpha Shader pull (alphaV with IS_AVATAR_SKIN + class 2 alphaF, 21 KB: the system avatar's alpha, rare), Water Shader (waterV + class 3 waterF: needs the probe, PBR punctual and cascade shadow functions; draws every frame at the water of London City, 14.7 a frame) and Underwater Shader.

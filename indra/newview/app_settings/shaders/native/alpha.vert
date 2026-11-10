@@ -86,7 +86,18 @@ void main()
     const mat4 texmat = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
     vary_texcoord0 = (texmat * vec4(texcoord, 0.0, 1.0)).xy;
     vary_position = eye.xyz;
+#ifdef GLOW_EMISSIVE
+    {
+        // the glow pass (Deferred Emissive Pull Shader, emissivePullV.glsl): the colour is the emissive array: the first byte of the vertex buffer (the positions) plus its offset in the row (pad2)
+        uint carry;
+        uvec2 emissive_address = row.positions;
+        emissive_address.x = uaddCarry(emissive_address.x, floatBitsToUint(row.pad2), carry);
+        emissive_address.y += carry;
+        vertex_color = unpackUnorm4x8(RowWords(emissive_address).w[color_index]);
+    }
+#else
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
+#endif
     vary_slot = row_texture_slot(row, position.w);
 #ifdef ALPHA_UBER
     vary_fullbright = (row.flags & 32u) != 0u ? 1u : 0u;
