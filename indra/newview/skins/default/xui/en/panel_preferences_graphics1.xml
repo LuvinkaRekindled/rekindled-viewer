@@ -2046,11 +2046,11 @@ If you do not understand the distinction then leave this control alone."
        control_name="FSVkRayTracing"
        height="16"
        initial_value="false"
-       label="Use ray tracing (RTX graphics cards, experimental)"
+       label="Use ray tracing (needs ray tracing hardware, experimental)"
        layout="topleft"
        left_delta="-18"
        name="FSVkRayTracing"
-       tool_tip="Ray traced sun shadows. Needs an NVIDIA RTX graphics card. Takes effect after the viewer is restarted."
+       tool_tip="Ray traced sun shadows. Needs a graphics card and driver with Vulkan ray tracing support (ray queries), from any maker; on a card without it the option does not take effect and the log says why. Takes effect after the viewer is restarted."
        top_pad="12"
        width="400"/>
       <check_box

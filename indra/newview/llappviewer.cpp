@@ -3999,7 +3999,7 @@ bool LLAppViewer::initWindow()
         }
         if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("LL_VK_RT") && !getenv("LL_VK_RT_SHADOWS"))
         {
-            _putenv_s("LL_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental, RTX)
+            _putenv_s("LL_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental; any card with Vulkan ray queries)
             _putenv_s("LL_VK_RT_SHADOWS", "1");
             if ((gSavedSettings.getBOOL("FSVkGlossyMirror") || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("LL_VK_RT_MATERIALS"))
             {
