@@ -40,6 +40,10 @@ class FSData : public LLSingleton<FSData>
     virtual ~FSData();
 
 public:
+    // Rekindled: false = the viewer makes no requests to Firestorm's servers (phoenixviewer.com: the fsdata feed,
+    // the grid list, the grid status feed). Set it to true, or point the URLs at a self-hosted copy, to bring them back.
+    static constexpr bool kUseFirestormServer = false;
+
     void startDownload();
     void downloadAgents();
     void processResponder(const LLSD& content, const std::string& url, bool save_to_file, const LLDate& last_modified);
