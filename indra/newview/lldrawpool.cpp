@@ -568,42 +568,6 @@ LLRenderPass::~LLRenderPass()
 
 }
 
-void LLRenderPass::renderGroup(LLSpatialGroup* group, U32 type, bool texture)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLSpatialGroup::drawmap_elem_t& draw_info = group->mDrawMap[type];
-
-    for (LLSpatialGroup::drawmap_elem_t::iterator k = draw_info.begin(); k != draw_info.end(); ++k)
-    {
-        LLDrawInfo *pparams = *k;
-        if (pparams)
-        {
-            pushBatch(*pparams, texture);
-        }
-    }
-}
-
-void LLRenderPass::renderRiggedGroup(LLSpatialGroup* group, U32 type, bool texture)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLSpatialGroup::drawmap_elem_t& draw_info = group->mDrawMap[type];
-    const LLVOAvatar* lastAvatar = nullptr;
-    U64 lastMeshId = 0;
-    bool skipLastSkin = false;
-
-    for (LLSpatialGroup::drawmap_elem_t::iterator k = draw_info.begin(); k != draw_info.end(); ++k)
-    {
-        LLDrawInfo* pparams = *k;
-        if (pparams)
-        {
-            if (uploadMatrixPalette(pparams->mAvatar, pparams->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-            {
-                pushBatch(*pparams, texture);
-            }
-        }
-    }
-}
-
 void LLRenderPass::pushBatches(U32 type, bool texture, bool batch_textures)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
