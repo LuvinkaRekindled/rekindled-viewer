@@ -48,6 +48,7 @@
 #include "llviewerjointmesh.h"
 #include "llviewerjointattachment.h"
 #include "llrendertarget.h"
+#include "llvkbridge.h"          // <FS> ImpostorQuadRow (fillImpostorQuad)
 #include "llavatarappearancedefines.h"
 #include "lltexglobalcolor.h"
 #include "lldriverparam.h"
@@ -622,7 +623,10 @@ public:
  **/
 
 public:
-    U32         renderImpostor(LLColor4U color = LLColor4U(255,255,255,255), S32 diffuse_channel = 0);
+    // <FS> 2026-11-10: the impostor's quad is a row of the pass's one impostor record (LLVkBridge kind 41), not an immediate mode draw: fillImpostorQuad makes the row (false: no picture yet),
+    // renderImpostorDebug draws the outline of the quad (the RENDER_DEBUG_IMPOSTORS view)
+    bool        fillImpostorQuad(LLVkBridge::ImpostorQuadRow& row) const;
+    void        renderImpostorDebug(S32 diffuse_channel);
     bool        isVisuallyMuted();
     bool        isInMuteList() const;
 // [RLVa:KB] - Checked: RLVa-2.2 (@setcam_avdist)

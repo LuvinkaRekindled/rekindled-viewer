@@ -8865,12 +8865,11 @@ U32 LLVOAvatar::renderRigid()
     return num_indices;
 }
 
-U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
+bool LLVOAvatar::fillImpostorQuad(LLVkBridge::ImpostorQuadRow& row) const
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR; // <FS:Beq/> Tracy accounting for render tracking
     if (!mImpostor.isComplete())
     {
-        return 0;
+        return false;
     }
 
     LLVector3 pos(getRenderPosition()+mImpostorOffset);
@@ -8882,53 +8881,54 @@ U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
     left *= mImpostorDim.mV[0];
     up *= mImpostorDim.mV[1];
 
-    if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_IMPOSTORS))
+    for (S32 i = 0; i < 3; ++i)
     {
-        LLRenderState::BlendScope blend(true);
-        gRender.setSceneBlendType(LLRender::BT_ADD);
-        gRender.getTexUnit(diffuse_channel)->bindWhite();
-
-        gRender.begin(LLRender::LINES);
-        gRender.color4f(1.f,1.f,1.f,1.f);
-        F32 thickness = llmax(F32(5.0f-5.0f*(gFrameTimeSeconds-mLastImpostorUpdateFrameTime)),1.0f);
-        gRender.setLineWidth(thickness); // <FS> Line width OGL core profile fix by Rye Mutt
-        gRender.vertex3fv((pos+left-up).mV);
-        gRender.vertex3fv((pos-left-up).mV);
-        gRender.vertex3fv((pos-left-up).mV);
-        gRender.vertex3fv((pos-left+up).mV);
-        gRender.vertex3fv((pos-left+up).mV);
-        gRender.vertex3fv((pos+left+up).mV);
-        gRender.vertex3fv((pos+left+up).mV);
-        gRender.vertex3fv((pos+left-up).mV);
-        gRender.end();
-        gRender.flush();
+        row.mCenter[i] = pos.mV[i];
+        row.mLeft[i] = left.mV[i];
+        row.mUp[i] = up.mV[i];
     }
-    {
-    gRender.flush();
+    // the three images of the impostor target: diffuse, specular (attachment 1) and normal (attachment 2); a target with fewer has none of the others (the slot 0 placeholder)
+    const U32 num_tex = mImpostor.getNumTextures();
+    row.mDiffuse = mImpostor.getTexture(0);
+    row.mSpecular = num_tex >= 2 ? mImpostor.getTexture(1) : 0;
+    row.mNormal = num_tex >= 3 ? mImpostor.getTexture(2) : 0;
+    return true;
+}
 
-    gRender.color4ubv(color.mV);
-    gRender.getTexUnit(diffuse_channel)->bind(&mImpostor);
-    gRender.begin(LLRender::TRIANGLES);
+void LLVOAvatar::renderImpostorDebug(S32 diffuse_channel)
+{
+    if (!mImpostor.isComplete() || !gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_IMPOSTORS))
     {
-        gRender.texCoord2f(0.f, 0.f);
-        gRender.vertex3fv((pos + left - up).mV);
-        gRender.texCoord2f(1.f, 0.f);
-        gRender.vertex3fv((pos - left - up).mV);
-        gRender.texCoord2f(1.f, 1.f);
-        gRender.vertex3fv((pos - left + up).mV);
-
-        gRender.texCoord2f(0.f, 0.f);
-        gRender.vertex3fv((pos + left - up).mV);
-        gRender.texCoord2f(1.f, 1.f);
-        gRender.vertex3fv((pos - left + up).mV);
-        gRender.texCoord2f(0.f, 1.f);
-        gRender.vertex3fv((pos + left + up).mV);
+        return;
     }
+
+    LLVector3 pos(getRenderPosition()+mImpostorOffset);
+    LLVector3 at = (pos - LLViewerCamera::getInstance()->getOrigin());
+    at.normalize();
+    LLVector3 left = LLViewerCamera::getInstance()->getUpAxis() % at;
+    LLVector3 up = at%left;
+
+    left *= mImpostorDim.mV[0];
+    up *= mImpostorDim.mV[1];
+
+    LLRenderState::BlendScope blend(true);
+    gRender.setSceneBlendType(LLRender::BT_ADD);
+    gRender.getTexUnit(diffuse_channel)->bindWhite();
+
+    gRender.begin(LLRender::LINES);
+    gRender.color4f(1.f,1.f,1.f,1.f);
+    F32 thickness = llmax(F32(5.0f-5.0f*(gFrameTimeSeconds-mLastImpostorUpdateFrameTime)),1.0f);
+    gRender.setLineWidth(thickness); // <FS> Line width OGL core profile fix by Rye Mutt
+    gRender.vertex3fv((pos+left-up).mV);
+    gRender.vertex3fv((pos-left-up).mV);
+    gRender.vertex3fv((pos-left-up).mV);
+    gRender.vertex3fv((pos-left+up).mV);
+    gRender.vertex3fv((pos-left+up).mV);
+    gRender.vertex3fv((pos+left+up).mV);
+    gRender.vertex3fv((pos+left+up).mV);
+    gRender.vertex3fv((pos+left-up).mV);
     gRender.end();
     gRender.flush();
-    }
-
-    return 6;
 }
 
 bool LLVOAvatar::allTexturesCompletelyDownloaded(std::set<LLUUID>& ids) const

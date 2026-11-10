@@ -556,6 +556,9 @@ void LLDrawPoolAvatar::endRigid()
     }
 }
 
+// <FS> 2026-11-10: the avatar impostors of a pass are the rows of one record (LLVkBridge kind 41, sent by endDeferredImpostor), not an immediate mode quad with three texture binds each
+static std::vector<LLVkBridge::ImpostorQuadRow> sImpostorRows;
+
 void LLDrawPoolAvatar::beginDeferredImpostor()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -566,11 +569,10 @@ void LLDrawPoolAvatar::beginDeferredImpostor()
     }
 
     sVertexProgram = &gDeferredImpostorProgram;
-    specular_channel = sVertexProgram->enableTexture(LLViewerShaderMgr::SPECULAR_MAP);
-    normal_channel = sVertexProgram->enableTexture(LLViewerShaderMgr::NORMAL_MAP);
-    sDiffuseChannel = sVertexProgram->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
+    sDiffuseChannel = sVertexProgram->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);      // (the debug outline binds white here)
     sVertexProgram->bind();
     sVertexProgram->setMinimumAlpha(0.01f);
+    sImpostorRows.clear();
 }
 
 void LLDrawPoolAvatar::endDeferredImpostor()
@@ -578,8 +580,16 @@ void LLDrawPoolAvatar::endDeferredImpostor()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     sShaderLevel = mShaderLevel;
-    sVertexProgram->disableTexture(LLViewerShaderMgr::NORMAL_MAP);
-    sVertexProgram->disableTexture(LLViewerShaderMgr::SPECULAR_MAP);
+    if (!sImpostorRows.empty())
+    {
+        // the impostors of the pass in one record: the program is the one bound at the start of the pass, the matrices those of the pass (the quads are in agent space: no model matrix)
+        gRender.syncMatrices();
+        LLVkBridge::ShadowPacketsHeader header;
+        header.mKind = 41;
+        header.mEntries = (U32)sImpostorRows.size();
+        LLVkBridge::shadowPackets(header, sImpostorRows.data(), sImpostorRows.size() * sizeof(sImpostorRows[0]));
+        sImpostorRows.clear();
+    }
     sVertexProgram->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
     gPipeline.unbindDeferredShader(*sVertexProgram);
    sVertexProgram = NULL;
@@ -878,25 +888,12 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         if (impostor || (LLVOAvatar::AOA_NORMAL != avatarp->getOverallAppearance() && !avatarp->needsImpostorUpdate()))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("render impostor"); // <FS:Beq/> Tracy markup
-            if (LLPipeline::sRenderDeferred && !LLPipeline::sReflectionRender && avatarp->mImpostor.isComplete())
+            LLVkBridge::ImpostorQuadRow row;
+            if (avatarp->fillImpostorQuad(row))
             {
-                // <FS:Ansariel> FIRE-9179: Crash fix
-                //if (normal_channel > -1)
-                U32 num_tex = avatarp->mImpostor.getNumTextures();
-                if (normal_channel > -1 && num_tex >= 3)
-                // </FS:Ansariel>
-                {
-                    avatarp->mImpostor.bindTexture(2, normal_channel);
-                }
-                // <FS:Ansariel> FIRE-9179: Crash fix
-                //if (specular_channel > -1)
-                if (specular_channel > -1 && num_tex >= 2)
-                // </FS:Ansariel>
-                {
-                    avatarp->mImpostor.bindTexture(1, specular_channel);
-                }
+                sImpostorRows.push_back(row);
             }
-            avatarp->renderImpostor(avatarp->getMutedAVColor(), sDiffuseChannel);
+            avatarp->renderImpostorDebug(sDiffuseChannel);
         }
         return;
     }

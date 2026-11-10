@@ -296,6 +296,10 @@ namespace LLVkBridge
     // kind 33 with mPass 1 (LV2): the projectors: blob = mEntries x SpotVolumeRow (11 vec4: the light, the projector's matrix and values, the GL name of its image in mTexture, which the worker replaces by the
     // bindless slot of the frame), drawn with the pull projector program (spotLightF with LL_PROJECTOR_PULL)
     struct SpotVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mTexture; S32 mShadowIndex; F32 mN[3]; F32 mNear; F32 mP[3]; F32 mRange; F32 mOrigin[3]; F32 mAmbiance; F32 mFocus; F32 mLod; F32 mAmbientLod; F32 mShadowFade; F32 mMat[16]; };
+    // kind 41 (2026-11-10): the avatar impostors of a deferred pass in one record, instead of one immediate mode quad (and three texture binds) a avatar. The viewer has bound the program "Deferred Impostor Shader"
+    // (its native stand-in is the only one that draws: it declares ll_impostor_table) and written the pass's matrices; blob = mEntries x ImpostorQuadRow. The worker replaces the three GL names by this
+    // frame's bindless slots and draws each row as 6 vertices (two triangles: the corners are centre -/+ left -/+ up, the order of LLVOAvatar::renderImpostor), the row read from the table by instance.
+    struct ImpostorQuadRow { F32 mCenter[3]; U32 mDiffuse; F32 mLeft[3]; U32 mNormal; F32 mUp[3]; U32 mSpecular; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
     struct GeoSlotMatrix { U32 mSlot; F32 mM[16]; };
     // S7 H1 (doc/vulkan/S7-design.md section 4): Hi-Z occlusion. hizSend queues kind 34 (the boxes of the occlusion groups and the view-projection of the pass) and returns its serial (0: not sent: no
