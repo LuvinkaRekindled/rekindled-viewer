@@ -104,6 +104,7 @@ class ViewerManifest(LLManifest,FSViewerManifest):
                 # <FS> the credits and licence texts of what Rekindled adds to the viewer (read by the About floater's Licenses tab)
                 self.path("rekindled-licenses.txt")
                 self.path("apache-2.0.txt")
+                self.path("glslang-license.txt")
 
                 # include the entire shaders directory recursively
                 self.path("shaders")
