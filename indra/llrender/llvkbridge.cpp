@@ -140,6 +140,8 @@ struct MirrorState
     bool mInFrame = false;
     bool mHold = false;
     bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
+    bool mStandIn = false;          // the open off-screen frame stands in for a frame that could not be presented (the window is minimised or has no size): see begin_stand_in_frame
+    U64 mStandInFrames = 0;
 
     HWND mWindow = nullptr;         // the viewer's main window: Vulkan presents into it
     volatile bool mResized = false;
@@ -413,6 +415,31 @@ void LLVkBridge::shutdown()
     }
 }
 
+namespace
+{
+bool begin_offscreen_frame();
+
+// <FS> The window cannot be presented into (minimised, or it has no size): a frame is recorded all the same, without a swapchain image. Nearly everything the renderer gives back, it gives back
+// when a frame begins (deferred destroys, the scratch rings and staging of the slot, retired handles, buffer writes that wait for a frame), and the viewer keeps sending work while it is minimised (the
+// reflection probe update, texture discards). With no frame at all, a viewer left minimised for 85 minutes (2026-11-09) kept every buffer it gave up: all the video memory in 18 minutes, then 58 GB of
+// system memory, 13 million scratch allocations refused, and 58 seconds to free it all at the restore. The frame is closed by the next endFrame / beginFrame like any off-screen frame.
+void begin_stand_in_frame(const char* why)
+{
+    if (!sMirror.mBackbuffer.valid())
+    {
+        return;         // (nothing was ever drawn: there is nothing to record into, and nothing to give back yet)
+    }
+    if (begin_offscreen_frame())
+    {
+        sMirror.mStandIn = true;
+        if (sMirror.mStandInFrames++ == 0)
+        {
+            LL_INFOS("VkMirror") << "no picture can be shown (" << why << "): frames are recorded without a present until one can" << LL_ENDL;
+        }
+    }
+}
+}
+
 void LLVkBridge::beginFrameImpl(S32 width, S32 height)
 {
     gMainThreadId = __readgsdword(0x48);
@@ -438,6 +465,7 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     }
     if (width <= 0 || height <= 0)
     {
+        begin_stand_in_frame("the window has no size");
         return;
     }
 
@@ -467,8 +495,14 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
         }
         if (!sc.isValid())
         {
+            begin_stand_in_frame("the window is minimised");
             return;     // minimised
         }
+    }
+    if (sMirror.mStandInFrames)
+    {
+        LL_INFOS("VkMirror") << "a picture can be shown again after " << sMirror.mStandInFrames << " frames without a present" << LL_ENDL;
+        sMirror.mStandInFrames = 0;
     }
 
     if ((U32)width != sMirror.mBackWidth || (U32)height != sMirror.mBackHeight)
@@ -1026,6 +1060,12 @@ void LLVkBridge::endFrameImpl()
         sMirror.mOffscreen = false;
         renderer.endFrame();
         ctx.endFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
+        if (sMirror.mStandIn)
+        {
+            // <FS> this frame took the place of a presented one: what a presented frame's end does for the worker's own upkeep runs here too (the readings and results of finished frames are taken, not left to pile up)
+            sMirror.mStandIn = false;
+            LLVkWorker::after_frame();
+        }
         return;
     }
 
