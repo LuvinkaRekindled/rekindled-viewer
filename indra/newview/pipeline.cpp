@@ -22734,7 +22734,7 @@ bool LLPipeline::avatarVelocityWanted()
 {
     static LLCachedControl<bool> enabled(gSavedSettings, "RenderAvatarMotionVectors", false);
     return enabled && sDLSS && sRenderDeferred && !gCubeSnapshot && !gSnapshot && LLVkBridge::upscaleAvailable() && mMotionMap.isComplete() && mUpscaledMap.isComplete()
-           && mAvatarVelocityMap.isComplete() && gAvatarVelocityProgram.isComplete() && gAvatarBodyVelocityProgram.isComplete()
+           && mAvatarVelocityMap.isComplete() && gAvatarVelocityPullProgram.isComplete() && gAvatarBodyVelocityProgram.isComplete()
            && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
@@ -23301,35 +23301,13 @@ void LLPipeline::renderAvatarVelocity()
 
         if (!fallback.empty())
         {
-            setup(gAvatarVelocityProgram);
-            const LLVOAvatar* last_avatar = nullptr;
-            U64 last_skin = 0;
-            bool last_ok = false;
-            for (LLDrawInfo* params : fallback)
+            // K6 group D: rigged draws the packet record cannot take are not drawn any more (the uniform palette program is gone: the log showed 0 of them); counted and logged once
+            static U64 dropped = 0;
+            if (dropped == 0)
             {
-                LLVOAvatar* avatar = params->mAvatar.get();
-                if (avatar != last_avatar || params->mSkinInfo->mHash != last_skin)
-                {
-                    last_avatar = avatar;
-                    last_skin = params->mSkinInfo->mHash;
-                    const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(params->mSkinInfo);
-                    const U32 count = (U32)mpc.mMatrixPalette.size();
-                    last_ok = count > 0 && mpc.mGLMp.size() >= (size_t)(count + 1) * 12 && mpc.mPrevGLMp.size() == mpc.mGLMp.size();
-                    if (last_ok)
-                    {
-                        gAvatarVelocityProgram.uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX, count, false, mpc.absPalette().data());       // (the uniform palette program: world matrices, not the anchored palette)
-                        gAvatarVelocityProgram.uniformMatrix3x4fv(palette_prev_s, count, false, mpc.absPrevPalette().data());
-                    }
-                }
-                if (!last_ok)
-                {
-                    continue;
-                }
-                params->mVertexBuffer->setBuffer();
-                params->mVertexBuffer->drawRange(LLRender::TRIANGLES, params->mStart, params->mEnd, params->mCount, params->mOffset);
-                ++rigged_draws;
+                LL_WARNS("VkMotion") << fallback.size() << " rigged draws the velocity record cannot carry are not drawn (there is no old path any more)" << LL_ENDL;
             }
-            gAvatarVelocityProgram.unbind();
+            dropped += fallback.size();
         }
     }
 
@@ -23367,9 +23345,11 @@ void LLPipeline::renderAvatarVelocity()
         }
     }
 
-    if (!LLViewerJointMesh::sVelocityDraws.empty())
+    // K6 group D: the system avatar's body parts through the body program's pull twin, one record of one entry each (ll_pull_draw_range, as the G-buffer draws them); no twin, no body motion vectors
+    LLShaderProgram* body_velocity = ll_pull_twin(&gAvatarBodyVelocityProgram);
+    if (!LLViewerJointMesh::sVelocityDraws.empty() && body_velocity)
     {
-        setup(gAvatarBodyVelocityProgram);
+        setup(*body_velocity);
         const LLViewerJointMesh* last_mesh = nullptr;
         for (const LLViewerJointMesh::VelocityDraw& d : LLViewerJointMesh::sVelocityDraws)
         {
@@ -23386,14 +23366,13 @@ void LLPipeline::renderAvatarVelocity()
             if (d.mMesh != last_mesh)
             {
                 last_mesh = d.mMesh;
-                gAvatarBodyVelocityProgram.uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, d.mMesh->getWorldPalette());
-                gAvatarBodyVelocityProgram.uniform4fv(palette_prev_s, 45, d.mMesh->getPreviousWorldPalette());
+                body_velocity->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, d.mMesh->getWorldPalette());
+                body_velocity->uniform4fv(palette_prev_s, 45, d.mMesh->getPreviousWorldPalette());
             }
-            d.mBuffer->setBuffer();
-            d.mBuffer->drawRange(LLRender::TRIANGLES, d.mStart, d.mEnd, d.mCount, d.mOffset);
+            ll_pull_draw_range(d.mBuffer, d.mOffset, d.mCount);
             ++body_draws;
         }
-        gAvatarBodyVelocityProgram.unbind();
+        body_velocity->unbind();
     }
     LLViewerJointMesh::sVelocityDraws.clear();
 

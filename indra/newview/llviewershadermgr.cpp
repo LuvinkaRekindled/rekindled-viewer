@@ -156,7 +156,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 27;
+constexpr size_t PULL_TWIN_COUNT = 28;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -207,7 +207,8 @@ static void make_pull_twins()
                                                   &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
                                                   &gHUDFullbrightProgram, &gHUDFullbrightAlphaMaskProgram, &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gDeferredBumpProgram,
                                                   &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gDeferredPBROpaqueProgram, &gObjectBumpProgram,
-                                                  &gDeferredShadowAlphaMaskProgram, &gDeferredShadowFullbrightAlphaMaskProgram, &gDeferredTreeShadowProgram, &gDeferredShadowGLTFAlphaBlendProgram };
+                                                  &gDeferredShadowAlphaMaskProgram, &gDeferredShadowFullbrightAlphaMaskProgram, &gDeferredTreeShadowProgram, &gDeferredShadowGLTFAlphaBlendProgram,
+                                                  &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
         sPullTwinSources[k] = sources[k];
@@ -393,7 +394,6 @@ LLShaderProgram            gExposureProgram;
 LLShaderProgram            gExposureProgramNoFade;
 LLShaderProgram            gLuminanceProgram;
 LLShaderProgram            gMotionVectorProgram;
-LLShaderProgram            gAvatarVelocityProgram;         // <FS> avatar motion vectors: rigged draws
 LLShaderProgram            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
 LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
 LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
@@ -1628,7 +1628,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgramNoFade.unload();
         gLuminanceProgram.unload();
         gMotionVectorProgram.unload();
-        gAvatarVelocityProgram.unload();
         gAvatarBodyVelocityProgram.unload();
         gAvatarVelocityPullProgram.unload();
         gObjectVelocityPullProgram.unload();
@@ -4231,19 +4230,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6). Optional: a failure here must not stop the programs that follow (the pass checks isComplete()).
     if (success)
     {
-        const std::string max_joints = std::to_string(LLSkinningUtil::getMaxJointCount());     // the Vulkan translator wants literal array sizes
-        gAvatarVelocityProgram.mName = "Avatar Velocity (rigged)";
-        gAvatarVelocityProgram.mShaderFiles.clear();
-        gAvatarVelocityProgram.clearPermutations();
-        gAvatarVelocityProgram.addPermutation("MAX_JOINTS_PER_MESH_OBJECT", max_joints);
-        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityV.glsl", ShaderStage::Vertex));
-        gAvatarVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
-        gAvatarVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gAvatarVelocityProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the avatar velocity program (rigged) did not compile: no avatar motion vectors" << LL_ENDL;
-        }
-
         if (LLVkBridge::shadowPacketsAvailable())
         {
             gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
