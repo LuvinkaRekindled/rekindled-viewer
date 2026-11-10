@@ -11058,6 +11058,7 @@ static bool shadow_riggltf_type(U32 rigged_type)
 static bool shadow_gltf_env();
 static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat);
 static int shadow_riggltf_kind(const LLDrawInfo& p);
+bool ll_shadow_riggltf_blend_in_record(const LLDrawInfo& p);
 static const U32 kGeoAlphaItemType = 2 * (U32)kGeoTypeCount;            // the item types of the alpha items (S5a static, S5d rigged: the next number)
 
 static int geo_type_number(U32 type)
@@ -21139,12 +21140,20 @@ static int shadow_riggltf_kind(const LLDrawInfo& p)
         return GS_NONE;
     }
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
-    if (kind == GS_BLEND || (kind == GS_MASK && (p.mTextureMatrix || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))))
+    if (kind != GS_OPAQUE && (p.mTextureMatrix || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)))
     {
-        return GS_NONE;         // (the blended rigged ones stay with the old loop)
+        return GS_NONE;         // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; with a texture matrix or without texture coordinates they are refused as the masks are)
     }
     return kind;
 }
+// (the old shadow loops: this rigged glTF blend draw is in the record)
+bool ll_shadow_riggltf_blend_in_record(const LLDrawInfo& p)
+{
+    return sShadowGltfRows && LLPipeline::sShadowRender && p.mGLTFMaterial && shadow_riggltf_kind(p) == GS_BLEND;
+}
+
+// <FS> K6 group C step 3a: how many rigged glTF casters were made as record entries (opaque, mask, blend), counted by the builders (several threads), logged with the ShadowDraws statistics
+static std::atomic<U64> sRigGltfEntries[3];
 
 struct LLPipeline::ShadowAlphaBuild
 {
@@ -21241,6 +21250,48 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             }
             entries.push_back(e);
         };
+        // J1 K3d / K6 group C step 3a: the entry of a rigged glTF caster (opaque, mask or blend) from the draw's rig source: the same entry as the static ones, with the skin
+        auto add_rigged_gltf = [&](const GeoRigSource& rig, int gk) -> bool
+        {
+            const LLVertexBuffer* vb = rig.mVb.get();
+            LLVOAvatar* avatar = rig.mAvatar.get();
+            const LLMeshSkinInfo* skin = rig.mSkin.get();
+            const LLFetchedGLTFMaterial* mat = rig.mGltf.get();
+            LLVkBridge::ShadowAlphaEntry e;
+            F32 tm[16];
+            bool has_tm = false;
+            LLViewerTexture* tex = shadow_gltf_entry_parts(vb, mat, rig.mOffset, rig.mCount, nullptr, rig.mTexture.get(), gk, e, tm, has_tm);
+            if (!(out.mShared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
+                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+            {
+                return false;       // the skin is not loaded yet: not drawn, as before
+            }
+            e.mFlags |= LLVkBridge::ALPHA_RIGGED;
+            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
+            e.mVertexFirst = rig.mStart;
+            e.mVertexCount = (U32)rig.mEnd + 1u - rig.mStart;
+            e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
+            e.mSkinId = (U32)(((uintptr_t)skin) >> 4);
+            {
+                const LLVector3 avatar_position = avatar->getRenderPosition();
+                e.mAvatarPos[0] = avatar_position.mV[0];
+                e.mAvatarPos[1] = avatar_position.mV[1];
+                e.mAvatarPos[2] = avatar_position.mV[2];
+                e.mAvatarKind = rt_avatar_kind(avatar);
+            }
+            if (tex)
+            {
+                e.mTextures[0] = texture_ref(tex);
+            }
+            if (has_tm)
+            {
+                out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
+                e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+            }
+            entries.push_back(e);
+            ++sRigGltfEntries[gk == GS_OPAQUE ? 0 : (gk == GS_MASK ? 1 : 2)];
+            return true;
+        };
         for (const ShadowAlphaSource& source : sources)
         {
             if (rigged && source.kind == KIND_GRASS)
@@ -21279,6 +21330,11 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
                 {
+                    if (rigged && shadow_gltf_env() && !LLVkBridge::rtShadowMode() && shadow_riggltf_kind(*params) == GS_BLEND)
+                    {
+                        add_rigged_gltf(ll_geo_rig_source(params), GS_BLEND);       // K6 group C step 3a: a rigged glTF blend caster is an entry of the rigged record too
+                        continue;
+                    }
                     ++out.mFbGLTF;
                     continue;       // left to renderAlphaObjects
                 }
@@ -21415,10 +21471,8 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     // the rigged glTF casters (opaque and mask; no list-built entry to compare with: the old loops drew them): the same entry as the static ones, with the skin
                     const GeoRigSource& rig = *named.second;
                     const LLVertexBuffer* vb = rig.mVb.get();
-                    LLVOAvatar* avatar = rig.mAvatar.get();
-                    const LLMeshSkinInfo* skin = rig.mSkin.get();
                     const LLFetchedGLTFMaterial* mat = rig.mGltf.get();
-                    if (!rig.mCount || !avatar || !skin || !vb || !mat || !rig.mAlphaOk || cmp_rig)
+                    if (!rig.mCount || !rig.mAvatar.get() || !rig.mSkin.get() || !vb || !mat || !rig.mAlphaOk || cmp_rig)
                     {
                         continue;
                     }
@@ -21427,38 +21481,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     {
                         continue;
                     }
-                    LLVkBridge::ShadowAlphaEntry e;
-                    F32 tm[16];
-                    bool has_tm = false;
-                    LLViewerTexture* tex = shadow_gltf_entry_parts(vb, mat, rig.mOffset, rig.mCount, nullptr, rig.mTexture.get(), gk, e, tm, has_tm);
-                    if (!(out.mShared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
-                                      : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
-                    {
-                        continue;
-                    }
-                    e.mFlags |= LLVkBridge::ALPHA_RIGGED;
-                    e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-                    e.mVertexFirst = rig.mStart;
-                    e.mVertexCount = (U32)rig.mEnd + 1u - rig.mStart;
-                    e.mAvatarId = (U32)(((uintptr_t)avatar) >> 4);
-                    e.mSkinId = (U32)(((uintptr_t)skin) >> 4);
-                    {
-                        const LLVector3 avatar_position = avatar->getRenderPosition();
-                        e.mAvatarPos[0] = avatar_position.mV[0];
-                        e.mAvatarPos[1] = avatar_position.mV[1];
-                        e.mAvatarPos[2] = avatar_position.mV[2];
-                        e.mAvatarKind = rt_avatar_kind(avatar);
-                    }
-                    if (tex)
-                    {
-                        e.mTextures[0] = texture_ref(tex);
-                    }
-                    if (has_tm)
-                    {
-                        out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
-                        e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
-                    }
-                    entries.push_back(e);
+                    add_rigged_gltf(rig, gk);
                     continue;
                 }
                 const ShadowAlphaSource* source = nullptr;
@@ -22066,6 +22089,10 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
         if (skip_packet_draws && !rigged && ll_shadow_gltf_in_record(*pparams))
         {
             continue;       // C5 PBR shadow rows: a glTF blend caster of the record
+        }
+        if (skip_packet_draws && rigged && ll_shadow_riggltf_blend_in_record(*pparams))
+        {
+            continue;       // K6 group C step 3a: a rigged glTF blend caster of the record
         }
 
         if (rigged)
@@ -29658,6 +29685,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LL_INFOS("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
                 << st.mFbRigged / frames << ", more than 4 textures " << st.mFbManyTextures / frames << ", texture matrix " << st.mFbTextureMatrix / frames << "; named to the ray scene instead: glTF opaque "
                 << st.mRtOpaque / frames << ", glTF mask " << st.mRtMask / frames << ", glTF blend " << st.mRtBlend / frames << ", texture matrix " << st.mRtTextureMatrix / frames << " (" << st.mRtRecords / frames << " records)" << LL_ENDL;
+            LL_INFOS("ShadowDraws") << "rigged glTF casters made as record entries per frame: opaque " << (double)sRigGltfEntries[0].exchange(0) / frames << ", mask " << (double)sRigGltfEntries[1].exchange(0) / frames
+                << ", blend " << (double)sRigGltfEntries[2].exchange(0) / frames << LL_ENDL;
             st.mFbGLTF = st.mFbLayout = st.mFbRigged = st.mFbManyTextures = st.mFbTextureMatrix = st.mRtOpaque = st.mRtMask = st.mRtBlend = st.mRtTextureMatrix = st.mRtRecords = 0;
             st.mPacketEntries = st.mPacketFallback = st.mPacketRecords = 0;
             st.mAlphaEntries = st.mAlphaFallback = st.mAlphaRecords = st.mAlphaTextures = st.mAlphaFragEntries = st.mAlphaFragGroups = 0;
