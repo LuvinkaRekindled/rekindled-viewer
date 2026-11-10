@@ -341,8 +341,9 @@ public:
     VkCommandBuffer getCommandBuffer() const { return mFrames[mFrameSlot].mCmd; }
     VkSemaphore getAcquireSemaphore() const { return mFrames[mFrameSlot].mAcquire; }
     U64 getFrameNumber() const { return mFrameNumber; }
-    // true once the GPU has finished the frame that was the n-th to be submitted (false while it is still being recorded)
+    // true once the GPU has finished the frame that was the n-th to be submitted (false while it is still being recorded). Right in a frame and between two frames (see mCompletedBelow). The render worker's thread.
     bool frameFinished(U64 n);
+    U64 earlyFinishedAvoided() const { return mEarlyFinishedAvoided; }      // times frameFinished was asked between two frames about a frame the old test called finished while it was still on the GPU
     U32 getFrameSlot() const { return mFrameSlot; }
     // GPU microseconds the "rt scene builds" pass took in the frame that last used this slot (read from the pass timestamps when the slot was reused; 0 when it had none): the ray scene paces its builds by it
     U64 rtBuildMicros(U32 slot) const { return slot < FRAMES_IN_FLIGHT ? mRtBuildMicros[slot].load(std::memory_order_relaxed) : 0; }
@@ -466,6 +467,8 @@ private:
     U32 mFrameSlot = 0;
     std::atomic<U64> mRtBuildMicros[FRAMES_IN_FLIGHT] = {};
     U64 mFrameNumber = 0;
+    U64 mCompletedBelow = 0;                // every frame with a number below this has been waited for (set in beginFrame after the slot's fence, raised by frameFinished for the next frame in order)
+    U64 mEarlyFinishedAvoided = 0;
     void (*mViewForget)(VkImageView) = nullptr;
     bool mInFrame = false;
     std::vector<std::function<void()>> mPendingDeferred;     // destroyed with the next frame slot that completes

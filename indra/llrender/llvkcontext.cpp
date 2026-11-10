@@ -1292,6 +1292,7 @@ void Context::shutdown()
     mInFrame = false;
     mFrameSlot = 0;
     mFrameNumber = 0;
+    mCompletedBelow = 0;
 }
 
 void Context::waitIdle()
@@ -2006,6 +2007,12 @@ VkCommandBuffer Context::beginFrame(bool wait)
         }
     }
     gSyncStats.mFenceWaitMicros.fetch_add((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - wait_start).count(), std::memory_order_relaxed);
+    if (mFrameNumber >= frameCount())
+    {
+        // <FS> the frame that used this slot last (frameCount() frames back) has been waited for, as every frame before it was by the frames before this one: frameFinished answers from this number,
+        // because the fence that says so is reset on the next line
+        mCompletedBelow = std::max(mCompletedBelow, mFrameNumber - frameCount() + 1);
+    }
     vkResetFences(mDevice, 1, &f.mFence);
 
     if (f.mTsPending && f.mTsPool)
@@ -2371,17 +2378,46 @@ bool Context::flushFrameAndWait()
     return ok;
 }
 
+// <FS> doc/vulkan/GPU-LIFETIMES-revised.md, finding 5.1. A frame is finished when something waited for it (mCompletedBelow, set where beginFrame has waited for the slot's last frame) or when its fence says so.
+// The test used to be "mFrameNumber - n >= frameCount(): its slot has been reused, which waited for it". That is right while a frame is being recorded, and one frame early BETWEEN two frames: the frame
+// number is the next frame's already, but its beginFrame has not waited yet, so the frame frameCount() back still owns its slot and may still be on the GPU. The Hi-Z poll after a presented frame asks
+// in exactly that state (after_frame -> hiz_poll): it published verdicts the GPU had not written yet, and the main thread read the slot's old contents as the new serial's.
+// The render worker's thread only (as every caller is).
 bool Context::frameFinished(U64 n)
 {
     if (n >= mFrameNumber)
     {
-        return false;
+        return false;       // being recorded, or not begun
     }
-    if (mFrameNumber - n >= frameCount())
+    if (n < mCompletedBelow)
     {
-        return true;        // its slot has been reused, which waited for it
+        return true;        // waited for
     }
-    return vkGetFenceStatus(mDevice, mFrames[n % frameCount()].mFence) == VK_SUCCESS;
+    const U32 count = frameCount();
+    if (mFrameNumber - n > count)
+    {
+        return true;        // (cannot be reached: every such frame is below mCompletedBelow; kept as the old answer for a frame that old)
+    }
+    // one of the last frameCount() frames, the one being recorded not among them: its slot still holds its own fence
+    const bool done = vkGetFenceStatus(mDevice, mFrames[n % count].mFence) == VK_SUCCESS;
+    if (done)
+    {
+        if (n == mCompletedBelow)
+        {
+            ++mCompletedBelow;      // (only the next one in order: nothing is concluded about the frames before a finished one)
+        }
+    }
+    else if (mFrameNumber - n >= count)
+    {
+        // the old test called this frame finished
+        ++mEarlyFinishedAvoided;
+        if (mEarlyFinishedAvoided <= 5 || mEarlyFinishedAvoided % 2000 == 0)
+        {
+            LL_INFOS("Vulkan") << "frameFinished: frame " << n << " was still on the GPU when asked between two frames (frame number " << mFrameNumber
+                               << "; the old test called it finished): " << mEarlyFinishedAvoided << " so far" << LL_ENDL;
+        }
+    }
+    return done;
 }
 
 bool Context::isStagingBuffer(VkBuffer buffer) const
