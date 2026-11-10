@@ -240,6 +240,8 @@ static void make_pull_twins()
 LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
 bool                       gTerrainPbrPullReady = false;
 LLShaderProgram            gDeferredTreeProgram;
+LLShaderProgram            gDeferredTreePullProgram;
+bool                       gTreePullReady = false;
 LLShaderProgram            gDeferredTreeShadowProgram;
 LLShaderProgram            gDeferredSkinnedTreeShadowProgram;
 LLShaderProgram            gDeferredAvatarProgram;
@@ -1479,6 +1481,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
         gDeferredTreeProgram.unload();
+        gDeferredTreePullProgram.unload();
+        gTreePullReady = false;
         gDeferredTreeShadowProgram.unload();
         gDeferredSkinnedTreeShadowProgram.unload();
         gDeferredDiffuseProgram.unload();
@@ -2095,6 +2099,30 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         add_common_permutations(&gDeferredTreeProgram);
 
         success = gDeferredTreeProgram.createShader();
+    }
+
+    // <FS> the Linden tree pass from the geometry packet path, as the terrain's: the tree faces' buffers are read by address (LLDrawPoolTree::renderDeferred sends them as one record), the program is the tree program's own
+    gTreePullReady = false;
+    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    {
+        gDeferredTreePullProgram.mName = "Deferred Tree Pull Shader";
+        gDeferredTreePullProgram.mFeatures = gDeferredTreeProgram.mFeatures;
+        gDeferredTreePullProgram.mShaderFiles.clear();
+        gDeferredTreePullProgram.mShaderFiles.push_back(make_pair("deferred/treeV.glsl", ShaderStage::Vertex));
+        gDeferredTreePullProgram.mShaderFiles.push_back(make_pair("deferred/treeF.glsl", ShaderStage::Fragment));
+        gDeferredTreePullProgram.clearPermutations();
+        gDeferredTreePullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        add_common_permutations(&gDeferredTreePullProgram);
+        gDeferredTreePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        if (gDeferredTreePullProgram.createShader())
+        {
+            gTreePullReady = true;
+        }
+        else
+        {
+            LL_WARNS("ShadowPackets") << "the Deferred Tree Pull Shader could not be made: the trees are drawn the old way" << LL_ENDL;
+            gDeferredTreePullProgram.unload();
+        }
     }
 
     if (success)

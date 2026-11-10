@@ -41,6 +41,8 @@ override | Deferred Diffuse Alpha Mask Pull Shader | gbuffer.vert | gbuffer_diff
 override | Deferred Diffuse Alpha Mask Pull Skin Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the legacy (texture) terrain of the G-buffer pass: the detail layers that show are fetched, the ramp coordinates are worked out in the fragment program
 override | Deferred Terrain Pull Shader | terrain.vert | terrain.frag | gbuffer | require ll_ti_alpha_ramp | default on
+# the Linden trees of the G-buffer pass: one record of all the pool's faces (LLDrawPoolTree::renderDeferred), alpha tested diffuse, no vertex colour
+override | Deferred Tree Pull Shader | tree.vert | tree.frag | gbuffer | require ll_ti_diffuseMap | default on
 # the legacy material draws of the G-buffer pass (alpha mode in bits 0-1 of the program number: 0 none, 2 mask, 3 emissive; specular map bit 2, normal map bit 3), static and rigged; the blend ones (1, 5, 9, 13) are the alpha family's
 override | Material Pull Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | default on
 override | Material Pull Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | default on
