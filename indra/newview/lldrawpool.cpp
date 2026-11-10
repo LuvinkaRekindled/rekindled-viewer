@@ -484,6 +484,23 @@ void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_cou
     batch.send();
 }
 
+// <FS> K6: the terrain, tree and avatar body draws of a pass whose pull program is not ready are not drawn the old way any more (their classic loops are deleted); the draw is counted and the first
+// one is logged, so a missing patch or mesh is not a silent one
+void ll_pool_draw_dropped(const char* what, size_t count)
+{
+    static std::map<std::string, U64> totals;
+    if (count == 0)
+    {
+        return;
+    }
+    U64& total = totals[what];
+    if (total % 10000 == 0)
+    {
+        LL_WARNS("VkScene") << what << ": " << count << " draws are not drawn because their pull program is not ready (there is no old path any more); dropped so far " << total + count << LL_ENDL;
+    }
+    total += count;
+}
+
 void LLFacePool::pushFaceGeometry()
 {
     for (LLFace* const& face : mDrawFace)

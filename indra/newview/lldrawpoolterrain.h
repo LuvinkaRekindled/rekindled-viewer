@@ -80,7 +80,6 @@ protected:
     void renderFullShader();
     void renderFullShaderTextures();
     void renderFullShaderPBR(bool use_local_materials = false);
-    void drawLoop();
 
 private:
     void hilightParcelOwners();

@@ -626,8 +626,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         }
         else
         {
-            buff->setBuffer();
-            buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+            ll_pool_draw_dropped("avatar body part (skinned)", 1);        // (the old direct draw is gone: no pull twin bound)
         }
     }
     else
@@ -641,8 +640,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         }
         else
         {
-            buff->setBuffer();
-            buff->drawRange(LLRender::TRIANGLES, start, end, count, offset);
+            ll_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull twin bound)
         }
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }
