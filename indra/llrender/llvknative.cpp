@@ -745,6 +745,12 @@ Program* nativeOverride(Program* p)
         return p;               // another set of outputs (the sun program with the blocker distance of the ray traced shadows)
     }
     d.mProgram->adoptFrom(*p);
+    if (d.mTarget == "Deferred Soften Shader")
+    {
+        // a uniform that only the native resolve has (the old program has no such name to copy it from): its live debug view, rt-debug.txt resolve_dbg (0 = none)
+        const S32 resolve_dbg = (S32)nativeKey("resolve_dbg", 0);
+        d.mProgram->setInts("resolve_dbg", &resolve_dbg, 1);
+    }
     if (++d.mUses % 2000 == 1)
     {
         LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
