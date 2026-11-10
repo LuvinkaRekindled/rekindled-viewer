@@ -362,7 +362,6 @@ extern LLShaderProgram         gExposureProgram;
 extern LLShaderProgram         gExposureProgramNoFade;
 extern LLShaderProgram         gLuminanceProgram;
 extern LLShaderProgram         gMotionVectorProgram;
-extern LLShaderProgram         gAvatarVelocityProgram;
 extern LLShaderProgram         gAvatarBodyVelocityProgram;
 extern LLShaderProgram         gAvatarVelocityPullProgram;
 extern LLShaderProgram         gObjectVelocityPullProgram;
