@@ -464,8 +464,85 @@ void LLDrawPoolAlpha::renderDebugAlpha()
     }
 }
 
+// <FS> K6 B1 step 3: the blended alpha draws of the groups that have a current alpha plan (ll_alpha_plan: the fragment's served items) are drawn red from the table: one record of the plans' served ranges
+// (the record the alpha loop sends for a run: kind 29, {fragment handle, first item, count} each), drawn with the colour program's pull twin. Returns the groups it drew all of; the old walk below draws
+// the others (a group without a plan: a fragment that is not current, a view the table does not serve, a segment the table does not carry).
+static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>& drawn)
+{
+    drawn.clear();
+    LLShaderProgram* color = ll_pull_twin(&gDrawColorProgram);
+    if (!color || !ll_alpha_serving() || (LLPipeline::sRenderingHUDs && !ll_scene_geo_hud_any()))
+    {
+        return;
+    }
+    struct Range { U32 mHandle, mFirst, mCount; };
+    static thread_local std::vector<Range> ranges;
+    ranges.clear();
+    for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        if (!group || group->isDead() || !group->getSpatialPartition()->mRenderByGroup)
+        {
+            continue;
+        }
+        const U32 partition = group->getSpatialPartition()->mPartitionType;
+        if (partition == LLViewerRegion::PARTITION_PARTICLE || partition == LLViewerRegion::PARTITION_HUD_PARTICLE)
+        {
+            continue;
+        }
+        LLAlphaPlanView plan;
+        if (ll_alpha_plan(group, plan, false) != 1 || plan.mHandle == 0)
+        {
+            continue;
+        }
+        bool all_served = true;
+        for (U32 sg = 0; sg < plan.mSegCount; ++sg)
+        {
+            const LLAlphaPlanSeg& seg = plan.mSegs[sg];
+            if (seg.mServed)
+            {
+                ranges.push_back({ plan.mHandle, seg.mRank, seg.mCount });
+            }
+            else
+            {
+                all_served = false;
+            }
+        }
+        if (all_served)
+        {
+            drawn.insert(group);
+        }
+    }
+    if (ranges.empty())
+    {
+        return;
+    }
+    static LLStaticHashedString waterSign("waterSign");
+    color->bind();
+    color->uniform1f(waterSign, 1.f);
+    color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0, 0, 1);
+    F32 matrices[32];
+    memcpy(matrices, glm::value_ptr(gRender.getModelviewMatrix()), 16 * sizeof(F32));
+    memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+    LLVkBridge::ShadowPacketsHeader begin_header;
+    begin_header.mKind = 29;
+    begin_header.mEntries = 0;
+    LLVkBridge::shadowPackets(begin_header, matrices, sizeof(matrices));
+    LLVkBridge::ShadowPacketsHeader header;
+    header.mKind = 29;
+    header.mEntries = (U32)ranges.size();
+    header.mPass = 0;
+    header.mFragment = 0;
+    {
+        LLRenderState::CullScope cull_face(false, true);        // (both sides: a highlight, not a surface)
+        LLVkBridge::shadowPackets(header, ranges.data(), ranges.size() * sizeof(Range));
+    }
+}
+
 void LLDrawPoolAlpha::renderAlphaHighlight()
 {
+    static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn;
+    highlight_alpha_from_table(table_drawn);
     for (int pass = 0; pass < 2; ++pass)
     { //two passes, one rigged and one not
         const LLVOAvatar* lastAvatar = nullptr;
@@ -479,7 +556,8 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
         {
             LLSpatialGroup* group = *i;
             if (group->getSpatialPartition()->mRenderByGroup &&
-                !group->isDead())
+                !group->isDead() &&
+                !(pass == 0 && table_drawn.count(group)))       // (drawn from the table above)
             {
                 LLSpatialGroup::drawmap_elem_t& draw_info = group->mDrawMap[LLRenderPass::PASS_ALPHA+pass]; // <-- hacky + pass to use PASS_ALPHA_RIGGED on second pass
 
