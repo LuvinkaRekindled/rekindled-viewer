@@ -453,6 +453,25 @@ void LLFacePool::pushFacesPull(bool region_matrix)
     batch.send();
 }
 
+// the Linden trees: one vertex buffer a face, drawn whole (the buffer's own index count, whatever the face's index range says) under the region's render matrix
+void LLFacePool::pushWholeBufferFacesPull()
+{
+    gRender.flush();
+    LLPullBatch batch;
+    for (LLFace* const& face : mDrawFace)
+    {
+        const LLVertexBuffer* vb = face->getVertexBuffer();
+        LLDrawable* drawable = face->getDrawable();
+        LLViewerRegion* region = drawable ? drawable->getRegion() : nullptr;
+        if (!vb || !region)
+        {
+            continue;
+        }
+        batch.add(vb, 0, vb->getNumIndices(), &region->mRenderMatrix);
+    }
+    batch.send();
+}
+
 // S6.6d: one range of a buffer (a body mesh of an avatar) as a record of one entry, drawn with the pull program bound now under the modelview matrix on the stack
 void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count)
 {
