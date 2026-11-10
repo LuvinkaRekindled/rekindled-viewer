@@ -1951,7 +1951,12 @@ bool LLAppViewer::doFrame()
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
                     pingMainloopTimeout("Main:Snapshot");
                     LL_CPU_ZONE("main loop: probes + snapshots");
-                    gPipeline.mReflectionMapManager.update();
+                    // <FS> no reflection probe is rendered while nothing can be shown: display() returns before it draws under the same condition, and the probe update went on behind it,
+                    // 260 probe faces a second for as long as the window was minimised (2026-11-09: each update made a new 48 KB uniform buffer that no frame gave back, see begin_stand_in_frame in llvkbridge.cpp)
+                    if (gViewerWindow->getActive() && gViewerWindow->getWindow()->getVisible() && !gViewerWindow->getWindow()->getMinimized() && !gNonInteractive)
+                    {
+                        gPipeline.mReflectionMapManager.update();
+                    }
                     LLFloaterSnapshot::update(); // take snapshots
                     LLFloaterSimpleSnapshot::update();
                     LLFloaterFlickr::update(); // <FS:Beq/> FIRE-35002 - Flickr preview not updating whne opened directly from tool tray icon
