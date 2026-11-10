@@ -51,6 +51,6 @@ Shared: `sky_pass.inc` (the uniform blocks of all five), `lib/pullvert.glsl` (th
 
 `alpha.vert` gets the `GLOW_EMISSIVE` branch only; its other variants are unchanged (checked offline). Lap pg4: 113 manifest programs, no error; the HUD fullbright alpha mask program drew 14001 times; the other programs of the group did not draw in the lap (no glow surfaces, no non HUD fullbright mask draw in view): compile and link checked offline only.
 
-## Still to do
+## Skipped (Adam, 2026-11-10: "let's skip it. we'll need a rewrite another time")
 
-Deferred Avatar Alpha Shader pull (alphaV with IS_AVATAR_SKIN + class 2 alphaF, 21 KB: the system avatar's alpha, rare), Water Shader (waterV + class 3 waterF: needs the probe, PBR punctual and cascade shadow functions; draws every frame at the water of London City, 14.7 a frame) and Underwater Shader.
+Water Shader and Underwater Shader (the water fragment shader calls about 900 lines of reflectionProbeF.glsl with its global probe state, the SSR marcher with a reject-up vector only water uses, the cascade shadow lookup of shadowUtil.glsl and the PBR punctual functions; the native probe, SSR and shadow libraries are restructured rewrites with no water mode, so a line for line translation would need the old library code copied: an idea is a converter script that turns the old library files into native includes: uniforms into a generated block, samplers into bindless lookup macros, bodies untouched) and the Deferred Avatar Alpha Shader pull (alphaV with IS_AVATAR_SKIN plus the 21 KB class 2 alphaF: the system avatar's alpha, rare). They stay on the old programs until the rewrite; `native_post` does not touch them.
