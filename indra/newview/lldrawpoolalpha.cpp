@@ -410,20 +410,33 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 
         renderAlphaHighlight();
 
-        pushUntexturedBatches(LLRenderPass::PASS_ALPHA_MASK);
         pushUntexturedBatches(LLRenderPass::PASS_ALPHA_INVISIBLE);
 
-        // Material alpha mask
-        gRender.diffuseColor4f(0, 0, 1, 1);
-        pushUntexturedBatches(LLRenderPass::PASS_MATERIAL_ALPHA_MASK);
-        pushUntexturedBatches(LLRenderPass::PASS_NORMMAP_MASK);
-        pushUntexturedBatches(LLRenderPass::PASS_SPECMAP_MASK);
-        pushUntexturedBatches(LLRenderPass::PASS_NORMSPEC_MASK);
-        pushUntexturedBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
-        pushUntexturedBatches(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK);
+        // <FS> K6 B1 step 1: the alpha masked and the invisible draws are table items (the render map no longer lists them in a view the table serves): the same items are drawn again with the colour program's
+        // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: alpha mask, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
+        // lists, prepares and elides these types while this view is on (ll_scene_geo_hud_type), so it draws them the same way.
+        if (LLShaderProgram* color = ll_pull_twin(&gDrawColorProgram))
+        {
+            static LLStaticHashedString waterSign("waterSign");
+            color->bind();
+            color->uniform1f(waterSign, 1.f);
+            color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 0, 0, 1);
+            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
 
+            // Material alpha mask
+            color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 0, 1, 1);
+            pushGeometryPackets(LLRenderPass::PASS_MATERIAL_ALPHA_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_NORMMAP_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_SPECMAP_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_NORMSPEC_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
+            pushGeometryPackets(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK);
+
+            color->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 1, 0, 1);
+            pushGeometryPackets(LLRenderPass::PASS_INVISIBLE);
+            gHighlightProgram.bind();
+        }
         gRender.diffuseColor4f(0, 1, 0, 1);
-        pushUntexturedBatches(LLRenderPass::PASS_INVISIBLE);
         // <FS:Beq> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
         if (sShowDebugAlphaRigged)
         {
