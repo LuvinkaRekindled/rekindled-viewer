@@ -322,11 +322,13 @@ void LLViewerJointMesh::noteRayShadow()
         e.mAvatarPos[1] = avatar_position.mV[1];
         e.mAvatarPos[2] = avatar_position.mV[2];
     }
-    // the alpha masked parts of the body (hair, eyelashes, skirt) are cut by the alpha of their diffuse texture, found as drawShape finds it; the ray scene's materials want the texture of
-    // every mesh
+    // every body mesh is cut by the alpha of its diffuse texture, found as drawShape finds it (the main view draws them all with the alpha test, minalpha 0.2): a head, an upper body or arms that a
+    // system alpha layer hides under a mesh body, or the base body of a goldfish avatar, have alpha 0 there and must cast nothing (2026-11-11: the base head under Adam's mesh head showed in the sun
+    // shadow on the lit side, and a fish avatar's shadow still had the base arms). Hair, eyelashes and skirt keep the cut of the old shadow shader (0.5); the rest is cut at the main view's 0.2.
     {
         const S32 mesh_id = LLAvatarJointMesh::getMeshID();
-        const bool masked = mesh_id == LLAvatarAppearanceDefines::MESH_ID_HAIR || mesh_id == LLAvatarAppearanceDefines::MESH_ID_EYELASH || mesh_id == LLAvatarAppearanceDefines::MESH_ID_SKIRT;
+        const bool masked = true;
+        const bool soft_cut = mesh_id == LLAvatarAppearanceDefines::MESH_ID_HAIR || mesh_id == LLAvatarAppearanceDefines::MESH_ID_EYELASH || mesh_id == LLAvatarAppearanceDefines::MESH_ID_SKIRT;
         if (buff->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) && !mTestImageName)
         {
             LLViewerTexLayerSet* layerset = dynamic_cast<LLViewerTexLayerSet*>(mLayerSet);
@@ -350,7 +352,7 @@ void LLViewerJointMesh::noteRayShadow()
             {
                 e.mAlphaFlags = LLVkBridge::ALPHA_TREE | LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
                 e.mTexture = gRender.getTexUnit(0)->prepareFast(tex);
-                e.mCutoff = 0.5f;
+                e.mCutoff = soft_cut ? 0.5f : 0.2f;
             }
             e.mTexcoordOffset = buff->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
             if (tex)
