@@ -4174,7 +4174,9 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 {
                     // <FS> stage C4 (LL_VK_RIGROWS): a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
                     // not changed: skip_rigged_this_frame), its drawable move, its bridge move, then the stamp of its group with its place in the draw order (written only when the group does not hold it), the text
-                    const bool skip_update = skip_rigged_this_frame;
+                    // (not an animated object: its control avatar takes the attachment's place every frame, a skipped move leaves it behind the animation of its host: Adam, 2026-11-11, another avatar's hair layer
+                    // that did not follow the animation until FSSkipStaticRiggedAttachmentUpdates was switched off)
+                    const bool skip_update = skip_rigged_this_frame && !obj->isAnimatedObject();
                     // <FS> stage C4b (LL_VK_RIGBOX: 1 default, 0 = the box of the avatar taken into the attachment's space and set every update, as before, 2 = held boxes and the old ones checked): the attachment holds two boxes that
                     // contain what the old calculation gave, and they are fitted again only when that stops being true. The BRIDGE holds the avatar's world box with a margin (its octree entry in the region's avatar partition);
                     // the attachment's own octree entry holds a cube around its origin that reaches every point of the avatar from there (the distance does not depend on the rotation).
@@ -4534,18 +4536,21 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 {
                     //override rigged attachments' octree spatial extents with this avatar's bounding box
                     bool rigged = false;
+                    bool skip_this_rigged_att = false;      // (this attachment's own verdict: the avatar's skip, except for an animated object)
                     if (bridge)
                     {
                         //transform avatar bounding box into attachment's coordinate frame
                         // (only for a rigged attachment that will take it: the rigid ones threw it away, one 4x4 inverse each)
                         LLVector4a extents[2];
-                        if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && !skip_rigged_this_frame)
+                        const bool skip_this_rigged = skip_rigged_this_frame && !attached_object->isAnimatedObject();       // (an animated object follows the attachment point every frame, see the rows above)
+                        if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && !skip_this_rigged)
                         { LL_CPU_ZONE("att: transformExtents"); const auto t = att_now(); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); gAttStats.nsExtents += att_ns(t); }
 
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
                         {
                             rigged = true;
-                            if (!skip_rigged_this_frame)
+                            skip_this_rigged_att = skip_this_rigged;
+                            if (!skip_this_rigged)
                             {
                                 const auto t = att_now();
                                 override_bbox(attached_object->mDrawable, extents);
@@ -4554,7 +4559,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             }
                         }
                     }
-                    const bool skip_update = rigged && skip_rigged_this_frame;
+                    const bool skip_update = rigged && skip_this_rigged_att;
                     att_run_full = !skip_update;
                     att_rigged_kind = rigged;
                     gAttStats.skipped += skip_update;
