@@ -16018,10 +16018,11 @@ static bool alpha_source_type(U32 type)
 }
 
 // (the draw info says its entry is in its group's fragment; the fragment of the group's current draw map says the worker holds the fragment's alpha entries: no lookup by buffer ids)
-static bool alpha_info_resident(const LLDrawInfo& info, const LLSpatialGroup* group)
+// ray: the sun cascades of the ray-only modes (sViewJobsSkipAlpha 2): the worker names the alpha entries it holds (kind 18, mAlphaSent) to the ray scene in the cascade's resident pass, not draws them (mAlphaResSent)
+static bool alpha_info_resident(const LLDrawInfo& info, const LLSpatialGroup* group, bool ray)
 {
     const LLSceneFragment* fragment = group->mSceneFragment;
-    return info.mAlphaInFragment && fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mAlphaResSent;
+    return info.mAlphaInFragment && fragment && fragment->mSerial == group->mDrawMapSerial && (ray ? fragment->mAlphaSent : fragment->mAlphaResSent);
 }
 
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
@@ -16118,6 +16119,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             if (f)
             {
                 mix(f->mSerial | ((U64)(f->mResident ? 1 : 0) << 32) | ((U64)(f->mAlphaResSent ? 1 : 0) << 33) | ((U64)f->mAlpha.size() << 34));
+                mix(f->mAlphaSent ? 0x51u : 0x17u);       // (the ray-only walk's answer depends on it: skip_alpha 2)
             }
             plan_key &= ~31ull;
             const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
@@ -16218,7 +16220,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
                 if (skip_alpha && !info->mAvatar && alpha_source_type(j->first))
                 {
-                    if (alpha_info_resident(*info, group))
+                    if (alpha_info_resident(*info, group, skip_alpha == 2))
                     {
                         ++n_alpha_skipped;
                         continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
@@ -21044,6 +21046,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
     texture_numbers.clear();
     static U64 groups_seen = 0;
     std::vector<LLVkBridge::ShadowAlphaEntry>& added = b.mEntries;
+    const bool ray = LLVkBridge::rtShadowMode() != 0;
     const U64 groups_before = groups_seen;
     const size_t entries_before = added.size();
     for (LLSpatialGroup* group : groups)
@@ -21053,12 +21056,14 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             continue;
         }
         const LLSceneFragment* f = group->mSceneFragment;
-        if (!f || f->mSerial != group->mDrawMapSerial || (f->mAlphaResSent && f->mAlphaTex.empty()))
+        // ray scene: the worker names the entries of a sent fragment itself in the resident pass of this cascade (as the resident filter of render_alpha_packets assumed)
+        const bool held = f ? (ray ? (f->mAlphaSent && sResidentPassRan) : f->mAlphaResSent) : false;
+        if (!f || f->mSerial != group->mDrawMapSerial || (held && f->mAlphaTex.empty()))
         {
             continue;
         }
         ++groups_seen;
-        const size_t plain = f->mAlphaResSent ? 0 : f->mAlpha.size();      // (the entries the worker holds are not named again)
+        const size_t plain = held ? 0 : f->mAlpha.size();      // (the entries the worker holds are not named again)
         const size_t total = plain + f->mAlphaTex.size();
         for (size_t entry_index = 0; entry_index < total; ++entry_index)
         {
@@ -21071,6 +21076,19 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             for (int t = 0; t < 4; ++t)
             {
                 tex[t] = e.mTextures[t] ? f->mTexLocal[e.mTextures[t] - 1].get() : nullptr;
+            }
+            if (ray && LLVkBridge::rtShadowMode() == 1 && LLVkBridge::rtLoadingGates())
+            {
+                // as rt_textures_ready for the list path: a masked draw whose texture has no data yet is not named until it has
+                bool ready = true;
+                for (int t = 0; t < 4; ++t)
+                {
+                    ready = ready && rt_texture_ready(const_cast<LLViewerTexture*>(tex[t]));
+                }
+                if (!ready)
+                {
+                    continue;
+                }
             }
             ne.mMatrix = 0;
             ne.mTexMatrix = 0;
@@ -27688,7 +27706,10 @@ void LLPipeline::setShadowJobFlags()
     const bool skip_static_now = (rt_sun_cascades_unused() || raster_skip) && all_static;
     sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
     // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); (the switch LL_VK_CASCADE_SKIP_ALPHA and its modes 0 and 2 are gone)
-    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? 1 : 0, std::memory_order_relaxed);
+    // 2: the sun cascades of the ray-only modes (3a of the shadow walk removal): the worker names the alpha entries of its sent fragments to the ray scene in the resident pass (the builder's entries for them were dropped by
+    // the resident filter), the walk leaves their draw infos out, and the groups whose fragment the worker does not hold name their alpha entries from the fragment (append_fragment_alpha)
+    const bool ray_alpha = rt_sun_cascades_unused() && scene_alpha_on() && shadow_static_casters_on();
+    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? 1 : (ray_alpha ? 2 : 0), std::memory_order_relaxed);
 }
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
@@ -28412,7 +28433,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
-        if (!rigged && !rt_skip && !result.mAlphaFragGroups.empty())
+        if (!rigged && !result.mAlphaFragGroups.empty())
         {
             LL_CPU_ZONE("packets: shadow alpha: fragment entries");
             append_fragment_alpha(*build_owned, result.mAlphaFragGroups);
