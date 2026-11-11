@@ -10516,6 +10516,20 @@ static const U32 kShadowStaticTypes[] = {
     LLRenderPass::PASS_NORMSPEC_EMISSIVE
 };
 static const size_t kShadowStaticTypeCount = sizeof(kShadowStaticTypes) / sizeof(kShadowStaticTypes[0]);
+// The static casters of a cascade are one switch: on when all of the static pass types are on in the render type mask. Nothing in the viewer switches one of them alone (the Develop menu and the
+// listener name pool types, the HUD pass toggles its own pass types outside any cascade, RenderPerfTest and the jelly doll path clear PASS_GRASS, which is not in the list); the only way off is
+// DisableAllRenderTypes or a non interactive start, which clear every type. So a fragment holds its static entries merged, with no type per entry, and a partial mask counts as off.
+static bool shadow_static_casters_on()
+{
+    for (size_t k = 0; k < kShadowStaticTypeCount; ++k)
+    {
+        if (!gPipeline.hasRenderType(kShadowStaticTypes[k]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
 // the kind of a draw map type for the render map job's counters: 0 a static shadow type, 1 its rigged variant (the next number), 2 alpha (blend or mask, rigged or not), 3 anything else
 static int shadow_view_class(U32 type)
 {
@@ -27664,11 +27678,7 @@ static void merge_render_lists(LLCullResult& into, LLCullResult& from)
 void LLPipeline::setShadowJobFlags()
 {
     // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
-    bool all_static = true;
-    for (size_t k = 0; k < kShadowStaticTypeCount && all_static; ++k)
-    {
-        all_static = hasRenderType(kShadowStaticTypes[k]);
-    }
+    const bool all_static = true;       // (an off static switch draws no static casters, so the lists are not needed then either)
     // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled());
     // with fragments in use and the resident scene, render_shadow_packets returns from the fragment branch: scene_gather reads the groups the render map job named in mSceneGroups
     // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
@@ -27812,6 +27822,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         LL_CPU_ZONE("packets: shadow static (build + record)");
         sResidentPassRan = false;
+        if (!shadow_static_casters_on())
+        {
+            return;     // the static switch is off (every render type cleared): no static casters, as the type lists gave
+        }
         // the entries come from the cascade's preparation job when there was one (built beside the other cascades, off this thread), else they are built here
         ShadowStaticBuild built;
         if (prepared && prepared->mStaticJob)
@@ -27825,12 +27839,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         bool fragment_source = false;
         if (prepared && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
-            bool all_types = true;
-            for (size_t t = 0; t < count && all_types; ++t)
-            {
-                all_types = hasRenderType(list[t]);
-            }
-            if (all_types)
             {
                 LL_CPU_ZONE("packets: shadow static (fragments)");
                 SceneGather gather;
