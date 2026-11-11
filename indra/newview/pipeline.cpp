@@ -15888,31 +15888,24 @@ static void rt_skin_material_src(LLVkBridge::ShadowSkinEntry& e, const RtMatSour
     e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
 }
 
-// J1 K3a (LL_VK_SHADOW_RIGFRAG: 1 default, 0 = the draw info lists only): the cascades' rigged casters that a group's fragment names are read from the fragment's items (their sources), not from the render
-// map's draw infos. 2 = compare: builds both and compares them (a mismatch is logged), the entries sent are the list-built ones; 3 = compare and send the item-built ones (the job still pushes every draw, the
-// builder leaves out the list-built entries of the draws a fragment names: what mode 1 does, with the proof that the items give the same entries). Not with ray scene materials (they read the draw info's cache: K5).
-static int shadow_rigfrag_mode()
-{
-    static const int mode = getenv("LL_VK_SHADOW_RIGFRAG") ? atoi(getenv("LL_VK_SHADOW_RIGFRAG")) : 1;
-    return mode;
-}
+// J1 K3a: the cascades' rigged casters that a group's fragment names are read from the fragment's items (their sources), not from the render map's draw infos (the switch LL_VK_SHADOW_RIGFRAG and its
+// compare modes 0, 2 and 3 are gone: the items were proven equal to the lists, and the render map job leaves the named draws out).
 static bool shadow_rigfrag_usable()
 {
-    return shadow_rigfrag_mode() != 0 && scene_geo_rigged_on();       // (J1 K5: with ray scene materials too: the item's source carries the material)
+    return scene_geo_rigged_on();       // (J1 K5: with ray scene materials too: the item's source carries the material)
 }
 
-// J1 K3d (LL_VK_SHADOW_RIGALPHA: 1 default, 0 = the draw info lists; 2 = compare: the lists still hold the draws and the alpha builder compares what the items give with what the lists gave, the list-built entries are sent):
+// J1 K3d (the switch LL_VK_SHADOW_RIGALPHA and its modes 0 and 2 are gone):
 // the rigged alpha masked casters a fragment item names are made from the item (its GeoRigSource), the render map job leaves their draw infos out of the cascade's lists. Only where the record carries rigged casters
 // (the packets path) and not for ray shadows or ray scene materials.
 static bool shadow_packets_enabled();
 static int shadow_rigalpha_mode()
 {
-    static const int mode = getenv("LL_VK_SHADOW_RIGALPHA") ? atoi(getenv("LL_VK_SHADOW_RIGALPHA")) : 1;
-    if (mode == 0 || !shadow_rigfrag_usable() || LLVkBridge::rtShadowMode() || !shadow_packets_enabled() || !LLVkBridge::shadowAlphaPacketsAvailable())
+    if (!shadow_rigfrag_usable() || LLVkBridge::rtShadowMode() || !shadow_packets_enabled() || !LLVkBridge::shadowAlphaPacketsAvailable())
     {
         return 0;
     }
-    return mode;
+    return 1;
 }
 
 static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
@@ -15972,8 +15965,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
         return vb && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->hasDataType(LLVertexBuffer::TYPE_VERTEX)
             && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0 && vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4);
     };
-    const int rig_mode = (shadow_rigfrag_usable() && result.mRigFromFragments) ? shadow_rigfrag_mode() : 0;      // (a result another path made, the spot shadows' or the main view's, holds every rigged draw in its lists)
-    std::vector<LLVkBridge::ShadowSkinEntry> served_by_list;        // (mode 2) the list-built entries of the draws a fragment names
+    const int rig_mode = (shadow_rigfrag_usable() && result.mRigFromFragments) ? 1 : 0;      // (a result another path made, the spot shadows' or the main view's, holds every rigged draw in its lists)
     for (size_t t = 0; t < count; ++t)
     {
         auto begin = result.beginRenderMap(list[t] + 1);      // the rigged variant of a pass type is the next number
@@ -16009,23 +16001,12 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                 }
                 e.mMatrix = it->second;
             }
-            if (rig_mode >= 2 && params->mGeoServed)
-            {
-                served_by_list.push_back(e);
-                if (rig_mode == 3)
-                {
-                    continue;       // (the items below give it)
-                }
-            }
             entries.push_back(e);
             out.mDraws.push_back(ll_geo_range(params));
         }
         if (rig_mode)
         {
-            // the draws the cascade's group fragments name: the items' sources, in the order of the groups (mode 2: only to compare, the entries above are the ones sent)
-            std::vector<LLVkBridge::ShadowSkinEntry> item_entries;
-            std::vector<GeoRange> item_ranges;
-            std::vector<LLVkBridge::ShadowSkinEntry>& into = rig_mode == 1 ? entries : item_entries;
+            // the draws the cascade's group fragments name: the items' sources, in the order of the groups
             for (const auto& named : result.mRigSources)
             {
                 if (named.first != list[t] + 1)
@@ -16046,35 +16027,8 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     continue;
                 }
                 ll_rig_census_add(6, 1);
-                into.push_back(e);
-                (rig_mode == 1 ? out.mDraws : item_ranges).push_back(rig.range());
-            }
-            if (rig_mode == 3)
-            {
-                entries.insert(entries.end(), item_entries.begin(), item_entries.end());        // (before the compare sorts them)
-                out.mDraws.insert(out.mDraws.end(), item_ranges.begin(), item_ranges.end());
-            }
-            if (rig_mode >= 2)
-            {
-                // compare: what the lists built for the draws a fragment names against what the items give (as multisets of entries: the order between the list and the items need not be the same)
-                // (the draws a fragment names are only in the lists because mode 2 still pushes them)
-                static std::atomic<U64> checks{ 0 }, wrong{ 0 };
-                std::vector<LLVkBridge::ShadowSkinEntry> a, b;
-                a.swap(served_by_list);
-                b.swap(item_entries);
-                auto less = [](const LLVkBridge::ShadowSkinEntry& x, const LLVkBridge::ShadowSkinEntry& y) { return memcmp(&x, &y, sizeof(x)) < 0; };
-                std::sort(a.begin(), a.end(), less);
-                std::sort(b.begin(), b.end(), less);
-                ++checks;
-                const bool same = a.size() == b.size() && (a.empty() || memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0);
-                if (!same && ++wrong <= 6)
-                {
-                    LL_WARNS("ShadowRigFrag") << "pass type " << list[t] + 1 << ": the lists built " << a.size() << " entries for the draws a fragment names, the fragments' items " << b.size() << " (" << wrong.load() << " of " << checks.load() << " builds differ)" << LL_ENDL;
-                }
-                if (checks % 2000 == 0)
-                {
-                    LL_INFOS("ShadowRigFrag") << "rigged casters from the fragments: " << wrong.load() << " of " << checks.load() << " type builds differed from the lists" << LL_ENDL;
-                }
+                entries.push_back(e);
+                out.mDraws.push_back(rig.range());
             }
         }
     }
@@ -16680,19 +16634,8 @@ static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPip
 }
 
 // worker: the render map of the cascade (the loop in postSort)
-// C5 J3: LL_VK_ALPHA_FRAG 1 (default) the alpha casters of groups whose fragment names them (and the worker does not hold yet) are made from the fragments, not from the render map's draw infos; 0 = as before, 2 = both, compared
-static int alpha_frag_mode()
-{
-    static const int mode = getenv("LL_VK_ALPHA_FRAG") ? atoi(getenv("LL_VK_ALPHA_FRAG")) : 1;
-    return mode;
-}
 
-// C4.1: LL_VK_MAP_PLAN 1 (default) the render map job skips a group whose last walk pushed nothing and whose inputs are the same, 0 walks every group, 2 walks them all and compares with the answer
-static int map_plan_mode()
-{
-    static const int mode = getenv("LL_VK_MAP_PLAN") ? atoi(getenv("LL_VK_MAP_PLAN")) : 1;
-    return mode;
-}
+// C4.1: the render map job skips a group whose last walk pushed nothing and whose inputs are the same (the switch LL_VK_MAP_PLAN and its modes 0 and 2 are gone)
 
 // C4.1 for the alpha casters (doc/vulkan/PLAN-clean-core.md): the non-rigged draw info of an alpha source type that the worker holds as a resident alpha entry (the same test as renderShadow's drop of the builder's entries, made at the
 // map job: the pool, while the main thread is in the preparation and nothing registers or retires a fragment). The builder made an entry for it (hash, matrix and texture numbers) and the viewer dropped the entry again: 1,251 of
@@ -16723,24 +16666,19 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     // render_shadow_packets takes the casters from the fragments; the main thread decided (generateSunShadow)
     const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
-    U64 n_alpha_skipped = 0, n_alpha_would = 0;
-    const int plan_mode = map_plan_mode();
+    U64 n_alpha_skipped = 0;
     // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
-    // casters left out, rigged and alpha casters named by the fragments); LL_VK_SHADOW_WALK_VERIFY=1 walks as before and compares, LL_VK_SHADOW_WALK=0 walks as before
-    static const bool walk_verify = getenv("LL_VK_SHADOW_WALK_VERIFY") != nullptr;
-    static const bool walk_off = getenv("LL_VK_SHADOW_WALK") && getenv("LL_VK_SHADOW_WALK")[0] == '0';
-    const int walk_rig = shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0;
-    const bool walk_modes_ok = skip_static && walk_rig == 1 && shadow_rigalpha_mode() == 1 && skip_alpha == 1 && alpha_frag_mode() == 1 && !walk_off;
+    // casters left out, rigged and alpha casters named by the fragments); (LL_VK_SHADOW_WALK and LL_VK_SHADOW_WALK_VERIFY are gone)
+    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha == 1;
     U64 n_plan_skipped = 0;
     U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
-    if (plan_mode)
     {
         plan_inputs = 1469598103934665603ull;
         for (U32 t = 0; t < LLPipeline::NUM_RENDER_TYPES; ++t)
         {
             plan_inputs = (plan_inputs ^ (hasRenderType(t) ? 0x9Eu + t : 0x31u)) * 1099511628211ull;
         }
-        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0) << 5) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigalpha_mode() : 0) << 8)) * 1099511628211ull;
+        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? 1 : 0) << 5) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigalpha_mode() : 0) << 8)) * 1099511628211ull;
     }
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
@@ -16771,7 +16709,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 if (hasRenderType(t)) { walk_ok = false; break; }
             }
         }
-        const bool fast = walk_ok && !walk_verify;
+        const bool fast = walk_ok;
         {
             // why a group is walked (counted over all jobs, logged every 20000 groups): 0 fast, 1 modes off, 2 no current fragment, 3 a rendered pass type no mechanism names
             static std::atomic<U64> why[4], by_type[128], groups{ 0 };
@@ -16799,9 +16737,8 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 if (hasRenderType(at[0]) && ((at[1] && !walk_frag->mAlphaResSent) || at[2])) { expect_frag = true; }
             }
         }
-        U64 walk_pushed = 0;
         U64 plan_key = 0;
-        if (plan_mode && !fast)
+        if (!fast)
         {
             const LLSceneFragment* f = group->mSceneFragment;
             plan_key = plan_inputs;
@@ -16814,7 +16751,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
             plan_key &= ~31ull;
             const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
-            if ((plan & 1) && (plan & ~31ull) == plan_key && plan_mode == 1)
+            if ((plan & 1) && (plan & ~31ull) == plan_key)
             {
                 // nothing to push, as the last walk found: the group's alpha entries still go on the alpha lists
                 ++n_plan_skipped;
@@ -16845,7 +16782,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
         // J1 K3a: the rigged casters the group's current fragment names go into the cascade's result as the items' sources (the render map keeps only the draws no fragment names, in mode 1)
         const LLSceneFragment* rig_fragment = group->mSceneFragment;
-        const int rig_mode = shadow_rigfrag_usable() ? shadow_rigfrag_mode() : 0;
+        const int rig_mode = shadow_rigfrag_usable() ? 1 : 0;
         local.mRigFromFragments = local.mRigFromFragments || rig_mode != 0;
     const int rigalpha_mode = rig_mode ? shadow_rigalpha_mode() : 0;
     local.mRigAlphaOn = local.mRigAlphaOn || rigalpha_mode != 0;
@@ -16913,22 +16850,15 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 {
                     if (alpha_info_resident(*info, group))
                     {
-                        if (skip_alpha == 1)
-                        {
-                            ++n_alpha_skipped;
-                            continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
-                        }
-                        ++n_alpha_would;
+                        ++n_alpha_skipped;
+                        continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
                     }
-                    else if (alpha_frag_mode() && (info->mAlphaInFragment || info->mAlphaFragTex) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
+                    else if ((info->mAlphaInFragment || info->mAlphaFragTex) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
                     {
                         // C5 J3: the group's fragment names this caster and the worker does not hold it yet: renderShadow makes the entry from the fragment (mode 2 also pushes the draw info, to compare)
                         plan_frag = true;
-                        if (alpha_frag_mode() == 1)
-                        {
-                            ++n_alpha_skipped;
-                            continue;
-                        }
+                        ++n_alpha_skipped;
+                        continue;
                     }
                 }
 
@@ -16942,7 +16872,6 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
 
                 ++plan_pushed;
-                ++walk_pushed;
                 if (sCascadeTypeCensus) { sCascadeTypePushed[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); if (info->mAvatar.notNull()) { sCascadeTypeAvatar[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); } }
                 sCull->pushDrawInfo(j->first, info);
                 if (ll_scene_geo_on() && ll_scene_geo_verify_on())
@@ -16994,41 +16923,13 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
             }
         }
-        if (walk_verify && walk_ok)
-        {
-            // the walk above ran: what the summary said must be what it found
-            static std::atomic<U64> checked{ 0 }, wrong{ 0 };
-            ++checked;
-            if (checked % 50000 == 0)
-            {
-                LL_INFOS("ShadowPrep") << "shadow walk verify: " << checked.load() << " groups checked against the fragment summary, " << wrong.load() << " different" << LL_ENDL;
-            }
-            if ((walk_pushed != 0 || plan_frag != expect_frag) && wrong++ < 16)
-            {
-                LL_WARNS("ShadowPrep") << "shadow walk verify: the fragment's summary said no draw info to push and " << (expect_frag ? "an" : "no") << " alpha entries group, the walk pushed " << walk_pushed << " and found " << (plan_frag ? "an" : "no") << " alpha entries group (checked " << checked.load() << ")" << LL_ENDL;
-            }
-        }
         if (plan_frag)
         {
             local.mAlphaFragGroups.push_back(group);
         }
-        if (plan_mode && !fast)
+        if (!fast)
         {
             const bool empty = plan_pushed == 0 && plan_avatar_skips == 0 && local.mSceneGroups.size() == plan_cull_mark;
-            if (plan_mode == 2)
-            {
-                // verify: a group the answer said was empty has pushed nothing now
-                static std::atomic<U64> checked{ 0 }, wrong{ 0 };
-                const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
-                if ((plan & 1) && (plan & ~31ull) == plan_key)
-                {
-                    ++checked;
-                    if (!empty && ++wrong <= 8)
-                    {
-                        LL_WARNS("ShadowPrep") << "render map plan: a group the answer called empty pushed " << plan_pushed << " draw infos now (checked " << checked.load() << ")" << LL_ENDL;
-                    }
-                }
-            }
             const LLSceneFragment* f = group->mSceneFragment;
             const bool resident = scene_resident_on() && !group->mDrawMap.empty() && f && f->mSerial == group->mDrawMapSerial && f->mResident;
             group->mMapPlan.store(plan_key | (empty ? 1ull : 0ull) | (plan_alpha ? 2ull : 0ull) | (plan_rigged_alpha ? 4ull : 0ull) | (resident ? 8ull : 0ull) | (plan_frag ? 16ull : 0ull), std::memory_order_relaxed);
@@ -17043,7 +16944,6 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     sViewJobs.mOther.fetch_add(n_other, std::memory_order_relaxed);
     sViewJobs.mSkippedStatic.fetch_add(n_skipped, std::memory_order_relaxed);
     sViewJobs.mSkippedAlpha.fetch_add(n_alpha_skipped, std::memory_order_relaxed);
-    sViewJobs.mWouldSkipAlpha.fetch_add(n_alpha_would, std::memory_order_relaxed);
     sViewJobs.mPlanSkipped.fetch_add(n_plan_skipped, std::memory_order_relaxed);
 }
 
@@ -21207,31 +21107,6 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
         texture_numbers.emplace(tex, number);
         return number;
     };
-        // J1 K3d compare mode (LL_VK_SHADOW_RIGALPHA=2): what an entry names, with the record's own numbers resolved (the texture pointers, the matrices' and texture matrices' values), as bytes
-        const bool cmp_rig = rigged && result.mRigAlphaOn && shadow_rigalpha_mode() == 2;
-        std::vector<std::string> list_norm, src_norm;
-        auto normalize_entry = [&](const LLVkBridge::ShadowAlphaEntry& e) -> std::string
-        {
-            LLVkBridge::ShadowAlphaEntry n = e;
-            n.mMatrix = 0;
-            n.mTexMatrix = 0;
-            memset(n.mTextures, 0, sizeof(n.mTextures));
-            std::string bytes((const char*)&n, sizeof(n));
-            for (int t = 0; t < 4; ++t)
-            {
-                const LLViewerTexture* tex = e.mTextures[t] ? out.mTextures[e.mTextures[t] - 1] : nullptr;
-                bytes.append((const char*)&tex, sizeof(tex));
-            }
-            if (e.mTexMatrix)
-            {
-                bytes.append((const char*)(out.mTexmats.data() + 16 * (size_t)(e.mTexMatrix - 1)), 64);
-            }
-            if (e.mMatrix)
-            {
-                bytes.append((const char*)(matrices.data() + 16 * (size_t)e.mMatrix), 64);
-            }
-            return bytes;
-        };
         // C5 PBR shadow rows: the static glTF casters of the pass as entries (the rigged ones and the ray shadow mode keep the old path)
         const bool gltf_rows = shadow_gltf_env() && !rigged && !LLVkBridge::rtShadowMode();
         auto add_gltf = [&](LLDrawInfo* params, int gk)
@@ -21466,16 +21341,11 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
                 }
                 entries.push_back(e);
-                if (cmp_rig && params->mRigAlphaSrc)
-                {
-                    list_norm.push_back(normalize_entry(entries.back()));
-                }
             }
         }
         if (rigged && result.mRigAlphaOn)
         {
-            // J1 K3d: the rigged alpha masked casters the groups' fragment items name (the entry of the list path above, made from the item's GeoRigSource: no draw info). Compare mode: made into a scratch list
-            // and compared with what the lists gave for the same draws (as multisets, the numbers resolved to what they name); the list-built entries are the ones sent.
+            // J1 K3d: the rigged alpha masked casters the groups' fragment items name (the entry of the list path above, made from the item's GeoRigSource: no draw info)
             for (const auto& named : result.mRigSources)
             {
                 if (shadow_riggltf_type(named.first))
@@ -21484,7 +21354,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     const GeoRigSource& rig = *named.second;
                     const LLVertexBuffer* vb = rig.mVb.get();
                     const LLFetchedGLTFMaterial* mat = rig.mGltf.get();
-                    if (!rig.mCount || !rig.mAvatar.get() || !rig.mSkin.get() || !vb || !mat || !rig.mAlphaOk || cmp_rig)
+                    if (!rig.mCount || !rig.mAvatar.get() || !rig.mSkin.get() || !vb || !mat || !rig.mAlphaOk)
                     {
                         continue;
                     }
@@ -21589,29 +21459,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 e.mFlags = flags;
                 e.mCutoff = rig.mAlphaCutoff;
-                if (cmp_rig)
-                {
-                    src_norm.push_back(normalize_entry(e));
-                }
-                else
-                {
-                    entries.push_back(e);
-                }
-            }
-            if (cmp_rig)
-            {
-                static std::atomic<U64> checks{ 0 }, wrong{ 0 };
-                std::sort(list_norm.begin(), list_norm.end());
-                std::sort(src_norm.begin(), src_norm.end());
-                ++checks;
-                if (list_norm != src_norm && ++wrong <= 6)
-                {
-                    LL_WARNS("ShadowRigAlpha") << "the lists built " << list_norm.size() << " rigged alpha entries for the draws a fragment names, the fragments' items " << src_norm.size() << " (" << wrong.load() << " of " << checks.load() << " builds differ)" << LL_ENDL;
-                }
-                if (checks % 2000 == 0)
-                {
-                    LL_INFOS("ShadowRigAlpha") << "rigged alpha casters from the fragments: " << wrong.load() << " of " << checks.load() << " builds differed from the lists" << LL_ENDL;
-                }
+                entries.push_back(e);
             }
         }
 }
@@ -21825,23 +21673,15 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
 
 // C5 J3: the entries of the alpha casters the fragments of the given groups name (the groups' fragments are current and the worker does not hold their alpha entries yet), made like the builder's: the matrices as raw
 // values numbered in this record, the textures as numbers into the build's texture list. verify = compare with the builder's entries of the same draws (the caller did not leave them out) instead of adding
-static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::vector<LLSpatialGroup*>& groups, bool verify)
+static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::vector<LLSpatialGroup*>& groups)
 {
     // J1 K3c: the matrices and textures this call numbers are a few dozen: flat reused lists searched in a line (the two hash maps allocated a node for every one, per cascade pass per frame)
     static thread_local std::vector<std::pair<const LLMatrix4*, U32>> matrix_numbers;
     static thread_local std::vector<std::pair<const LLViewerTexture*, U32>> texture_numbers;
     matrix_numbers.clear();
     texture_numbers.clear();
-    std::unordered_map<U64, const LLVkBridge::ShadowAlphaEntry*> builder_by_key;
-    if (verify)
-    {
-        for (const LLVkBridge::ShadowAlphaEntry& e : b.mEntries)
-        {
-            builder_by_key[alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount)] = &e;
-        }
-    }
-    static U64 checked = 0, missing = 0, differ = 0, groups_seen = 0;
-    std::vector<LLVkBridge::ShadowAlphaEntry>& added = b.mEntries;      // (verify adds nothing: the entries are only compared)
+    static U64 groups_seen = 0;
+    std::vector<LLVkBridge::ShadowAlphaEntry>& added = b.mEntries;
     const U64 groups_before = groups_seen;
     const size_t entries_before = added.size();
     for (LLSpatialGroup* group : groups)
@@ -21869,35 +21709,6 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             for (int t = 0; t < 4; ++t)
             {
                 tex[t] = e.mTextures[t] ? f->mTexLocal[e.mTextures[t] - 1].get() : nullptr;
-            }
-            if (verify)
-            {
-                ++checked;
-                auto found = builder_by_key.find(alpha_key(e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount));
-                if (found == builder_by_key.end())
-                {
-                    if (++missing <= 6) { LL_WARNS("VkScene") << "alpha fragment verify: the builder has no entry for a fragment caster (vb " << e.mVertexBuffer << ")" << LL_ENDL; }
-                    continue;
-                }
-                const LLVkBridge::ShadowAlphaEntry& be = *found->second;
-                bool same = be.mFlags == e.mFlags && be.mCutoff == e.mCutoff && be.mMatrixId == e.mMatrixId && (be.mMatrix != 0) == (matrix != nullptr) && (be.mTexMatrix != 0) == (texmat != nullptr);
-                if (same && matrix)
-                {
-                    same = memcmp(b.mMatrices.data() + 16 * (size_t)be.mMatrix, matrix->mMatrix, 64) == 0;
-                }
-                if (same && texmat)
-                {
-                    same = memcmp(b.mTexmats.data() + 16 * (size_t)(be.mTexMatrix - 1), texmat->mMatrix, 64) == 0;
-                }
-                for (int t = 0; t < 4 && same; ++t)
-                {
-                    same = (be.mTextures[t] ? b.mTextures[be.mTextures[t] - 1] : nullptr) == tex[t];
-                }
-                if (!same && ++differ <= 6)
-                {
-                    LL_WARNS("VkScene") << "alpha fragment verify: a fragment caster differs from the builder's entry (flags " << e.mFlags << "/" << be.mFlags << ", matrix id " << e.mMatrixId << "/" << be.mMatrixId << ")" << LL_ENDL;
-                }
-                continue;
             }
             ne.mMatrix = 0;
             ne.mTexMatrix = 0;
@@ -21944,15 +21755,8 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             added.push_back(ne);
         }
     }
-    if (!verify)
-    {
-        gShadowDrawStats.mAlphaFragEntries += added.size() - entries_before;
-        gShadowDrawStats.mAlphaFragGroups += groups_seen - groups_before;
-    }
-    if (verify && (checked % 3000) < 40 && checked)
-    {
-        LL_INFOS("VkScene") << "alpha fragment verify: " << checked << " fragment casters compared, " << missing << " missing in the builder's entries, " << differ << " differ (" << groups_seen << " groups)" << LL_ENDL;
-    }
+    gShadowDrawStats.mAlphaFragEntries += added.size() - entries_before;
+    gShadowDrawStats.mAlphaFragGroups += groups_seen - groups_before;
 }
 
 static void finish_shadow_alpha(LLPipeline::ShadowAlphaBuild& b)
@@ -28552,9 +28356,8 @@ void LLPipeline::setShadowJobFlags()
     const bool raster_skip = shadow_packets_enabled() && !builder_verify();
     const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
     sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
-    // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); LL_VK_CASCADE_SKIP_ALPHA 0 = as before, 2 = count only
-    static const S32 alpha_mode = getenv("LL_VK_CASCADE_SKIP_ALPHA") ? atoi(getenv("LL_VK_CASCADE_SKIP_ALPHA")) : 1;
-    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? alpha_mode : 0, std::memory_order_relaxed);
+    // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); (the switch LL_VK_CASCADE_SKIP_ALPHA and its modes 0 and 2 are gone)
+    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? 1 : 0, std::memory_order_relaxed);
 }
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
@@ -29302,10 +29105,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
-        if (!rigged && !rt_skip && alpha_frag_mode() && !result.mAlphaFragGroups.empty())
+        if (!rigged && !rt_skip && !result.mAlphaFragGroups.empty())
         {
             LL_CPU_ZONE("packets: shadow alpha: fragment entries");
-            append_fragment_alpha(*build_owned, result.mAlphaFragGroups, alpha_frag_mode() == 2);
+            append_fragment_alpha(*build_owned, result.mAlphaFragGroups);
         }
         { LL_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent
@@ -29537,6 +29340,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         else if (skin_packets)
         {
             render_skin_packets(types, kShadowStaticTypeCount);
+        }
+        else
+        {
+            ll_pool_draw_dropped(rigged ? "shadow rigged casters (no pull program or worker)" : "shadow static casters (no pull program or worker)", 1);       // K6: the old per draw loops are gone
         }
         if (!rigged)
         {
