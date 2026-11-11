@@ -86,7 +86,6 @@ class LLSpatialGroup;
 void ll_scene_fragment_build(LLSpatialGroup* group);
 class LLCullResult;
 bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
-bool ll_scene_geo_verify_on();                                  // ... with LL_VK_SCENE_VERIFY=1
 bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this frame (LL_VK_SCENE_GEO_AB=<seconds> alternates it)
 bool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
 bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
@@ -758,15 +757,8 @@ public:
     // <FS> C4.4: the visible groups of a shadow cascade's cull whose changeLOD() answered true when the cull walk stamped them (the row was hot there), in the walk's order: the only ones the mark job
     // (shadowPrepMark) still has to look at (a few dozen of ~1800 a frame). Filled by LLPipeline::markNotCulled for the cascade culls; cleared with the lists.
     std::vector<LLSpatialGroup*> mLodGroups;
-    // <FS> S3: the visible groups that passed postSort's filters (not dead, not occluded, not auto-hidden), after their rebuild: the groups whose deferred geometry the scene tables draw
-    // (LL_VK_SCENE_GEO=1). Filled by postSort.
-    std::vector<LLSpatialGroup*> mGeoGroups;
-    std::vector<U32> mGeoSerials;                       // their mDrawMapSerial when postSort listed them
     bool mGeoElided = false;                            // S3 G4: postSort left the table's draws out of this cull result's render map (the passes must be prepared)
     std::vector<U32> mGeoHandles;                       // S3 G3 (LL_VK_SCENE_GEO=2 serving): the scene geometry handles of the groups that passed postSort's filters: the list the worker draws from
-    // verify only (LL_VK_SCENE_GEO with LL_VK_SCENE_VERIFY=1): who pushed each draw info into the render map: the group, its mDrawMapSerial then, and where (1 postSort, 2 the shadow render map job)
-    struct GeoOwner { LLSpatialGroup* mGroup; U32 mSerial; U8 mSource; };
-    std::unordered_map<const LLDrawInfo*, GeoOwner> mGeoOwner;
 
 private:
 
