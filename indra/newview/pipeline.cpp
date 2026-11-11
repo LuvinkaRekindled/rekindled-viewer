@@ -7638,7 +7638,6 @@ void scene_stats_frame()
 }
 }
 
-namespace { constexpr int view_jobs_bits(); }      // R1 = 1, R2 = 2 (defined with scene_resident_on)
 static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
@@ -8142,10 +8141,9 @@ void LLPipeline::postSort(LLCamera &camera)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
     const bool geo_collect = ll_scene_geo_on() && (!LLPipeline::shadowRender() || sImpostorTableView);       // (an impostor image is drawn with sShadowRender set: its fragments are listed and elided like the main view's, else the pools skip the served draws and nothing draws them: the far avatars lost their bodies)
-    const bool geo_owner = geo_collect && ll_scene_geo_verify_on();
     const bool hud_table = view.mRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any();       // J1 K6 S1: the HUD view with a HUD pool that draws from rows
     const bool geo_list = geo_collect && ll_scene_geo_serving() && (hud_table || (view.mViewerCamera && ll_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
-    const bool geo_elide = geo_list && !ll_scene_geo_verify_on();       // S3 G4: the draws the table serves are not listed in the render map
+    const bool geo_elide = geo_list;       // S3 G4: the draws the table serves are not listed in the render map
     if (gCubeSnapshot)
     {
         static U64 cube_sorts = 0;
@@ -8155,7 +8153,7 @@ void LLPipeline::postSort(LLCamera &camera)
                 << ", geo_list " << geo_list << ", geo_elide " << geo_elide << ", visible groups " << sCull->getVisibleGroupsSize() << ", shadow render " << LLPipeline::shadowRender() << ", camera id " << (S32)LLViewerCamera::sCurCameraID << LL_ENDL;
         }
     }
-    const bool r2_whole_groups = geo_elide && (view_jobs_bits() & 2) != 0;
+    const bool r2_whole_groups = geo_elide;
     static const bool r2_verify = getenv("LL_VK_R2_VERIFY") != nullptr;       // (J1 K6 S5a: counts the draw infos a skipped group still holds that the render map would have taken)
     if (geo_elide)
     {
@@ -8168,7 +8166,7 @@ void LLPipeline::postSort(LLCamera &camera)
         static const U32 min_groups = 256;
         const U32 chunk_size = main_map_chunk();
         const U32 n_groups = sCull->getVisibleGroupsSize();
-        if (chunk_size && n_groups >= min_groups && !vis_post && !geo_owner && !scene_stats && !cascade_cull_active && !LLGpuZoneTimer::isActive()
+        if (chunk_size && n_groups >= min_groups && !vis_post && !scene_stats && !cascade_cull_active && !LLGpuZoneTimer::isActive()
             && view.isMainWorldSort())
         {
             LLForkJoinPool* pool = LLForkJoinPool::shared();
@@ -8197,8 +8195,8 @@ void LLPipeline::postSort(LLCamera &camera)
                 // C5: the blended alpha types are not put in the main view's render map (the alpha pool reads the groups' draw maps and the ray naming reads them through collect_main_view_draw_infos; LL_VK_RM_ALPHA=0 fills them as before; the verifiers and the census keep them)
                 static const bool rm_alpha_env = rm_alpha_mode() == 1;
                 static const bool lazy_env = !getenv("LL_VK_LAZY_TYPES") || getenv("LL_VK_LAZY_TYPES")[0] != '0';
-                const bool lazy_types_ok = lazy_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on();
-                const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !ll_scene_geo_verify_on() && !getenv("LL_VK_RMCENSUS");
+                const bool lazy_types_ok = lazy_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn;
+                const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !getenv("LL_VK_RMCENSUS");
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; U64 mVerifyLeft = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
                 std::vector<MapChunk> chunks;
@@ -8476,11 +8474,6 @@ void LLPipeline::postSort(LLCamera &camera)
             }
             vis_census_alpha(group);
         }
-        if (geo_owner)
-        {
-            sCull->mGeoGroups.push_back(group);     // <FS> S3: the groups the G-buffer entries are taken from (verify and census only)
-            sCull->mGeoSerials.push_back(group->mDrawMapSerial);
-        }
         if (geo_list && group->mGeoHandle)
         {
             sCull->mGeoHandles.push_back(group->mGeoHandle);       // <FS> S3 G3: the list the worker draws from
@@ -8574,10 +8567,6 @@ void LLPipeline::postSort(LLCamera &camera)
                 }
 
                 sCull->pushDrawInfo(j->first, info);
-                if (geo_owner)
-                {
-                    sCull->mGeoOwner[info] = { group, group->mDrawMapSerial, 1 };
-                }
                 if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
                 {
                     addTrianglesDrawn(info->mCount);
@@ -10548,7 +10537,6 @@ struct LLPipeline::ShadowStaticBuild
     std::vector<LLDrawInfo*> mFallback;         // draws the packet layout cannot take: drawn the old way, by the main thread
 };
 
-static constexpr bool builder_verify() { return false; }       // (LL_VK_BUILDER_VERIFY is gone)
 
 static void build_shadow_static(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowStaticBuild& out)
 {
@@ -10598,23 +10586,6 @@ static void build_shadow_static(LLCullResult& result, const U32* list, size_t co
             }
             out.mEntries.push_back(entry);
         }
-    }
-}
-
-static void verify_shadow_static(const char* what, const LLPipeline::ShadowStaticBuild& a, const LLPipeline::ShadowStaticBuild& b)
-{
-    static std::atomic<U32> checked{0}, bad{0};
-    ++checked;
-    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mFallback == b.mFallback
-        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0);
-    if (!same && bad++ < 8)
-    {
-        LL_WARNS("VkBuilder") << "builder verify: the " << what << " packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size()
-            << " entries, " << a.mFallback.size() << " / " << b.mFallback.size() << " fallbacks)" << LL_ENDL;
-    }
-    if (checked % 600 == 1)
-    {
-        LL_INFOS("VkBuilder") << "builder verify: " << checked << " builds compared, " << bad << " differed" << LL_ENDL;
     }
 }
 
@@ -10711,10 +10682,6 @@ bool scene_env(const char* name)
 // LL_VK_SCENE_FRAGMENTS, LL_VK_SCENE_VERIFY, LL_VK_SCENE_GEO (0 = no table, 1 = verify only), LL_VK_VIEWJOBS and its A/B alternation, LL_VK_BUILDER_VERIFY. The accessors stay as constants for this step so that the
 // branches they guard can be removed one at a time (a branch of the "off" side is dead code now).
 constexpr bool scene_resident_on() { return true; }
-constexpr bool scene_fragments_use() { return true; }
-constexpr bool scene_verify_on() { return false; }
-constexpr int view_jobs_bits() { return 3; }       // R1a (the cascades' dead static lists) and R2 (postSort does not walk all-served groups)
-constexpr bool view_jobs_on() { return true; }
 constexpr int scene_geo_mode() { return 2; }
 constexpr bool scene_geo_on() { return true; }
 // S4 C: the draws with a model matrix that is not a region matrix are served by the table too (their matrix has a moving slot)
@@ -13844,37 +13811,12 @@ struct SceneGather
     size_t mEntries = 0;
 };
 
-// the entries of one fragment against a fresh build from the live draw maps: the cause of the first difference, or null
-static const char* scene_fragment_diff(const LLSceneFragment& a, const LLSceneFragment& b, int& cause)
-{
-    cause = -1;
-    if (a.mEntries.size() != b.mEntries.size()) { cause = FC_COUNT; }
-    else if (a.mFallback != b.mFallback) { cause = FC_FALLBACK; }
-    else if (a.mMatrices != b.mMatrices) { cause = FC_MATRICES; }
-    else
-    {
-        for (size_t i = 0; i < a.mEntries.size() && cause < 0; ++i)
-        {
-            const LLVkBridge::ShadowPacketEntry& x = a.mEntries[i];
-            const LLVkBridge::ShadowPacketEntry& y = b.mEntries[i];
-            if (x.mVertexBuffer != y.mVertexBuffer) { cause = FC_VERTEX_BUFFER; }
-            else if (x.mIndexBuffer != y.mIndexBuffer) { cause = FC_INDEX_BUFFER; }
-            else if (x.mFirstIndex != y.mFirstIndex || x.mIndexCount != y.mIndexCount) { cause = FC_RANGE; }
-            else if (x.mMatrix != y.mMatrix) { cause = FC_MATRIX; }
-            else if (x.mMatrixId != y.mMatrixId) { cause = FC_MATRIX_ID; }
-        }
-    }
-    return cause >= 0 ? kFragmentCauseNames[cause] : nullptr;
-}
-
 // the fragments of the cull result's visible groups (the groups shadowPrepRenderMap takes draws from); send: tell the worker about new ones (RETAIN) and gone ones (RELEASE)
 static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool retain = true)
 {
     g.mMatrices.assign(16, 0.f);
     g.mMatrices[0] = g.mMatrices[5] = g.mMatrices[10] = g.mMatrices[15] = 1.f;
     std::unordered_map<const void*, U32> matrix_numbers;
-    const bool verify = scene_verify_on();
-    LLSceneFragment fresh;
     // resident mode: the render map job already picked the groups the worker does not hold (mSceneGroups); the rest are culled on the GPU
     LLSpatialGroup* const* group_list = scene_resident_on() ? result.mSceneGroups.data() : result.beginVisibleGroups();
     const size_t group_count = scene_resident_on() ? result.mSceneGroups.size() : (size_t)(result.endVisibleGroups() - result.beginVisibleGroups());
@@ -13886,23 +13828,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
             continue;
         }
         ++sFragStats.mGroups;
-        const U64 changed_before = sFragStats.mBufferChanged;
         LLSceneFragment* f = scene_fragment_ensure(group);
-        if (verify)
-        {
-            ++sFragStats.mChecked;
-            sFragStats.mMismatch[FC_VERTEX_BUFFER] += sFragStats.mBufferChanged - changed_before;      // same serial, buffer under it changed: the fragment would have been stale
-            scene_fragment_fill(group, fresh);
-            int cause;
-            if (scene_fragment_diff(*f, fresh, cause))
-            {
-                if (sFragStats.mMismatch[cause]++ < 8)
-                {
-                    LL_WARNS("VkScene") << "fragment verify: group fragment " << f->mId << " (serial " << f->mSerial << ") differs from a rebuild: " << kFragmentCauseNames[cause] << " (" << f->mEntries.size()
-                        << " / " << fresh.mEntries.size() << " entries)" << LL_ENDL;
-                }
-            }
-        }
         g.mFallback.insert(g.mFallback.end(), f->mFallback.begin(), f->mFallback.end());
         sFragStats.mFallback += f->mFallback.size();
         if (f->mEntries.empty() || (f->mResident && scene_resident_on()))
@@ -13980,352 +13906,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
 }
 
 
-// ---- <FS> S3 G1 verify (LL_VK_SCENE_GEO=1 with LL_VK_SCENE_VERIFY=1): the deferred geometry entries of the fragments against the builder's, for one pass of the main view ----
-// Called by LLRenderPass::pushGeometryPackets after the builder's records are final. (1) The draw infos the fragments of the cull result's mGeoGroups hold for the pass type (entries and fallback
-// draws) are the draw infos of the render map, as multisets of pointers; (2) the builder's entries, walked in render map order, equal what LLRenderPass::geometryEntry makes now (every field but
-// the matrix number and the texture names, whose presence is compared); (3) each fragment entry equals a fresh one (textures by pointer, the matrix by region slot).
-namespace
-{
-struct GeoVerifyStats
-{
-    U64 mPasses = 0, mInfos = 0, mMissing = 0, mExtra = 0, mFallbackDiff = 0, mBuilderDiff = 0, mItemDiff = 0, mCountDiff = 0, mGroups = 0, mItems = 0, mMissingInDrawMaps = 0, mDeadGroups = 0, mMissingPasses = 0, mMissingChangedGroup = 0;
-    // census of the main view, once a frame (what the worker side of S3 has to carry): sums over the frames counted
-    U64 mFrames = 0, mVisibleGroups = 0, mGroupsWithItems = 0, mItemsByType[2 * kGeoTypeCount + 2] = {}, mFallback = 0, mNonRegionGroups = 0, mNonRegionItems = 0, mDistinctTextures = 0, mRenderMapAll = 0, mRenderMapGeo = 0, mFragmentless = 0;
-    U64 mNamesChecked = 0, mNamesStale = 0, mHandleGroups = 0, mHandleListDiff = 0, mHandleMismatch = 0, mPassesNoList = 0, mInfosNoList = 0;     // G3: the registry's names against prepareFast's, the handles of the listed groups against the list
-    U64 mMissingCause[6] = {}, mMissingByType[2 * kGeoTypeCount] = {}, mDup = 0;     // causes: no owner recorded, pushed by the shadow job, group dead, group's draw map changed, owner not listed, listed with the same serial
-    U32 mCensusFrame = ~0u;
-    U32 mLast = 0;
-} sGeoStats;
-
-const char* geo_entry_diff(const LLVkBridge::GeoEntry& a, const LLVkBridge::GeoEntry& b)
-{
-    if (a.mVertexBuffer != b.mVertexBuffer) return "vertex buffer";
-    if (a.mIndexBuffer != b.mIndexBuffer) return "index buffer";
-    if (a.mFirstIndex != b.mFirstIndex || a.mIndexCount != b.mIndexCount) return "index range";
-    if (a.mFlags != b.mFlags) return "flags";
-    if (a.mNormalOffset != b.mNormalOffset || a.mTexcoordOffset != b.mTexcoordOffset || a.mColorOffset != b.mColorOffset) return "array offsets";
-    if (a.mTangentOffset != b.mTangentOffset || a.mTexcoord1Offset != b.mTexcoord1Offset || a.mTexcoord2Offset != b.mTexcoord2Offset) return "map array offsets";
-    if (memcmp(a.mSpecular, b.mSpecular, sizeof(a.mSpecular)) != 0) return "specular";
-    if (a.mEnvIntensity != b.mEnvIntensity || a.mCutoff != b.mCutoff || a.mBrightness != b.mBrightness) return "material values";
-    // a is the builder's (GL names: 0 for a texture that has no name yet, even after the default image), b a fresh entry (numbers): a name where there is no texture is a difference
-    for (int t = 0; t < 4; ++t)
-    {
-        if (a.mTextures[t] != 0 && b.mTextures[t] == 0) return "diffuse textures";
-    }
-    if (a.mNormalMap != 0 && b.mNormalMap == 0) return "normal map";
-    if (a.mSpecularMap != 0 && b.mSpecularMap == 0) return "specular map";
-    return nullptr;
-}
-}
-
-static void geo_census(LLCullResult* cull)
-{
-    GeoVerifyStats& s = sGeoStats;
-    std::unordered_set<const LLViewerTexture*> textures;
-    U64 handle_groups = 0;
-    ++s.mFrames;
-    s.mVisibleGroups += cull->mGeoGroups.size();
-    for (LLSpatialGroup* group : cull->mGeoGroups)
-    {
-        if (group->isDead())
-        {
-            continue;
-        }
-        const LLSceneFragment* f = scene_fragment_ensure(group);
-        if (f->mGeo.empty() && f->mGeoFallback.empty())
-        {
-            ++s.mFragmentless;
-            continue;
-        }
-        ++s.mGroupsWithItems;
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            ++s.mItemsByType[item.mType];
-        }
-        s.mFallback += f->mGeoFallback.size();
-        if (!f->mGeoRegion)
-        {
-            ++s.mNonRegionGroups;
-            s.mNonRegionItems += f->mGeo.size();
-        }
-        for (const LLPointer<LLViewerTexture>& tex : f->mGeoTex)
-        {
-            textures.insert(tex.get());
-        }
-        if (f->mGeoHandle)
-        {
-            ++handle_groups;
-            s.mHandleMismatch += group->mGeoHandle != f->mGeoHandle ? 1 : 0;
-            // the names the worker was told against the names the old path would bind now (prepareFast: what the builder's finish step does for every texture of a record)
-            for (size_t k = 0; k < f->mGeoTex.size(); ++k)
-            {
-                const U32 fresh = gRender.getTexUnit(0)->prepareFast(f->mGeoTex[k].get());
-                ++s.mNamesChecked;
-                if (k < f->mGeoSentName.size() && fresh != f->mGeoSentName[k])
-                {
-                    ++s.mNamesStale;
-                    static U32 said = 0;
-                    if (said++ < 12)
-                    {
-                        LL_WARNS("VkScene") << "geometry verify: fragment " << f->mId << " texture " << k << " told as GL " << f->mGeoSentName[k] << ", prepareFast gives " << fresh << LL_ENDL;
-                    }
-                }
-            }
-        }
-    }
-    s.mHandleGroups += handle_groups;
-    if (ll_scene_geo_serving() && cull->mGeoHandles.size() != handle_groups)
-    {
-        ++s.mHandleListDiff;
-    }
-    s.mDistinctTextures += textures.size();
-    for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t)
-    {
-        s.mRenderMapAll += cull->getRenderMapSize(t);
-    }
-    for (size_t t = 0; t < kGeoTypeCount; ++t)
-    {
-        s.mRenderMapGeo += cull->getRenderMapSize(kGeoTypes[t].mType);
-    }
-}
-
-void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo* materials, const std::vector<LLVkBridge::GeoEntry>& built, const std::vector<LLDrawInfo*>& built_fallback)
-{
-    if (!scene_geo_on() || !scene_verify_on() || !cull || !gPipeline.hasRenderType(type))
-    {
-        return;
-    }
-    if (!gCubeSnapshot && sGeoStats.mCensusFrame != (U32)gFrameCount && cull == gPipeline.getCull())
-    {
-        sGeoStats.mCensusFrame = (U32)gFrameCount;
-        geo_census(cull);
-    }
-    const int tn = geo_type_number(type);
-    if (tn < 0)
-    {
-        return;
-    }
-    GeoVerifyStats& s = sGeoStats;
-    if (cull->mGeoGroups.empty())
-    {
-        ++s.mPassesNoList;       // a cull result postSort did not collect for (an impostor, a probe, a snapshot): nothing to compare
-        s.mInfosNoList += cull->getRenderMapSize(type);
-        return;
-    }
-    ++s.mPasses;
-    // the render map side, with the entries walked in the builder's order
-    std::vector<LLDrawInfo*> expected;
-    size_t entry_index = 0;
-    std::vector<LLDrawInfo*> expected_fallback;
-    for (LLCullResult::drawinfo_iterator i = cull->beginRenderMap(type), end = cull->endRenderMap(type); i != end; )
-    {
-        LLDrawInfo* params = *i;
-        LLCullResult::increment_iterator(i, end);
-        if (!params->mCount)
-        {
-            continue;
-        }
-        expected.push_back(params);
-        LLVkBridge::GeoEntry fresh;
-        LLViewerTexture* textures[6];
-        if (!LLRenderPass::geometryEntry(*params, materials, fresh, textures, false, false, ll_pass_arrays(type)))
-        {
-            expected_fallback.push_back(params);
-            continue;
-        }
-        if (entry_index >= built.size())
-        {
-            ++s.mCountDiff;
-            continue;
-        }
-        if (const char* why = geo_entry_diff(built[entry_index], fresh))
-        {
-            if (s.mBuilderDiff++ < 8)
-            {
-                LL_WARNS("VkScene") << "geometry verify: type " << type << " entry " << entry_index << " of the builder differs from geometryEntry(): " << why << LL_ENDL;
-            }
-        }
-        ++entry_index;
-    }
-    if (entry_index != built.size() || expected_fallback != built_fallback)
-    {
-        ++s.mCountDiff;
-    }
-    // the fragment side
-    std::vector<LLDrawInfo*> held, in_maps;
-    bool changed_group = false;
-    for (size_t gi = 0; gi < cull->mGeoGroups.size(); ++gi)
-    {
-        LLSpatialGroup* group = cull->mGeoGroups[gi];
-        if (group->isDead())
-        {
-            ++s.mDeadGroups;
-            changed_group = true;
-            continue;
-        }
-        changed_group = changed_group || group->mDrawMapSerial != cull->mGeoSerials[gi];
-        auto dm = group->mDrawMap.find(type);
-        if (dm != group->mDrawMap.end())
-        {
-            for (LLDrawInfo* params : dm->second)
-            {
-                if (params->mCount)
-                {
-                    in_maps.push_back(params);
-                }
-            }
-        }
-        const LLSceneFragment* f = scene_fragment_ensure(group);
-        ++s.mGroups;
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            if (item.mType != (U32)tn)
-            {
-                continue;
-            }
-            held.push_back(item.mInfo);
-            ++s.mItems;
-            LLVkBridge::GeoEntry fresh;
-            LLViewerTexture* textures[6];
-            bool ok = LLRenderPass::geometryEntry(*item.mInfo, materials, fresh, textures, false, false, ll_pass_arrays(type));
-            const char* why = ok ? geo_entry_diff(item.mE, fresh) : "no longer eligible";
-            if (!why)
-            {
-                const U32 fields[6] = { item.mE.mTextures[0], item.mE.mTextures[1], item.mE.mTextures[2], item.mE.mTextures[3], item.mE.mNormalMap, item.mE.mSpecularMap };
-                for (int k = 0; k < 6 && !why; ++k)
-                {
-                    if ((fields[k] ? f->mGeoTex[fields[k] - 1].get() : nullptr) != textures[k])
-                    {
-                        why = "texture pointers";
-                    }
-                }
-            }
-            if (!why)
-            {
-                U32 slot = 0;
-                if (item.mInfo->mModelMatrix)
-                {
-                    auto it = sRegionSlot.find(item.mInfo->mModelMatrix);
-                    slot = it == sRegionSlot.end() ? 0 : it->second;
-                }
-                if (item.mE.mMatrix != slot)
-                {
-                    why = "matrix slot";
-                }
-            }
-            if (why && s.mItemDiff++ < 8)
-            {
-                LL_WARNS("VkScene") << "geometry verify: fragment " << f->mId << " entry for type " << type << " differs from a fresh one: " << why << LL_ENDL;
-            }
-        }
-        for (const auto& fb : f->mGeoFallback)
-        {
-            if (fb.first == (U32)tn)
-            {
-                held.push_back(fb.second);
-            }
-        }
-    }
-    std::vector<LLDrawInfo*> a = expected;
-    std::sort(a.begin(), a.end());
-    for (size_t k = 1; k < a.size(); ++k)
-    {
-        s.mDup += a[k] == a[k - 1] ? 1 : 0;       // the same draw info twice in the render map of one type
-    }
-    std::sort(held.begin(), held.end());
-    std::vector<LLDrawInfo*> diff;
-    std::set_difference(a.begin(), a.end(), held.begin(), held.end(), std::back_inserter(diff));
-    s.mMissing += diff.size();
-    const size_t missing_now = diff.size();
-    if (missing_now)
-    {
-        ++s.mMissingPasses;
-        s.mMissingChangedGroup += changed_group ? 1 : 0;
-        // the draw info is not in the groups' draw maps either: the group was rebuilt or died after postSort listed it (the render map keeps the old pointers; the epoch check throws such a build away)
-        std::sort(in_maps.begin(), in_maps.end());
-        std::unordered_set<const LLSpatialGroup*> listed(cull->mGeoGroups.begin(), cull->mGeoGroups.end());
-        s.mMissingByType[tn] += diff.size();
-        for (LLDrawInfo* p : diff)
-        {
-            const bool in_map = std::binary_search(in_maps.begin(), in_maps.end(), p);
-            s.mMissingInDrawMaps += in_map ? 1 : 0;
-            // who pushed it, and what became of that group (a group not in the listed set is not touched: it may be gone)
-            int cause = 0;
-            U32 serial_then = 0, serial_now = 0;
-            U8 source = 0;
-            auto owner = cull->mGeoOwner.find(p);
-            if (owner != cull->mGeoOwner.end())
-            {
-                source = owner->second.mSource;
-                serial_then = owner->second.mSerial;
-                if (source == 2)
-                {
-                    cause = 1;
-                }
-                else if (!listed.count(owner->second.mGroup))
-                {
-                    cause = 4;
-                }
-                else if (owner->second.mGroup->isDead())
-                {
-                    cause = 2;
-                }
-                else
-                {
-                    serial_now = owner->second.mGroup->mDrawMapSerial;
-                    cause = serial_now != serial_then ? 3 : 5;
-                }
-            }
-            ++s.mMissingCause[cause];
-            static U32 detailed = 0;
-            if (detailed++ < 12)
-            {
-                LL_WARNS("VkScene") << "geometry verify detail: type " << type << " draw info " << (const void*)p << " not in the fragments: cause " << cause << " (0 no owner recorded, 1 shadow job pushed it, 2 group dead, 3 group's draw map changed, "
-                    << "4 owner group not listed, 5 listed, same serial), source " << (int)source << ", serial then " << serial_then << " now " << serial_now << ", still in a listed group's draw map " << in_map
-                    << ", pass draw infos " << a.size() << LL_ENDL;
-            }
-        }
-    }
-    diff.clear();
-    std::set_difference(held.begin(), held.end(), a.begin(), a.end(), std::back_inserter(diff));
-    s.mExtra += diff.size();
-    s.mInfos += a.size();
-    if ((missing_now || !diff.empty()) && (s.mMissing + s.mExtra) < 40)
-    {
-        LL_WARNS("VkScene") << "geometry verify: type " << type << ": " << missing_now << " draw infos of the render map not in the fragments, " << diff.size() << " fragment draw infos not in the render map ("
-            << a.size() << " / " << held.size() << ")" << LL_ENDL;
-    }
-    const U32 frame = (U32)gFrameCount;
-    if (frame >= s.mLast + 600)
-    {
-        s.mLast = frame;
-        const double fr = s.mFrames ? (double)s.mFrames : 1.0;
-        std::string per_type;
-        for (int t = 0; t < 13; ++t)
-        {
-            per_type += std::string(t ? "/" : "") + std::to_string((long long)((double)s.mItemsByType[t] / fr + 0.5));
-        }
-        LL_INFOS("VkScene") << "geometry census (main view, per frame over " << s.mFrames << " frames): " << (double)s.mVisibleGroups / fr << " visible groups, " << (double)s.mGroupsWithItems / fr
-            << " with G entries (" << (double)s.mFragmentless / fr << " without), entries by type (simple/material/mask/glow/spec/specmask/specglow/norm/normmask/normglow/normspec/nsmask/nsglow) " << per_type
-            << ", fallback draws " << (double)s.mFallback / fr << ", groups not region-only " << (double)s.mNonRegionGroups / fr << " (" << (double)s.mNonRegionItems / fr << " entries), distinct textures "
-            << (double)s.mDistinctTextures / fr << ", render map draw infos " << (double)s.mRenderMapAll / fr << " of which G types " << (double)s.mRenderMapGeo / fr
-            << " | G3 verify: " << s.mHandleGroups << " listed groups with a handle (" << s.mHandleMismatch << " group / fragment handle mismatches, " << s.mHandleListDiff << " frames where the handle list size differs), registry names checked "
-            << s.mNamesChecked << ", stale " << s.mNamesStale << ", passes of other views without a group list " << s.mPassesNoList << " (" << s.mInfosNoList << " draw infos)"
-            << " | fragment G builds: " << sGeoFillCalls << " (" << (double)sGeoFillNs / 1000.0 / std::max<U64>(sGeoFillCalls, 1) << " us each, " << (double)sGeoFillItems / std::max<U64>(sGeoFillCalls, 1)
-            << " entries, " << sGeoFillFallback << " fallback, " << sGeoFillNonRegion << " not region-only), region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
-        LL_INFOS("VkScene") << "geometry verify (G-buffer entries of the fragments against the builder): " << s.mPasses << " passes, " << s.mInfos << " render map draw infos, " << s.mGroups << " group visits, "
-            << s.mItems << " fragment entries (" << s.mDeadGroups << " dead groups skipped); not in the fragments " << s.mMissing << " (of those still in a draw map: " << s.mMissingInDrawMaps << "; in " << s.mMissingPasses << " passes, " << s.mMissingChangedGroup << " of which had a group whose draw map changed or that died since postSort; "
-            << "by cause " << s.mMissingCause[0] << "/" << s.mMissingCause[1] << "/" << s.mMissingCause[2] << "/" << s.mMissingCause[3] << "/" << s.mMissingCause[4] << "/" << s.mMissingCause[5] << " (no owner / shadow job / dead / map changed / not listed / same serial), duplicates in the render map " << s.mDup << "), extra in the fragments " << s.mExtra << ", builder entries differing from geometryEntry " << s.mBuilderDiff
-            << ", fragment entries differing from a fresh one " << s.mItemDiff << ", entry count / fallback list differences " << s.mCountDiff << LL_ENDL;
-    }
-}
-
-// ---- <FS> S3 G2: the table serves the deferred geometry of the visible fragments (LL_VK_SCENE_GEO=2) ----
-bool ll_scene_geo_verify_on()
-{
-    return scene_geo_on() && scene_verify_on();
-}
-
+// ---- <FS> S3 G2: the table serves the deferred geometry of the visible fragments ----
 namespace
 {
 U32 sGeoServingFrame = ~0u;
@@ -14375,7 +13956,7 @@ bool ll_scene_geo_serving()
 
 bool ll_scene_geo_skip()
 {
-    return ll_scene_geo_serving() && !scene_verify_on();
+    return ll_scene_geo_serving();
 }
 
 bool ll_scene_geo_prepared(LLCullResult* cull)
@@ -15684,123 +15265,9 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
     }
     ++sFragStats.mResPasses;
 
-    if (source && scene_verify_on())
-    {
-        static const U32 side_planes = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
-        struct Key { U32 a, b, c, d; bool operator==(const Key& o) const { return a == o.a && b == o.b && c == o.c && d == o.d; } };
-        struct KeyHash { size_t operator()(const Key& k) const { return ((size_t)k.a * 73856093u) ^ ((size_t)k.b * 19349663u) ^ ((size_t)k.c * 83492791u) ^ ((size_t)k.d * 2654435761u); } };
-        std::unordered_set<Key, KeyHash> covered;
-        for (const LLSceneFragment* f : sResidentFragments)
-        {
-            for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
-            {
-                F32 c[3] = { f->mBounds[0], f->mBounds[1], f->mBounds[2] };
-                if (e.mMatrix)
-                {
-                    for (int a = 0; a < 3; ++a)
-                    {
-                        c[a] += f->mMatrices[e.mMatrix - 1]->mMatrix[3][a];
-                    }
-                }
-                bool inside = true;
-                for (U32 p = 0; p < side_planes && inside; ++p)
-                {
-                    inside = planes[p][0] * c[0] + planes[p][1] * c[1] + planes[p][2] * c[2] + planes[p][3] >= -f->mBounds[3];
-                }
-                if (inside)
-                {
-                    covered.insert({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount });
-                    ++sFragStats.mResPassed;
-                }
-            }
-        }
-        for (const LLSceneFragment* f : gather.mFragments)
-        {
-            for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
-            {
-                covered.insert({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount });
-            }
-        }
-        for (const LLVkBridge::ShadowPacketEntry& e : source->mEntries)
-        {
-            ++sFragStats.mResBuilder;
-            if (!covered.count({ e.mVertexBuffer, e.mIndexBuffer, e.mFirstIndex, e.mIndexCount }) && sFragStats.mResMissing++ < 8)
-            {
-                LL_WARNS("VkScene") << "resident verify: a builder entry is covered by no resident or gathered fragment: vb " << e.mVertexBuffer << " ib " << e.mIndexBuffer << " first " << e.mFirstIndex
-                    << " count " << e.mIndexCount << " matrix id " << std::hex << e.mMatrixId << std::dec << LL_ENDL;
-            }
-        }
-    }
 }
 
 // the entries the fragments make against the builder's, as sets (the fragments' order is by group, the builder's by type)
-static void scene_verify_view(const SceneGather& g, const LLPipeline::ShadowStaticBuild& source)
-{
-    struct Key { U32 mVb, mIb, mFirst, mCount, mId; F32 mMatrix[16]; U32 mMaterial; };
-    auto less = [](const Key& a, const Key& b)
-    {
-        if (a.mVb != b.mVb) return a.mVb < b.mVb;
-        if (a.mIb != b.mIb) return a.mIb < b.mIb;
-        if (a.mFirst != b.mFirst) return a.mFirst < b.mFirst;
-        if (a.mCount != b.mCount) return a.mCount < b.mCount;
-        if (a.mId != b.mId) return a.mId < b.mId;
-        if (a.mMaterial != b.mMaterial) return a.mMaterial < b.mMaterial;
-        return memcmp(a.mMatrix, b.mMatrix, sizeof(a.mMatrix)) < 0;
-    };
-    auto same = [](const Key& a, const Key& b) { return memcmp(&a, &b, sizeof(Key)) == 0; };
-    static const F32 identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-    std::vector<Key> mine, theirs;
-    mine.reserve(g.mEntries);
-    for (const LLSceneFragment* f : g.mFragments)
-    {
-        for (const LLVkBridge::ShadowPacketEntry& e : f->mEntries)
-        {
-            Key k = {};
-            k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId; k.mMaterial = e.mMaterial;
-            memcpy(k.mMatrix, e.mMatrix ? (const F32*)f->mMatrices[e.mMatrix - 1]->mMatrix : identity, sizeof(k.mMatrix));
-            mine.push_back(k);
-        }
-    }
-    for (const LLVkBridge::ShadowPacketEntry& e : source.mEntries)
-    {
-        Key k = {};
-        k.mVb = e.mVertexBuffer; k.mIb = e.mIndexBuffer; k.mFirst = e.mFirstIndex; k.mCount = e.mIndexCount; k.mId = e.mMatrixId; k.mMaterial = e.mMaterial;
-        memcpy(k.mMatrix, source.mMatrices.data() + 16 * (size_t)e.mMatrix, sizeof(k.mMatrix));
-        theirs.push_back(k);
-    }
-    ++sFragStats.mViewsChecked;
-    if (mine.size() != theirs.size())
-    {
-        if (sFragStats.mViewCount++ < 8)
-        {
-            LL_WARNS("VkScene") << "fragment verify: a cascade has " << mine.size() << " entries from fragments, " << theirs.size() << " from the builder" << LL_ENDL;
-        }
-    }
-    else
-    {
-        std::sort(mine.begin(), mine.end(), less);
-        std::sort(theirs.begin(), theirs.end(), less);
-        for (size_t i = 0; i < mine.size(); ++i)
-        {
-            if (!same(mine[i], theirs[i]))
-            {
-                if (sFragStats.mViewContent++ < 8)
-                {
-                    LL_WARNS("VkScene") << "fragment verify: a cascade's entries from fragments differ in content from the builder's (first at sorted entry " << i << " of " << mine.size() << ")" << LL_ENDL;
-                }
-                break;
-            }
-        }
-    }
-    std::vector<LLDrawInfo*> a = g.mFallback, b = source.mFallback;
-    std::sort(a.begin(), a.end());
-    std::sort(b.begin(), b.end());
-    if (a != b && sFragStats.mViewFallback++ < 8)
-    {
-        LL_WARNS("VkScene") << "fragment verify: a cascade has " << a.size() << " fallback draws from fragments, " << b.size() << " from the builder" << LL_ENDL;
-    }
-}
-
 static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);
 static U32 rt_avatar_kind(LLVOAvatar* avatar);
 
@@ -16522,71 +15989,6 @@ static bool shadow_lod_apply(U32 pass, const std::vector<GeoRange>& draws, std::
     return true;
 }
 
-static void verify_shadow_skin(const LLPipeline::ShadowSkinBuild& a, const LLPipeline::ShadowSkinBuild& b)
-{
-    static std::atomic<U32> checked{0}, bad{0};
-    ++checked;
-    // palettes are compared as bytes: a palette with a NaN in it (see the count below) is equal to itself in memory but not by ==
-    const bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes.size() == b.mPalettes.size()
-        && (a.mPalettes.empty() || memcmp(a.mPalettes.data(), b.mPalettes.data(), a.mPalettes.size() * sizeof(F32)) == 0) && a.mFallback == b.mFallback && a.mPaletteCount == b.mPaletteCount
-        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0);
-    {
-        static std::atomic<U32> nonfinite_builds{0};
-        size_t nonfinite = 0;
-        for (F32 f : a.mPalettes)
-        {
-            if (!std::isfinite(f)) { ++nonfinite; }
-        }
-        if (nonfinite && nonfinite_builds++ < 4)
-        {
-            LL_WARNS("VkBuilder") << "a rigged shadow build has " << nonfinite << " palette floats that are not finite (of " << a.mPalettes.size() << ")" << LL_ENDL;
-        }
-    }
-    if (!same && bad++ < 8)
-    {
-        std::string detail;
-        if (a.mPalettes.size() == b.mPalettes.size())
-        {
-            size_t n = 0, first = 0;
-            for (size_t k = 0; k < a.mPalettes.size(); ++k)
-            {
-                if (memcmp(&a.mPalettes[k], &b.mPalettes[k], sizeof(F32)) != 0)
-                {
-                    if (!n) { first = k; }
-                    ++n;
-                }
-            }
-            if (n) { detail += llformat(" palette floats differing %u, first %u (%g vs %g)", (U32)n, (U32)first, a.mPalettes[first], b.mPalettes[first]); }
-        }
-        if (a.mEntries.size() == b.mEntries.size())
-        {
-            size_t n = 0, first_entry = 0, first_byte = 0;
-            for (size_t k = 0; k < a.mEntries.size(); ++k)
-            {
-                const U8* pa = (const U8*)&a.mEntries[k];
-                const U8* pb = (const U8*)&b.mEntries[k];
-                for (size_t m = 0; m < sizeof(a.mEntries[0]); ++m)
-                {
-                    if (pa[m] != pb[m])
-                    {
-                        if (!n) { first_entry = k; first_byte = m; }
-                        ++n;
-                    }
-                }
-            }
-            if (n) { detail += llformat(" entry bytes differing %u, first in entry %u at byte %u", (U32)n, (U32)first_entry, (U32)first_byte); }
-        }
-        if (a.mMatrices != b.mMatrices) { detail += " matrices differ"; }
-        if (a.mFallback != b.mFallback) { detail += " fallbacks differ"; }
-        LL_WARNS("VkBuilder") << "builder verify: the rigged packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size()
-            << " entries, " << a.mPalettes.size() << " / " << b.mPalettes.size() << " palette floats):" << detail << LL_ENDL;
-    }
-    if (checked % 600 == 1)
-    {
-        LL_INFOS("VkBuilder") << "builder verify: " << checked << " rigged builds compared, " << bad << " differed" << LL_ENDL;
-    }
-}
-
 // worker: the render map of the cascade (the loop in postSort)
 
 // C4.1: the render map job skips a group whose last walk pushed nothing and whose inputs are the same (the switch LL_VK_MAP_PLAN and its modes 0 and 2 are gone)
@@ -16828,10 +16230,6 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 ++plan_pushed;
                 if (sCascadeTypeCensus) { sCascadeTypePushed[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); if (info->mAvatar.notNull()) { sCascadeTypeAvatar[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); } }
                 sCull->pushDrawInfo(j->first, info);
-                if (ll_scene_geo_on() && ll_scene_geo_verify_on())
-                {
-                    sCull->mGeoOwner[info] = { group, group->mDrawMapSerial, 2 };
-                }
             }
         }
 
@@ -17382,10 +16780,6 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
             }
         }
 
-        if (&camera == LLViewerCamera::getInstance() && builder_verify() && sCull)
-        {
-            checkRenderMapLive(*sCull);
-        }
 
         if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
         {
@@ -21740,28 +21134,6 @@ static void finish_shadow_alpha(LLPipeline::ShadowAlphaBuild& b)
     b.mFinished = true;
 }
 
-static void verify_shadow_alpha(const LLPipeline::ShadowAlphaBuild& a, const LLPipeline::ShadowAlphaBuild& b)
-{
-    static std::atomic<U32> checked{0}, bad{0};
-    ++checked;
-    bool same = a.mEntries.size() == b.mEntries.size() && a.mMatrices == b.mMatrices && a.mPalettes == b.mPalettes && a.mTexmats == b.mTexmats && a.mTextures == b.mTextures
-        && (a.mEntries.empty() || memcmp(a.mEntries.data(), b.mEntries.data(), a.mEntries.size() * sizeof(a.mEntries[0])) == 0)
-        && a.mFbGLTF == b.mFbGLTF && a.mFbLayout == b.mFbLayout && a.mFbRigged == b.mFbRigged && a.mFbManyTextures == b.mFbManyTextures && a.mFbTextureMatrix == b.mFbTextureMatrix;
-    for (int k = 0; k <= KIND_MATERIAL && same; ++k)
-    {
-        same = a.mFallback[k] == b.mFallback[k];
-    }
-    if (!same && bad++ < 8)
-    {
-        LL_WARNS("VkBuilder") << "builder verify: the alpha packets built in the job differ from the ones built now (" << a.mEntries.size() << " / " << b.mEntries.size() << " entries, "
-            << a.mTextures.size() << " / " << b.mTextures.size() << " textures)" << LL_ENDL;
-    }
-    if (checked % 600 == 1)
-    {
-        LL_INFOS("VkBuilder") << "builder verify: " << checked << " alpha builds compared, " << bad << " differed" << LL_ENDL;
-    }
-}
-
 // main thread, after the render maps of the cascades are built: the packets of the casters of each cascade are built by the async pool while the main thread goes on
 // (the first cascade's are waited for first, the others build while the main thread draws the ones before them)
 static bool shadow_packets_enabled();
@@ -21771,7 +21143,7 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
     LLAsyncPool& pool = LLAsyncPool::shared();
     prep.mSkinBuild = std::make_shared<ShadowSkinBuild>();
     std::shared_ptr<ShadowSkinBuild> skin_build = prep.mSkinBuild;
-    if (!(scene_fragments_use() && !scene_verify_on() && (!LLVkBridge::rtShadowMode() || scene_resident_on())))      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
+    if (false)      // S1: the fragments serve the cascade (render_shadow_packets builds inline when it still needs entries)
     {
         prep.mStaticBuild = std::make_shared<ShadowStaticBuild>();
         std::shared_ptr<ShadowStaticBuild> static_build = prep.mStaticBuild;
@@ -28286,10 +27658,6 @@ static void merge_render_lists(LLCullResult& into, LLCullResult& from)
     into.mRigFromFragments = into.mRigFromFragments || from.mRigFromFragments;
     into.mRigAlphaOn = into.mRigAlphaOn || from.mRigAlphaOn;
     into.mAlphaResSkipped = into.mAlphaResSkipped || from.mAlphaResSkipped;
-    if (!from.mGeoOwner.empty())
-    {
-        into.mGeoOwner.insert(from.mGeoOwner.begin(), from.mGeoOwner.end());
-    }
 }
 
 // J1 K6 B: the flags of the render map job of a shadow pass (what the batch of the sun cascades and a serial pass both set before the job runs)
@@ -28306,8 +27674,8 @@ void LLPipeline::setShadowJobFlags()
     // and the worker's table, never the render map's static type lists (class 0), and shadowPrepSubmitBuilds does not submit the static builder. Those lists were pushed (275 draw infos a cascade job,
     // 0.64 ms a frame of CPU in a still) and read by nothing. Kept for the legacy pass (packets off), the builders' verify (LL_VK_BUILDER_VERIFY) and the other modes.
     // (A/B 2026-11-05, four laps in one session, same crowd: the cascades' render map job 0.58 -> 0.39 ms a frame of CPU in a still, 1.47 -> 0.99 in a turn; the switch is gone, the old behaviour with it.)
-    const bool raster_skip = shadow_packets_enabled() && !builder_verify();
-    const bool skip_static_now = view_jobs_on() && (rt_sun_cascades_unused() || raster_skip) && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && all_static;
+    const bool raster_skip = shadow_packets_enabled();
+    const bool skip_static_now = (rt_sun_cascades_unused() || raster_skip) && all_static;
     sViewJobsSkipStatic.store(skip_static_now, std::memory_order_relaxed);
     // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); (the switch LL_VK_CASCADE_SKIP_ALPHA and its modes 0 and 2 are gone)
     sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? 1 : 0, std::memory_order_relaxed);
@@ -28396,7 +27764,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
             static const bool serial_fragments = !getenv("LL_VK_SHADOW_SERIAL") || getenv("LL_VK_SHADOW_SERIAL")[0] != '0';
-            if (serial_fragments && scene_fragments_use() && !scene_verify_on() && scene_resident_on() && !LLVkBridge::rtShadowMode() && shadow_packets_enabled())
+            if (serial_fragments && !LLVkBridge::rtShadowMode() && shadow_packets_enabled())
             {
                 LL_CPU_ZONE("renderShadow: serial pass render map job");
                 static ShadowCascadePrep serial_prep;
@@ -28455,7 +27823,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // S1: the cascade's casters from the groups' retained fragments (LL_VK_SCENE_FRAGMENTS=1), compared with the builder's when LL_VK_SCENE_VERIFY=1 (then the builder's record is the one drawn)
         ShadowStaticBuild from_fragments;       // ray shadows with resident fragments: the entries of the groups the worker does not hold, expanded here
         bool fragment_source = false;
-        if ((!rt_skip || scene_resident_on()) && prepared && (scene_fragments_use() || scene_verify_on()) && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
+        if (prepared && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
             bool all_types = true;
             for (size_t t = 0; t < count && all_types; ++t)
@@ -28465,18 +27833,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (all_types)
             {
                 LL_CPU_ZONE("packets: shadow static (fragments)");
-                const bool use = scene_fragments_use();
                 SceneGather gather;
-                scene_gather(result, use, gather, !rt_skip);
-                if (source && scene_verify_on() && !scene_resident_on())
-                {
-                    scene_verify_view(gather, *source);
-                }
-                if (use && scene_resident_on())
+                scene_gather(result, true, gather, !rt_skip);
                 {
                     scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather, rt_skip);
                 }
-                if (use && rt_skip)
+                if (rt_skip)
                 {
                     // the note-only record below carries the non-resident casters: their entries from the fragments, matrices numbered for this record
                     from_fragments.mMatrices = gather.mMatrices;
@@ -28493,7 +27855,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     source = &from_fragments;
                     fragment_source = true;
                 }
-                else if (use)
+                else
                 {
                     if (!gather.mRefs.empty())
                     {
@@ -28529,11 +27891,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             build_shadow_static(result, list, count, built);
             source = &built;
-        }
-        else if (builder_verify() && !fragment_source)
-        {
-            build_shadow_static(result, list, count, built);
-            verify_shadow_static("static", *source, built);
         }
         const std::vector<LLVkBridge::ShadowPacketEntry>& entries = source->mEntries;
         if (shadow_pass_index() < 4) { sCascadeStaticEntries[shadow_pass_index()].store((U32)entries.size(), std::memory_order_relaxed); }
@@ -28618,11 +27975,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             build_shadow_skin(result, list, count, built);
             source = &built;
-        }
-        else if (builder_verify())
-        {
-            build_shadow_skin(result, list, count, built);
-            verify_shadow_skin(*source, built);
         }
         // <FS> shadow caster LOD: a cascade's rigged draws that have a simplified index list name it (a copy of the entries: the builder's are shared)
         // J1 K3b (LL_VK_SHADOW_SLIM, default on): a record no ray scene reads (and whose palettes are ids of the frame's list) carries the slim entries, a third of the size, and the LOD is applied as patches while they
@@ -29040,12 +28392,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 prepared->mAlphaJob[slot]->wait();
             }
             build_owned = prepared->mAlphaBuild[slot];
-            if (builder_verify())
-            {
-                ShadowAlphaBuild again;
-                build_shadow_alpha(result, rigged, again);
-                verify_shadow_alpha(*build_owned, again);
-            }
         }
         else
         {
@@ -29078,7 +28424,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             F32 planes[6][4];
             scene_frustum_planes(view_proj, planes);
             static const U32 plane_count = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
-            const bool verify = scene_verify_on();
             std::vector<LLVkBridge::ShadowAlphaEntry>& list = build_owned->mEntries;
             size_t kept = 0;
             for (size_t i = 0; i < list.size(); ++i)
@@ -29104,36 +28449,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                     ++sAlphaResKept[2];         // not named again: the worker draws it
                 }
                 ++sAlphaStats[5];
-                if (verify)
-                {
-                    const LLSceneFragment* f = found->second.mFrag;
-                    F32 c[3] = { f->mBounds[0], f->mBounds[1], f->mBounds[2] };
-                    if (!f->mMatrices.empty())
-                    {
-                        for (int a = 0; a < 3; ++a)
-                        {
-                            c[a] += f->mMatrices[0]->mMatrix[3][a];
-                        }
-                    }
-                    bool inside = true;
-                    for (U32 p = 0; p < plane_count && inside; ++p)
-                    {
-                        inside = planes[p][0] * c[0] + planes[p][1] * c[1] + planes[p][2] * c[2] + planes[p][3] >= -f->mBounds[3];
-                    }
-                    if (!inside && sAlphaStats[6]++ < 8)
-                    {
-                        LL_WARNS("VkScene") << "alpha verify: a builder entry is outside its resident fragment's sphere test: vb " << e.mVertexBuffer << " ib " << e.mIndexBuffer << LL_ENDL;
-                    }
-                    const LLVkBridge::ShadowAlphaEntry& mine = f->mAlpha[found->second.mIndex];
-                    for (U32 t = 0; t < 4; ++t)
-                    {
-                        const U32 expected = mine.mTextures[t] ? sAlphaTex[f->mTexLocal[mine.mTextures[t] - 1].get()].mName : 0u;
-                        if (expected != e.mTextures[t] && sAlphaStats[7]++ < 8)
-                        {
-                            LL_WARNS("VkScene") << "alpha verify: texture " << t << " of a resident entry has name " << expected << ", the builder resolved " << e.mTextures[t] << LL_ENDL;
-                        }
-                    }
-                }
             }
             list.resize(kept);
         }

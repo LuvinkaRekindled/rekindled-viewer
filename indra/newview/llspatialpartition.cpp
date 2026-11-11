@@ -5466,11 +5466,8 @@ void LLCullResult::clear()
     mRigAlphaOn = false;
     mAlphaResSkipped = false;
     mLodGroups.clear();
-    mGeoGroups.clear();
-    mGeoSerials.clear();
     mGeoHandles.clear();
     mGeoElided = false;
-    mGeoOwner.clear();
 
     for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
     {
@@ -5505,7 +5502,6 @@ void LLCullResult::clearRenderLists()
     mAlphaResSkipped = false;
     mGeoHandles.clear();
     mGeoElided = false;
-    mGeoOwner.clear();
     for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
     {
         drawinfo_list_t& render_map = mRenderMap[i];

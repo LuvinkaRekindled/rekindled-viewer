@@ -652,7 +652,6 @@ void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textur
 }
 
 bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);       // pipeline.cpp (S4 A1)
-void ll_scene_geo_verify(LLCullResult* cull, U32 type, const LLGeometryPassInfo* materials, const std::vector<LLVkBridge::GeoEntry>& built, const std::vector<LLDrawInfo*>& built_fallback);     // pipeline.cpp (S3)
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
 
