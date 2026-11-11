@@ -12,7 +12,7 @@ Status: **cause narrowed to the async compute split (E2) with ray scene material
 
 - **The async compute split causes it.** In one session (21:53-22:02, log times local = UTC-6; the log's own timestamps are UTC): default (`rtearly=3`, ray scene built on the compute queue) blinked; live `rtearly=1` in `<work>\rt-debug.txt` at 21:55:28 (frame 9962): no blink for 2.4 minutes; `rtearly=3` again at 21:57:52 (frame 23377): the blink came back. An earlier run with `LL_VK_RT_EARLY=1` set at start (21:34-21:44, no compute queue at all) had no blink in about 10 minutes.
 - It also happens with DLSS off (the sync validation run, below), so the upscaler is not involved.
-- `LL_VK_RT_EARLY=1` is a workaround without a visible cost besides about 0.35 ms of GPU a frame (the A/B figure from 2026-11-05 recorded in the source and in the async compute memory note). Adam's decision: leave the default at 3 and find the ordering problem.
+- `LL_VK_RT_EARLY=1` hides the blink (it costs about 0.35 ms of GPU a frame, the A/B figure from 2026-11-05 recorded in the source and in the async compute memory note); it is a test switch, not a fix: Adam does not want the issue masked and the default stays at 3.
 
 ## Ruled out (with the evidence)
 
@@ -78,7 +78,7 @@ Read, no error found:
 
 ## How to resume
 
-- The stop-gap that needs no more runs: when `LL_VK_RT_MATERIALS` is 1 and `LL_VK_RT_EARLY` is not set, set `LL_VK_RT_EARLY=1` at start-up in `llappviewer.cpp` (next to the other RT defaults, ~line 4003, before the window and Vulkan start); both the device setup and the pipeline read that variable. Asked of Adam, not decided.
+- **No stop-gap.** Setting `LL_VK_RT_EARLY=1` when materials are on was suggested and Adam refused it (2026-11-10): it masks the issue, and he did not ask for it. The default stays at 3 and the ordering problem is to be found. `rtearly=1` stays a test switch only.
 - To confirm a blink live: start the normal materials launcher, add `rtearly=1` to `rt-debug.txt` when it blinks, remove it again.
 - The next code reading, if the cause is still wanted: what the compute build reads and writes through addresses, and what the graphics parts between the split and the join write to the same buffers, material table and record buffers first; the arena block free path against the in-flight compute work.
 - Launchers kept: `run-viewer-clean-rtmaterials.bat`, `-noasync.bat` (`LL_VK_RT_EARLY=1`), `-syncval.bat`, `-handlelog.bat` (only meaningful with the diagnostic build).
