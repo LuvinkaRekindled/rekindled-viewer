@@ -4006,9 +4006,9 @@ bool LLAppViewer::initWindow()
                 _putenv_s("LL_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
             }
         }
-        if (gSavedSettings.getBOOL("FSVkResidentScene"))
         {
-            // the scene tables (doc/vulkan/S2-handoff.md): what the environment sets explicitly (also 0) wins. LL_VK_SCENE_RAYALPHA (resident alpha casters in the ray scene) was off by
+            // the scene tables (doc/vulkan/S2-handoff.md). <FS> K6: they are the only path now (the FSVkResidentScene setting is gone); what the environment sets explicitly (also 0) still wins for the three ray scene parts.
+            // LL_VK_SCENE_RAYALPHA (resident alpha casters in the ray scene) was off by
             // default for a day (150 ms GPU frames in bursts and device-lost crashes: ray records held stale buffer addresses, fixed in d9995666, S2-handoff part 12); on again by Adam's choice
             for (const char* name : { "LL_VK_SCENE_RESIDENT", "LL_VK_SCENE_RAYRANGE", "LL_VK_SCENE_RAYALPHA", "LL_VK_RT_INSTDELTA" })
             {
