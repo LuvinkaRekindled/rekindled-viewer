@@ -15336,7 +15336,8 @@ static bool shadow_rigfrag_usable()
 static bool shadow_packets_enabled();
 static int shadow_rigalpha_mode()
 {
-    if (!shadow_rigfrag_usable() || LLVkBridge::rtShadowMode() || !shadow_packets_enabled() || !LLVkBridge::shadowAlphaPacketsAvailable())
+    // (the ray shadow modes too: the item entry has the list entry's fields, the texture gate and the ray scene material, see the rigged alpha items of build_shadow_alpha)
+    if (!shadow_rigfrag_usable() || !shadow_packets_enabled() || !LLVkBridge::shadowAlphaPacketsAvailable())
     {
         return 0;
     }
@@ -16040,7 +16041,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     U64 n_alpha_skipped = 0;
     // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
     // casters left out, rigged and alpha casters named by the fragments); (LL_VK_SHADOW_WALK and LL_VK_SHADOW_WALK_VERIFY are gone)
-    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha == 1;
+    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0;       // (1 raster, 2 the sun cascades of the ray-only modes)
     U64 n_plan_skipped = 0;
     U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
     {
@@ -16105,7 +16106,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         {
             for (const auto& at : walk_frag->mWalkAlphaTypes)
             {
-                if (hasRenderType(at[0]) && ((at[1] && !walk_frag->mAlphaResSent) || at[2])) { expect_frag = true; }
+                if (hasRenderType(at[0]) && ((at[1] && !(skip_alpha == 2 ? walk_frag->mAlphaSent : walk_frag->mAlphaResSent)) || at[2])) { expect_frag = true; }
             }
         }
         U64 plan_key = 0;
@@ -20755,6 +20756,26 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 {
                     continue;
                 }
+                if (LLVkBridge::rtShadowMode() == 1 && LLVkBridge::rtLoadingGates())
+                {
+                    // as rt_textures_ready for the list path: a masked draw whose texture has no data yet is not named until it has
+                    bool ready = true;
+                    if (batch && rig.mTextureListSize > 1)
+                    {
+                        for (size_t t = 0; t < rig.mTextureListSize && t < 4; ++t)
+                        {
+                            ready = ready && rt_texture_ready(rig.mTextures[t].get());
+                        }
+                    }
+                    else
+                    {
+                        ready = rt_texture_ready(rig.mTexture.get());
+                    }
+                    if (!ready)
+                    {
+                        continue;
+                    }
+                }
                 LLVkBridge::ShadowAlphaEntry e = {};
                 e.mVertexBuffer = vb->getVertexBufferId();
                 e.mIndexBuffer = vb->getIndexBufferId();
@@ -20823,6 +20844,12 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 e.mFlags = flags;
                 e.mCutoff = rig.mAlphaCutoff;
+                if (rt_materials_on() && rig.mMat.mSet)
+                {
+                    // as the list entry above (the item keeps the material source, J1 K5)
+                    e.mMaterial = rt_material_id(rt_mat_view(rig.mMat), (source->kind == KIND_MATERIAL) ? 5u : 1u);
+                    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
+                }
                 entries.push_back(e);
             }
         }
