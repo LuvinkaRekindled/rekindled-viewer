@@ -10366,7 +10366,7 @@ static U32 rt_material_intern(LLVkBridge::RtMaterialDef& d, LLPointer<LLViewerTe
 }
 
 // the body meshes of avatars (head, upper body, lower body, eyes, hair, eyelashes, skirt) have no draw info: their material is the texture the mesh is drawn with (a baked texture or a
-// layer set composite, white when none) times the mesh colour. masked: hair, eyelashes and skirt are cut at 0.5 of the texture alpha. 0 = materials off or registry full.
+// layer set composite, white when none) times the mesh colour. masked: every body mesh is cut by the texture alpha (hair, eyelashes and skirt at 0.5, the rest at 0.2 in the sun rays). 0 = materials off or registry full.
 U32 rt_body_material(LLViewerTexture* texture, const F32* color, bool masked)
 {
     if (!rt_materials_on())
