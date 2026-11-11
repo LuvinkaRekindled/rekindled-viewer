@@ -11,7 +11,9 @@
  *      fetch (width sum / blocker count at the window's level: every pixel of the window counted, a lit pixel beside a shadow gets the shadow's width).
  *   2. the filter: the hard shadow averaged over a disc of that radius (a fixed Vogel spiral, no rotation: the same picture every frame), weights falling off to the rim, each
  *      tap read at the mip level of the taps' spacing (so a tap is the average of its share of the disc, not one pixel of it; rt-debug.txt penlod biases that level).
- * A tap on another surface (the lightmap blur's plane distance test) does not count. Only the sun channel (r) is filtered; SSAO (g) and the spot shadows (b, a) pass through.
+ * A tap on another surface (the lightmap blur's plane distance test) does not count, and neither do the sky pixels inside a tap's mip footprint: the prep target holds the sun channel
+ * premultiplied by a surface flag (a), and every read here is divided by the flag's average (a sky pixel's sun value is 1 and was averaged into the skin around a one pixel gap of a
+ * mesh: flecks, as the half resolution lightmap blur's, cdbe206729). Only the sun channel (r) is filtered; SSAO (g) and the spot shadows (b, a) pass through.
  *
  * No stochastic term anywhere: nothing to accumulate, nothing for the upscaler to average. Earlier forms, 2026-11-04: separable (streaks and rings), 16 point taps (fibrous edges),
  * 12 point search taps (light rims between overlapping shadows).
@@ -34,6 +36,7 @@ in vec2 vary_fragcoord;
 
 vec4 getPosition(vec2 pos_screen);
 vec4 getNorm(vec2 pos_screen);
+float getDepth(vec2 pos_screen);
 
 #define FILTER_TAPS 16
 
@@ -49,6 +52,11 @@ void main()
 {
     vec2 tc = vary_fragcoord.xy;
     vec4 c = texture(lightMap, tc);
+    if (getDepth(tc) >= 1.0)
+    {
+        frag_color = c;             // a sky pixel: nothing reads its sun channel
+        return;
+    }
 
     // 1. the width: the pixel's own, or the window's average blocker width where that is wider
     float r = textureLod(diffuseRect, tc, 0.0).g;
@@ -70,8 +78,9 @@ void main()
 
     // 2. the filter: the hard shadow over the disc of radius r, the weight falling to 0 at the rim; each tap at the mip level of the taps' spacing (sqrt(pi / N) r for N taps on the disc)
     float lod = max(log2(r * 0.443) + pen_lod, 0.0);
-    float sum = textureLod(diffuseRect, tc, lod).r;
-    float wsum = 1.0;
+    vec4 m0 = textureLod(diffuseRect, tc, lod);
+    float sum = m0.r;           // (premultiplied by the surface flag: a = the share of surface pixels in the footprint)
+    float wsum = m0.a;
     for (int i = 0; i < FILTER_TAPS; ++i)
     {
         vec2 u = vogel(i, FILTER_TAPS);
@@ -83,9 +92,13 @@ void main()
             continue;
         }
         float w = 1.0 - 0.75 * dot(u, u);
-        sum += textureLod(diffuseRect, stc, lod).r * w;
-        wsum += w;
+        vec4 m = textureLod(diffuseRect, stc, lod);
+        sum += m.r * w;
+        wsum += m.a * w;
     }
-    c.r = sum / wsum;
+    if (wsum > 0.001)
+    {
+        c.r = sum / wsum;
+    }
     frag_color = max(c, vec4(0.0));
 }
