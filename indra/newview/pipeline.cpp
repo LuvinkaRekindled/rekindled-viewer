@@ -30303,6 +30303,34 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             getVisiblePointCloud(main_camera,min,max,fp);
         }
+        // <FS> the user, 2026-11-10: the ground shadow of his avatar blinked, walking as well as running. The probe showed the first split of the cascades alternating between 2.5, 5.1 and 6.2 m from one frame to the
+        // next: the box of the visible scene that the fit is made from (the main cull's groups, fit mode 2, or the walk when the cull gave none) came out as near 0.1 / far 256 on one frame and near 4 or 1 / far 64
+        // on the next. Nothing smoothed it, so the splits and the fit of cascades 0 and 1 (and with them the blend of the two maps where the avatar's shadow falls, and the bias) changed every other frame.
+        // The box now grows at once and shrinks slowly (a few percent of the way to the new box a frame), which makes it the union of the recent boxes: no coverage is lost, and it settles.
+        if (!gCubeSnapshot && fit_mode < 3 && !fp.empty())
+        {
+            static bool have_prev = false;
+            static LLVector3 prev_min, prev_max;
+            if (have_prev)
+            {
+                const F32 follow = 0.04f;       // the share of the way a shrinking edge moves to the new box in one frame
+                for (S32 axis = 0; axis < 3; ++axis)
+                {
+                    min.mV[axis] = (min.mV[axis] < prev_min.mV[axis]) ? min.mV[axis] : prev_min.mV[axis] + (min.mV[axis] - prev_min.mV[axis]) * follow;
+                    max.mV[axis] = (max.mV[axis] > prev_max.mV[axis]) ? max.mV[axis] : prev_max.mV[axis] + (max.mV[axis] - prev_max.mV[axis]) * follow;
+                }
+                std::vector<LLVector3> steady_fp;
+                pointCloudFromExtents(main_camera, min, max, steady_fp);
+                if (!steady_fp.empty())
+                {
+                    fp.swap(steady_fp);
+                }
+            }
+            prev_min = min;
+            prev_max = max;
+            have_prev = true;
+        }
+
         scene_min = min;
         scene_max = max;
         scene_have = !fp.empty();
@@ -30353,7 +30381,21 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         //far_clip = llmin(far_clip, 128.f);
         far_clip = llmin(far_clip, camera.getFar());
 
-        F32 range = far_clip-near_clip;
+        // <FS> the user, 2026-11-10: the ground shadow of his avatar blinked. The split distances were near + range * (i/4)^3 with near the nearest point of the visible scene box (0.01 to 4 m): the first split is about
+        // near + far / 64, so for a far of 64 m the near term (1 to 4 m) was most of it, and a group entering or leaving the box moved the first split by metres in one frame (6.2 m <-> 2.5 m in the probe),
+        // which moved the avatar's ground shadow between cascade 0 and cascade 1 (another map, resolution and bias). For the main view the splits now start from a fixed 0.5 m and the far extent rises at once but
+        // falls slowly (about a second), so they only move as the view's far extent does; near_clip stays the start of cascade 0's slice (kept below half the first split, below). The reflection probes' cube
+        // faces keep the old formula.
+        F32 split_base = near_clip;
+        if (!gCubeSnapshot)
+        {
+            static F32 far_steady = 0.f;
+            far_steady = (far_clip > far_steady) ? far_clip : far_steady + (far_clip - far_steady) * 0.02f;
+            far_clip = llmin(far_steady, camera.getFar());
+            split_base = 0.5f;
+        }
+
+        F32 range = far_clip - split_base;
 
         LLVector3 split_exp = RenderShadowSplitExponent;
 
@@ -30367,10 +30409,15 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             F32 x = (F32)(i+1)/4.f;
             x = powf(x, sxp);
-            mSunClipPlanes.mV[i] = near_clip+range*x;
+            mSunClipPlanes.mV[i] = split_base+range*x;
         }
 
         mSunClipPlanes.mV[0] *= 1.25f; //bump back first split for transition padding
+        if (!gCubeSnapshot)
+        {
+            near_clip = llmin(near_clip, mSunClipPlanes.mV[0] * 0.5f);      // (the slice of cascade 0 starts below its end whatever the nearest visible point is)
+        }
+
     }
 
     if (gCubeSnapshot)
@@ -31614,7 +31661,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 prep.mProj = proj[j];
                 prep.mLastView = last_view;
                 prep.mLastProj = last_proj;
-                prep.mCullActive = cascade_cull && !gCubeSnapshot && j >= 1
+                // (2026-11-10: from cascade 2 up, not cascade 1: cascade 1 renders every frame and its slice starts a few metres from the camera, where a following avatar stands; the cull tests the avatar's
+                // extents (its radius changes with every step), so near the edge it dropped the avatar from cascade 1 on one frame and kept it on the next, and the ground shadow, a blend of cascades 0 and 1 there, blinked)
+                prep.mCullActive = cascade_cull && !gCubeSnapshot && j >= 2
                     && sun_elevation_sin >= sinf(cascade_min_elevation * DEG_TO_RAD);
                 if (prep.mCullActive)
                 {

@@ -1371,6 +1371,20 @@ public:
 
     virtual S32 frustumCheckObjects(const LLViewerOctreeGroup* group)
     {
+        // <FS> the user, 2026-11-10: the shadow of his own avatar blinked for a frame now and then while he moved. A caster is in a cascade's pass only if its object bounds meet that cascade's frustum
+        // (LLDrawable::isVisible reads the stamp this cull sets, LLPipeline::stateSort drops an avatar without it), and an avatar's bounds change with every step of its pose: the first split of
+        // the cascades is a few metres from the camera, where a following avatar stands, so its bounds crossed the edge of the cascade 1 frustum from one frame to the next. The bounds of the avatar
+        // partitions are padded by 2 m for this test (a shadow caster outside the frustum by less than that costs nothing).
+        LLSpatialGroup* spatial = const_cast<LLSpatialGroup*>(static_cast<const LLSpatialGroup*>(group));
+        const LLSpatialPartition* partition = spatial->getSpatialPartition();
+        if (partition && (partition->mPartitionType == LLViewerRegion::PARTITION_AVATAR || partition->mPartitionType == LLViewerRegion::PARTITION_CONTROL_AV))
+        {
+            LLVector4a size = group->row().objectBounds[1];
+            LLVector4a pad;
+            pad.splat(2.f);
+            size.add(pad);
+            return mCamera->AABBInFrustum(group->row().objectBounds[0], size);
+        }
         return AABBInFrustumObjectBounds(group);
     }
 };
