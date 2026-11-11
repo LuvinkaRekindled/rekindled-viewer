@@ -7638,7 +7638,7 @@ void scene_stats_frame()
 }
 }
 
-namespace { int view_jobs_bits(); }      // R1 = 1, R2 = 2 (LL_VK_VIEWJOBS, defined with scene_resident_on)
+namespace { constexpr int view_jobs_bits(); }      // R1 = 1, R2 = 2 (defined with scene_resident_on)
 static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
@@ -10548,11 +10548,7 @@ struct LLPipeline::ShadowStaticBuild
     std::vector<LLDrawInfo*> mFallback;         // draws the packet layout cannot take: drawn the old way, by the main thread
 };
 
-static bool builder_verify()
-{
-    static const bool on = getenv("LL_VK_BUILDER_VERIFY") != nullptr;
-    return on;
-}
+static constexpr bool builder_verify() { return false; }       // (LL_VK_BUILDER_VERIFY is gone)
 
 static void build_shadow_static(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowStaticBuild& out)
 {
@@ -10711,58 +10707,16 @@ bool scene_env(const char* name)
     const char* e = getenv(name);
     return e && e[0] == '1';
 }
-bool scene_resident_on();
-bool scene_fragments_use()
-{
-    static const bool on = scene_env("LL_VK_SCENE_FRAGMENTS") || scene_env("LL_VK_SCENE_RESIDENT");
-    return on;
-}
-bool scene_verify_on()
-{
-    static const bool on = scene_env("LL_VK_SCENE_VERIFY");
-    return on;
-}
-
-bool scene_resident_on()
-{
-    static const bool on = scene_env("LL_VK_SCENE_RESIDENT");
-    return on;
-}
-// R1a (doc/vulkan/S-retire-views-design.md): on by default, LL_VK_VIEWJOBS=0 off, LL_VK_VIEWJOBS_AB=<s> alternates it (log marker "[phase] view jobs now ON/off").
-// bits: 1 = R1a (the cascades' dead static lists; ON by default since 2026-10-21, the user: "R1a on"), 2 = R2 (postSort does not walk all-served groups; off, 0.02-0.04 ms); LL_VK_VIEWJOBS=0 turns both off.
-// LL_VK_VIEWJOBS_AB=<s> alternates them (with LL_VK_VIEWJOBS unset the alternation is R1a)
-int view_jobs_bits()
-{
-    static const int base = []() { const char* v = getenv("LL_VK_VIEWJOBS"); return v ? atoi(v) : 3; }();       // (J1 K6 S5a: R2 on by default)
-    static const int period = []() { const char* v = getenv("LL_VK_VIEWJOBS_AB"); return v ? atoi(v) : 0; }();
-    if (period <= 0)
-    {
-        return base;
-    }
-    const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    const bool phase = ((seconds / period) % 2) == 1;
-    static int last = -1;
-    if ((int)phase != last)
-    {
-        last = (int)phase;
-        LL_INFOS("VkScene") << "[phase] view jobs now " << (phase ? "ON" : "off") << LL_ENDL;
-    }
-    return phase ? (base ? base : 3) : 0;
-}
-bool view_jobs_on()
-{
-    return (view_jobs_bits() & 1) != 0;
-}
-int scene_geo_mode()
-{
-    // (on since 2026-10-21, the user: S3 table + S4 B + C verified in London; LL_VK_SCENE_GEO=0 turns the whole scene table off, 1 is the old verify-only mode)
-    static const int mode = []() { const char* e = getenv("LL_VK_SCENE_GEO"); return !e || !e[0] ? 2 : (e[0] == '2' ? 2 : (e[0] == '1' ? 1 : 0)); }();
-    return mode;
-}
-bool scene_geo_on()
-{
-    return scene_geo_mode() >= 1;
-}
+// <FS> K6 (draw info removal, stage 1): the scene table with resident fragments is the only path. The switches that chose another one are gone: LL_VK_SCENE_RESIDENT and the FSVkResidentScene setting,
+// LL_VK_SCENE_FRAGMENTS, LL_VK_SCENE_VERIFY, LL_VK_SCENE_GEO (0 = no table, 1 = verify only), LL_VK_VIEWJOBS and its A/B alternation, LL_VK_BUILDER_VERIFY. The accessors stay as constants for this step so that the
+// branches they guard can be removed one at a time (a branch of the "off" side is dead code now).
+constexpr bool scene_resident_on() { return true; }
+constexpr bool scene_fragments_use() { return true; }
+constexpr bool scene_verify_on() { return false; }
+constexpr int view_jobs_bits() { return 3; }       // R1a (the cascades' dead static lists) and R2 (postSort does not walk all-served groups)
+constexpr bool view_jobs_on() { return true; }
+constexpr int scene_geo_mode() { return 2; }
+constexpr bool scene_geo_on() { return true; }
 // S4 C: the draws with a model matrix that is not a region matrix are served by the table too (their matrix has a moving slot)
 bool scene_geo_moving_on()
 {
@@ -28131,9 +28085,8 @@ static U32 rt_matrix_id(const LLMatrix4* m)
 // CPU (the cull and the caster lists are what the ray scene is made from) but draw nothing: note-only records, no target, no old path draws. LL_VK_RT_KEEP_CASCADES=1 draws them anyway.
 static bool rt_sun_cascades_unused()
 {
-    static const bool keep = []() { const char* e = getenv("LL_VK_RT_KEEP_CASCADES"); return e && e[0] == '1'; }();
     const U32 mode = LLVkBridge::rtShadowMode();
-    return !keep && (mode == 1 || mode == 4 || mode == 5);
+    return mode == 1 || mode == 4 || mode == 5;       // (LL_VK_RT_KEEP_CASCADES is gone)
 }
 
 S32 LLPipeline::sRtProbePass = -1;
