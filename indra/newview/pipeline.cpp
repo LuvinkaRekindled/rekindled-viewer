@@ -9028,11 +9028,19 @@ ViewJobsStats sViewJobs;
 static const bool sCascadeTypeCensus = getenv("LL_VK_RMCENSUS") != nullptr;
 static std::atomic<U64> sCascadeTypePushed[128], sCascadeTypeAvatar[128];
 
-// J1 K6 step 3d: LL_VK_SHADOW_SERIAL_RT=1 (default off until checked): the raster shadow passes of the ray tracing modes that do not draw the sun cascades (modes 1, 4, 5: a reflection probe's faces, the spot and projector maps)
+// J1 K6 step 3d: LL_VK_SHADOW_SERIAL_RT (default ON since 2026-11-12, 0 = the old way): the raster shadow passes of the ray tracing modes that do not draw the sun cascades (modes 1, 4, 5: a reflection probe's faces, the spot and projector maps)
 // take their casters from the groups' fragments like the passes of RT off do (the render map job runs for the serial pass; the fragments carry the raster form of the glTF and texture matrix casters too, mRaster / mRasterTex)
 static bool serial_rt_on()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return e && e[0] && atoi(e) != 0; }();
+    static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return !(e && e[0]) || atoi(e) != 0; }();
+    return on;
+}
+// 3d2 (LL_VK_SHADOW_SERIAL_RT=2): also the sun cascades of the modes that keep them (2 split screen, 3 difference) take their casters from the fragments in the raster form. Off by default: in mode 3 the floor next to
+// the pool of the PBR store came out much darker with it (91 % dark pixels against 64 % without; the glTF casters of the raster form are the cause, LL_VK_RASTER_SKIP=1 bisect 2026-11-12), and RT off,
+// the reference for the cascades, could not tell which of the two is right (mode 3 lights the scene differently)
+static bool serial_rt_cascades_on()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return e && atoi(e) >= 2; }();
     return on;
 }
 std::atomic<bool> sViewJobsRasterRt{false};    // the render map job about to run is one of those passes (setShadowJobFlags): the walk leaves out what the raster form carries, never takes the fast way
@@ -28271,7 +28279,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
     const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
     // J1 K6 step 3d (LL_VK_SHADOW_SERIAL_RT): the other passes of those modes (a probe's cube face, a spot or projector map) draw, and take their casters from the fragments like the passes of RT off
-    const bool rt_raster = serial_rt_on() && rt_sun_cascades_unused() && !rt_skip;
+    // 3d2: also in the modes that keep the sun cascades (2 split screen, 3 difference): there every pass draws, the cascades included, and takes its casters from the fragments in the raster form
+    const bool rt_raster = serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && !rt_skip && (rt_sun_cascades_unused() || serial_rt_cascades_on());
     sRtRasterNow.store(rt_raster, std::memory_order_relaxed);
 
     LLRenderState::CullScope cull(true);
@@ -30845,7 +30854,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         lap.reset();
 
         {
-            setShadowJobFlags(serial_rt_on() && rt_sun_cascades_unused() && LLPipeline::sRtProbePass >= 0);       // (a probe face's cascades in the ray tracing modes that do not draw the main view's: raster passes, step 3d)
+            // (a probe face's cascades in the ray tracing modes that do not draw the main view's: raster passes, step 3d; in the modes that keep the cascades (2, 3) the main view's own cascades are raster passes too, 3d2)
+            setShadowJobFlags(serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && (rt_sun_cascades_unused() ? LLPipeline::sRtProbePass >= 0 : serial_rt_cascades_on()));
         }
         // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
         // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
