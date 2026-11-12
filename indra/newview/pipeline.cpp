@@ -10058,7 +10058,7 @@ struct LLPipeline::ShadowStaticBuild
 {
     std::vector<LLVkBridge::ShadowPacketEntry> mEntries;
     std::vector<F32> mMatrices;                 // matrix 0 is the identity: "no model matrix"
-    std::vector<LLDrawInfo*> mFallback;         // draws the packet layout cannot take: drawn the old way, by the main thread
+    U32 mFallbackCount = 0;                     // draws the packet layout cannot take (a count: no draw info is kept)
 };
 
 
@@ -10079,7 +10079,7 @@ struct LLSceneFragment
     std::vector<U32> mRtPins;                           // J1 K5b: the pinned registry rows of the ray scene materials its retained entries (mEntries, mAlpha, mAlphaTex) name
     std::vector<const LLMatrix4*> mMatrices;
     std::vector<U32> mMatrixIds;                        // rt_matrix_id of each
-    std::vector<LLDrawInfo*> mFallback;                 // draws the packet layout cannot take
+    U32 mFallbackCount = 0;                             // draws the packet layout cannot take (a count: the fragment keeps no draw info)
     // S2: resident = all its matrices are region matrices (static geometry): the worker culls it on the GPU. mSlots: the region matrix slot of each of mMatrices; mBounds: sphere (centre in region space)
     bool mResident = false;
     bool mResidentSent = false;
@@ -10105,7 +10105,6 @@ struct LLSceneFragment
         LLPointer<LLViewerTexture> mTex;                // null: an opaque caster
         U32 mMatKind = 0;                               // the hint of rt_material_id
         U8 mStat = 0;                                   // 0 glTF opaque, 1 glTF mask, 2 glTF blend, 3 texture matrix (the statistics)
-        LLDrawInfo* mDraw = nullptr;                    // (only while the fragment is made: the raster fill reads what it decided for the draw)
         RtMatSource mMat;
     };
     std::vector<RtExtra> mRtExtra;
@@ -10134,13 +10133,13 @@ struct LLSceneFragment
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
-    struct GeoItem { LLVkBridge::GeoEntry mE; LLDrawInfo* mInfo; U32 mType; bool mServed; U32 mWire;       // mType 0-12 static, 13-25 the rigged variants (S4 B); mWire: its number in the worker's item list
+    struct GeoItem { LLVkBridge::GeoEntry mE; U32 mType; bool mServed; U32 mWire;       // mType 0-12 static, 13-25 the rigged variants (S4 B); mWire: its number in the worker's item list
         U32 mBoundEpoch; U32 mBoundId, mBoundJoints, mBoundLodIb, mBoundLodCount; };      // P2: the binding the worker holds for this rigged item (valid when mBoundEpoch is sRebindEpoch; 0 = none sent)
     std::vector<GeoItem> mGeo;
     std::vector<LLPointer<LLViewerTexture>> mGeoTex;
     struct BumpSource { LLPointer<LLViewerTexture> mTexture; U8 mCode; };
     std::vector<BumpSource> mBump;                      // J1 K4: the bump images of the served bump items: made current every frame the fragment is listed (LLDrawPoolBump::refreshBumpImage)
-    std::vector<std::pair<U32, LLDrawInfo*>> mGeoFallback;      // (type number, draw info) the packet layout cannot take
+    U32 mGeoFallbackCount = 0;                                  // the draws the packet layout cannot take (a count)
     bool mGeoRegion = true;                             // all its matrices are region matrices (the worker can hold it)
     U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
     bool mGeoSent = false;                              // the worker has it (RETAIN_GEO, kind 20)
@@ -10780,7 +10779,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeo.clear();
     f.mGeoTex.clear();
     f.mBump.clear();
-    f.mGeoFallback.clear();
+    f.mGeoFallbackCount = 0;
     f.mGeoRegion = true;
     f.mGeoServedCount = 0;
     f.mGeoServedMask = 0;
@@ -10852,7 +10851,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                         LL_INFOS("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
                     }
                 }
-                f.mGeoFallback.push_back({ (U32)t2, params });
+                ++f.mGeoFallbackCount;
                 params->mGeoServed = false;
                 continue;
             }
@@ -10901,7 +10900,6 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 texmat_served = tslot != 0;
                 if (texmat_served) { ++sGeoTexmatRows; }
             }
-            item.mInfo = params;
             item.mType = (U32)t2;
             item.mServed = (!params->mModelMatrix || item.mE.mMatrix != 0) && texmat_served;
             params->mGeoServed = item.mServed;
@@ -10963,7 +10961,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     sGeoFillNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t_fill).count();
     ++sGeoFillCalls;
     sGeoFillItems += f.mGeo.size();
-    sGeoFillFallback += f.mGeoFallback.size();
+    sGeoFillFallback += f.mGeoFallbackCount;
     sGeoFillNonRegion += f.mGeoRegion ? 0 : 1;
     if (sGeoFillCalls % 4000 == 0)
     {
@@ -11517,7 +11515,6 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                     f.mBuffers.push_back({ vb, vb->getVertexBufferId(), vb->getIndexBufferId() });
                 }
             }
-            item.mInfo = p;
             item.mType = kGeoAlphaItemType + (rigged ? 1 : 0);
             item.mServed = true;
         }
@@ -11539,19 +11536,16 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                 ps.mPbr.push_back(block);
             }
             ps.mItems.push_back(item);
-        }
-        (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
-    }
-    if (rigged)
-    {
-        for (const LLSceneFragment::GeoItem& gi : ps.mItems)
-        {
-            ps.mItemRig.push_back(ll_geo_rig_source(gi.mInfo));
-            if (rt_materials_on())
+            if (rigged)
             {
-                ps.mItemRig.back().mMat = rt_mat_source(gi.mInfo);        // the ray scene material of a blended rigged item (hair layer, an avatar's translucent shell): without it the draw has material 0 and the traced mirror shows it as a neutral grey opaque surface
+                ps.mItemRig.push_back(ll_geo_rig_source(p));
+                if (rt_materials_on())
+                {
+                    ps.mItemRig.back().mMat = rt_mat_source(p);        // the ray scene material of a blended rigged item (hair layer, an avatar's translucent shell): without it the draw has material 0
+                }
             }
         }
+        (served ? sAlphaPlanServed : sAlphaPlanOld) += 1;
     }
     ps.mItemWire.assign(ps.mItems.size(), 0);
     ps.mBound.assign(ps.mItems.size() * 5, 0);
@@ -11775,7 +11769,6 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
         x.mTex = tex;
         x.mMatKind = mat_kind;
         x.mStat = stat;
-        x.mDraw = params;
         if (rt_materials_on())
         {
             x.mMat = rt_mat_source(params);
@@ -11871,7 +11864,7 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mEntries.clear();
     f.mMatrices.clear();
     f.mMatrixIds.clear();
-    f.mFallback.clear();
+    f.mFallbackCount = 0;
     for (size_t t = 0; t < kShadowStaticTypeCount; ++t)
     {
         auto it = group->mDrawMap.find(kShadowStaticTypes[t]);
@@ -11905,7 +11898,7 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
             if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
                 || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0)
             {
-                f.mFallback.push_back(params);
+                ++f.mFallbackCount;
                 continue;
             }
             U32 matrix = 0, matrix_id = 0;
@@ -11969,8 +11962,8 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mResident = false;
     f.mSlots.clear();
     U8 non_res_why = 4;
-    if (!f.mFallback.empty()) { non_res_why = 1; }
-    if (scene_resident_on() && (!f.mEntries.empty() || !f.mAlpha.empty()) && f.mFallback.empty() && !group->isDead())
+    if (f.mFallbackCount) { non_res_why = 1; }
+    if (scene_resident_on() && (!f.mEntries.empty() || !f.mAlpha.empty()) && f.mFallbackCount == 0 && !group->isDead())
     {
         bool all_region = true;
         for (size_t k = 0; k < f.mMatrices.size() && all_region; ++k)
@@ -13378,7 +13371,7 @@ struct SceneGather
     std::vector<Ref> mRefs;
     std::vector<U32> mMap;                      // per fragment, the number in mMatrices of each of its own matrices
     std::vector<F32> mMatrices;                 // matrix 0 is the identity
-    std::vector<LLDrawInfo*> mFallback;
+    U32 mFallbackCount = 0;
     std::vector<const LLSceneFragment*> mFragments;
     size_t mEntries = 0;
 };
@@ -13401,8 +13394,8 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
         }
         ++sFragStats.mGroups;
         LLSceneFragment* f = scene_fragment_ensure(group);
-        g.mFallback.insert(g.mFallback.end(), f->mFallback.begin(), f->mFallback.end());
-        sFragStats.mFallback += f->mFallback.size();
+        g.mFallbackCount += f->mFallbackCount;
+        sFragStats.mFallback += f->mFallbackCount;
         if (f->mEntries.empty() || (f->mResident && scene_resident_on()))
         {
             continue;
@@ -14852,7 +14845,6 @@ struct LLPipeline::ShadowSkinBuild
     std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
     std::vector<F32> mMatrices;
     std::vector<F32> mPalettes;         // the record's own palettes (LL_VK_PALETTE_SHARED=0; empty when they are in the frame's shared list)
-    std::vector<LLDrawInfo*> mFallback;
     std::vector<GeoRange> mDraws;       // the range behind each entry: what the shadow LOD and LL_VK_SHADOWLOD_DRY read (J1 K3a: from a draw info or from a fragment item)
     size_t mPaletteCount = 0;
     bool mShared = false;               // S4 A2: the entries' palette offsets belong to the shared list of mPaletteFrame
@@ -19733,7 +19725,6 @@ struct LLPipeline::ShadowAlphaBuild
     std::vector<F32> mMatrices;
     std::vector<F32> mPalettes;
     std::vector<F32> mTexmats;                  // C5 J3: the texture matrices of the draws (16 floats each; an entry's mTexMatrix is 1 + its number)
-    std::vector<LLDrawInfo*> mFallback[KIND_MATERIAL + 1];
     std::vector<LLViewerTexture*> mTextures;
     U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
     bool mFinished = false;
@@ -19749,7 +19740,6 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
     std::vector<LLVkBridge::ShadowAlphaEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     std::vector<F32>& palettes = out.mPalettes;
-    std::vector<LLDrawInfo*>* fallback = out.mFallback;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
     std::unordered_map<const void*, U32> matrix_numbers;
@@ -26843,7 +26833,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 {
                     // the note-only record below carries the non-resident casters: their entries from the fragments, matrices numbered for this record
                     from_fragments.mMatrices = gather.mMatrices;
-                    from_fragments.mFallback = gather.mFallback;
+                    from_fragments.mFallbackCount = gather.mFallbackCount;
                     for (size_t r = 0; r < gather.mRefs.size(); ++r)
                     {
                         const LLSceneFragment* f = gather.mFragments[r];
@@ -26877,10 +26867,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                         gShadowDrawStats.mPacketEntries += gather.mEntries;
                         ++gShadowDrawStats.mPacketRecords;
                     }
-                    if (!gather.mFallback.empty())
+                    if (gather.mFallbackCount)
                     {
-                        gShadowDrawStats.mPacketFallback += gather.mFallback.size();
-                        shadow_caster_dropped("static", gather.mFallback.size());
+                        gShadowDrawStats.mPacketFallback += gather.mFallbackCount;
+                        shadow_caster_dropped("static", gather.mFallbackCount);
                     }
                     LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
                     gRenderLastMatrix = NULL;
@@ -26895,7 +26885,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         const std::vector<LLVkBridge::ShadowPacketEntry>& entries = source->mEntries;
         if (shadow_pass_index() < 4) { sCascadeStaticEntries[shadow_pass_index()].store((U32)entries.size(), std::memory_order_relaxed); }
         const std::vector<F32>& matrices = source->mMatrices;
-        const std::vector<LLDrawInfo*>& fallback = source->mFallback;
+        const U32 fallback = source->mFallbackCount;
         if (rt_skip)
         {
             // ray tracing only: the same casters as a note-only record (opaque entries of the alpha entry layout), no draws, no old path fallback
@@ -26946,10 +26936,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gShadowDrawStats.mPacketEntries += entries.size();
             ++gShadowDrawStats.mPacketRecords;
         }
-        if (!fallback.empty())
+        if (fallback)
         {
-            gShadowDrawStats.mPacketFallback += fallback.size();
-            shadow_caster_dropped("static", fallback.size());
+            gShadowDrawStats.mPacketFallback += fallback;
+            shadow_caster_dropped("static", fallback);
         }
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         gRenderLastMatrix = NULL;
@@ -27005,7 +26995,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         const std::vector<LLVkBridge::ShadowSkinEntry>& entries = lod_entries.empty() ? source->mEntries : lod_entries;
         const std::vector<F32>& matrices = source->mMatrices;
         const std::vector<F32>& palettes = source->mPalettes;
-        const std::vector<LLDrawInfo*>& fallback = source->mFallback;
         const size_t palette_count = source->mPaletteCount;
         if (!entries.empty())
         {
@@ -27060,11 +27049,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gShadowDrawStats.mSkinEntries += entries.size();
             gShadowDrawStats.mSkinPalettes += palette_count;
             ++gShadowDrawStats.mSkinRecords;
-        }
-        if (!fallback.empty() && !rt_skip)
-        {
-            gShadowDrawStats.mSkinFallback += fallback.size();
-            shadow_caster_dropped("rigged", fallback.size());
         }
         LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
         gRenderLastMatrix = NULL;
@@ -27414,7 +27398,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         std::vector<LLVkBridge::ShadowAlphaEntry>& entries = build_owned->mEntries;
         std::vector<F32>& matrices = build_owned->mMatrices;
         std::vector<F32>& palettes = build_owned->mPalettes;
-        std::vector<LLDrawInfo*>* fallback = build_owned->mFallback;
         if (!entries.empty())
         {
             if (!rt_skip)
@@ -27542,13 +27525,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
         }
 
-        // what the record cannot carry is not drawn (see shadow_caster_dropped)
-        if (!rt_skip)
-        {
-            const size_t dropped = fallback[KIND_MASK].size() + fallback[KIND_FULLBRIGHT].size() + fallback[KIND_GRASS].size() + fallback[KIND_MATERIAL].size();
-            gShadowDrawStats.mAlphaFallback += dropped;
-            shadow_caster_dropped("alpha", dropped);
-        }
     };
 
     if (rt_skip)
