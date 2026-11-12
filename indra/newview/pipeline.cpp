@@ -10700,6 +10700,11 @@ struct LLSceneFragment
     U8 mWalkAlphaBits = 0;                              // 1 = the draw map has a PASS_ALPHA entry, 2 = PASS_ALPHA_RIGGED
     std::vector<std::array<U32, 3>> mWalkAlphaTypes;    // per alpha source pass type: { type, non rigged draws whose entry is in the fragment, those with a texture matrix the fragment holds }
     std::vector<U32> mWalkUnnamed;                      // the pass types of the draws no fragment mechanism names (the old walk pushes them)
+    // step 3d+ (the walk of the raster passes of the ray tracing modes, 2026-11-12): the same answers for a pass that draws the raster form: a draw the raster form carries (mRasterFrag) is named, one that only the ray scene's form
+    // carries (mAlphaFragTex) is not. Valid when the raster form was filled (mWalkRasterValid).
+    bool mWalkRasterValid = false;
+    std::vector<U32> mWalkUnnamedRaster;
+    std::vector<std::array<U32, 3>> mWalkAlphaTypesRaster;
     size_t mAlphaCullIndex = 0;
     // S3 (LL_VK_SCENE_GEO=1, doc/vulkan/S3-design.md): the entries LLRenderPass::geometryEntry makes for the group's draw infos of the 13 deferred geometry pass types (kGeoTypes). mE.mMatrix = the
     // region matrix slot (0 = none), its texture fields are 1-based numbers into mGeoTex.
@@ -12191,6 +12196,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
 // J1 K6 S5b: the answer of the cascades' render map job walk, made once when the fragment is made: for each draw info of the group that is not a static caster (those are left out under skip_static), is it NAMED by a
 // fragment mechanism (a served rigged item, a rigged alpha source, an alpha entry or a texture matrix entry in the fragment) or would the walk push it? The draw map keeps the same infos until the fragment is made again.
 static bool alpha_source_type(U32 type);
+static int rt_extra_frag_mode();
 static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mWalkValid = true;
@@ -12198,6 +12204,9 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
     f.mWalkAlphaBits = 0;
     f.mWalkAlphaTypes.clear();
     f.mWalkUnnamed.clear();
+    f.mWalkUnnamedRaster.clear();
+    f.mWalkAlphaTypesRaster.clear();
+    f.mWalkRasterValid = serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && scene_alpha_on() && rt_extra_frag_mode() != 0;       // (the conditions under which scene_fragment_fill_raster ran)
     for (const auto& kv : group->mDrawMap)
     {
         const U32 type = kv.first;
@@ -12209,28 +12218,45 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
             continue;
         }
         const bool alpha_src = alpha_source_type(type);
-        U32 in_frag = 0, frag_tex = 0;
-        bool unnamed = false;
+        U32 in_frag = 0, frag_tex = 0, in_frag_r = 0, frag_raster = 0;
+        bool unnamed = false, unnamed_r = false;
         for (const LLDrawInfo* info : kv.second)
         {
             if (info->mAvatar.notNull())
             {
-                unnamed = unnamed || !(info->mGeoServed && (cls == 1 || info->mRigAlphaSrc));
+                const bool avatar_unnamed = !(info->mGeoServed && (cls == 1 || info->mRigAlphaSrc));
+                unnamed = unnamed || avatar_unnamed;
+                unnamed_r = unnamed_r || avatar_unnamed;
             }
             else if (alpha_src)
             {
-                if (info->mAlphaInFragment) { ++in_frag; }
-                else if (info->mAlphaFragTex) { ++frag_tex; }
-                else { unnamed = true; }
+                if (info->mAlphaInFragment) { ++in_frag; ++in_frag_r; }
+                else
+                {
+                    if (info->mAlphaFragTex) { ++frag_tex; } else { unnamed = true; }
+                    if (info->mRasterFrag) { ++frag_raster; } else { unnamed_r = true; }       // (a draw only the ray scene's form carries stays in the lists of a raster pass)
+                }
             }
             else
             {
                 unnamed = true;
+                unnamed_r = true;
             }
         }
         if (in_frag || frag_tex)
         {
             f.mWalkAlphaTypes.push_back({ type, in_frag, frag_tex });
+        }
+        if (f.mWalkRasterValid)
+        {
+            if (in_frag_r || frag_raster)
+            {
+                f.mWalkAlphaTypesRaster.push_back({ type, in_frag_r, frag_raster });
+            }
+            if (unnamed_r)
+            {
+                f.mWalkUnnamedRaster.push_back(type);
+            }
         }
         if (unnamed)
         {
@@ -16245,7 +16271,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     U64 n_alpha_skipped = 0;
     // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
     // casters left out, rigged and alpha casters named by the fragments); (LL_VK_SHADOW_WALK and LL_VK_SHADOW_WALK_VERIFY are gone)
-    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0 && !raster_rt;       // (1 raster, 2 the sun cascades of the ray-only modes)
+    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0;       // (1 raster, 2 the sun cascades of the ray-only modes; the raster passes of the ray tracing modes (step 3d) take the fast way by the summary of their own form)
     U64 n_plan_skipped = 0;
     U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
     {
@@ -16277,10 +16303,10 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         ++n_groups;
         const LLSceneFragment* walk_frag = group->mSceneFragment;
         bool walk_ok = walk_modes_ok;
-        walk_ok = walk_ok && walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid;
+        walk_ok = walk_ok && walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid);
         if (walk_ok)
         {
-            for (U32 t : walk_frag->mWalkUnnamed)
+            for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed))
             {
                 if (hasRenderType(t)) { walk_ok = false; break; }
             }
@@ -16291,11 +16317,11 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             static std::atomic<U64> why[4], by_type[128], groups{ 0 };
             U32 reason = 0;
             if (!walk_modes_ok) { reason = 1; }
-            else if (!(walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid)) { reason = 2; }
+            else if (!(walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid))) { reason = 2; }
             else if (!walk_ok)
             {
                 reason = 3;
-                for (U32 t : walk_frag->mWalkUnnamed) { if (hasRenderType(t)) { by_type[std::min<U32>(t, 127u)].fetch_add(1, std::memory_order_relaxed); } }
+                for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed)) { if (hasRenderType(t)) { by_type[std::min<U32>(t, 127u)].fetch_add(1, std::memory_order_relaxed); } }
             }
             why[reason].fetch_add(1, std::memory_order_relaxed);
             if (groups.fetch_add(1, std::memory_order_relaxed) % 20000 == 19999)
@@ -16308,7 +16334,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         bool expect_frag = false;
         if (walk_ok)
         {
-            for (const auto& at : walk_frag->mWalkAlphaTypes)
+            for (const auto& at : (raster_rt ? walk_frag->mWalkAlphaTypesRaster : walk_frag->mWalkAlphaTypes))
             {
                 if (hasRenderType(at[0]) && ((at[1] && !(skip_alpha == 2 ? walk_frag->mAlphaSent : walk_frag->mAlphaResSent)) || at[2])) { expect_frag = true; }
             }
