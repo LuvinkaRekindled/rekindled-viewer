@@ -218,13 +218,13 @@ U32 LLSpatialGroup::sGuardFragmentOnly = 0;
 void LLSpatialGroup::clearDrawMap()
 {
     gPipeline.releaseForget(this);       // <FS> expiry: a group without geometry is not in the age queue (a rebuild queues it again)
-    ++mDrawMapSerial;
+    ++mGeometrySerial;
     // <FS> the draw infos go. The draw map is emptied when the group's fragment is built (stage 2, 2026-11-12), so a group with a fragment and an empty map is the normal case: the async builders read the
     // group's FRAGMENT (its items, its rig sources: pointers into its vectors, valid until it is made again) and the early sort's result names it, so the guard (it waits for the builders in flight and bumps
     // the epoch of the early sort) fires when there is a map or a fragment to change
-    if (!mDrawMap.empty() || mSceneFragment)
+    if (!mPendingDraws.empty() || mSceneFragment)
     {
-        if (mDrawMap.empty())
+        if (mPendingDraws.empty())
         {
             ++sGuardFragmentOnly;
         }
@@ -234,7 +234,7 @@ void LLSpatialGroup::clearDrawMap()
         }
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
-    mDrawMap.clear();
+    mPendingDraws.clear();
     mParticleRuns.clear();
     mGeoHandle = 0;
     mGeoServedMask = 0;
@@ -5271,7 +5271,7 @@ LLDrawable* LLSpatialGroup::lineSegmentIntersect(const LLVector4a& start, const 
     return drawable;
 }
 
-LLDrawInfo::LLDrawInfo(U16 start, U16 end, U32 count, U32 offset,
+LLDrawBatch::LLDrawBatch(U16 start, U16 end, U32 count, U32 offset,
                        LLViewerTexture* texture, LLVertexBuffer* buffer,
                        bool fullbright, U8 bump)
 :   mVertexBuffer(buffer),
@@ -5291,16 +5291,16 @@ LLDrawInfo::LLDrawInfo(U16 start, U16 end, U32 count, U32 offset,
     mVertexBuffer->validateRange(mStart, mEnd, mCount, mOffset);
 }
 
-LLDrawInfo::~LLDrawInfo()
+LLDrawBatch::~LLDrawBatch()
 {
 }
 
-LLColor4U LLDrawInfo::getDebugColor() const
+LLColor4U LLDrawBatch::getDebugColor() const
 {
     LLColor4U color;
 
     LLCRC hash;
-    hash.update((U8*)this + sizeof(S32), sizeof(LLDrawInfo) - sizeof(S32));
+    hash.update((U8*)this + sizeof(S32), sizeof(LLDrawBatch) - sizeof(S32));
 
     *((U32*) color.mV) = hash.getCRC();
 
@@ -5309,7 +5309,7 @@ LLColor4U LLDrawInfo::getDebugColor() const
     return color;
 }
 
-U64 LLDrawInfo::getSkinHash()
+U64 LLDrawBatch::getSkinHash()
 {
     return mSkinInfo ? mSkinInfo->mHash : 0;
 }

@@ -127,20 +127,20 @@ bool ll_group_has_alpha_key(const LLSpatialGroup* group);                       
 bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
 
-class LLDrawInfo final : public LLRefCount
+class LLDrawBatch final : public LLRefCount
 {
     LL_ALIGN_NEW;
 protected:
-    ~LLDrawInfo();
+    ~LLDrawBatch();
 
 public:
-    LLDrawInfo(const LLDrawInfo& rhs) = delete;
-    const LLDrawInfo& operator=(const LLDrawInfo& rhs) = delete;
+    LLDrawBatch(const LLDrawBatch& rhs) = delete;
+    const LLDrawBatch& operator=(const LLDrawBatch& rhs) = delete;
 
-    // return a hash of this LLDrawInfo as a debug color
+    // return a hash of this LLDrawBatch as a debug color
     LLColor4U getDebugColor() const;
 
-    LLDrawInfo(U16 start, U16 end, U32 count, U32 offset,
+    LLDrawBatch(U16 start, U16 end, U32 count, U32 offset,
                 LLViewerTexture* image, LLVertexBuffer* buffer,
                 bool fullbright = false, U8 bump = 0);
 
@@ -210,7 +210,7 @@ struct GeoRange
     U32 mStart = 0;         // first vertex
     U32 mEnd = 0;           // last vertex
 };
-inline GeoRange ll_geo_range(const LLDrawInfo* p)
+inline GeoRange ll_geo_range(const LLDrawBatch* p)
 {
     GeoRange r;
     if (p && p->mVertexBuffer.notNull())
@@ -277,7 +277,7 @@ struct GeoRigSource
         return r;
     }
 };
-inline GeoRigSource ll_geo_rig_source(const LLDrawInfo* p)
+inline GeoRigSource ll_geo_rig_source(const LLDrawBatch* p)
 {
     GeoRigSource s;
     if (p)
@@ -341,7 +341,7 @@ public:
 
     typedef std::vector<LLPointer<LLSpatialGroup> > sg_vector_t;
     typedef std::vector<LLPointer<LLSpatialBridge> > bridge_list_t;
-    typedef std::vector<LLPointer<LLDrawInfo> > drawmap_elem_t;
+    typedef std::vector<LLPointer<LLDrawBatch> > drawmap_elem_t;
     typedef std::unordered_map<U32, drawmap_elem_t > draw_map_t;
     typedef std::vector<LLPointer<LLVertexBuffer> > buffer_list_t;
     typedef std::unordered_map<LLFace*, buffer_list_t> buffer_texture_map_t;
@@ -463,16 +463,16 @@ protected:
 
 public:
     LLPointer<LLVertexBuffer> mVertexBuffer;
-    draw_map_t mDrawMap;
-    std::vector<LLParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mDrawMap[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
+    draw_map_t mPendingDraws;
+    std::vector<LLParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mPendingDraws[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
     // <FS> S1 phase 0 (doc/vulkan/PLAN-retained-records.md): bumped whenever the draw infos are cleared (every creation of draw infos follows a clear), so the same serial on two frames
     // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
-    U32 mDrawMapSerial = 1;
+    U32 mGeometrySerial = 1;
     S32 mReleaseDeadline = 0;                  // <FS> expiry (cold mode 3): the frame at which the group's geometry is looked at for release (0 = not queued: LLPipeline::scheduleRelease / releaseForget, pipeline.cpp)
-    U32 mChurnFrame = 0, mChurnSerial = 0;     // <FS> census only (LL_VK_VISCENSUS): the frame this group was last in the main view's render map loop and its mDrawMapSerial then
+    U32 mChurnFrame = 0, mChurnSerial = 0;     // <FS> census only (LL_VK_VISCENSUS): the frame this group was last in the main view's render map loop and its mGeometrySerial then
     U32 mSceneSeenSerial = 0;
     U32 mSceneSeenFrame = 0;
-    // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mDrawMapSerial; freed with the group
+    // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mGeometrySerial; freed with the group
     struct LLSceneFragment* mSceneFragment = nullptr;
     U64 mGeoServedMask = 0;             // <FS> S3 G4 (S4 B: the bits after the static types are the rigged variants): the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
     U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)

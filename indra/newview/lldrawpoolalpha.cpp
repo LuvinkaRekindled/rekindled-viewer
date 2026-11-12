@@ -573,7 +573,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
 }
 
 // <FS> K6 B1: the Batch Size and Texture Animation debug views from the scene table (they walked every group's draw infos and drew each with pushVerts). The visible fragments' items of every table type are
-// drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour LLDrawInfo::getDebugColor made for it when its entry was built (carried in the
+// drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour LLDrawBatch::getDebugColor made for it when its entry was built (carried in the
 // table row), Texture Animation tints the draws that have a texture matrix yellow. The blended alpha draws come from the alpha plans' ranges as in the highlight; the rigged ones use the skinned twin.
 void ll_render_table_debug()
 {

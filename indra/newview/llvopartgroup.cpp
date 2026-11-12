@@ -1286,7 +1286,7 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
     // the rows the sort pass wrote, class after class (the classes' live counts give the ranges), are drawn as rows of stage 1
     LLVertexBuffer* rows = parts->mRows.get();
     group->mVertexBuffer = rows;
-    group->mDrawMap[render_pass];       // (C5 J2: the draw map keeps its entry, empty: the alpha group lists find the group by it; the draws are the group's particle runs)
+    group->mPendingDraws[render_pass];       // (C5 J2: the draw map keeps its entry, empty: the alpha group lists find the group by it; the draws are the group's particle runs)
     group->mParticleRuns.clear();
     U32 first = 0;
     for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
@@ -1442,7 +1442,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         *glowp++ = glow;
     };
 
-    group->mDrawMap[mRenderPass];       // (C5 J2: kept, empty: the alpha group lists find the group by it)
+    group->mPendingDraws[mRenderPass];       // (C5 J2: kept, empty: the alpha group lists find the group by it)
     std::vector<LLParticleRun>& runs = group->mParticleRuns;
     runs.clear();
     LLParticleRun* info = nullptr;
@@ -1598,7 +1598,7 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
     S32 geom_idx = 0;
     S32 indices_idx = 0;
 
-    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mDrawMap[mRenderPass];
+    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mPendingDraws[mRenderPass];
 
     for (std::vector<LLFace*>::iterator i = mFaceList.begin(); i != mFaceList.end(); ++i)
     {
@@ -1651,7 +1651,7 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
 
         if (idx >= 0)
         {
-            LLDrawInfo* info = draw_vec[idx];
+            LLDrawBatch* info = draw_vec[idx];
 
             if (info->mTexture == facep->getTexture() &&
                 info->mHasGlow == has_glow &&
@@ -1681,7 +1681,7 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
             U32 end = start + facep->getGeomCount()-1;
             U32 offset = facep->getIndicesStart();
             U32 count = facep->getIndicesCount();
-            LLDrawInfo* info = new LLDrawInfo(start,end,count,offset,facep->getTexture(),
+            LLDrawBatch* info = new LLDrawBatch(start,end,count,offset,facep->getTexture(),
                 buffer, fullbright);
 
             info->mBlendFuncDst = bf_dst;

@@ -35,7 +35,7 @@
 #include "lldrawpool.h"
 
 class LLViewerTexture;
-class LLDrawInfo;
+class LLDrawBatch;
 class LLShaderProgram;
 
 class LLDrawPoolWaterExclusion : public LLRenderPass

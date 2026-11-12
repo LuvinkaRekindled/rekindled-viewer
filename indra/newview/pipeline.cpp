@@ -8124,11 +8124,11 @@ void LLPipeline::postSort(LLCamera &camera)
                     {
                         ++LLVisCensus::sChurnKept;
                         ++LLVisCensus::sChurnCurKept;
-                        LLVisCensus::sChurnSerial += group->mChurnSerial != group->mDrawMapSerial;
+                        LLVisCensus::sChurnSerial += group->mChurnSerial != group->mGeometrySerial;
                     }
                     LLVisCensus::sChurnNewInfo += group->hasState(LLSpatialGroup::NEW_DRAWINFO);
                     group->mChurnFrame = fc;
-                    group->mChurnSerial = group->mDrawMapSerial;
+                    group->mChurnSerial = group->mGeometrySerial;
                 }
             }
         }
@@ -9519,7 +9519,7 @@ struct RtMatView
     F32 mEnv = 0.f;
     std::atomic<U64>* mCache = nullptr;
 };
-static RtMatView rt_mat_view(LLDrawInfo* p)
+static RtMatView rt_mat_view(LLDrawBatch* p)
 {
     RtMatView v;
     v.mGltf = p->mGLTFMaterial.get();
@@ -9565,7 +9565,7 @@ static RtMatView rt_mat_view(const RtMatSource& m)
     v.mCache = &m.mCache.mValue;
     return v;
 }
-static RtMatSource rt_mat_source(const LLDrawInfo* p)
+static RtMatSource rt_mat_source(const LLDrawBatch* p)
 {
     RtMatSource m;
     m.mGltf = p->mGLTFMaterial;
@@ -9629,7 +9629,7 @@ static bool rt_source_textures_ready(const GeoRigSource& r, bool batch_textures)
 }
 
 // hint: 1 = the draw is alpha masked, 2 = alpha blended, 4 = the mask test ignores the vertex alpha (materials passes). Returns 0 when materials are off or the registry is full.
-static U32 rt_material_id(LLDrawInfo* p, U32 hint)
+static U32 rt_material_id(LLDrawBatch* p, U32 hint)
 {
     if (!rt_materials_on() || !p)
     {
@@ -9740,7 +9740,7 @@ static U32 rt_material_id(const RtMatView& v, U32 hint, bool pin)
 
 // J1 K5b: the row of a draw's material for an entry a fragment RETAINS (the worker keeps it and names it to the ray scene every frame, the viewer does not look at it again): pinned, so the registry does not release
 // the row and give its id to another material while the entry lives. The fragment gives the pins back (rt_material_unpin) when it is made again or freed.
-static U32 rt_material_pin(LLDrawInfo* p, U32 hint)
+static U32 rt_material_pin(LLDrawBatch* p, U32 hint)
 {
     if (!rt_materials_on() || !p)
     {
@@ -10022,14 +10022,14 @@ struct LLPipeline::ShadowStaticBuild
 
 // ---- <FS> S1 (doc/vulkan/S1-handoff.md): retained fragments of the untextured static shadow casters (kind 0), one per spatial group ----
 // A fragment is what build_shadow_static would make of the group's draw infos of the 13 static types, made once and kept in the group (mSceneFragment) while the group's draw info set is
-// the same (LLSpatialGroup::mDrawMapSerial) and its vertex buffers still have the ids it saw. The worker keeps a copy under the fragment's id (RETAIN, kind 11); a pass names fragments
+// the same (LLSpatialGroup::mGeometrySerial) and its vertex buffers still have the ids it saw. The worker keeps a copy under the fragment's id (RETAIN, kind 11); a pass names fragments
 // (kind 13) instead of carrying their entries. LL_VK_SCENE_FRAGMENTS=1 uses them for the sun cascades, LL_VK_SCENE_VERIFY=1 compares every fragment it meets with a rebuild from the
 // live draw maps, and the entries of each cascade with the ones the builder made. Main thread only.
 struct LLSceneFragment
 {
     U32 mId = 0;
     U32 mSerial = 0;
-    LLSpatialGroup* mGroup = nullptr;                   // <FS> the group it was made for (the group frees its fragment before it goes): its mDrawMapSerial against mSerial says whether the draw infos the items point at still exist
+    LLSpatialGroup* mGroup = nullptr;                   // <FS> the group it was made for (the group frees its fragment before it goes): its mGeometrySerial against mSerial says whether the draw infos the items point at still exist
     bool mSent = false;                                 // the worker has it (RETAIN sent)
     struct BufferRef { const LLVertexBuffer* mBuffer; U32 mVertex, mIndex; };
     std::vector<BufferRef> mBuffers;                    // the buffers its entries name, with the ids they had
@@ -10436,9 +10436,9 @@ static bool shadow_riggltf_type(U32 rigged_type)
     return type == LLRenderPass::PASS_GLTF_PBR || type == LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK;
 }
 static bool shadow_gltf_env();
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat, bool allow_windows);
-static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged);
-static int shadow_riggltf_kind(const LLDrawInfo& p);
+static bool shadow_alpha_packet_ok(const LLDrawBatch& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat, bool allow_windows);
+static int shadow_alpha_fallback_reason(const LLDrawBatch& p, bool batch_textures, bool rigged);
+static int shadow_riggltf_kind(const LLDrawBatch& p);
 static const U32 kGeoAlphaItemType = 2 * (U32)kGeoTypeCount;            // the item types of the alpha items (S5a static, S5d rigged: the next number)
 
 static int geo_type_number(U32 type)
@@ -10505,7 +10505,7 @@ static bool geo_type_available(size_t t, bool rigged)
 
 // S6 X4: the entry of a glTF draw of the opaque, mask or glow pass: the arrays, the four textures and the PBR values the pbr pull programs read (the same rows as the glTF blend items, see alpha_classify). False: the old
 // path draws it (a double sided material changes the culling per draw, a texture matrix is not carried by these records, the glow pass needs the emissive array).
-static bool scene_gltf_g_entry(const LLDrawInfo& p, bool rigged, const GeoType& type, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], F32 values[40])
+static bool scene_gltf_g_entry(const LLDrawBatch& p, bool rigged, const GeoType& type, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], F32 values[40])
 {
     for (int k = 0; k < 6; ++k)
     {
@@ -10664,14 +10664,14 @@ static std::shared_ptr<GeoBindJob> sBindJob;
 static U64 sFragStaleSkips = 0;
 static bool scene_fragment_behind(const LLSceneFragment* f)
 {
-    if (!f->mGroup || f->mSerial == f->mGroup->mDrawMapSerial)
+    if (!f->mGroup || f->mSerial == f->mGroup->mGeometrySerial)
     {
         return false;
     }
     ++sFragStaleSkips;
     if (sFragStaleSkips <= 20 || sFragStaleSkips % 500 == 0)
     {
-        LL_WARNS("FragStale") << "fragment " << f->mId << " is behind its group: fragment serial " << f->mSerial << ", group draw map serial " << f->mGroup->mDrawMapSerial << ", " << f->mGeo.size() << " items ("
+        LL_WARNS("FragStale") << "fragment " << f->mId << " is behind its group: fragment serial " << f->mSerial << ", group draw map serial " << f->mGroup->mGeometrySerial << ", " << f->mGeo.size() << " items ("
                               << f->mGeoRigged.size() << " rigged), resident " << f->mResident << ", group dead " << f->mGroup->isDead() << "; its rigged items are skipped (" << sFragStaleSkips << " so far)" << LL_ENDL;
     }
     return true;
@@ -10752,8 +10752,8 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     {
         const bool rigged = t2 >= kGeoTypeCount;
         const size_t t = t2 % kGeoTypeCount;
-        auto it = group->mDrawMap.find(kGeoTypes[t].mType + (rigged ? 1 : 0));        // the rigged variant of a pass type is the next number
-        if (it == group->mDrawMap.end() || !geo_type_available(t, rigged))
+        auto it = group->mPendingDraws.find(kGeoTypes[t].mType + (rigged ? 1 : 0));        // the rigged variant of a pass type is the next number
+        if (it == group->mPendingDraws.end() || !geo_type_available(t, rigged))
         {
             continue;
         }
@@ -10764,7 +10764,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
         // <FS> P3 (rigged draws as rows): the rigged variants take a texture matrix slot too: the skin pull programs apply the row's pad.x the same way
         // (the census of 2026-11-07 showed 16 rigged G-buffer draws a frame in per frame records for this reason alone)
         const bool texmat_ok = !kGeoTypes[t].mPbr && scene_geo_moving_on();
-        for (LLDrawInfo* params : it->second)
+        for (LLDrawBatch* params : it->second)
         {
             if (!params->mCount)
             {
@@ -11011,7 +11011,7 @@ struct AlphaClass
     LLViewerTexture* mTextures[6] = {};
 };
 
-static void alpha_classify(LLDrawInfo* p, bool rigged, bool table, bool whole_old, AlphaClass& ac)
+static void alpha_classify(LLDrawBatch* p, bool rigged, bool table, bool whole_old, AlphaClass& ac)
 {
     const LLVertexBuffer* vb = p->mVertexBuffer.get();
     // S5b: a draw with a material (blend variant of its shader mask: 1, 5, 9, 13, the program gDeferredMaterialProgram[mask] of the old loop) is served by the materials pull program of the same mask
@@ -11165,7 +11165,7 @@ bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* vb, b
         e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);
     }
     e.mFlags |= LLVkBridge::GEO_ONE_TEXTURE | LLVkBridge::GEO_NO_INDEX | LLVkBridge::GEO_PARTICLE_ROWS;
-    e.mCutoff = 0.5f;           // (LLDrawInfo's default)
+    e.mCutoff = 0.5f;           // (LLDrawBatch's default)
     out.mPbr = false;
     out.mUseTexMatrix = false;
     for (int k = 0; k < 6; ++k)
@@ -11190,7 +11190,7 @@ bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* vb, b
 int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
     {
         return -1;
     }
@@ -11212,7 +11212,7 @@ bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group)
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    if (!f || !f->mWalkValid || f->mSerial != group->mDrawMapSerial || !f->mHasDraw)
+    if (!f || !f->mWalkValid || f->mSerial != group->mGeometrySerial || !f->mHasDraw)
     {
         return false;
     }
@@ -11229,7 +11229,7 @@ bool ll_group_has_static_alpha(const LLSpatialGroup* group)
 bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index, LLAlphaTransientDraw& draw)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
     {
         return false;
     }
@@ -11258,7 +11258,7 @@ bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index
 bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, LLAlphaTransient& out, LLAlphaTransientDraw& draw)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
     {
         return false;
     }
@@ -11314,8 +11314,8 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     ps.mTransAvatar.clear();
     ps.mTransSkin.clear();
     const auto t0 = std::chrono::steady_clock::now();
-    auto it = group->mDrawMap.find(rigged ? LLRenderPass::PASS_ALPHA_RIGGED : LLRenderPass::PASS_ALPHA);
-    if (it == group->mDrawMap.end())
+    auto it = group->mPendingDraws.find(rigged ? LLRenderPass::PASS_ALPHA_RIGGED : LLRenderPass::PASS_ALPHA);
+    if (it == group->mPendingDraws.end())
     {
         return;
     }
@@ -11323,7 +11323,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     const U32 ptype = partition ? partition->mPartitionType : 0;
     const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE;       // (J1 K6 S1: the HUD's alpha draws have plans too: the HUD alpha pass draws them from the fragments)
     const bool table = scene_geo_mode() >= 2 && !whole_old && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed() && (scene_alpha_only() & 64)));
-    for (LLDrawInfo* p : it->second)
+    for (LLDrawBatch* p : it->second)
     {
         if ((p->mAvatar != nullptr) != rigged)
         {
@@ -11563,7 +11563,7 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
     {
         return 0;
     }
-    if (f->mSerial != group->mDrawMapSerial)
+    if (f->mSerial != group->mGeometrySerial)
     {
         return 2;
     }
@@ -11600,13 +11600,13 @@ static bool alpha_source_type(U32 type);
 static U32 ll_group_draw_tris(const LLSpatialGroup* group)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    return (f && f->mWalkValid && f->mSerial == group->mDrawMapSerial) ? f->mDrawTris : 0u;
+    return (f && f->mWalkValid && f->mSerial == group->mGeometrySerial) ? f->mDrawTris : 0u;
 }
 
 static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris)
 {
     const LLSceneFragment* f = group->mSceneFragment;
-    if (f && f->mWalkValid && f->mSerial == group->mDrawMapSerial)
+    if (f && f->mWalkValid && f->mSerial == group->mGeometrySerial)
     {
         draws = f->mDrawCount;
         tris = f->mDrawTris;
@@ -11616,14 +11616,14 @@ static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& t
 static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mWalkValid = true;
-    f.mWalkNonEmpty = !group->mDrawMap.empty();
+    f.mWalkNonEmpty = !group->mPendingDraws.empty();
     f.mDrawTris = 0;
     f.mDrawCount = 0;
-    f.mHasDraw = !group->mDrawMap.empty() && !group->mDrawMap.begin()->second.empty();
-    f.mFirstModel = f.mHasDraw ? (*group->mDrawMap.begin()->second.begin())->mModelMatrix : nullptr;
-    for (const auto& kv : group->mDrawMap)
+    f.mHasDraw = !group->mPendingDraws.empty() && !group->mPendingDraws.begin()->second.empty();
+    f.mFirstModel = f.mHasDraw ? (*group->mPendingDraws.begin()->second.begin())->mModelMatrix : nullptr;
+    for (const auto& kv : group->mPendingDraws)
     {
-        for (const LLDrawInfo* info : kv.second)
+        for (const LLDrawBatch* info : kv.second)
         {
             f.mDrawTris += info->mCount / 3;
             ++f.mDrawCount;
@@ -11635,7 +11635,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
     f.mWalkUnnamedRaster.clear();
     f.mWalkAlphaTypesRaster.clear();
     f.mWalkRasterValid = serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && scene_alpha_on();       // (the conditions under which scene_fragment_fill_raster ran)
-    for (const auto& kv : group->mDrawMap)
+    for (const auto& kv : group->mPendingDraws)
     {
         const U32 type = kv.first;
         if (type == LLRenderPass::PASS_ALPHA) { f.mWalkAlphaBits |= 1; }
@@ -11648,7 +11648,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
         const bool alpha_src = alpha_source_type(type);
         U32 in_frag = 0, frag_tex = 0, in_frag_r = 0, frag_raster = 0;
         bool unnamed = false, unnamed_r = false;
-        for (const LLDrawInfo* info : kv.second)
+        for (const LLDrawBatch* info : kv.second)
         {
             if (info->mAvatar.notNull())
             {
@@ -11705,7 +11705,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
 // lists, the group is named for the fragment's items instead)
 static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& f)
 {
-    auto make = [&](LLDrawInfo* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr, U32 mat_kind, U8 stat)
+    auto make = [&](LLDrawBatch* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr, U32 mat_kind, U8 stat)
     {
         if (!params->mCount || params->mAvatar || !params->mVertexBuffer.get())
         {
@@ -11737,12 +11737,12 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
     // glTF opaque and alpha mask passes
     for (U32 type : { (U32)LLRenderPass::PASS_GLTF_PBR, (U32)LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK })
     {
-        auto found = group->mDrawMap.find(type);
-        if (found == group->mDrawMap.end())
+        auto found = group->mPendingDraws.find(type);
+        if (found == group->mPendingDraws.end())
         {
             continue;
         }
-        for (LLDrawInfo* params : found->second)
+        for (LLDrawBatch* params : found->second)
         {
             params->mAlphaFragTex = false;
             LLFetchedGLTFMaterial* mat = params->mGLTFMaterial.get();
@@ -11763,10 +11763,10 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
     }
     // glTF alpha blend draws live in the alpha pass
     {
-        auto found = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
-        if (found != group->mDrawMap.end())
+        auto found = group->mPendingDraws.find(LLRenderPass::PASS_ALPHA);
+        if (found != group->mPendingDraws.end())
         {
-            for (LLDrawInfo* params : found->second)
+            for (LLDrawBatch* params : found->second)
             {
                 LLFetchedGLTFMaterial* mat = params->mGLTFMaterial.get();
                 if (!mat)
@@ -11792,12 +11792,12 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
     };
     for (const LegacySource& source : legacy)
     {
-        auto found = group->mDrawMap.find(source.type);
-        if (found == group->mDrawMap.end())
+        auto found = group->mPendingDraws.find(source.type);
+        if (found == group->mPendingDraws.end())
         {
             continue;
         }
-        for (LLDrawInfo* params : found->second)
+        for (LLDrawBatch* params : found->second)
         {
             if (params->mAvatar || params->mGLTFMaterial || !params->mCount || params->mTexture.isNull() || !params->mTextureMatrix || shadow_alpha_packet_ok(*params, source.blend, false, false, false, false))
             {
@@ -11825,12 +11825,12 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mFallbackCount = 0;
     for (size_t t = 0; t < kShadowStaticTypeCount; ++t)
     {
-        auto it = group->mDrawMap.find(kShadowStaticTypes[t]);
-        if (it == group->mDrawMap.end())
+        auto it = group->mPendingDraws.find(kShadowStaticTypes[t]);
+        if (it == group->mPendingDraws.end())
         {
             continue;
         }
-        for (LLDrawInfo* params : it->second)
+        for (LLDrawBatch* params : it->second)
         {
             if (!params->mCount)
             {
@@ -12136,7 +12136,7 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
         // the draw map itself)
         bool all = true;
         U8 alpha_bits = 0;
-        for (const auto& kv : group->mDrawMap)
+        for (const auto& kv : group->mPendingDraws)
         {
             if (kv.second.empty())
             {
@@ -12168,7 +12168,7 @@ static void scene_alpha_register(LLSceneFragment* f);
 static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
 {
     LLSceneFragment* f = group->mSceneFragment;
-    if (f && f->mSerial == group->mDrawMapSerial)
+    if (f && f->mSerial == group->mGeometrySerial)
     {
         bool current = true;
         for (const LLSceneFragment::BufferRef& b : f->mBuffers)
@@ -12185,7 +12185,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
             return f;
         }
         ++sFragStats.mBufferChanged;
-        if (group->mDrawMap.empty())
+        if (group->mPendingDraws.empty())
         {
             // the draw map is emptied once the fragment is built (stage 2): a fragment whose buffers changed cannot be made again from it. The group is rebuilt (next frame); this frame it has an empty fragment.
             ++sFragStats.mBufferChangedEmpty;
@@ -12198,14 +12198,14 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
             gPipeline.markRebuild(group);
         }
     }
-    if (group->mDrawMap.empty())
+    if (group->mPendingDraws.empty())
     {
         ++sFragStats.mBuiltEmpty;       // (a fragment made from an empty draw map: must stay 0 but for the case above)
     }
     ll_scene_fragment_free(group->mSceneFragment);
     f = group->mSceneFragment = new LLSceneFragment();
     f->mId = sNextFragmentId++;
-    f->mSerial = group->mDrawMapSerial;
+    f->mSerial = group->mGeometrySerial;
     f->mGroup = group;
     scene_fragment_fill(group, *f);
     ++sFragStats.mBuilt;
@@ -12228,7 +12228,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
         }
     }
     // the fragment is the group's truth now: the draw infos are not needed again (2026-11-12, stage 2: the draw map is the hand over between the producers and this build, not a store)
-    group->mDrawMap.clear();
+    group->mPendingDraws.clear();
     if (sFragStats.mBuilt % 20000 == 0)
     {
         LL_INFOS("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
@@ -12240,7 +12240,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
 // the end of a group rebuild (main thread): its fragment is made now, so the worker's table follows the rebuilds and nothing has to look at the group again
 void ll_scene_fragment_build(LLSpatialGroup* group)
 {
-    if ((scene_resident_on() || scene_geo_on()) && !group->isDead() && !group->mDrawMap.empty())
+    if ((scene_resident_on() || scene_geo_on()) && !group->isDead() && !group->mPendingDraws.empty())
     {
         scene_fragment_ensure(group);
         gPipeline.scheduleRelease(group);       // <FS> expiry: its geometry is built, it is looked at again when LL_VK_REL_FRAMES frames have passed
@@ -15534,7 +15534,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
         ++n_groups;
         const LLSceneFragment* walk_frag = group->mSceneFragment;
-        const bool current = walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid);
+        const bool current = walk_frag && walk_frag->mSerial == group->mGeometrySerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid);
         bool has_unnamed = false;
         if (current)
         {
@@ -15550,7 +15550,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             if (!current)
             {
                 reason = 2;
-                if (!group->mDrawMap.empty()) { orphans.fetch_add(1, std::memory_order_relaxed); }
+                if (!group->mPendingDraws.empty()) { orphans.fetch_add(1, std::memory_order_relaxed); }
             }
             else if (has_unnamed)
             {
@@ -15568,7 +15568,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         }
         if (!current)
         {
-            if (!group->mDrawMap.empty())
+            if (!group->mPendingDraws.empty())
             {
                 shadow_caster_dropped("group without a current fragment", 1);
                 local.mSceneGroups.push_back(group);        // (the worker's table makes the fragment on the main thread)
@@ -15599,7 +15599,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     const int rigalpha_mode = rig_mode ? shadow_rigalpha_mode() : 0;
     local.mRigAlphaOn = local.mRigAlphaOn || rigalpha_mode != 0;
     local.mAlphaResSkipped = local.mAlphaResSkipped || skip_alpha == 1;
-        const bool rig_current = rig_mode && rig_fragment && rig_fragment->mSerial == group->mDrawMapSerial && !rig_fragment->mGeoRigged.empty();
+        const bool rig_current = rig_mode && rig_fragment && rig_fragment->mSerial == group->mGeometrySerial && !rig_fragment->mGeoRigged.empty();
         if (rig_current)
         {
             for (size_t rk = 0; rk < rig_fragment->mGeoRigged.size(); ++rk)
@@ -19491,7 +19491,7 @@ static void shadow_alpha_push_windows(std::vector<LLVkBridge::ShadowAlphaEntry>&
     }
 }
 
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false, bool allow_windows = false)
+static bool shadow_alpha_packet_ok(const LLDrawBatch& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false, bool allow_windows = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     // (a rows-mode particle group has no draw infos any more: its draws are LLParticleRun, which are not casters: the rows are not vertex positions, see 2026-11-03's bad range flags)
@@ -19513,7 +19513,7 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
 
 // <FS> why shadow_alpha_packet_ok said no (for the statistics, and for the ray scene, which takes the texture matrix draws): 1 glTF material, 2 buffer layout, 3 rigged without weights
 // or skin, 4 more than four textures, 5 texture matrix
-static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged)
+static int shadow_alpha_fallback_reason(const LLDrawBatch& p, bool batch_textures, bool rigged)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (p.mGLTFMaterial)
@@ -19562,7 +19562,7 @@ static bool shadow_gltf_env()
 {
     return true;        // (the switch LL_VK_PBR_SHADOW is gone, 2026-11-12: the glTF casters are always entries of the record)
 }
-static int shadow_gltf_kind(const LLDrawInfo& p)
+static int shadow_gltf_kind(const LLDrawBatch& p)
 {
     const LLGLTFMaterial* mat = p.mGLTFMaterial.get();
     if (!mat || p.mAvatar || !p.mCount)
@@ -19672,13 +19672,13 @@ static LLViewerTexture* shadow_gltf_entry_parts(const LLVertexBuffer* vb, const 
     }
     return tex;
 }
-static LLViewerTexture* shadow_gltf_entry(const LLDrawInfo& params, int gk, LLVkBridge::ShadowAlphaEntry& e, F32* tm, bool& has_tm)
+static LLViewerTexture* shadow_gltf_entry(const LLDrawBatch& params, int gk, LLVkBridge::ShadowAlphaEntry& e, F32* tm, bool& has_tm)
 {
     return shadow_gltf_entry_parts(params.mVertexBuffer.get(), params.mGLTFMaterial.get(), params.mOffset, params.mCount, params.mModelMatrix, params.mTexture.get(), gk, e, tm, has_tm);
 }
 
 // J1 K3d: the glTF opaque / mask kind of a RIGGED draw a record can carry (GS_NONE = not: the old loops draw it): as shadow_gltf_kind for the static ones, with the skin and the weights a rigged entry needs
-static int shadow_riggltf_kind(const LLDrawInfo& p)
+static int shadow_riggltf_kind(const LLDrawBatch& p)
 {
     const LLGLTFMaterial* mat = p.mGLTFMaterial.get();
     if (!mat || !p.mAvatar || p.mSkinInfo.isNull() || !p.mCount)
@@ -19979,13 +19979,13 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
         {
             continue;       // (the cascade builder makes the glTF casters from the lists)
         }
-        auto found = group->mDrawMap.find(source.type);
-        if (found == group->mDrawMap.end())
+        auto found = group->mPendingDraws.find(source.type);
+        if (found == group->mPendingDraws.end())
         {
             continue;
         }
         const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-        for (LLDrawInfo* params : found->second)
+        for (LLDrawBatch* params : found->second)
         {
             params->mAlphaInFragment = false;
             params->mAlphaFragTex = false;
@@ -20210,13 +20210,13 @@ static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f
     };
     for (const ShadowAlphaSource& source : sources)
     {
-        auto found = group->mDrawMap.find(source.type);
-        if (found == group->mDrawMap.end())
+        auto found = group->mPendingDraws.find(source.type);
+        if (found == group->mPendingDraws.end())
         {
             continue;
         }
         const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-        for (LLDrawInfo* params : found->second)
+        for (LLDrawBatch* params : found->second)
         {
             params->mRasterFrag = false;
             if (!params->mCount || params->mAvatar != nullptr)
@@ -20366,7 +20366,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
         const LLSceneFragment* f = group->mSceneFragment;
         // ray scene: the worker names the entries of a sent fragment itself in the resident pass of this cascade (as the resident filter of render_alpha_packets assumed)
         const bool held = f ? (ray ? (f->mAlphaSent && sResidentPassRan) : f->mAlphaResSent) : false;
-        if (!f || f->mSerial != group->mDrawMapSerial || (held && f->mAlphaTex.empty()))
+        if (!f || f->mSerial != group->mGeometrySerial || (held && f->mAlphaTex.empty()))
         {
             continue;
         }
@@ -23808,7 +23808,7 @@ void LLPipeline::bindDeferredShaderFast(LLShaderProgram& shader)
 bool ll_group_fragment_state(const LLSpatialGroup* group, bool* resident)
 {
     const LLSceneFragment* fragment = group->mSceneFragment;
-    const bool current = fragment && fragment->mSerial == group->mDrawMapSerial;
+    const bool current = fragment && fragment->mSerial == group->mGeometrySerial;
     *resident = current && fragment->mResident;
     return current;
 }
@@ -24462,7 +24462,7 @@ static void rt_name_rigged_main_view()
                         continue;
                     }
                     const LLSceneFragment* f = group->mSceneFragment;
-                    if (!f || f->mSerial != group->mDrawMapSerial || !f->mAlphaPlanned)
+                    if (!f || f->mSerial != group->mGeometrySerial || !f->mAlphaPlanned)
                     {
                         continue;
                     }
@@ -26780,7 +26780,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     struct CompareVertexBuffer
     {
-        bool operator()(const LLDrawInfo* const& lhs, const LLDrawInfo* const& rhs)
+        bool operator()(const LLDrawBatch* const& lhs, const LLDrawBatch* const& rhs)
         {
             return lhs->mVertexBuffer > rhs->mVertexBuffer;
         }
@@ -27066,7 +27066,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             rt_uv_transform(anim_in, khr, out);
         };
-        auto add = [&](LLDrawInfo* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr)
+        auto add = [&](LLDrawBatch* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr)
         {
             const LLVertexBuffer* vb = params->mVertexBuffer.get();
             if (!params->mCount || params->mAvatar || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
@@ -27224,7 +27224,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 continue;
             }
             const LLSceneFragment* f = group->mSceneFragment;
-            if (!f || f->mSerial != group->mDrawMapSerial)
+            if (!f || f->mSerial != group->mGeometrySerial)
             {
                 continue;
             }
