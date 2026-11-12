@@ -480,7 +480,6 @@ public:
     //check references will assert that there are no references in sCullResult to the provided data
     void checkReferences(LLFace* face);
     void checkReferences(LLDrawable* drawable);
-    void checkReferences(LLDrawInfo* draw_info);
     void checkReferences(LLSpatialGroup* group);
 
     void renderGeomDeferred(LLCamera& camera, bool do_occlusion = false);

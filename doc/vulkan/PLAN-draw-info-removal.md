@@ -138,3 +138,6 @@ Then: delete the files, their `gXxxProgram` objects and loader entries, the sett
 
 ## Stage 2 design (2026-11-12)
 Written for Adam's review before any code: `doc/vulkan/DESIGN-draw-info-stage2.md` (the draw map becomes transient: it hands the producers' batches to the fragment builders and is emptied when the fragment is built; steps 2.0 to 2.6; two questions for Adam).
+
+## Status 2026-11-12, end of the day
+Stage 1 done (steps 3a-6c, commits up to c2726e9b4f). Stage 2 done as designed in `DESIGN-draw-info-stage2.md`: the draw map is transient (2.0 audit, 2.2 face pointer gone, 2.3 fragment keeps no draw info pointer, 2.4 emptied when the fragment is built, e313b07452 .. a7864b7640), and the release scan is an age queue (ce4ccdc9f1). Stage 3: the draw info's debug checks and extents are deleted; what is left is a rename (section 6.9 of the design: Adam to decide). Stage 4 (shader cleanup) not started. Open items: the HUD alpha and the planar mirror are to be looked at by Adam with the draw maps emptied; the rigged normal-map draws that were once reported as not served (6.8); hitchless loading is a separate plan.

@@ -144,9 +144,6 @@ public:
                 LLViewerTexture* image, LLVertexBuffer* buffer,
                 bool fullbright = false, U8 bump = 0);
 
-
-    void validate();
-
     // return mSkinHash->mHash, or 0 if mSkinHash is null
     U64 getSkinHash();
 
@@ -197,10 +194,6 @@ public:
     U8   mShiny = 0;
     bool mFullbright = false;
     bool mHasGlow = false;
-    // <FS> S7 B0 (doc/vulkan/S7-design.md section 13): the union of the extents of the faces this draw covers (agent space for a static drawable, the drawable's own space for an active one: the model
-    // matrix maps it); only filled for volume faces while LL_VK_VISCENSUS is on (LLVolumeGeometryManager::registerFace)
-    LLVector4a mExtents[2];
-    bool mHasExtents = false;
 
     // <FS> ray scene: the draw's material in the viewer's registry (pipeline.cpp, rt_material_id): the row in the low 32 bits, its generation in the high 32 (0 = not looked up yet).
     // Atomic: the packet builders of several cascades run in parallel and meet the same draw.
@@ -412,7 +405,6 @@ public:
 
     void clearDrawMap();
     void validate();
-    void validateDrawMap();
 
     void setState(U32 state, S32 mode);
     void clearState(U32 state, S32 mode);

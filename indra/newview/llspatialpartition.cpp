@@ -265,8 +265,6 @@ void LLSpatialGroup::validate()
     LLVector4a myMax;
     myMax.setAdd(row().bounds[0], row().bounds[1]);
 
-    validateDrawMap();
-
     for (element_iter i = getDataBegin(); i != getDataEnd(); ++i)
     {
         LLDrawable* drawable = *i;
@@ -310,22 +308,6 @@ void LLSpatialGroup::validate()
         }
     }
 
-#endif
-}
-
-void LLSpatialGroup::validateDrawMap()
-{
-#if LL_OCTREE_PARANOIA_CHECK
-    for (draw_map_t::iterator i = mDrawMap.begin(); i != mDrawMap.end(); ++i)
-    {
-        LLSpatialGroup::drawmap_elem_t& draw_vec = i->second;
-        for (drawmap_elem_t::iterator j = draw_vec.begin(); j != draw_vec.end(); ++j)
-        {
-            LLDrawInfo& params = **j;
-
-            params.validate();
-        }
-    }
 #endif
 }
 
@@ -5311,10 +5293,6 @@ LLDrawInfo::LLDrawInfo(U16 start, U16 end, U32 count, U32 offset,
 
 LLDrawInfo::~LLDrawInfo()
 {
-    if (gDebugRender)
-    {
-        gPipeline.checkReferences(this);
-    }
 }
 
 LLColor4U LLDrawInfo::getDebugColor() const
@@ -5329,11 +5307,6 @@ LLColor4U LLDrawInfo::getDebugColor() const
     color.mV[3] = 200;
 
     return color;
-}
-
-void LLDrawInfo::validate()
-{
-    mVertexBuffer->validateRange(mStart, mEnd, mCount, mOffset);
 }
 
 U64 LLDrawInfo::getSkinHash()
