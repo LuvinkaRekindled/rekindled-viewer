@@ -216,6 +216,7 @@ U32 LLSpatialGroup::sDrawMapsCleared = 0;
 
 void LLSpatialGroup::clearDrawMap()
 {
+    gPipeline.releaseForget(this);       // <FS> expiry: a group without geometry is not in the age queue (a rebuild queues it again)
     ++mDrawMapSerial;
     // <FS> the draw infos go: builders on the async pool may be reading them, and the main view's render map may point to them
     if (!mDrawMap.empty())
