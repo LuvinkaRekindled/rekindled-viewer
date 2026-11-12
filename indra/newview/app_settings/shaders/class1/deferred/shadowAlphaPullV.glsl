@@ -150,9 +150,18 @@ void main()
     vary_texcoord0 = ((pk.flags & 8u) != 0u) ? AlphaTexcoords(pk.texcoords).t[index] : vec2(0.0);
     if (pk.pad != 0u && (pk.flags & 8u) != 0u)
     {
-        mat4 ll_tm = AlphaTexmats(ll_packet_texmats).t[pk.pad];
-        if (ll_tm[3][3] == 0.0) ll_tm = ll_texanim_core(ll_tm, AlphaTexmats(ll_packet_texmats).t[0][0].yz);       // a texture animation's slot holds its parameters (llvktexanim.h)
-        vary_texcoord0 = (ll_tm * vec4(vary_texcoord0, 0.0, 1.0)).xy;
+        // up to two texture matrices, the low half of pad first (a glTF face with a texture animation: the animation, then the glTF transform; one for the others)
+        for (uint tm_part = 0u; tm_part < 2u; ++tm_part)
+        {
+            uint tm_number = (tm_part == 0u) ? (pk.pad & 0xFFFFu) : (pk.pad >> 16u);
+            if (tm_number == 0u)
+            {
+                continue;
+            }
+            mat4 ll_tm = AlphaTexmats(ll_packet_texmats).t[tm_number];
+            if (ll_tm[3][3] == 0.0) ll_tm = ll_texanim_core(ll_tm, AlphaTexmats(ll_packet_texmats).t[0][0].yz);       // a texture animation's slot holds its parameters (llvktexanim.h)
+            vary_texcoord0 = (ll_tm * vec4(vary_texcoord0, 0.0, 1.0)).xy;
+        }
     }
     vary_alpha = ((pk.flags & 16u) != 0u) ? float(AlphaColors(pk.colors).c[index] >> 24) * (1.0 / 255.0) : 1.0;
 }

@@ -10664,6 +10664,7 @@ struct LLSceneFragment
     // number (1-based, into mTexLocal), 0 = none. Texture names are not kept here: the registry (sAlphaTex) resolves them once a frame.
     std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
     std::vector<LLVkBridge::ShadowAlphaEntry> mAlphaTex;      // C5 J3: the alpha casters with a texture matrix (raster only): never registered with the worker; mAlphaTexPtrs: their matrices (values read when a record is made)
+    std::vector<const LLMatrix4*> mAlphaTexPtrs2;             // the second matrix of an entry (applied after the first: a glTF face with a texture animation), null = none; parallel to mAlphaTexPtrs
     std::vector<const LLMatrix4*> mAlphaTexPtrs;              // (null: no texture matrix, the draw is named in every pass for another reason: a double sided glTF caster)
     std::deque<LLMatrix4> mAlphaTexOwn;                       // J1 K3c: the base colour transforms of glTF casters (the fragment's own copies; stable addresses)
     // J1 K6 step 3c (ray scene only): the casters the ray scene is named from that the alpha packet layout leaves to the old path (glTF opaque, alpha mask and blend; textured draws with a texture
@@ -10688,6 +10689,7 @@ struct LLSceneFragment
     // the raster form that RT off keeps in mAlpha and mAlphaTex (the ray scene's form of mAlpha leaves them out: they are named from mRtExtra). Never registered with the worker; the pass numbers matrices, textures and texture matrices.
     std::vector<LLVkBridge::ShadowAlphaEntry> mRaster;
     std::vector<LLVkBridge::ShadowAlphaEntry> mRasterTex;    // (the double sided ones and those with a transform: mRasterTexPtrs, as mAlphaTexPtrs)
+    std::vector<const LLMatrix4*> mRasterTexPtrs2;
     std::vector<const LLMatrix4*> mRasterTexPtrs;
     std::vector<LLPointer<LLViewerTexture>> mTexLocal;
     std::vector<U32> mSentName;                         // per local texture: the name the worker was told
@@ -12472,12 +12474,14 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mAlpha.clear();
     f.mAlphaTex.clear();
     f.mAlphaTexPtrs.clear();
+    f.mAlphaTexPtrs2.clear();
     f.mAlphaTexOwn.clear();
     f.mTexLocal.clear();
     f.mRtExtra.clear();
     f.mRaster.clear();
     f.mRasterTex.clear();
     f.mRasterTexPtrs.clear();
+    f.mRasterTexPtrs2.clear();
     if ((scene_alpha_on() && LLVkBridge::rtShadowMode()) || (alpha_res_wanted() && !LLVkBridge::rtShadowMode()))
     {
         scene_fragment_fill_alpha(group, f);
@@ -20567,10 +20571,7 @@ static int shadow_gltf_kind(const LLDrawInfo& p)
         return GS_NONE;
     }
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
-    if (kind != GS_OPAQUE && p.mTextureMatrix)
-    {
-        return GS_NONE;         // (a texture animation on a masked or blended glTF face: the packet carries one texture matrix, the animation and the glTF transform need two: the packet layer change with the texture windows)
-    }
+    // (a texture animation on a masked or blended glTF face is served too, since 2026-11-12: the entry carries two texture matrices, the animation then the glTF transform)
     // (no texture coordinate array is served too, 2026-11-12: the entry has no ALPHA_HAS_TEXCOORD, the pull shader reads uv 0 as the main view reads the missing attribute)
     return kind;
 }
@@ -20690,10 +20691,7 @@ static int shadow_riggltf_kind(const LLDrawInfo& p)
         return GS_NONE;
     }
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
-    if (kind != GS_OPAQUE && p.mTextureMatrix)
-    {
-        return GS_NONE;         // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; with a texture animation they are refused as the static ones are: the packet layer change; without texture coordinates they are served since 2026-11-12)
-    }
+    // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; a texture animation and a missing texture coordinate array are served since 2026-11-12)
     return kind;
 }
 // (the old shadow loops: this rigged glTF blend draw is in the record)
@@ -20770,7 +20768,19 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             {
                 e.mTextures[0] = texture_ref(tex);
             }
-            if (has_tm)
+            // a texture animation on a masked or blended face (params->mTextureMatrix): its matrix first, then the glTF transform (textureUtilV.glsl texture_transform)
+            if (gk != GS_OPAQUE && params->mTextureMatrix)
+            {
+                const F32* am = (const F32*)params->mTextureMatrix->mMatrix;
+                out.mTexmats.insert(out.mTexmats.end(), am, am + 16);
+                e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+                if (has_tm)
+                {
+                    out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
+                    e.mTexMatrix2 = (U32)(out.mTexmats.size() / 16);
+                }
+            }
+            else if (has_tm)
             {
                 out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
                 e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
@@ -20810,7 +20820,18 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             {
                 e.mTextures[0] = texture_ref(tex);
             }
-            if (has_tm)
+            if (gk != GS_OPAQUE && rig.mTextureMatrix)
+            {
+                const F32* am = (const F32*)rig.mTextureMatrix->mMatrix;
+                out.mTexmats.insert(out.mTexmats.end(), am, am + 16);
+                e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+                if (has_tm)
+                {
+                    out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
+                    e.mTexMatrix2 = (U32)(out.mTexmats.size() / 16);
+                }
+            }
+            else if (has_tm)
             {
                 out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
                 e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
@@ -21217,20 +21238,20 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
                 }
                 ge.mUv[0] = 1.f;
                 ge.mUv[3] = 1.f;
-                if ((ge.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED) || has_tm)
+                const LLMatrix4* gltf_anim = (gk != GS_OPAQUE) ? params->mTextureMatrix : nullptr;       // (a texture animation: its matrix is the first, the glTF transform the second)
+                if ((ge.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED) || has_tm || gltf_anim)
                 {
                     params->mAlphaFragTex = true;
                     f.mAlphaTex.push_back(ge);
+                    const LLMatrix4* own = nullptr;
                     if (has_tm)
                     {
                         f.mAlphaTexOwn.emplace_back();
                         memcpy(f.mAlphaTexOwn.back().mMatrix, gtm, 64);
-                        f.mAlphaTexPtrs.push_back(&f.mAlphaTexOwn.back());
+                        own = &f.mAlphaTexOwn.back();
                     }
-                    else
-                    {
-                        f.mAlphaTexPtrs.push_back(nullptr);
-                    }
+                    f.mAlphaTexPtrs.push_back(gltf_anim ? gltf_anim : own);
+                    f.mAlphaTexPtrs2.push_back(gltf_anim ? own : nullptr);
                 }
                 else
                 {
@@ -21335,6 +21356,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             {
                 f.mAlphaTex.push_back(e);
                 f.mAlphaTexPtrs.push_back(params->mTextureMatrix);
+                f.mAlphaTexPtrs2.push_back(nullptr);
             }
             else
             {
@@ -21429,19 +21451,19 @@ static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f
                 ge.mUv[0] = 1.f;
                 ge.mUv[3] = 1.f;
                 params->mRasterFrag = true;
-                if ((ge.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED) || has_tm)
+                const LLMatrix4* gltf_anim = (gk != GS_OPAQUE) ? params->mTextureMatrix : nullptr;
+                if ((ge.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED) || has_tm || gltf_anim)
                 {
                     f.mRasterTex.push_back(ge);
+                    const LLMatrix4* own = nullptr;
                     if (has_tm)
                     {
                         f.mAlphaTexOwn.emplace_back();
                         memcpy(f.mAlphaTexOwn.back().mMatrix, gtm, 64);
-                        f.mRasterTexPtrs.push_back(&f.mAlphaTexOwn.back());
+                        own = &f.mAlphaTexOwn.back();
                     }
-                    else
-                    {
-                        f.mRasterTexPtrs.push_back(nullptr);
-                    }
+                    f.mRasterTexPtrs.push_back(gltf_anim ? gltf_anim : own);
+                    f.mRasterTexPtrs2.push_back(gltf_anim ? own : nullptr);
                 }
                 else
                 {
@@ -21515,6 +21537,7 @@ static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f
             {
                 f.mRasterTex.push_back(e);
                 f.mRasterTexPtrs.push_back(params->mTextureMatrix);
+                f.mRasterTexPtrs2.push_back(nullptr);
             }
             else
             {
@@ -21557,7 +21580,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
         }
         ++groups_seen;
         // the entry as this record numbers it: the matrix, the texture matrix and the textures of the pass's own lists
-        auto emit = [&](const LLVkBridge::ShadowAlphaEntry& e, const LLMatrix4* texmat, std::vector<LLVkBridge::ShadowAlphaEntry>& dest)
+        auto emit = [&](const LLVkBridge::ShadowAlphaEntry& e, const LLMatrix4* texmat, std::vector<LLVkBridge::ShadowAlphaEntry>& dest, const LLMatrix4* texmat2 = nullptr)
         {
             LLVkBridge::ShadowAlphaEntry ne = e;
             const LLMatrix4* matrix = e.mMatrix ? f->mMatrices[e.mMatrix - 1] : nullptr;
@@ -21581,11 +21604,18 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             }
             ne.mMatrix = 0;
             ne.mTexMatrix = 0;
+            ne.mTexMatrix2 = 0;
             if (texmat)
             {
                 const F32* tm = (const F32*)texmat->mMatrix;
                 b.mTexmats.insert(b.mTexmats.end(), tm, tm + 16);
                 ne.mTexMatrix = (U32)(b.mTexmats.size() / 16);
+            }
+            if (texmat2)
+            {
+                const F32* tm = (const F32*)texmat2->mMatrix;
+                b.mTexmats.insert(b.mTexmats.end(), tm, tm + 16);
+                ne.mTexMatrix2 = (U32)(b.mTexmats.size() / 16);
             }
             if (matrix)
             {
@@ -21628,7 +21658,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
         for (size_t entry_index = 0; entry_index < total; ++entry_index)
         {
             const bool with_texmat = entry_index >= plain;
-            emit(with_texmat ? f->mAlphaTex[entry_index - plain] : f->mAlpha[entry_index], with_texmat ? f->mAlphaTexPtrs[entry_index - plain] : nullptr, added);
+            emit(with_texmat ? f->mAlphaTex[entry_index - plain] : f->mAlpha[entry_index], with_texmat ? f->mAlphaTexPtrs[entry_index - plain] : nullptr, added, with_texmat ? f->mAlphaTexPtrs2[entry_index - plain] : nullptr);
         }
         if (rt_raster)
         {
@@ -21639,7 +21669,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             }
             for (size_t k = 0; k < f->mRasterTex.size(); ++k)
             {
-                emit(f->mRasterTex[k], f->mRasterTexPtrs[k], b.mDrawOnly);
+                emit(f->mRasterTex[k], f->mRasterTexPtrs[k], b.mDrawOnly, f->mRasterTexPtrs2[k]);
             }
         }
     }
