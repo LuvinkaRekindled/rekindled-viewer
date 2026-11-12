@@ -191,6 +191,10 @@ namespace LLVkBridge
         ALPHA_DOUBLE_SIDED = 1024,  // kind 1 (raster), C5 PBR shadow rows: a double sided glTF caster: the viewer sends it in a record of its own with culling off (the shader ignores the bit)
         ALPHA_OPAQUE = 2048         // kind 1 (raster): a caster with no alpha test (opaque glTF): the fragment shader samples nothing. ALPHA_HARD (64) in the raster pass: texture alpha times vertex alpha against mCutoff, no dithering
     };
+    // texture windows (2026-11-12): a batch of more than four textures is drawn by several entries over the same index range, each naming four (or two, or one: the test width LL_VK_SHADOW_WINDOW) of the textures. The
+    // window number is in bits 12 - 15 of mFlags (the textures window * width ... of the batch are the entry's mTextures), the width code in bits 16 - 17 (0: four textures, 1: two, 2: one). shadowAlphaPullV.glsl
+    // collapses the triangles whose texture index (position.w) is in another window, so each texture is drawn by one entry.
+    constexpr U32 kAlphaWindowShift = 12, kAlphaWindowMask = 15u << 12, kAlphaWidthShift = 16, kAlphaWidthMask = 3u << 16;
     struct ShadowAlphaEntry
     {
         U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix;

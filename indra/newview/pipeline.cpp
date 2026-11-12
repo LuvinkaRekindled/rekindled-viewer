@@ -11052,7 +11052,7 @@ static bool shadow_riggltf_type(U32 rigged_type)
     return type == LLRenderPass::PASS_GLTF_PBR || type == LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK;
 }
 static bool shadow_gltf_env();
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat);
+static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat, bool allow_windows);
 static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged);
 static int shadow_riggltf_kind(const LLDrawInfo& p);
 bool ll_shadow_riggltf_blend_in_record(const LLDrawInfo& p);
@@ -11625,7 +11625,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                     {
                         const U32 base = kGeoTypes[t].mType;
                         const bool batch = base == LLRenderPass::PASS_ALPHA_MASK || base == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK;
-                        const bool ok = shadow_alpha_packet_ok(*params, batch, true, false, !LLVkBridge::rtShadowMode());
+                        const bool ok = shadow_alpha_packet_ok(*params, batch, true, false, !LLVkBridge::rtShadowMode(), true);       // (windows: a rigged batch of more than four textures is carried; the builder makes its entries in windows where the pass is not one that names to the ray scene)
                         f.mGeoRiggedSrc.back().mAlphaOk = ok;
                         params->mRigAlphaSrc = ok;
                     }
@@ -12380,7 +12380,7 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
         }
         for (LLDrawInfo* params : found->second)
         {
-            if (params->mAvatar || params->mGLTFMaterial || !params->mCount || params->mTexture.isNull() || !params->mTextureMatrix || shadow_alpha_packet_ok(*params, source.blend, false, false, false))
+            if (params->mAvatar || params->mGLTFMaterial || !params->mCount || params->mTexture.isNull() || !params->mTextureMatrix || shadow_alpha_packet_ok(*params, source.blend, false, false, false, false))
             {
                 continue;
             }
@@ -20442,7 +20442,45 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
-static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false)
+// texture windows (see LLVkBridge::kAlphaWindowShift): how many textures one entry names, 4, or 2 or 1 for a test (LL_VK_SHADOW_WINDOW: a batch of 2 or 3 textures is then drawn in windows too, which real content
+// has more of than batches of five)
+static U32 shadow_alpha_window_width()
+{
+    static const U32 width = []() { const char* e = getenv("LL_VK_SHADOW_WINDOW"); const int v = e ? atoi(e) : 4; return (U32)(v == 1 ? 1 : (v == 2 ? 2 : 4)); }();
+    return width;
+}
+// the entry of a batch of more than one texture: one entry when the batch fits a window (or windows are not wanted: the ray scene's form carries up to four), else one entry for each window over the same index
+// range, with the textures of its window (texture_at(k): the number of the k-th texture of the batch for this record, 0 = none)
+template <class TextureAt>
+static void shadow_alpha_push_windows(std::vector<LLVkBridge::ShadowAlphaEntry>& dest, const LLVkBridge::ShadowAlphaEntry& e, size_t list_size, bool windowed, TextureAt texture_at)
+{
+    const U32 width = shadow_alpha_window_width();
+    if (!windowed || list_size <= width || list_size > 16)
+    {
+        dest.push_back(e);
+        return;
+    }
+    static std::atomic<U64> sWindowEntries{ 0 }, sWindowBatches{ 0 };
+    const U32 width_code = width == 4 ? 0u : (width == 2 ? 1u : 2u);
+    U32 windows = 0;
+    for (size_t first = 0; first < list_size; first += width, ++windows)
+    {
+        LLVkBridge::ShadowAlphaEntry ew = e;
+        for (U32 t = 0; t < 4; ++t)
+        {
+            ew.mTextures[t] = (t < width && first + t < list_size) ? texture_at(first + t) : 0u;
+        }
+        ew.mFlags = (ew.mFlags & ~(LLVkBridge::kAlphaWindowMask | LLVkBridge::kAlphaWidthMask)) | (windows << LLVkBridge::kAlphaWindowShift) | (width_code << LLVkBridge::kAlphaWidthShift);
+        dest.push_back(ew);
+    }
+    sWindowEntries += windows;
+    if (++sWindowBatches % 2000 == 1)
+    {
+        LL_INFOS("ShadowDraws") << "texture windows: batches of more than " << width << " textures made as one entry for each window, so far " << sWindowBatches.load() << " batches, " << sWindowEntries.load() << " entries" << LL_ENDL;
+    }
+}
+
+static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf = false, bool allow_texmat = false, bool allow_windows = false)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     // (a rows-mode particle group has no draw infos any more: its draws are LLParticleRun, which are not casters: the rows are not vertex positions, see 2026-11-03's bad range flags)
@@ -20457,7 +20495,7 @@ static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, boo
     }
     if (batch_textures && p.mTextureList.size() > 1)
     {
-        return p.mTextureList.size() <= 4;
+        return p.mTextureList.size() <= (allow_windows ? 16u : 4u);
     }
     return allow_gltf || allow_texmat || !(p.mTexture.notNull() && p.mTextureMatrix);
 }
@@ -20837,7 +20875,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 {
                     continue;       // ray shadows: the texture has no data yet, nothing is traced for the draw until it has
                 }
-                if (!shadow_alpha_packet_ok(*params, batch, rigged, false, !LLVkBridge::rtShadowMode() || raster_rt))       // (J1 K3c: the rigged draws' texture matrices travel too: the pull shader applies the entry's matrix to any entry)
+                if (!shadow_alpha_packet_ok(*params, batch, rigged, false, !LLVkBridge::rtShadowMode() || raster_rt, !LLVkBridge::rtShadowMode() || raster_rt))       // (J1 K3c: the rigged draws' texture matrices travel too: the pull shader applies the entry's matrix to any entry)
                 {
                     switch (shadow_alpha_fallback_reason(*params, batch, rigged))
                     {
@@ -20948,7 +20986,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     e.mMaterial = rt_material_id(params, (source.kind == KIND_ALPHA) ? 2u : ((source.kind == KIND_MATERIAL) ? 5u : 1u));
                     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
                 }
-                entries.push_back(e);
+                shadow_alpha_push_windows(entries, e, batch ? params->mTextureList.size() : 0, !LLVkBridge::rtShadowMode() || raster_rt, [&](size_t k) { return params->mTextureList[k].notNull() ? texture_ref(params->mTextureList[k].get()) : 0u; });
             }
         }
         if (rigged && result.mRigAlphaOn)
@@ -21089,7 +21127,12 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     e.mMaterial = rt_material_id(rt_mat_view(rig.mMat), (source->kind == KIND_MATERIAL) ? 5u : 1u);
                     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
                 }
-                entries.push_back(e);
+                const bool windowed = !LLVkBridge::rtShadowMode() || raster_rt;
+                if (batch && rig.mTextureListSize > 4 && !windowed)
+                {
+                    continue;       // (the ray scene's form carries four textures: such a batch is not named to it, as before windows existed)
+                }
+                shadow_alpha_push_windows(entries, e, batch ? rig.mTextureListSize : 0, windowed, [&](size_t k) { return rig.mTextures[k].notNull() ? texture_ref(rig.mTextures[k].get()) : 0u; });
             }
         }
 }
@@ -21201,7 +21244,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
                 continue;
             }
             const bool texmat_draw = !LLVkBridge::rtShadowMode() && params->mTextureMatrix && !(batch && params->mTextureList.size() > 1) && params->mTexture.notNull();
-            if (!shadow_alpha_packet_ok(*params, batch, false, false, !LLVkBridge::rtShadowMode()))
+            if (!shadow_alpha_packet_ok(*params, batch, false, false, !LLVkBridge::rtShadowMode(), !LLVkBridge::rtShadowMode()))
             {
                 continue;
             }
@@ -21295,7 +21338,7 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
             }
             else
             {
-                f.mAlpha.push_back(e);
+                shadow_alpha_push_windows(f.mAlpha, e, batch ? params->mTextureList.size() : 0, !LLVkBridge::rtShadowMode(), [&](size_t k) { return params->mTextureList[k].notNull() ? texture_ref(params->mTextureList[k].get()) : 0u; });
             }
         }
     }
@@ -21407,7 +21450,7 @@ static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f
                 continue;
             }
             // the legacy casters the ray scene's form leaves out (a texture matrix): the entry RT off makes
-            if (shadow_alpha_packet_ok(*params, batch, false, false, false) || !shadow_alpha_packet_ok(*params, batch, false, false, true))
+            if (shadow_alpha_packet_ok(*params, batch, false, false, false) || !shadow_alpha_packet_ok(*params, batch, false, false, true, true))
             {
                 continue;
             }
@@ -21475,7 +21518,7 @@ static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f
             }
             else
             {
-                f.mRaster.push_back(e);
+                shadow_alpha_push_windows(f.mRaster, e, batch ? params->mTextureList.size() : 0, true, [&](size_t k) { return params->mTextureList[k].notNull() ? texture_ref(params->mTextureList[k].get()) : 0u; });
             }
         }
     }
@@ -21728,7 +21771,7 @@ void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
             continue;
         }
 
-        if (skip_packet_draws && shadow_alpha_packet_ok(*pparams, true, rigged, false, !LLVkBridge::rtShadowMode()))
+        if (skip_packet_draws && shadow_alpha_packet_ok(*pparams, true, rigged, false, !LLVkBridge::rtShadowMode(), !LLVkBridge::rtShadowMode()))
         {
             continue;       // <FS> already part of the alpha packet record of this pass (J1 K3c: with the texture matrix draws the builder takes too: they were drawn a second time here)
         }

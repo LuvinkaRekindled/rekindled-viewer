@@ -260,7 +260,7 @@ struct GeoRigSource
     U32 mOffset = 0, mCount = 0, mStart = 0, mEnd = 0;
     // J1 K3d: what a cascade's alpha caster entry needs besides that (the draw's textures as handles, the batch of textures if it has more than one, the texture matrix, the cutoff): the alpha builder makes the
     // entry of a rigged alpha masked caster from this, without the draw info. mAlphaOk: the draw is one a record can carry (shadow_alpha_packet_ok when the fragment was made)
-    LLTexRef mTextures[4];
+    LLTexRef mTextures[16];             // (a batch of up to sixteen textures: the shadow entries are made in windows of four, see LLVkBridge::kAlphaWindowShift)
     LLTexRef mTexture;
     LLGLTFMatRef mGltf;                 // (the rigged glTF casters: the material is read when the entry is made, as the list path does)
     U32 mTextureListSize = 0;
@@ -294,7 +294,7 @@ inline GeoRigSource ll_geo_rig_source(const LLDrawInfo* p)
         s.mTexture = p->mTexture;
         s.mGltf = p->mGLTFMaterial;
         s.mTextureListSize = (U32)p->mTextureList.size();
-        for (size_t t = 0; t < p->mTextureList.size() && t < 4; ++t)
+        for (size_t t = 0; t < p->mTextureList.size() && t < 16; ++t)
         {
             s.mTextures[t] = p->mTextureList[t];
         }
