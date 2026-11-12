@@ -11,6 +11,10 @@
 class LLDrawInfo;
 class LLViewerTexture;
 class LLVertexBuffer;
+class LLSpatialGroup;
+class LLVOAvatar;
+class LLMeshSkinInfo;
+class LLMatrix4;
 struct LLParticleRun;
 
 struct LLAlphaTransient
@@ -23,8 +27,21 @@ struct LLAlphaTransient
     LLViewerTexture* mTextures[6] = {}; // textures[k] belongs to entry.mTextures[0..3], mNormalMap, mSpecularMap (the caller replaces the numbers by GL names)
 };
 
-// pipeline.cpp: can the table's pull programs draw this draw as a transient entry (the same conditions as a fragment item), and if so its entry, key, textures and values
-bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaTransient& out);
+
+// what the pass reads besides the entry when it makes the transient record of a draw: the model matrix and the texture matrix (the pass numbers them), the avatar and skin of a rigged draw (its palette),
+// the glow class of its emissive buffer (255 = none, 0 plain, 1 glTF, 2 double sided glTF). From a fragment's transient item: no draw info is read.
+struct LLAlphaTransientDraw
+{
+    const LLMatrix4* mModel = nullptr;
+    const LLMatrix4* mTexMat = nullptr;
+    LLVOAvatar* mAvatar = nullptr;
+    const LLMeshSkinInfo* mSkin = nullptr;
+    unsigned char mGlowCls = 255;
+};
+// the group's fragment keeps one transient item per classifiable alpha draw of a set (static / rigged), in the group's order: -1 when the fragment is not current (or has no plan), else the count
+int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged);
+// item `index` as ll_alpha_transient gives it for the draw (false: the context cannot draw it)
+bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, LLAlphaTransient& out, LLAlphaTransientDraw& draw);
 
 // C5 J2: the same for a run of a particle group (rows of the group's buffer); false = not drawn
 bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* rows, bool depth_only, LLAlphaTransient& out);

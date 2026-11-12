@@ -10673,6 +10673,22 @@ struct LLSceneFragment
         std::vector<U32> mGlowIdx;                      // plan indices of the served draws with a glow buffer
         std::vector<U8> mGlowCls;                       // J1 K6 S5d: per glow index, 0 plain, 1 glTF, 2 double sided glTF
         bool mGlow = false;
+        // the transient items (2026-11-12, main view stage 1 (4)): one per draw of the set the alpha pull programs can draw as a per frame record (the same classification as the plan's items, made with the table on),
+        // served by the table or not, in the group's order: what the views the table does not serve (impostor, HUD, probe faces, the planar mirror) draw the group's blended draws from, no draw info read
+        struct TransItem
+        {
+            LLVkBridge::GeoEntry mE;                    // arrays and flags; its texture fields are 1 + the index into the fragment's mGeoTex; no matrix slots
+            U32 mKey = 0;
+            U32 mPbrAt = ~0u;                           // the index of its 40 values in mTransPbr, ~0u = not a glTF draw
+            bool mUseTexMatrix = false;
+            U8 mGlowCls = 255;                          // 255 = no emissive buffer
+            const LLMatrix4* mModel = nullptr;
+            const LLMatrix4* mTexMat = nullptr;
+        };
+        std::vector<TransItem> mTrans;
+        std::vector<F32> mTransPbr;
+        std::vector<LLAvatarRef> mTransAvatar;          // the rigged set only, parallel to mTrans
+        std::vector<LLSkinRef> mTransSkin;
     };
     AlphaSet mAlphaSet[2];
     bool mAlphaPlanned = false;
@@ -11714,32 +11730,55 @@ bool ll_particle_transient(const LLParticleRun& run, const LLVertexBuffer* vb, b
 }
 
 // S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
-bool ll_alpha_transient(LLDrawInfo* draw, bool rigged, bool depth_only, LLAlphaTransient& out)
+int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
 {
-    AlphaClass ac;
-    alpha_classify(draw, rigged, true, false, ac);
-    if (ac.mServed && !alpha_transient_context_ok(ac.mKey & 0xFF, rigged, depth_only))
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
     {
-        ac.mServed = false;
-        ac.mWhy = WHY_PBR;       // (counted with "glTF blend not ready": a program of the context is missing)
+        return -1;
     }
-    ++sAlphaWhyTr[ac.mWhy];
-    if (!ac.mServed)
+    return (int)f->mAlphaSet[rigged ? 1 : 0].mTrans.size();
+}
+
+bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, LLAlphaTransient& out, LLAlphaTransientDraw& draw)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
     {
-        static bool warned[WHY_COUNT] = {};
-        if (ac.mWhy != WHY_EMPTY && !warned[ac.mWhy])
-        {   // S5g: no old path: such a draw is not drawn at all
-            warned[ac.mWhy] = true;
-            LL_WARNS("VkScene") << "[S5g] an alpha draw the table cannot draw is not drawn (reason: " << sAlphaWhyName[ac.mWhy] << "; logged once)" << LL_ENDL;
-        }
         return false;
     }
-    out.mEntry = ac.mEntry;
-    out.mKey = ac.mKey;
-    out.mPbr = ac.mPbrBlock;
-    out.mUseTexMatrix = ac.mUseTexMatrix;
-    memcpy(out.mPbrValues, ac.mPbrValues, sizeof(out.mPbrValues));
-    memcpy(out.mTextures, ac.mTextures, sizeof(out.mTextures));
+    const LLSceneFragment::AlphaSet& ps = f->mAlphaSet[rigged ? 1 : 0];
+    if (index >= ps.mTrans.size())
+    {
+        return false;
+    }
+    const LLSceneFragment::AlphaSet::TransItem& t = ps.mTrans[index];
+    if (!alpha_transient_context_ok(t.mKey & 0xFF, rigged, depth_only))
+    {
+        ++sAlphaWhyTr[WHY_PBR];       // (as ll_alpha_transient counts it: a program of the context is missing)
+        return false;
+    }
+    out.mEntry = t.mE;
+    out.mKey = t.mKey;
+    out.mPbr = t.mPbrAt != ~0u;
+    out.mUseTexMatrix = t.mUseTexMatrix;
+    if (out.mPbr)
+    {
+        memcpy(out.mPbrValues, &ps.mTransPbr[t.mPbrAt], sizeof(out.mPbrValues));
+    }
+    const U32 numbers[6] = { t.mE.mTextures[0], t.mE.mTextures[1], t.mE.mTextures[2], t.mE.mTextures[3], t.mE.mNormalMap, t.mE.mSpecularMap };
+    for (int k = 0; k < 6; ++k)
+    {
+        out.mTextures[k] = (numbers[k] && numbers[k] <= f->mGeoTex.size()) ? f->mGeoTex[numbers[k] - 1].get() : nullptr;
+    }
+    draw.mModel = t.mModel;
+    draw.mTexMat = t.mTexMat;
+    draw.mGlowCls = t.mGlowCls;
+    if (rigged && index < ps.mTransAvatar.size())
+    {
+        draw.mAvatar = ps.mTransAvatar[index].get();
+        draw.mSkin = ps.mTransSkin[index].get();
+    }
     return true;
 }
 
@@ -11755,6 +11794,10 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     ps.mGlow = false;
     ps.mGlowIdx.clear();
     ps.mGlowCls.clear();
+    ps.mTrans.clear();
+    ps.mTransPbr.clear();
+    ps.mTransAvatar.clear();
+    ps.mTransSkin.clear();
     const auto t0 = std::chrono::steady_clock::now();
     auto it = group->mDrawMap.find(rigged ? LLRenderPass::PASS_ALPHA_RIGGED : LLRenderPass::PASS_ALPHA);
     if (it == group->mDrawMap.end())
@@ -11778,6 +11821,56 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         }
         AlphaClass ac;
         alpha_classify(p, rigged, table, whole_old, ac);
+        {
+            // the transient item: the classification with the table on (what ll_alpha_transient makes of the draw), kept whether the plan serves the draw or not
+            AlphaClass act;
+            const AlphaClass* tc = &ac;
+            if (!table)
+            {
+                alpha_classify(p, rigged, true, false, act);
+                tc = &act;
+            }
+            if (tc->mServed)
+            {
+                LLSceneFragment::AlphaSet::TransItem t;
+                t.mE = tc->mEntry;
+                t.mKey = tc->mKey;
+                U32* tfields[6] = { &t.mE.mTextures[0], &t.mE.mTextures[1], &t.mE.mTextures[2], &t.mE.mTextures[3], &t.mE.mNormalMap, &t.mE.mSpecularMap };
+                for (int k = 0; k < 6; ++k)
+                {
+                    if (!tc->mTextures[k])
+                    {
+                        *tfields[k] = 0;
+                        continue;
+                    }
+                    size_t n = 0;
+                    while (n < f.mGeoTex.size() && f.mGeoTex[n].get() != tc->mTextures[k])
+                    {
+                        ++n;
+                    }
+                    if (n == f.mGeoTex.size())
+                    {
+                        f.mGeoTex.push_back(tc->mTextures[k]);
+                    }
+                    *tfields[k] = (U32)n + 1;
+                }
+                if (tc->mPbrBlock)
+                {
+                    t.mPbrAt = (U32)ps.mTransPbr.size();
+                    ps.mTransPbr.insert(ps.mTransPbr.end(), tc->mPbrValues, tc->mPbrValues + 40);
+                }
+                t.mUseTexMatrix = tc->mUseTexMatrix;
+                t.mModel = p->mModelMatrix;
+                t.mTexMat = p->mTextureMatrix;
+                t.mGlowCls = (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) ? (p->mGLTFMaterial.notNull() ? (p->mGLTFMaterial->mDoubleSided ? 2 : 1) : 0) : 255;
+                ps.mTrans.push_back(t);
+                if (rigged)
+                {
+                    ps.mTransAvatar.push_back(p->mAvatar);
+                    ps.mTransSkin.push_back(p->mSkinInfo);
+                }
+            }
+        }
         int why = ac.mWhy;
         bool served = ac.mServed;
         LLSceneFragment::GeoItem item = {};
