@@ -189,6 +189,7 @@ namespace LLVkBridge
         ALPHA_NOT_READY = 256,      // kind 18 / 19 only: a texture of the entry has no data yet (ray scene loading gate): the entry stays out of the scene
         ALPHA_BLENDED = 512,        // ray tracing: an alpha BLENDED draw (the alpha pool, KIND_ALPHA): the soft sun ray takes its alpha as its coverage (rtAlphaCover), not the masked ramp
         ALPHA_DOUBLE_SIDED = 1024,  // kind 1 (raster), C5 PBR shadow rows: a double sided glTF caster: the viewer sends it in a record of its own with culling off (the shader ignores the bit)
+        ALPHA_UV = 262144,          // ray tracing: mUv is valid for a RIGGED entry (a texture animation on a masked rigged draw), as it is for ALPHA_HARD ones (bit 18; bits 12 - 17 are the texture windows, see kAlphaWindowShift)
         ALPHA_OPAQUE = 2048         // kind 1 (raster): a caster with no alpha test (opaque glTF): the fragment shader samples nothing. ALPHA_HARD (64) in the raster pass: texture alpha times vertex alpha against mCutoff, no dithering
     };
     // texture windows (2026-11-12): a batch of more than four textures is drawn by several entries over the same index range, each naming four (or two, or one: the test width LL_VK_SHADOW_WINDOW) of the textures. The

@@ -11627,7 +11627,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                     {
                         const U32 base = kGeoTypes[t].mType;
                         const bool batch = base == LLRenderPass::PASS_ALPHA_MASK || base == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK;
-                        const bool ok = shadow_alpha_packet_ok(*params, batch, true, false, !LLVkBridge::rtShadowMode(), true);       // (windows: a rigged batch of more than four textures is carried; the builder makes its entries in windows where the pass is not one that names to the ray scene)
+                        const bool ok = shadow_alpha_packet_ok(*params, batch, true, false, true, true);       // (windows: a rigged batch of more than four textures is carried; the builder makes its entries in windows where the pass is not one that names to the ray scene)
                         f.mGeoRiggedSrc.back().mAlphaOk = ok;
                         params->mRigAlphaSrc = ok;
                     }
@@ -20446,6 +20446,64 @@ void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
+// the transform of one texture coordinate as the ray scene applies it (u' = out[0] * u + out[2] * v + out[4], v' = out[1] * u + out[3] * v + out[5]): the texture animation matrix of the draw, then (glTF) the KHR
+// transform in its left-handed coordinates; as textureUtilV.glsl texture_transform. Made at the moment of the call (a GPU texture animation holds parameters: evaluated now)
+static void rt_uv_transform(const LLMatrix4* anim_in, const LLGLTFMaterial::TextureTransform* khr, F32* out)
+{
+    // <FS> with FSTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, llvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
+    // and this transform read the parameters as a matrix (the rate and the timer origin as scales and offsets), so the alpha test of an animated leaf looked up a texture at coordinates that
+    // depended on when the animation started. The matrix the parameters give at this moment is used (LL_VK_RT_TEXANIM_FIX=0: the old reading, to compare)
+    LLMatrix4 baked;
+    const LLMatrix4* anim = anim_in;
+    if (anim_in && LLVkTexAnim::isParams((const F32*)anim_in->mMatrix))
+    {
+        static const bool fix = getenv("LL_VK_RT_TEXANIM_FIX") == nullptr || atoi(getenv("LL_VK_RT_TEXANIM_FIX")) != 0;
+        static U64 seen = 0;
+        if (fix)
+        {
+            LLVkTexAnim::evaluateNow((const F32*)anim_in->mMatrix, (F32*)baked.mMatrix);
+            anim = &baked;
+        }
+        if (seen++ < 8 || seen % 20000 == 0)
+        {
+            const F32* r = (const F32*)anim_in->mMatrix;
+            LL_INFOS("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
+                                << r[4] << "," << r[5] << "); " << (fix ? "the matrix of this moment is used: scale " : "kept as is: scale ") << anim->mMatrix[0][0] << "," << anim->mMatrix[1][1] << " offset " << anim->mMatrix[3][0] << ","
+                                << anim->mMatrix[3][1] << " (" << seen << " uses)" << LL_ENDL;
+        }
+    }
+    auto eval = [&](F32 u, F32 v, F32& ou, F32& ov)
+    {
+        F32 x = u, y = v;
+        if (anim)
+        {
+            x = anim->mMatrix[0][0] * u + anim->mMatrix[1][0] * v + anim->mMatrix[3][0];
+            y = anim->mMatrix[0][1] * u + anim->mMatrix[1][1] * v + anim->mMatrix[3][1];
+        }
+        if (khr)
+        {
+            y = 1.f - y;
+            const F32 sx = khr->mScale.mV[VX] * x, sy = khr->mScale.mV[VY] * y;
+            const F32 c = cosf(khr->mRotation), s = sinf(khr->mRotation);
+            x = c * sx + s * sy + khr->mOffset.mV[VX];
+            y = -s * sx + c * sy + khr->mOffset.mV[VY];
+            y = 1.f - y;
+        }
+        ou = x;
+        ov = y;
+    };
+    F32 o0x, o0y, o1x, o1y, o2x, o2y;
+    eval(0.f, 0.f, o0x, o0y);
+    eval(1.f, 0.f, o1x, o1y);
+    eval(0.f, 1.f, o2x, o2y);
+    out[0] = o1x - o0x;
+    out[1] = o1y - o0y;
+    out[2] = o2x - o0x;
+    out[3] = o2y - o0y;
+    out[4] = o0x;
+    out[5] = o0y;
+}
+
 // texture windows (see LLVkBridge::kAlphaWindowShift): how many textures one entry names, 4, or 2 or 1 for a test (LL_VK_SHADOW_WINDOW: a batch of 2 or 3 textures is then drawn in windows too, which real content
 // has more of than batches of five)
 static U32 shadow_alpha_window_width()
@@ -21097,13 +21155,19 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                     e.mAvatarPos[2] = avatar_position.mV[2];
                     e.mAvatarKind = rt_avatar_kind(avatar);
                 }
-                if (!LLVkBridge::rtShadowMode() && rig.mTextureMatrix && !(batch && rig.mTextureListSize > 1) && rig.mTexture.notNull())
+                bool rig_uv = false;
+                if (rig.mTextureMatrix && !(batch && rig.mTextureListSize > 1) && rig.mTexture.notNull())
                 {
                     const F32* tm = (const F32*)rig.mTextureMatrix->mMatrix;
                     out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
                     e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+                    if (LLVkBridge::rtShadowMode())
+                    {
+                        rt_uv_transform(rig.mTextureMatrix, nullptr, e.mUv);        // (the ray scene takes the animation as the transform of this moment: the entry is named to it, and drawn by a raster pass with the matrix above)
+                        rig_uv = true;
+                    }
                 }
-                U32 flags = (U32)LLVkBridge::ALPHA_RIGGED;
+                U32 flags = (U32)LLVkBridge::ALPHA_RIGGED | (rig_uv ? (U32)LLVkBridge::ALPHA_UV : 0u);
                 if (source->kind == KIND_FULLBRIGHT)
                 {
                     flags |= LLVkBridge::ALPHA_FULLBRIGHT;
@@ -28758,58 +28822,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // the transform of one texture coordinate: the texture animation matrix of the draw, then (glTF) the KHR transform in its left-handed coordinates; as textureUtilV.glsl
         auto uv_transform = [](const LLMatrix4* anim_in, const LLGLTFMaterial::TextureTransform* khr, F32* out)
         {
-            // <FS> with FSTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, llvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
-            // and this transform read the parameters as a matrix (the rate and the timer origin as scales and offsets), so the alpha test of an animated leaf looked up a texture at coordinates that
-            // depended on when the animation started. The matrix the parameters give at this moment is used (LL_VK_RT_TEXANIM_FIX=0: the old reading, to compare)
-            LLMatrix4 baked;
-            const LLMatrix4* anim = anim_in;
-            if (anim_in && LLVkTexAnim::isParams((const F32*)anim_in->mMatrix))
-            {
-                static const bool fix = getenv("LL_VK_RT_TEXANIM_FIX") == nullptr || atoi(getenv("LL_VK_RT_TEXANIM_FIX")) != 0;
-                static U64 seen = 0;
-                if (fix)
-                {
-                    LLVkTexAnim::evaluateNow((const F32*)anim_in->mMatrix, (F32*)baked.mMatrix);
-                    anim = &baked;
-                }
-                if (seen++ < 8 || seen % 20000 == 0)
-                {
-                    const F32* r = (const F32*)anim_in->mMatrix;
-                    LL_INFOS("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
-                                        << r[4] << "," << r[5] << "); " << (fix ? "the matrix of this moment is used: scale " : "kept as is: scale ") << anim->mMatrix[0][0] << "," << anim->mMatrix[1][1] << " offset " << anim->mMatrix[3][0] << ","
-                                        << anim->mMatrix[3][1] << " (" << seen << " uses)" << LL_ENDL;
-                }
-            }
-            auto eval = [&](F32 u, F32 v, F32& ou, F32& ov)
-            {
-                F32 x = u, y = v;
-                if (anim)
-                {
-                    x = anim->mMatrix[0][0] * u + anim->mMatrix[1][0] * v + anim->mMatrix[3][0];
-                    y = anim->mMatrix[0][1] * u + anim->mMatrix[1][1] * v + anim->mMatrix[3][1];
-                }
-                if (khr)
-                {
-                    y = 1.f - y;
-                    const F32 sx = khr->mScale.mV[VX] * x, sy = khr->mScale.mV[VY] * y;
-                    const F32 c = cosf(khr->mRotation), s = sinf(khr->mRotation);
-                    x = c * sx + s * sy + khr->mOffset.mV[VX];
-                    y = -s * sx + c * sy + khr->mOffset.mV[VY];
-                    y = 1.f - y;
-                }
-                ou = x;
-                ov = y;
-            };
-            F32 o0x, o0y, o1x, o1y, o2x, o2y;
-            eval(0.f, 0.f, o0x, o0y);
-            eval(1.f, 0.f, o1x, o1y);
-            eval(0.f, 1.f, o2x, o2y);
-            out[0] = o1x - o0x;
-            out[1] = o1y - o0y;
-            out[2] = o2x - o0x;
-            out[3] = o2y - o0y;
-            out[4] = o0x;
-            out[5] = o0y;
+            rt_uv_transform(anim_in, khr, out);
         };
         auto add = [&](LLDrawInfo* params, U32 flags, F32 cutoff, LLViewerTexture* tex, const LLMatrix4* anim, const LLGLTFMaterial::TextureTransform* khr)
         {
