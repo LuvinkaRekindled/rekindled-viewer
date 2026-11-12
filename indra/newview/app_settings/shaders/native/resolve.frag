@@ -91,6 +91,8 @@ void main()
         if (resolve_dbg == 5) { frag_color = vec4(norm * 0.5 + 0.5, 0.0); return; }
         if (resolve_dbg == 6) { frag_color = vec4(spec.rgb, 0.0); return; }
         if (resolve_dbg == 12) { frag_color = vec4(vec3(clamp(dot(norm, normalize(light_dir)), 0.0, 1.0)), 0.0); return; }
+        if (resolve_dbg == 13) { frag_color = vec4(vec3(depth), 0.0); return; }                                         // the raw depth the lighting reads
+        if (resolve_dbg == 14) { frag_color = vec4(vec3(clamp(-pos.z / 40.0, 0.0, 1.0)), 0.0); return; }               // the view distance it makes of it, 0 .. 40 m
     }
 
 #if RESOLVE_DBG == 1
@@ -175,9 +177,6 @@ void main()
             radiance = mix(radiance, ssr.rgb, ssr.a);
         }
 #endif
-#ifdef HERO_PROBES
-        radiance = probe_hero(radiance, pos, norm, gloss);
-#endif
         if (rt_glossy_reflections != 0)
         {
             // the traced reflection of the RT Reflection pass replaces the probe result where it hit
@@ -192,6 +191,10 @@ void main()
                 radiance = mix(radiance, rt_refl.rgb, max(rt_refl.a, 0.0));
             }
         }
+#ifdef HERO_PROBES
+        // after the traced reflection: the glass of a mirror shows the planar view (the avatar as the main view draws it: its hair, tints and translucent layers come from the real alpha pass), not the ray scene's version
+        radiance = probe_hero(radiance, pos, norm, gloss);
+#endif
         irradiance = adjust_irradiance(irradiance, ambocc);
 
         const vec3 f0 = vec3(0.04);
@@ -231,13 +234,6 @@ void main()
             legacyenv = mix(legacyenv, ssr.rgb, ssr.a);
         }
 #endif
-#ifdef HERO_PROBES
-        glossenv = probe_hero(glossenv, pos, norm, glossiness);
-        if (env > 0.0)
-        {
-            legacyenv = probe_hero(legacyenv, pos, norm, 1.0);
-        }
-#endif
         if (rt_glossy_reflections != 0)
         {
             const vec4 rt_refl = textureLod(G_TAP(ll_ti_rtReflMap), tc, 0.0);
@@ -251,6 +247,13 @@ void main()
                 glossenv = mix(glossenv, rt_refl.rgb, max(rt_refl.a, 0.0));
             }
         }
+#ifdef HERO_PROBES
+        glossenv = probe_hero(glossenv, pos, norm, glossiness);       // (after the traced reflection: the glass of a mirror shows the planar view)
+        if (env > 0.0)
+        {
+            legacyenv = probe_hero(legacyenv, pos, norm, 1.0);
+        }
+#endif
         glossenv = clamp(glossenv, vec3(0.0), vec3(10.0));
         irradiance = adjust_irradiance(irradiance, ambocc);
 
