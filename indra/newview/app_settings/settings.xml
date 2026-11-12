@@ -2615,7 +2615,7 @@
     <key>FSVkMirrorQuality</key>
     <map>
       <key>Comment</key>
-      <string>Needs FSVkRayTracing: glossy surfaces such as mirrors reflect the scene by ray tracing instead of the reflection probes, and the level says what a traced hit shows. 0 Off, 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time. Off and the levels take effect at once; from Off to a level takes effect at once only if this launch started with ray tracing and a level above Off or FSVkRTWater on (they build the material table), otherwise after a restart. (This setting replaced the check box FSVkGlossyMirror.)</string>
+      <string>Needs FSVkRayTracing: glossy surfaces such as polished floors and metal reflect the scene by ray tracing instead of the reflection probes, and the level says what a traced hit shows. The glass of a planar mirror always shows the mirror view (RenderHeroProbeResolution and RenderHeroProbeUpdateRate are its quality). 0 Off, 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time. Off and the levels take effect at once; from Off to a level takes effect at once only if this launch started with ray tracing and a level above Off or FSVkRTWater on (they build the material table), otherwise after a restart. (This setting replaced the check box FSVkGlossyMirror.)</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

@@ -678,6 +678,18 @@ vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)
 }
 #endif
 
+// <FS> (mirror quality 2026-11-12) the hero probe's own weight at a pixel (reflectionProbeF.glsl): the glass of a planar mirror takes the planar view over whatever else its reflection is (the lighting
+// resolve mixes it in after the traced reflection), so a pixel the mirror covers completely needs no trace. tapHeroProbe mixes the view into the colour by that weight: from a huge colour a result below
+// 1000 means a weight of 1 (a weight below 0.999 leaves at least 1000 of the huge colour). Without HERO_PROBES the function does nothing, the colour stays huge and nothing is skipped.
+void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness);
+
+bool planar_mirror_covers(vec3 pos, vec3 norm, float glossiness)
+{
+    vec3 probe = vec3(1.0e6);
+    tapHeroProbe(probe, pos, norm, glossiness);
+    return probe.r < 1.0e3;
+}
+
 void main()
 {
     frag_data[0] = vec4(0.0);
@@ -700,6 +712,17 @@ void main()
     if (sky_pixel)
     {
         return;
+    }
+    {
+        // <FS> (mirror quality 2026-11-12) the glossiness test first: most pixels are not glossy, and the atmospheric set up below (the sky's light at the pixel) was done for all of them before the test
+        // rejected them; a pixel the planar mirror covers completely needs no trace either (see planar_mirror_covers)
+        const bool has_pbr = GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_PBR);
+        const float gloss_here = has_pbr ? 1.0 - gb.specular.g : gb.specular.a;
+        const float gloss_min = has_pbr ? (rt_glossy_reflections >= 4 ? 0.0 : 0.9) : (rt_glossy_reflections >= 4 ? 0.01 : 0.9);
+        if (gloss_here < gloss_min || planar_mirror_covers(pos.xyz, gb.normal, gloss_here))
+        {
+            return;
+        }
     }
     vec3 light_dir = (sun_up_factor == 1) ? sun_dir : moon_dir;
     vec3 sunlit, amblit, additive, atten;
