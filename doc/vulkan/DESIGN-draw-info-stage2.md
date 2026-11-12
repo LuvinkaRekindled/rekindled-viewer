@@ -43,3 +43,31 @@ So after stage 1 a draw info is only needed from `registerFace` until the end of
 
 1. The transient map (section 2) or producers that write items directly? (My recommendation is the transient map.)
 2. Is the mirror and the HUD alpha check still pending on your side before I touch the producers' lifetime (2.4)? Both use the paths changed in stage 1.
+
+## 6. Results of step 2.0 (done 2026-11-12, reading only, no code changed)
+
+### 6.1 Ownership audit: the draw info owns nothing
+`LLDrawInfo` holds handles, not counted pointers (clean core C2.3 / C2.4: the comments in `llspatialpartition.h`): `LLVBRef mVertexBuffer`, `LLTexRef mTexture / mSpecularMap / mNormalMap / mTextureList`, `LLAvatarRef mAvatar`, `LLSkinRef mSkinInfo`, `LLGLTFMatRef mGLTFMaterial`; the matrices are raw pointers. So emptying the map (2.4) drops no reference: no object can die because a draw info was cleared. Who owns what, before and after:
+
+| What a draw info names | Draw info | Owner (unchanged by 2.4) | What the fragment keeps |
+| --- | --- | --- | --- |
+| vertex buffer | `LLVBRef` handle | the group (`mVertexBuffer`, `mBufferMap`); freed only by the rebuild, which clears the map first | `mBuffers`: raw pointer and the ids it had (a staleness check, not ownership); `GeoRigSource::mVb`, `RtExtra::mVb` and `TransItem::mVb` are `LLPointer`s (they keep a buffer alive until that fragment is replaced) |
+| diffuse, normal, specular textures | `LLTexRef` handles | the faces and their texture entries | the textures of the items, the plan and the transient items as `LLPointer`s in `mGeoTex`; `RtExtra::mTex` an `LLPointer`; the rig sources `LLTexRef` handles (resolved when used, null = skipped) |
+| glTF material | `LLGLTFMatRef` handle | the texture entry | the glTF values copied into the rows (`mPbr`, `mTransPbr`); `GeoRigSource::mGltf` a handle |
+| avatar, skin | `LLAvatarRef`, `LLSkinRef` handles | the avatar and the mesh asset | the same handles in the rig sources and `TransItem` |
+| model and texture matrix | raw pointers | the drawable (or the region's `mRenderMatrix`) | raw pointers in `RtExtra`, `TransItem`, and the matrix slot registry (`sMovingMatrix`); a deleted drawable's matrices are handled by the rebuild rule at `llvovolume.cpp:449` (the group that names them is rebuilt), which is a rebuild of the group and so unchanged |
+
+So the answer to "does the transient map change ownership": no. The risk is not a reference count, it is the three READERS and GUARDS below that assume the draw map is still there after the build. Two of them were missing from section 1.
+
+### 6.2 What the draw map is still used for after the fragment build (the corrected list)
+1. **`LLFace::mDrawInfo`** (known): `llface.cpp:500`, `llspatialpartition.cpp:4615-4623`. Step 2.2.
+2. **`LLOctreeDirtyTexture` (`pipeline.cpp:1951`, NEW):** when a set of textures is reloaded (`dirtyPoolObjectTextures`), it walks every group's draw infos and marks the group `GEOM_DIRTY` if one uses `mTexture` in the set. After 2.4 it must ask the fragment which textures the group uses (the fragment's `mGeoTex`, `RtExtra::mTex` and the rig sources' handles cover the draws that are drawn; a draw nothing draws needs no rebuild). Added to step 2.1.
+3. **The release scan (cold mode, on by default: `pipeline.cpp:2586` and `2604`, NEW):** a group is released only when `!group->mDrawMap.empty()` (it has built geometry), and the draw infos are counted for the statistic (`sRelReleasedInfos`, the scene census). With a transient map the test is always empty and NOTHING would be released any more (the object expiry would silently stop working: no error, only memory). It must ask the fragment (`mWalkNonEmpty` / `mHasDraw`, `mDrawCount`). Added to step 2.1; verified by the census line "Released: N groups" staying non-zero in a lap with the cold mode on.
+4. **The builder guard (`clearDrawMap`, `llspatialpartition.cpp:219-226`, NEW and the most dangerous):** `LLBuilderGuard::beforeMutation` (it waits for the async builders in flight) is called only `if (!mDrawMap.empty())`. Since stage 1 the async builders read the FRAGMENT (rig sources, items: pointers into its vectors, valid "until the fragment is made again"), and the guard is what keeps a rebuild from freeing them under a builder. With a transient map the map is empty when the next rebuild starts, so the guard would not fire: a race (the same kind as the glTF preview crash). The condition must become `!mDrawMap.empty() || mSceneFragment` BEFORE the map is emptied (so it is the first edit of 2.4, and testable by a counter of quiesces). The epoch of the main view map (`sMainMapLive`, `sEpoch`) counted changes to the render map the early sort made; the render map is gone, the groups and fragments it names remain: check in 2.0c that the resort it triggers is still wanted.
+5. **Window semantics that stay as they are** (checked, no change): `ll_scene_fragment_build` builds only `if (!group->mDrawMap.empty())`; `shadowPrepRenderMap` counts and names a group "with draws and no current fragment" by `!mDrawMap.empty()`. Both are about the window between the producers' merge and the build, where the map is exactly non-empty; after the build it is empty and the fragment is current, which is the state those tests ask for. The batched rebuild is safe for the same reason: a `LLRebuildBatch::Scope` flushes in its destructor and explicitly before the passes (`pipeline.cpp:5654`, `7965`, `9487`), and every lap of the day logged "no current fragment ... (with draws 0)": no view ever saw a group with draws and no fragment.
+
+### 6.3 Changes to the steps
+- **2.1** also converts the release scan and `LLOctreeDirtyTexture` (items 2 and 3) and the statistics that count draw infos (`sRelReleasedInfos`, `mDrawCount`).
+- **2.4** starts with the guard condition (item 4), then the clear, with the counter of "a reader found an empty map for a group with a fragment" and the quiesce counter.
+- **2.0c** (a small read before 2.1): the epoch mechanism of the early sort, and whether anything else is waited for by the guard.
+- Nothing in 2.2, 2.3, 2.5, 2.6 changes.
