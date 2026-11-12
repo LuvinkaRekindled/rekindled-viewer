@@ -2196,6 +2196,7 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
+    LLShaderProgram::dumpProgramCensus(); // <FS> LL_VK_PROGRAM_CENSUS=1 (shader cleanup, stage 4): what the run loaded and bound, while the programs are still there
     LLVkBridge::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
 
 #if LL_VELOPACK
