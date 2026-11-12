@@ -20529,10 +20529,11 @@ static int shadow_gltf_kind(const LLDrawInfo& p)
         return GS_NONE;
     }
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
-    if (kind != GS_OPAQUE && (p.mTextureMatrix || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)))
+    if (kind != GS_OPAQUE && p.mTextureMatrix)
     {
-        return GS_NONE;
+        return GS_NONE;         // (a texture animation on a masked or blended glTF face: the packet carries one texture matrix, the animation and the glTF transform need two: the packet layer change with the texture windows)
     }
+    // (no texture coordinate array is served too, 2026-11-12: the entry has no ALPHA_HAS_TEXCOORD, the pull shader reads uv 0 as the main view reads the missing attribute)
     return kind;
 }
 // (the old shadow loops: this draw is in the record)
@@ -20593,8 +20594,12 @@ static LLViewerTexture* shadow_gltf_entry_parts(const LLVertexBuffer* vb, const 
     }
     else
     {
-        flags |= LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
-        e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+        flags |= LLVkBridge::ALPHA_NO_INDEX;
+        if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+        {
+            flags |= LLVkBridge::ALPHA_HAS_TEXCOORD;
+            e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+        }
         if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
         {
             flags |= LLVkBridge::ALPHA_HAS_COLOR;
@@ -20647,9 +20652,9 @@ static int shadow_riggltf_kind(const LLDrawInfo& p)
         return GS_NONE;
     }
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
-    if (kind != GS_OPAQUE && (p.mTextureMatrix || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)))
+    if (kind != GS_OPAQUE && p.mTextureMatrix)
     {
-        return GS_NONE;         // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; with a texture matrix or without texture coordinates they are refused as the masks are)
+        return GS_NONE;         // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; with a texture animation they are refused as the static ones are: the packet layer change; without texture coordinates they are served since 2026-11-12)
     }
     return kind;
 }
@@ -20962,10 +20967,6 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                         continue;
                     }
                     const int gk = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : GS_OPAQUE;
-                    if (gk == GS_MASK && !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
-                    {
-                        continue;
-                    }
                     add_rigged_gltf(rig, gk);
                     continue;
                 }
