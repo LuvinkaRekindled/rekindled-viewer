@@ -27,6 +27,16 @@
 
 #define FLT_MAX 3.402823466e+38
 
+// <FS> (compile time 2026-11-12) the test views of the hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24) each called the hit function again: five inlined copies of the biggest function of the pass. They are
+// compiled only with RT_REFL_DEBUG (LL_VK_RTREFL_DEBUG=1 in the environment); the pass the viewer draws with has one call site.
+#ifdef RT_REFL_DEBUG
+#define RT_Q23 (rt_hit_quality == 23)
+#define RT_Q24 (rt_hit_quality == 24)
+#else
+#define RT_Q23 false
+#define RT_Q24 false
+#endif
+
 // <FS> the RT Reflection pass (doc/vulkan/PLAN-rt-reflection-pass.md): the traced glossy reflection, carved out of softenLightF.glsl so the lighting pass compiles without the ray queries.
 // Two outputs: 0 = the reflection (rgb) and how much of it replaces the probe result (a; -1 = the ray was traced and found nothing, 0 = not traced), 1 = the hit distance for ray reconstruction (R).
 out vec4 frag_data[2];
@@ -358,12 +368,12 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
         // the probe list is state of the invocation (reflectionProbeF.glsl): the pixel's own list is put aside, the hit gets a clean one, the pixel's comes back at the end
         probeListSave();
         probeListReset();
-        if (rt_hit_quality != 23)           // (23: a cost test without any probe lookup at the hit)
+        if (!RT_Q23)           // (23: a cost test without any probe lookup at the hit)
         {
             preProbeSample(hp);
         }
         vec3 irradiance = amblit_in;
-        if (classic_mode == 0 && rt_hit_quality != 23)
+        if (classic_mode == 0 && !RT_Q23)
         {
             irradiance = sampleProbeAmbient(hp, n, amblit_in);
         }
@@ -372,7 +382,7 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
         if (mr.z > 0.5)
         {
             float rough = max(mr.y, 0.04);
-            vec3 radiance = rt_hit_quality == 23 ? vec3(0.1) : sampleProbes(hp, refl, rough * max_probe_lod);
+            vec3 radiance = RT_Q23 ? vec3(0.1) : sampleProbes(hp, refl, rough * max_probe_lod);
             vec3 diffuseColor, specularColor;
             calcDiffuseSpecular(albedo, mr.x, diffuseColor, specularColor);
             color = pbrBaseLight(diffuseColor, specularColor, mr.x, v, n, rough, light_dir_n, sunlit_in, shadow, radiance, irradiance, emissive, 1.0, vec3(0.0), vec3(1.0));
@@ -420,7 +430,7 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
                     float sc = shadow * fres * textureLod(lightFunc, vec2(nh, spec.a), 0.0).r * gt / (nh * nl);
                     c += lit * sc * sl * spec.rgb;
                 }
-                vec3 glossenv = rt_hit_quality == 23 ? vec3(0.0) : sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
+                vec3 glossenv = RT_Q23 ? vec3(0.0) : sampleProbes(hp, refl, (1.0 - spec.a) * max_probe_lod);
                 applyGlossEnv(c, glossenv, spec, dir, n);
             }
             if (rt_hit_quality >= 2 && mr.w > -0.5)
@@ -454,8 +464,10 @@ vec3 rtLitHitColor(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, vec3
 // <FS> A traced reflection ray whose hit is lit like a surface of the main pass (doc/vulkan/PLAN-glossy-mirror-quality.md, steps A and B): the hit's normal map, roughness / metallic
 // (glTF, through pbrBaseLight) or specular map (legacy materials, the blinn-phong lines of main() below), the sun with the ray's shadow, and the reflection probes sampled AT THE HIT for ambient
 // light and for the surface's own specular reflection. rt_hit_quality 0 keeps the flat diffuse shading of rtReflection (the water uses that one only).
+#ifdef RT_REFL_DEBUG
 vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
 vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc);
+#endif
 
 // <FS> For DLSS ray reconstruction (pipeline.cpp, rrHitDistF.glsl): how far the traced reflection ray of this pixel went (metres from its origin to the hit; RT_HIT_DISTANCE_MISS when it found nothing,
 // a far away environment). 0 = not traced. Written to the alpha of the soften output, moved to a target of its own right after the lighting.
@@ -468,6 +480,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
     {
         return rtReflection(origin, dir, light_dir_n, sunlit_in, amblit_in, tc, fallback);
     }
+#ifdef RT_REFL_DEBUG
     rt_lights_noshadow = (rt_hit_quality == 4 || rt_hit_quality == 5);
     if (rt_hit_quality == 3 || rt_hit_quality == 4)
     {
@@ -514,6 +527,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
         }
         return vec4(vec3(clamp(dot(n7, light_dir_n), 0.0, 1.0) * sh7) * sunlit_in, 1.0);
     }
+#endif
     vec3 albedo, emissive, n_geo, n, hp;
     float t, shadow;
     bool fb;
@@ -526,13 +540,14 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
     vec3 m_albedo, m_emissive, m_n_geo, m_n, m_hp;
     bool m_fb;
     vec4 m_mr, m_spec;
-    if (!rtTraceHitEx(origin, dir, light_dir_n, tc, rt_hit_quality != 24, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec,
+    if (!rtTraceHitEx(origin, dir, light_dir_n, tc, !RT_Q24, true, albedo, emissive, n_geo, n, hp, t, shadow, fb, mr, spec, layer_alpha, l_albedo, l_emissive, l_n_geo, l_n, l_hp, l_t, l_shadow, l_fb, l_mr, l_spec,
                       m_alpha, m_albedo, m_emissive, m_n_geo, m_n, m_hp, m_t, m_shadow, m_fb, m_mr, m_spec))
     {
         rt_hit_dist_out = RT_HIT_DISTANCE_MISS;
         return vec4(0.0);
     }
     rt_hit_dist_out = t;
+#ifdef RT_REFL_DEBUG
     if (rt_hit_quality == 22)
     {
         // debug: red = opacity of the nearest blended layer, green = of the second, blue = a blended surface is the hit itself (nothing opaque behind it)
@@ -576,6 +591,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
         n = -dir;
         n_geo = -dir;
     }
+#endif
     // the hit, then the blended surfaces in front of it (hair, an avatar's shell), the farther one first: each lit like any hit and composited over what is behind by its opacity, like the alpha pass of
     // the main view. One call site of the hit lighting for all of them (the function is big: three inlined copies tripled the compile time of this pass)
     vec3 color = vec3(0.0);
@@ -610,7 +626,7 @@ vec4 rtReflectionLit(vec3 origin, vec3 dir, vec3 light_dir_n, vec3 sunlit_in, ve
 }
 #endif
 
-#ifdef SOFTEN_RT_REFLECTION
+#if defined(SOFTEN_RT_REFLECTION) && defined(RT_REFL_DEBUG)
 // rt_hit_quality 3 (test): a traced hit shows only what the local lights add (x4), magenta where the soften pass was sent no light at all
 vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)
 {
@@ -646,7 +662,7 @@ vec4 rtHitLightsOnly(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)
 }
 #endif
 
-#ifdef SOFTEN_RT_REFLECTION
+#if defined(SOFTEN_RT_REFLECTION) && defined(RT_REFL_DEBUG)
 // rt_hit_quality 6 (test): the projector's uniforms and what its texture returns at the hit. red: |light colour| / 2, green: proj_lod / 10, blue: the projected diffuse colour x4 (luminance);
 // the same pixel is also marked (alpha 1) only when the projector's range / cone test passed; magenta: no projector uploaded
 vec4 rtHitProjectorInternals(vec3 origin, vec3 dir, vec3 light_dir_n, vec2 tc)

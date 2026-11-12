@@ -418,6 +418,16 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
         mi.codeSize = info.mSpirv[s].size() * sizeof(U32);
         mi.pCode = info.mSpirv[s].data();
+        // LL_VK_COLD_SALT=<n> (a test of cold start times, 2026-11-12): the id bound in the SPIR-V header is raised by n, which changes the module's bytes and nothing it does, so the driver's own on disk shader
+        // cache (NVIDIA's, which this program cannot switch off and which sits outside the program's directories) holds no pipeline for it and the driver compiles every pipeline again. A different n for each cold run.
+        static const U32 cold_salt = []() { const char* e = getenv("LL_VK_COLD_SALT"); return e ? (U32)std::max(0, atoi(e)) : 0u; }();
+        std::vector<U32> salted;
+        if (cold_salt && info.mSpirv[s].size() > 5)
+        {
+            salted = info.mSpirv[s];
+            salted[3] += cold_salt;
+            mi.pCode = salted.data();
+        }
         if (!vk_ok(vkCreateShaderModule(ctx.getDevice(), &mi, nullptr, &mModules[s]), "vkCreateShaderModule"))
         {
             destroy();
