@@ -3767,48 +3767,6 @@ void LLPipeline::checkReferences(LLDrawable* drawable)
 #endif
 }
 
-void check_references(LLSpatialGroup* group, LLDrawInfo* draw_info)
-{
-    for (LLSpatialGroup::draw_map_t::iterator i = group->mDrawMap.begin(); i != group->mDrawMap.end(); ++i)
-    {
-        LLSpatialGroup::drawmap_elem_t& draw_vec = i->second;
-        for (LLSpatialGroup::drawmap_elem_t::iterator j = draw_vec.begin(); j != draw_vec.end(); ++j)
-        {
-            LLDrawInfo* params = *j;
-            if (params == draw_info)
-            {
-                LL_ERRS() << "LLDrawInfo deleted while actively referenced by LLPipeline." << LL_ENDL;
-            }
-        }
-    }
-}
-
-
-void LLPipeline::checkReferences(LLDrawInfo* draw_info)
-{
-#if 0
-    if (sCull)
-    {
-        for (LLCullResult::sg_iterator iter = sCull->beginVisibleGroups(); iter != sCull->endVisibleGroups(); ++iter)
-        {
-            LLSpatialGroup* group = *iter;
-            check_references(group, draw_info);
-        }
-
-        for (LLCullResult::sg_iterator iter = sCull->beginAlphaGroups(); iter != sCull->endAlphaGroups(); ++iter)
-        {
-            LLSpatialGroup* group = *iter;
-            check_references(group, draw_info);
-        }
-
-        for (LLCullResult::sg_iterator iter = sCull->beginDrawableGroups(); iter != sCull->endDrawableGroups(); ++iter)
-        {
-            LLSpatialGroup* group = *iter;
-            check_references(group, draw_info);
-        }
-    }
-#endif
-}
 
 void LLPipeline::checkReferences(LLSpatialGroup* group)
 {

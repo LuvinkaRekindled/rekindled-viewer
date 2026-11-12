@@ -5980,34 +5980,6 @@ void LLVolumeGeometryManager::freeFaces()
     }
 }
 
-// <FS> S7 B0: a draw's extents are the union of its faces' (rigged faces have none that mean anything: the skin moves them)
-static void visCensusExtents(LLDrawInfo& info, const LLFace& face)
-{
-    if (face.isState(LLFace::RIGGED) || face.mAvatar != nullptr)
-    {
-        return;
-    }
-    const LLVector4a& lo = face.row().extents[0];
-    const LLVector4a& hi = face.row().extents[1];
-    const F32* a = lo.getF32ptr();
-    const F32* b = hi.getF32ptr();
-    if (!(a[0] <= b[0] && a[1] <= b[1] && a[2] <= b[2]) || fabsf(a[0]) > 1.0e7f || fabsf(b[0]) > 1.0e7f || fabsf(a[1]) > 1.0e7f || fabsf(b[1]) > 1.0e7f || fabsf(a[2]) > 1.0e7f || fabsf(b[2]) > 1.0e7f)
-    {
-        return;
-    }
-    if (!info.mHasExtents)
-    {
-        info.mExtents[0] = lo;
-        info.mExtents[1] = hi;
-        info.mHasExtents = true;
-    }
-    else
-    {
-        info.mExtents[0].setMin(info.mExtents[0], lo);
-        info.mExtents[1].setMax(info.mExtents[1], hi);
-    }
-}
-
 // <FS> cheaper fill: LL_VK_CHEAP_FILL (default on, 0 = the old paths; 2 = also checks every cached result against the computed one and logs a difference)
 static int cheap_fill_mode()
 {
@@ -6258,17 +6230,12 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
     {
         info->mCount += facep->getIndicesCount();
         info->mEnd += facep->getGeomCount();
-        if (LLVisCensus::sBoxes)
-        {
-            visCensusExtents(*info, *facep);
-        }
 
         if (index < FACE_DO_NOT_BATCH_TEXTURES && index >= info->mTextureList.size())
         {
             info->mTextureList.resize(index+1);
             info->mTextureList[index] = tex;
         }
-        info->validate();
     }
     else
     {
@@ -6284,10 +6251,6 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         draw_vec.push_back(draw_info);
         draw_info->mTextureMatrix = tex_mat;
         draw_info->mModelMatrix = model_mat;
-        if (LLVisCensus::sBoxes)
-        {
-            visCensusExtents(*draw_info, *facep);
-        }
 
         draw_info->mBump  = bump;
         draw_info->mShiny = shiny;
@@ -6354,7 +6317,6 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
             draw_info->mTextureList.resize(index+1);
             draw_info->mTextureList[index] = tex;
         }
-        draw_info->validate();
     }
 
     llassert(info->mGLTFMaterial == nullptr || (info->mVertexBuffer->getTypeMask() & LLVertexBuffer::MAP_TANGENT) != 0);
