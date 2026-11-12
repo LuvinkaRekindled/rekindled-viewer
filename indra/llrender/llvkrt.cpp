@@ -1312,6 +1312,13 @@ U32 shadowMode()
 {
     static const U32 mode = []() {
         const U64 v = env_u64("LL_VK_RT_SHADOWS", 0);
+        if (v == 2 || v == 3)
+        {
+            // (2026-11-12, the user) the split screen (2) and the disagreement map (3) are retired: they kept the sun cascades drawing next to the rays, which is what kept the old render map loops alive. A diagnostic view
+            // of the rays against the shadow maps is to be made new when it is needed, on the table's own caster lists. The shader still has their branches (dead: it never gets those values now).
+            LL_WARNS("VkRt") << "LL_VK_RT_SHADOWS=" << v << " is retired (the cascade comparison views): running as 1" << LL_ENDL;
+            return 1u;
+        }
         return v >= 1 && v <= 5 ? (U32)v : 0u;
     }();
     return mode;

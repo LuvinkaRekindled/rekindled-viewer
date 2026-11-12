@@ -9035,14 +9035,6 @@ static bool serial_rt_on()
     static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return !(e && e[0]) || atoi(e) != 0; }();
     return on;
 }
-// 3d2 (LL_VK_SHADOW_SERIAL_RT=2): also the sun cascades of the modes that keep them (2 split screen, 3 difference) take their casters from the fragments in the raster form. Off by default: in mode 3 the floor next to
-// the pool of the PBR store came out much darker with it (91 % dark pixels against 64 % without; the glTF casters of the raster form are the cause, LL_VK_RASTER_SKIP=1 bisect 2026-11-12), and RT off,
-// the reference for the cascades, could not tell which of the two is right (mode 3 lights the scene differently)
-static bool serial_rt_cascades_on()
-{
-    static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return e && atoi(e) >= 2; }();
-    return on;
-}
 std::atomic<bool> sViewJobsRasterRt{false};    // the render map job about to run is one of those passes (setShadowJobFlags): the walk leaves out what the raster form carries, never takes the fast way
 std::atomic<bool> sRtRasterNow{false};         // main thread: renderShadow is in such a pass (the alpha builder makes the static glTF rows there, as in RT off)
 std::atomic<bool> sViewJobsSkipStatic{false};
@@ -28017,10 +28009,10 @@ static U32 rt_matrix_id(const LLMatrix4* m)
 // <FS> ray query shadows: which shadow pass is rendering (0-3 sun cascades, 4-5 spot / projector shadows, 6 anything else)
 // <FS> Ray tracing: in the modes that trace the sun shadow with rays only (1, and the debug views 4 and 5) the sun cascades' shadow maps are never read. Their passes still run on the
 // CPU (the cull and the caster lists are what the ray scene is made from) but draw nothing: note-only records, no target, no old path draws. LL_VK_RT_KEEP_CASCADES=1 draws them anyway.
+// Every ray tracing mode is such a mode since 2026-11-12: the split screen and the disagreement map (2, 3: the cascades drawn next to the rays) are retired (llvkrt.cpp shadowMode)
 static bool rt_sun_cascades_unused()
 {
-    const U32 mode = LLVkBridge::rtShadowMode();
-    return mode == 1 || mode == 4 || mode == 5;       // (LL_VK_RT_KEEP_CASCADES is gone)
+    return LLVkBridge::rtShadowMode() != 0;       // (LL_VK_RT_KEEP_CASCADES is gone)
 }
 
 S32 LLPipeline::sRtProbePass = -1;
@@ -28285,8 +28277,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
     const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
     // J1 K6 step 3d (LL_VK_SHADOW_SERIAL_RT): the other passes of those modes (a probe's cube face, a spot or projector map) draw, and take their casters from the fragments like the passes of RT off
-    // 3d2: also in the modes that keep the sun cascades (2 split screen, 3 difference): there every pass draws, the cascades included, and takes its casters from the fragments in the raster form
-    const bool rt_raster = serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && !rt_skip && (rt_sun_cascades_unused() || serial_rt_cascades_on());
+    const bool rt_raster = serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && !rt_skip;
     sRtRasterNow.store(rt_raster, std::memory_order_relaxed);
 
     LLRenderState::CullScope cull(true);
@@ -30860,8 +30851,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         lap.reset();
 
         {
-            // (a probe face's cascades in the ray tracing modes that do not draw the main view's: raster passes, step 3d; in the modes that keep the cascades (2, 3) the main view's own cascades are raster passes too, 3d2)
-            setShadowJobFlags(serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && (rt_sun_cascades_unused() ? LLPipeline::sRtProbePass >= 0 : serial_rt_cascades_on()));
+            // (a probe face's cascades in the ray tracing modes that do not draw the main view's: raster passes, step 3d)
+            setShadowJobFlags(serial_rt_on() && LLVkBridge::rtShadowMode() != 0 && LLPipeline::sRtProbePass >= 0);
         }
         // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
         // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
