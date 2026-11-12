@@ -8589,7 +8589,11 @@ void LLPipeline::postSort(LLCamera &camera)
                     continue;
                 }
 
-                sCull->pushDrawInfo(j->first, info);
+                // (a shadow pass takes its casters from the fragments: the lists of its sort are not read, the render map job makes the answer: renderShadow clears them)
+                if (!(LLPipeline::sRtProbePass >= 0 || (LLViewerCamera::sCurCameraID >= LLViewerCamera::CAMERA_SUN_SHADOW0 && LLViewerCamera::sCurCameraID <= LLViewerCamera::CAMERA_SPOT_SHADOW1)))
+                {
+                    sCull->pushDrawInfo(j->first, info);
+                }
                 if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
                 {
                     addTrianglesDrawn(info->mCount);
@@ -28314,8 +28318,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
-            constexpr bool serial_fragments = true;       // (LL_VK_SHADOW_SERIAL=0 is gone, 2026-11-12)
-            if (serial_fragments && (!LLVkBridge::rtShadowMode() || rt_raster) && shadow_packets_enabled())
+            // every serial pass takes its casters from the fragments, in every mode (2026-11-12: the ray tracing modes' sun cascades too, which used to keep the lists of the sort; postSort pushes no draw info for a shadow view any more)
             {
                 LL_CPU_ZONE("renderShadow: serial pass render map job");
                 static ShadowCascadePrep serial_prep;
