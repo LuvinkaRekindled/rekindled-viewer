@@ -4604,33 +4604,6 @@ public:
                 renderAgentTarget(avatar);
             }
 
-#if 0
-            if (gDebugRender)
-            {
-                for (U32 i = 0; i < drawable->getNumFaces(); ++i)
-                {
-                    LLFace* facep = drawable->getFace(i);
-                    if (facep)
-                    {
-                        U8 index = facep->getTextureIndex();
-                        if (facep->mDrawInfo)
-                        {
-                            if (index < FACE_DO_NOT_BATCH_TEXTURES)
-                            {
-                                if (facep->mDrawInfo->mTextureList.size() <= index)
-                                {
-                                    LL_ERRS() << "Face texture index out of bounds." << LL_ENDL;
-                                }
-                                else if (facep->mDrawInfo->mTextureList[index] != facep->getTexture())
-                                {
-                                    LL_ERRS() << "Face texture index incorrect." << LL_ENDL;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-#endif
         }
 
         // (K6 B1: Batch Size and Texture Animation are drawn from the scene table once a frame: ll_render_table_debug)

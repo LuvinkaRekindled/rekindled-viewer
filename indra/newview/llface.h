@@ -220,7 +220,6 @@ public:
 
     void        setGeomIndex(U16 idx);
     void        setIndicesIndex(S32 idx);
-    void        setDrawInfo(LLDrawInfo* draw_info);
 
     F32         getTextureVirtualSize() ;
     void        resetVirtualSize();
@@ -273,7 +272,6 @@ public:
     LLMatrix4*  mTextureMatrix;
     LLMatrix4*  mSpecMapMatrix;
     LLMatrix4*  mNormalMapMatrix;
-    LLDrawInfo* mDrawInfo;
     LLVOAvatar* mAvatar = nullptr;
     LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 

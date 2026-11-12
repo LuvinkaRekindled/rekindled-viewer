@@ -1688,8 +1688,6 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
             info->mBlendFuncSrc = bf_src;
             info->mHasGlow = has_glow;
             draw_vec.push_back(info);
-            //for alpha sorting
-            facep->setDrawInfo(info);
         }
     }
 

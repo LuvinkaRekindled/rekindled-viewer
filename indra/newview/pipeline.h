@@ -310,7 +310,6 @@ public:
         );
 
     // Something about these textures has changed.  Dirty them.
-    void        dirtyPoolObjectTextures(const std::set<LLViewerFetchedTexture*>& textures);
 
     void        resetDrawOrders();
 
