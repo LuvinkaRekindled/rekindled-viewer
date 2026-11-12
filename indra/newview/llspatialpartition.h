@@ -492,6 +492,7 @@ public:
     std::atomic<bool> mInDirtyReg{ false };        // <FS> C4.1: listed in LLDirtyGroups
     U32 mDirtyIdx = 0;
     U32 mGeoHandle = 0;                 // <FS> S3 G3: the worker's handle of this group's scene geometry fragment (0 = none, or the table does not hold it): what postSort lists for the passes
+    static U32 sGuardFragmentOnly;      // <FS> clearDrawMap calls that found a fragment and an empty draw map (the normal case since the map is emptied after the build): the builder guard fired for the fragment alone
     static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
 
     bridge_list_t mBridgeList;

@@ -213,15 +213,25 @@ LLSpatialGroup::~LLSpatialGroup()
 }
 
 U32 LLSpatialGroup::sDrawMapsCleared = 0;
+U32 LLSpatialGroup::sGuardFragmentOnly = 0;
 
 void LLSpatialGroup::clearDrawMap()
 {
     gPipeline.releaseForget(this);       // <FS> expiry: a group without geometry is not in the age queue (a rebuild queues it again)
     ++mDrawMapSerial;
-    // <FS> the draw infos go: builders on the async pool may be reading them, and the main view's render map may point to them
-    if (!mDrawMap.empty())
+    // <FS> the draw infos go. The draw map is emptied when the group's fragment is built (stage 2, 2026-11-12), so a group with a fragment and an empty map is the normal case: the async builders read the
+    // group's FRAGMENT (its items, its rig sources: pointers into its vectors, valid until it is made again) and the early sort's result names it, so the guard (it waits for the builders in flight and bumps
+    // the epoch of the early sort) fires when there is a map or a fragment to change
+    if (!mDrawMap.empty() || mSceneFragment)
     {
-        ++sDrawMapsCleared;
+        if (mDrawMap.empty())
+        {
+            ++sGuardFragmentOnly;
+        }
+        else
+        {
+            ++sDrawMapsCleared;
+        }
         LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mDrawMap.clear();
