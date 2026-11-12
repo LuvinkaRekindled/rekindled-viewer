@@ -11618,7 +11618,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                         f.mGeoRiggedSrc.back().mMat = rt_mat_source(params);        // J1 K5
                     }
                     params->mRigAlphaSrc = false;
-                    if (shadow_riggltf_type(kGeoTypes[t].mType + 1) && shadow_gltf_env() && !LLVkBridge::rtShadowMode())
+                    if (shadow_riggltf_type(kGeoTypes[t].mType + 1) && shadow_gltf_env())       // (also in the ray tracing modes since 2026-11-12: a group with rigged glTF draws no longer takes the full walk of the cascades for them)
                     {
                         const bool ok = shadow_riggltf_kind(*params) != 0;       // (0 = GS_NONE)
                         f.mGeoRiggedSrc.back().mAlphaOk = ok;
@@ -20753,6 +20753,12 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             {
                 out.mTexmats.insert(out.mTexmats.end(), tm, tm + 16);
                 e.mTexMatrix = (U32)(out.mTexmats.size() / 16);
+            }
+            if (rt_materials_on() && rig.mMat.mSet)
+            {
+                // the ray scene's material of the caster (as the static glTF entries of the fragments and the rigged alpha entries below): without it a traced hit on it would be the neutral grey of material 0
+                e.mMaterial = rt_material_id(rt_mat_view(rig.mMat), gk == GS_OPAQUE ? 0u : (gk == GS_MASK ? 1u : 2u));
+                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
             }
             entries.push_back(e);
             ++sRigGltfEntries[gk == GS_OPAQUE ? 0 : (gk == GS_MASK ? 1 : 2)];
