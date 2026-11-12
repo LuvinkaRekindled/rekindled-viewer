@@ -10114,40 +10114,6 @@ static bool rt_texture_ready(LLViewerTexture* t)
     return gl && gl->getTexName() != 0;
 }
 
-static bool rt_textures_ready(const LLDrawInfo& p, bool batch_textures)
-{
-    if (LLVkBridge::rtShadowMode() != 1 || !LLVkBridge::rtLoadingGates())
-    {
-        return true;
-    }
-    bool ready = true;
-    if (batch_textures && p.mTextureList.size() > 1)
-    {
-        for (const LLTexRef& t : p.mTextureList)      // <FS> C2.3: handles
-        {
-            ready = ready && rt_texture_ready(t.get());
-        }
-    }
-    else
-    {
-        ready = rt_texture_ready(p.mTexture.get());
-        if (ready && p.mTexture.isNull() && p.mGLTFMaterial.notNull())
-        {
-            ready = rt_texture_ready(p.mGLTFMaterial->mBaseColorTexture.get());
-        }
-    }
-    if (!ready)
-    {
-        static std::atomic<U64> left_out{0};
-        const U64 n = ++left_out;
-        if (n == 1 || n % 20000 == 0)
-        {
-            LL_INFOS("VkRtMaterials") << "ray scene: masked draws left out because their texture has no data yet: " << n << " so far (they join the scene when it arrives)" << LL_ENDL;
-        }
-    }
-    return ready;
-}
-
 // J1 K6 R2: the same test for a rigged fragment item's source
 static bool rt_source_textures_ready(const GeoRigSource& r, bool batch_textures)
 {
@@ -15479,18 +15445,6 @@ struct LLPipeline::ShadowSkinBuild
 };
 
 // ray scene materials: the material and the arrays the hit shading reads, for a rigged draw (every rigged entry gets them, whatever pass names the draw)
-static void rt_skin_material(LLVkBridge::ShadowSkinEntry& e, LLDrawInfo* params, const LLVertexBuffer* vb)
-{
-    if (!rt_materials_on())
-    {
-        return;
-    }
-    e.mMaterial = rt_material_id(params, 0);
-    e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
-    e.mTexcoordOffset = vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) ? vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0) : 0;
-    e.mColorOffset = vb->hasDataType(LLVertexBuffer::TYPE_COLOR) ? vb->getOffset(LLVertexBuffer::TYPE_COLOR) : 0;
-}
-
 // J1 K5: the same for a fragment item's source (its own material source and cache)
 static void rt_skin_material_src(LLVkBridge::ShadowSkinEntry& e, const RtMatSource& mat, const LLVertexBuffer* vb)
 {
@@ -15540,7 +15494,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     out.mShared = shared_palettes;
     out.mPaletteFrame = ll_frame_palette_frame();
     // the entry of one rigged draw, from its parts (a draw info's, or a fragment item's source): false = the skin is not loaded yet, not drawn
-    auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLDrawInfo* info, LLVkBridge::ShadowSkinEntry& e, const RtMatSource* mat = nullptr) -> bool
+    auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLVkBridge::ShadowSkinEntry& e, const RtMatSource* mat = nullptr) -> bool
     {
         e = {};
         if (!(shared_palettes ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
@@ -15565,11 +15519,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
             e.mAvatarPos[2] = avatar_position.mV[2];
             e.mAvatarKind = rt_avatar_kind(avatar);
         }
-        if (info)
-        {
-            rt_skin_material(e, info, vb);
-        }
-        else if (mat)
+        if (mat)
         {
             rt_skin_material_src(e, *mat, vb);
         }
@@ -15600,7 +15550,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                     continue;
                 }
                 LLVkBridge::ShadowSkinEntry e;
-                if (!make_entry(avatar, skin, vb, rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, e, &rig.mMat))
+                if (!make_entry(avatar, skin, vb, rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, e, &rig.mMat))
                 {
                     continue;
                 }
@@ -16158,14 +16108,6 @@ static bool alpha_source_type(U32 type)
     return type == LLRenderPass::PASS_GLTF_PBR || type == LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK       // (J1 K3c: the static glTF casters, named by the fragments too)
         || type == LLRenderPass::PASS_ALPHA_MASK || type == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK || type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_GRASS
         || type == LLRenderPass::PASS_NORMSPEC_MASK || type == LLRenderPass::PASS_MATERIAL_ALPHA_MASK || type == LLRenderPass::PASS_SPECMAP_MASK || type == LLRenderPass::PASS_NORMMAP_MASK;
-}
-
-// (the draw info says its entry is in its group's fragment; the fragment of the group's current draw map says the worker holds the fragment's alpha entries: no lookup by buffer ids)
-// ray: the sun cascades of the ray-only modes (sViewJobsSkipAlpha 2): the worker names the alpha entries it holds (kind 18, mAlphaSent) to the ray scene in the cascade's resident pass, not draws them (mAlphaResSent)
-static bool alpha_info_resident(const LLDrawInfo& info, const LLSpatialGroup* group, bool ray)
-{
-    const LLSceneFragment* fragment = group->mSceneFragment;
-    return info.mAlphaInFragment && fragment && fragment->mSerial == group->mDrawMapSerial && (ray ? fragment->mAlphaSent : fragment->mAlphaResSent);
 }
 
 static void shadow_caster_dropped(const char* kind, size_t count);
@@ -24975,7 +24917,7 @@ static void rt_name_rigged_main_view()
         struct RigNamed
         {
             LLVOAvatar* mAvatar; const LLMeshSkinInfo* mSkin; const LLVertexBuffer* mVb; U32 mOffset, mCount, mStart, mEnd;
-            const LLMatrix4* mModel; LLDrawInfo* mInfo; const RtMatSource* mMat;
+            const LLMatrix4* mModel; const RtMatSource* mMat;
         };
         auto name_view = [&](const RigNamed& d)
         {
@@ -25020,11 +24962,7 @@ static void rt_name_rigged_main_view()
                     e.mAvatarPos[2] = avatar_position.mV[2];
                     e.mAvatarKind = rt_avatar_kind(d.mAvatar);
                 }
-                if (d.mInfo)
-                {
-                    rt_skin_material(e, d.mInfo, vb);
-                }
-                else if (d.mMat)
+                if (d.mMat)
                 {
                     rt_skin_material_src(e, *d.mMat, vb);
                 }
@@ -25058,7 +24996,7 @@ static void rt_name_rigged_main_view()
                     for (const GeoRigSource& rig : f->mGeoRiggedSrc)
                     {
                         // (J1 K6 R1: the served rigged items are named from their sources, no draw info read)
-                        name_view({ rig.mAvatar.get(), rig.mSkin.get(), rig.mVb.get(), rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, nullptr, &rig.mMat });
+                        name_view({ rig.mAvatar.get(), rig.mSkin.get(), rig.mVb.get(), rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, &rig.mMat });
                     }
                 }
             }
@@ -25124,14 +25062,6 @@ static void rt_name_rigged_main_view()
         };
         // debug: why the own avatar's draws were turned away (counted until the next log line): 0 count / no avatar / glTF mismatch, 1..5 packet layout (shadow_alpha_fallback_reason), 6 texture not ready,
         // 7 palette, 8 accepted
-        static U32 sRtNameWhy[9] = {};
-        auto note_why = [&](LLDrawInfo* params, U32 why)
-        {
-            if (params->mAvatar.isSelf())
-            {
-                ++sRtNameWhy[why];
-            }
-        };
         auto add_entry_src = [&](const GeoRigSource& rig, const Source& source)
         {
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || (source.kind == KIND_ALPHA && rig.mGltf.isNull());
