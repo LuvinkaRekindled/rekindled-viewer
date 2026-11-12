@@ -7665,6 +7665,7 @@ static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at 
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
 static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
+static U32 ll_group_draw_tris(const LLSpatialGroup* group);        // the triangles of the group's draws, from its current fragment (below, after LLSceneFragment)
 
 // <FS> far avatar tier of the main view. An avatar that is far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) and whose rigged attachments add up to more than the triangle
 // budget of its tier (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off) is drawn as an impostor (LLVOAvatar::shouldImpostor reads mFarTierHeavy): the picture of the whole avatar. The first
@@ -7696,14 +7697,7 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
         {
             continue;
         }
-        U32 tris = 0;
-        for (const auto& entry : group->mDrawMap)
-        {
-            for (const LLDrawInfo* info : entry.second)
-            {
-                tris += info->mCount / 3;
-            }
-        }
+        const U32 tris = ll_group_draw_tris(group);
         if (tris)
         {
             by_avatar[avatar].push_back({ tris, group });
@@ -10655,6 +10649,8 @@ struct LLSceneFragment
     U32 mGeoServedCount = 0;                            // entries of mGeo the scene table can draw (region matrix or none)
     bool mGeoSent = false;                              // the worker has it (RETAIN_GEO, kind 20)
     U64 mGeoServedMask = 0;                             // G4: see LLSpatialGroup
+    U64 mGeoTypeMask = 0;                               // the table types (bit = item type number) the fragment has at least one SERVED item of (mGeoServedMask: only the types all of whose draws are served)
+    U32 mDrawTris = 0;                                  // the triangles of all the draws of the group's draw map when the fragment was made (far_avatar_tier: no draw info is read to count them)
     U32 mGeoServedTris = 0;
     U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
@@ -11271,6 +11267,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mGeoRegion = true;
     f.mGeoServedCount = 0;
     f.mGeoServedMask = 0;
+    f.mGeoTypeMask = 0;
     f.mGeoServedTris = 0;
     f.mGeoRigged.clear();
     f.mGeoRiggedSrc.clear();
@@ -11398,6 +11395,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
             }
             if (item.mServed)
             {
+                f.mGeoTypeMask |= 1ull << t2;
                 ++served_infos[t2];
                 served_tris[t2] += params->mCount;
                 if (rigged)
@@ -11990,10 +11988,24 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
 // J1 K6 S5b: the answer of the cascades' render map job walk, made once when the fragment is made: for each draw info of the group that is not a static caster (those are left out under skip_static), is it NAMED by a
 // fragment mechanism (a served rigged item, a rigged alpha source, an alpha entry or a texture matrix entry in the fragment) or would the walk push it? The draw map keeps the same infos until the fragment is made again.
 static bool alpha_source_type(U32 type);
+static U32 ll_group_draw_tris(const LLSpatialGroup* group)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    return (f && f->mWalkValid && f->mSerial == group->mDrawMapSerial) ? f->mDrawTris : 0u;
+}
+
 static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mWalkValid = true;
     f.mWalkNonEmpty = !group->mDrawMap.empty();
+    f.mDrawTris = 0;
+    for (const auto& kv : group->mDrawMap)
+    {
+        for (const LLDrawInfo* info : kv.second)
+        {
+            f.mDrawTris += info->mCount / 3;
+        }
+    }
     f.mWalkAlphaBits = 0;
     f.mWalkAlphaTypes.clear();
     f.mWalkUnnamed.clear();
@@ -13994,19 +14006,16 @@ bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
     {
         return false;
     }
-    if (cull->getRenderMapSize(type) > 0)
-    {
-        return true;
-    }
+    // (2026-11-12: the render map lists are not asked: a draw the table does not serve is not drawn by any pass, so only the fragments' served items count)
     const int tn = ll_scene_geo_type_number(type);
-    if (tn < 0 || !cull->mGeoElided)
+    if (tn < 0)
     {
         return false;
     }
     for (U32 handle : cull->mGeoHandles)
     {
         const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-        if (f && (f->mGeoServedMask & (1ull << tn)))
+        if (f && (f->mGeoTypeMask & (1ull << tn)))
         {
             return true;
         }
@@ -31270,16 +31279,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     }
 
     LLVertexBuffer::unbind();
-}
-
-bool LLPipeline::hasRenderBatches(const U32 type) const
-{
-    // <FS:ND>  FIRE-31942, sCull can be invalid if triggering 360 snapshosts fast enough  (due to snapshots running in their own co routine)
-    if( !sCull )
-        return {};
-    // </FS:ND>
-
-    return sCull->getRenderMapSize(type) > 0;
 }
 
 LLCullResult::drawinfo_iterator LLPipeline::beginRenderMap(U32 type)
