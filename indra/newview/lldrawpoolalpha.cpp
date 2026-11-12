@@ -271,7 +271,7 @@ bool LLDrawPoolAlpha::hasStaticAlpha()
     for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
     {
         LLSpatialGroup* group = *i;
-        if (group && !group->isDead() && (!group->mDrawMap[LLRenderPass::PASS_ALPHA].empty() || !group->mParticleRuns.empty()))
+        if (group && !group->isDead() && (ll_group_has_static_alpha(group) || !group->mParticleRuns.empty()))
         {
             return true;
         }
@@ -642,18 +642,22 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
                 !group->isDead() &&
                 !table_drawn[pass].count(group))       // (drawn from the table above)
             {
-                LLSpatialGroup::drawmap_elem_t& draw_info = group->mDrawMap[LLRenderPass::PASS_ALPHA+pass]; // <-- hacky + pass to use PASS_ALPHA_RIGGED on second pass
-
-                for (LLSpatialGroup::drawmap_elem_t::iterator k = draw_info.begin(); k != draw_info.end(); ++k)
+                // (2026-11-12: from the fragment's transient items of the set, no draw info: the set `pass` is the static one, then the rigged one)
+                const int highlight_count = ll_alpha_transient_count(group, pass == 1);
+                for (int highlight_k = 0; highlight_k < highlight_count; ++highlight_k)
                 {
-                    LLDrawInfo& params = **k;
+                    LLAlphaTransientDraw params;
+                    if (!ll_alpha_transient_draw(group, pass == 1, (U32)highlight_k, params) || !params.mVb)
+                    {
+                        continue;
+                    }
 
                     bool rigged = (params.mAvatar != nullptr);
                     gHighlightProgram.bind(rigged);
 
                     if (rigged)
                     {
-                        if (!uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                        if (!uploadMatrixPalette(params.mAvatar, params.mSkin, lastAvatar, lastMeshId, skipLastSkin))
                         { // failed to upload matrix palette, skip rendering
                             continue;
                         }
@@ -673,9 +677,9 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
                     else // NB dangling else to drop through to "normal behaviour"
                     // </FS:Beq>
                     gRender.diffuseColor4f(1, 0, 0, 1);
-                    LLRenderPass::applyModelMatrix(params);
-                    params.mVertexBuffer->setBuffer();
-                    params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
+                    LLRenderPass::applyModelMatrix(params.mModel);
+                    params.mVb->setBuffer();
+                    params.mVb->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
                 }
             }
         }

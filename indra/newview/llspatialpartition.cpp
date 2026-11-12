@@ -854,7 +854,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
 
     F32 dist = 0.f;
 
-    if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA) != group->mDrawMap.end())
+    if (ll_group_has_alpha_key(group))
     {
         LLVector4a v = eye;
 
@@ -2854,10 +2854,10 @@ void pushBufferVerts(LLSpatialGroup* group, bool push_alpha = true)
 {
     if (group->getSpatialPartition()->mRenderByGroup)
     {
-        if (!group->mDrawMap.empty() && !group->mDrawMap.begin()->second.empty())
+        const LLMatrix4* first_model = nullptr;
+        if (ll_group_first_draw_model(group, first_model))
         {
-            LLDrawInfo* params = *(group->mDrawMap.begin()->second.begin());
-            LLRenderPass::applyModelMatrix(*params);
+            LLRenderPass::applyModelMatrix(first_model);
 
             if (push_alpha)
             {

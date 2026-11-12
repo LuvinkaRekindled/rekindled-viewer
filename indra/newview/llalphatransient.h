@@ -37,10 +37,16 @@ struct LLAlphaTransientDraw
     LLVOAvatar* mAvatar = nullptr;
     const LLMeshSkinInfo* mSkin = nullptr;
     unsigned char mGlowCls = 255;
+    LLVertexBuffer* mVb = nullptr;      // the draw's range (the Highlight Transparent view draws it with the highlight program)
+    U32 mStart = 0, mEnd = 0, mCount = 0, mOffset = 0;
 };
 // the group's fragment keeps one transient item per classifiable alpha draw of a set (static / rigged), in the group's order: -1 when the fragment is not current (or has no plan), else the count
 int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged);
-// item `index` as ll_alpha_transient gives it for the draw (false: the context cannot draw it)
+// the group has a static alpha blended draw (its fragment's plan counts them)
+bool ll_group_has_static_alpha(const LLSpatialGroup* group);
+// what the pass reads of item `index` besides the entry (no context test: the debug views use it)
+bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index, LLAlphaTransientDraw& draw);
+// item `index` as ll_alpha_transient gave it for the draw (false: the context cannot draw it)
 bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, LLAlphaTransient& out, LLAlphaTransientDraw& draw);
 
 // C5 J2: the same for a run of a particle group (rows of the group's buffer); false = not drawn
