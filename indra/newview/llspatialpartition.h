@@ -165,6 +165,7 @@ public:
 
     // <FS> C2.4a: this was a counted LLPointer<LLMaterial> that was only ever tested for null (the batching test in registerFace, the materials pull program choice in the scene table): a flag, no lifetime to carry
     bool mHasMaterial = false;
+    bool mRasterFrag = false;          // <FS> J1 K6 step 3d (ray tracing only): a raster shadow pass (a probe face, a spot map) finds this glTF or texture matrix caster as an entry of the group's fragment (mRaster, mRasterTex)
     bool mAlphaFragTex = false;        // <FS> C5 J3: this alpha caster has a texture matrix and the group's fragment holds it in its texture matrix list (the cascades' shadow records carry it)
     // <FS> C4.1 alpha: this draw info's alpha caster entry went into the group's scene fragment (scene_fragment_fill_alpha): the cascades' render map job asks the fragment whether the worker holds it, no lookup by buffer ids
     bool mAlphaInFragment = false;

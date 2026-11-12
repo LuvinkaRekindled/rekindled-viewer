@@ -4913,7 +4913,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        if (Rt::active() && !(e.mFlags & LLVkBridge::ALPHA_RIGGED))
+        if (Rt::active() && !(e.mFlags & LLVkBridge::ALPHA_RIGGED) && !h.mDrawOnly)       // (mDrawOnly: step 3d, the viewer names these casters to the ray scene itself, with their materials)
         {
             Rt::AlphaInfo alpha;
             alpha.mFlags = e.mFlags & 31u;      // fullbright, tree, one texture, texcoords, colours: the bits mean the same in the ray query shader

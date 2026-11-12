@@ -9004,6 +9004,15 @@ ViewJobsStats sViewJobs;
 static const bool sCascadeTypeCensus = getenv("LL_VK_RMCENSUS") != nullptr;
 static std::atomic<U64> sCascadeTypePushed[128], sCascadeTypeAvatar[128];
 
+// J1 K6 step 3d: LL_VK_SHADOW_SERIAL_RT=1 (default off until checked): the raster shadow passes of the ray tracing modes that do not draw the sun cascades (modes 1, 4, 5: a reflection probe's faces, the spot and projector maps)
+// take their casters from the groups' fragments like the passes of RT off do (the render map job runs for the serial pass; the fragments carry the raster form of the glTF and texture matrix casters too, mRaster / mRasterTex)
+static bool serial_rt_on()
+{
+    static const bool on = []() { const char* e = getenv("LL_VK_SHADOW_SERIAL_RT"); return e && e[0] && atoi(e) != 0; }();
+    return on;
+}
+std::atomic<bool> sViewJobsRasterRt{false};    // the render map job about to run is one of those passes (setShadowJobFlags): the walk leaves out what the raster form carries, never takes the fast way
+std::atomic<bool> sRtRasterNow{false};         // main thread: renderShadow is in such a pass (the alpha builder makes the static glTF rows there, as in RT off)
 std::atomic<bool> sViewJobsSkipStatic{false};
 std::atomic<S32> sViewJobsSkipAlpha{0};        // C4.1 for the alpha casters: 1 the render map job leaves out the draw infos the worker holds as resident alpha entries (the builder built them and the viewer dropped them again), 2 counts only
 ShadowPrepTimes sShadowPrepTimes[2]; // [parallel]
@@ -10646,9 +10655,16 @@ struct LLSceneFragment
         LLPointer<LLViewerTexture> mTex;                // null: an opaque caster
         U32 mMatKind = 0;                               // the hint of rt_material_id
         U8 mStat = 0;                                   // 0 glTF opaque, 1 glTF mask, 2 glTF blend, 3 texture matrix (the statistics)
+        bool mInList = false;                           // step 3d: a raster pass cannot take this draw as an entry (mRaster, mRasterTex): its walk leaves it in the lists, so the lists name it to the ray scene there
+        LLDrawInfo* mDraw = nullptr;                    // (only while the fragment is made: the raster fill reads what it decided for the draw)
         RtMatSource mMat;
     };
     std::vector<RtExtra> mRtExtra;
+    // J1 K6 step 3d (ray scene only, LL_VK_SHADOW_SERIAL_RT): the entries a RASTER shadow pass of the ray tracing modes (a reflection probe's face, a spot or projector map) draws for the same glTF and texture matrix casters:
+    // the raster form that RT off keeps in mAlpha and mAlphaTex (the ray scene's form of mAlpha leaves them out: they are named from mRtExtra). Never registered with the worker; the pass numbers matrices, textures and texture matrices.
+    std::vector<LLVkBridge::ShadowAlphaEntry> mRaster;
+    std::vector<LLVkBridge::ShadowAlphaEntry> mRasterTex;    // (the double sided ones and those with a transform: mRasterTexPtrs, as mAlphaTexPtrs)
+    std::vector<const LLMatrix4*> mRasterTexPtrs;
     std::vector<LLPointer<LLViewerTexture>> mTexLocal;
     std::vector<U32> mSentName;                         // per local texture: the name the worker was told
     std::vector<U8> mSentReady;
@@ -12237,6 +12253,7 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
         x.mTex = tex;
         x.mMatKind = mat_kind;
         x.mStat = stat;
+        x.mDraw = params;
         if (rt_materials_on())
         {
             x.mMat = rt_mat_source(params);
@@ -12323,6 +12340,8 @@ static void scene_fragment_fill_rtextra(LLSpatialGroup* group, LLSceneFragment& 
     }
 }
 
+static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f);
+
 static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mBuffers.clear();
@@ -12402,6 +12421,9 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     f.mAlphaTexOwn.clear();
     f.mTexLocal.clear();
     f.mRtExtra.clear();
+    f.mRaster.clear();
+    f.mRasterTex.clear();
+    f.mRasterTexPtrs.clear();
     if ((scene_alpha_on() && LLVkBridge::rtShadowMode()) || (alpha_res_wanted() && !LLVkBridge::rtShadowMode()))
     {
         scene_fragment_fill_alpha(group, f);
@@ -12409,6 +12431,10 @@ static void scene_fragment_fill(LLSpatialGroup* group, LLSceneFragment& f)
     if (scene_alpha_on() && LLVkBridge::rtShadowMode() && rt_extra_frag_mode() != 0)
     {
         scene_fragment_fill_rtextra(group, f);      // J1 K6 step 3c (after the alpha entries: their fill resets the draws' flags)
+        if (serial_rt_on())
+        {
+            scene_fragment_fill_raster(group, f);   // J1 K6 step 3d (after the items: it says for each which of them a raster pass takes as an entry)
+        }
     }
     if (scene_geo_on())
     {
@@ -15348,8 +15374,10 @@ static void scene_alpha_frame(U64 frame)
 
 static bool sResidentPassRan = false;       // the resident pass named this cascade's casters (the alpha builder entries the worker holds can be dropped)
 
-static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather, bool ray_notes)
+static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPipeline::ShadowStaticBuild* source, const SceneGather& gather, bool ray_notes, bool also_note = false)
 {
+    // also_note (step 3d): a raster pass of the ray tracing modes (a probe or mirror face, a spot map) draws the resident casters (kind 16) AND names them to the ray scene (kind 17) as the lists did: the casters
+    // only these passes see (the mirror's view) stay in the ray scene by being named here
     for (LLSceneFragment* f : sPendingResident)
     {
         if (f->mEntries.empty())
@@ -15407,7 +15435,7 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
         memcpy(sPassPlanes[pass], planes, sizeof(planes));
         sPassPlaneMask |= 1u << pass;
     }
-    if (scene_alpha_on() && ray_notes)
+    if (scene_alpha_on() && (ray_notes || also_note))
     {
         scene_alpha_frame((U64)gFrameCount);
     }
@@ -15418,6 +15446,11 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
         header.mPass = pass;
         memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
         LLVkBridge::shadowPackets(header, planes, sizeof(planes));
+        if (also_note && !ray_notes)
+        {
+            header.mKind = 17;
+            LLVkBridge::shadowPackets(header, planes, sizeof(planes));
+        }
     }
     ++sFragStats.mResPasses;
 
@@ -16180,10 +16213,11 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     // render_shadow_packets takes the casters from the fragments; the main thread decided (generateSunShadow)
     const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
+    const bool raster_rt = sViewJobsRasterRt.load(std::memory_order_relaxed);       // step 3d: a raster pass of the ray tracing modes: no fast way (its summary names the ray scene's form), the raster form's draws are the named ones
     U64 n_alpha_skipped = 0;
     // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
     // casters left out, rigged and alpha casters named by the fragments); (LL_VK_SHADOW_WALK and LL_VK_SHADOW_WALK_VERIFY are gone)
-    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0;       // (1 raster, 2 the sun cascades of the ray-only modes)
+    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0 && !raster_rt;       // (1 raster, 2 the sun cascades of the ray-only modes)
     U64 n_plan_skipped = 0;
     U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
     {
@@ -16192,7 +16226,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
         {
             plan_inputs = (plan_inputs ^ (hasRenderType(t) ? 0x9Eu + t : 0x31u)) * 1099511628211ull;
         }
-        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? 1 : 0) << 5) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigalpha_mode() : 0) << 8)) * 1099511628211ull;
+        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ (raster_rt ? 0x10000ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? 1 : 0) << 5) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigalpha_mode() : 0) << 8)) * 1099511628211ull;
     }
     U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
 
@@ -16368,7 +16402,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                         ++n_alpha_skipped;
                         continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
                     }
-                    else if ((info->mAlphaInFragment || info->mAlphaFragTex) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
+                    else if ((info->mAlphaInFragment || (raster_rt ? info->mRasterFrag : info->mAlphaFragTex)) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
                     {
                         // C5 J3: the group's fragment names this caster and the worker does not hold it yet: renderShadow makes the entry from the fragment (mode 2 also pushes the draw info, to compare)
                         plan_frag = true;
@@ -20577,6 +20611,7 @@ static std::atomic<U64> sRigGltfEntries[3];
 struct LLPipeline::ShadowAlphaBuild
 {
     std::vector<LLVkBridge::ShadowAlphaEntry> mEntries;
+    std::vector<LLVkBridge::ShadowAlphaEntry> mDrawOnly;    // J1 K6 step 3d: the raster form of the glTF and texture matrix casters of a raster pass in the ray tracing modes: a record of its own the ray scene does not take (ray scene items name them)
     std::vector<F32> mMatrices;
     std::vector<F32> mPalettes;
     std::vector<F32> mTexmats;                  // C5 J3: the texture matrices of the draws (16 floats each; an entry's mTexMatrix is 1 + its number)
@@ -20615,7 +20650,8 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
         return number;
     };
         // C5 PBR shadow rows: the static glTF casters of the pass as entries (the rigged ones and the ray shadow mode keep the old path)
-        const bool gltf_rows = shadow_gltf_env() && !rigged && !LLVkBridge::rtShadowMode();
+        const bool raster_rt = sRtRasterNow.load(std::memory_order_relaxed);       // step 3d: a raster pass of the ray tracing modes makes its entries as RT off does
+        const bool gltf_rows = shadow_gltf_env() && !rigged && (!LLVkBridge::rtShadowMode() || raster_rt);
         auto add_gltf = [&](LLDrawInfo* params, int gk)
         {
             LLVkBridge::ShadowAlphaEntry e;
@@ -20724,7 +20760,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 }
                 if (source.kind == KIND_ALPHA && params->mGLTFMaterial)
                 {
-                    if (rigged && shadow_gltf_env() && !LLVkBridge::rtShadowMode() && shadow_riggltf_kind(*params) == GS_BLEND)
+                    if (rigged && shadow_gltf_env() && (!LLVkBridge::rtShadowMode() || raster_rt) && shadow_riggltf_kind(*params) == GS_BLEND)
                     {
                         add_rigged_gltf(ll_geo_rig_source(params), GS_BLEND);       // K6 group C step 3a: a rigged glTF blend caster is an entry of the rigged record too
                         continue;
@@ -20736,7 +20772,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 {
                     continue;       // ray shadows: the texture has no data yet, nothing is traced for the draw until it has
                 }
-                if (!shadow_alpha_packet_ok(*params, batch, rigged, false, !LLVkBridge::rtShadowMode()))       // (J1 K3c: the rigged draws' texture matrices travel too: the pull shader applies the entry's matrix to any entry)
+                if (!shadow_alpha_packet_ok(*params, batch, rigged, false, !LLVkBridge::rtShadowMode() || raster_rt))       // (J1 K3c: the rigged draws' texture matrices travel too: the pull shader applies the entry's matrix to any entry)
                 {
                     switch (shadow_alpha_fallback_reason(*params, batch, rigged))
                     {
@@ -21204,9 +21240,193 @@ static void scene_fragment_fill_alpha(LLSpatialGroup* group, LLSceneFragment& f)
     }
 }
 
+// J1 K6 step 3d (ray scene only): the raster form of the casters the ray scene's form of the fragment leaves to mRtExtra: the static glTF casters (opaque, mask, blend) and the textured draws with a texture matrix, as entries a
+// raster shadow pass draws (what scene_fragment_fill_alpha makes of the same draws when RT is off: the same conditions, the same fields, in mRaster / mRasterTex). A draw it carries is marked mRasterFrag (the walk of a raster pass
+// leaves it out of the lists); a draw it cannot carry stays in the lists there (the old loops draw it) and its ray scene item says so (mInList).
+static void scene_fragment_fill_raster(LLSpatialGroup* group, LLSceneFragment& f)
+{
+    auto texture_ref = [&](LLViewerTexture* tex) -> U32
+    {
+        for (size_t k = 0; k < f.mTexLocal.size(); ++k)
+        {
+            if (f.mTexLocal[k].get() == tex)
+            {
+                return (U32)k + 1;
+            }
+        }
+        f.mTexLocal.push_back(tex);
+        return (U32)f.mTexLocal.size();
+    };
+    auto buffer_known = [&](const LLVertexBuffer* vb)
+    {
+        for (const LLSceneFragment::BufferRef& br : f.mBuffers)
+        {
+            if (br.mBuffer == vb)
+            {
+                return;
+            }
+        }
+        f.mBuffers.push_back({ vb, vb->getVertexBufferId(), vb->getIndexBufferId() });
+    };
+    auto matrix_number = [&](const LLMatrix4* model, U32 matrix_id) -> U32
+    {
+        if (!model)
+        {
+            return 0;
+        }
+        size_t k = 0;
+        while (k < f.mMatrices.size() && f.mMatrices[k] != model)
+        {
+            ++k;
+        }
+        if (k == f.mMatrices.size())
+        {
+            f.mMatrices.push_back(model);
+            f.mMatrixIds.push_back(matrix_id);
+        }
+        return (U32)k + 1;
+    };
+    for (const ShadowAlphaSource& source : sources)
+    {
+        auto found = group->mDrawMap.find(source.type);
+        if (found == group->mDrawMap.end())
+        {
+            continue;
+        }
+        const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+        for (LLDrawInfo* params : found->second)
+        {
+            params->mRasterFrag = false;
+            if (!params->mCount || params->mAvatar != nullptr)
+            {
+                continue;
+            }
+            if (source.kind >= KIND_GLTF_OPAQUE || (source.kind == KIND_ALPHA && params->mGLTFMaterial))
+            {
+                if (!shadow_gltf_env() || !params->mGLTFMaterial)
+                {
+                    continue;
+                }
+                const int gk = shadow_gltf_kind(*params);
+                if (gk == GS_NONE)
+                {
+                    continue;       // (a glTF draw the record cannot carry: the old loops draw it)
+                }
+                buffer_known(params->mVertexBuffer.get());
+                LLVkBridge::ShadowAlphaEntry ge;
+                F32 gtm[16];
+                bool has_tm = false;
+                LLViewerTexture* gtex = shadow_gltf_entry(*params, gk, ge, gtm, has_tm);
+                ge.mMatrix = matrix_number(params->mModelMatrix, ge.mMatrixId);
+                if (gtex)
+                {
+                    ge.mTextures[0] = texture_ref(gtex);
+                }
+                ge.mUv[0] = 1.f;
+                ge.mUv[3] = 1.f;
+                params->mRasterFrag = true;
+                if ((ge.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED) || has_tm)
+                {
+                    f.mRasterTex.push_back(ge);
+                    if (has_tm)
+                    {
+                        f.mAlphaTexOwn.emplace_back();
+                        memcpy(f.mAlphaTexOwn.back().mMatrix, gtm, 64);
+                        f.mRasterTexPtrs.push_back(&f.mAlphaTexOwn.back());
+                    }
+                    else
+                    {
+                        f.mRasterTexPtrs.push_back(nullptr);
+                    }
+                }
+                else
+                {
+                    f.mRaster.push_back(ge);
+                }
+                continue;
+            }
+            // the legacy casters the ray scene's form leaves out (a texture matrix): the entry RT off makes
+            if (shadow_alpha_packet_ok(*params, batch, false, false, false) || !shadow_alpha_packet_ok(*params, batch, false, false, true))
+            {
+                continue;
+            }
+            const bool texmat_draw = params->mTextureMatrix && !(batch && params->mTextureList.size() > 1) && params->mTexture.notNull();
+            const LLVertexBuffer* vb = params->mVertexBuffer.get();
+            buffer_known(vb);
+            LLVkBridge::ShadowAlphaEntry e = {};
+            e.mVertexBuffer = vb->getVertexBufferId();
+            e.mIndexBuffer = vb->getIndexBufferId();
+            e.mFirstIndex = params->mOffset;
+            e.mIndexCount = params->mCount;
+            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
+            e.mMatrix = matrix_number(params->mModelMatrix, e.mMatrixId);
+            U32 flags = 0;
+            if (source.kind == KIND_FULLBRIGHT)
+            {
+                flags |= LLVkBridge::ALPHA_FULLBRIGHT;
+            }
+            if (source.kind == KIND_GRASS || source.kind == KIND_MATERIAL)
+            {
+                flags |= LLVkBridge::ALPHA_TREE;
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+            }
+            if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+            {
+                flags |= LLVkBridge::ALPHA_HAS_COLOR;
+                e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+            }
+            if (batch && params->mTextureList.size() > 1)
+            {
+                for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
+                {
+                    if (params->mTextureList[t].notNull())
+                    {
+                        e.mTextures[t] = texture_ref(params->mTextureList[t].get());
+                    }
+                }
+            }
+            else
+            {
+                flags |= LLVkBridge::ALPHA_NO_INDEX;
+                if (params->mTexture.notNull())
+                {
+                    e.mTextures[0] = texture_ref(params->mTexture.get());
+                }
+            }
+            if (source.kind == KIND_ALPHA)
+            {
+                flags |= LLVkBridge::ALPHA_BLENDED;
+            }
+            e.mFlags = flags;
+            e.mCutoff = (source.kind == KIND_ALPHA || source.kind == KIND_GRASS) ? ALPHA_BLEND_CUTOFF : params->mAlphaMaskCutoff;
+            e.mNormalOffset = 0;
+            e.mUv[0] = 1.f;
+            e.mUv[3] = 1.f;
+            params->mRasterFrag = true;
+            if (texmat_draw)
+            {
+                f.mRasterTex.push_back(e);
+                f.mRasterTexPtrs.push_back(params->mTextureMatrix);
+            }
+            else
+            {
+                f.mRaster.push_back(e);
+            }
+        }
+    }
+    for (LLSceneFragment::RtExtra& x : f.mRtExtra)
+    {
+        x.mInList = x.mDraw && !x.mDraw->mRasterFrag;
+    }
+}
+
 // C5 J3: the entries of the alpha casters the fragments of the given groups name (the groups' fragments are current and the worker does not hold their alpha entries yet), made like the builder's: the matrices as raw
 // values numbered in this record, the textures as numbers into the build's texture list. verify = compare with the builder's entries of the same draws (the caller did not leave them out) instead of adding
-static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::vector<LLSpatialGroup*>& groups)
+static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::vector<LLSpatialGroup*>& groups, bool rt_raster = false)
 {
     // J1 K3c: the matrices and textures this call numbers are a few dozen: flat reused lists searched in a line (the two hash maps allocated a node for every one, per cascade pass per frame)
     static thread_local std::vector<std::pair<const LLMatrix4*, U32>> matrix_numbers;
@@ -21215,7 +21435,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
     texture_numbers.clear();
     static U64 groups_seen = 0;
     std::vector<LLVkBridge::ShadowAlphaEntry>& added = b.mEntries;
-    const bool ray = LLVkBridge::rtShadowMode() != 0;
+    const bool ray = LLVkBridge::rtShadowMode() != 0 && !rt_raster;       // (a raster pass of the ray tracing modes (step 3d) draws the entries: the worker does not name them for it)
     const U64 groups_before = groups_seen;
     const size_t entries_before = added.size();
     for (LLSpatialGroup* group : groups)
@@ -21232,13 +21452,9 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
             continue;
         }
         ++groups_seen;
-        const size_t plain = held ? 0 : f->mAlpha.size();      // (the entries the worker holds are not named again)
-        const size_t total = plain + f->mAlphaTex.size();
-        for (size_t entry_index = 0; entry_index < total; ++entry_index)
+        // the entry as this record numbers it: the matrix, the texture matrix and the textures of the pass's own lists
+        auto emit = [&](const LLVkBridge::ShadowAlphaEntry& e, const LLMatrix4* texmat, std::vector<LLVkBridge::ShadowAlphaEntry>& dest)
         {
-            const bool with_texmat = entry_index >= plain;
-            const LLVkBridge::ShadowAlphaEntry& e = with_texmat ? f->mAlphaTex[entry_index - plain] : f->mAlpha[entry_index];
-            const LLMatrix4* texmat = with_texmat ? f->mAlphaTexPtrs[entry_index - plain] : nullptr;
             LLVkBridge::ShadowAlphaEntry ne = e;
             const LLMatrix4* matrix = e.mMatrix ? f->mMatrices[e.mMatrix - 1] : nullptr;
             const LLViewerTexture* tex[4] = {};
@@ -21256,7 +21472,7 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
                 }
                 if (!ready)
                 {
-                    continue;
+                    return;
                 }
             }
             ne.mMatrix = 0;
@@ -21301,7 +21517,26 @@ static void append_fragment_alpha(LLPipeline::ShadowAlphaBuild& b, const std::ve
                 }
                 ne.mTextures[t] = texture_numbers[k].second;
             }
-            added.push_back(ne);
+            dest.push_back(ne);
+        };
+        const size_t plain = held ? 0 : f->mAlpha.size();      // (the entries the worker holds are not named again)
+        const size_t total = plain + f->mAlphaTex.size();
+        for (size_t entry_index = 0; entry_index < total; ++entry_index)
+        {
+            const bool with_texmat = entry_index >= plain;
+            emit(with_texmat ? f->mAlphaTex[entry_index - plain] : f->mAlpha[entry_index], with_texmat ? f->mAlphaTexPtrs[entry_index - plain] : nullptr, added);
+        }
+        if (rt_raster)
+        {
+            // step 3d: the raster form of the glTF and texture matrix casters (a record of its own: the ray scene's items name them)
+            for (const LLVkBridge::ShadowAlphaEntry& e : f->mRaster)
+            {
+                emit(e, nullptr, b.mDrawOnly);
+            }
+            for (size_t k = 0; k < f->mRasterTex.size(); ++k)
+            {
+                emit(f->mRasterTex[k], f->mRasterTexPtrs[k], b.mDrawOnly);
+            }
         }
     }
     gShadowDrawStats.mAlphaFragEntries += added.size() - entries_before;
@@ -21321,6 +21556,13 @@ static void finish_shadow_alpha(LLPipeline::ShadowAlphaBuild& b)
         ++gShadowDrawStats.mAlphaTextures;
     }
     for (LLVkBridge::ShadowAlphaEntry& e : b.mEntries)
+    {
+        for (U32& t : e.mTextures)
+        {
+            t = t ? names[t - 1] : 0u;
+        }
+    }
+    for (LLVkBridge::ShadowAlphaEntry& e : b.mDrawOnly)
     {
         for (U32& t : e.mTextures)
         {
@@ -22660,6 +22902,33 @@ void LLPipeline::renderAvatarVelocity()
         VelocityRiggedWork& work = sVelWork;
         const bool objects_on = work.mObjectsOn;
         if (objects_on)
+void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
+{
+    LL_PROFILE_GPU_ZONE("rr hit distance");
+    static LLStaticHashedString clear_s("clear_only");
+    RenderPassSuspend suspend(*screen);      // the caller's pass on the screen target is suspended here and resumed below
+    LLRenderState::DepthScope depth(false, false);
+    LLRenderState::BlendScope blend(false);
+
+    RenderPassScope pass_10737(mRRHitDist);
+    gRRHitDistProgram.bind();
+    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, screen, false, LLTexUnit::TFO_POINT);
+    gRRHitDistProgram.uniform1f(clear_s, 0.f);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    pass_10737.end();
+
+    // the glow amount starts at zero again: only the alpha of the lit picture is written, with 0
+    suspend.resume();
+    gRender.setColorMask(false, true);
+    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRRHitDist, false, LLTexUnit::TFO_POINT);
+    gRRHitDistProgram.uniform1f(clear_s, 1.f);
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gRender.setColorMask(true, true);
+    gRRHitDistProgram.unbind();
+    mRRHitDistValid = true;
+}
+
         {
             object_unfit = work.mObjUnfit;
             std::vector<LLVkBridge::ShadowPacketEntry>& entries = work.mObjEntries;
@@ -22900,33 +23169,6 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }
     unbindDeferredShader(gRRReflMotionProgram);
-}
-
-void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
-{
-    LL_PROFILE_GPU_ZONE("rr hit distance");
-    static LLStaticHashedString clear_s("clear_only");
-    RenderPassSuspend suspend(*screen);      // the caller's pass on the screen target is suspended here and resumed below
-    LLRenderState::DepthScope depth(false, false);
-    LLRenderState::BlendScope blend(false);
-
-    RenderPassScope pass_10737(mRRHitDist);
-    gRRHitDistProgram.bind();
-    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, screen, false, LLTexUnit::TFO_POINT);
-    gRRHitDistProgram.uniform1f(clear_s, 0.f);
-    mScreenTriangleVB->setBuffer();
-    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    pass_10737.end();
-
-    // the glow amount starts at zero again: only the alpha of the lit picture is written, with 0
-    suspend.resume();
-    gRender.setColorMask(false, true);
-    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRRHitDist, false, LLTexUnit::TFO_POINT);
-    gRRHitDistProgram.uniform1f(clear_s, 1.f);
-    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    gRender.setColorMask(true, true);
-    gRRHitDistProgram.unbind();
-    mRRHitDistValid = true;
 }
 
 F32 LLPipeline::farDistanceScale()
@@ -26038,6 +26280,7 @@ void LLPipeline::renderDeferredLighting()
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         }
 
+                S32 rt_hit_shadow_variant = 0;
         LLRenderTarget* penumbra = nullptr;        // <FS> the lightmap with the penumbra filter applied to its sun channel (mRtShadowTemp)
         if (LLVkBridge::rtShadowMode() && !gCubeSnapshot && LLVkBridge::rtSunFilter() != 0 && mRtBlocker.isComplete() && mRtShadowTemp.isComplete()
             && mRtSunHard.isComplete() && gRtShadowFilterProgram.isComplete() && gRtShadowPrepProgram.isComplete() && RenderDeferredSSAO)
@@ -26211,6 +26454,8 @@ void LLPipeline::renderDeferredLighting()
             gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
             gDeferredBlurLightProgram.uniform4f(sHalfSrc, 0.f, 0.f, 0.f, 0.f);       // <FS> the lightmap has the G-buffer's size here (the half resolution blur above sets this)
             gDeferredBlurLightProgram.uniform2f(sDelta, 1.f, 0.f);
+
+                // full screen blit
             gDeferredBlurLightProgram.uniform1f(sDistFactor, dist_factor);
             gDeferredBlurLightProgram.uniform3fv(sKern, kern_length, gauss[0].mV);
             gDeferredBlurLightProgram.uniform1f(sKernScale, blur_size * (kern_length / 2.f - 0.5f));
@@ -26280,7 +26525,6 @@ void LLPipeline::renderDeferredLighting()
                 {
                     rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
                 }
-                S32 rt_hit_shadow_variant = 0;
                 if (rt_glossy_mode >= 20 && rt_glossy_mode <= 28)       // 20 .. 28: the glossy mode 1 with a test variant of how a hit is lit (shadowUtil.glsl rt_hit_shadow_variant; 1 sun always lit, 2 / 3 / 4: ray start 0.15 m, 1024 candidates, texture mip 0; 9 = one shadow ray per local light instead of 4)
                 {
                     rt_hit_shadow_variant = rt_glossy_mode - 19;
@@ -26454,16 +26698,14 @@ void LLPipeline::renderDeferredLighting()
             {
                 LLRenderState::DepthScope depth(false);
                 LLRenderState::BlendScope blend(false);
-
-                // full screen blit
                 mScreenTriangleVB->setBuffer();
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
-
             if (rt_hit_spot_bound)
             {
                 soften_shader.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
             }
+
             unbindDeferredShader(gDeferredSoftenProgram);
         }
 
@@ -26641,6 +26883,12 @@ void LLPipeline::renderDeferredLighting()
 
                     if (camera->getOrigin().mV[0] > c[0] + s + 0.2f || camera->getOrigin().mV[0] < c[0] - s - 0.2f ||
                         camera->getOrigin().mV[1] > c[1] + s + 0.2f || camera->getOrigin().mV[1] < c[1] - s - 0.2f ||
+    if (mRRHitDistPending)
+    {
+        extractRRHitDistance(screen_target);
+        mRRHitDistPending = false;
+    }
+
                         camera->getOrigin().mV[2] > c[2] + s + 0.2f || camera->getOrigin().mV[2] < c[2] - s - 0.2f)
                     {  // draw box if camera is outside box
                         if (volume->isLightSpotlight())
@@ -26881,12 +27129,6 @@ void LLPipeline::renderDeferredLighting()
         }
 
         gRender.setColorMask(true, true);
-    }
-
-    if (mRRHitDistPending)
-    {
-        extractRRHitDistance(screen_target);
-        mRRHitDistPending = false;
     }
 
     lighting_depth_read_only.setEnabled(false);
@@ -27862,8 +28104,11 @@ static void merge_render_lists(LLCullResult& into, LLCullResult& from)
 }
 
 // J1 K6 B: the flags of the render map job of a shadow pass (what the batch of the sun cascades and a serial pass both set before the job runs)
-void LLPipeline::setShadowJobFlags()
+void LLPipeline::setShadowJobFlags(bool rt_raster)
 {
+    // J1 K6 step 3d: rt_raster = the pass is a raster pass of the ray tracing modes that do not draw the sun cascades (a probe face, a spot map): its casters come from the fragments in their raster form, as in RT off
+    sViewJobsRasterRt.store(rt_raster, std::memory_order_relaxed);
+    sRtRasterNow.store(rt_raster, std::memory_order_relaxed);
     // R1a: the static lists of the cascades are dead in the ray-only modes when the fragments name the casters (the same conditions as shadowPrepSubmitBuilds and render_shadow_packets)
     const bool all_static = true;       // (an off static switch draws no static casters, so the lists are not needed then either)
     // C4.1 (doc/vulkan/PLAN-clean-core.md): the same holds in the RASTER shadow path. A cascade's static pass draws through packets (renderShadow: packets = !rigged && shadow_packets_enabled());
@@ -27877,8 +28122,10 @@ void LLPipeline::setShadowJobFlags()
     // the alpha casters: the same conditions in the raster path, where renderShadow drops the builder's entries that the worker holds (res_raster); (the switch LL_VK_CASCADE_SKIP_ALPHA and its modes 0 and 2 are gone)
     // 2: the sun cascades of the ray-only modes (3a of the shadow walk removal): the worker names the alpha entries of its sent fragments to the ray scene in the resident pass (the builder's entries for them were dropped by
     // the resident filter), the walk leaves their draw infos out, and the groups whose fragment the worker does not hold name their alpha entries from the fragment (append_fragment_alpha)
-    const bool ray_alpha = rt_sun_cascades_unused() && scene_alpha_on() && shadow_static_casters_on();
-    sViewJobsSkipAlpha.store((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) ? 1 : (ray_alpha ? 2 : 0), std::memory_order_relaxed);
+    const bool ray_alpha = rt_sun_cascades_unused() && !rt_raster && scene_alpha_on() && shadow_static_casters_on();
+    // (a raster pass of the ray tracing modes: 1, the fragments name the alpha entries; none is held by the worker as a drawing row in these modes, so the walk takes the entries of every named draw from the fragment)
+    const bool raster_rt_alpha = rt_raster && skip_static_now && raster_skip && scene_alpha_on() && shadow_static_casters_on() && LLVkBridge::shadowAlphaPacketsAvailable();
+    sViewJobsSkipAlpha.store(((skip_static_now && raster_skip && !rt_sun_cascades_unused() && !LLVkBridge::rtShadowMode() && alpha_res_wanted() && LLVkBridge::shadowAlphaPacketsAvailable()) || raster_rt_alpha) ? 1 : (ray_alpha ? 2 : 0), std::memory_order_relaxed);
 }
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
@@ -27918,6 +28165,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     // <FS> a sun cascade pass in a ray-only mode: names the casters, draws nothing (see rt_sun_cascades_unused)
     const bool rt_skip = rt_sun_cascades_unused() && shadow_pass_index() < 4;
+    // J1 K6 step 3d (LL_VK_SHADOW_SERIAL_RT): the other passes of those modes (a probe's cube face, a spot or projector map) draw, and take their casters from the fragments like the passes of RT off
+    const bool rt_raster = serial_rt_on() && rt_sun_cascades_unused() && !rt_skip;
+    sRtRasterNow.store(rt_raster, std::memory_order_relaxed);
 
     LLRenderState::CullScope cull(true);
 
@@ -27926,7 +28176,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         explicit GltfRowsScope(bool on) { sShadowGltfRows = on; }
         ~GltfRowsScope() { sShadowGltfRows = false; }
-    } gltf_rows_scope(shadow_gltf_env() && !LLVkBridge::rtShadowMode() && !rt_skip && shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
+    } gltf_rows_scope(shadow_gltf_env() && (!LLVkBridge::rtShadowMode() || rt_raster) && !rt_skip && shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
 
     //enable depth clamping if available
     LLRenderState::DepthClampScope clamp_depth(true, depth_clamp);
@@ -27964,7 +28214,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
             static const bool serial_fragments = !getenv("LL_VK_SHADOW_SERIAL") || getenv("LL_VK_SHADOW_SERIAL")[0] != '0';
-            if (serial_fragments && !LLVkBridge::rtShadowMode() && shadow_packets_enabled())
+            if (serial_fragments && (!LLVkBridge::rtShadowMode() || rt_raster) && shadow_packets_enabled())
             {
                 LL_CPU_ZONE("renderShadow: serial pass render map job");
                 static ShadowCascadePrep serial_prep;
@@ -27975,7 +28225,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 serial_prep.mResult = &result;
                 serial_prep.mView = view;
                 serial_prep.mProj = proj;
-                setShadowJobFlags();
+                setShadowJobFlags(rt_raster);
                 result.clearRenderLists();
                 serial_local.clear();
                 shadowPrepRenderMap(serial_prep, 0, result.getVisibleGroupsSize(), serial_local);
@@ -28008,7 +28258,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
 
     // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
-    auto render_shadow_packets = [this, rt_skip, prepared, &result](const U32* list, size_t count)
+    auto render_shadow_packets = [this, rt_skip, rt_raster, prepared, &result](const U32* list, size_t count)
     {
         LL_CPU_ZONE("packets: shadow static (build + record)");
         sResidentPassRan = false;
@@ -28034,7 +28284,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 SceneGather gather;
                 scene_gather(result, true, gather, !rt_skip);
                 {
-                    scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather, rt_skip);
+                    scene_resident_pass(gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView), shadow_pass_index(), source, gather, rt_skip, rt_raster);
                 }
                 if (rt_skip)
                 {
@@ -28271,7 +28521,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> Ray tracing only: casters the shadow passes draw the old way (glTF materials: opaque, alpha mask, alpha blend; textured draws with a texture matrix) are named to the ray
     // scene (kind 5 record, static draws only: nothing is drawn by it). The alpha test is the one of the old shadow shaders: glTF mask = base colour alpha x vertex alpha against
     // the material's cutoff, blend and legacy = the dithered test; the texture coordinates go through the same transform (texture animation matrix, then the glTF transform).
-    auto render_rt_extra_packets = [this, &result]()
+    auto render_rt_extra_packets = [this, rt_raster, &result]()
     {
         if (!LLVkBridge::rtShadowMode())
         {
@@ -28515,10 +28765,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 }
                 for (const LLSceneFragment::RtExtra& x : f->mRtExtra)
                 {
+                    if (rt_raster && x.mInList)
+                    {
+                        continue;       // step 3d: a raster pass's walk left this draw in the lists: the loops below name it
+                    }
                     add_item(x);
                 }
             }
-            if (rt_extra_frag_mode() == 2)
+            if (rt_extra_frag_mode() == 2 && !rt_raster)
             {
                 // the check lap: what the old loops make of the same groups' draw maps against what the items made (the matrix numbers are left out, the matrix ids are in)
                 std::vector<LLVkBridge::ShadowAlphaEntry> old_entries;
@@ -28815,7 +29069,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     // <FS> Render packets with textures: the static alpha masked casters of a shadow pass (masked, fullbright masked, blended, grass, the materials' masks) leave
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
-    auto render_alpha_packets = [this, rt_skip, prepared, &result](S32 sun_up, U32 target_width, bool rigged)
+    auto render_alpha_packets = [this, rt_skip, rt_raster, prepared, &result](S32 sun_up, U32 target_width, bool rigged)
     {
         LL_CPU_ZONE("packets: shadow alpha (build + record)");
         // the entries come from the cascade's builder job when there was one, else they are built here
@@ -28843,7 +29097,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (!rigged && !result.mAlphaFragGroups.empty())
         {
             LL_CPU_ZONE("packets: shadow alpha: fragment entries");
-            append_fragment_alpha(*build_owned, result.mAlphaFragGroups);
+            append_fragment_alpha(*build_owned, result.mAlphaFragGroups, rt_raster);
         }
         { LL_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent
@@ -28953,6 +29207,46 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             {
                 LLRenderState::CullScope cull_off(false, true);
                 send_record(entries.data() + single_sided, entries.size() - single_sided);
+            }
+        }
+        if (rt_raster && !rigged && !build_owned->mDrawOnly.empty())
+        {
+            // step 3d: the glTF and texture matrix casters of a raster pass of the ray tracing modes: drawn, not named to the ray scene (its items from the fragments name them: render_rt_extra_packets)
+            std::vector<LLVkBridge::ShadowAlphaEntry>& extra = build_owned->mDrawOnly;
+            gDeferredShadowAlphaPullProgram.bind();
+            const size_t extra_single = (size_t)(std::stable_partition(extra.begin(), extra.end(), [](const LLVkBridge::ShadowAlphaEntry& e) { return !(e.mFlags & LLVkBridge::ALPHA_DOUBLE_SIDED); }) - extra.begin());
+            auto send_extra = [&](const LLVkBridge::ShadowAlphaEntry* first, size_t count)
+            {
+                LL_CPU_ZONE("packets: shadow alpha: record (raster form of the ray scene's extra casters)");
+                LLVkBridge::ShadowPacketsHeader header;
+                header.mKind = 1;
+                header.mDrawOnly = 1;
+                header.mTargetWidth = (F32)target_width;
+                header.mEntries = (U32)count;
+                header.mPass = shadow_pass_index();
+                header.mMatrices = (U32)(matrices.size() / 16);
+                const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+                memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
+                std::vector<U8> blob(count * sizeof(extra[0]) + matrices.size() * sizeof(F32));
+                memcpy(blob.data(), first, count * sizeof(extra[0]));
+                memcpy(blob.data() + count * sizeof(extra[0]), matrices.data(), matrices.size() * sizeof(F32));
+                if (!build_owned->mTexmats.empty())
+                {
+                    header.mTexmats = (U32)(build_owned->mTexmats.size() / 16);
+                    blob.insert(blob.end(), (const U8*)build_owned->mTexmats.data(), (const U8*)(build_owned->mTexmats.data() + build_owned->mTexmats.size()));
+                }
+                LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+                gShadowDrawStats.mAlphaEntries += count;
+                ++gShadowDrawStats.mAlphaRecords;
+            };
+            if (extra_single)
+            {
+                send_extra(extra.data(), extra_single);
+            }
+            if (extra_single < extra.size())
+            {
+                LLRenderState::CullScope cull_off(false, true);
+                send_extra(extra.data() + extra_single, extra.size() - extra_single);
             }
         }
         if (res_raster)
@@ -30446,7 +30740,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         lap.reset();
 
         {
-            setShadowJobFlags();
+            setShadowJobFlags(serial_rt_on() && rt_sun_cascades_unused() && LLPipeline::sRtProbePass >= 0);       // (a probe face's cascades in the ray tracing modes that do not draw the main view's: raster passes, step 3d)
         }
         // the render map job of a cascade in chunks of its visible groups (LL_VK_MAP_CHUNK, default 192, 0: one chunk a cascade as before): the biggest cascade's job was the longest wait of the
         // main thread on the pool; each chunk pushes into a result of its own, appended to the cascade's in chunk order
