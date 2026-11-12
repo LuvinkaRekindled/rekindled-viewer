@@ -97,20 +97,13 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
     mUntouched = false;
     if (deferredPacketsEnabled())
     {
-        static const U32 pass_types[] =
-        {
-            LLRenderPass::PASS_MATERIAL, LLRenderPass::PASS_MATERIAL_ALPHA_MASK, LLRenderPass::PASS_MATERIAL_ALPHA_EMISSIVE, LLRenderPass::PASS_SPECMAP, LLRenderPass::PASS_SPECMAP_MASK,
-            LLRenderPass::PASS_SPECMAP_EMISSIVE, LLRenderPass::PASS_NORMMAP, LLRenderPass::PASS_NORMMAP_MASK, LLRenderPass::PASS_NORMMAP_EMISSIVE, LLRenderPass::PASS_NORMSPEC,
-            LLRenderPass::PASS_NORMSPEC_MASK, LLRenderPass::PASS_NORMSPEC_EMISSIVE,
-        };
         static const bool lazy = !(getenv("LL_VK_POOL_LAZY") && getenv("LL_VK_POOL_LAZY")[0] == '0');
         if (lazy)
         {
             if (rigged)
             {
-                const U32 type = pass_types[pass] + 1;
-                // (S4 B: with the table serving the rigged draws the render map is empty on purpose: the pass still sends the table's draw record)
-                if (gPipeline.beginRenderMap(type) == gPipeline.endRenderMap(type) && !(ll_scene_geo_rigged_env() && ll_scene_geo_serving() && ll_scene_geo_main_view()))
+                // (the table draws the rigged materials passes in the main view only: pushGeometryPackets returns in any other view, so there is nothing to bind there; the render map is not asked, 2026-11-12)
+                if (!(ll_scene_geo_rigged_env() && ll_scene_geo_serving() && ll_scene_geo_main_view()))
                 {
                     mUntouched = true;
                     ll_scene_geo_count(4, 1);

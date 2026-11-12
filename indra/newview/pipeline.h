@@ -585,7 +585,6 @@ public:
 
     void setLight(LLDrawable *drawablep, bool is_light);
 
-    bool hasRenderBatches(const U32 type) const;
     LLCullResult::drawinfo_iterator beginRenderMap(U32 type);
     LLCullResult::drawinfo_iterator endRenderMap(U32 type);
     LLCullResult::sg_iterator beginAlphaGroups();
