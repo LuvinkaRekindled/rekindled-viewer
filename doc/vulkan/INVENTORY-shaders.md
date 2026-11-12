@@ -127,7 +127,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | HUD PBR Opaque Shader | gHUDPBROpaqueProgram | 3 sites: indra/newview/llviewershadermgr.cpp:1949, indra/newview/llviewershadermgr.cpp:1950, indra/newview/llviewershadermgr.cpp:1952 | REACHABLE |
 | Hero Radiance Gen Shader | gHeroRadianceGenProgram | 2 sites: indra/newview/llviewershadermgr.cpp:5512, indra/newview/llviewershadermgr.cpp:5513 | REACHABLE |
 | Highlight Normals Shader | gHighlightNormalProgram | 2 sites: indra/newview/pipeline.cpp:15918, indra/newview/pipeline.cpp:15920 | REACHABLE |
-| Highlight Pull Skin Shader | pull | 113 sites: indra/newview/lldrawpool.cpp:499, indra/newview/lldrawpool.cpp:652, indra/newview/lldrawpool.h:427, indra/newview/lldrawpoolalpha.cpp:866 ... | REACHABLE |
+| Highlight Pull Skin Shader | pull | 113 sites: indra/llrender/llshaderprogram.cpp:1079, indra/llrender/llvertexbuffer.cpp:888, indra/llrender/llvertexbuffer.h:301, indra/llrender/llvkbridge.h:151 ... | REACHABLE |
 | Highlight Spec Shader | gHighlightSpecularProgram | 2 sites: indra/newview/pipeline.cpp:15925, indra/newview/pipeline.cpp:15927 | REACHABLE |
 | Impostor Shader | gImpostorProgram | 4 sites: indra/newview/lldrawpoolavatar.cpp:513, indra/newview/lldrawpoolavatar.cpp:514, indra/newview/lldrawpoolavatar.cpp:524, indra/newview/llviewershadermgr.cpp:617 | REACHABLE |
 | Legacy Gamma Correction Post Process | gLegacyPostGammaCorrectProgram | 4 sites: indra/newview/llviewershadermgr.cpp:659, indra/newview/llviewershadermgr.cpp:4414, indra/newview/llviewershadermgr.cpp:4415, indra/newview/pipeline.cpp:20851 | REACHABLE |
@@ -153,7 +153,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | No Post Tonemap Gamma Post Process | gNoPostTonemapGammaCorrectProgram | 5 sites: indra/newview/llviewershadermgr.cpp:654, indra/newview/llviewershadermgr.cpp:4477, indra/newview/llviewershadermgr.cpp:4478, indra/newview/llviewershadermgr.cpp:4479 ... | REACHABLE |
 | No Post Tonemap Post Process | gNoPostTonemapProgram | 4 sites: indra/newview/llviewershadermgr.cpp:652, indra/newview/llviewershadermgr.cpp:4445, indra/newview/llviewershadermgr.cpp:4446, indra/newview/pipeline.cpp:20803 | REACHABLE |
 | No color alpha mask Shader | gObjectAlphaMaskNoColorProgram | 2 sites: indra/newview/lldrawpoolavatar.cpp:534, indra/newview/llviewershadermgr.cpp:620 | REACHABLE |
-| Normal Debug Shader | shader | 1360 sites: indra/newview/gltfscenemanager.cpp:324, indra/newview/gltfscenemanager.cpp:680, indra/newview/gltfscenemanager.cpp:815, indra/newview/gltfscenemanager.cpp:827 ... | REACHABLE |
+| Normal Debug Shader | shader | 1360 sites: indra/llrender/llpostprocess.cpp:67, indra/llrender/llpostprocess.cpp:152, indra/llrender/llrender.cpp:1019, indra/llrender/llrender.cpp:1024 ... | REACHABLE |
 | Object Preview Shader | gObjectPreviewProgram | 8 sites: indra/newview/llfloaterimagepreview.cpp:1208, indra/newview/llfloaterimagepreview.cpp:1222, indra/newview/llmodelpreview.cpp:4550, indra/newview/llmodelpreview.cpp:4554 ... | REACHABLE |
 | Occlusion Shader | gOcclusionProgram | 0 sites:  | DEAD |
 | PBR Glow Shader | ? | no global found (name built in code) | REVIEW |
@@ -179,7 +179,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | SMAA Neighborhood Blending (Ultra) | ? | no global found (name built in code) | REVIEW |
 | Screen Space Reflection Post | gPostScreenSpaceReflectionProgram | 0 sites:  | DEAD |
 | Skinned  PBR Glow Shader | gPBRGlowProgram | 2 sites: indra/newview/llviewershadermgr.cpp:1931, indra/newview/llviewershadermgr.cpp:1933 | REACHABLE |
-| Skinned Debug Shader | gDebugProgram | 48 sites: indra/newview/fsmaniprotatejoint.cpp:96, indra/newview/fsmaniprotatejoint.cpp:134, indra/newview/fsmaniprotatejoint.cpp:536, indra/newview/gltfscenemanager.cpp:324 ... | REACHABLE |
+| Skinned Debug Shader | gDebugProgram | 48 sites: indra/llrender/llvkcontext.cpp:37, indra/llrender/llvkcontext.cpp:185, indra/llrender/llvkcontext.cpp:189, indra/llrender/llvkrenderer.cpp:969 ... | REACHABLE |
 | Skinned Deferred Alpha Impostor Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Alpha Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Bump Shader | gDeferredBumpProgram | 4 sites: indra/newview/llviewershadermgr.cpp:203, indra/newview/llviewershadermgr.cpp:661, indra/newview/llviewershadermgr.cpp:1774, indra/newview/llviewershadermgr.cpp:1775 | REACHABLE |
@@ -214,7 +214,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | Skinned Material Shader 29 | ? | no global found (name built in code) | REVIEW |
 | Skinned Material Shader 30 | ? | no global found (name built in code) | REVIEW |
 | Skinned Material Shader 31 | ? | no global found (name built in code) | REVIEW |
-| Skinned Normal Debug Shader | shader | 1360 sites: indra/newview/gltfscenemanager.cpp:324, indra/newview/gltfscenemanager.cpp:680, indra/newview/gltfscenemanager.cpp:815, indra/newview/gltfscenemanager.cpp:827 ... | REACHABLE |
+| Skinned Normal Debug Shader | shader | 1360 sites: indra/llrender/llpostprocess.cpp:67, indra/llrender/llpostprocess.cpp:152, indra/llrender/llrender.cpp:1019, indra/llrender/llrender.cpp:1024 ... | REACHABLE |
 | Skinned Object Preview Shader | gObjectPreviewProgram | 8 sites: indra/newview/llfloaterimagepreview.cpp:1208, indra/newview/llfloaterimagepreview.cpp:1222, indra/newview/llmodelpreview.cpp:4550, indra/newview/llmodelpreview.cpp:4554 ... | REACHABLE |
 | Skinned Occlusion Shader | gOcclusionProgram | 0 sites:  | DEAD |
 | Snapshot Frame Post | gPostSnapshotFrameProgram | 0 sites:  | DEAD |
@@ -256,6 +256,69 @@ Each family is chosen at run time by a selector, so the check is on the selector
 | Skinned Deferred Fullbright Alpha Mask Pull Shader | 1 | (derived: pull twin / skinned variant of another program) |
 | Skinned Deferred PBR Alpha Shader | 1 | (derived: pull twin / skinned variant of another program) |
 | Skinned Material Shader N | 16 | 1802 |
+
+## Bound in a lap, no native override: port next (56; 67 bound ones already have one)
+
+Busiest first. Binds are the two laps added (RT off + RT on). Group = the first directory of the stock vertex file.
+
+| program | binds | group | files |
+|---|---|---|---|
+| Deferred Shadow Alpha Pull Shader | 89216 | deferred | deferred/shadowAlphaPullV.glsl;deferred/shadowAlphaPullF.glsl |
+| Deferred Shadow Pull Shader | 83344 | deferred | deferred/shadowPullV.glsl;deferred/shadowF.glsl |
+| Deferred Avatar Alpha Mask Shadow Shader pull | 63226 | deferred | deferred/avatarAlphaShadowV.glsl;deferred/avatarAlphaMaskShadowF.glsl |
+| Deferred Avatar Alpha Shadow Shader pull | 63226 | deferred | deferred/avatarAlphaShadowV.glsl;deferred/avatarAlphaShadowF.glsl |
+| Deferred Avatar Shadow Shader pull | 63226 | deferred | deferred/avatarShadowV.glsl;deferred/avatarShadowF.glsl |
+| Deferred Shadow Cube Shader | 49194 | deferred | deferred/shadowCubeV.glsl;deferred/shadowF.glsl |
+| Deferred Shadow Skin Pull Shader | 41672 | deferred | deferred/shadowSkinPullV.glsl;deferred/shadowF.glsl |
+| Draw Color Shader pull | 26708 | objects | objects/simpleNoAtmosV.glsl;objects/simpleColorF.glsl |
+| Deferred Avatar Alpha Shader pull | 21564 | deferred | deferred/alphaV.glsl;deferred/alphaF.glsl |
+| Highlight Shader | 21534 | interface | interface/highlightV.glsl;interface/highlightF.glsl |
+| Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | 21138 | deferred | deferred/diffuseNoColorV.glsl;deferred/diffuseAlphaMaskNoColorF.glsl |
+| HUD Fullbright Alpha Pull Shader | 20736 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightF.glsl |
+| PBR Glow Pull Shader | 16017 | deferred | deferred/pbrGlowPullV.glsl;deferred/pbrglowF.glsl |
+| Deferred Fullbright Pull Shader | 15896 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightF.glsl |
+| Deferred Fullbright Pull Skin Shader | 15896 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightF.glsl |
+| Deferred Fullbright Shiny Pull Shader | 15896 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightShinyF.glsl |
+| Deferred Fullbright Shiny Pull Skin Shader | 15896 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightShinyF.glsl |
+| PBR Glow Pull Skin Shader | 15896 | deferred | deferred/pbrGlowPullV.glsl;deferred/pbrglowF.glsl |
+| Deferred Light Pull Shader | 15580 | deferred | deferred/pointLightV.glsl;deferred/pointLightF.glsl |
+| Deferred MultiSpotLight Shader | 15580 | deferred | deferred/multiPointLightV.glsl;deferred/spotLightF.glsl |
+| Water Shader | 15580 | environment | environment/waterV.glsl;environment/waterF.glsl |
+| Deferred SpotLight Pull Shader | 13689 | deferred | deferred/pointLightV.glsl;deferred/spotLightF.glsl |
+| Deferred MultiLight Shader 0 | 13625 | deferred | deferred/multiPointLightV.glsl;deferred/multiPointLightF.glsl |
+| Glow Combine Shader | 10408 | interface | interface/glowcombineV.glsl;interface/glowcombineF.glsl |
+| Deferred Post NoDoF Noise Shader | 10406 | deferred | deferred/postDeferredNoTCV.glsl;deferred/postDeferredNoDoFF.glsl |
+| Exposure | 10406 | deferred | deferred/postDeferredNoTCV.glsl;deferred/exposureF.glsl |
+| Glow Extract Shader (Post) (+Noise) | 10406 | effects | effects/glowExtractV.glsl;effects/glowExtractF.glsl |
+| HUD Fullbright Pull Shader | 10368 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightF.glsl |
+| HUD Fullbright Shiny Pull Shader | 10368 | deferred | deferred/alphaPullV.glsl;deferred/fullbrightShinyF.glsl |
+| Object Velocity (packets) | 10335 | deferred | deferred/objectVelocityPullV.glsl;deferred/avatarVelocityF.glsl |
+| Avatar Velocity (rigged, packets) | 10333 | deferred | deferred/avatarVelocityPullV.glsl;deferred/avatarVelocityF.glsl |
+| Avatar Velocity (body) pull | 9977 | deferred | deferred/avatarBodyVelocityV.glsl;deferred/avatarVelocityF.glsl |
+| Native Lightmap Upsample | 6166 | ? |  |
+| Native Sun Lightmap Half | 6166 | ? |  |
+| Deferred Sun Probe Shader | 5174 | deferred | deferred/sunLightV.glsl;deferred/sunLightF.glsl |
+| RT Shadow Penumbra Filter | 4240 | deferred | deferred/blurLightV.glsl;deferred/rtShadowFilterF.glsl |
+| RT Shadow Penumbra Prep | 4240 | deferred | deferred/blurLightV.glsl;deferred/rtShadowPrepF.glsl |
+| Material Pull Skin Shader 5 | 544 | deferred | deferred/materialPullV.glsl;deferred/materialF.glsl |
+| Skinned Deferred Alpha Impostor Pull Shader | 502 | deferred | deferred/alphaPullV.glsl;deferred/alphaF.glsl |
+| Deferred MultiLight Shader 4 | 496 | deferred | deferred/multiPointLightV.glsl;deferred/multiPointLightF.glsl |
+| Material Pull Skin Shader 13 | 430 | deferred | deferred/materialPullV.glsl;deferred/materialF.glsl |
+| Debug Shader | 380 | interface | interface/debugV.glsl;interface/debugF.glsl |
+| Deferred Alpha Impostor Pull Shader | 250 | deferred | deferred/alphaPullV.glsl;deferred/alphaF.glsl |
+| Material Pull Shader 13 | 160 | deferred | deferred/materialPullV.glsl;deferred/materialF.glsl |
+| Material Pull Skin Shader 9 | 152 | deferred | deferred/materialPullV.glsl;deferred/materialF.glsl |
+| Normal Map Generation Program | 143 | deferred | deferred/normgenV.glsl;deferred/normgenF.glsl |
+| Deferred MultiLight Shader 2 | 124 | deferred | deferred/multiPointLightV.glsl;deferred/multiPointLightF.glsl |
+| Deferred MultiLight Shader 3 | 124 | deferred | deferred/multiPointLightV.glsl;deferred/multiPointLightF.glsl |
+| Material Pull Shader 5 | 76 | deferred | deferred/materialPullV.glsl;deferred/materialF.glsl |
+| Alpha Mask Shader | 50 | interface | interface/alphamaskV.glsl;interface/alphamaskF.glsl |
+| Brdf Gen Shader | 8 | deferred | deferred/genbrdflutV.glsl;deferred/genbrdflutF.glsl |
+| Bump Shader | 2 | objects | objects/bumpV.glsl;objects/bumpF.glsl |
+| Glow CombineFXAA Shader | 2 | interface | interface/glowcombineFXAAV.glsl;interface/glowcombineFXAAF.glsl |
+| One Texture Filter Shader | 2 | interface | interface/onetexturefilterV.glsl;interface/onetexturefilterF.glsl |
+| Skinned Bump Shader | 2 | objects | objects/bumpV.glsl;objects/bumpF.glsl |
+| Two Texture Compare Shader | 2 | interface | interface/twotexturecompareV.glsl;interface/twotexturecompareF.glsl |
 
 ## Bound in a lap
 

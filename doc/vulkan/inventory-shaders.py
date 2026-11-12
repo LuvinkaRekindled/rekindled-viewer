@@ -142,6 +142,20 @@ def main():
         probe = re.split(r'\s\d|\s\(|\s+N$', key)[0]
         where = [str(i) for i, l in enumerate(mgr_lines, 1) if 'mName' in l and probe in l]
         lines.append('| %s | %d | %s |' % (key, len(mem), ', '.join(where[:4]) or '(derived: pull twin / skinned variant of another program)'))
+    # bound in a lap and no native override: the porting list, busiest first
+    ov = set(manifest)
+
+    def has_native(n):
+        return n in ov or (n.endswith(' pull') and n[:-5] in ov) or (n.startswith('Skinned ') and n[8:] in ov)
+    port = [n for n in names if used_lap[n] > 0 and not has_native(n)]
+    done = [n for n in names if used_lap[n] > 0 and has_native(n)]
+    lines += ['', '## Bound in a lap, no native override: port next (%d; %d bound ones already have one)' % (len(port), len(done)), '',
+              'Busiest first. Binds are the two laps added (RT off + RT on). Group = the first directory of the stock vertex file.', '',
+              '| program | binds | group | files |', '|---|---|---|---|']
+    for n in sorted(port, key=lambda n: -used_lap[n]):
+        r = next(l[n] for l in laps if n in l)
+        grp = r['files'].split(';')[0].split('/')[0] if r['files'] else '?'
+        lines.append('| %s | %d | %s | %s |' % (n, used_lap[n], grp, r['files']))
     lines += ['', '## Bound in a lap', '', '| program | binds | level | native | files |', '|---|---|---|---|---|']
     for n in names:
         if used_lap[n] > 0:
