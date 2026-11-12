@@ -149,6 +149,7 @@ namespace LLVkBridge
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
         U32 mViewerFrame = 0;       // P3: the viewer's frame (gFrameCount) a record that names palettes by id is made in: the id table it is resolved in (kind 8: mFragment == 1)
         U32 mEntryBytes = 0;        // J1 K3b: kind 2: 0 = ShadowSkinEntry entries, sizeof(ShadowSkinSlim) = the slim ones (the fields the shadow skin pull program reads; palettes by id, no ray scene fields)
+        U32 mDrawOnly = 0;          // J1 K6 step 3d: kind 1: 1 = drawn only, not named to the ray scene (the glTF and texture matrix casters of a raster pass in the ray tracing modes: the viewer names them from the fragments' items)
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
     // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.
