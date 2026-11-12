@@ -11207,126 +11207,6 @@ static bool scene_fragment_behind(const LLSceneFragment* f)
     return true;
 }
 
-// S4 B / C: the draw infos of a pass type of the MAIN view, for the passes that are not drawn by the scene table but need to know the draws (the avatar motion vectors, the ray scene's naming of rigged
-// casters): the render map, and, where postSort left a type of a group out because the table serves all of it, those items of the group's fragment (the render map no longer holds them)
-static void collect_main_view_draw_infos(U32 type, std::vector<LLDrawInfo*>& out, bool with_items = true)
-{
-    out.clear();
-    if (rm_alpha_mode() == 2 && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
-    {
-        LLCullResult* c = gPipeline.getCull();
-        if (c)
-        {
-            std::vector<LLDrawInfo*> from_list, from_groups;
-            for (auto i = c->beginRenderMap(type), e = c->endRenderMap(type); i != e; ) { from_list.push_back(*i); LLCullResult::increment_iterator(i, e); }
-            auto it = type == LLRenderPass::PASS_ALPHA ? c->beginAlphaGroups() : c->beginRiggedAlphaGroups();
-            auto end = type == LLRenderPass::PASS_ALPHA ? c->endAlphaGroups() : c->endRiggedAlphaGroups();
-            for (; it != end; ++it)
-            {
-                LLSpatialGroup* group = *it;
-                auto found = group->isDead() ? group->mDrawMap.end() : group->mDrawMap.find(type);
-                if (!group->isDead() && found != group->mDrawMap.end())
-                {
-                    for (const LLPointer<LLDrawInfo>& info : found->second) { from_groups.push_back(info.get()); }
-                }
-            }
-            // (the render map is in the order of the visible groups, the alpha groups are sorted by distance: the same set)
-            std::unordered_set<LLDrawInfo*> a(from_list.begin(), from_list.end()), b(from_groups.begin(), from_groups.end());
-            static U64 checks = 0, bad = 0;
-            ++checks;
-            if (a != b || from_list.size() != from_groups.size())
-            {
-                ++bad;
-                if (bad <= 6)
-                {
-                    LL_WARNS("RMCensus") << "alpha draws of pass type " << type << ": the render map holds " << from_list.size() << ", the alpha groups' draw maps " << from_groups.size() << " (" << bad << " of " << checks << ")" << LL_ENDL;
-                }
-            }
-            else if (checks % 600 == 0)
-            {
-                LL_INFOS("RMCensus") << "alpha draws check: " << bad << " of " << checks << " differ (" << from_list.size() << " draws now)" << LL_ENDL;
-            }
-        }
-    }
-    if (LLCullResult* skipped = gPipeline.getCull(); skipped && skipped->mAlphaListsSkipped && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
-    {
-        // C5: postSort did not list the blended alpha draws; they are the groups' own: the alpha groups (or the rigged alpha groups) in their order, each group's draw infos of the type in the group's order
-        auto it = type == LLRenderPass::PASS_ALPHA ? skipped->beginAlphaGroups() : skipped->beginRiggedAlphaGroups();
-        auto end = type == LLRenderPass::PASS_ALPHA ? skipped->endAlphaGroups() : skipped->endRiggedAlphaGroups();
-        for (; it != end; ++it)
-        {
-            LLSpatialGroup* group = *it;
-            if (group->isDead())
-            {
-                continue;
-            }
-            auto found = group->mDrawMap.find(type);
-            if (found != group->mDrawMap.end())
-            {
-                for (const LLPointer<LLDrawInfo>& info : found->second)
-                {
-                    out.push_back(info.get());
-                }
-            }
-        }
-        return;
-    }
-    auto* begin = gPipeline.beginRenderMap(type);
-    auto* end = gPipeline.endRenderMap(type);
-    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-    {
-        out.push_back(*i);
-        LLCullResult::increment_iterator(i, end);
-    }
-    if (!with_items)
-    {
-        return;         // J1 K2b: the caller reads the served rigged items through their sources (collect_main_view_rig_sources)
-    }
-    LLCullResult* cull = gPipeline.getCull();
-    if (!cull || !cull->mGeoElided)
-    {
-        return;
-    }
-    const int tn = ll_scene_geo_type_number(type);
-    if (tn < 0)
-    {
-        return;
-    }
-    static std::vector<LLDrawInfo*> lists[2 * kGeoTypeCount];
-    static LLCullResult* key_cull = nullptr;
-    static U64 key_frame = ~0ull;
-    static size_t key_handles = 0;
-    static U64 key_epoch = ~0ull;
-    // (a snapshot renders several times in one frame, and rebuilds the groups in between: the draw infos of the first render's list are gone by the second)
-    if (key_cull != cull || key_frame != gFrameCount || key_handles != cull->mGeoHandles.size() || key_epoch != sGeoItemsEpoch.load())
-    {
-        key_cull = cull;
-        key_frame = gFrameCount;
-        key_epoch = sGeoItemsEpoch.load();
-        key_handles = cull->mGeoHandles.size();
-        for (std::vector<LLDrawInfo*>& l : lists)
-        {
-            l.clear();
-        }
-        for (U32 handle : cull->mGeoHandles)
-        {
-            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f || !f->mGeoServedMask)
-            {
-                continue;
-            }
-            for (const LLSceneFragment::GeoItem& item : f->mGeo)
-            {
-                if (item.mServed && item.mType < 2 * kGeoTypeCount && (f->mGeoServedMask & (1ull << item.mType)))
-                {
-                    lists[item.mType].push_back(item.mInfo);
-                }
-            }
-        }
-    }
-    out.insert(out.end(), lists[tn].begin(), lists[tn].end());
-}
-
 // J1 K2b: the served RIGGED items of the main view that postSort left out of the render map (the same set collect_main_view_draw_infos adds from the fragments), as their sources: the avatar and the skin, the
 // buffer and the range, with no draw info read. The pointers are into the fragments' own vectors (valid until the fragment is made again: the same life as the draw infos' pointers had).
 static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSource*>& out)
@@ -11360,14 +11240,15 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
         for (U32 handle : cull->mGeoHandles)
         {
             const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f || !f->mGeoServedMask)
+            if (!f)
             {
                 continue;
             }
+            // every served item (2026-11-12: not only those of a group whose draws of the type are all served: the render map list that named the others is gone)
             for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
             {
                 const LLSceneFragment::GeoItem& item = f->mGeo[f->mGeoRigged[rk]];
-                if (item.mServed && item.mType < 2 * kGeoTypeCount && (f->mGeoServedMask & (1ull << item.mType)))
+                if (item.mServed && item.mType < 2 * kGeoTypeCount)
                 {
                     lists[item.mType].push_back(&f->mGeoRiggedSrc[rk]);
                 }
@@ -21923,7 +21804,6 @@ struct VelocityRiggedWork
     std::vector<GeoRange> mRanges;              // <FS> by entry: the range of its draw, and its avatar: the main thread looks up the simplified list the G-buffer draws with (the same lists, the same pixels)
     std::vector<LLVOAvatar*> mEntryAvatars;
     std::vector<F32> mPalettes, mPrevPalettes;
-    std::vector<LLDrawInfo*> mFallback;
     U32 mSkipped = 0, mStill = 0;
     std::vector<LLVkBridge::ShadowPacketEntry> mObjEntries;     // step 1b: draws that move as a whole, their matrices (this frame's, last frame's)
     std::vector<F32> mObjCur, mObjPrev;
@@ -21973,7 +21853,6 @@ static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
     w.mEntryAvatars.clear();
     w.mPalettes.clear();
     w.mPrevPalettes.clear();
-    w.mFallback.clear();
     w.mSkipped = w.mStill = 0;
     w.mObjEntries.clear();
     w.mObjCur.clear();
@@ -21985,13 +21864,6 @@ static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
 static bool velocity_ids_on()
 {
     static const bool on = (getenv("LL_VK_VELIDS") ? atoi(getenv("LL_VK_VELIDS")) != 0 : true) && ll_palette_ids_on();
-    return on;
-}
-
-// J1 K2b (LL_VK_VELRIG, default on; 0 = the draw infos of the fragments' items are read as before): the served rigged items are read through their sources
-static bool velocity_rig_on()
-{
-    static const bool on = !getenv("LL_VK_VELRIG") || atoi(getenv("LL_VK_VELRIG")) != 0;
     return on;
 }
 
@@ -22008,7 +21880,7 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
     const F32 min_motion_px = w.mMinMotionPx;
     const U32 vel_frame = w.mFrame;
     // J1 K2b: the per draw work takes (avatar, skin, buffer, range) so the served rigged items of the fragments can be read through their sources, and only the draws left in the render map through their draw infos
-    struct VelDraw { LLVOAvatar* avatar; const LLMeshSkinInfo* skin; const LLVertexBuffer* vb; U32 offset, count; LLDrawInfo* info; GeoRange range; };
+    struct VelDraw { LLVOAvatar* avatar; const LLMeshSkinInfo* skin; const LLVertexBuffer* vb; U32 offset, count; GeoRange range; };
     auto consume = [&](const VelDraw& d)
     {
         LLVOAvatar* avatar = d.avatar;
@@ -22107,28 +21979,15 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             w.mEntryAvatars.push_back(avatar);
             return;
         }
-        if (d.info)
-        {
-            w.mFallback.push_back(d.info);
-        }
     };
-    const bool rig_mode = velocity_rig_on() && use_packets;
-    std::vector<LLDrawInfo*> infos;
+    // the served rigged items, through their sources (the render map lists and LL_VK_VELRIG are gone, 2026-11-12: a draw no item names is not drawn by the G-buffer either)
     std::vector<const GeoRigSource*> rigs;
     for (U32 type : kVelocityRiggedTypes)
     {
-        { LL_CPU_ZONE("avatar velocity: collect draw infos"); collect_main_view_draw_infos(type, infos, !rig_mode); }       // (S4 B: the render map and, unless the sources are read, the draws the scene table serves)
-        for (LLDrawInfo* params : infos)
+        { LL_CPU_ZONE("avatar velocity: collect rigged item sources"); collect_main_view_rig_sources(type, rigs); }
+        for (const GeoRigSource* rig : rigs)
         {
-            consume({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, params, ll_geo_range(params) });
-        }
-        if (rig_mode)
-        {
-            { LL_CPU_ZONE("avatar velocity: collect rigged item sources"); collect_main_view_rig_sources(type, rigs); }
-            for (const GeoRigSource* rig : rigs)
-            {
-                consume({ rig->mAvatar.get(), rig->mSkin.get(), rig->mVb.get(), rig->mOffset, rig->mCount, nullptr, rig->range() });
-            }
+            consume({ rig->mAvatar.get(), rig->mSkin.get(), rig->mVb.get(), rig->mOffset, rig->mCount, rig->range() });
         }
     }
 
@@ -22217,7 +22076,6 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             }
             w.mObjEntries.push_back({ vb_id, ib_id, offset, count, number->second, 0 });
         };
-        std::vector<LLDrawInfo*> moving_infos;
         bool wanted_type[kGeoTypeCount] = {};
         for (U32 rigged_type : kVelocityRiggedTypes)
         {
@@ -22227,13 +22085,7 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
             {
                 wanted_type[tn] = true;
             }
-            collect_main_view_draw_infos(rigged_type - 1, moving_infos, !rig_mode);       // (S4 C: the render map and, unless the items are read below, the draws the scene table serves)
-            for (LLDrawInfo* params : moving_infos)
-            {
-                consume_object(params->mModelMatrix, true, params->mVertexBuffer.get(), 0, 0, (U32)params->mOffset, (U32)params->mCount);
-            }
         }
-        if (rig_mode)
         {
             LLCullResult* cull = gPipeline.getCull();
             if (cull && cull->mGeoElided)
@@ -22242,13 +22094,13 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
                 for (U32 handle : cull->mGeoHandles)
                 {
                     const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-                    if (!f || f->mGeoMoving.empty() || !f->mGeoServedMask)
+                    if (!f || f->mGeoMoving.empty())
                     {
                         continue;
                     }
                     for (const LLSceneFragment::GeoItem& item : f->mGeo)
                     {
-                        if (!item.mServed || item.mType >= kGeoTypeCount || !wanted_type[item.mType] || !(f->mGeoServedMask & (1ull << item.mType)) || item.mE.mMatrix < kMovingBase || item.mE.mMatrix >= kMovingBase + sMovingMatrix.size())
+                        if (!item.mServed || item.mType >= kGeoTypeCount || !wanted_type[item.mType] || item.mE.mMatrix < kMovingBase || item.mE.mMatrix >= kMovingBase + sMovingMatrix.size())
                         {
                             continue;
                         }
@@ -22373,7 +22225,7 @@ void LLPipeline::renderAvatarVelocity()
                 velocity_prepare(again, (F32)mAvatarVelocityMap.getHeight());
                 build_velocity_rigged(again);
                 ++checks;
-                if (again.mEntries.size() != work.mEntries.size() || again.mPalettes.size() != work.mPalettes.size() || again.mFallback.size() != work.mFallback.size() || again.mSkipped != work.mSkipped
+                if (again.mEntries.size() != work.mEntries.size() || again.mPalettes.size() != work.mPalettes.size() || again.mSkipped != work.mSkipped
                     || again.mStill != work.mStill || again.mObjEntries.size() != work.mObjEntries.size() || again.mObjCur.size() != work.mObjCur.size() || again.mObjUnfit != work.mObjUnfit
                     || (!again.mObjEntries.empty() && memcmp(again.mObjEntries.data(), work.mObjEntries.data(), again.mObjEntries.size() * sizeof(again.mObjEntries[0])) != 0)
                     || (!again.mObjCur.empty() && memcmp(again.mObjCur.data(), work.mObjCur.data(), again.mObjCur.size() * sizeof(F32)) != 0)
@@ -22397,7 +22249,6 @@ void LLPipeline::renderAvatarVelocity()
         std::vector<LLVkBridge::ShadowSkinEntry>& entries = work.mEntries;
         std::vector<F32>& palettes = work.mPalettes;
         std::vector<F32>& prev_palettes = work.mPrevPalettes;
-        std::vector<LLDrawInfo*>& fallback = work.mFallback;
         rigged_skipped = work.mSkipped;
         still_draws = work.mStill;
 
@@ -22466,16 +22317,6 @@ void LLPipeline::renderAvatarVelocity()
             gAvatarVelocityPullProgram.unbind();
         }
 
-        if (!fallback.empty())
-        {
-            // K6 group D: rigged draws the packet record cannot take are not drawn any more (the uniform palette program is gone: the log showed 0 of them); counted and logged once
-            static U64 dropped = 0;
-            if (dropped == 0)
-            {
-                LL_WARNS("VkMotion") << fallback.size() << " rigged draws the velocity record cannot carry are not drawn (there is no old path any more)" << LL_ENDL;
-            }
-            dropped += fallback.size();
-        }
     }
 
     // Step 1b: the moving objects were worked out with the rigged draws (build_velocity_rigged); this is the record
@@ -25035,24 +24876,6 @@ static void rt_name_rigged_main_view()
                 }
                 entries.push_back(e);
         };
-        auto name_one = [&](LLDrawInfo* params)
-        {
-            name_view({ params->mAvatar.get(), params->mSkinInfo.get(), params->mVertexBuffer.get(), (U32)params->mOffset, (U32)params->mCount, (U32)params->mStart, (U32)params->mEnd, params->mModelMatrix, params, nullptr });
-        };
-        {
-            LL_CPU_ZONE("rt name: opaque render maps");
-            for (U32 type : types)
-            {
-                auto* begin = gPipeline.beginRenderMap(type + 1);       // the rigged variant of a pass type is the next number
-                auto* end = gPipeline.endRenderMap(type + 1);
-                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-                {
-                    LLDrawInfo* params = *i;
-                    LLCullResult::increment_iterator(i, end);
-                    name_one(params);
-                }
-            }
-        }
         cs_opaque_entries = (U32)entries.size();
         if (scene_geo_rigged_on() && ll_scene_geo_serving())
         {
@@ -25144,129 +24967,6 @@ static void rt_name_rigged_main_view()
                 ++sRtNameWhy[why];
             }
         };
-        auto add_entry = [&](LLDrawInfo* params, const Source& source)
-        {
-            // (a blended glTF draw, e.g. an avatar's translucent shell, is named as a blended entry with the glTF material: one texture, no batch index; the sun rays leave it out, see rtAlphaHit in shadowUtil.glsl)
-            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || (source.kind == KIND_ALPHA && !params->mGLTFMaterial);
-            if (!params->mCount || !params->mAvatar || (source.kind == KIND_GLTF && !params->mGLTFMaterial))
-            {
-                if (params->mAvatar) note_why(params, 0);
-                return;
-            }
-            if (!rt_name_avatar_due(params->mAvatar.get()))
-            {
-                return;
-            }
-            if (!shadow_alpha_packet_ok(*params, batch, true, params->mGLTFMaterial.notNull()))
-            {
-                note_why(params, std::min(5, shadow_alpha_fallback_reason(*params, batch, true)));
-                return;
-            }
-            if (!rt_textures_ready(*params, batch))
-            {
-                note_why(params, 6);
-                return;
-            }
-            const LLVertexBuffer* vb = params->mVertexBuffer.get();
-            LLVkBridge::ShadowAlphaEntry e = {};
-            e.mVertexBuffer = vb->getVertexBufferId();
-            e.mIndexBuffer = vb->getIndexBufferId();
-            e.mFirstIndex = params->mOffset;
-            e.mIndexCount = params->mCount;
-            e.mMatrixId = rt_matrix_id(params->mModelMatrix);
-            if (!(note_shared ? ll_frame_palette(params->mAvatar.get(), params->mSkinInfo.get(), e.mPaletteOffset, e.mJoints)
-                              : shadow_palette(params->mAvatar, params->mSkinInfo, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
-            {
-                note_why(params, 7);
-                return;
-            }
-            note_why(params, 8);
-            e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
-            e.mVertexFirst = params->mStart;
-            e.mVertexCount = (U32)params->mEnd + 1u - params->mStart;
-            e.mAvatarId = (U32)(((uintptr_t)params->mAvatar.get()) >> 4);
-            e.mSkinId = (U32)(((uintptr_t)params->mSkinInfo.get()) >> 4);
-            {
-                const LLVOAvatar* avatar_for_pos = params->mAvatar.get();
-                    const LLVector3 avatar_position = avatar_for_pos ? avatar_for_pos->getRenderPosition() : LLVector3();
-                e.mAvatarPos[0] = avatar_position.mV[0];
-                e.mAvatarPos[1] = avatar_position.mV[1];
-                e.mAvatarPos[2] = avatar_position.mV[2];
-                e.mAvatarKind = rt_avatar_kind(params->mAvatar.get());
-            }
-            if (params->mModelMatrix)
-            {
-                auto it = matrix_numbers.find(params->mModelMatrix);
-                if (it == matrix_numbers.end())
-                {
-                    it = matrix_numbers.emplace(params->mModelMatrix, (U32)(matrices.size() / 16)).first;
-                    const F32* m = (const F32*)params->mModelMatrix->mMatrix;
-                    matrices.insert(matrices.end(), m, m + 16);
-                }
-                e.mMatrix = it->second;
-            }
-            U32 flags = LLVkBridge::ALPHA_RIGGED;
-            if (source.kind == KIND_GLTF)
-            {
-                flags |= LLVkBridge::ALPHA_HARD;        // glTF alpha mask: a plain cut at the material's cutoff on texture alpha times vertex alpha
-            }
-            if (source.kind == KIND_FULLBRIGHT)
-            {
-                flags |= LLVkBridge::ALPHA_FULLBRIGHT;
-            }
-            if (source.kind == KIND_MATERIAL)
-            {
-                flags |= LLVkBridge::ALPHA_TREE;
-            }
-            if (vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
-            {
-                flags |= LLVkBridge::ALPHA_HAS_TEXCOORD;
-                e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
-            }
-            if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
-            {
-                flags |= LLVkBridge::ALPHA_HAS_COLOR;
-                e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
-            }
-            if (batch && params->mTextureList.size() > 1)
-            {
-                for (size_t t = 0; t < params->mTextureList.size() && t < 4; ++t)
-                {
-                    if (params->mTextureList[t].notNull())
-                    {
-                        e.mTextures[t] = texture_name(params->mTextureList[t].get());
-                    }
-                }
-            }
-            else
-            {
-                flags |= LLVkBridge::ALPHA_NO_INDEX;
-                if (params->mGLTFMaterial.notNull())
-                {
-                    LLFetchedGLTFMaterial* gm = params->mGLTFMaterial.get();
-                    LLViewerTexture* base = params->mTexture.notNull() ? params->mTexture.get() : gm->mBaseColorTexture.get();
-                    if (base)
-                    {
-                        e.mTextures[0] = texture_name(base);
-                    }
-                    rt_khr_uv(gm->mTextureTransform[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR], e.mUv);
-                }
-                else if (params->mTexture.notNull())
-                {
-                    e.mTextures[0] = texture_name(params->mTexture.get());
-                }
-            }
-            e.mFlags = flags;
-            e.mCutoff = source.kind == KIND_ALPHA ? ALPHA_BLEND_CUTOFF : (source.kind == KIND_GLTF ? params->mGLTFMaterial->mAlphaCutoff : params->mAlphaMaskCutoff);
-            if (rt_materials_on())
-            {
-                e.mMaterial = rt_material_id(params, source.kind == KIND_ALPHA ? 2u : (source.kind == KIND_MATERIAL ? 5u : 1u));
-                e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
-            }
-            entries.push_back(e);
-        };
-        // J1 K6 R2: the same entry made from a rigged fragment item's source (the avatar, the skin, the buffer range, the textures as handles, the glTF material, the cutoff and the ray scene material source the item kept):
-        // no draw info read. A blended item is one the alpha plan serves (the layout checks passed when the plan was made); a masked or glTF one is checked by mAlphaOk when the fragment was made.
         auto add_entry_src = [&](const GeoRigSource& rig, const Source& source)
         {
             const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || (source.kind == KIND_ALPHA && rig.mGltf.isNull());
@@ -25372,37 +25072,25 @@ static void rt_name_rigged_main_view()
             }
             entries.push_back(e);
         };
-        // (LL_VK_RT_RIGALPHA=0: the rigged alpha casters from the draw infos as before, a visual A/B of this step)
-        static const bool src_path = !getenv("LL_VK_RT_RIGALPHA") || getenv("LL_VK_RT_RIGALPHA")[0] != '0';
+        // (the rigged alpha casters are the items' sources: the draw info paths and LL_VK_RT_RIGALPHA are gone, 2026-11-12)
         {
             LL_CPU_ZONE("rt name: alpha sources");
             for (const Source& source : sources)
             {
-                const U32 type = source.kind != KIND_ALPHA ? source.type + 1 : source.type;       // PASS_ALPHA holds both
-                static std::vector<LLDrawInfo*> alpha_infos;
-                if (src_path && source.kind == KIND_ALPHA)
+                if (source.kind == KIND_ALPHA)
                 {
                     continue;       // (J1 K6 R2: the blended rigged draws come from the rigged alpha plans below)
                 }
-                collect_main_view_draw_infos(type, alpha_infos, !src_path);       // (S4 B: the render map and, unless the sources are read below, the draws the scene table serves)
-                for (LLDrawInfo* params : alpha_infos)
+                static std::vector<const GeoRigSource*> rigs;
+                collect_main_view_rig_sources(source.type + 1, rigs);
+                for (const GeoRigSource* rig : rigs)
                 {
-                    add_entry(params, source);
-                }
-                if (src_path)
-                {
-                    static std::vector<const GeoRigSource*> rigs;
-                    collect_main_view_rig_sources(type, rigs);
-                    for (const GeoRigSource* rig : rigs)
-                    {
-                        add_entry_src(*rig, source);
-                    }
+                    add_entry_src(*rig, source);
                 }
             }
         }
         // alpha BLENDED rigged draws (the blond hair layer of a mesh head, clothes) are not in the render maps: the alpha pool walks the rigged alpha groups and their draw maps (LLDrawPoolAlpha::renderAlpha),
         // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
-        if (src_path)
         {
             // J1 K6 R2: the blended rigged draws (the hair layer of a mesh head, clothes) are the items of the groups' rigged alpha plans: the sources they kept, each group once
             LL_CPU_ZONE("rt name: blended groups");
@@ -25430,88 +25118,6 @@ static void rt_name_rigged_main_view()
                         add_entry_src(rig, blended);
                     }
                 }
-            }
-        }
-        else
-        {
-            LL_CPU_ZONE("rt name: blended groups");
-            static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
-            // debug aid (about once in 600 frames): what the rigged alpha groups hold and which check turns the viewer's own avatar's blended draws away
-            static U64 last_blend_log = 0;
-            const bool blend_log = rt_materials_on() && gFrameCount >= last_blend_log + 600;
-            if (blend_log)
-            {
-                last_blend_log = gFrameCount;
-            }
-            U32 n_groups = 0, n_with_map = 0, n_draws = 0, n_self = 0, n_gltf = 0, n_layout = 0, n_texture = 0, n_ok = 0;
-            U64 self_tris = 0;
-            // both group lists (the rigged alpha groups and the ordinary alpha groups) and both pass types: the draws named only by the shadow passes were one frame behind the scene call (never fresh), so the
-            // parts of an avatar they alone knew (hair layer, sock tops) stayed out of its structure until something named them in the main view (a snapshot)
-            for (int list = 0; list < 2; ++list)
-            {
-                LLCullResult::sg_iterator begin = list == 0 ? gPipeline.beginRiggedAlphaGroups() : gPipeline.beginAlphaGroups();
-                LLCullResult::sg_iterator end = list == 0 ? gPipeline.endRiggedAlphaGroups() : gPipeline.endAlphaGroups();
-                for (LLCullResult::sg_iterator g = begin; g != end; ++g)
-                {
-                    LLSpatialGroup* group = *g;
-                    ++n_groups;
-                    if (!group || group->isDead())
-                    {
-                        continue;
-                    }
-                    for (U32 pass_type : { (U32)LLRenderPass::PASS_ALPHA_RIGGED, (U32)LLRenderPass::PASS_ALPHA })
-                    {
-                        LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(pass_type);
-                        if (rigged_alpha == group->mDrawMap.end())
-                        {
-                            continue;
-                        }
-                        ++n_with_map;
-                        for (auto& pointer : rigged_alpha->second)
-                        {
-                            LLDrawInfo* p = pointer.get();
-                            if (!p || !p->mAvatar)
-                            {
-                                continue;
-                            }
-                            if (blend_log)
-                            {
-                                ++n_draws;
-                                if (p->mAvatar.isSelf())
-                                {
-                                    ++n_self;
-                                    self_tris += p->mCount / 3;
-                                    if (p->mGLTFMaterial) ++n_gltf;
-                                    else if (!shadow_alpha_packet_ok(*p, true, true, false)) ++n_layout;
-                                    else if (!rt_textures_ready(*p, true)) ++n_texture;
-                                    else ++n_ok;
-                                }
-                            }
-                            add_entry(p, blended);
-                        }
-                    }
-                }
-            }
-            if (blend_log)
-            {
-                // debug: the entries that go to the worker, own avatar only (triangles, material, first index) so they can be matched to the draw log of the ray scene (avlog=1)
-                std::string list;
-                for (const LLVkBridge::ShadowAlphaEntry& e : entries)
-                {
-                    list += llformat(" %u/%u", e.mIndexCount / 3, e.mMaterial);
-                }
-                LL_INFOS("VkRtMaterials") << "rigged alpha entries sent (triangles/material): " << entries.size() << ":" << list << LL_ENDL;
-            }
-            if (blend_log)
-            {
-                LL_INFOS("VkRtMaterials") << "own avatar rigged alpha naming since the last line: no count / glTF mismatch " << sRtNameWhy[0] << ", layout " << sRtNameWhy[1] << " / " << sRtNameWhy[2] << " / " << sRtNameWhy[3]
-                    << " / " << sRtNameWhy[4] << " / texture matrix " << sRtNameWhy[5] << ", texture not ready " << sRtNameWhy[6] << ", no palette " << sRtNameWhy[7] << ", named " << sRtNameWhy[8] << LL_ENDL;
-                memset(sRtNameWhy, 0, sizeof(sRtNameWhy));
-            }
-            if (blend_log)
-            {
-                LL_INFOS("VkRtMaterials") << "blended rigged draws: " << n_groups << " rigged alpha groups, " << n_with_map << " with a PASS_ALPHA_RIGGED map, " << n_draws << " draws, own avatar " << n_self
-                    << " (" << self_tris << " triangles): glTF " << n_gltf << ", layout/skin rejected " << n_layout << ", texture not ready " << n_texture << ", accepted " << n_ok << LL_ENDL;
             }
         }
         if (!entries.empty())
