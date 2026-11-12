@@ -122,6 +122,10 @@ bool ll_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second 
 bool ll_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (LL_VK_SCENE_ALPHA=1 and the AB phase)
 bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
+// what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
+bool ll_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
+bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
+
 class LLDrawInfo final : public LLRefCount
 {
     LL_ALIGN_NEW;

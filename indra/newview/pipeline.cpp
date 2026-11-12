@@ -10651,6 +10651,8 @@ struct LLSceneFragment
     U64 mGeoServedMask = 0;                             // G4: see LLSpatialGroup
     U64 mGeoTypeMask = 0;                               // the table types (bit = item type number) the fragment has at least one SERVED item of (mGeoServedMask: only the types all of whose draws are served)
     U32 mDrawTris = 0;                                  // the triangles of all the draws of the group's draw map when the fragment was made (far_avatar_tier: no draw info is read to count them)
+    const LLMatrix4* mFirstModel = nullptr;             // the model matrix of the first draw of the draw map (pushBufferVerts, a debug view)
+    bool mHasDraw = false;                              // the draw map holds a draw
     U32 mGeoServedTris = 0;
     U32 mGeoHandle = 0;                                 // its handle at the worker (0 = not attached: nothing served, or LL_VK_SCENE_GEO < 2)
     std::vector<U32> mGeoSentName;                      // per local texture, the GL name the worker was told
@@ -10684,6 +10686,8 @@ struct LLSceneFragment
             U8 mGlowCls = 255;                          // 255 = no emissive buffer
             const LLMatrix4* mModel = nullptr;
             const LLMatrix4* mTexMat = nullptr;
+            LLPointer<LLVertexBuffer> mVb;              // the draw's range (the highlight debug view draws it)
+            U32 mStart = 0, mEnd = 0, mCount = 0, mOffset = 0;
         };
         std::vector<TransItem> mTrans;
         std::vector<F32> mTransPbr;
@@ -11740,6 +11744,58 @@ int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
     return (int)f->mAlphaSet[rigged ? 1 : 0].mTrans.size();
 }
 
+bool ll_group_has_alpha_key(const LLSpatialGroup* group)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    return f && f->mWalkValid && (f->mWalkAlphaBits & 1);
+}
+
+bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (!f || !f->mWalkValid || f->mSerial != group->mDrawMapSerial || !f->mHasDraw)
+    {
+        return false;
+    }
+    model = f->mFirstModel;
+    return true;
+}
+
+bool ll_group_has_static_alpha(const LLSpatialGroup* group)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    return f && f->mAlphaPlanned && f->mAlphaSet[0].mCount > 0;
+}
+
+bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index, LLAlphaTransientDraw& draw)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (!f || !f->mAlphaPlanned || f->mSerial != group->mDrawMapSerial)
+    {
+        return false;
+    }
+    const LLSceneFragment::AlphaSet& ps = f->mAlphaSet[rigged ? 1 : 0];
+    if (index >= ps.mTrans.size())
+    {
+        return false;
+    }
+    const LLSceneFragment::AlphaSet::TransItem& t = ps.mTrans[index];
+    draw.mModel = t.mModel;
+    draw.mTexMat = t.mTexMat;
+    draw.mGlowCls = t.mGlowCls;
+    draw.mVb = t.mVb.get();
+    draw.mStart = t.mStart;
+    draw.mEnd = t.mEnd;
+    draw.mCount = t.mCount;
+    draw.mOffset = t.mOffset;
+    if (rigged && index < ps.mTransAvatar.size())
+    {
+        draw.mAvatar = ps.mTransAvatar[index].get();
+        draw.mSkin = ps.mTransSkin[index].get();
+    }
+    return true;
+}
+
 bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, LLAlphaTransient& out, LLAlphaTransientDraw& draw)
 {
     const LLSceneFragment* f = group->mSceneFragment;
@@ -11862,6 +11918,11 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                 t.mUseTexMatrix = tc->mUseTexMatrix;
                 t.mModel = p->mModelMatrix;
                 t.mTexMat = p->mTextureMatrix;
+                t.mVb = p->mVertexBuffer;
+                t.mStart = p->mStart;
+                t.mEnd = p->mEnd;
+                t.mCount = p->mCount;
+                t.mOffset = p->mOffset;
                 t.mGlowCls = (vb && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) ? (p->mGLTFMaterial.notNull() ? (p->mGLTFMaterial->mDoubleSided ? 2 : 1) : 0) : 255;
                 ps.mTrans.push_back(t);
                 if (rigged)
@@ -12092,6 +12153,8 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
     f.mWalkValid = true;
     f.mWalkNonEmpty = !group->mDrawMap.empty();
     f.mDrawTris = 0;
+    f.mHasDraw = !group->mDrawMap.empty() && !group->mDrawMap.begin()->second.empty();
+    f.mFirstModel = f.mHasDraw ? (*group->mDrawMap.begin()->second.begin())->mModelMatrix : nullptr;
     for (const auto& kv : group->mDrawMap)
     {
         for (const LLDrawInfo* info : kv.second)
