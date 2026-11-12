@@ -2389,6 +2389,17 @@ void Renderer::setRenderTarget(Image* const* colors, U32 color_count, Image* dep
     finishPassUse();
     flushPendingClear();
     endRendering(PE_TARGET);
+    // <FS> (mouselook dark state 2026-11-12) the read-only depth mode belongs to the depth image it was chosen for: a new depth image starts writable. It used to carry over from the last pass of the
+    // previous target (the planar mirror view's lighting ends read-only), and the first pass after that took the old mode: a pending clear of the new depth went into a read-only pass (load, no clear,
+    // no store) and was gone, so the depth of the main view held whatever it held before.
+    {
+        const Image* old_root = mDepthTarget ? (mDepthTarget->mOwner ? mDepthTarget->mOwner : mDepthTarget) : nullptr;
+        const Image* new_root = depth ? (depth->mOwner ? depth->mOwner : depth) : nullptr;
+        if (old_root != new_root)
+        {
+            mDepthRO = false;
+        }
+    }
     mColorCount = std::min<U32>(color_count, 8);
     for (U32 i = 0; i < mColorCount; ++i)
     {
@@ -3763,6 +3774,10 @@ void Renderer::applyState()
         if (mRendering)
         {
             ++mDepthROFlipEnded;
+        }
+        if (!mRendering && (mPendingClear & CLEAR_DEPTH))
+        {
+            mDepthRO = depth_ro;        // <FS> no pass is open: a pending depth clear starts the pass in the mode this draw needs (in the old read-only mode the clear was lost)
         }
         flushPendingClear();
         endRendering(PE_DEPTH_FLIP);
