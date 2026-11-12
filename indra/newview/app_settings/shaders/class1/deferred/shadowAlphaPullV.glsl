@@ -133,7 +133,16 @@ void main()
     post_pos = pos;
     gl_Position = pos;
 
-    uint tex_index = ((pk.flags & 4u) != 0u) ? 0u : (floatBitsToUint(position.w) & 3u);
+    // texture windows (LLVkBridge::kAlphaWindowShift): a batch of more than four textures is drawn by several entries over the same index range, each naming the textures of one window (width 4, 2 or 1, bits 16 - 17
+    // of the flags; the window number is in bits 12 - 15). The triangles of the other windows are moved outside the clip volume (the three vertices of a triangle share the face's texture index): another entry draws them.
+    uint tex_raw = ((pk.flags & 4u) != 0u) ? 0u : (floatBitsToUint(position.w) & 15u);
+    uint width_code = (pk.flags >> 16u) & 3u;
+    uint width_shift = (width_code == 0u) ? 2u : ((width_code == 1u) ? 1u : 0u);
+    if ((tex_raw >> width_shift) != ((pk.flags >> 12u) & 15u))
+    {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
+    uint tex_index = tex_raw & ((1u << width_shift) - 1u);
     uint pair = (tex_index < 2u) ? pk.slots.x : pk.slots.y;
     vary_slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
     vary_flags = pk.flags;
