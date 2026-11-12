@@ -10764,45 +10764,23 @@ constexpr bool scene_geo_on() { return true; }
 // S4 C: the draws with a model matrix that is not a region matrix are served by the table too (their matrix has a moving slot)
 bool scene_geo_moving_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_MOVING"); return !v || atoi(v) != 0; }();       // (default on; =0 off)
-    return on && scene_geo_mode() >= 2;
+    return true;        // (the switch LL_VK_SCENE_GEO_MOVING is gone, 2026-11-12: always on)
 }
 // S4 B: the rigged draws of the deferred passes are items of the fragments too (their palettes are bound by the frame record); needs the rigged pull programs (A1)
 bool scene_geo_rigged_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_SCENE_GEO_RIGGED"); return !v || atoi(v) != 0; }();       // (default on; =0 off)
-    return on && scene_geo_mode() >= 2;
+    return true;        // (the switch LL_VK_SCENE_GEO_RIGGED is gone, 2026-11-12: always on)
 }
 // the alpha masked casters of resident fragments too (ray shadows, with the range membership)
 bool scene_alpha_on()
 {
-    static const bool on = scene_env("LL_VK_SCENE_RESIDENT") && scene_env("LL_VK_SCENE_RAYRANGE") && scene_env("LL_VK_SCENE_RAYALPHA");
-    return on;
+    return true;        // (the switches LL_VK_SCENE_RESIDENT, LL_VK_SCENE_RAYRANGE and LL_VK_SCENE_RAYALPHA are gone, 2026-11-12: always on)
 }
 // <FS> item B of doc/vulkan/PLAN-crowd-worker-and-gpu.md: the worker draws the alpha masked static casters of the cascades from its own resident table (kinds 18, 38, 37) instead of one entry
-// each every pass. LL_VK_ALPHARES=1 starts it on, rt-debug.txt alphares=0/1 switches it live (a same-lap A/B; fragments made while it is off have no rows and are drawn the old way)
+// each every pass. Always on since 2026-11-12 (LL_VK_ALPHARES and the live key alphares of rt-debug.txt, the same-lap A/B, are gone: the user judged the shadows good on 2026-11-04)
 bool alpha_res_wanted()
 {
-    static const bool env = []() { const char* e = getenv("LL_VK_ALPHARES"); return !e || atoi(e) != 0; }();      // on unless LL_VK_ALPHARES=0 (the user judged the shadows: good, 2026-11-04)
-    static S32 live = -1;
-    static std::chrono::steady_clock::time_point last;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - last >= std::chrono::milliseconds(500))
-    {
-        last = now;
-        S32 v = -1;
-        std::ifstream in("D:/claude/rt-debug.txt");
-        std::string line;
-        while (std::getline(in, line))
-        {
-            if (line.compare(0, 9, "alphares=") == 0)
-            {
-                v = atoi(line.c_str() + 9);
-            }
-        }
-        live = v;
-    }
-    return live >= 0 ? live != 0 : env;
+    return true;
 }
 // the textures of resident alpha entries: one record each, with the users (fragment, local number); resolved once a frame for the fragments in range
 struct AlphaTexUse { LLSceneFragment* mFrag; U32 mLocal; };
@@ -20611,8 +20589,7 @@ static const ShadowAlphaSource sources[] = {
 enum { GS_NONE, GS_OPAQUE, GS_MASK, GS_BLEND };
 static bool shadow_gltf_env()
 {
-    static const bool on = !getenv("LL_VK_PBR_SHADOW") || getenv("LL_VK_PBR_SHADOW")[0] != '0';
-    return on;
+    return true;        // (the switch LL_VK_PBR_SHADOW is gone, 2026-11-12: the glTF casters are always entries of the record)
 }
 static bool sShadowGltfRows = false;        // main thread: this renderShadow call sends the static glTF casters in the alpha record (the old loops skip what the record carries)
 static int shadow_gltf_kind(const LLDrawInfo& p)
@@ -28488,7 +28465,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             // J1 K6 B: a serial pass (a probe's cube face, the zone timer laps, hide selected objects) gets its casters from the fragments like a prepared one: the sort rebuilt the groups (their fragments are current) and made
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
-            static const bool serial_fragments = !getenv("LL_VK_SHADOW_SERIAL") || getenv("LL_VK_SHADOW_SERIAL")[0] != '0';
+            constexpr bool serial_fragments = true;       // (LL_VK_SHADOW_SERIAL=0 is gone, 2026-11-12)
             if (serial_fragments && (!LLVkBridge::rtShadowMode() || rt_raster) && shadow_packets_enabled())
             {
                 LL_CPU_ZONE("renderShadow: serial pass render map job");
