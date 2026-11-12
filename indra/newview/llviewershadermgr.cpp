@@ -3683,6 +3683,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredRtReflectionProgram.addPermutation("HAS_SUN_SHADOW", "1");
         gDeferredRtReflectionProgram.addPermutation("LL_RT_REFLECTIONS", "1");
+        if (getenv("LL_VK_RTREFL_DEBUG"))
+        {
+            gDeferredRtReflectionProgram.addPermutation("RT_REFL_DEBUG", "1");        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
+        }
         success = gDeferredRtReflectionProgram.createShader();
         llassert(success);
     }
