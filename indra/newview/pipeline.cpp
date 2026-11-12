@@ -15487,10 +15487,8 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     std::vector<LLVkBridge::ShadowSkinEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     std::vector<F32>& palettes = out.mPalettes;
-    std::vector<LLDrawInfo*>& fallback = out.mFallback;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-    std::unordered_map<const void*, U32> matrix_numbers;
     std::unordered_map<const F32*, U32> palette_offsets;
     std::unordered_set<U32> palettes_used;
     const bool shared_palettes = ll_palette_shared();
@@ -25082,39 +25080,6 @@ static void rt_name_rigged_main_view()
     {
         LL_CPU_ZONE("rt name: body meshes");
         LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
-    }
-    if (rt_materials_on())
-    {
-        // debug aid: which pass types hold the viewer's own avatar's rigged draws (about once in 600 frames), to see what the naming below leaves out
-        static U64 last_log = 0;
-        if (gFrameCount >= last_log + 600)
-        {
-            last_log = gFrameCount;
-            std::vector<U32> all(std::begin(kVelocityRiggedTypes), std::end(kVelocityRiggedTypes));
-            all.push_back(LLRenderPass::PASS_ALPHA);
-            for (U32 type : all)
-            {
-                U32 draws = 0, gltf = 0;
-                U64 tris = 0;
-                auto* begin = gPipeline.beginRenderMap(type);
-                auto* end = gPipeline.endRenderMap(type);
-                for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-                {
-                    LLDrawInfo* params = *i;
-                    LLCullResult::increment_iterator(i, end);
-                    if (params->mAvatar.isSelf())
-                    {
-                        ++draws;
-                        tris += params->mCount / 3;
-                        gltf += params->mGLTFMaterial ? 1u : 0u;
-                    }
-                }
-                if (draws)
-                {
-                    LL_INFOS("VkRtMaterials") << "own avatar rigged draws, pass type " << type << ": " << draws << " draws, " << tris << " triangles, " << gltf << " with a glTF material" << LL_ENDL;
-                }
-            }
-        }
     }
     static const U32 types[] = {
         LLRenderPass::PASS_SIMPLE, LLRenderPass::PASS_FULLBRIGHT, LLRenderPass::PASS_SHINY, LLRenderPass::PASS_BUMP, LLRenderPass::PASS_FULLBRIGHT_SHINY, LLRenderPass::PASS_MATERIAL,
