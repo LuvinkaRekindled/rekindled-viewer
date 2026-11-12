@@ -404,28 +404,6 @@ public:
     // S6.6: the draw infos of a render map type as one record of entries, drawn with the pull program bound now (draws its buffers cannot give to the packet path are skipped with a warning)
 
 
-    // push full GLTF batches
-    // assumes draw infos of given type have valid GLTF materials
-    void pushGLTFBatches(U32 type);
-
-    // like pushGLTFBatches, but will not bind textures or set up texture transforms
-    void pushUntexturedGLTFBatches(U32 type);
-
-    // helper function for dispatching to textured or untextured pass based on bool
-    void pushGLTFBatches(U32 type, bool textured);
-
-
-    // rigged variants of above
-    void pushRiggedGLTFBatches(U32 type);
-    void pushRiggedGLTFBatches(U32 type, bool textured);
-    void pushUntexturedRiggedGLTFBatches(U32 type);
-
-    // push a single GLTF draw call
-    static void pushGLTFBatch(LLDrawInfo& params);
-    static void pushRiggedGLTFBatch(LLDrawInfo& params, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);
-    static void pushUntexturedGLTFBatch(LLDrawInfo& params);
-    static void pushUntexturedRiggedGLTFBatch(LLDrawInfo& params, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);
-
     void pushBatch(LLDrawInfo& params, bool texture, bool batch_textures = false);
     // <FS> render packets for the deferred geometry passes (Vulkan mirror only): sends the static draws of a pass type as one record, with the program bound by the caller
     // (a pull program); the draws it cannot carry are returned to be drawn the old way

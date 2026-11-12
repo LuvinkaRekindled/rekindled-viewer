@@ -10969,7 +10969,6 @@ static bool shadow_gltf_env();
 static bool shadow_alpha_packet_ok(const LLDrawInfo& p, bool batch_textures, bool rigged, bool allow_gltf, bool allow_texmat, bool allow_windows);
 static int shadow_alpha_fallback_reason(const LLDrawInfo& p, bool batch_textures, bool rigged);
 static int shadow_riggltf_kind(const LLDrawInfo& p);
-bool ll_shadow_riggltf_blend_in_record(const LLDrawInfo& p);
 static const U32 kGeoAlphaItemType = 2 * (U32)kGeoTypeCount;            // the item types of the alpha items (S5a static, S5d rigged: the next number)
 
 static int geo_type_number(U32 type)
@@ -20145,34 +20144,6 @@ void LLPipeline::resetVertexBuffers(LLDrawable* drawable)
     }
 }
 
-void LLPipeline::renderGLTFObjects(U32 type, bool texture, bool rigged)
-{
-    assertInitialized();
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-
-    if (rigged)
-    {
-        mSimplePool->pushRiggedGLTFBatches(type + 1, texture);
-    }
-    else
-    {
-        mSimplePool->pushGLTFBatches(type, texture);
-    }
-
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-
-    if (!rigged)
-    {
-        LL::GLTFSceneManager::instance().renderOpaque();
-    }
-    else
-    {
-        LL::GLTFSceneManager::instance().render(true, true);
-    }
-}
-
 // Currently only used for shadows -Cosmic,2023-04-19
 // <FS> Render packets with textures: can this static draw be an entry of a record of alpha masked casters? The pull shader reads 16 bit indices, positions
 // first, and takes the draw's texture(s) from a table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
@@ -20343,7 +20314,6 @@ static bool shadow_gltf_env()
 {
     return true;        // (the switch LL_VK_PBR_SHADOW is gone, 2026-11-12: the glTF casters are always entries of the record)
 }
-static bool sShadowGltfRows = false;        // main thread: this renderShadow call sends the static glTF casters in the alpha record (the old loops skip what the record carries)
 static int shadow_gltf_kind(const LLDrawInfo& p)
 {
     const LLGLTFMaterial* mat = p.mGLTFMaterial.get();
@@ -20363,10 +20333,6 @@ static int shadow_gltf_kind(const LLDrawInfo& p)
     return kind;
 }
 // (the old shadow loops: this draw is in the record)
-bool ll_shadow_gltf_in_record(const LLDrawInfo& p)
-{
-    return sShadowGltfRows && LLPipeline::sShadowRender && shadow_gltf_kind(p) != GS_NONE;
-}
 // the KHR texture transform of the base colour as the 4 x 4 matrix the record's pull shader multiplies the texture coordinate with (textureUtilV.glsl: y flipped, scale, rotation, offset, y flipped back);
 // false = the identity (no matrix needed)
 static bool shadow_gltf_texmat(const LLGLTFMaterial::TextureTransform& t, F32* m)
@@ -20480,11 +20446,6 @@ static int shadow_riggltf_kind(const LLDrawInfo& p)
     const int kind = mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_MASK ? GS_MASK : (mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND ? GS_BLEND : GS_OPAQUE);
     // (K6 group C step 3a: the blended rigged ones are carried too, the dithered test of the static blend entry; a texture animation and a missing texture coordinate array are served since 2026-11-12)
     return kind;
-}
-// (the old shadow loops: this rigged glTF blend draw is in the record)
-bool ll_shadow_riggltf_blend_in_record(const LLDrawInfo& p)
-{
-    return sShadowGltfRows && LLPipeline::sShadowRender && p.mGLTFMaterial && shadow_riggltf_kind(p) == GS_BLEND;
 }
 
 // <FS> K6 group C step 3a: how many rigged glTF casters were made as record entries (opaque, mask, blend), counted by the builders (several threads), logged with the ShadowDraws statistics
@@ -21346,98 +21307,6 @@ static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::
 bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
 {
     return shadow_palette(avatar, skin, data, offsets, offset, joints);
-}
-
-void LLPipeline::renderAlphaObjects(bool rigged, bool skip_packet_draws)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    assertInitialized();
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
-    S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
-    U32 target_width = LLRenderTarget::sCurResX;
-    U32 type = LLRenderPass::PASS_ALPHA;
-    // for gDeferredShadowAlphaMaskProgram
-    const LLVOAvatar* lastAvatar = nullptr;
-    U64 lastMeshId = 0;
-    bool skipLastSkin;
-    // for gDeferredShadowGLTFAlphaBlendProgram
-    const LLVOAvatar* lastAvatarGLTF = nullptr;
-    U64 lastMeshIdGLTF = 0;
-    bool skipLastSkinGLTF;
-    auto* begin = gPipeline.beginRenderMap(type);
-    auto* end = gPipeline.endRenderMap(type);
-
-    for (LLCullResult::drawinfo_iterator i = begin; i != end; )
-    {
-        LLDrawInfo* pparams = *i;
-        LLCullResult::increment_iterator(i, end);
-
-        if (rigged != (pparams->mAvatar != nullptr))
-        {
-            // Pool contains both rigged and non-rigged DrawInfos. Only draw
-            // the objects we're interested in in this pass.
-            continue;
-        }
-
-        if (skip_packet_draws && shadow_alpha_packet_ok(*pparams, true, rigged, false, !LLVkBridge::rtShadowMode(), !LLVkBridge::rtShadowMode()))
-        {
-            continue;       // <FS> already part of the alpha packet record of this pass (J1 K3c: with the texture matrix draws the builder takes too: they were drawn a second time here)
-        }
-        if (skip_packet_draws && !rigged && ll_shadow_gltf_in_record(*pparams))
-        {
-            continue;       // C5 PBR shadow rows: a glTF blend caster of the record
-        }
-        if (skip_packet_draws && rigged && ll_shadow_riggltf_blend_in_record(*pparams))
-        {
-            continue;       // K6 group C step 3a: a rigged glTF blend caster of the record
-        }
-
-        if (rigged)
-        {
-            if (pparams->mGLTFMaterial)
-            {
-                gDeferredShadowGLTFAlphaBlendProgram.bind(rigged);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
-                LLRenderPass::pushRiggedGLTFBatch(*pparams, lastAvatarGLTF, lastMeshIdGLTF, skipLastSkinGLTF);
-            }
-            else
-            {
-                gDeferredShadowAlphaMaskProgram.bind(rigged);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
-                if (mSimplePool->uploadMatrixPalette(pparams->mAvatar, pparams->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
-                {
-                    mSimplePool->pushBatch(*pparams, true, true);
-                }
-            }
-        }
-        else
-        {
-            if (pparams->mGLTFMaterial)
-            {
-                ll_pull_or(&gDeferredShadowGLTFAlphaBlendProgram)->bind(rigged);       // S6.6
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
-                LLRenderPass::pushGLTFBatch(*pparams);
-            }
-            else
-            {
-                ll_pull_or(&gDeferredShadowAlphaMaskProgram)->bind(rigged);       // S6.6
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-                LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-                LLShaderProgram::sCurBoundShaderPtr->setMinimumAlpha(ALPHA_BLEND_CUTOFF);
-                mSimplePool->pushBatch(*pparams, true, true);
-            }
-        }
-    }
-
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-    gRenderLastMatrix = NULL;
 }
 
 void apply_cube_face_rotation(U32 face)
@@ -27922,13 +27791,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     LLRenderState::CullScope cull(true);
 
-    // C5 PBR shadow rows: this call sends the static glTF casters in the alpha record (when that record is used at all); the old loops below skip what it carries
-    struct GltfRowsScope
-    {
-        explicit GltfRowsScope(bool on) { sShadowGltfRows = on; }
-        ~GltfRowsScope() { sShadowGltfRows = false; }
-    } gltf_rows_scope(shadow_gltf_env() && (!LLVkBridge::rtShadowMode() || rt_raster) && !rt_skip && shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable());
-
     //enable depth clamping if available
     LLRenderState::DepthClampScope clamp_depth(true, depth_clamp);
 
@@ -28808,14 +28670,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             gShadowDrawStats.endStaticPass();
         }
 
-        if (packets || skin_packets)
-        {
-            // <FS> the glTF casters below are drawn the old way, with the regular shadow program (it was bound here before the packets): the pull programs ignore
-            // the vertex input and would draw whatever their table entry 0 holds
-            (rigged ? &gDeferredShadowProgram : ll_pull_or(&gDeferredShadowProgram))->bind(rigged);       // S6.6: the static glTF casters through the pull twin (the cull mode of each draw rides in the stream)
-        }
-        { LL_CPU_ZONE("renderShadow: glTF static"); renderGLTFObjects(LLRenderPass::PASS_GLTF_PBR, false, rigged); }
-
+        // (the glTF casters are entries of the packet records: the old loops that drew them from the render map, and the bind of the regular shadow program they needed, are gone, 2026-11-12)
     }
 
     // <FS> S7 H3: no occlusion culling for the shadow cascades (it was the cascade camera's own queries, which the Hi-Z pass of the world camera does not provide; the cascades draw their casters
@@ -28843,41 +28698,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable())
             {
                 render_alpha_packets(sun_up, target_width, rigged);
-                {
-                    LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha blend");
-                    LL_PROFILE_GPU_ZONE("shadow alpha blend");
-                    LL_CPU_ZONE("renderShadow: alpha blend");
-                    renderAlphaObjects(rigged, true);
-                }
             }
         }
 
-        for (int i = 0; i < 2; ++i)
-        {
-            bool rigged = i == 1;
-            LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
-            gDeferredShadowGLTFAlphaMaskProgram.bind(rigged);
-            LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::SUN_UP_FACTOR, sun_up);
-            LLShaderProgram::sCurBoundShaderPtr->uniform1f(LLShaderMgr::DEFERRED_SHADOW_TARGET_WIDTH, (float)target_width);
-
-            LL_CPU_ZONE("renderShadow: glTF alpha mask");
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-
-            U32 type = LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK;
-
-            if (rigged)
-            {
-                mAlphaMaskPool->pushRiggedGLTFBatches(type + 1);
-            }
-            else
-            {
-                mAlphaMaskPool->pushGLTFBatches(type);
-            }
-
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-            gRenderLastMatrix = NULL;
-        }
     }
 
     render_rt_extra_packets();       // <FS> ray tracing only: what the old path drew above, named to the ray scene
