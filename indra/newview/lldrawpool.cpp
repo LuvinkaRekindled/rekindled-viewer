@@ -569,7 +569,7 @@ LLRenderPass::~LLRenderPass()
 
 }
 
-void LLRenderPass::applyModelMatrix(const LLDrawInfo& params)
+void LLRenderPass::applyModelMatrix(const LLDrawBatch& params)
 {
     applyModelMatrix(params.mModelMatrix);
 }
@@ -1306,7 +1306,7 @@ U32 ll_pass_arrays(U32 type)
     }
 }
 
-static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
+static bool geometry_packet_ok(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
@@ -1353,7 +1353,7 @@ static bool geometry_packet_ok(const LLDrawInfo& p, bool batch_textures, const L
 }
 
 // S6 census: why geometry_packet_ok refuses a draw (0 = it does not)
-int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
+int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount) return 1;
@@ -1376,7 +1376,7 @@ int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LL
 }
 
 // static. S5c: a draw with a glTF blend material as an entry of the alpha items: the pull shader reads 16 bit indices, position first, and the normal, texcoord 0, colour and tangent arrays
-bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& e, bool rigged)
+bool LLRenderPass::pbrAlphaEntry(const LLDrawBatch& params, LLVkBridge::GeoEntry& e, bool rigged)
 {
     e = {};
     const LLVertexBuffer* vb = params.mVertexBuffer.get();
@@ -1404,7 +1404,7 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry&
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
+bool LLRenderPass::geometryEntry(const LLDrawBatch& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
 {
     e = {};
     for (int t = 0; t < 6; ++t)

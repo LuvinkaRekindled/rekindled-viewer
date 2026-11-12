@@ -36,7 +36,7 @@
 
 class LLImageRaw;
 class LLSpatialGroup;
-class LLDrawInfo;
+class LLDrawBatch;
 class LLShaderProgram;
 class LLViewerFetchedTexture;
 

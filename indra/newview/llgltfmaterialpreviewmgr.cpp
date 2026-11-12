@@ -226,7 +226,7 @@ namespace {
 
 struct GLTFPreviewModel
 {
-    // <FS> K6 B4: the sphere part is a buffer range of its own (it was an LLDrawInfo drawn by LLRenderPass::pushGLTFBatch, the preview's only link to the draw info layer); draw() does what
+    // <FS> K6 B4: the sphere part is a buffer range of its own (it was an LLDrawBatch drawn by LLRenderPass::pushGLTFBatch, the preview's only link to the draw info layer); draw() does what
     // pushGLTFBatch did for it: the material's bind, the culling of a double sided material, the model matrix, the range. The part owns its buffer (the old draw info held it by handle and owned nothing:
     // the sphere is cached across frames and a buffer held by nobody was destroyed by the retire list, so the next preview died in getColorStrider).
     GLTFPreviewModel(LLVertexBuffer* buffer, const LLMatrix4& mat, U16 start, U16 end, U32 count, U32 offset)

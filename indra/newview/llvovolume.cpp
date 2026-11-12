@@ -446,7 +446,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                     }
 
                     gPipeline.markTextured(mDrawable);
-                    // <FS> LL d67326e62 (heap-use-after-free in LLDrawInfo texture matrix): the matrices just deleted are named by the draw infos of the group, which must be rebuilt
+                    // <FS> LL d67326e62 (heap-use-after-free in LLDrawBatch texture matrix): the matrices just deleted are named by the draw infos of the group, which must be rebuilt
                     if (LLSpatialGroup* group = mDrawable->getSpatialGroup())
                     {
                         group->dirtyGeom();
@@ -1311,9 +1311,9 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
                 gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_TCOORD);
                 // dirtyGeom+markRebuild tells the engine to call
                 // LLVolumeGeometryManager::rebuildGeom, which rebuilds the
-                // LLDrawInfo for the spatial group containing this LLFace,
+                // LLDrawBatch for the spatial group containing this LLFace,
                 // safely copying the mTextureMatrix from the LLFace the the
-                // LLDrawInfo. While it's not ideal to call it here, prims with
+                // LLDrawBatch. While it's not ideal to call it here, prims with
                 // animated faces get moved to a smaller partition to reduce
                 // side-effects of their updates (see shrinkWrap in
                 // LLVOVolume::animateTextures).
@@ -6077,7 +6077,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         passType += 1;
     }
     //add face to drawmap
-    LLSpatialGroup::drawmap_elem_t& draw_vec = (drawmap ? *drawmap : group->mDrawMap)[passType];
+    LLSpatialGroup::drawmap_elem_t& draw_vec = (drawmap ? *drawmap : group->mPendingDraws)[passType];
 
     S32 idx = static_cast<S32>(draw_vec.size()) - 1;
 
@@ -6208,7 +6208,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         }
     }
 
-    LLDrawInfo* info = idx >= 0 ? draw_vec[idx] : nullptr;
+    LLDrawBatch* info = idx >= 0 ? draw_vec[idx] : nullptr;
 
     if (info &&
         info->mVertexBuffer == facep->getVertexBuffer() &&
@@ -6243,7 +6243,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         U32 end = start + facep->getGeomCount()-1;
         U32 offset = facep->getIndicesStart();
         U32 count = facep->getIndicesCount();
-        LLPointer<LLDrawInfo> draw_info = new LLDrawInfo(start,end,count,offset, tex,
+        LLPointer<LLDrawBatch> draw_info = new LLDrawBatch(start,end,count,offset, tex,
             facep->getVertexBuffer(), fullbright, bump);
 
         info = draw_info;
@@ -7600,7 +7600,7 @@ void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<Fi
     {
         for (auto& entry : task.mMap)
         {
-            LLSpatialGroup::drawmap_elem_t& dst = group->mDrawMap[entry.first];
+            LLSpatialGroup::drawmap_elem_t& dst = group->mPendingDraws[entry.first];
             dst.insert(dst.end(), entry.second.begin(), entry.second.end());
         }
         task.mMap.clear();
@@ -7700,7 +7700,7 @@ void LLRebuildBatch::flush()
             {
                 for (auto& element : task.mMap)
                 {
-                    LLSpatialGroup::drawmap_elem_t& dst = group->mDrawMap[element.first];
+                    LLSpatialGroup::drawmap_elem_t& dst = group->mPendingDraws[element.first];
                     dst.insert(dst.end(), element.second.begin(), element.second.end());
                 }
             }

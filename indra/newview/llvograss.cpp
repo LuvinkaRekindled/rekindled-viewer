@@ -704,7 +704,7 @@ void LLGrassPartition::getGeometry(LLSpatialGroup* group)
     buffer->getTexCoord0Strider(texcoordsp);
     buffer->getIndexStrider(indicesp);
 
-    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mDrawMap[mRenderPass];
+    LLSpatialGroup::drawmap_elem_t& draw_vec = group->mPendingDraws[mRenderPass];
 
     for (std::vector<LLFace*>::iterator i = mFaceList.begin(); i != mFaceList.end(); ++i)
     {
@@ -765,7 +765,7 @@ void LLGrassPartition::getGeometry(LLSpatialGroup* group)
             U32 end = start + facep->getGeomCount()-1;
             U32 offset = facep->getIndicesStart();
             U32 count = facep->getIndicesCount();
-            LLDrawInfo* info = new LLDrawInfo(start,end,count,offset,facep->getTexture(),
+            LLDrawBatch* info = new LLDrawBatch(start,end,count,offset,facep->getTexture(),
                 //facep->getTexture(),
                 buffer, object->isSelected(), fullbright);
 

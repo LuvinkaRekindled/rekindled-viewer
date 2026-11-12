@@ -8,7 +8,7 @@
 
 #include "llvkbridge.h"
 
-class LLDrawInfo;
+class LLDrawBatch;
 class LLViewerTexture;
 class LLVertexBuffer;
 class LLSpatialGroup;

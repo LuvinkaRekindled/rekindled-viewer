@@ -37,7 +37,7 @@ class LLFace;
 class LLViewerTexture;
 class LLViewerFetchedTexture;
 class LLSpatialGroup;
-class LLDrawInfo;
+class LLDrawBatch;
 class LLVOAvatar;
 class LLShaderProgram;
 class LLMeshSkinInfo;
@@ -144,7 +144,7 @@ struct LLGeometryPassInfo
 bool ll_rigged_packets_enabled();
 enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4, LL_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
 U32 ll_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
-int ll_geometry_reject_reason(const LLDrawInfo& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
+int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigged draws are served by the scene table (the rigged records stay for the frames it does not serve)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
@@ -398,8 +398,8 @@ public:
     bool isDead() { return false; }
     void resetDrawOrders() { }
 
-    static void applyModelMatrix(const LLDrawInfo& params);
-    // For rendering that doesn't use LLDrawInfo for some reason
+    static void applyModelMatrix(const LLDrawBatch& params);
+    // For rendering that doesn't use LLDrawBatch for some reason
     static void applyModelMatrix(const LLMatrix4* model_matrix);
     // S6.6: the draw infos of a render map type as one record of entries, drawn with the pull program bound now (draws its buffers cannot give to the packet path are skipped with a warning)
 
@@ -410,8 +410,8 @@ public:
     static void pushGeometryPackets(U32 type, bool rigged = false);
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
-    static bool pbrAlphaEntry(const LLDrawInfo& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
-    static bool geometryEntry(const LLDrawInfo& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
+    static bool pbrAlphaEntry(const LLDrawBatch& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
+    static bool geometryEntry(const LLDrawBatch& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     // <FS:Beq> be defensive about UAF with skinInfo during LocalMesh
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo);

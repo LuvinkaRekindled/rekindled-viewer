@@ -50,7 +50,7 @@ class LLTextureEntry;
 class LLVertexProgram;
 class LLViewerTexture;
 class LLGeometryManager;
-class LLDrawInfo;
+class LLDrawBatch;
 // class LLMeshSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 
 const F32 MIN_ALPHA_SIZE = 1024.f;

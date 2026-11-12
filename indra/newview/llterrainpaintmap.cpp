@@ -134,7 +134,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     // *NOTE: The actual getTerrainGeometry fits the terrain vertices snugly
     // under the 16-bit indices limit. For the sake of simplicity, that has not
     // been replicated here.
-    std::vector<LLPointer<LLDrawInfo>> infos;
+    std::vector<LLPointer<LLDrawBatch>> infos;
     // Vertex and index counts adapted from LLVOSurfacePatch::getGeomSizesMain,
     // with additional vertices added as we are including the north and east
     // edges here.
