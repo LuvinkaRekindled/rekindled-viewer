@@ -120,6 +120,12 @@ S32 LLFontGL::getCacheGeneration() const
     return font_bitmap_cache->getCacheGeneration();
 }
 
+S32 LLFontGL::getLayoutGeneration() const
+{
+    const LLFontBitmapCache* font_bitmap_cache = mFontFreetype->getFontBitmapCache();
+    return font_bitmap_cache->getLayoutGeneration();
+}
+
 S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, const LLRect& rect, const LLColor4 &color, HAlign halign, VAlign valign, U8 style,
     ShadowType shadow, S32 max_chars, F32* right_x, bool use_ellipses, bool use_color) const
 {

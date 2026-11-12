@@ -93,6 +93,7 @@ public:
 
     S32 getNumFaces(const std::string& filename);
     S32 getCacheGeneration() const;
+    S32 getLayoutGeneration() const;        // <FS> see LLFontBitmapCache::getLayoutGeneration
 
     S32 render(const LLWString &text, S32 begin_offset,
                 const LLRect& rect,

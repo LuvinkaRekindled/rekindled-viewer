@@ -170,6 +170,7 @@ void LLFontBitmapCache::reset()
     mBitmapWidth = 0;
     mBitmapHeight = 0;
     mGeneration++;
+    mLayoutGeneration++;
 }
 
 //static
