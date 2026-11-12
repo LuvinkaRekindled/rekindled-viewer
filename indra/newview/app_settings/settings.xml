@@ -2612,27 +2612,16 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkGlossyMirror</key>
-    <map>
-      <key>Comment</key>
-      <string>Needs FSVkRayTracing: glossy surfaces such as mirrors reflect the scene by ray tracing instead of the reflection probes. Costs frame rate. Off takes effect at once; on takes effect at once only if this launch started with ray tracing and one of FSVkGlossyMirror / FSVkRTWater on (they build the material table), otherwise after a restart.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
     <key>FSVkMirrorQuality</key>
     <map>
       <key>Comment</key>
-      <string>Quality of what the ray traced glossy mirror shows (needs FSVkGlossyMirror): 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time.</string>
+      <string>Needs FSVkRayTracing: glossy surfaces such as mirrors reflect the scene by ray tracing instead of the reflection probes, and the level says what a traced hit shows. 0 Off, 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time. Off and the levels take effect at once; from Off to a level takes effect at once only if this launch started with ray tracing and a level above Off or FSVkRTWater on (they build the material table), otherwise after a restart. (This setting replaced the check box FSVkGlossyMirror.)</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <integer>3</integer>
+      <integer>0</integer>
     </map>
     <key>FSVkRTWater</key>
     <map>

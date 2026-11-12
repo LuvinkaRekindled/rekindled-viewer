@@ -414,8 +414,14 @@ void LLHeroProbeManager::renderProbes()
             }
             if (ll_mirror_planar())
             {
-                // the planar mirror: one reflected view at the main view's size every frame; the glass reads it (heroMipCount < 0), the cube is not rendered
-                updateMirrorView(dynamic, face_near);
+                // the planar mirror: one reflected view (the size set by RenderHeroProbeResolution) every `rate + 1` frames, 6 at the most (RenderHeroProbeUpdateRate: 1 Ultra every 2nd frame, 2 High every 3rd, 3 Medium every 4th, 6 Low every 6th); the glass reads it
+                // (heroMipCount < 0) and keeps showing the last one in between; the cube is not rendered
+                const S32 mirror_interval = rate < 6 ? rate + 1 : 6;     // (Adam 2026-11-12: even the best setting is every other frame)
+                if (mMirrorLastFrame == 0 || (U64)gFrameCount >= mMirrorLastFrame + (U64)mirror_interval)
+                {
+                    mMirrorLastFrame = (U64)gFrameCount;
+                    updateMirrorView(dynamic, face_near);
+                }
             }
             else
             {
@@ -598,6 +604,7 @@ void LLHeroProbeManager::updateMirrorView(bool is_dynamic, F32 near_clip)
     gViewerWindow->mirrorSnapshot(mMirrorPosition, mMirrorNormal, near_clip, is_dynamic);
 
     gPipeline.mRT = &gPipeline.mMainRT;
+    gPipeline.upscaleMirrorView();      // (a view rendered below the main view's size is enlarged for the glass; no-op at full size)
 }
 
 void LLHeroProbeManager::updateUniforms()
@@ -766,6 +773,7 @@ void LLHeroProbeManager::doOcclusion()
 void LLHeroProbeManager::reset()
 {
     mReset = true;
+    mMirrorLastFrame = 0;       // the planar view is rendered again at once (its target may have been made again)
 }
 
 bool LLHeroProbeManager::registerViewerObject(LLVOVolume* drawablep)

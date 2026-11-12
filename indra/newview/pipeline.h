@@ -987,6 +987,11 @@ public:
 
     // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view, at the main view's render size (allocated with LL_VK_MIRROR_PLANAR=1)
     RenderTargetPack mMirrorViewRT;
+    // <FS> the mirror view's quality setting (RenderHeroProbeResolution 256 / 512 / 1024 / 2048: 1/4, 1/2, full, full of the main view's size): below full size the view is rendered into the smaller
+    // mMirrorViewRT and enlarged into this target, at the main view's size, which is what the glass reads (the glass shaders find a pixel by the size of the texture)
+    LLRenderTarget mMirrorUpscaled;
+    static U32 mirrorViewDivisor();
+    void upscaleMirrorView();
 
     // currently used render target pack
     RenderTargetPack* mRT;

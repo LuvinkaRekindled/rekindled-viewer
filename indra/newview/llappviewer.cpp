@@ -4001,7 +4001,7 @@ bool LLAppViewer::initWindow()
         {
             _putenv_s("LL_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental; any card with Vulkan ray queries)
             _putenv_s("LL_VK_RT_SHADOWS", "1");
-            if ((gSavedSettings.getBOOL("FSVkGlossyMirror") || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("LL_VK_RT_MATERIALS"))
+            if ((gSavedSettings.getS32("FSVkMirrorQuality") > 0 || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("LL_VK_RT_MATERIALS"))
             {
                 _putenv_s("LL_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
             }
