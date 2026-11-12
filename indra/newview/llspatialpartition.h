@@ -124,6 +124,7 @@ bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha 
 
 // what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
 bool ll_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
+bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
 
 class LLDrawInfo final : public LLRefCount

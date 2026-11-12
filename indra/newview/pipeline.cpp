@@ -8209,11 +8209,6 @@ void LLPipeline::postSort(LLCamera &camera)
                     }
                 }
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
-                // C5: the blended alpha types are not put in the main view's render map (the alpha pool reads the groups' draw maps and the ray naming reads them through collect_main_view_draw_infos; LL_VK_RM_ALPHA=0 fills them as before; the verifiers and the census keep them)
-                static const bool rm_alpha_env = rm_alpha_mode() == 1;
-                static const bool lazy_env = !getenv("LL_VK_LAZY_TYPES") || getenv("LL_VK_LAZY_TYPES")[0] != '0';
-                const bool lazy_types_ok = lazy_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn;
-                const bool skip_alpha_lists = rm_alpha_env && view.isMainWorldSort() && !gCubeSnapshot && !LLVisCensus::sOn && !getenv("LL_VK_RMCENSUS");
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; U64 mVerifyLeft = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
                 std::vector<MapChunk> chunks;
@@ -8247,6 +8242,7 @@ void LLPipeline::postSort(LLCamera &camera)
                         {
                             continue;
                         }
+                        chunk.mIndices += (S32)(ll_group_draw_tris(group) * 3);        // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
                         if (geo_list && group->mGeoHandle)
                         {
                             local.mGeoHandles.push_back(group->mGeoHandle);
@@ -8254,7 +8250,6 @@ void LLPipeline::postSort(LLCamera &camera)
                             {
                                 ++chunk.mElideGroups;
                                 chunk.mElideTris += group->mGeoServedTris;
-                                chunk.mIndices += group->mGeoServedTris;
                             }
                             if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
                             {
@@ -8268,67 +8263,14 @@ void LLPipeline::postSort(LLCamera &camera)
                                 continue;
                             }
                         }
-                        for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
-                        {
-                            LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
-                            if (!view.hasRenderType(j->first))
-                            {
-                                continue;
-                            }
-                            if (geo_elide && group->mGeoServedMask)
-                            {
-                                const int tn = ll_scene_geo_type_number(j->first);
-                                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)) && (!view.mRenderingHUDs || ll_scene_geo_hud_type(tn)))
-                                {
-                                    ++chunk.mElideTypes;
-                                    continue;
-                                }
-                            }
-                            const bool alpha_type = skip_alpha_lists && (j->first == LLRenderPass::PASS_ALPHA || j->first == LLRenderPass::PASS_ALPHA_RIGGED);
-                            // C5 J4: the types the table has no kind for are listed by group and made into a list when a pool asks (LL_VK_LAZY_TYPES=0 pushes them as before)
-                            const bool lazy_type = lazy_types_ok && !alpha_type && ll_scene_geo_type_number(j->first) < 0;
-                            if (lazy_type)
-                            {
-                                local.pushLazyGroup(j->first, group);
-                                for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
-                                {
-                                    chunk.mIndices += (*k)->mCount;
-                                }
-                                continue;
-                            }
-                            static const bool leftover_census = getenv("LL_VK_RMCENSUS") != nullptr;
-                            if (leftover_census && j->first != LLRenderPass::PASS_ALPHA && j->first != LLRenderPass::PASS_ALPHA_RIGGED)
-                            {
-                                // C5 J4: the draws that stay in the render map, by partition, whether the group has a fragment handle, whether the type is a table type, and whether the matrix is a region's
-                                const U32 part = std::min<U32>(group->getSpatialPartition() ? group->getSpatialPartition()->mPartitionType : 15u, 15u);
-                                const bool in_table = ll_scene_geo_type_number(j->first) >= 0;
-                                const bool has_handle = group->mGeoHandle != 0;
-                                for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
-                                {
-                                    const LLDrawInfo* info = *k;
-                                    const bool rigged = info->mAvatar.notNull();
-                                    const U32 cell = (((part * 2 + (in_table ? 1 : 0)) * 2 + (has_handle ? 1 : 0)) * 2 + (rigged ? 1 : 0));
-                                    sLeftoverCensus[cell].fetch_add(1, std::memory_order_relaxed);
-                                    if (!in_table) { sLeftoverByType[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); }
-                                }
-                            }
-                            for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
-                            {
-                                LLDrawInfo* info = *k;
-                                if (!alpha_type)
-                                {
-                                    local.pushDrawInfo(j->first, info);
-                                }
-                                chunk.mIndices += info->mCount;
-                            }
-                        }
+                        // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the table draws every type, the statistic below comes from the fragment)
                         if (view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                         {
-                            if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA) != group->mDrawMap.end())
+                            if (ll_group_has_alpha_key(group))
                             {
                                 local.pushAlphaGroup(group);            // (the distance is updated by the main thread when the lists are joined)
                             }
-                            if (group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED) != group->mDrawMap.end())
+                            if (ll_group_has_rigged_alpha_key(group))
                             {
                                 local.pushRiggedAlphaGroup(group);
                             }
@@ -8343,21 +8285,6 @@ void LLPipeline::postSort(LLCamera &camera)
                     for (MapChunk& chunk : chunks)
                     {
                         LLCullResult& from = *chunk.mLocal;
-                        if (from.mLazyTypes)
-                        {
-                            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-                            {
-                                from.mLazyDone[type] = true;
-                                for (LLSpatialGroup* lazy_group : from.mLazyGroups[type]) { sCull->pushLazyGroup(type, lazy_group); }
-                            }
-                        }
-                        for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-                        {
-                            for (LLCullResult::drawinfo_iterator d = from.beginRenderMap(type); d != from.endRenderMap(type); ++d)
-                            {
-                                sCull->pushDrawInfo(type, *d);
-                            }
-                        }
                         for (LLCullResult::sg_iterator g = from.beginAlphaGroups(); g != from.endAlphaGroups(); ++g)
                         {
                             LLSpatialGroup* group = *g;
@@ -8399,7 +8326,6 @@ void LLPipeline::postSort(LLCamera &camera)
                         }
                     }
                     addTrianglesDrawn(indices);
-                    sCull->mAlphaListsSkipped = skip_alpha_lists;
                 }
             }
         }
@@ -8491,6 +8417,10 @@ void LLPipeline::postSort(LLCamera &camera)
             }
             vis_census_alpha(group);
         }
+        if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
+        {
+            addTrianglesDrawn(ll_group_draw_tris(group) * 3);       // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
+        }
         if (geo_list && group->mGeoHandle)
         {
             sCull->mGeoHandles.push_back(group->mGeoHandle);       // <FS> S3 G3: the list the worker draws from
@@ -8498,7 +8428,6 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 ++sGeoElideGroups;
                 sGeoElideTris += group->mGeoServedTris;
-                addTrianglesDrawn(group->mGeoServedTris);          // (the statistic counted every draw info of the types the table draws)
             }
             if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
             {
@@ -8551,54 +8480,7 @@ void LLPipeline::postSort(LLCamera &camera)
             }
         }
 
-        for (LLSpatialGroup::draw_map_t::iterator j = group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
-        {
-            LLSpatialGroup::drawmap_elem_t &src_vec = j->second;
-            if (!hasRenderType(j->first))
-            {
-                continue;
-            }
-            if (geo_elide && group->mGeoServedMask)
-            {
-                const int tn = ll_scene_geo_type_number(j->first);
-                if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)) && (!view.mRenderingHUDs || ll_scene_geo_hud_type(tn)))
-                {
-                    ++sGeoElideTypes;       // every draw info of this type in this group is the scene table's
-                    continue;
-                }
-            }
-
-            for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
-            {
-                LLDrawInfo *info = *k;
-
-                if (cascade_cull_active && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get(), cascade_cull))
-                {
-                    // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
-                    if (LLGpuZoneTimer::isActive())
-                    {
-                        LLGpuZoneTimer::count("shadow cascade cull: batches skipped", 1.0);
-                        LLGpuZoneTimer::count("shadow cascade cull: tris skipped", (double)(info->mCount / 3));
-                    }
-                    continue;
-                }
-
-                // (a shadow pass takes its casters from the fragments: the lists of its sort are not read, the render map job makes the answer: renderShadow clears them)
-                if (!(LLPipeline::sRtProbePass >= 0 || (LLViewerCamera::sCurCameraID >= LLViewerCamera::CAMERA_SUN_SHADOW0 && LLViewerCamera::sCurCameraID <= LLViewerCamera::CAMERA_SPOT_SHADOW1)))
-                {
-                    sCull->pushDrawInfo(j->first, info);
-                }
-                if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
-                {
-                    addTrianglesDrawn(info->mCount);
-                }
-                else if (LLPipeline::shadowRender() && LLGpuZoneTimer::isActive())
-                {
-                    count_shadow_batch(info); // <FS>
-                }
-            }
-        }
-
+        // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the statistic of the triangles drawn is counted above from the fragment)
         if (scene_stats)
         {
             scene_stats_group(group);
@@ -8607,9 +8489,7 @@ void LLPipeline::postSort(LLCamera &camera)
         if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Collect Alpha groups");
-            LLSpatialGroup::draw_map_t::iterator alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
-
-            if (alpha != group->mDrawMap.end())
+            if (ll_group_has_alpha_key(group))
             {  // store alpha groups for sorting
                 LLSpatialBridge *bridge = group->getSpatialPartition()->asBridge();
                 if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
@@ -8631,9 +8511,7 @@ void LLPipeline::postSort(LLCamera &camera)
                 }
             }
 
-            LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
-
-            if (rigged_alpha != group->mDrawMap.end())
+            if (ll_group_has_rigged_alpha_key(group))
             {  // store rigged alpha groups for LLDrawPoolAlpha prepass (skip distance update, rigged attachments use depth buffer)
                 if (vis_post) { ++LLVisCensus::sRiggedAlphaGroups; }
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
@@ -8848,85 +8726,6 @@ void LLPipeline::postSort(LLCamera &camera)
                         }
                     }
                 }
-            }
-        }
-    }
-
-    if (sCull->mLazyTypes && view.isMainWorldSort() && !gCubeSnapshot)
-    {
-        // C5 J4: the lists of the types without a table kind are made now, from the groups' draw maps as they are at the end of postSort (the pools ask later in the frame: a group rebuilt in between
-        // would show draw infos whose buffers are not filled yet)
-        for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-        {
-            if (!sCull->mLazyDone[type] && !sCull->mLazyGroups[type].empty())
-            {
-                sCull->materializeLazy(type);
-            }
-        }
-    }
-
-    {
-        // <FS> C5 census (LL_VK_RMCENSUS=1): what the main view's render map holds when postSort is done, by pass type: draw infos, indices, and how many of them belong to an avatar (rigged) or are
-        // from a group whose fragment the table does not hold
-        static const bool rm_census = getenv("LL_VK_RMCENSUS") != nullptr;
-        if (rm_census && view.isMainWorldSort() && !gCubeSnapshot)
-        {
-            static const char* const names[] = { "SIMPLE", "SIMPLE_RIGGED", "GRASS", "FULLBRIGHT", "FULLBRIGHT_RIGGED", "INVISIBLE", "INVISIBLE_RIGGED", "INVISI_SHINY", "INVISI_SHINY_RIGGED", "FULLBRIGHT_SHINY",
-                "FULLBRIGHT_SHINY_RIGGED", "SHINY", "SHINY_RIGGED", "BUMP", "BUMP_RIGGED", "POST_BUMP", "POST_BUMP_RIGGED", "MATERIAL", "MATERIAL_RIGGED", "MATERIAL_ALPHA", "MATERIAL_ALPHA_RIGGED", "MATERIAL_ALPHA_MASK",
-                "MATERIAL_ALPHA_MASK_RIGGED", "MATERIAL_ALPHA_EMISSIVE", "MATERIAL_ALPHA_EMISSIVE_RIGGED", "SPECMAP", "SPECMAP_RIGGED", "SPECMAP_BLEND", "SPECMAP_BLEND_RIGGED", "SPECMAP_MASK", "SPECMAP_MASK_RIGGED",
-                "SPECMAP_EMISSIVE", "SPECMAP_EMISSIVE_RIGGED", "NORMMAP", "NORMMAP_RIGGED", "NORMMAP_BLEND", "NORMMAP_BLEND_RIGGED", "NORMMAP_MASK", "NORMMAP_MASK_RIGGED", "NORMMAP_EMISSIVE", "NORMMAP_EMISSIVE_RIGGED",
-                "NORMSPEC", "NORMSPEC_RIGGED", "NORMSPEC_BLEND", "NORMSPEC_BLEND_RIGGED", "NORMSPEC_MASK", "NORMSPEC_MASK_RIGGED", "NORMSPEC_EMISSIVE", "NORMSPEC_EMISSIVE_RIGGED", "GLOW", "GLOW_RIGGED", "GLTF_GLOW",
-                "GLTF_GLOW_RIGGED", "ALPHA", "ALPHA_RIGGED", "ALPHA_MASK", "ALPHA_MASK_RIGGED", "FULLBRIGHT_ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK_RIGGED", "ALPHA_INVISIBLE", "ALPHA_INVISIBLE_RIGGED", "GLTF_PBR",
-                "GLTF_PBR_RIGGED", "GLTF_PBR_ALPHA_MASK", "GLTF_PBR_ALPHA_MASK_RIGGED" };
-            constexpr U32 n_types = (U32)(sizeof(names) / sizeof(names[0]));
-            static U64 draws[n_types] = {}, indices[n_types] = {}, avatar_draws[n_types] = {}, frames = 0;
-            for (U32 k = 0; k < n_types; ++k)
-            {
-                const U32 type = LLRenderPass::PASS_SIMPLE + k;
-                for (LLCullResult::drawinfo_iterator d = sCull->beginRenderMap(type); d != sCull->endRenderMap(type); ++d)
-                {
-                    const LLDrawInfo* info = *d;
-                    ++draws[k];
-                    indices[k] += info->mCount;
-                    if (info->mAvatar.notNull()) { ++avatar_draws[k]; }
-                }
-            }
-            if (frames % 600 == 599)
-            {
-                static const char* const part_names[16] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "control av", "hud particle", "vo cache", "none", "14", "other" };
-                std::string cells;
-                for (U32 c = 0; c < 16 * 8; ++c)
-                {
-                    const U64 n = sLeftoverCensus[c].exchange(0);
-                    if (n)
-                    {
-                        cells += llformat(" | %s, %s type, %s, %s: %.1f", part_names[c >> 3], (c & 4) ? "table" : "NOT table", (c & 2) ? "fragment handle" : "no handle", (c & 1) ? "rigged" : "static", (double)n / 600.0);
-                    }
-                }
-                std::string types;
-                for (U32 t = 0; t < 128; ++t)
-                {
-                    const U64 n = sLeftoverByType[t].exchange(0);
-                    if (n) { types += llformat(" | type %u: %.1f", t, (double)n / 600.0); }
-                }
-                LL_INFOS("RMCensus") << "draws left in the render map (not alpha), per frame:" << cells << LL_ENDL;
-                LL_INFOS("RMCensus") << "of them, pass types the table does not take:" << types << LL_ENDL;
-            }
-            if (++frames % 600 == 0)
-            {
-                std::string text;
-                U64 total_draws = 0, total_indices = 0;
-                for (U32 k = 0; k < n_types; ++k)
-                {
-                    total_draws += draws[k];
-                    total_indices += indices[k];
-                    if (draws[k])
-                    {
-                        text += llformat(" | %s %.1f draws (%.1f of an avatar), %.0f indices", names[k], (double)draws[k] / 600.0, (double)avatar_draws[k] / 600.0, (double)indices[k] / 600.0);
-                    }
-                    draws[k] = indices[k] = avatar_draws[k] = 0;
-                }
-                LL_INFOS("RMCensus") << "main view render map after postSort, per frame over 600 frames: " << (double)total_draws / 600.0 << " draw infos, " << (double)total_indices / 600.0 << " indices;" << text << LL_ENDL;
             }
         }
     }
@@ -11714,6 +11513,12 @@ bool ll_group_has_alpha_key(const LLSpatialGroup* group)
 {
     const LLSceneFragment* f = group->mSceneFragment;
     return f && f->mWalkValid && (f->mWalkAlphaBits & 1);
+}
+
+bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    return f && f->mWalkValid && (f->mWalkAlphaBits & 2);
 }
 
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model)
