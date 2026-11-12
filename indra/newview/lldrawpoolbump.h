@@ -74,7 +74,6 @@ public:
     virtual S32 getNumPostDeferredPasses() override { return 1; }
     /*virtual*/ void renderPostDeferred(S32 pass) override;
 
-    static bool bindBumpMap(LLDrawInfo& params, S32 channel = -2);
     static bool bindBumpMap(LLFace* face, S32 channel = -2);
     // J1 K4: the bump image of a draw: generate = false finds or makes the (empty) entry only (a fragment's row names it), true also makes it current (a render pass inside)
     static LLViewerTexture* bumpImageFor(U8 bump_code, LLViewerTexture* tex, bool generate);

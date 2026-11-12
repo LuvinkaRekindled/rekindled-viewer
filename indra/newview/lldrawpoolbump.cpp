@@ -396,14 +396,6 @@ void LLDrawPoolBump::endFullbrightShiny()
     shiny = false;
 }
 
-// static
-bool LLDrawPoolBump::bindBumpMap(LLDrawInfo& params, S32 channel)
-{
-    U8 bump_code = params.mBump;
-
-    return bindBumpMap(bump_code, params.mTexture, channel);
-}
-
 //static
 bool LLDrawPoolBump::bindBumpMap(LLFace* face, S32 channel)
 {
