@@ -561,6 +561,8 @@ public:
     void wakeGroups();
     void wakeRequest(LLSpatialGroup* group);
     void wakeForget(LLSpatialGroup* group);
+    void scheduleRelease(LLSpatialGroup* group);        // <FS> expiry (cold mode 3): the group's geometry was built; it is looked at again after LL_VK_REL_FRAMES frames (an age queue, no octree scan)
+    void releaseForget(LLSpatialGroup* group);          // <FS> the group's draw map was cleared (a rebuild, a release, its death): it leaves the age queue
     std::vector<LLSpatialGroup*> mWakeQ;
     static U64 sRelReleased, sRelReleasedInfos, sRelWoken, sRelScans;
     static int coldMode();

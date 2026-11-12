@@ -2569,49 +2569,51 @@ int LLPipeline::coldMode()
 
 U64 LLPipeline::sRelReleased = 0, LLPipeline::sRelReleasedInfos = 0, LLPipeline::sRelWoken = 0, LLPipeline::sRelScans = 0;
 
-// <FS> the groups of the VOLUME partitions that nobody has accepted for LL_VK_REL_FRAMES: release their draw infos
-class LLReleaseTraveler : public OctreeTraveler
+// <FS> expiry (cold mode 3), event driven (2026-11-12, the user: no octree scan): the groups of the VOLUME partitions that no camera has accepted for LL_VK_REL_FRAMES frames lose their geometry. A group enters an age
+// queue when its geometry is built (ll_scene_fragment_build -> scheduleRelease), with the frame at which it falls due. releaseScan (called every frame) looks only at the groups whose time has come: a group that was
+// accepted since is queued again for the frame it would be due from its latest sighting, so a group is looked at about once in LL_VK_REL_FRAMES frames, and a group nobody asks about costs nothing. A group leaves the
+// queue when its draw map is cleared (a rebuild, the release itself, the group's death: LLSpatialGroup::clearDrawMap -> releaseForget); a rebuild queues it again. No traversal of the octree.
+static std::set<std::pair<S32, LLSpatialGroup*>> sReleaseQ;
+static std::mutex sReleaseMutex;
+
+static S32 release_min_age()
 {
-public:
-    S32 mMinAge = 3600;
-    U32 mLimit = 200;
-    U32 mReleased = 0;
-    virtual void visit(const OctreeNode* node)
+    static const S32 age = getenv("LL_VK_REL_FRAMES") ? atoi(getenv("LL_VK_REL_FRAMES")) : 5400;
+    return age;
+}
+
+static void release_schedule_at(LLSpatialGroup* group, S32 deadline)
+{
+    std::lock_guard<std::mutex> lock(sReleaseMutex);
+    if (group->mReleaseDeadline)
     {
-        if (mReleased >= mLimit)
-        {
-            return;
-        }
-        LLSpatialGroup* group = (LLSpatialGroup*)node->getListener(0);
-        if (!group || group->isDead() || group->isEmpty() || group->mDrawMap.empty() || group->isHUDGroup() || !group->mBridgeList.empty())
-        {
-            return;
-        }
-        if (group->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::FS_RELEASED | LLSpatialGroup::FS_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
-        {
-            return;
-        }
-        S32 latest = 0;
-        for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
-        {
-            latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
-        }
-        if (latest <= 0 || LLViewerOctreeEntryData::getCurrentFrame() - latest <= mMinAge)
-        {
-            return;
-        }
-        U64 infos = 0;
-        for (const auto& kv : group->mDrawMap)
-        {
-            infos += kv.second.size();
-        }
-        group->clearDrawMap();
-        group->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::FS_RELEASED);
-        ++mReleased;
-        ++LLPipeline::sRelReleased;
-        LLPipeline::sRelReleasedInfos += infos;
+        sReleaseQ.erase({ group->mReleaseDeadline, group });
     }
-};
+    group->mReleaseDeadline = deadline;
+    sReleaseQ.insert({ deadline, group });
+}
+
+void LLPipeline::scheduleRelease(LLSpatialGroup* group)
+{
+    if (coldMode() < 3 || group->isHUDGroup())
+    {
+        return;
+    }
+    release_schedule_at(group, (S32)LLViewerOctreeEntryData::getCurrentFrame() + release_min_age());
+}
+
+void LLPipeline::releaseForget(LLSpatialGroup* group)
+{
+    if (!group->mReleaseDeadline)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sReleaseMutex);
+    sReleaseQ.erase({ group->mReleaseDeadline, group });
+    group->mReleaseDeadline = 0;
+}
+
+static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // (below, after LLSceneFragment)
 
 void LLPipeline::releaseScan()
 {
@@ -2619,24 +2621,52 @@ void LLPipeline::releaseScan()
     {
         return;
     }
-    static const S32 min_age = getenv("LL_VK_REL_FRAMES") ? atoi(getenv("LL_VK_REL_FRAMES")) : 5400;
-    static U32 last = 0;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame - last < 60)
+    const S32 now = (S32)LLViewerOctreeEntryData::getCurrentFrame();
+    static std::vector<LLSpatialGroup*> due;
+    due.clear();
+    {
+        std::lock_guard<std::mutex> lock(sReleaseMutex);
+        while (!sReleaseQ.empty() && sReleaseQ.begin()->first <= now && due.size() < 256)
+        {
+            LLSpatialGroup* group = sReleaseQ.begin()->second;
+            sReleaseQ.erase(sReleaseQ.begin());
+            group->mReleaseDeadline = 0;
+            due.push_back(group);
+        }
+    }
+    if (due.empty())
     {
         return;
     }
-    last = frame;
-    LL_CPU_ZONE("expiry: release scan");
+    LL_CPU_ZONE("expiry: release due groups");
     ++sRelScans;
-    LLReleaseTraveler traveler;
-    traveler.mMinAge = min_age;
-    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    const S32 min_age = release_min_age();
+    for (LLSpatialGroup* group : due)
     {
-        if (LLSpatialPartition* part = region->getSpatialPartition(LLViewerRegion::PARTITION_VOLUME))
+        U64 infos = 0, tris = 0;
+        ll_group_draw_counts(group, infos, tris);        // (from the group's fragment: no draw info is read)
+        if (group->isDead() || group->isEmpty() || infos == 0 || group->isHUDGroup() || !group->mBridgeList.empty())
         {
-            traveler.traverse(part->mOctree);
+            continue;       // (queued again by its next build)
         }
+        if (group->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::FS_RELEASED | LLSpatialGroup::FS_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
+        {
+            continue;       // (a rebuild is coming: it queues the group again; a released or waking group has nothing to release)
+        }
+        S32 latest = 0;
+        for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
+        {
+            latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
+        }
+        if (latest <= 0 || now - latest <= min_age)
+        {
+            release_schedule_at(group, (latest > 0 ? latest : now) + min_age + 1);       // (accepted since it was queued, or by no camera yet: due again from its latest sighting)
+            continue;
+        }
+        group->clearDrawMap();
+        group->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::FS_RELEASED);
+        ++sRelReleased;
+        sRelReleasedInfos += infos;
     }
 }
 
@@ -12308,6 +12338,7 @@ void ll_scene_fragment_build(LLSpatialGroup* group)
     if ((scene_resident_on() || scene_geo_on()) && !group->isDead() && !group->mDrawMap.empty())
     {
         scene_fragment_ensure(group);
+        gPipeline.scheduleRelease(group);       // <FS> expiry: its geometry is built, it is looked at again when LL_VK_REL_FRAMES frames have passed
     }
 }
 
