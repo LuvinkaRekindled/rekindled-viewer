@@ -615,7 +615,12 @@ LLFontGlyphInfo* LLFontFreetype::addGlyphFromFont(const LLFontFreetype *fontp, l
         // Digits are supposed to be preloaded, and buffers
         // refresh when new chars get added (mGeneration),
         // so this lazy load should not cause any issues.
-        mMaxDigitWidth = llmax(mMaxDigitWidth, gi->mXAdvanceRaw);
+        // <FS> (and a digit wider than the ones before it changes the advance of every digit: the text that is already laid out has to be laid out again)
+        if (gi->mXAdvanceRaw > mMaxDigitWidth)
+        {
+            mMaxDigitWidth = gi->mXAdvanceRaw;
+            mFontBitmapCachep->noteLayoutChange();
+        }
     }
 
     insertGlyphInfo(wch, gi);

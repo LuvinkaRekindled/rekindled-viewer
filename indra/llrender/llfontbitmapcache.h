@@ -64,6 +64,10 @@ public:
     S32 getBitmapWidth() const { return mBitmapWidth; }
     S32 getBitmapHeight() const { return mBitmapHeight; }
     S32 getCacheGeneration() const { return mGeneration; }
+    // <FS> Counts only what moves text that is already laid out: the pages thrown away (reset) and, for a font with tabular digits, a wider digit (noteLayoutChange). A glyph added to a page
+    // counts in mGeneration alone: the glyphs that are already there keep their place and their page. LLFontVertexBuffer rebuilds on this one (see there).
+    S32 getLayoutGeneration() const { return mLayoutGeneration; }
+    void noteLayoutChange() { mLayoutGeneration++; }
 
 protected:
     static U32 getNumComponents(EFontGlyphType bitmap_type);
@@ -76,6 +80,7 @@ private:
     S32 mMaxCharWidth = 0;
     S32 mMaxCharHeight = 0;
     S32 mGeneration = 0;
+    S32 mLayoutGeneration = 0;
     std::vector<LLPointer<LLImageRaw>> mImageRawVec[static_cast<U32>(EFontGlyphType::Count)];
     std::vector<LLPointer<LLImageTex>> mImageTexVec[static_cast<U32>(EFontGlyphType::Count)];
 };

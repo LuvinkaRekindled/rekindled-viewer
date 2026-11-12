@@ -148,7 +148,10 @@ S32 LLFontVertexBuffer::render(
              || mLastHorizDPI != LLFontGL::sHorizDPI
              || mLastOrigin != LLFontGL::sCurOrigin
              || mLastResGeneration != LLFontGL::sResolutionGeneration
-             || mLastFontCacheGen != fontp->getCacheGeneration())
+             // <FS> Adam, 2026-11-11: not for every glyph the font rasterises. The counter that was compared here changes with each new glyph (a character seen for the first time, in a name tag,
+             // a chat line), and every text of the font that keeps its buffers was built again, in that frame or the next: several hundred vertex buffers for nothing, since a glyph
+             // is appended to its page and the ones already there keep their place. Only what moves laid out text counts now (the pages reset, a wider tabular digit).
+             || mLastFontCacheGen != fontp->getLayoutGeneration())
     {
         genBuffers(fontp, text, begin_offset, x, y, color, halign, valign,
             style, shadow, max_chars, max_pixels, right_x, use_ellipses, use_color);
@@ -182,7 +185,7 @@ void LLFontVertexBuffer::genBuffers(
     mBufferList.clear();
     // Save before rendreing, it can change mid-render,
     // so will need to rerender previous characters
-    mLastFontCacheGen = fontp->getCacheGeneration();
+    mLastFontCacheGen = fontp->getLayoutGeneration();       // <FS> (the layout counter, see render())
 
     gRender.beginList(&mBufferList);
     mChars = fontp->render(text, begin_offset, x, y, color, halign, valign,
