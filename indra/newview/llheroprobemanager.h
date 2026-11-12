@@ -150,6 +150,7 @@ private:
 
     bool mRenderingMirror = false;
     bool mViewRendered = false;
+    U64 mMirrorLastFrame = 0;       // the frame the planar mirror view was rendered in last (RenderHeroProbeUpdateRate)
 
     std::vector<LLPointer<LLVOVolume>>                       mHeroVOList;
     LLPointer<LLVOVolume>                                 mNearestHero;

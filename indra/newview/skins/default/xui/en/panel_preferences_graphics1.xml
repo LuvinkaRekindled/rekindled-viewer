@@ -2053,18 +2053,6 @@ If you do not understand the distinction then leave this control alone."
        tool_tip="Ray traced sun shadows. Needs a graphics card and driver with Vulkan ray tracing support (ray queries), from any maker; on a card without it the option does not take effect and the log says why. Takes effect after the viewer is restarted."
        top_pad="12"
        width="400"/>
-      <check_box
-       control_name="FSVkGlossyMirror"
-       enabled_control="FSVkRayTracing"
-       height="16"
-       initial_value="false"
-       label="Ray traced glossy mirror (costs frame rate)"
-       layout="topleft"
-       left_delta="18"
-       name="FSVkGlossyMirror"
-       tool_tip="Mirrors and other glossy surfaces show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and the glossy mirror or the water option on, otherwise after a restart."
-       top_pad="8"
-       width="400"/>
       <text
        type="string"
        length="1"
@@ -2074,19 +2062,23 @@ If you do not understand the distinction then leave this control alone."
        left_delta="18"
        name="FSVkMirrorQualityText"
        top_pad="8"
-       width="300">
-        Glossy mirror quality:
+       width="360">
+        Ray traced glossy mirror (costs frame rate):
       </text>
       <combo_box
        control_name="FSVkMirrorQuality"
-       enabled_control="FSVkGlossyMirror"
+       enabled_control="FSVkRayTracing"
        height="23"
        layout="topleft"
        left_delta="0"
        name="FSVkMirrorQuality"
-       tool_tip="What the ray traced mirror shows. Low: flat colours. Medium: lit surfaces with materials, reflection probes and the sun shadow. High: also the local lights (lamps and projectors). Ultra: soft shadows of the local lights. Each step costs more frame time. Applies at once."
+       tool_tip="Mirrors and other glossy surfaces show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. Needs ray tracing, costs frame rate. Off: the reflection probes. Low: flat colours. Medium: lit surfaces with materials, reflection probes and the sun shadow. High: also the local lights (lamps and projectors). Ultra: soft shadows of the local lights. Each step costs more frame time. Switching to Off or between the levels takes effect at once; switching on takes effect at once if this launch started with ray tracing and a ray traced glossy mirror or the water option on, otherwise after a restart."
        top_pad="3"
        width="250">
+        <combo_box.item
+         label="Off"
+         name="0"
+         value="0"/>
         <combo_box.item
          label="Low (flat colours)"
          name="1"
@@ -2111,9 +2103,9 @@ If you do not understand the distinction then leave this control alone."
        initial_value="false"
        label="Ray traced water reflections (costs frame rate)"
        layout="topleft"
-       left_delta="-18"
+       left_delta="0"
        name="FSVkRTWater"
-       tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and the glossy mirror or the water option on, otherwise after a restart."
+       tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and a ray traced glossy mirror or the water option on, otherwise after a restart."
        top_pad="8"
        width="400"/>
       <text

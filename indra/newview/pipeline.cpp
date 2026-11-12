@@ -980,7 +980,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             if (ll_mirror_planar())
             {   // <FS> the planar mirror's reflected view: the main view's own size (allocateScreenBufferInternal scales it by the render resolution like the main target)
                 mRT = &mMirrorViewRT;
-                allocateScreenBufferInternal(resX, resY);
+                const U32 mirror_div = mirrorViewDivisor();
+                allocateScreenBufferInternal(std::max(64u, resX / mirror_div), std::max(64u, resY / mirror_div));
             }
         }
 
@@ -1113,6 +1114,19 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
         //water reflection texture (always needed as scratch space whether or not transparent water is enabled)
         mWaterDis.allocate(resX, resY, screenFormat, true);
+
+        // <FS> the planar mirror's view at less than full size is enlarged into this one (see mMirrorUpscaled)
+        if (RenderMirrors && ll_mirror_planar() && mirrorViewDivisor() > 1)
+        {
+            if (!mMirrorUpscaled.allocate(resX, resY, TexelFormat::RGBA16F))
+            {
+                mMirrorUpscaled.release();
+            }
+        }
+        else
+        {
+            mMirrorUpscaled.release();
+        }
 
         if(RenderScreenSpaceReflections)
         {
@@ -1591,6 +1605,7 @@ void LLPipeline::releaseScreenBuffers()
     mMirrorViewRT.screen.release();
     mMirrorViewRT.deferredScreen.release();
     mMirrorViewRT.deferredLight.release();
+    mMirrorUpscaled.release();
 
     mPreviewScreen.release(); // <FS:Beq/> dedicated preview target
 }
@@ -23788,6 +23803,30 @@ void LLPipeline::copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst)
 
 }
 
+// <FS> the quality setting of the planar mirror (RenderHeroProbeResolution, the one the cube mirror used for its faces): the size of the reflected view as a fraction of the main view's
+U32 LLPipeline::mirrorViewDivisor()
+{
+    const S32 res = gSavedSettings.getS32("RenderHeroProbeResolution");
+    return res <= 256 ? 4u : (res <= 512 ? 2u : 1u);       // 256: a quarter of the width and height, 512: a half, 1024 and 2048: the full size
+}
+
+// The reflected view rendered at less than the main view's size is enlarged (bilinear) into mMirrorUpscaled, the texture the glass reads
+void LLPipeline::upscaleMirrorView()
+{
+    if (!mMirrorUpscaled.isComplete() || !mMirrorViewRT.screen.isComplete())
+    {
+        return;
+    }
+    LL_PROFILE_GPU_ZONE("mirror view upscale");
+    RenderPassScope pass(mMirrorUpscaled);
+    LLRenderState::BlendScope blend(false);
+    LLRenderState::DepthScope depth(false, false);
+    gCopyProgram.bind();
+    mMirrorViewRT.screen.bindTexture(0, 0, LLTexUnit::TFO_BILINEAR);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+}
+
 bool LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
 {
     if (!mGlowCombine)
@@ -26508,8 +26547,8 @@ void LLPipeline::renderDeferredLighting()
         {
             // (rt-debug.txt glossyrt)
             rt_glossy_mode = LLVkBridge::rtGlossyReflections();
-                static LLCachedControl<bool> glossy_mirror_setting(gSavedSettings, "FSVkGlossyMirror", false);
-                if (rt_glossy_mode == 0 && glossy_mirror_setting && LLVkBridge::rtMaterialsAvailable())
+                static LLCachedControl<S32> glossy_mirror_setting(gSavedSettings, "FSVkMirrorQuality", 0);       // 0 Off, 1 .. 4 the quality levels (the checkbox FSVkGlossyMirror is gone: Off is the first level)
+                if (rt_glossy_mode == 0 && glossy_mirror_setting > 0 && LLVkBridge::rtMaterialsAvailable())
                 {
                     rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
                 }
@@ -26550,7 +26589,7 @@ void LLPipeline::renderDeferredLighting()
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
                 // the levels of the preference FSVkMirrorQuality (rt-debug.txt hitq / hitrays override them for tests): 1 Low = flat colours at the hits (hitq 0), 2 Medium = lit hits (hitq 1), 3 High = lit hits + the
                 // local lights with one shadow ray each (hitq 2), 4 Ultra = the same with 4 soft shadow rays per light
-                static LLCachedControl<S32> mirror_quality_setting(gSavedSettings, "FSVkMirrorQuality", 3);
+                static LLCachedControl<S32> mirror_quality_setting(gSavedSettings, "FSVkMirrorQuality", 0);
                 const S32 mirror_level = llclamp((S32)mirror_quality_setting, 1, 4);
                 const S32 dbg_hit_quality = LLVkBridge::rtHitQuality();
                 const S32 dbg_hit_rays = LLVkBridge::rtHitRays();
@@ -27797,7 +27836,11 @@ void LLPipeline::bindReflectionProbes(LLShaderProgram& shader)
             channel = shader.enableTexture(LLShaderMgr::MIRROR_VIEW, LLTexUnit::TT_TEXTURE);
             if (channel > -1)
             {
-                if (!gCubeSnapshot && mMirrorViewRT.screen.isComplete())
+                if (!gCubeSnapshot && mMirrorUpscaled.isComplete() && mMirrorViewRT.screen.isComplete())
+                {
+                    gRender.getTexUnit(channel)->bind(&mMirrorUpscaled);        // the view was rendered smaller: its enlargement is the size of the screen the glass is in
+                }
+                else if (!gCubeSnapshot && mMirrorViewRT.screen.isComplete())
                 {
                     gRender.getTexUnit(channel)->bind(&mMirrorViewRT.screen);
                 }
