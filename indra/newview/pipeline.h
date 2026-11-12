@@ -448,9 +448,8 @@ public:
         F32 mCullMargin = 0.f;
         const LLDrawable* mExclude = nullptr;   // J1 K3e: a spot light's own drawable, left out of its shadow pass's cull (what RenderSpotLight does for the unprepared pass; the jobs have no such global)
         std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
-        std::shared_ptr<ShadowStaticBuild> mStaticBuild;    // the untextured static casters' packet entries, built by the render map job
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
-        LLAsyncPool::JobPtr mStaticJob;                     // the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them
+        // (the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them)
         LLAsyncPool::JobPtr mSkinJob;
         std::shared_ptr<ShadowAlphaBuild> mAlphaBuild[2];   // the casters with a texture, static and rigged
         LLAsyncPool::JobPtr mAlphaJob[2];
