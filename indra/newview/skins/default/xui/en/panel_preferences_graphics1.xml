@@ -2063,7 +2063,7 @@ If you do not understand the distinction then leave this control alone."
        name="FSVkMirrorQualityText"
        top_pad="8"
        width="360">
-        Ray traced glossy mirror (costs frame rate):
+        Ray traced glossy surfaces (costs frame rate):
       </text>
       <combo_box
        control_name="FSVkMirrorQuality"
@@ -2072,7 +2072,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkMirrorQuality"
-       tool_tip="Mirrors and other glossy surfaces show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. Needs ray tracing, costs frame rate. Off: the reflection probes. Low: flat colours. Medium: lit surfaces with materials, reflection probes and the sun shadow. High: also the local lights (lamps and projectors). Ultra: soft shadows of the local lights. Each step costs more frame time. Switching to Off or between the levels takes effect at once; switching on takes effect at once if this launch started with ray tracing and a ray traced glossy mirror or the water option on, otherwise after a restart."
+       tool_tip="Glossy surfaces such as polished floors and metal show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. The glass of a mirror always shows the mirror view (its quality is the mirror resolution and update rate). Needs ray tracing, costs frame rate. Off: the reflection probes. Low: flat colours. Medium: lit surfaces with materials, reflection probes and the sun shadow. High: also the local lights (lamps and projectors). Ultra: soft shadows of the local lights. Each step costs more frame time. Switching to Off or between the levels takes effect at once; switching on takes effect at once if this launch started with ray tracing and ray traced glossy surfaces or the water option on, otherwise after a restart."
        top_pad="3"
        width="250">
         <combo_box.item
@@ -2105,7 +2105,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkRTWater"
-       tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and a ray traced glossy mirror or the water option on, otherwise after a restart."
+       tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and ray traced glossy surfaces or the water option on, otherwise after a restart."
        top_pad="8"
        width="400"/>
       <text
