@@ -969,7 +969,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending_key = -1;
     };
     // an entry for the draw (its GL names made now: the old bind marks a texture in use, regenerates a deleted one and applies its sampler options, prepareFast does the same)
-    auto tr_add = [&](const LLAlphaTransient& t, const LLDrawInfo* draw_p)       // (draw_p null = a particle run: no model or texture matrix, never rigged)
+    auto tr_add = [&](const LLAlphaTransient& t, const LLAlphaTransientDraw* draw_p)       // (draw_p null = a particle run: no model or texture matrix, never rigged)
     {
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_ADD);
         ItemCensus::add(ItemCensus::ALPHA_TR_ADD, tr_rigged ? 1 : 0);
@@ -980,9 +980,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         LLVkBridge::GeoEntry e = t.mEntry;
         if (tr_rigged && draw_p)
         {
-            const LLDrawInfo& draw = *draw_p;
             U32 offset = 0, joints = 0;
-            if (!ll_frame_palette(draw.mAvatar.get(), draw.mSkinInfo.get(), offset, joints))
+            if (!ll_frame_palette(draw_p->mAvatar, draw_p->mSkin, offset, joints))
             {
                 return;                 // the skin is not loaded yet: not drawn, as the old path
             }
@@ -995,10 +994,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             *fields[k] = t.mTextures[k] ? gRender.getTexUnit(0)->prepareFast(t.mTextures[k]) : 0u;
         }
-        e.mMatrix = (draw_p && draw_p->mModelMatrix) ? tr_matrix(draw_p->mModelMatrix) : 0u;
-        if (draw_p && t.mUseTexMatrix && draw_p->mTextureMatrix)
+        e.mMatrix = (draw_p && draw_p->mModel) ? tr_matrix(draw_p->mModel) : 0u;
+        if (draw_p && t.mUseTexMatrix && draw_p->mTexMat)
         {
-            tr.mTexmats.insert(tr.mTexmats.end(), (const F32*)draw_p->mTextureMatrix->mMatrix, (const F32*)draw_p->mTextureMatrix->mMatrix + 16);
+            tr.mTexmats.insert(tr.mTexmats.end(), (const F32*)draw_p->mTexMat->mMatrix, (const F32*)draw_p->mTexMat->mMatrix + 16);
             e.mPad3 = (U32)(tr.mTexmats.size() / 16);
         }
         if (t.mPbr)
@@ -1009,7 +1008,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         tr.mEntries.push_back(e);
     };
     // S5f F3: the glow second draw of the transient draws, per group by class (as glow_range for the fragment items): the draws, built again as entries at the glow pass
-    static thread_local std::vector<LLDrawInfo*> glow_draws[3];
+    static thread_local std::vector<U32> glow_draws[3];       // (the transient items of the group in hand, by glow class)
     static thread_local std::vector<const LLParticleRun*> glow_particle_runs;       // C5 J2: the particle runs with a glow (plain class), of the group in hand; glow_particle_rows: their group's buffer
     const LLVertexBuffer* glow_particle_rows = nullptr;
     auto run_flush = [&]()
@@ -1393,8 +1392,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
             LLRenderState::CullScope cull(false, disable_cull);
 
-            LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
-
             // C5 J2: a particle group's draws are runs of rows (no draw infos): transient entries made from the runs, in the sorted order
             if (!rigged && is_particle_or_hud_particle && !group->mParticleRuns.empty())
             {
@@ -1428,15 +1425,17 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
             }
 
-            // S5f F3: the table does not keep this draw (or this view has no fragments): a transient entry (the same pull program as a fragment item of its key), in the pass's order
-            auto transient_draw = [&](LLDrawInfo& params) -> bool
+            // S5f F3: the table does not keep this draw (or this view has no fragments): a transient entry (the same pull program as a fragment item of its key), in the pass's order. Made from the fragment's transient
+            // item `k` of the set (2026-11-12: no draw info is read; the item path was compared with the draw info path over 5.5 million draws: none differed)
+            auto transient_draw = [&](U32 k) -> bool
             {
                 if (!transient_ok)
                 {
                     return false;
                 }
                 LLAlphaTransient transient;
-                if (!ll_alpha_transient(&params, rigged, depth_only, transient))
+                LLAlphaTransientDraw tdraw;
+                if (!ll_alpha_transient_item(group, rigged, k, depth_only, transient, tdraw))
                 {
                     return false;
                 }
@@ -1450,14 +1449,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     run_flush();
                     run_begin(key);
                 }
-                tr_add(transient, &params);
+                tr_add(transient, &tdraw);
                 ++sAlphaScene.mTrFromInfo;
-                if (glow_pass && params.mVertexBuffer->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+                if (glow_pass && tdraw.mGlowCls != 255)
                 {
-                    const bool pbr_draw = params.mGLTFMaterial.notNull();
-                    if (pbr_draw ? glow_pbr_table : glow_plain_table)
+                    if (tdraw.mGlowCls != 0 ? glow_pbr_table : glow_plain_table)
                     {
-                        glow_draws[pbr_draw ? (params.mGLTFMaterial->mDoubleSided ? 2 : 1) : 0].push_back(&params);
+                        glow_draws[tdraw.mGlowCls].push_back(k);
                     }
                 }
                 return true;
@@ -1499,22 +1497,25 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
             }
 
-            // groups without a plan (the HUD without table alpha, the reflection renders, a fragment that is not current): the draws as transient entries, in the group's order
-            for (LLSpatialGroup::drawmap_elem_t::iterator k = group_plan ? draw_info.end() : draw_info.begin(); k != draw_info.end(); ++k)
+            // groups without a plan (the HUD without table alpha, the reflection renders): the draws as transient entries from the fragment's transient items, in the group's order. A group whose fragment is not
+            // current has no items: not drawn this frame (counted)
+            if (!group_plan)
             {
-                LLDrawInfo& params = **k;
-                if ((bool)params.mAvatar != rigged)
+                const int transient_count = ll_alpha_transient_count(group, rigged);
+                if (transient_count < 0)
                 {
-                    continue;
+                    ++sAlphaScene.mDropped;
                 }
-
-                LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
-                if (transient_draw(params))
+                for (int k = 0; k < transient_count; ++k)
                 {
-                    continue;
+                    LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
+                    if (transient_draw((U32)k))
+                    {
+                        continue;
+                    }
+                    // S5g: no old path: a draw neither the fragments nor a transient entry can draw is not drawn
+                    ++sAlphaScene.mDropped;
                 }
-                // S5g: no old path: a draw neither the fragments nor a transient entry can draw is not drawn
-                ++sAlphaScene.mDropped;
             }
 
             // render emissive faces into alpha channel for bloom effects (the glow second draw of the group's draws, from the table: one run a class)
@@ -1541,12 +1542,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         {   // the transient draws' glow: entries made again, one record
                             glow_program->bind();
                             pending_key = (cls == 2 ? (1 << 16) : 0) | (is_particle_or_hud_particle ? (1 << 18) : 0);       // (a particle group draws with culling off, its glow too)
-                            for (LLDrawInfo* glow_draw : glow_draws[cls])
+                            for (U32 glow_k : glow_draws[cls])
                             {
                                 LLAlphaTransient glow_transient;
-                                if (ll_alpha_transient(glow_draw, rigged, false, glow_transient))
+                                LLAlphaTransientDraw glow_draw;
+                                if (ll_alpha_transient_item(group, rigged, glow_k, false, glow_transient, glow_draw))
                                 {
-                                    tr_add(glow_transient, glow_draw);
+                                    tr_add(glow_transient, &glow_draw);
                                 }
                             }
                             if (cls == 0)
