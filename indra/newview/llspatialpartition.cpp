@@ -5389,16 +5389,6 @@ LLCullResult::LLCullResult()
     mVisibleBridge.push_back(NULL);
     mVisibleBridgeEnd = &mVisibleBridge[0];
 
-    for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
-    {
-        mRenderMap[i].clear();
-        mRenderMap[i].push_back(NULL);
-        mRenderMapEnd[i] = &mRenderMap[i][0];
-        mRenderMapAllocated[i] = 0;
-    }
-
-    memset( mRenderMapSize, 0, sizeof(mRenderMapSize) ); // <FS:ND> Initialize with 0.
-
     clear();
 }
 
@@ -5432,12 +5422,6 @@ void LLCullResult::clearLists()
 
 void LLCullResult::clear()
 {
-    mAlphaListsSkipped = false;
-    if (mLazyTypes)
-    {
-        for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t) { mLazyGroups[t].clear(); mLazyDone[t] = false; }
-        mLazyTypes = false;
-    }
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
 
@@ -5468,28 +5452,10 @@ void LLCullResult::clear()
     mLodGroups.clear();
     mGeoHandles.clear();
     mGeoElided = false;
-
-    for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
-    {
-        drawinfo_list_t& render_map = mRenderMap[i];
-        U32 render_map_size = llmin((U32)render_map.size(), mRenderMapSize[i]);
-        for (U32 j = 0; j < render_map_size; j++)
-        {
-            render_map[j] = 0;
-        }
-        mRenderMapSize[i] = 0;
-        mRenderMapEnd[i] = &render_map.front();
-    }
 }
 
 void LLCullResult::clearRenderLists()
 {
-    mAlphaListsSkipped = false;
-    if (mLazyTypes)
-    {
-        for (U32 t = 0; t < LLRenderPass::NUM_RENDER_TYPES; ++t) { mLazyGroups[t].clear(); mLazyDone[t] = false; }
-        mLazyTypes = false;
-    }
     mAlphaGroupsSize = 0;
     mAlphaGroupsEnd = &mAlphaGroups[0];
     mRiggedAlphaGroupsSize = 0;
@@ -5502,17 +5468,6 @@ void LLCullResult::clearRenderLists()
     mAlphaResSkipped = false;
     mGeoHandles.clear();
     mGeoElided = false;
-    for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
-    {
-        drawinfo_list_t& render_map = mRenderMap[i];
-        U32 render_map_size = llmin((U32)render_map.size(), mRenderMapSize[i]);
-        for (U32 j = 0; j < render_map_size; j++)
-        {
-            render_map[j] = 0;
-        }
-        mRenderMapSize[i] = 0;
-        mRenderMapEnd[i] = &render_map.front();
-    }
 }
 
 LLCullResult::sg_iterator LLCullResult::beginVisibleGroups()
@@ -5583,57 +5538,6 @@ LLCullResult::bridge_iterator LLCullResult::beginVisibleBridge()
 LLCullResult::bridge_iterator LLCullResult::endVisibleBridge()
 {
     return mVisibleBridgeEnd;
-}
-
-void LLCullResult::materializeLazy(U32 type)
-{
-    mLazyDone[type] = true;
-    for (LLSpatialGroup* group : mLazyGroups[type])
-    {
-        if (group->isDead())
-        {
-            continue;
-        }
-        auto found = group->mDrawMap.find(type);
-        if (found == group->mDrawMap.end())
-        {
-            continue;
-        }
-        for (const LLPointer<LLDrawInfo>& info : found->second)
-        {
-            if (info->mVertexBuffer.isNull())
-            {
-                continue;       // (a draw info of a group that is being rebuilt: no buffer yet)
-            }
-            pushDrawInfo(type, info.get());
-        }
-    }
-}
-
-LLCullResult::drawinfo_iterator LLCullResult::beginRenderMap(U32 type)
-{
-    if (mLazyTypes && !mLazyDone[type] && !mLazyGroups[type].empty())
-    {
-        materializeLazy(type);
-    }
-    if (mAlphaListsSkipped && (type == LLRenderPass::PASS_ALPHA || type == LLRenderPass::PASS_ALPHA_RIGGED))
-    {
-        static std::atomic<int> logged{ 0 };
-        if (logged.fetch_add(1) < 6)
-        {
-            LL_WARNS("RMCensus") << "a reader asks the main view's render map list of pass type " << type << ", which postSort did not fill (LL_VK_RM_ALPHA=0 fills it)" << LL_ENDL;
-        }
-    }
-    return &mRenderMap[type][0];
-}
-
-LLCullResult::drawinfo_iterator LLCullResult::endRenderMap(U32 type)
-{
-    if (mLazyTypes && !mLazyDone[type] && !mLazyGroups[type].empty())
-    {
-        materializeLazy(type);
-    }
-    return mRenderMapEnd[type];
 }
 
 void LLCullResult::pushVisibleGroup(LLSpatialGroup* group)
@@ -5742,29 +5646,4 @@ void LLCullResult::pushBridge(LLSpatialBridge* bridge)
     mVisibleBridgeEnd = &mVisibleBridge[mVisibleBridgeSize];
 }
 
-void LLCullResult::pushDrawInfo(U32 type, LLDrawInfo* draw_info)
-{
-    if (mRenderMapSize[type] < mRenderMapAllocated[type])
-    {
-        mRenderMap[type][mRenderMapSize[type]] = draw_info;
-    }
-    else
-    {
-        pushBack(mRenderMap[type], mRenderMapAllocated[type], draw_info);
-    }
-    ++mRenderMapSize[type];
-    mRenderMapEnd[type] = &(mRenderMap[type][mRenderMapSize[type]]);
-}
 
-
-void LLCullResult::assertDrawMapsEmpty()
-{
-    for (U32 i = 0; i < LLRenderPass::NUM_RENDER_TYPES; i++)
-    {
-        if (mRenderMapSize[i] != 0)
-        {
-            LL_ERRS() << "Stale LLDrawInfo's in LLCullResult!"
-                << " (mRenderMapSize[" << i << "] = " << mRenderMapSize[i] << ")" << LL_ENDL;
-        }
-    }
-}

@@ -7100,54 +7100,6 @@ void LLPipeline::refillPools(LLCullResult& result)
     mDeferredPoolFill.clear();
 }
 
-// <FS> a check for the early sort: the render map of a view holds pointers to draw infos that belong to groups; a group that is rebuilt after the map was made frees them. Every entry
-// of the map must still be one of the draw infos its group holds now.
-void LLPipeline::checkRenderMapLive(LLCullResult& result)
-{
-    std::unordered_set<const LLDrawInfo*> live;
-    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
-    {
-        LLSpatialGroup* group = *i;
-        if (group->isDead())
-        {
-            continue;
-        }
-        for (auto& entry : group->mDrawMap)
-        {
-            for (LLDrawInfo* info : entry.second)
-            {
-                live.insert(info);
-            }
-        }
-    }
-    size_t stale = 0, total = 0;
-    for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-    {
-        for (LLCullResult::drawinfo_iterator it = result.beginRenderMap(type); it != result.endRenderMap(type); ++it)
-        {
-            ++total;
-            if (!live.count(*it))
-            {
-                ++stale;
-            }
-        }
-    }
-    static U32 frames = 0, bad_frames = 0;
-    ++frames;
-    if (stale)
-    {
-        ++bad_frames;
-        if (bad_frames <= 8)
-        {
-            LL_WARNS("VkBuilder") << "early sort: " << stale << " of " << total << " draw infos in the render map are no longer held by their group" << LL_ENDL;
-        }
-    }
-    if (frames % 600 == 1)
-    {
-        LL_INFOS("VkBuilder") << "early sort check: " << frames << " frames, " << bad_frames << " with stale draw infos in the render map" << LL_ENDL;
-    }
-}
-
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
     const U64 vis_l0 = sVisSortOn ? LLVisCensus::now() : 0;
@@ -7579,7 +7531,6 @@ static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCa
     return depth + radius + cascade_cull.mMargin < cascade_cull.mSliceStart;
 }
 
-static void count_shadow_batch(const LLDrawInfo* info); // <FS> defined below
 
 // <FS> S1 phase 0 (LL_VK_SCENE_STATS=1): how much of what the main view draws is the same draw info set as on the previous frame (the hit rate a retained record would get), and how much of it
 // could be retained at all (no rigged avatar, no texture matrix). Counters only: nothing here changes what is drawn.
@@ -8046,16 +7997,6 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
 #endif
 }
 
-// C5 J4 census (LL_VK_RMCENSUS=1): draws left in the main view's render map by (partition type, table type, group has a fragment handle, rigged)
-static std::atomic<U64> sLeftoverCensus[16 * 8];
-static std::atomic<U64> sLeftoverByType[128];
-
-// C5: LL_VK_RM_ALPHA 1 (default) the main view's postSort does not list the blended alpha draws, 0 lists them, 2 lists them and collect_main_view_draw_infos compares them with the draws of the alpha groups
-static int rm_alpha_mode()
-{
-    static const int mode = getenv("LL_VK_RM_ALPHA") ? atoi(getenv("LL_VK_RM_ALPHA")) : 1;
-    return mode;
-}
 
 static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves (it sets sShadowRender too: the gates of postSort that say "not a shadow pass" take this as well)
 
@@ -8132,7 +8073,6 @@ void LLPipeline::postSort(LLCamera &camera)
         if (vis_post) { LLVisCensus::sPostTicksRebuildGeom += LLVisCensus::now() - vis_g0; }
         LL_PUSH_CALLSTACKS();
         // rebuild groups
-        sCull->assertDrawMapsEmpty();
 
         { LL_CPU_ZONE("postSort: rebuildPriorityGroups"); rebuildPriorityGroups(); }
         rebuild_batch.flush();
@@ -16150,41 +16090,6 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
 // The workers mark groups and drawables visible as they go, and whether an attachment's bridge is culled depends on that
 // (it asks whether its avatar was seen), so a serial run after them can see more than a serial run before them. What the
 // parallel result lacks compared with a serial run made first is the problem; extras are only counted.
-// <FS> the draw infos of a result for a pass type: its render map, and (when the scene table serves a type of its groups, mGeoElided) the served items of the fragments of its groups, which the render map no longer
-// holds (the same as collect_main_view_draw_infos, for any result): what shadowPrepCompare compares
-static void result_draw_infos(LLCullResult& result, U32 type, std::vector<const void*>& out)
-{
-    for (LLCullResult::drawinfo_iterator i = result.beginRenderMap(type); i != result.endRenderMap(type); )
-    {
-        out.push_back(*i);
-        LLCullResult::increment_iterator(i, result.endRenderMap(type));
-    }
-    if (!result.mGeoElided)
-    {
-        return;
-    }
-    const int tn = ll_scene_geo_type_number(type);
-    if (tn < 0)
-    {
-        return;
-    }
-    for (U32 handle : result.mGeoHandles)
-    {
-        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-        if (!f || !f->mGeoServedMask)
-        {
-            continue;
-        }
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            if (item.mServed && item.mType == (U32)tn && (f->mGeoServedMask & (1ull << item.mType)))
-            {
-                out.push_back(item.mInfo);
-            }
-        }
-    }
-}
-
 void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& reference)
 {
     LLCullResult& r = *prep.mResult;
@@ -16213,23 +16118,6 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     check("rigged alpha groups", sorted_pointers(r.beginRiggedAlphaGroups(), r.endRiggedAlphaGroups()), sorted_pointers(reference.beginRiggedAlphaGroups(), reference.endRiggedAlphaGroups()));
     check("bridges", sorted_pointers(r.beginVisibleBridge(), r.endVisibleBridge()), sorted_pointers(reference.beginVisibleBridge(), reference.endVisibleBridge()));
     check("visible drawables", sorted_pointers(r.beginVisibleList(), r.endVisibleList()), sorted_pointers(reference.beginVisibleList(), reference.endVisibleList()));
-    // <FS> the render map job leaves the static shadow types out on purpose when the fragments name the casters (sViewJobsSkipStatic: the ray-only modes with the resident scene, R1a), so the serial reference, which lists
-    // them, is not what the parallel result should equal for those types (the check reported them missing for every cascade: render maps 23, 26, 32, 40, 48, 56, 64, 2026-11-01)
-    const bool static_skipped = sViewJobsSkipStatic.load(std::memory_order_relaxed);
-    for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-    {
-        if (static_skipped && shadow_view_class(type) == 0)
-        {
-            continue;
-        }
-        std::vector<const void*> mine, theirs;
-        result_draw_infos(r, type, mine);
-        result_draw_infos(reference, type, theirs);
-        std::sort(mine.begin(), mine.end());
-        std::sort(theirs.begin(), theirs.end());
-        check(llformat("render map %u", type).c_str(), mine, theirs);        // (the render map and what the scene table serves of it: the table made the render maps of the result shorter than the serial reference's)
-    }
-
     static U32 sChecks = 0;
     static U32 sMismatches = 0;
     static U64 sExtras = 0;
@@ -16238,51 +16126,6 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     if (!diff.empty())
     {
         ++sMismatches;
-        if (sMismatches <= 6)
-        {
-            // <FS> where a missing render map entry comes from: the group that owns it in the serial result, and what that group is like (the first few of each pass type)
-            std::unordered_map<const void*, std::pair<LLSpatialGroup*, U32>> owner;
-            for (LLCullResult::sg_iterator g = reference.beginVisibleGroups(); g != reference.endVisibleGroups(); ++g)
-            {
-                for (auto& kv : (*g)->mDrawMap)
-                {
-                    for (LLDrawInfo* info : kv.second)
-                    {
-                        owner[info] = { *g, kv.first };
-                    }
-                }
-            }
-            std::set<LLSpatialGroup*> in_mine(r.beginVisibleGroups(), r.endVisibleGroups());
-            std::string detail;
-            for (U32 type = 0; type < LLRenderPass::NUM_RENDER_TYPES; ++type)
-            {
-                if (static_skipped && shadow_view_class(type) == 0)
-                {
-                    continue;
-                }
-                std::vector<const void*> mine, theirs, missing;
-                result_draw_infos(r, type, mine);
-                result_draw_infos(reference, type, theirs);
-                std::sort(mine.begin(), mine.end());
-                std::sort(theirs.begin(), theirs.end());
-                std::set_difference(theirs.begin(), theirs.end(), mine.begin(), mine.end(), std::back_inserter(missing));
-                for (size_t m = 0; m < missing.size() && m < 2; ++m)
-                {
-                    auto it = owner.find(missing[m]);
-                    if (it == owner.end())
-                    {
-                        detail += llformat(" [type %u: owner not among the serial result's groups]", type);
-                        continue;
-                    }
-                    LLSpatialGroup* g = it->second.first;
-                    detail += llformat(" [type %u (drawmap type %u), group %p: in parallel groups %d, dead %d, occluded %d, new_drawinfo %d, geom_dirty %d, partition %u, parallel hasRenderType %d, serial hasRenderType %d, geom %u/%u]",
-                        type, it->second.second, (void*)g, (int)in_mine.count(g), (int)g->isDead(), (int)g->isOcclusionState(LLSpatialGroup::OCCLUDED), (int)g->hasState(LLSpatialGroup::NEW_DRAWINFO),
-                        (int)g->hasState(LLSpatialGroup::GEOM_DIRTY), g->getSpatialPartition() ? (U32)g->getSpatialPartition()->mPartitionType : 99u,
-                        prep.mJobView ? (int)prep.mJobView->hasRenderType(type) : -1, (int)gPipeline.hasRenderType(type), (U32)g->mGeoServedMask, (U32)g->mGeoHandle);
-                }
-            }
-            LL_WARNS("ShadowPrep") << "cascade " << prep.mIndex << " missing entries, detail:" << detail << LL_ENDL;
-        }
         if (sMismatches <= 20 || sMismatches % 300 == 0)
         {
             LL_WARNS("ShadowPrep") << "cascade " << prep.mIndex << " lacks entries of the serial result:" << diff << LL_ENDL;
@@ -16745,37 +16588,6 @@ static const char* shadow_pass_batches_name(U32 i, bool cube, bool rigged)
         { { "cube shadow batches pass 0: static", "cube shadow batches pass 1: static", "cube shadow batches pass 2: static", "cube shadow batches pass 3: static", "cube shadow batches pass 4: static", "cube shadow batches pass 5: static", "cube shadow batches pass 6: static", "cube shadow batches pass 7: static", "cube shadow batches pass 8: static", "cube shadow batches pass 9: static" },
           { "cube shadow batches pass 0: rigged", "cube shadow batches pass 1: rigged", "cube shadow batches pass 2: rigged", "cube shadow batches pass 3: rigged", "cube shadow batches pass 4: rigged", "cube shadow batches pass 5: rigged", "cube shadow batches pass 6: rigged", "cube shadow batches pass 7: rigged", "cube shadow batches pass 8: rigged", "cube shadow batches pass 9: rigged" } } };
     return names[cube ? 1 : 0][rigged ? 1 : 0][llmin(i, 9U)];
-}
-
-// <FS> Triangle and batch counts of what the shadow passes draw (FSGpuZoneTimers log summary):
-// tells how much of the shadow work is in small batches, which a small-caster cull could skip.
-static void count_shadow_batch(const LLDrawInfo* info)
-{
-    const double tris = (double)(info->mCount / 3);
-    const bool rigged = info->mAvatar.notNull();
-    const char* kind = rigged ? "rigged" : "static";
-
-    LLGpuZoneTimer::count(rigged ? "shadow batches: rigged" : "shadow batches: static", 1.0);
-    LLGpuZoneTimer::count(rigged ? "shadow tris: rigged" : "shadow tris: static", tris);
-    LLGpuZoneTimer::count(shadow_pass_batches_name(sCurrentShadowPass, sCurrentShadowPassIsCube, rigged), 1.0);
-    LLGpuZoneTimer::count(shadow_pass_tris_name(sCurrentShadowPass, sCurrentShadowPassIsCube, rigged), tris);
-
-    // cumulative size buckets: how many triangles sit in batches smaller than N triangles
-    struct Bucket { double mMaxTris; const char* mRigged; const char* mStatic; };
-    static const Bucket buckets[] =
-    {
-        { 200.0,  "shadow tris in batches < 200: rigged",  "shadow tris in batches < 200: static" },
-        { 1000.0, "shadow tris in batches < 1000: rigged", "shadow tris in batches < 1000: static" },
-        { 5000.0, "shadow tris in batches < 5000: rigged", "shadow tris in batches < 5000: static" },
-    };
-    (void)kind;
-    for (const Bucket& b : buckets)
-    {
-        if (tris < b.mMaxTris)
-        {
-            LLGpuZoneTimer::count(rigged ? b.mRigged : b.mStatic, tris);
-        }
-    }
 }
 
 // <FS> names for the per-pool GPU timer zones (FSGpuZoneTimers log summary)
@@ -31170,26 +30982,6 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     }
 
     LLVertexBuffer::unbind();
-}
-
-LLCullResult::drawinfo_iterator LLPipeline::beginRenderMap(U32 type)
-{
-    // <FS:ND>  FIRE-31942, sCull can be invalid if triggering 360 snapshosts fast enough  (due to snapshots running in their own co routine)
-    if( !sCull )
-        return {};
-    // </FS:ND>
-
-    return sCull->beginRenderMap(type);
-}
-
-LLCullResult::drawinfo_iterator LLPipeline::endRenderMap(U32 type)
-{
-    // <FS:ND>  FIRE-31942, sCull can be invalid if triggering 360 snapshosts fast enough  (due to snapshots running in their own co routine)
-    if( !sCull )
-        return {};
-    // </FS:ND>
-
-    return sCull->endRenderMap(type);
 }
 
 LLCullResult::sg_iterator LLPipeline::beginAlphaGroups()
