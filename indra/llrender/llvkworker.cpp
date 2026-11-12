@@ -4346,9 +4346,9 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkBridge::ShadowAlphaEntry& 
     alpha.mColorOffset = e.mColorOffset;
     memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
     alpha.mCutoff = e.mCutoff;
-    if (e.mFlags & LLVkBridge::ALPHA_HARD)
+    if (e.mFlags & (LLVkBridge::ALPHA_HARD | LLVkBridge::ALPHA_UV))
     {
-        memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));         // the glTF texture transform
+        memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));         // the glTF texture transform, or the texture animation of a rigged masked draw
     }
     if (Rt::materialsOn())
     {
