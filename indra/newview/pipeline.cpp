@@ -977,6 +977,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             res = mHeroProbeManager.mProbeResolution;  // We also scale the hero probe RT to the probe res since we don't super sample it.
             mRT = &mHeroProbeRT;
             allocateScreenBufferInternal(res, res);
+            if (ll_mirror_planar())
+            {   // <FS> the planar mirror's reflected view: the main view's own size (allocateScreenBufferInternal scales it by the render resolution like the main target)
+                mRT = &mMirrorViewRT;
+                allocateScreenBufferInternal(resX, resY);
+            }
         }
 
         mRT = &mMainRT;
@@ -1157,12 +1162,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
             // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
             if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RG16F)
-                || !mRRHitDist.allocate(resX, resY, TexelFormat::R16F) || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)
+                || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)
                 || !mRRDenoised.allocate(resX, resY, TexelFormat::RGBA16F))
             {
                 LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
                 mRRGuides.release();
-                mRRHitDist.release();
                 mRRReflMotion.release();
                 mRRHdr.release();
                 mRRPing.release();
@@ -1173,7 +1177,6 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mRRGuides.release();
-            mRRHitDist.release();
             mRRReflMotion.release();
             mRRHdr.release();
             mRRPing.release();
@@ -1569,7 +1572,8 @@ void LLPipeline::releaseScreenBuffers()
     mNRLift.release();
     mNRLiftRender.release();
     mRRGuides.release();
-    mRRHitDist.release();
+    mRtReflMain.release();
+    mRtReflSlots.clear();
     mRRReflMotion.release();
     mRRHdr.release();
     mRRPing.release();
@@ -1583,6 +1587,10 @@ void LLPipeline::releaseScreenBuffers()
     mHeroProbeRT.screen.release();
     mHeroProbeRT.deferredScreen.release();
     mHeroProbeRT.deferredLight.release();
+
+    mMirrorViewRT.screen.release();
+    mMirrorViewRT.deferredScreen.release();
+    mMirrorViewRT.deferredLight.release();
 
     mPreviewScreen.release(); // <FS:Beq/> dedicated preview target
 }
@@ -8659,6 +8667,7 @@ void LLPipeline::postSort(LLCamera &camera)
 
     mMeshDirtyGroup.clear();
 
+
     if (!LLPipeline::shadowRender() || sImpostorTableView)
     {
         ll_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
@@ -12069,6 +12078,10 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
         for (const LLSceneFragment::GeoItem& gi : ps.mItems)
         {
             ps.mItemRig.push_back(ll_geo_rig_source(gi.mInfo));
+            if (rt_materials_on())
+            {
+                ps.mItemRig.back().mMat = rt_mat_source(gi.mInfo);        // the ray scene material of a blended rigged item (hair layer, an avatar's translucent shell): without it the draw has material 0 and the traced mirror shows it as a neutral grey opaque surface
+            }
         }
     }
     ps.mItemWire.assign(ps.mItems.size(), 0);
@@ -22902,33 +22915,6 @@ void LLPipeline::renderAvatarVelocity()
         VelocityRiggedWork& work = sVelWork;
         const bool objects_on = work.mObjectsOn;
         if (objects_on)
-void LLPipeline::extractRRHitDistance(LLRenderTarget* screen)
-{
-    LL_PROFILE_GPU_ZONE("rr hit distance");
-    static LLStaticHashedString clear_s("clear_only");
-    RenderPassSuspend suspend(*screen);      // the caller's pass on the screen target is suspended here and resumed below
-    LLRenderState::DepthScope depth(false, false);
-    LLRenderState::BlendScope blend(false);
-
-    RenderPassScope pass_10737(mRRHitDist);
-    gRRHitDistProgram.bind();
-    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, screen, false, LLTexUnit::TFO_POINT);
-    gRRHitDistProgram.uniform1f(clear_s, 0.f);
-    mScreenTriangleVB->setBuffer();
-    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    pass_10737.end();
-
-    // the glow amount starts at zero again: only the alpha of the lit picture is written, with 0
-    suspend.resume();
-    gRender.setColorMask(false, true);
-    gRRHitDistProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRRHitDist, false, LLTexUnit::TFO_POINT);
-    gRRHitDistProgram.uniform1f(clear_s, 1.f);
-    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    gRender.setColorMask(true, true);
-    gRRHitDistProgram.unbind();
-    mRRHitDistValid = true;
-}
-
         {
             object_unfit = work.mObjUnfit;
             std::vector<LLVkBridge::ShadowPacketEntry>& entries = work.mObjEntries;
@@ -23155,7 +23141,7 @@ void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
     RenderPassScope pass(*dst);
     bindDeferredShader(gRRReflMotionProgram);
     gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
-    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
+    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRtReflMain, false, LLTexUnit::TFO_POINT, 1);        // (the hit distance: the second output of the RT Reflection pass)
     gRRReflMotionProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
     gRRReflMotionProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
     gRRReflMotionProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
@@ -23188,6 +23174,33 @@ bool LLPipeline::rayReconstructionActive()
            && mRRGuides.getNumTextures() >= 4 && gRRGuidesProgram.isComplete() && LLVkBridge::rayReconstructionAvailable() && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
+// <FS> the target of the RT Reflection pass for a view: the main view's lives in mRtReflMain (render size), the others (cube faces, the planar mirror's view) in a slot each, made at the view's size
+LLRenderTarget* LLPipeline::rtReflectionTarget(const LLRenderTarget* screen)
+{
+    const U32 w = screen->getWidth(), h = screen->getHeight();
+    LLRenderTarget* t = &mRtReflMain;
+    if (gCubeSnapshot)
+    {
+        std::unique_ptr<LLRenderTarget>& slot = mRtReflSlots[screen];
+        if (!slot)
+        {
+            slot.reset(new LLRenderTarget());
+        }
+        t = slot.get();
+    }
+    if (!t->isComplete() || t->getWidth() != w || t->getHeight() != h || t->getNumTextures() < 2)
+    {
+        t->release();
+        if (!t->allocate(w, h, TexelFormat::RGBA16F) || !t->addColorAttachment(TexelFormat::R16F))
+        {
+            LL_WARNS("VkRt") << "the RT Reflection pass's target could not be made at " << w << "x" << h << LL_ENDL;
+            t->release();
+            return nullptr;
+        }
+    }
+    return t;
+}
+
 // <FS> The guide buffers ray reconstruction wants, from the G-buffer (rrGuidesF.glsl)
 void LLPipeline::generateRRGuides(LLRenderTarget* dst)
 {
@@ -23206,7 +23219,7 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
     bindDeferredShader(gRRGuidesProgram);
     gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
     gRRGuidesProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
-    gRRGuidesProgram.bindTexture(LLShaderMgr::BUMP_MAP, &mRRHitDist, false, LLTexUnit::TFO_POINT, 0);
+    gRRGuidesProgram.bindTexture(LLShaderMgr::BUMP_MAP, &mRtReflMain, false, LLTexUnit::TFO_POINT, 1);        // (the hit distance: the second output of the RT Reflection pass)
     gRRGuidesProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
     gRRGuidesProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
     gRRGuidesProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
@@ -23263,10 +23276,10 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
         {
             a.mReflectionMotion = mRRGuides.getTexture(3);      // what the traced reflections show, moved by the camera (the fourth output of the guides pass)
         }
-        if (mRRHitDistValid && mRRHitDist.isComplete() && rrDebugMode() == 10)       // test: the hit distance guide with matrices instead of the motion vectors
+        if (mRRHitDistValid && mRtReflMain.isComplete() && rrDebugMode() == 10)       // test: the hit distance guide with matrices instead of the motion vectors
         {
             // the specular hit distance of the traced reflections; with it the denoiser wants the camera matrices (no jitter in them): world (the region) to view, and view to clip
-            a.mSpecularHitDistance = mRRHitDist.getTexture(0);
+            a.mSpecularHitDistance = mRtReflMain.getTexture(1);
             memcpy(a.mWorldToView, glm::value_ptr(LLViewerCamera::sJitterModelview), sizeof(a.mWorldToView));
             memcpy(a.mViewToClip, glm::value_ptr(LLViewerCamera::sUnjitteredProjection), sizeof(a.mViewToClip));
         }
@@ -25573,8 +25586,9 @@ static void rt_name_rigged_main_view()
         };
         auto add_entry = [&](LLDrawInfo* params, const Source& source)
         {
-            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
-            if (!params->mCount || !params->mAvatar || (source.kind == KIND_ALPHA && params->mGLTFMaterial) || (source.kind == KIND_GLTF && !params->mGLTFMaterial))
+            // (a blended glTF draw, e.g. an avatar's translucent shell, is named as a blended entry with the glTF material: one texture, no batch index; the sun rays leave it out, see rtAlphaHit in shadowUtil.glsl)
+            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || (source.kind == KIND_ALPHA && !params->mGLTFMaterial);
+            if (!params->mCount || !params->mAvatar || (source.kind == KIND_GLTF && !params->mGLTFMaterial))
             {
                 if (params->mAvatar) note_why(params, 0);
                 return;
@@ -25583,7 +25597,7 @@ static void rt_name_rigged_main_view()
             {
                 return;
             }
-            if (!shadow_alpha_packet_ok(*params, batch, true, source.kind == KIND_GLTF))
+            if (!shadow_alpha_packet_ok(*params, batch, true, params->mGLTFMaterial.notNull()))
             {
                 note_why(params, std::min(5, shadow_alpha_fallback_reason(*params, batch, true)));
                 return;
@@ -25667,7 +25681,7 @@ static void rt_name_rigged_main_view()
             else
             {
                 flags |= LLVkBridge::ALPHA_NO_INDEX;
-                if (source.kind == KIND_GLTF)
+                if (params->mGLTFMaterial.notNull())
                 {
                     LLFetchedGLTFMaterial* gm = params->mGLTFMaterial.get();
                     LLViewerTexture* base = params->mTexture.notNull() ? params->mTexture.get() : gm->mBaseColorTexture.get();
@@ -25695,11 +25709,11 @@ static void rt_name_rigged_main_view()
         // no draw info read. A blended item is one the alpha plan serves (the layout checks passed when the plan was made); a masked or glTF one is checked by mAlphaOk when the fragment was made.
         auto add_entry_src = [&](const GeoRigSource& rig, const Source& source)
         {
-            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || source.kind == KIND_ALPHA;
+            const bool batch = source.kind == KIND_MASK || source.kind == KIND_FULLBRIGHT || (source.kind == KIND_ALPHA && rig.mGltf.isNull());
             const LLVertexBuffer* vb = rig.mVb.get();
             LLVOAvatar* avatar = rig.mAvatar.get();
             const LLMeshSkinInfo* skin = rig.mSkin.get();
-            if (!rig.mCount || !avatar || !skin || !vb || (source.kind == KIND_ALPHA && rig.mGltf.notNull()) || (source.kind == KIND_GLTF && rig.mGltf.isNull()))
+            if (!rig.mCount || !avatar || !skin || !vb || (source.kind == KIND_GLTF && rig.mGltf.isNull()))
             {
                 return;
             }
@@ -25774,7 +25788,7 @@ static void rt_name_rigged_main_view()
             else
             {
                 flags |= LLVkBridge::ALPHA_NO_INDEX;
-                if (source.kind == KIND_GLTF)
+                if (rig.mGltf.notNull())
                 {
                     LLFetchedGLTFMaterial* gm = rig.mGltf.get();
                     LLViewerTexture* base = rig.mTexture.notNull() ? rig.mTexture.get() : gm->mBaseColorTexture.get();
@@ -26095,7 +26109,7 @@ void LLPipeline::renderDeferredLighting()
     LLRenderTarget *screen_target         = &mRT->screen;
     LLRenderTarget* deferred_light_target = &mRT->deferredLight;
     LLRenderState::DepthReadOnlyScope lighting_depth_read_only{LLRenderState::Keep{}};      // F3.5c: the lighting stage samples the depth and writes none: enabled where it starts, disabled before the geometry that writes it
-    RenderPassScope screen_pass;        // F3.5b: the pass on the screen target crosses blocks (begun before the atmospherics, ended after the post-deferred geometry) and is suspended by extractRRHitDistance
+    RenderPassScope screen_pass;        // F3.5b: the pass on the screen target crosses blocks (begun before the atmospherics, ended after the post-deferred geometry)
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("deferred");
@@ -26280,7 +26294,6 @@ void LLPipeline::renderDeferredLighting()
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         }
 
-                S32 rt_hit_shadow_variant = 0;
         LLRenderTarget* penumbra = nullptr;        // <FS> the lightmap with the penumbra filter applied to its sun channel (mRtShadowTemp)
         if (LLVkBridge::rtShadowMode() && !gCubeSnapshot && LLVkBridge::rtSunFilter() != 0 && mRtBlocker.isComplete() && mRtShadowTemp.isComplete()
             && mRtSunHard.isComplete() && gRtShadowFilterProgram.isComplete() && gRtShadowPrepProgram.isComplete() && RenderDeferredSSAO)
@@ -26454,8 +26467,6 @@ void LLPipeline::renderDeferredLighting()
             gDeferredBlurLightProgram.uniform1f(sSunPassthrough, sun_passthrough);
             gDeferredBlurLightProgram.uniform4f(sHalfSrc, 0.f, 0.f, 0.f, 0.f);       // <FS> the lightmap has the G-buffer's size here (the half resolution blur above sets this)
             gDeferredBlurLightProgram.uniform2f(sDelta, 1.f, 0.f);
-
-                // full screen blit
             gDeferredBlurLightProgram.uniform1f(sDistFactor, dist_factor);
             gDeferredBlurLightProgram.uniform3fv(sKern, kern_length, gauss[0].mV);
             gDeferredBlurLightProgram.uniform1f(sKernScale, blur_size * (kern_length / 2.f - 0.5f));
@@ -26488,38 +26499,15 @@ void LLPipeline::renderDeferredLighting()
             unbindDeferredShader(gDeferredBlurLightProgram);
         }
 
-        screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
-        lighting_depth_read_only.setEnabled(true);
-        // the pass cleared the colour buffer when it began - zeroing alpha (glow) is important or it will accumulate against sky
-
+        // <FS> the RT Reflection pass (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md): the traced glossy reflections of this view, made before its lighting pass. The lighting pass reads the result.
+        // Until the pass's pipeline is built the draw is dropped and the target stays cleared (a = 0 = nothing traced): the surfaces keep the probe result.
+        S32 rt_glossy_mode = 0;
+        S32 rt_hit_shadow_variant = 0;
+        LLRenderTarget* rt_refl_target = nullptr;
         if (RenderDeferredAtmospheric)
-        {  // apply sunlight contribution
-            LLShaderProgram &soften_shader = gDeferredSoftenProgram;
-
-            LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - atmospherics");
-            LL_CPU_ZONE("lighting: atmospherics");
-            LL_PROFILE_GPU_ZONE("atmospherics");
-            bindDeferredShader(soften_shader);
-
-            static LLCachedControl<F32> ssao_scale(gSavedSettings, "RenderSSAOIrradianceScale", 0.5f);
-            static LLCachedControl<F32> ssao_max(gSavedSettings, "RenderSSAOIrradianceMax", 0.25f);
-            static LLStaticHashedString ssao_scale_str("ssao_irradiance_scale");
-            static LLStaticHashedString ssao_max_str("ssao_irradiance_max");
-
-            soften_shader.uniform1f(ssao_scale_str, ssao_scale);
-            soften_shader.uniform1f(ssao_max_str, ssao_max);
-
-            LLEnvironment &environment = LLEnvironment::instance();
-
-            soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
-            soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
-
-            soften_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
-            bool rt_hit_spot_bound = false;         // a projector's texture is bound for the traced hits (unbound after the draw)
-            {
-                // <FS> ray traced reflections on glossy surfaces (rt-debug.txt glossyrt, softenLightF.glsl)
-                static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
-                S32 rt_glossy_mode = LLVkBridge::rtGlossyReflections();
+        {
+            // (rt-debug.txt glossyrt)
+            rt_glossy_mode = LLVkBridge::rtGlossyReflections();
                 static LLCachedControl<bool> glossy_mirror_setting(gSavedSettings, "FSVkGlossyMirror", false);
                 if (rt_glossy_mode == 0 && glossy_mirror_setting && LLVkBridge::rtMaterialsAvailable())
                 {
@@ -26530,19 +26518,35 @@ void LLPipeline::renderDeferredLighting()
                     rt_hit_shadow_variant = rt_glossy_mode - 19;
                     rt_glossy_mode = 1;
                 }
+        }
+        mRRHitDistValid = false;
+        if (rt_glossy_mode != 0 && gDeferredRtReflectionProgram.isComplete())
+        {
+            rt_refl_target = rtReflectionTarget(screen_target);
+        }
+        if (rt_refl_target)
+        {
+            LLShaderProgram& rt_shader = gDeferredRtReflectionProgram;
+            LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - rt reflection");
+            LL_CPU_ZONE("lighting: rt reflection");
+            LL_PROFILE_GPU_ZONE("rt reflection");
+            RenderPassScope pass_rt_refl(*rt_refl_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
+            bindDeferredShader(rt_shader);
+            LLEnvironment &environment = LLEnvironment::instance();
+            rt_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+            rt_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+            rt_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
+            bool rt_hit_spot_bound = false;         // a projector's texture is bound for the traced hits (unbound after the draw)
+            {
+                static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
                 static LLStaticHashedString rt_hit_variant_s("rt_hit_shadow_variant");
-                soften_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
+                rt_shader.uniform1i(rt_glossy_s, rt_glossy_mode);
                 static LLStaticHashedString rt_hair_soft_s("rt_hair_soft");
                 rrDebugMode();          // (reads the test file now and then)
-                soften_shader.uniform1i(rt_hair_soft_s, sRrHairMode);
-                // <FS> ray reconstruction: the soften pass leaves the traced reflection's hit distance in the alpha, extractRRHitDistance picks it up after the lights
-                static LLStaticHashedString rr_hit_s("rr_hit_distance");
-                mRRHitDistValid = false;
-                mRRHitDistPending = rt_glossy_mode != 0 && rayReconstructionActive() && mRRHitDist.isComplete() && gRRHitDistProgram.isComplete();
-                soften_shader.uniform1f(rr_hit_s, mRRHitDistPending ? 1.f : 0.f);
-                soften_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
+                rt_shader.uniform1i(rt_hair_soft_s, sRrHairMode);
+                rt_shader.uniform1i(rt_hit_variant_s, rt_hit_shadow_variant);
                 static LLStaticHashedString rt_noise_frame_s("rt_noise_frame");
-                soften_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
+                rt_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
                 // the levels of the preference FSVkMirrorQuality (rt-debug.txt hitq / hitrays override them for tests): 1 Low = flat colours at the hits (hitq 0), 2 Medium = lit hits (hitq 1), 3 High = lit hits + the
                 // local lights with one shadow ray each (hitq 2), 4 Ultra = the same with 4 soft shadow rays per light
@@ -26552,9 +26556,9 @@ void LLPipeline::renderDeferredLighting()
                 const S32 dbg_hit_rays = LLVkBridge::rtHitRays();
                 const S32 rt_hit_quality = dbg_hit_quality >= 0 ? dbg_hit_quality : (mirror_level == 1 ? 0 : (mirror_level == 2 ? 1 : 2));
                 const S32 rt_hit_rays = dbg_hit_rays > 0 ? dbg_hit_rays : (mirror_level >= 4 ? 4 : 1);
-                soften_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
+                rt_shader.uniform1i(rt_hit_quality_s, rt_hit_quality);
                 static LLStaticHashedString rt_hit_rays_s("rt_hit_shadow_samples");
-                soften_shader.uniform1i(rt_hit_rays_s, rt_hit_rays);
+                rt_shader.uniform1i(rt_hit_rays_s, rt_hit_rays);
 
                 // hit quality 2: the local lights seen from the traced hits (softenLightF.glsl rtHitLocalLights). Not culled to the view frustum: a mirror shows what is behind the camera
                 static LLStaticHashedString rt_hit_light_count_s("rt_hit_light_count"), rt_hit_light_pos_s("rt_hit_light_pos"), rt_hit_light_col_s("rt_hit_light_col"), rt_hit_light_dir_s("rt_hit_light_dir");
@@ -26663,30 +26667,30 @@ void LLPipeline::renderDeferredLighting()
                                          << ", local light limit " << (S32)hit_light_limit << LL_ENDL;
                     }
                 }
-                soften_shader.uniform1i(rt_hit_light_count_s, hit_lights);
+                rt_shader.uniform1i(rt_hit_light_count_s, hit_lights);
                 if (hit_lights > 0)
                 {
-                    soften_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (F32*)hit_light_pos);
-                    soften_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (F32*)hit_light_col);
-                    soften_shader.uniform4fv(rt_hit_light_dir_s, hit_lights, (F32*)hit_light_dir);
+                    rt_shader.uniform4fv(rt_hit_light_pos_s, hit_lights, (F32*)hit_light_pos);
+                    rt_shader.uniform4fv(rt_hit_light_col_s, hit_lights, (F32*)hit_light_col);
+                    rt_shader.uniform4fv(rt_hit_light_dir_s, hit_lights, (F32*)hit_light_dir);
                 }
-                soften_shader.uniform1i(rt_hit_spot_s, hit_spot ? 1 : 0);
+                rt_shader.uniform1i(rt_hit_spot_s, hit_spot ? 1 : 0);
                 if (hit_spot)
                 {
                     LLVOVolume* volume = hit_spot->getVOVolume();
-                    setupSpotLight(soften_shader, hit_spot);
+                    setupSpotLight(rt_shader, hit_spot);
                     LLColor3 col = volume->getLightLinearColor() * light_scale;
                     glm::vec3 tc(hit_spot->getPositionAgent());
                     tc = mul_mat4_vec3(mat, tc);
-                    soften_shader.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
-                    soften_shader.uniform1f(LLShaderMgr::LIGHT_SIZE, volume->getLightRadius() * 1.5f);
-                    soften_shader.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
-                    soften_shader.uniform3fv(rt_hit_spot_center_s, 1, glm::value_ptr(tc));
+                    rt_shader.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
+                    rt_shader.uniform1f(LLShaderMgr::LIGHT_SIZE, volume->getLightRadius() * 1.5f);
+                    rt_shader.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
+                    rt_shader.uniform3fv(rt_hit_spot_center_s, 1, glm::value_ptr(tc));
                     static U32 spot_log = 0;
                     if (!gCubeSnapshot && spot_log++ % 300 == 0)
                     {
                         LLViewerTexture* img = volume->getLightTexture();
-                        LL_INFOS("VkRt") << "traced hit projector: texture channel " << soften_shader.enableTexture(LLShaderMgr::DEFERRED_PROJECTION) << ", light texture "
+                        LL_INFOS("VkRt") << "traced hit projector: texture channel " << rt_shader.enableTexture(LLShaderMgr::DEFERRED_PROJECTION) << ", light texture "
                                          << (img ? (S32)img->getWidth() : -1) << " px, colour " << col.mV[0] << "," << col.mV[1] << "," << col.mV[2] << ", radius " << volume->getLightRadius()
                                          << ", falloff " << volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF)
                                          << ", " << dist_vec(hit_spot->getPositionAgent(), camera->getOrigin()) << " m from the camera" << LL_ENDL;
@@ -26703,7 +26707,56 @@ void LLPipeline::renderDeferredLighting()
             }
             if (rt_hit_spot_bound)
             {
-                soften_shader.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
+                rt_shader.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
+            }
+            pass_rt_refl.end();
+            unbindDeferredShader(rt_shader);
+            mRRHitDistValid = !gCubeSnapshot && rayReconstructionActive();
+        }
+
+        screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
+        lighting_depth_read_only.setEnabled(true);
+        // the pass cleared the colour buffer when it began - zeroing alpha (glow) is important or it will accumulate against sky
+
+        if (RenderDeferredAtmospheric)
+        {  // apply sunlight contribution
+            LLShaderProgram &soften_shader = gDeferredSoftenProgram;
+
+            LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - atmospherics");
+            LL_CPU_ZONE("lighting: atmospherics");
+            LL_PROFILE_GPU_ZONE("atmospherics");
+            bindDeferredShader(soften_shader);
+
+            static LLCachedControl<F32> ssao_scale(gSavedSettings, "RenderSSAOIrradianceScale", 0.5f);
+            static LLCachedControl<F32> ssao_max(gSavedSettings, "RenderSSAOIrradianceMax", 0.25f);
+            static LLStaticHashedString ssao_scale_str("ssao_irradiance_scale");
+            static LLStaticHashedString ssao_max_str("ssao_irradiance_max");
+
+            soften_shader.uniform1f(ssao_scale_str, ssao_scale);
+            soften_shader.uniform1f(ssao_max_str, ssao_max);
+
+            LLEnvironment &environment = LLEnvironment::instance();
+
+            soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+            soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+
+            soften_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
+            {
+                static LLStaticHashedString rt_glossy_s("rt_glossy_reflections");
+                soften_shader.uniform1i(rt_glossy_s, rt_refl_target ? rt_glossy_mode : 0);
+                if (rt_refl_target)
+                {
+                    soften_shader.bindTexture(LLShaderMgr::RT_REFL_MAP, rt_refl_target, false, LLTexUnit::TFO_POINT, 0);
+                }
+            }
+
+            {
+                LLRenderState::DepthScope depth(false);
+                LLRenderState::BlendScope blend(false);
+
+                // full screen blit
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
 
             unbindDeferredShader(gDeferredSoftenProgram);
@@ -26883,12 +26936,6 @@ void LLPipeline::renderDeferredLighting()
 
                     if (camera->getOrigin().mV[0] > c[0] + s + 0.2f || camera->getOrigin().mV[0] < c[0] - s - 0.2f ||
                         camera->getOrigin().mV[1] > c[1] + s + 0.2f || camera->getOrigin().mV[1] < c[1] - s - 0.2f ||
-    if (mRRHitDistPending)
-    {
-        extractRRHitDistance(screen_target);
-        mRRHitDistPending = false;
-    }
-
                         camera->getOrigin().mV[2] > c[2] + s + 0.2f || camera->getOrigin().mV[2] < c[2] - s - 0.2f)
                     {  // draw box if camera is outside box
                         if (volume->isLightSpotlight())
@@ -27744,6 +27791,21 @@ void LLPipeline::bindReflectionProbes(LLShaderProgram& shader)
         {
             mHeroProbeManager.mTexture->bind(channel);
             bound = true;
+        }
+        if (ll_mirror_planar())
+        {   // <FS> the planar mirror's reflected view (a view being rendered never reads itself: it gets white)
+            channel = shader.enableTexture(LLShaderMgr::MIRROR_VIEW, LLTexUnit::TT_TEXTURE);
+            if (channel > -1)
+            {
+                if (!gCubeSnapshot && mMirrorViewRT.screen.isComplete())
+                {
+                    gRender.getTexUnit(channel)->bind(&mMirrorViewRT.screen);
+                }
+                else
+                {
+                    gRender.getTexUnit(channel)->bindWhite();
+                }
+            }
         }
     }
 

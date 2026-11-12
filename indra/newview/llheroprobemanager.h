@@ -47,6 +47,9 @@ struct HeroProbeData
     S32     heroProbeCount;
 };
 
+// <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): LL_VK_MIRROR_PLANAR=1 also renders the reflected view of the nearest mirror at the main view's size
+bool ll_mirror_planar();
+
 class alignas(16) LLHeroProbeManager
 {
     LL_ALIGN_NEW
@@ -87,6 +90,10 @@ public:
 
     bool isMirrorPass() const { return mRenderingMirror; }
 
+    // <FS> true when renderProbes made a cube face or the reflected view this frame: the camera matrices, the viewport and the environment's eye space planes are then those of that view, and the main view
+    // sets them up again (llviewerdisplay.cpp)
+    bool viewRenderedThisFrame() const { return mViewRendered; }
+
     LLVector3 mMirrorPosition;
     LLVector3     mMirrorNormal;
     HeroProbeData mHeroData;
@@ -117,7 +124,9 @@ private:
 
     // update the specified face of the specified probe
     void updateProbeFace(LLReflectionMap* probe, U32 face, bool is_dynamic, F32 near_clip);
-    void generateRadiance(LLReflectionMap *probe);
+
+    // <FS> the planar mirror: render the world from the viewer's camera reflected across the mirror's plane into LLPipeline::mMirrorViewRT
+    void updateMirrorView(bool is_dynamic, F32 near_clip);
 
     // list of active reflection maps
     std::vector<LLPointer<LLReflectionMap>> mProbes;
@@ -140,6 +149,7 @@ private:
     bool mReset = false;
 
     bool mRenderingMirror = false;
+    bool mViewRendered = false;
 
     std::vector<LLPointer<LLVOVolume>>                       mHeroVOList;
     LLPointer<LLVOVolume>                                 mNearestHero;

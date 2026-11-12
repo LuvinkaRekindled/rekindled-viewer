@@ -41,6 +41,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int cube_snapshot;
     int resolve_dbg;            // live debug view of the resolve (rt-debug.txt resolve_dbg), 0 = none
     vec4 clipPlane;             // the hero probe fades in across a mirror's clip plane
+    int rt_glossy_reflections;  // 0: no traced reflection for this view (the RT Reflection pass did not run), 1-2: it replaces the probe result, 3, 4 and 7, 8: debug views of it
 
 #ifdef SSR
     // screen space reflections: the previous frame's camera (the picture and depth are its), the marcher's settings
@@ -82,6 +83,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_lightMap;
     uint ll_ti_lightFunc;
     uint ll_ti_brdfLut;
+    uint ll_ti_rtReflMap;               // the RT Reflection pass's output: rgb the traced reflection, a how much of it replaces the probe result (-1 traced and missed, 0 not traced)
 #ifdef HAS_EMISSIVE
     uint ll_ti_emissiveRect;
 #endif
@@ -89,6 +91,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
     uint ll_ti_cubearray_heroProbes;
+    uint ll_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
 #endif
 #ifdef SSR
     uint ll_ti_sceneMap;

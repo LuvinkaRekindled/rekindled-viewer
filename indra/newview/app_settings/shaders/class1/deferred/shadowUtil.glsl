@@ -106,6 +106,18 @@ float rtSunBlockerT()
 // <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
+// <FS> a translucent glTF mesh (an avatar's shell: base colour alpha blended) is a layer for the traced reflection only (rtTraceHitEx); a sun ray goes through it, as it did before such draws were named to the ray scene
+bool rtRecordGltfBlend(LLRtGeom g)
+{
+    uint mat_id = g.material;
+    if (mat_id == 0u || mat_id >= 16384u)
+    {
+        return false;
+    }
+    uint mf = floatBitsToUint(LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    return (mf & 10u) == 10u;
+}
+
 bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 {
     // record 0 (the header) carries the number of records this frame's table holds: a geometry that points past them (a structure that does not match its records) would make this
@@ -118,6 +130,10 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     if ((g.flags & 256u) != 0u)
     {
         return false;                       // a record the scene could not vouch for this frame: nothing is read
+    }
+    if (rtRecordGltfBlend(g))
+    {
+        return false;
     }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
     LLRtIndices ib = LLRtIndices(g.indices);
@@ -191,6 +207,10 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     }
     LLRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
+    {
+        return 0.0;
+    }
+    if (rtRecordGltfBlend(g))
     {
         return 0.0;
     }
@@ -660,6 +680,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         if (emissive_pin != 0u)
         {
             uint emissive_slot = ll_rt_slot(emissive_pin);
+            emissive_tex = vec3(0.0);           // <FS> a named emissive map that has no slot yet (not resident): no glow, not the factor alone (a white glow on hair)
             if (emissive_slot != 0u)
             {
                 emissive_tex = rtSrgbToLinear(textureLod(ll_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb);
@@ -753,7 +774,7 @@ bool rtShadeSurface(uint record, uint prim, vec2 bary, float lod, out vec3 albed
     return rtShadeSurfaceEx(record, prim, bary, lod, false, albedo, emissive, n_obj, n_shaded, alpha, fullbright, mr, spec);
 }
 
-// Is the record's material a legacy material that is alpha BLENDED (hair, some clothes)? The main view draws those in the forward alpha pass over the opaque layers behind them.
+// Is the record's material alpha BLENDED (legacy: hair, some clothes; glTF: translucent meshes such as an avatar's shell)? The main view draws those in the forward alpha pass over the opaque layers behind them.
 bool rtRecordBlended(uint record)
 {
     if (record == 0u || record >= ll_rt_geoms.g[0].first)
@@ -766,7 +787,7 @@ bool rtRecordBlended(uint record)
         return false;
     }
     uint mf = floatBitsToUint(LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
-    return (mf & 8u) != 0u && (mf & 2u) == 0u;
+    return (mf & 8u) != 0u;         // <FS> glTF blends too (the translucent shell of an avatar): a layer over what is behind it, lit like any hit
 }
 
 // Decode a hit that is known by record, triangle, barycentrics and distance (a committed intersection, or a blended candidate kept aside): the surface, the eye space normals facing the ray,
@@ -817,7 +838,8 @@ bool rtResolveHit(uint record, uint prim, vec2 bary, mat4x3 w2o, float t, vec3 o
 // as l_* (layer_alpha its opacity, 0 = none), to be shaded and composited over the hit by the caller. A blended surface with nothing behind it is the hit itself, layer_alpha = -its opacity.
 bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full, bool layers, out vec3 albedo, out vec3 emissive, out vec3 n_geo_eye, out vec3 n_eye, out vec3 hit_pos, out float t,
                   out float shadow, out bool fullbright, out vec4 mr, out vec4 spec,
-                  out float layer_alpha, out vec3 l_albedo, out vec3 l_emissive, out vec3 l_n_geo, out vec3 l_n, out vec3 l_hp, out float l_t, out float l_shadow, out bool l_fb, out vec4 l_mr, out vec4 l_spec)
+                  out float layer_alpha, out vec3 l_albedo, out vec3 l_emissive, out vec3 l_n_geo, out vec3 l_n, out vec3 l_hp, out float l_t, out float l_shadow, out bool l_fb, out vec4 l_mr, out vec4 l_spec,
+                  out float m_alpha, out vec3 m_albedo, out vec3 m_emissive, out vec3 m_n_geo, out vec3 m_n, out vec3 m_hp, out float m_t, out float m_shadow, out bool m_fb, out vec4 m_mr, out vec4 m_spec)
 {
     albedo = vec3(0.0);
     emissive = vec3(0.0);
@@ -840,6 +862,17 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
     l_fb = false;
     l_mr = mr;
     l_spec = spec;
+    m_alpha = 0.0;                      // a second blended layer behind the first (hair underside and the shell on it: both are drawn over the opaque surface, back to front)
+    m_albedo = vec3(0.0);
+    m_emissive = vec3(0.0);
+    m_n_geo = n_geo_eye;
+    m_n = n_geo_eye;
+    m_hp = origin;
+    m_t = 0.0;
+    m_shadow = 0.0;
+    m_fb = false;
+    m_mr = mr;
+    m_spec = spec;
     mat3 to_scene;
     vec3 camera;
     rtSceneFrame(to_scene, camera);
@@ -861,6 +894,10 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
     uint c_record = 0u, c_prim = 0u;
     vec2 c_bary = vec2(0.0);
     mat4x3 c_w2o = mat4x3(1.0);
+    float d_t = 1e30, d_alpha = 0.0;            // the second nearest blended candidate
+    uint d_record = 0u, d_prim = 0u;
+    vec2 d_bary = vec2(0.0);
+    mat4x3 d_w2o = mat4x3(1.0);
     while (rayQueryProceedEXT(rq))
     {
         if (++steps > (rt_hit_shadow_variant == 3 ? 1024u : 64u))
@@ -890,12 +927,27 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
                     }
                     if (alpha >= 0.03 && ct < c_t)
                     {
+                        d_t = c_t;                      // the nearest so far becomes the second
+                        d_alpha = c_alpha;
+                        d_record = c_record;
+                        d_prim = c_prim;
+                        d_bary = c_bary;
+                        d_w2o = c_w2o;
                         c_t = ct;
                         c_alpha = min(alpha, 1.0);
                         c_record = record;
                         c_prim = prim;
                         c_bary = bary;
                         c_w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, false);
+                    }
+                    else if (alpha >= 0.03 && ct < d_t)
+                    {
+                        d_t = ct;
+                        d_alpha = min(alpha, 1.0);
+                        d_record = record;
+                        d_prim = prim;
+                        d_bary = bary;
+                        d_w2o = rayQueryGetIntersectionWorldToObjectEXT(rq, false);
                     }
                 }
                 else if (alpha >= 0.5)
@@ -938,6 +990,15 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
             {
                 layer_alpha = c_alpha;
             }
+            if (d_record != 0u && d_t < t)
+            {
+                m_t = d_t;
+                float ma;
+                if (rtResolveHit(d_record, d_prim, d_bary, d_w2o, d_t, origin, dir, sun_dir, pos_screen, full, to_scene, m_albedo, m_emissive, m_n_geo, m_n, m_hp, m_shadow, m_fb, m_mr, m_spec, ma))
+                {
+                    m_alpha = d_alpha;
+                }
+            }
         }
         return true;
     }
@@ -958,8 +1019,12 @@ bool rtTraceHit(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool full,
     vec3 l_albedo, l_emissive, l_n_geo, l_n, l_hp;
     bool l_fb;
     vec4 l_mr, l_spec;
+    float ma, mt, ms;
+    vec3 m_albedo, m_emissive, m_n_geo, m_n, m_hp;
+    bool m_fb;
+    vec4 m_mr, m_spec;
     return rtTraceHitEx(origin, dir, sun_dir, pos_screen, full, false, albedo, emissive, n_geo_eye, n_eye, hit_pos, t, shadow, fullbright, mr, spec,
-                        la, l_albedo, l_emissive, l_n_geo, l_n, l_hp, lt, ls, l_fb, l_mr, l_spec);
+                        la, l_albedo, l_emissive, l_n_geo, l_n, l_hp, lt, ls, l_fb, l_mr, l_spec, ma, m_albedo, m_emissive, m_n_geo, m_n, m_hp, mt, ms, m_fb, m_mr, m_spec);
 }
 
 // A ray from origin (eye space) along dir (unit, eye space) against the scene. The hit is lit like a legacy surface of the deferred pass: (ambient + sun * N.L * shadow) * albedo + emissive,

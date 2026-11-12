@@ -1,6 +1,5 @@
 // resolve.frag: the lighting resolve. One full screen pass that turns the G-buffer into the lit colour: for each pixel, by the flag the surface was written with, a glTF (metallic roughness) surface, a legacy
-// material surface, or a sky pixel that only gets its colour moved over. Matches the viewer's soften program without ray tracing ("Deferred Soften Shader": the ray traced variants stay with the old
-// program): the sun's shadow and ambient occlusion from the lightmap, the sky's light, the probes (ambient, reflection, the screen space reflection and the hero probe for the glossy), the sun's
+// material surface, or a sky pixel that only gets its colour moved over. Matches the viewer's soften program ("Deferred Soften Shader"; the traced glossy reflection is the RT Reflection pass's, read here as a texture): the sun's shadow and ambient occlusion from the lightmap, the sky's light, the probes (ambient, reflection, the screen space reflection and the hero probe for the glossy), the sun's
 // highlight. Local lights are added by their own passes afterwards, and the haze comes after those: nothing of that is here.
 // What is different is the cost: a sky pixel reads nothing but its colour, the view position comes from the depth with the few multiplications the projection leaves (lib/viewpos.glsl), and the pixel
 // runs only the branch of its own kind.
@@ -154,6 +153,8 @@ void main()
     const vec3 v = -normalize(pos);
     const vec3 reflect_dir = normalize(reflect(pos, norm));
     vec3 color;
+    int dbg_trace = 0;                  // rt_glossy_reflections 3, 4, 7, 8: 1 a ray was traced and missed, 2 it hit
+    vec3 dbg_rt_color = vec3(0.0);
 
     if (is_flag(flag, FLAG_HAS_PBR))
     {
@@ -177,6 +178,20 @@ void main()
 #ifdef HERO_PROBES
         radiance = probe_hero(radiance, pos, norm, gloss);
 #endif
+        if (rt_glossy_reflections != 0)
+        {
+            // the traced reflection of the RT Reflection pass replaces the probe result where it hit
+            const vec4 rt_refl = textureLod(G_TAP(ll_ti_rtReflMap), tc, 0.0);
+            if (rt_glossy_reflections >= 3)
+            {
+                dbg_trace = rt_refl.a == 0.0 ? 0 : (rt_refl.a > 0.5 ? 2 : 1);
+                dbg_rt_color = rt_refl.rgb;
+            }
+            else
+            {
+                radiance = mix(radiance, rt_refl.rgb, max(rt_refl.a, 0.0));
+            }
+        }
         irradiance = adjust_irradiance(irradiance, ambocc);
 
         const vec3 f0 = vec3(0.04);
@@ -223,6 +238,19 @@ void main()
             legacyenv = probe_hero(legacyenv, pos, norm, 1.0);
         }
 #endif
+        if (rt_glossy_reflections != 0)
+        {
+            const vec4 rt_refl = textureLod(G_TAP(ll_ti_rtReflMap), tc, 0.0);
+            if (rt_glossy_reflections >= 3)
+            {
+                dbg_trace = rt_refl.a == 0.0 ? 0 : (rt_refl.a > 0.5 ? 2 : 1);
+                dbg_rt_color = rt_refl.rgb;
+            }
+            else
+            {
+                glossenv = mix(glossenv, rt_refl.rgb, max(rt_refl.a, 0.0));
+            }
+        }
         glossenv = clamp(glossenv, vec3(0.0), vec3(10.0));
         irradiance = adjust_irradiance(irradiance, ambocc);
 
@@ -270,6 +298,19 @@ void main()
         }
     }
 
+    // debug views of the traced reflection (the setting glossyrt): 3 and 4 green where the ray hit, red where it missed, 7 the colour it found, 8 the surface's own colour where it traced
+    if (rt_glossy_reflections == 3 || rt_glossy_reflections == 4)
+    {
+        color = dbg_trace == 0 ? color : (dbg_trace == 2 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0));
+    }
+    else if (rt_glossy_reflections == 7)
+    {
+        color = dbg_trace == 2 ? dbg_rt_color : color;
+    }
+    else if (rt_glossy_reflections == 8)
+    {
+        color = dbg_trace != 0 ? albedo.rgb : color;
+    }
     // (the old shader's output: linear, and a safety range so that one bad value cannot spread through the glow and the exposure)
     color *= classic_mode > 0 ? 1.1 : 1.0;
     color = mix(color, vec3(1.0), isinf(color));

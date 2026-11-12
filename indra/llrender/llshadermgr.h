@@ -115,6 +115,8 @@ public:
         REFLECTION_PROBES,                  //  "reflectionProbes"
         IRRADIANCE_PROBES,                  //  "irradianceProbes"
         HERO_PROBE,                         //  "heroProbes"
+        MIRROR_VIEW,                        //  "mirrorView" (the planar mirror's reflected view, a 2D texture: doc/vulkan/PLAN-planar-mirror.md)
+        RT_REFL_MAP,                        //  "rtReflMap" (the traced reflection of the RT Reflection pass: rgb the colour, a how much replaces the probe result, doc/vulkan/PLAN-rt-reflection-pass.md)
         CLOUD_NOISE_MAP,                    //  "cloud_noise_texture"
         CLOUD_NOISE_MAP_NEXT,               //  "cloud_noise_texture_next"
         LIGHTNORM,                          //  "lightnorm"

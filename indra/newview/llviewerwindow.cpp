@@ -6829,6 +6829,113 @@ bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubea
     return true;
 }
 
+// <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): cubeSnapshot with one view instead of a cube face. The camera is the viewer's camera reflected across the plane: position, look and up vectors
+// reflected (the camera stays right handed, so no winding flips; the image comes out mirrored left to right, which the glass undoes when it reads it), the same field of view and aspect; the viewport is the
+// size of gPipeline.mRT (the caller sets the target). What is behind the plane is cut by the mirror clip of the programs (mirror_flag, clipPlane), the near plane by the caller's near_clip.
+bool LLViewerWindow::mirrorSnapshot(const LLVector3& plane_point, const LLVector3& plane_normal, F32 near_clip, bool dynamic_render)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_APP;
+    LL_PROFILE_GPU_ZONE("mirrorSnapshot");
+    llassert(LLPipeline::sRenderDeferred);
+    llassert(!gCubeSnapshot); //assert a snapshot isn't already in progress
+
+    const U32 res_w = gPipeline.mRT->deferredScreen.getWidth();
+    const U32 res_h = gPipeline.mRT->deferredScreen.getHeight();
+    if (res_w == 0 || res_h == 0)
+    {
+        return false;
+    }
+
+    S32 old_occlusion = LLPipeline::sUseOcclusion;
+    LLPipeline::sUseOcclusion = 0;
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+
+    LLViewerCamera saved_camera = LLViewerCamera::instance();
+    glm::mat4 saved_proj = get_current_projection();
+    glm::mat4 saved_mod = get_current_modelview();
+
+    LLVector3 n = plane_normal;
+    n.normalize();
+    auto reflect_vec = [&n](const LLVector3& v) { return v - n * (2.f * (v * n)); };
+    const LLVector3 origin = camera->getOrigin();
+    const LLVector3 reflected_origin = origin - n * (2.f * ((origin - plane_point) * n));
+    const LLVector3 reflected_at = reflect_vec(camera->getAtAxis());
+    const LLVector3 reflected_up = reflect_vec(camera->getUpAxis());
+    camera->setAspect((F32)res_w / (F32)res_h);
+    camera->setOrigin(reflected_origin);
+    camera->lookDir(reflected_at, reflected_up);
+    camera->setNear(near_clip);
+
+    gPipeline.pushRenderTypeMask();
+
+    gRender.clearBuffers(ClearBits::Depth | ClearBits::Color);
+
+    U32 dynamic_render_types[] = {
+        LLPipeline::RENDER_TYPE_AVATAR,
+        LLPipeline::RENDER_TYPE_CONTROL_AV,
+        LLPipeline::RENDER_TYPE_PARTICLES
+    };
+    constexpr U32 dynamic_render_type_count = sizeof(dynamic_render_types) / sizeof(U32);
+
+    if (!dynamic_render)
+    {
+        for (int i = 0; i < dynamic_render_type_count; ++i)
+        {
+            if (gPipeline.hasRenderType(dynamic_render_types[i]))
+            {
+                gPipeline.toggleRenderType(dynamic_render_types[i]);
+            }
+        }
+    }
+
+    bool prev_draw_ui = gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI);
+    if (prev_draw_ui)
+    {
+        LLPipeline::toggleRenderDebugFeature(LLPipeline::RENDER_DEBUG_FEATURE_UI);
+    }
+
+    bool hide_hud = LLPipeline::sShowHUDAttachments;
+    if (hide_hud)
+    {
+        LLPipeline::sShowHUDAttachments = false;
+    }
+    LLRect window_rect = getWorldViewRectRaw();
+
+    mWorldViewRectRaw.set(0, (S32)res_h, (S32)res_w, 0);
+
+    gDisplaySwapBuffers = false;
+    gCubeSnapshot = true;
+    display_cube_face();
+    gCubeSnapshot = false;
+    gDisplaySwapBuffers = true;
+
+    if (!gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    {
+        if (prev_draw_ui)
+        {
+            LLPipeline::toggleRenderDebugFeature(LLPipeline::RENDER_DEBUG_FEATURE_UI);
+        }
+    }
+
+    gPipeline.popRenderTypeMask();
+
+    if (hide_hud)
+    {
+        LLPipeline::sShowHUDAttachments = true;
+    }
+
+    gPipeline.resetDrawOrders();
+    mWorldViewRectRaw = window_rect;
+
+    // restore the viewer's own camera, matrices and viewport
+    *camera = saved_camera;
+    set_current_modelview(saved_mod);
+    set_current_projection(saved_proj);
+    setup3DViewport();
+    LLPipeline::sUseOcclusion = old_occlusion;
+    return true;
+}
+
 void LLViewerWindow::destroyWindow()
 {
     if (mWindow)

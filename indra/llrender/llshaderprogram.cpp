@@ -62,6 +62,7 @@ using std::pair;
 using std::make_pair;
 using std::string;
 
+U32 LLShaderProgram::sEnvUniformEpoch = 1;      // (programs start at 0: the first bind of any program takes the environment's uniforms)
 U32 LLShaderProgram::sCurBoundShader = 0;
 LLShaderProgram* LLShaderProgram::sCurBoundShaderPtr = NULL;
 S32 LLShaderProgram::sIndexedTextureChannels = 0;
@@ -966,6 +967,7 @@ bool LLShaderProgram::createShader()
     else if (mFeatures.mIndexedTextureChannels > 0)
     { //override texture channels for indexed texture rendering
         llassert(mFeatures.mIndexedTextureChannels == LLShaderProgram::sIndexedTextureChannels); // these numbers must always match
+        mEnvUniformEpoch = sEnvUniformEpoch;       // <FS> (as in mapUniforms: a program being made takes no environment uniforms yet)
         bind();
         S32 channel_count = mFeatures.mIndexedTextureChannels;
 
@@ -1368,6 +1370,8 @@ bool LLShaderProgram::mapUniforms()
     mUniform.resize(LLShaderMgr::instance()->mReservedUniforms.size(), -1);
     mTexture.resize(LLShaderMgr::instance()->mReservedUniforms.size(), -1);
 
+    // <FS> a program being made binds here before its uniform tables exist: it must not take the environment's uniforms now (it takes them at its first bind after the next environment update)
+    mEnvUniformEpoch = sEnvUniformEpoch;
     bind();
 
     // what the program reports as active: its loose uniforms (arrays by their first element), then its samplers
@@ -1701,12 +1705,13 @@ void LLShaderProgram::bind()
         placeProfileQuery();
     }
 
-    if (mUniformsDirty)
+    if (mUniformsDirty || mEnvUniformEpoch != sEnvUniformEpoch)
     {
         const long long t_upd = LLUniCensus::sOn ? LLUniCensus::now_ns() : 0;
         const U64 calls_upd = LLUniCensus::sTotal.mCalls;
         LLShaderMgr::instance()->updateShaderUniforms(this);
         mUniformsDirty = false;
+        mEnvUniformEpoch = sEnvUniformEpoch;
         if (LLUniCensus::sOn)
         {
             ++mCensus.mUpdBinds;

@@ -43,6 +43,8 @@
 #include "llheroprobemanager.h"
 
 #include <atomic>
+#include <map>
+#include <memory>
 #include <stack>
 
 namespace LLVkBridge { struct SpotVolumeRow; }
@@ -184,14 +186,16 @@ public:
     static F32 farDistanceScale();      // the factor the far avatar rules (tiers, impostor distance, fringe pass) apply to a distance: 1 at the normal field of view, less when the camera zooms in (a zoomed in avatar is looked at closely whatever its distance)
     bool rayReconstructionActive();     // sRR and everything it needs exists (targets, program, device support, no zoomed snapshot)
     void generateRRGuides(LLRenderTarget* dst);
-    // the traced reflections' hit distance (specular hit distance guide): the soften pass leaves it in the alpha of the lit picture, this moves it to mRRHitDist and clears the alpha again
-    void extractRRHitDistance(LLRenderTarget* screen);
     void generateRRReflectionMotion(LLRenderTarget* dst);       // specular motion vectors from the hit distance: the reflected point projected with this frame's and last frame's camera
     LLRenderTarget          mRRReflMotion;  // render size RG16F
     bool                    mRRReflMotionValid = false;
-    LLRenderTarget          mRRHitDist;     // render size R16F: metres from a glossy pixel to what its reflection ray hit (0: not traced)
-    bool                    mRRHitDistPending = false;      // the soften pass of this frame writes the distance
-    bool                    mRRHitDistValid = false;        // mRRHitDist holds this frame's distances
+    // <FS> the RT Reflection pass (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md): the traced glossy reflections of a view before its lighting pass. Output 0 RGBA16F: the reflection colour and how much of it
+    // replaces the probe result (-1 traced and missed, 0 not traced); output 1 R16F: metres from a glossy pixel to what its ray hit (0: not traced), the specular hit distance guide of ray reconstruction.
+    // mRtReflMain is the main view's (render size), the other views (cube faces, the planar mirror's view) have a target each, made at their size.
+    LLRenderTarget          mRtReflMain;
+    std::map<const LLRenderTarget*, std::unique_ptr<LLRenderTarget>> mRtReflSlots;
+    LLRenderTarget*         rtReflectionTarget(const LLRenderTarget* screen);       // the pass's target for a view, made or remade at the view's size; null if it could not be made
+    bool                    mRRHitDistValid = false;        // mRtReflMain's second output holds this frame's distances
     LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F), 3 the reflection motion (RG16F)
     LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
     LLRenderTarget          mRRDenoised;    // <FS> render size RGBA16F: what ray reconstruction outputs at a one-to-one ratio ("denoise first", PLAN-dlss-nr.md section 8); the frame then takes the plain path
@@ -457,7 +461,7 @@ public:
     void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class LLForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
     void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
-    void setShadowJobFlags(bool rt_raster = false);          // J1 K6 B: sViewJobsSkipStatic / sViewJobsSkipAlpha for the render map job of the shadow pass about to be prepared (the batch and the serial pass)
+    void setShadowJobFlags(bool rt_raster = false);        // J1 K6 B: sViewJobsSkipStatic / sViewJobsSkipAlpha for the render map job of the shadow pass about to be prepared (the batch and the serial pass)
     void shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local);      // the visible groups [begin, end) of the cascade into `local` (a chunk of the render map job)
     void shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps);
     void shadowPrepSubmitBuilds(ShadowCascadePrep& prep);
@@ -980,6 +984,9 @@ public:
 
     // Auxillary render target pack scaled to the hero probe's per-face size.
     RenderTargetPack mHeroProbeRT;
+
+    // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view, at the main view's render size (allocated with LL_VK_MIRROR_PLANAR=1)
+    RenderTargetPack mMirrorViewRT;
 
     // currently used render target pack
     RenderTargetPack* mRT;

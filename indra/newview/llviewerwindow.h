@@ -396,6 +396,9 @@ public:
     bool cubeSnapshot(const LLVector3 &origin, LLCubeMapArray *cubearray, S32 index, S32 face, F32 near_clip, bool render_avatars,
                       bool customCullingPlane = false, LLPlane cullingPlane = LLPlane(LLVector3(0, 0, 0), LLVector3(0, 0, 1)));
 
+    // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): render the world from the viewer's camera reflected across the plane (point, normal) into gPipeline.mRT (set by the caller), at that target's size
+    bool mirrorSnapshot(const LLVector3& plane_point, const LLVector3& plane_normal, F32 near_clip, bool dynamic_render);
+
 
     // special implementation of simpleSnapshot for reflection maps
     bool            reflectionSnapshot(LLImageRaw* raw, S32 image_width, S32 image_height, const int num_render_passes);
