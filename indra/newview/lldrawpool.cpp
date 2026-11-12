@@ -588,69 +588,6 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
     }
 }
 
-void LLRenderPass::pushBatch(LLDrawInfo& params, bool texture, bool batch_textures)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    llassert(texture);
-
-    if (!params.mCount)
-    {
-        return;
-    }
-
-    if (LLPipeline::sShadowRender)
-    {
-        ++gShadowDrawStats.mTextured;
-    }
-
-    applyModelMatrix(params);
-
-    bool tex_setup = false;
-
-    {
-        if (batch_textures && params.mTextureList.size() > 1)
-        {
-            for (U32 i = 0; i < params.mTextureList.size(); ++i)
-            {
-                if (params.mTextureList[i].notNull())
-                {
-                    gRender.getTexUnit(i)->bindFast(params.mTextureList[i]);
-                }
-            }
-        }
-        else
-        { //not batching textures or batch has only 1 texture -- might need a texture matrix
-            if (params.mTexture.notNull())
-            {
-                gRender.getTexUnit(0)->bindFast(params.mTexture);
-                if (params.mTextureMatrix)
-                {
-                    tex_setup = true;
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*) params.mTextureMatrix->mMatrix);
-                    gPipeline.mTextureMatrixOps++;
-                }
-            }
-            else
-            {
-                gRender.getTexUnit(0)->bindWhiteFast();
-            }
-        }
-    }
-    // <FS:Beq> FIRE-34518 bugsplat access violation - place guard on unchecked mVertexBuffer access
-    if (params.mVertexBuffer == nullptr)
-    {
-        LL_WARNS() << "LLRenderPass::pushBatch: params.mVertexBuffer is nullptr. drawRange skipped." << LL_ENDL;
-        return;
-    }
-    // </FS:Beq>
-    params.mVertexBuffer->setBuffer();
-    params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
-    if (tex_setup)
-    {
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
-    }
-}
-
 bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);       // pipeline.cpp (S4 A1)
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
@@ -1651,53 +1588,6 @@ void LLShadowDrawStats::endStaticPass()
         }
     }
     mDistinctPairs += pairs.size();
-}
-
-void LLRenderPass::pushUntexturedBatch(LLDrawInfo& params)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-
-    if (!params.mCount)
-    {
-        return;
-    }
-
-    if (LLPipeline::sShadowRender)
-    {
-        LLShadowDrawStats& st = gShadowDrawStats;
-        if (params.mAvatar)
-        {
-            ++st.mRiggedUntex;
-        }
-        else
-        {
-            ++st.mStaticUntex;
-            if (st.mLastVB != params.mVertexBuffer.get())
-            {
-                ++st.mStaticVBChanges;
-                st.mLastVB = params.mVertexBuffer.get();
-            }
-            if (st.mLastMatrix != params.mModelMatrix)
-            {
-                ++st.mStaticMatrixChanges;
-                st.mLastMatrix = params.mModelMatrix;
-            }
-            st.mPassVBs.insert(params.mVertexBuffer.get());
-            st.mTable.push_back({ params.mVertexBuffer.get(), params.mStart, params.mEnd, params.mCount, params.mOffset, params.mModelMatrix });
-        }
-    }
-
-    applyModelMatrix(params);
-
-    params.mVertexBuffer->setBuffer();
-    params.mVertexBuffer->drawRange(LLRender::TRIANGLES, params.mStart, params.mEnd, params.mCount, params.mOffset);
-}
-
-// static
-bool LLRenderPass::uploadMatrixPalette(LLDrawInfo& params)
-{
-    // upload matrix palette to shader
-    return uploadMatrixPalette(params.mAvatar, params.mSkinInfo);
 }
 
 //static
