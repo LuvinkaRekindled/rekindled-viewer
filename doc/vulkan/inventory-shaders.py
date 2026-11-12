@@ -161,6 +161,25 @@ def main():
         if used_lap[n] > 0:
             r = next(l[n] for l in laps if n in l)
             lines.append('| %s | %d | %s | %s | %s |' % (n, used_lap[n], r['level'], 'native' if any(l.get(n, {}).get('native') for l in laps) else 'stock', r['files']))
+    # native coverage: the NativeCensus lines of the laps (draws that took the native program, draws of the old program that did not, by reason)
+    nat = []
+    for f in ('native-census-off.txt', 'native-census-rt.txt'):
+        fp = os.path.join(HERE, 'inventory-data', f)
+        if os.path.exists(fp):
+            nat.append([[x.strip() for x in l.split(' | ')] for l in read(fp).splitlines() if l.strip()])
+    if nat:
+        val = lambda r, i: int(r[i].split()[1])
+        n = len(nat[0])
+        uses = [sum(val(l[k], 2) for l in nat) for k in range(n)]
+        reasons = ['family_off', 'not_fit', 'rt', 'not_ready', 'outputs']
+        fb = [[sum(val(l[k], 3 + j) for l in nat) for j in range(5)] for k in range(n)]
+        lines += ['', '## Native coverage (laps: %d)' % len(nat), '',
+                  '- manifest lines: %d; made native draws in a lap: %d; never reached in a lap: %d' % (n, sum(1 for u in uses if u), sum(1 for k in range(n) if not uses[k] and not any(fb[k]))),
+                  '- draws of the old program that did not take the native one, by reason: ' + ', '.join('%s %d' % (reasons[j], sum(f[j] for f in fb)) for j in range(5)), '',
+                  '| manifest line (program) | family | native draws | ' + ' | '.join(reasons) + ' |', '|---|---|---|---|---|---|---|---|']
+        for k in sorted(range(n), key=lambda k: -sum(fb[k])):
+            if any(fb[k]):
+                lines.append('| %s | %s | %d | %s |' % (nat[0][k][0], nat[0][k][1][7:], uses[k], ' | '.join(str(x) for x in fb[k])))
     open(OUT, 'w', newline='\n').write('\n'.join(lines) + '\n')
     print('names', len(names), 'bound', len(names) - len(never), 'never', len(never), 'dead', len(dead), 'reachable/review', len(reach), 'unmapped', len(unmapped))
 

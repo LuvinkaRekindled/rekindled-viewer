@@ -127,7 +127,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | HUD PBR Opaque Shader | gHUDPBROpaqueProgram | 3 sites: indra/newview/llviewershadermgr.cpp:1949, indra/newview/llviewershadermgr.cpp:1950, indra/newview/llviewershadermgr.cpp:1952 | REACHABLE |
 | Hero Radiance Gen Shader | gHeroRadianceGenProgram | 2 sites: indra/newview/llviewershadermgr.cpp:5512, indra/newview/llviewershadermgr.cpp:5513 | REACHABLE |
 | Highlight Normals Shader | gHighlightNormalProgram | 2 sites: indra/newview/pipeline.cpp:15918, indra/newview/pipeline.cpp:15920 | REACHABLE |
-| Highlight Pull Skin Shader | pull | 113 sites: indra/llrender/llshaderprogram.cpp:1079, indra/llrender/llvertexbuffer.cpp:888, indra/llrender/llvertexbuffer.h:301, indra/llrender/llvkbridge.h:151 ... | REACHABLE |
+| Highlight Pull Skin Shader | pull | 113 sites: indra/newview/lldrawpool.cpp:499, indra/newview/lldrawpool.cpp:652, indra/newview/lldrawpool.h:427, indra/newview/lldrawpoolalpha.cpp:866 ... | REACHABLE |
 | Highlight Spec Shader | gHighlightSpecularProgram | 2 sites: indra/newview/pipeline.cpp:15925, indra/newview/pipeline.cpp:15927 | REACHABLE |
 | Impostor Shader | gImpostorProgram | 4 sites: indra/newview/lldrawpoolavatar.cpp:513, indra/newview/lldrawpoolavatar.cpp:514, indra/newview/lldrawpoolavatar.cpp:524, indra/newview/llviewershadermgr.cpp:617 | REACHABLE |
 | Legacy Gamma Correction Post Process | gLegacyPostGammaCorrectProgram | 4 sites: indra/newview/llviewershadermgr.cpp:659, indra/newview/llviewershadermgr.cpp:4414, indra/newview/llviewershadermgr.cpp:4415, indra/newview/pipeline.cpp:20851 | REACHABLE |
@@ -153,7 +153,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | No Post Tonemap Gamma Post Process | gNoPostTonemapGammaCorrectProgram | 5 sites: indra/newview/llviewershadermgr.cpp:654, indra/newview/llviewershadermgr.cpp:4477, indra/newview/llviewershadermgr.cpp:4478, indra/newview/llviewershadermgr.cpp:4479 ... | REACHABLE |
 | No Post Tonemap Post Process | gNoPostTonemapProgram | 4 sites: indra/newview/llviewershadermgr.cpp:652, indra/newview/llviewershadermgr.cpp:4445, indra/newview/llviewershadermgr.cpp:4446, indra/newview/pipeline.cpp:20803 | REACHABLE |
 | No color alpha mask Shader | gObjectAlphaMaskNoColorProgram | 2 sites: indra/newview/lldrawpoolavatar.cpp:534, indra/newview/llviewershadermgr.cpp:620 | REACHABLE |
-| Normal Debug Shader | shader | 1360 sites: indra/llrender/llpostprocess.cpp:67, indra/llrender/llpostprocess.cpp:152, indra/llrender/llrender.cpp:1019, indra/llrender/llrender.cpp:1024 ... | REACHABLE |
+| Normal Debug Shader | shader | 1360 sites: indra/newview/gltfscenemanager.cpp:324, indra/newview/gltfscenemanager.cpp:680, indra/newview/gltfscenemanager.cpp:815, indra/newview/gltfscenemanager.cpp:827 ... | REACHABLE |
 | Object Preview Shader | gObjectPreviewProgram | 8 sites: indra/newview/llfloaterimagepreview.cpp:1208, indra/newview/llfloaterimagepreview.cpp:1222, indra/newview/llmodelpreview.cpp:4550, indra/newview/llmodelpreview.cpp:4554 ... | REACHABLE |
 | Occlusion Shader | gOcclusionProgram | 0 sites:  | DEAD |
 | PBR Glow Shader | ? | no global found (name built in code) | REVIEW |
@@ -179,7 +179,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | SMAA Neighborhood Blending (Ultra) | ? | no global found (name built in code) | REVIEW |
 | Screen Space Reflection Post | gPostScreenSpaceReflectionProgram | 0 sites:  | DEAD |
 | Skinned  PBR Glow Shader | gPBRGlowProgram | 2 sites: indra/newview/llviewershadermgr.cpp:1931, indra/newview/llviewershadermgr.cpp:1933 | REACHABLE |
-| Skinned Debug Shader | gDebugProgram | 48 sites: indra/llrender/llvkcontext.cpp:37, indra/llrender/llvkcontext.cpp:185, indra/llrender/llvkcontext.cpp:189, indra/llrender/llvkrenderer.cpp:969 ... | REACHABLE |
+| Skinned Debug Shader | gDebugProgram | 48 sites: indra/newview/fsmaniprotatejoint.cpp:96, indra/newview/fsmaniprotatejoint.cpp:134, indra/newview/fsmaniprotatejoint.cpp:536, indra/newview/gltfscenemanager.cpp:324 ... | REACHABLE |
 | Skinned Deferred Alpha Impostor Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Alpha Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Bump Shader | gDeferredBumpProgram | 4 sites: indra/newview/llviewershadermgr.cpp:203, indra/newview/llviewershadermgr.cpp:661, indra/newview/llviewershadermgr.cpp:1774, indra/newview/llviewershadermgr.cpp:1775 | REACHABLE |
@@ -214,7 +214,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | Skinned Material Shader 29 | ? | no global found (name built in code) | REVIEW |
 | Skinned Material Shader 30 | ? | no global found (name built in code) | REVIEW |
 | Skinned Material Shader 31 | ? | no global found (name built in code) | REVIEW |
-| Skinned Normal Debug Shader | shader | 1360 sites: indra/llrender/llpostprocess.cpp:67, indra/llrender/llpostprocess.cpp:152, indra/llrender/llrender.cpp:1019, indra/llrender/llrender.cpp:1024 ... | REACHABLE |
+| Skinned Normal Debug Shader | shader | 1360 sites: indra/newview/gltfscenemanager.cpp:324, indra/newview/gltfscenemanager.cpp:680, indra/newview/gltfscenemanager.cpp:815, indra/newview/gltfscenemanager.cpp:827 ... | REACHABLE |
 | Skinned Object Preview Shader | gObjectPreviewProgram | 8 sites: indra/newview/llfloaterimagepreview.cpp:1208, indra/newview/llfloaterimagepreview.cpp:1222, indra/newview/llmodelpreview.cpp:4550, indra/newview/llmodelpreview.cpp:4554 ... | REACHABLE |
 | Skinned Occlusion Shader | gOcclusionProgram | 0 sites:  | DEAD |
 | Snapshot Frame Post | gPostSnapshotFrameProgram | 0 sites:  | DEAD |
@@ -447,3 +447,34 @@ Busiest first. Binds are the two laps added (RT off + RT on). Group = the first 
 | UI Shader | 145941 | 2 | stock | interface/uiV.glsl;interface/uiF.glsl |
 | Water Haze Shader | 15580 | 3 | stock | deferred/waterHazeV.glsl;deferred/waterHazeF.glsl |
 | Water Shader | 15580 | 3 | stock | environment/waterV.glsl;environment/waterF.glsl |
+
+## Native coverage (laps: 2)
+
+- manifest lines: 116; made native draws in a lap: 55; never reached in a lap: 60
+- draws of the old program that did not take the native one, by reason: family_off 0, not_fit 0, rt 820732, not_ready 0, outputs 0
+
+| manifest line (program) | family | native draws | family_off | not_fit | rt | not_ready | outputs |
+|---|---|---|---|---|---|---|---|
+| Deferred Alpha Uber Material Pull Shader | alpha | 874617 | 0 | 0 | 630177 | 0 | 0 |
+| Water Haze Shader | post | 81734 | 0 | 0 | 59133 | 0 | 0 |
+| Deferred Alpha Uber Material Pull Skin Shader | alpha | 51708 | 0 | 0 | 36521 | 0 | 0 |
+| Deferred PBR Alpha Pull Skin Shader | alpha | 11090 | 0 | 0 | 7674 | 0 | 0 |
+| Haze Shader | post | 8830 | 0 | 0 | 6382 | 0 | 0 |
+| Material Pull Shader 2 | gbuffer | 8464 | 0 | 0 | 6030 | 0 | 0 |
+| Material Pull Shader 12 | gbuffer | 8122 | 0 | 0 | 5799 | 0 | 0 |
+| Material Pull Shader 4 | gbuffer | 7694 | 0 | 0 | 5523 | 0 | 0 |
+| Material Pull Shader 8 | gbuffer | 7760 | 0 | 0 | 5522 | 0 | 0 |
+| Material Pull Shader 10 | gbuffer | 7560 | 0 | 0 | 5399 | 0 | 0 |
+| Material Pull Shader 0 | gbuffer | 7375 | 0 | 0 | 5332 | 0 | 0 |
+| Material Pull Shader 14 | gbuffer | 7238 | 0 | 0 | 5206 | 0 | 0 |
+| Deferred Sun Shader | sun | 0 | 0 | 0 | 4263 | 0 | 0 |
+| Material Pull Skin Shader 8 | gbuffer | 5882 | 0 | 0 | 4252 | 0 | 0 |
+| Material Pull Skin Shader 10 | gbuffer | 5879 | 0 | 0 | 4252 | 0 | 0 |
+| Material Pull Shader 6 | gbuffer | 5837 | 0 | 0 | 4217 | 0 | 0 |
+| Material Pull Skin Shader 12 | gbuffer | 5811 | 0 | 0 | 4194 | 0 | 0 |
+| Material Pull Skin Shader 4 | gbuffer | 5801 | 0 | 0 | 4184 | 0 | 0 |
+| Material Pull Skin Shader 14 | gbuffer | 5801 | 0 | 0 | 4184 | 0 | 0 |
+| Material Pull Skin Shader 2 | gbuffer | 5744 | 0 | 0 | 4151 | 0 | 0 |
+| Material Pull Skin Shader 6 | gbuffer | 5744 | 0 | 0 | 4151 | 0 | 0 |
+| Material Pull Skin Shader 0 | gbuffer | 5691 | 0 | 0 | 4015 | 0 | 0 |
+| Deferred PBR Alpha Pull Shader | alpha | 37 | 0 | 0 | 171 | 0 | 0 |
