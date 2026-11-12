@@ -721,7 +721,7 @@
      reference="DkGray_66" />
     <color
      name="ChatNameColor"
-     reference="AccentColor" />
+     value="0.50455 0.83139 0.54796 1.0" />
     <color
      name="ObjectChatColor"
      value="0.699 0.899 0.699 1" />
