@@ -10322,7 +10322,7 @@ const char* const kFragmentCauseNames[FC_NUM] = { "entry count", "fallback draws
 
 struct FragmentStats
 {
-    U64 mPasses = 0, mGroups = 0, mReused = 0, mBuilt = 0, mBufferChanged = 0, mRetains = 0, mReleases = 0, mEntries = 0, mFallback = 0;
+    U64 mPasses = 0, mGroups = 0, mReused = 0, mBuilt = 0, mBufferChanged = 0, mBuiltEmpty = 0, mBufferChangedEmpty = 0, mRetains = 0, mReleases = 0, mEntries = 0, mFallback = 0;
     U64 mChecked = 0, mMismatch[FC_NUM] = {}, mViewsChecked = 0, mViewCount = 0, mViewContent = 0, mViewFallback = 0;
     U64 mResPasses = 0, mResRetains = 0, mResPassed = 0, mResBuilder = 0, mResMissing = 0;
     U32 mLastReport = 0;
@@ -12227,6 +12227,22 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
             return f;
         }
         ++sFragStats.mBufferChanged;
+        if (group->mDrawMap.empty())
+        {
+            // the draw map is emptied once the fragment is built (stage 2): a fragment whose buffers changed cannot be made again from it. The group is rebuilt (next frame); this frame it has an empty fragment.
+            ++sFragStats.mBufferChangedEmpty;
+            static int warned = 0;
+            if (warned++ < 8)
+            {
+                LL_WARNS("VkScene") << "a fragment's vertex buffer ids changed under its serial and the group's draw map is empty: the group is rebuilt" << LL_ENDL;
+            }
+            group->setState(LLSpatialGroup::GEOM_DIRTY);
+            gPipeline.markRebuild(group);
+        }
+    }
+    if (group->mDrawMap.empty())
+    {
+        ++sFragStats.mBuiltEmpty;       // (a fragment made from an empty draw map: must stay 0 but for the case above)
     }
     ll_scene_fragment_free(group->mSceneFragment);
     f = group->mSceneFragment = new LLSceneFragment();
@@ -12252,6 +12268,13 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
         {
             scene_alpha_register(f);
         }
+    }
+    // the fragment is the group's truth now: the draw infos are not needed again (2026-11-12, stage 2: the draw map is the hand over between the producers and this build, not a store)
+    group->mDrawMap.clear();
+    if (sFragStats.mBuilt % 20000 == 0)
+    {
+        LL_INFOS("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
+            << LLSpatialGroup::sGuardFragmentOnly << " guard calls for a fragment alone, " << LLBuilderGuard::sQuiesces.load() << " quiesces of the async pool" << LL_ENDL;
     }
     return f;
 }
