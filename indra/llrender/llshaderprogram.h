@@ -390,6 +390,8 @@ public:
     static U64 sTotalSamplesDrawn;
     U32 mBinds;
     static U32 sTotalBinds;
+    U32 mCensusBinds = 0;                       // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the bind() calls since the program was created
+    static void dumpProgramCensus();            // <FS> LL_VK_PROGRAM_CENSUS=1: one log line (tag ProgramCensus) for every loaded program: name, binds, shader level, files, native files
 
     // this pointer should be set to whichever shader represents this shader's rigged variant
     LLShaderProgram* mRiggedVariant = nullptr;

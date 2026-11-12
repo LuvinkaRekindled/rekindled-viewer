@@ -949,6 +949,7 @@ void LLViewerShaderMgr::setShaders()
 
 void LLViewerShaderMgr::unloadShaders()
 {
+    LLShaderProgram::dumpProgramCensus();       // <FS> LL_VK_PROGRAM_CENSUS=1: what was loaded and bound (before the programs forget their files)
     while (!LLShaderProgram::sInstances.empty())
     {
         LLShaderProgram* shader = *(LLShaderProgram::sInstances.begin());

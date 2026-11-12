@@ -884,6 +884,7 @@ bool LLShaderProgram::createShader()
     unloadInternal();
 
     sInstances.insert(this);
+    mCensusBinds = 0;
 
     //reloading, reset matrix hash values
     for (U32 i = 0; i < LLRender::NUM_MATRIX_MODES; ++i)
@@ -1001,6 +1002,8 @@ bool LLShaderProgram::createShader()
         llassert(mActiveTextureChannels <= 16);
         unbind();
     }
+
+    mCensusBinds = 0;       // <FS> the binds a program makes while it is made (uniform mapping, texture channels) are not use
 
 #if defined(LL_VULKAN)
     if (success)
@@ -1681,10 +1684,36 @@ std::string LLShaderProgram::vkUniformAt(U32 cls, U32 offset) const
     return n ? *n : std::string("?");
 }
 
+// <FS> shader cleanup (stage 4): what the viewer loaded and what it bound in this run (LL_VK_PROGRAM_CENSUS=1). Called before the programs are unloaded (a shader reload or the end of the run).
+// The program's own name, the files it lists (the stock GLSL paths below shaders/class<N>/, libraries included), the native files that stand in for it, its shader level and how often it was bound.
+void LLShaderProgram::dumpProgramCensus()
+{
+    static const bool on = getenv("LL_VK_PROGRAM_CENSUS") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    U32 count = 0;
+    for (const LLShaderProgram* p : sInstances)
+    {
+        std::string files;
+        for (const auto& f : p->mShaderFiles)
+        {
+            files += files.empty() ? "" : ";";
+            files += f.first;
+        }
+        LL_INFOS("ProgramCensus") << "program | " << (p->mName.empty() ? std::string("(unnamed)") : p->mName) << " | loaded " << (p->mProgramObject != 0 ? 1 : 0) << " | binds " << p->mCensusBinds
+            << " | level " << p->mShaderLevel << " | files " << files << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << LL_ENDL;
+        ++count;
+    }
+    LL_INFOS("ProgramCensus") << "programs loaded " << count << LL_ENDL;
+}
+
 void LLShaderProgram::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SHADER_BIND);
+    ++mCensusBinds;
     if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_bind(); ++mCensus.mBinds; }
 
     llassert_always(mProgramObject != 0);
