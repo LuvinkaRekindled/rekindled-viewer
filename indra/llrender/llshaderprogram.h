@@ -329,6 +329,11 @@ public:
     bool mVertexPull = false;
     S32 mShaderGroup; // see LLShaderProgram::eGroup
     bool mUniformsDirty;
+    // <FS> (mirror 2026-11-11) the environment's uniforms (sky, water, the eye space water and mirror planes) are rebuilt by LLEnvironment::update, which bumps sEnvUniformEpoch; a program takes them at its first bind after that.
+    // This replaces a list of programs the environment marked dirty: a program missing from the list (the opaque scene table programs: diffuse, PBR, tree, bump...) never got mirror_flag and clipPlane, so a hero probe face
+    // drew the world behind the mirror's plane (terrain, the wall's outside, trees) in front of the room.
+    static U32 sEnvUniformEpoch;
+    U32 mEnvUniformEpoch = 0;
     LLShaderFeatures mFeatures;
     std::vector< std::pair< std::string, ShaderStage > > mShaderFiles;
     // a native program (llvknative.h): written for Vulkan from scratch, read from the native shader directory, no counterpart among the viewer's translated programs. Set the fragment file (and the vertex file)

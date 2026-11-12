@@ -243,6 +243,7 @@ extern LLShaderProgram         gNativeSunHalfProgram;           // <FS> native o
 extern LLShaderProgram         gNativeLightUpsampleProgram;     // <FS> native only: the depth aware upsample of the half resolution lightmap
 extern LLShaderProgram         gDeferredAvatarProgram;
 extern LLShaderProgram         gDeferredSoftenProgram;
+extern LLShaderProgram         gDeferredRtReflectionProgram;     // <FS> the traced glossy reflection as a pass of its own (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md)
 extern LLShaderProgram         gDeferredShadowProgram;
 extern LLShaderProgram         gDeferredShadowCubeProgram;
 extern LLShaderProgram         gDeferredShadowPullProgram;   // <FS> render packets: reads vertices and indices by address (Vulkan mirror only)
@@ -267,7 +268,6 @@ extern bool                    gTreePullReady;
 LLShaderProgram* ll_pull_twin(LLShaderProgram* src);
 LLShaderProgram* ll_pull_or(LLShaderProgram* src);          // the twin when there is one, else src
 bool ll_is_pull_twin(const LLShaderProgram* program);       // a pull twin (what is bound decides how a draw is made)
-void ll_pull_twins_mark_dirty();
 extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
 extern bool                    gTerrainPbrPullReady;
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
@@ -371,7 +371,6 @@ extern LLShaderProgram         gObjectVelocityPullProgram;
 extern LLShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
 extern LLShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
 extern LLShaderProgram         gRRGuidesProgram;
-extern LLShaderProgram         gRRHitDistProgram;
 extern LLShaderProgram         gNRRimLiftProgram;             // <FS> DLSS-NR: the rim lift after the neural renderer (nrRimLiftF.glsl)
 extern LLShaderProgram         gRRReflMotionProgram;
 extern LLShaderProgram         gAvatarVelocityDebugProgram;

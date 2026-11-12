@@ -162,6 +162,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
     uint ll_ti_cubearray_heroProbes;
+    uint ll_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
 #endif
 #endif
 #ifdef ALPHA_MAT

@@ -734,6 +734,7 @@ vec3 sampleProbeAmbient(vec3 pos, vec3 dir, vec3 amblit)
 
 uniform vec4 clipPlane;
 uniform samplerCubeArray   heroProbes;
+uniform sampler2D          mirrorView;      // <FS> the planar mirror's reflected view (heroMipCount < 0: read at the pixel's own position, mirrored left to right)
 
 void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
 {
@@ -765,6 +766,13 @@ void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
     clipDist = clamp(clipDist * falloffMult, 0, 1);
     w = clamp(w * falloffMult * clipDist, 0, 1);
     w = mix(0, w, clamp(glossiness - 0.75, 0, 1) * 4); // We only generate a quarter of the mips for the hero probes.  Linearly interpolate between normal probes and hero probes based upon glossiness.
+    if (heroMipCount < 0)
+    {
+        // <FS> the planar mirror: the reflected view was rendered from the camera mirrored across the plane with the same projection, so the glass pixel at screen position (u, v) shows what that view has at (1 - u, v)
+        const vec2 view_size = vec2(textureSize(mirrorView, 0));
+        glossenv = mix(glossenv, textureLod(mirrorView, vec2(1.0 - gl_FragCoord.x / view_size.x, gl_FragCoord.y / view_size.y), 0.0).xyz, w);
+        return;
+    }
     glossenv = mix(glossenv, textureLod(heroProbes, vec4(env_mat * refnormpersp, 0), (1.0-glossiness)*heroMipCount).xyz, w);
 }
 

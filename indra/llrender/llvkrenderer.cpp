@@ -54,6 +54,12 @@ std::string pipeline_cache_path()
     return path;
 }
 
+// programs whose pipelines the world does not wait for (the draw is dropped until the pipeline is built, and what it adds is optional): their pre-warm builds are not counted by the start-up wait
+bool is_optional_program(const std::string& name)
+{
+    return name == "Deferred RT Reflection Shader";
+}
+
 // the header every Vulkan pipeline cache starts with (spec: header size, version, vendor, device, UUID)
 bool pipeline_cache_header_matches(const std::vector<U8>& data)
 {
@@ -951,6 +957,34 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
 
     gi.flags = flags;
     gDebugProgram = getName().c_str();      // (validation messages about this pipeline name its program)
+    // <FS> compile time baseline (PLAN-rt-reflection-pass.md step 0): LL_VK_PIPEDIAG=1 logs, for every pipeline the driver needed more than a second for, a hash of what it was given
+    // and the size of the driver's pipeline cache before and after (a cache hit leaves the size as it was; a miss adds the pipeline)
+    static const bool pipe_diag = []() { const char* e = getenv("LL_VK_PIPEDIAG"); return e && e[0] == '1'; }();
+    if (pipe_diag)
+    {
+        auto cache_size = [&]() { size_t sz = 0; vkGetPipelineCacheData(ctx.getDevice(), r.mPipelineCache, &sz, nullptr); return sz; };
+        const size_t before = cache_size();
+        const auto t0 = std::chrono::steady_clock::now();
+        const VkResult res = vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (ms > 1000.0)
+        {
+            auto fnv = [](const void* d, size_t n, U64 h) { const U8* p = (const U8*)d; for (size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; } return h; };
+            U64 h[3] = { 1469598103934665603ull, 1469598103934665603ull, 1469598103934665603ull };
+            for (U32 s = 0; s < 3; ++s)
+            {
+                if (!mInfo.mSpirv[s].empty()) h[s] = fnv(mInfo.mSpirv[s].data(), mInfo.mSpirv[s].size() * 4, h[s]);
+            }
+            U64 hs = fnv(spec_data, mInfo.mSpec.size() * 4, 1469598103934665603ull);
+            U64 hk = fnv(key.mColor, sizeof(key.mColor), 1469598103934665603ull);
+            hk = fnv(&key.mDepth, sizeof(key.mDepth), hk);
+            hk = fnv(&key.mColorCount, sizeof(key.mColorCount), hk);
+            hk = fnv(&key.mTopology, sizeof(key.mTopology), hk);
+            LL_INFOS("VkPipeline") << "PIPEDIAG " << mName << " took " << ms << " ms; vert " << std::hex << h[0] << " frag " << h[1] << " geom " << h[2] << " spec " << hs << " key " << hk << std::dec
+                                   << " layout " << (void*)r.mPipelineLayout << " cache before " << before << " after " << cache_size() << " bytes" << LL_ENDL;
+        }
+        return res;
+    }
     return vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
 }
 
@@ -960,7 +994,11 @@ void Program::requestBuild(const PipelineKey& key, bool prewarm)
     mJobs.fetch_add(1, std::memory_order_acq_rel);
     if (prewarm)
     {
-        gSyncStats.mPipePrewarmQueued.fetch_add(1, std::memory_order_relaxed);
+        // <FS> the RT Reflection pass is optional: the world draws without it (the surfaces keep the probe result) until it is built, so the start-up does not wait for it (PLAN-rt-reflection-pass.md step 3)
+        if (!is_optional_program(mName))
+        {
+            gSyncStats.mPipePrewarmQueued.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     else
     {
@@ -1051,7 +1089,10 @@ void Program::drainCompletedPipelines()
         Renderer::instance().mPipelinesSinceSave++;
         if (d.mPrewarm)
         {
-            gSyncStats.mPipePrewarmDone.fetch_add(1, std::memory_order_relaxed);
+            if (!is_optional_program(p.mName))
+            {
+                gSyncStats.mPipePrewarmDone.fetch_add(1, std::memory_order_relaxed);
+            }
             gSyncStats.mPipePrewarmMicros.fetch_add(d.mMicros, std::memory_order_relaxed);
             if (d.mMicros > 1000000)
             {

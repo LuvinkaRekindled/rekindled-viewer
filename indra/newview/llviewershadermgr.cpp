@@ -195,14 +195,6 @@ bool ll_is_pull_twin(const LLShaderProgram* program)
     return false;
 }
 
-void ll_pull_twins_mark_dirty()
-{
-    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
-    {
-        sPullTwins[k].mUniformsDirty = true;
-    }
-}
-
 static void make_pull_twins()
 {
     LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
@@ -264,6 +256,7 @@ LLShaderProgram            gDeferredBlurLightProgram;
 LLShaderProgram            gNativeSunHalfProgram;
 LLShaderProgram            gNativeLightUpsampleProgram;
 LLShaderProgram            gDeferredSoftenProgram;
+LLShaderProgram            gDeferredRtReflectionProgram;
 LLShaderProgram            gDeferredShadowProgram;
 LLShaderProgram            gDeferredSkinnedShadowProgram;
 LLShaderProgram            gDeferredShadowCubeProgram;
@@ -402,7 +395,6 @@ LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion
 LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
-LLShaderProgram            gRRHitDistProgram;              // <FS> DLSS ray reconstruction: the hit distance of the traced reflections out of the alpha of the lit picture
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
 LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
 LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
@@ -634,6 +626,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gHazeProgram);
     mShaderList.push_back(&gHazeWaterProgram);
     mShaderList.push_back(&gDeferredSoftenProgram);
+    mShaderList.push_back(&gDeferredRtReflectionProgram);
     mShaderList.push_back(&gDeferredAlphaProgram);
     mShaderList.push_back(&gHUDAlphaProgram);
     mShaderList.push_back(&gDeferredAlphaImpostorProgram);
@@ -1514,6 +1507,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNativeSunHalfProgram.unload();
         gNativeLightUpsampleProgram.unload();
         gDeferredSoftenProgram.unload();
+        gDeferredRtReflectionProgram.unload();
         gDeferredShadowProgram.unload();
         gDeferredSkinnedShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
@@ -1641,7 +1635,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRtShadowPrepProgram.unload();
         gRRGuidesProgram.unload();
         gRRReflMotionProgram.unload();
-        gRRHitDistProgram.unload();
         gNRRimLiftProgram.unload();
         gAvatarVelocityDebugProgram.unload();
         gRtMaterialDebugProgram.unload();
@@ -3643,7 +3636,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSoftenProgram.mFeatures.hasGamma = true;
         gDeferredSoftenProgram.mFeatures.isDeferred = true;
         gDeferredSoftenProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredSoftenProgram.mFeatures.hasShadows = use_sun_shadow;
+        gDeferredSoftenProgram.mFeatures.hasShadows = false;      // <FS> the lighting pass reads the lightmap only; shadowUtil.glsl (the ray scene declarations) stays out so the ray traced variants of this program, and the native stand-in refusing them, are gone
         gDeferredSoftenProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
         gDeferredSoftenProgram.clearPermutations();
@@ -3656,10 +3649,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (use_sun_shadow)
         {
             gDeferredSoftenProgram.addPermutation("HAS_SUN_SHADOW", "1");
-            if (rt_reflections_possible())
-            {
-                gDeferredSoftenProgram.addPermutation("LL_RT_REFLECTIONS", "1");        // glossy surfaces trace their reflection (softenLightF.glsl)
-            }
         }
 
         if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
@@ -3669,6 +3658,32 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
 
         success = gDeferredSoftenProgram.createShader();
+        llassert(success);
+    }
+
+    if (success && use_sun_shadow && rt_reflections_possible())
+    {
+        // <FS> the traced glossy reflection (rtReflectionF.glsl): the code the lighting pass used to hold. The same libraries as the lighting pass, its own program and pipeline: the lighting pass
+        // compiles without the ray queries, this one is built in the background (doc/vulkan/PLAN-rt-reflection-pass.md)
+        gDeferredRtReflectionProgram.mName = "Deferred RT Reflection Shader";
+        gDeferredRtReflectionProgram.mShaderFiles.clear();
+        gDeferredRtReflectionProgram.mFeatures.hasSrgb = true;
+        gDeferredRtReflectionProgram.mFeatures.calculatesAtmospherics = true;
+        gDeferredRtReflectionProgram.mFeatures.hasAtmospherics = true;
+        gDeferredRtReflectionProgram.mFeatures.hasGamma = true;
+        gDeferredRtReflectionProgram.mFeatures.isDeferred = true;
+        gDeferredRtReflectionProgram.mFeatures.hasFullGBuffer = true;
+        gDeferredRtReflectionProgram.mFeatures.hasShadows = true;
+        gDeferredRtReflectionProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
+
+        gDeferredRtReflectionProgram.clearPermutations();
+        add_common_permutations(&gDeferredRtReflectionProgram);
+        gDeferredRtReflectionProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
+        gDeferredRtReflectionProgram.mShaderFiles.push_back(make_pair("deferred/rtReflectionF.glsl", ShaderStage::Fragment));
+        gDeferredRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredRtReflectionProgram.addPermutation("HAS_SUN_SHADOW", "1");
+        gDeferredRtReflectionProgram.addPermutation("LL_RT_REFLECTIONS", "1");
+        success = gDeferredRtReflectionProgram.createShader();
         llassert(success);
     }
 
@@ -4328,17 +4343,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gRRReflMotionProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the ray reconstruction reflection motion program did not compile: no reflection motion vectors" << LL_ENDL;
-        }
-
-        gRRHitDistProgram.mName = "Ray Reconstruction Hit Distance";
-        gRRHitDistProgram.mShaderFiles.clear();
-        gRRHitDistProgram.clearPermutations();
-        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gRRHitDistProgram.mShaderFiles.push_back(make_pair("deferred/rrHitDistF.glsl", ShaderStage::Fragment));
-        gRRHitDistProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gRRHitDistProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the ray reconstruction hit distance program did not compile: no hit distance guide" << LL_ENDL;
         }
 
         gNRRimLiftProgram.mName = "DLSS-NR Rim Lift";

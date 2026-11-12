@@ -110,10 +110,14 @@ void LLDrawPoolSimple::renderDeferred(S32 pass)
     LLRenderState::BlendScope blend(false);
 
     // <FS> J1 K6 A3: the static and the rigged draws, each as one draw record of the scene table
-    gDeferredDiffusePullProgram.bind();
-    pushGeometryPackets(LLRenderPass::PASS_SIMPLE);
+    // (a program that was not made, as in the Low graphics set after a crash, draws nothing: binding it is an assert that ends the viewer)
+    if (gDeferredDiffusePullProgram.mProgramObject != 0)
+    {
+        gDeferredDiffusePullProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_SIMPLE);
+    }
 
-    if (ll_rigged_packets_enabled())
+    if (ll_rigged_packets_enabled() && gDeferredDiffusePullSkinProgram.mProgramObject != 0)
     {
         gDeferredDiffusePullSkinProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_SIMPLE_RIGGED, true);

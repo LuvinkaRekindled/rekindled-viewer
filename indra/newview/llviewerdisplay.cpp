@@ -894,16 +894,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     if (!gDisconnected && !LLApp::isExiting())
     {
-        // Render mirrors and associated hero probes before we render the rest of the scene.
-        // This ensures the scene state in the hero probes are exactly the same as the rest of the scene before we render it.
-        if (gPipeline.RenderMirrors && !gSnapshot)
-        {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update hero probes");
-            LL_PROFILE_GPU_ZONE("hero manager")
-            { LL_CPU_ZONE("hero: update"); gPipeline.mHeroProbeManager.update(); }
-            { LL_CPU_ZONE("hero: renderProbes"); gPipeline.mHeroProbeManager.renderProbes(); }
-        }
-
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 1");
         LLAppViewer::instance()->pingMainloopTimeout("Display:Update");
         if (gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_HUD))
@@ -922,6 +912,23 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
             // update all the sky/atmospheric/water settings
             LLEnvironment::instance().update(&camera); // <FS:Ansariel> Factor out calls to getInstance
+        }
+
+        // Render mirrors and associated hero probes before we render the rest of the scene.
+        // This ensures the scene state in the hero probes are exactly the same as the rest of the scene before we render it.
+        // <FS> (planar mirror, doc/vulkan/PLAN-planar-mirror.md step 4) after the camera and the environment are updated for this frame, still before any scene update: the reflected view is made from this frame's
+        // camera (it ran before display_update_camera and used the camera of the frame before: a mirror shows a lag when the camera moves)
+        if (gPipeline.RenderMirrors && !gSnapshot)
+        {
+            LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update hero probes");
+            LL_PROFILE_GPU_ZONE("hero manager")
+            { LL_CPU_ZONE("hero: update"); gPipeline.mHeroProbeManager.update(); }
+            { LL_CPU_ZONE("hero: renderProbes"); gPipeline.mHeroProbeManager.renderProbes(); }
+            if (gPipeline.mHeroProbeManager.viewRenderedThisFrame())
+            {   // the mirror's view left its camera, matrices, viewport and the environment's eye space planes (the water and mirror planes follow the modelview of the last update) behind: the main view's again
+                { LL_CPU_ZONE("display: display_update_camera (after the mirror)"); display_update_camera(); }
+                LLEnvironment::instance().update(&camera);
+            }
         }
 
         // *TODO: merge these two methods

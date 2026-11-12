@@ -231,6 +231,13 @@ vec3 probe_hero(vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
     }
     w = clamp(w * falloff * clip_dist, 0.0, 1.0);
     w = mix(0.0, w, clamp(glossiness - 0.75, 0.0, 1.0) * 4.0);       // only a quarter of the mips are made for the hero probes: blend from the normal probes up to them
+    if (heroMipCount < 0)
+    {
+        // the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view was rendered from the camera mirrored across the plane with the same projection, so the glass pixel at screen position (u, v)
+        // shows what that view has at (1 - u, v); the target has the size of the screen target this pixel is in
+        const vec2 view_size = vec2(textureSize(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_mirrorView))], 0));
+        return mix(glossenv, textureLod(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_mirrorView))], vec2(1.0 - gl_FragCoord.x / view_size.x, gl_FragCoord.y / view_size.y), 0.0).xyz, w);
+    }
     return mix(glossenv, textureLod(ll_tblcubearray[nonuniformEXT(LL_HM(ll_ti_cubearray_heroProbes))], vec4(env_mat * reflected, 0.0), (1.0 - glossiness) * float(heroMipCount)).xyz, w);
 }
 #endif

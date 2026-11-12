@@ -349,6 +349,7 @@ void LLHeroProbeManager::update()
 void LLHeroProbeManager::renderProbes()
 {
     ++sHero.mRenderCalls;
+    mViewRendered = false;
     if (!LLPipeline::RenderMirrors || !LLPipeline::sReflectionProbesEnabled || gTeleportDisplay ||
         LLStartUp::getStartupState() < STATE_STARTED)
     {
@@ -359,8 +360,9 @@ void LLHeroProbeManager::renderProbes()
         return;
     }
 
-    static LLCachedControl<S32> sDetail(gSavedSettings, "RenderHeroReflectionProbeDetail", -1);
-    static LLCachedControl<S32> sLevel(gSavedSettings, "RenderHeroReflectionProbeLevel", 3);
+    // <FS> (mirror 2026-11-11) the hero probe follows the general reflection detail setting (1 = static + dynamic: avatars, animated objects and particles are in the faces);
+    // the settings it read before (RenderHeroReflectionProbeDetail, ...Level) exist in no settings file, so `dynamic` was always false and no avatar ever reached a mirror
+    static LLCachedControl<S32> sDetail(gSavedSettings, "RenderReflectionProbeDetail", 1);
     static LLCachedControl<S32> sUpdateRate(gSavedSettings, "RenderHeroProbeUpdateRate", 0);
 
     F32 near_clip = 0.01f;
@@ -402,15 +404,32 @@ void LLHeroProbeManager::renderProbes()
             LL_PROFILE_ZONE_NUM(rate);
 
             bool dynamic = mNearestHero->getReflectionProbeIsDynamic() && sDetail() > 0;
-            for (U32 i = 0; i < 6; ++i)
+            // <FS> (mirror 2026-11-11) the faces are rendered from the mirrored camera, behind the mirror's plane, and everything between that camera and the plane is clipped: the near plane can sit near the glass.
+            // With 0.01 the depth buffer resolved about 0.7 mm at the avatar's 11 m: a thin blended layer hugging a surface (the pink shell over the metal limbs) lost its depth test everywhere but at grazing edges.
+            // Every point of the kept half space is at least the plane distance from the camera and, in a face's 45 degree frustum, at least plane distance / sqrt(3) along the face's axis: half the distance is safe for all six.
+            F32 face_near = near_clip;
             {
-                if ((gFrameCount % rate) == (i % rate))
-                { // update 6/rate faces per frame
-                    LL_PROFILE_ZONE_NUM(i);
-                    updateProbeFace(mProbes[0], i, dynamic, near_clip);
+                const LLVector3 origin(mProbes[0]->mOrigin);
+                face_near = llmax(near_clip, 0.5f * fabsf((origin - mMirrorPosition) * mMirrorNormal));
+            }
+            if (ll_mirror_planar())
+            {
+                // the planar mirror: one reflected view at the main view's size every frame; the glass reads it (heroMipCount < 0), the cube is not rendered
+                updateMirrorView(dynamic, face_near);
+            }
+            else
+            {
+                for (U32 i = 0; i < 6; ++i)
+                {
+                    if ((gFrameCount % rate) == (i % rate))
+                    { // update 6/rate faces per frame
+                        LL_PROFILE_ZONE_NUM(i);
+                        updateProbeFace(mProbes[0], i, dynamic, face_near);
+                    }
                 }
             }
-            { LL_CPU_ZONE("hero: generateRadiance"); generateRadiance(mProbes[0]); }
+            // <FS> (mirror strobe hunt 2026-11-11) no radiance pass for the hero probe any more: each face's mip chain goes straight into the face's layer of the hero cube (updateProbeFace),
+            // nothing samples the cube array while it is written, and every level of every layer holds data
         }
 
         mRenderingMirror = false;
@@ -444,15 +463,14 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
     // hacky hot-swap of camera specific render targets
     gPipeline.mRT = &gPipeline.mHeroProbeRT;
+    mViewRendered = true;
 
     { LL_CPU_ZONE("hero: face render (scene)"); probe->update(mRenderTarget.getWidth(), face, is_dynamic, near_clip); }
 
     gPipeline.mRT = &gPipeline.mMainRT;
 
-    S32 sourceIdx = mReflectionProbeCount;
-
-    // Unlike the reflectionmap manager, all probes are considered "realtime" for hero probes.
-    sourceIdx += 1;
+    // <FS> the face's mip chain goes into the face's own layer of the hero cube (the layer the lighting samples), not a scratch cube that a radiance pass filters
+    const S32 destIdx = probe->mCubeIndex;
 
     gRender.setColorMask(true, true);
     LLRenderState::DepthScope depth(false, false);
@@ -540,7 +558,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
                 LL_PROFILE_GPU_ZONE("hero probe mip copy");
                 mTexture->bind(0);
 
-                gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, mip, 0, 0, destIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
 
                 mTexture->unbind();
             }
@@ -554,71 +572,32 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     }
 }
 
-// Separate out radiance generation as a separate stage.
-// This is to better enable independent control over how we generate radiance vs. having it coupled with processing the final face of the probe.
-// Useful when we may not always be rendering a full set of faces of the probe.
-void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
+bool ll_mirror_planar()
+{
+    // on by default since 2026-11-11 (the user: "looks good"); LL_VK_MIRROR_PLANAR=0 goes back to the cube faces, whose code stays for as long as the planar mirror has not proven itself
+    static const bool on = []() { const char* e = getenv("LL_VK_MIRROR_PLANAR"); return !e || atoi(e) != 0; }();
+    return on;
+}
+
+// <FS> the planar mirror, step 1 (doc/vulkan/PLAN-planar-mirror.md): the world seen from the viewer's camera reflected across the mirror's plane, at the main view's size, into mMirrorViewRT.
+// The glass reads it (heroMipCount < 0); the cube faces are the fallback (LL_VK_MIRROR_PLANAR=0)
+void LLHeroProbeManager::updateMirrorView(bool is_dynamic, F32 near_clip)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
-    S32 sourceIdx = mReflectionProbeCount;
-
-    // Unlike the reflectionmap manager, all probes are considered "realtime" for hero probes.
-    sourceIdx += 1;
+    LL_PROFILE_GPU_ZONE("mirror view");
+    LLRenderTarget& view_rt = gPipeline.mMirrorViewRT.screen;
+    if (!view_rt.isComplete())
     {
-        RenderPassScope pass(mMipChain[0]);
-        static LLStaticHashedString sSourceIdx("sourceIdx");
-
-        {
-            // generate radiance map (even if this is not the irradiance map, we need the mip chain for the irradiance map)
-            gHeroRadianceGenProgram.bind();
-            mVertexBuffer->setBuffer();
-
-            S32 channel = gHeroRadianceGenProgram.enableTexture(LLShaderMgr::REFLECTION_PROBES, LLTexUnit::TT_CUBE_MAP_ARRAY);
-            mTexture->bind(channel);
-            gHeroRadianceGenProgram.uniform1i(sSourceIdx, sourceIdx);
-            gHeroRadianceGenProgram.uniform1f(LLShaderMgr::REFLECTION_PROBE_MAX_LOD, mMaxProbeLOD);
-            gHeroRadianceGenProgram.uniform1f(LLShaderMgr::REFLECTION_PROBE_STRENGTH, mHeroProbeStrength);
-
-            U32 res = mMipChain[0].getWidth();
-
-            for (int i = 0; i < mMipChain.size() / 4; ++i)
-            {
-                LL_PROFILE_GPU_ZONE("hero probe radiance gen");
-                static LLStaticHashedString sMipLevel("mipLevel");
-                static LLStaticHashedString sRoughness("roughness");
-                static LLStaticHashedString sWidth("u_width");
-                static LLStaticHashedString sStrength("probe_strength");
-
-                gHeroRadianceGenProgram.uniform1f(sRoughness, (F32) i / (F32) (mMipChain.size() - 1));
-                gHeroRadianceGenProgram.uniform1f(sMipLevel, (F32)i);
-                gHeroRadianceGenProgram.uniform1i(sWidth, mProbeResolution);
-                gHeroRadianceGenProgram.uniform1f(sStrength, 1);
-
-                for (int cf = 0; cf < 6; ++cf)
-                {  // for each cube face
-                    LLCoordFrame frame;
-                    frame.lookAt(LLVector3(0, 0, 0), LLCubeMapArray::sClipToCubeLookVecs[cf], LLCubeMapArray::sClipToCubeUpVecs[cf]);
-
-                    F32 mat[16];
-                    frame.getOpenGLRotation(mat);
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
-
-                    mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
-
-                    gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
-                }
-
-                if (i != mMipChain.size() - 1)
-                {
-                    res /= 2;
-                    gRender.setViewport(0, 0, res, res);
-                }
-            }
-
-            gHeroRadianceGenProgram.unbind();
-        }
-
+        return;
     }
+    // (the ray scene names the casters of a probe pass under its number: the cube's face 5 is the least used one; the cube goes in step 7)
+    struct ProbePassScope { S32 mPrev; explicit ProbePassScope(S32 pass) : mPrev(LLPipeline::sRtProbePass) { LLPipeline::sRtProbePass = pass; } ~ProbePassScope() { LLPipeline::sRtProbePass = mPrev; } } probe_pass_scope(12);
+
+    gPipeline.mRT = &gPipeline.mMirrorViewRT;
+    mViewRendered = true;
+    gViewerWindow->mirrorSnapshot(mMirrorPosition, mMirrorNormal, near_clip, is_dynamic);
+
+    gPipeline.mRT = &gPipeline.mMainRT;
 }
 
 void LLHeroProbeManager::updateUniforms()
@@ -661,7 +640,8 @@ void LLHeroProbeManager::updateUniforms()
     }
 
     llassert(mMipChain.size() <= size_t(S32_MAX));
-    mHeroData.heroMipCount = S32(mMipChain.size());
+    // <FS> the planar mirror: a negative mip count tells the shaders to read mirrorView at the pixel's own position instead of the cube (no change to the uniform block)
+    mHeroData.heroMipCount = ll_mirror_planar() ? -1 : S32(mMipChain.size());
 }
 
 void LLHeroProbeManager::renderDebug()

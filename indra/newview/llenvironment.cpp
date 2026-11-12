@@ -1805,59 +1805,9 @@ void LLEnvironment::update(const LLViewerCamera * cam)
 
     updateSettingsUniforms();
 
-    LLViewerShaderMgr::shader_iter shaders_iter, end_shaders;
-    end_shaders = LLViewerShaderMgr::instance()->endShaders();
-    for (shaders_iter = LLViewerShaderMgr::instance()->beginShaders(); shaders_iter != end_shaders; ++shaders_iter)
-    {
-        shaders_iter->mUniformsDirty = true;
-        if (shaders_iter->mRiggedVariant)
-        {
-            shaders_iter->mRiggedVariant->mUniformsDirty = true;
-        }
-
-        for (auto& variant : shaders_iter->mGLTFVariants)
-        {
-            variant.mUniformsDirty = true;
-        }
-    }
-
-    // <FS> S5a: the alpha pull programs are not on the shader manager's list; they need the sky / atmosphere uniforms (sun and ambient colour) like the programs they stand in for
-    gDeferredAlphaPullProgram.mUniformsDirty = true;
-    gDeferredFullbrightAlphaPullProgram.mUniformsDirty = true;
-    gDeferredAlphaUberPullProgram.mUniformsDirty = true;        // (item D1)
-    gDeferredAlphaUberPullSkinProgram.mUniformsDirty = true;
-    gDeferredAlphaUberMatPullProgram.mUniformsDirty = true;     // (item D2)
-    gDeferredAlphaUberMatPullSkinProgram.mUniformsDirty = true;
-    gDeferredFullbrightPullProgram.mUniformsDirty = true;       // (S6 X1)
-    gDeferredFullbrightPullSkinProgram.mUniformsDirty = true;
-    gDeferredFullbrightShinyPullProgram.mUniformsDirty = true;      // (J1 K4)
-    gDeferredFullbrightShinyPullSkinProgram.mUniformsDirty = true;
-    gDeferredFullbrightAlphaMaskPullProgram.mUniformsDirty = true;      // (S6 X3)
-    gDeferredFullbrightAlphaMaskPullSkinProgram.mUniformsDirty = true;
-    gDeferredPBRAlphaPullProgram.mUniformsDirty = true;
-    gDeferredAlphaPullSkinProgram.mUniformsDirty = true;
-    gHUDFullbrightAlphaPullProgram.mUniformsDirty = true;       // (S5f F4)
-    gHUDPBRAlphaPullProgram.mUniformsDirty = true;
-    gDeferredAlphaImpostorPullProgram.mUniformsDirty = true;
-    gDeferredAlphaImpostorPullSkinProgram.mUniformsDirty = true;
-    gDeferredFullbrightMaskPullProgram.mUniformsDirty = true;
-    gDeferredTerrainPullProgram.mUniformsDirty = true;      // (S6.6a)
-    ll_pull_twins_mark_dirty();                              // (S6.6 water, haze, exclusion mask)
-    for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
-    {
-        gDeferredPBRTerrainPullProgram[paint_type].mUniformsDirty = true;
-    }
-    gDeferredFullbrightMaskPullSkinProgram.mUniformsDirty = true;
-    gDeferredFullbrightAlphaPullSkinProgram.mUniformsDirty = true;
-    gDeferredPBRAlphaPullSkinProgram.mUniformsDirty = true;
-    for (LLShaderProgram& skin : gDeferredMaterialPullSkinProgram)
-    {
-        skin.mUniformsDirty = true;     // (S5d: the rigged blend variants are drawn by the alpha pass)
-    }
-    for (LLShaderProgram& pull : gDeferredMaterialPullProgram)
-    {
-        pull.mUniformsDirty = true;     // (S5b: the blend variants are drawn by the alpha pass, which needs the sun and ambient colours)
-    }
+    // <FS> every program takes the environment's uniforms at its first bind after this update (LLShaderProgram::bind compares its epoch). This replaces the loop over the shader manager's list and a hand written list of the
+    // scene table's pull programs: the programs the lists missed (diffuse, PBR opaque, tree, bump, diffuse alpha mask pull) never got mirror_flag and clipPlane, so a hero probe face did not clip them.
+    ++LLShaderProgram::sEnvUniformEpoch;
 }
 
 void LLEnvironment::updateCloudScroll()
