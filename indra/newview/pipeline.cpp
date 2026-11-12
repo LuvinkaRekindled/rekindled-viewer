@@ -163,7 +163,6 @@
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
-void ll_vis_census_items(LLCamera& camera);        // S7 B0 (below)
 #ifndef LL_WINDOWS
 #define A_GCC 1
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -3120,6 +3119,8 @@ static struct LightLoopCensus
     U64 mCalls = 0, mUpdated = 0, mScans = 0, mScanned = 0, mDropped = 0, mInserted = 0;
 } sLightLoopCensus;
 
+static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // the draws and triangles of the group's draw map, from its current fragment (below, after LLSceneFragment)
+
 void LLPipeline::sceneStateCensus()
 {
     static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
@@ -3222,14 +3223,7 @@ void LLPipeline::sceneStateCensus()
         const LLVector4a* b = group->getBounds();
         const bool in = camera.AABBInFrustum(b[0], b[1]) != 0;
         U64 group_infos = 0, group_tris = 0;
-        for (const auto& kv : group->mDrawMap)
-        {
-            for (const LLDrawInfo* info : kv.second)
-            {
-                ++group_infos;
-                group_tris += info->mCount / 3;
-            }
-        }
+        ll_group_draw_counts(group, group_infos, group_tris);        // (from the fragment: no draw info is read)
         const bool has = group_infos > 0;
         built += has;
         in_frustum += in;
@@ -5408,10 +5402,6 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     {
         LLCullShadow::send(camera);         // <FS> S7 C1: the flat group table, shadow mode
     }
-    if (LLVisCensus::sBoxes)
-    {
-        ll_vis_census_items(camera);        // <FS> S7 B0: the table items' boxes ride in the same batch
-    }
     {
         LL_CPU_ZONE("occlusion: Hi-Z send");
         LL_PROFILE_GPU_ZONE("hiz");
@@ -7532,90 +7522,9 @@ static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCa
 }
 
 
-// <FS> S1 phase 0 (LL_VK_SCENE_STATS=1): how much of what the main view draws is the same draw info set as on the previous frame (the hit rate a retained record would get), and how much of it
-// could be retained at all (no rigged avatar, no texture matrix). Counters only: nothing here changes what is drawn.
-namespace
-{
-struct SceneStats
-{
-    U64 mFrames = 0, mGroups = 0, mGroupsHit = 0, mInfos = 0, mInfosHit = 0, mRetainable = 0, mRetainableHit = 0, mRigged = 0, mTexMatrix = 0, mAlphaInfos = 0, mCleared = 0, mTris = 0, mTrisHit = 0;
-    U32 mFirstFrame = 0;
-};
-SceneStats sSceneStats;
-bool scene_stats_on()
-{
-    static const bool on = getenv("LL_VK_SCENE_STATS") != nullptr;
-    return on;
-}
-void scene_stats_group(LLSpatialGroup* group)
-{
-    SceneStats& s = sSceneStats;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (group->mSceneSeenFrame == frame)
-    {
-        return;         // this frame's main view sorted twice (the early sort and the refill): count a group once a frame
-    }
-    group->mSceneSeenFrame = frame;
-    const bool hit = group->mSceneSeenSerial == group->mDrawMapSerial;
-    group->mSceneSeenSerial = group->mDrawMapSerial;
-    bool any = false;
-    for (auto& entry : group->mDrawMap)
-    {
-        const bool alpha = entry.first == LLRenderPass::PASS_ALPHA || entry.first == LLRenderPass::PASS_ALPHA_RIGGED;
-        for (LLDrawInfo* info : entry.second)
-        {
-            any = true;
-            ++s.mInfos;
-            s.mTris += info->mCount / 3;
-            if (hit) { ++s.mInfosHit; s.mTrisHit += info->mCount / 3; }
-            if (alpha) { ++s.mAlphaInfos; }
-            const bool rigged = info->mAvatar.notNull();
-            const bool texmat = info->mTextureMatrix != nullptr;
-            if (rigged) { ++s.mRigged; }
-            if (texmat) { ++s.mTexMatrix; }
-            if (!rigged && !texmat && !alpha)
-            {
-                ++s.mRetainable;
-                if (hit) { ++s.mRetainableHit; }
-            }
-        }
-    }
-    if (any)
-    {
-        ++s.mGroups;
-        if (hit) { ++s.mGroupsHit; }
-    }
-}
-void scene_stats_frame()
-{
-    SceneStats& s = sSceneStats;
-    static U32 last_frame = ~0u;
-    const U32 frame = (U32)LLFrameTimer::getFrameCount();
-    if (frame == last_frame)
-    {
-        return;
-    }
-    last_frame = frame;
-    s.mCleared += LLSpatialGroup::sDrawMapsCleared;
-    LLSpatialGroup::sDrawMapsCleared = 0;
-    ++s.mFrames;
-    if (s.mFrames >= 600)
-    {
-        const double n = (double)s.mFrames;
-        LL_INFOS("VkScene") << "main view per frame over " << s.mFrames << " frames: " << s.mGroups / n << " groups with draw infos (" << 100.0 * s.mGroupsHit / std::max<U64>(1, s.mGroups) << "% unchanged since the previous frame), "
-                            << s.mInfos / n << " draw infos (" << 100.0 * s.mInfosHit / std::max<U64>(1, s.mInfos) << "% in unchanged groups), " << s.mTris / n << " triangles ("
-                            << 100.0 * s.mTrisHit / std::max<U64>(1, s.mTris) << "% in unchanged groups) | retainable (no rigged avatar, no texture matrix, not alpha): " << s.mRetainable / n << " infos ("
-                            << 100.0 * s.mRetainable / std::max<U64>(1, s.mInfos) << "% of all, " << 100.0 * s.mRetainableHit / std::max<U64>(1, s.mRetainable) << "% of them unchanged) | rigged " << s.mRigged / n
-                            << ", with a texture matrix " << s.mTexMatrix / n << ", alpha " << s.mAlphaInfos / n << " | draw maps cleared (group rebuilds) " << s.mCleared / n << " per frame" << LL_ENDL;
-        s = SceneStats();
-    }
-}
-}
-
 static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
-static void vis_census_alpha(LLSpatialGroup* group);        // S7 C0 (below, after LLSceneFragment)
 static U32 ll_group_draw_tris(const LLSpatialGroup* group);        // the triangles of the group's draws, from its current fragment (below, after LLSceneFragment)
 
 // <FS> far avatar tier of the main view. An avatar that is far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) and whose rigged attachments add up to more than the triangle
@@ -8008,27 +7917,6 @@ static bool render_map_inert_type(U32 type)
         || type == LLRenderPass::PASS_INVISI_SHINY || type == LLRenderPass::PASS_INVISI_SHINY_RIGGED;
 }
 
-// what the render map would have taken of a group the all-served shortcut skips (LL_VK_R2_VERIFY): the draw infos of the types this view draws that are neither the table's, nor alpha, nor inert; 0 when the group's
-// flags are current
-static U64 r2_left_over(const LLSpatialGroup* group, const LLPipeline::View& view)
-{
-    U64 left = 0;
-    for (const auto& kv : group->mDrawMap)
-    {
-        if (kv.second.empty() || !view.hasRenderType(kv.first) || kv.first == LLRenderPass::PASS_ALPHA || kv.first == LLRenderPass::PASS_ALPHA_RIGGED || render_map_inert_type(kv.first))
-        {
-            continue;
-        }
-        const int tn = ll_scene_geo_type_number(kv.first);
-        if (tn >= 0 && (group->mGeoServedMask & (1ull << tn)))
-        {
-            continue;
-        }
-        left += kv.second.size();
-    }
-    return left;
-}
-
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8043,7 +7931,6 @@ void LLPipeline::postSort(LLCamera &camera)
         bool mOn; U64 mT0;
         ~VisPostEnd() { if (mOn) { LLVisCensus::sPostTicks += LLVisCensus::now() - mT0; if (++LLVisCensus::sPostCalls % 600 == 0) { LLVisCensus::report(); } } }
     } vis_post_end = { vis_post, vis_post ? LLVisCensus::now() : 0 };
-    const bool scene_stats = scene_stats_on() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot;
 
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG
@@ -8111,7 +7998,6 @@ void LLPipeline::postSort(LLCamera &camera)
         }
     }
     const bool r2_whole_groups = geo_elide;
-    static const bool r2_verify = getenv("LL_VK_R2_VERIFY") != nullptr;       // (J1 K6 S5a: counts the draw infos a skipped group still holds that the render map would have taken)
     if (geo_elide)
     {
         sCull->mGeoElided = true;
@@ -8123,7 +8009,7 @@ void LLPipeline::postSort(LLCamera &camera)
         static const U32 min_groups = 256;
         const U32 chunk_size = main_map_chunk();
         const U32 n_groups = sCull->getVisibleGroupsSize();
-        if (chunk_size && n_groups >= min_groups && !vis_post && !scene_stats && !cascade_cull_active && !LLGpuZoneTimer::isActive()
+        if (chunk_size && n_groups >= min_groups && !vis_post && !cascade_cull_active && !LLGpuZoneTimer::isActive()
             && view.isMainWorldSort())
         {
             LLForkJoinPool* pool = LLForkJoinPool::shared();
@@ -8149,7 +8035,7 @@ void LLPipeline::postSort(LLCamera &camera)
                     }
                 }
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
-                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; U64 mVerifyLeft = 0; };
+                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
                 std::vector<MapChunk> chunks;
                 for (U32 b = 0; b < n_groups; b += chunk_size)
@@ -8199,7 +8085,6 @@ void LLPipeline::postSort(LLCamera &camera)
                                     if (group->mGeoAlphaBits & 1) { local.pushAlphaGroup(group); }            // (the distance is updated by the main thread when the lists are joined)
                                     if (group->mGeoAlphaBits & 2) { local.pushRiggedAlphaGroup(group); }
                                 }
-                                if (r2_verify) { chunk.mVerifyLeft += r2_left_over(group, view); }
                                 continue;
                             }
                         }
@@ -8256,14 +8141,6 @@ void LLPipeline::postSort(LLCamera &camera)
                         sGeoElideWhole += chunk.mElideWhole;
                         sGeoElideTris += chunk.mElideTris;
                         indices += chunk.mIndices;
-                        if (chunk.mVerifyLeft)
-                        {
-                            static U64 reported = 0;
-                            if (reported++ < 16)
-                            {
-                                LL_WARNS("VkScene") << "R2 verify: " << chunk.mVerifyLeft << " draw infos of a skipped all-served group are not the table's and not inert (the draw map changed since the fragment was attached?)" << LL_ENDL;
-                            }
-                        }
                     }
                     addTrianglesDrawn(indices);
                 }
@@ -8335,27 +8212,6 @@ void LLPipeline::postSort(LLCamera &camera)
                     group->mChurnSerial = group->mDrawMapSerial;
                 }
             }
-            const U64 served_mask = geo_elide ? group->mGeoServedMask : 0;
-            for (const auto& kv : group->mDrawMap)
-            {
-                if (!hasRenderType(kv.first) || kv.first < LLDrawPool::NUM_POOL_TYPES || kv.first - LLDrawPool::NUM_POOL_TYPES >= (U32)LLVisCensus::PASSES)
-                {
-                    continue;
-                }
-                const U32 idx = kv.first - LLDrawPool::NUM_POOL_TYPES;
-                U64 tris = 0;
-                for (const LLDrawInfo* info : kv.second)
-                {
-                    tris += info->mCount / 3;
-                }
-                const int tn = ll_scene_geo_type_number(kv.first);
-                const bool served = tn >= 0 && (served_mask & (1ull << tn));
-                (served ? LLVisCensus::sPassServedInfos : LLVisCensus::sPassListedInfos)[idx] += kv.second.size();
-                (served ? LLVisCensus::sPassServedTris : LLVisCensus::sPassListedTris)[idx] += tris;
-                LLVisCensus::sPartInfos[part] += kv.second.size();
-                LLVisCensus::sPartTris[part] += tris;
-            }
-            vis_census_alpha(group);
         }
         if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
         {
@@ -8373,22 +8229,6 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 // R2: nothing of this group is left for the render map (only alpha, which the alpha group lists take): the draw map is not walked
                 ++sGeoElideWhole;
-                if (scene_stats)
-                {
-                    scene_stats_group(group);
-                }
-                if (r2_verify)
-                {
-                    const U64 left = r2_left_over(group, view);
-                    if (left)
-                    {
-                        static U64 reported = 0;
-                        if (reported++ < 16)
-                        {
-                            LL_WARNS("VkScene") << "R2 verify: " << left << " draw infos of a skipped all-served group are not the table's and not inert" << LL_ENDL;
-                        }
-                    }
-                }
                 if (group->mGeoAlphaBits && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                 {
                     if (group->mGeoAlphaBits & 1)
@@ -8421,11 +8261,6 @@ void LLPipeline::postSort(LLCamera &camera)
         }
 
         // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the statistic of the triangles drawn is counted above from the fragment)
-        if (scene_stats)
-        {
-            scene_stats_group(group);
-        }
-
         if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Collect Alpha groups");
@@ -8462,11 +8297,6 @@ void LLPipeline::postSort(LLCamera &camera)
         }
     }
     if (vis_post) { LLVisCensus::sPostTicksMap += LLVisCensus::now() - vis_r0; }
-    }
-
-    if (scene_stats)
-    {
-        scene_stats_frame();
     }
 
     /*bool use_transform_feedback = gTransformPositionProgram.mProgramObject && !mMeshDirtyGroup.empty();
@@ -10356,6 +10186,7 @@ struct LLSceneFragment
     U64 mGeoServedMask = 0;                             // G4: see LLSpatialGroup
     U64 mGeoTypeMask = 0;                               // the table types (bit = item type number) the fragment has at least one SERVED item of (mGeoServedMask: only the types all of whose draws are served)
     U32 mDrawTris = 0;                                  // the triangles of all the draws of the group's draw map when the fragment was made (far_avatar_tier: no draw info is read to count them)
+    U32 mDrawCount = 0;                                 // the number of those draws
     const LLMatrix4* mFirstModel = nullptr;             // the model matrix of the first draw of the draw map (pushBufferVerts, a debug view)
     bool mHasDraw = false;                              // the draw map holds a draw
     U32 mGeoServedTris = 0;
@@ -11859,11 +11690,22 @@ static U32 ll_group_draw_tris(const LLSpatialGroup* group)
     return (f && f->mWalkValid && f->mSerial == group->mDrawMapSerial) ? f->mDrawTris : 0u;
 }
 
+static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris)
+{
+    const LLSceneFragment* f = group->mSceneFragment;
+    if (f && f->mWalkValid && f->mSerial == group->mDrawMapSerial)
+    {
+        draws = f->mDrawCount;
+        tris = f->mDrawTris;
+    }
+}
+
 static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& f)
 {
     f.mWalkValid = true;
     f.mWalkNonEmpty = !group->mDrawMap.empty();
     f.mDrawTris = 0;
+    f.mDrawCount = 0;
     f.mHasDraw = !group->mDrawMap.empty() && !group->mDrawMap.begin()->second.empty();
     f.mFirstModel = f.mHasDraw ? (*group->mDrawMap.begin()->second.begin())->mModelMatrix : nullptr;
     for (const auto& kv : group->mDrawMap)
@@ -11871,6 +11713,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
         for (const LLDrawInfo* info : kv.second)
         {
             f.mDrawTris += info->mCount / 3;
+            ++f.mDrawCount;
         }
     }
     f.mWalkAlphaBits = 0;
@@ -12482,143 +12325,8 @@ static const char* const kVisPassNames[] =
 static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) == (size_t)((int)LLRenderPass::NUM_RENDER_TYPES - (int)LLDrawPool::NUM_POOL_TYPES), "pass names");
 static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) <= (size_t)LLVisCensus::PASSES, "pass names");
 
-// alpha draws of a visible group: all of them, and the ones its fragment holds as table items
-static void vis_census_alpha(LLSpatialGroup* group)
-{
-    auto it = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
-    if (it == group->mDrawMap.end())
-    {
-        return;
-    }
-    ++LLVisCensus::sAlphaGroups;
-    LLVisCensus::sAlphaItemsTotal += it->second.size();
-    LLSceneFragment* f = group->mSceneFragment;
-    if (f && f->mSerial == group->mDrawMapSerial)
-    {
-        LLVisCensus::sAlphaServedItems += f->mAlphaSet[0].mItems.size();
-    }
-}
-
 // B0: the boxes of the table items of this frame's visible groups (the groups postSort keeps: not occluded, not auto-hidden), served items only (what the table draws). ALL of them go to the Hi-Z batch of
 // the frame (LLHiz::addItem), the frustum test is the worker's (bits 17 / 19 of its verdict); the CPU's own frustum verdict travels along for comparison. Tallied when the verdicts come back (LLHiz::apply).
-void ll_vis_census_items(LLCamera& camera)
-{
-    if (!LLVisCensus::sBoxes || !sCull)
-    {
-        return;
-    }
-    ++LLVisCensus::sBFrames;
-    U32 sent = 0;
-    static std::unordered_set<const LLVOAvatar*> seen_avatars;
-    seen_avatars.clear();
-    for (LLCullResult::sg_iterator iter = sCull->beginVisibleGroups(); iter != sCull->endVisibleGroups(); ++iter)
-    {
-        LLSpatialGroup* group = *iter;
-        if (group->isDead() || !group->mGeoHandle || !group->mSceneFragment || group->mSceneFragment->mSerial != group->mDrawMapSerial)
-        {
-            continue;
-        }
-        if ((LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) ||
-            (LLPipeline::RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > LLPipeline::RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
-        {
-            continue;
-        }
-        const LLVector4a* gb = group->getBounds();
-        const S32 gres = camera.AABBInFrustumNoFarClip(gb[0], gb[1]);
-        ++(gres == 2 ? LLVisCensus::sBGroupsFull : LLVisCensus::sBGroupsPartial);
-        LLSceneFragment* f = group->mSceneFragment;
-        auto visit = [&](const LLSceneFragment::GeoItem& item, U32 type, bool rigged)
-        {
-            const LLDrawInfo* info = item.mInfo;
-            if (!info || type >= (U32)LLVisCensus::ITEM_TYPES)
-            {
-                return;
-            }
-            const U32 tris = info->mCount / 3;
-            ++LLVisCensus::sBItems[type];
-            LLVisCensus::sBTris[type] += tris;
-            LLVector4a lo, hi;
-            bool boxed = false;
-            if (rigged)
-            {
-                // a rigged draw is bounded by its avatar's animated extents (agent space), padded by 25 cm for what the skin and attachments add
-                const LLVOAvatar* wearer = info->mAvatar.get();
-                if (wearer)
-                {
-                    const LLVector3* e = wearer->getLastAnimExtents();
-                    const F32 pad = 0.25f;
-                    boxed = e[0].mV[0] < e[1].mV[0] && e[0].mV[1] < e[1].mV[1] && e[0].mV[2] < e[1].mV[2] && fabsf(e[0].mV[0]) < 1.0e7f && fabsf(e[1].mV[0]) < 1.0e7f;
-                    lo.set(e[0].mV[0] - pad, e[0].mV[1] - pad, e[0].mV[2] - pad, 0.f);
-                    hi.set(e[1].mV[0] + pad, e[1].mV[1] + pad, e[1].mV[2] + pad, 0.f);
-                    if (boxed && seen_avatars.insert(wearer).second)
-                    {
-                        ++LLVisCensus::sBAvatars;
-                    }
-                    if (boxed)
-                    {
-                        LLVisCensus::sBAvatarTris += tris;
-                    }
-                }
-            }
-            else if (info->mHasExtents)
-            {
-                lo = info->mExtents[0];
-                hi = info->mExtents[1];
-                boxed = true;
-            }
-            if (!boxed)
-            {
-                ++LLVisCensus::sBUnbounded[type];
-                return;
-            }
-            if (!rigged && info->mModelMatrix && !(rt_matrix_id(info->mModelMatrix) & 0x80000000u))
-            {
-                // an active drawable's faces are in its own space: the box of the eight corners under its matrix
-                const F32* a = lo.getF32ptr();
-                const F32* b = hi.getF32ptr();
-                LLVector3 mn(1.0e30f, 1.0e30f, 1.0e30f), mx(-1.0e30f, -1.0e30f, -1.0e30f);
-                for (int k = 0; k < 8; ++k)
-                {
-                    const LLVector3 c = LLVector3((k & 1) ? b[0] : a[0], (k & 2) ? b[1] : a[1], (k & 4) ? b[2] : a[2]) * *info->mModelMatrix;
-                    for (int d = 0; d < 3; ++d)
-                    {
-                        mn.mV[d] = llmin(mn.mV[d], c.mV[d]);
-                        mx.mV[d] = llmax(mx.mV[d], c.mV[d]);
-                    }
-                }
-                lo.load3(mn.mV);
-                hi.load3(mx.mV);
-            }
-            LLVector4a center, half;
-            center.setAdd(lo, hi);
-            center.mul(0.5f);
-            half.setSub(hi, lo);
-            half.mul(0.5f);
-            if (sent >= 24000)
-            {
-                ++LLVisCensus::sBNoRoom;
-                return;
-            }
-            ++sent;
-            LLHiz::addItem(center, half[0], half[1], half[2], (U8)type, tris, camera.AABBInFrustumNoFarClip(center, half) == 0);
-        };
-        for (const LLSceneFragment::GeoItem& item : f->mGeo)
-        {
-            if (item.mServed)
-            {
-                visit(item, item.mType, item.mType >= kGeoTypeCount);
-            }
-        }
-        for (int set = 0; set < 2; ++set)
-        {
-            for (const LLSceneFragment::GeoItem& item : f->mAlphaSet[set].mItems)
-            {
-                visit(item, kGeoAlphaItemType + set, set == 1);
-            }
-        }
-    }
-}
-
 void LLVisCensus::report()
 {
     using namespace LLVisCensus;
@@ -26872,46 +26580,6 @@ struct ShadowPassCensus
 };
 static ShadowPassCensus sShadowCensus[7];
 
-static void shadow_pass_census(LLCullResult& result, U32 pass)
-{
-    static const bool on = getenv("LL_VK_SCENECENSUS") != nullptr;
-    if (!on)
-    {
-        return;
-    }
-    ShadowPassCensus& c = sShadowCensus[std::min<U32>(pass, 6)];
-    ++c.mCalls;
-    const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
-    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i)
-    {
-        LLSpatialGroup* group = *i;
-        if (!group || group->isDead())
-        {
-            continue;
-        }
-        const bool in_world = group->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame - 1;
-        U64 infos = 0, tris = 0;
-        for (const auto& kv : group->mDrawMap)
-        {
-            for (const LLDrawInfo* info : kv.second)
-            {
-                ++infos;
-                tris += info->mCount / 3;
-            }
-        }
-        ++c.mGroups;
-        c.mBuilt += infos > 0;
-        c.mInfos += infos;
-        c.mTris += tris;
-        if (in_world)
-        {
-            ++c.mGroupsInWorld;
-            c.mInfosInWorld += infos;
-            c.mTrisInWorld += tris;
-        }
-    }
-}
-
 // <FS> LL_VK_SCENECENSUS=1: the shadow prep jobs (doc/vulkan/MAINTHREAD-candidates.md, A). One cull job and one render map job per cascade run on the shared fork-join pool; the cascades rotate, so a frame usually has a small job and a big one.
 // Per run: the wall time of the fork-join, the time of each job (by cascade), the sum and the longest. If the longest job is most of the wall time, finer jobs are what shortens it.
 struct PrepJobCensus
@@ -27165,7 +26833,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
     }
 
-    shadow_pass_census(result, shadow_pass_index());       // <FS>
 
     //generate shadow map
     LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
