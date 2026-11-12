@@ -9021,12 +9021,9 @@ struct ShadowPrepTimes
 // R0 / R1a (doc/vulkan/S-retire-views-design.md): what the render map job of a cascade pushes, by kind, and the draw infos it leaves out when the cascade's static lists are dead
 struct ViewJobsStats
 {
-    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mStatic{0}, mRiggedStatic{0}, mAlpha{0}, mOther{0}, mSkippedStatic{0}, mSkippedAlpha{0}, mWouldSkipAlpha{0}, mPlanSkipped{0};
+    std::atomic<U64> mJobs{0}, mGroups{0}, mResidentGroups{0}, mRiggedStatic{0};
 };
 ViewJobsStats sViewJobs;
-// C5 J3 census (LL_VK_RMCENSUS=1): the draw infos the cascades' render map job still pushes, by pass type (and how many are an avatar's)
-static const bool sCascadeTypeCensus = getenv("LL_VK_RMCENSUS") != nullptr;
-static std::atomic<U64> sCascadeTypePushed[128], sCascadeTypeAvatar[128];
 
 // J1 K6 step 3d: LL_VK_SHADOW_SERIAL_RT (default ON since 2026-11-12, 0 = the old way): the raster shadow passes of the ray tracing modes that do not draw the sun cascades (modes 1, 4, 5: a reflection probe's faces, the spot and projector maps)
 // take their casters from the groups' fragments like the passes of RT off do (the render map job runs for the serial pass; the fragments carry the raster form of the glTF and texture matrix casters too, mRaster / mRasterTex)
@@ -9176,22 +9173,8 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             if (jobs)
             {
                 const double n = (double)jobs;
-                LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment; draw infos pushed: %.1f static (%.1f left out), %.1f rigged static, %.1f alpha, %.1f other",
-                    (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mStatic.exchange(0) / n, sViewJobs.mSkippedStatic.exchange(0) / n,
-                    sViewJobs.mRiggedStatic.exchange(0) / n, sViewJobs.mAlpha.exchange(0) / n, sViewJobs.mOther.exchange(0) / n) << LL_ENDL;
-                if (sCascadeTypeCensus)
-                {
-                    std::string types;
-                    const double per_job = n;
-                    for (U32 t = 0; t < 128; ++t)
-                    {
-                        const U64 pushed = sCascadeTypePushed[t].exchange(0), avatar_pushed = sCascadeTypeAvatar[t].exchange(0);
-                        if (pushed) { types += llformat(" | type %u: %.1f (%.1f an avatar's)", t, (double)pushed / per_job, (double)avatar_pushed / per_job); }
-                    }
-                    LL_INFOS("RMCensus") << "cascade render map job, draw infos pushed per job by pass type:" << types << LL_ENDL;
-                }
-                LL_INFOS("ShadowPrep") << llformat("render map jobs: alpha draw infos left out %.1f a job (the worker holds them), %.1f a job that would be left out (count-only mode), %.1f groups a job skipped by their answer",
-                    sViewJobs.mSkippedAlpha.exchange(0) / n, sViewJobs.mWouldSkipAlpha.exchange(0) / n, sViewJobs.mPlanSkipped.exchange(0) / n) << LL_ENDL;
+                LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment, %.1f rigged sources named",
+                    (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mRiggedStatic.exchange(0) / n) << LL_ENDL;
             }
         }
         t = ShadowPrepTimes();
@@ -16237,6 +16220,8 @@ static bool alpha_info_resident(const LLDrawInfo& info, const LLSpatialGroup* gr
     return info.mAlphaInFragment && fragment && fragment->mSerial == group->mDrawMapSerial && (ray ? fragment->mAlphaSent : fragment->mAlphaResSent);
 }
 
+static void shadow_caster_dropped(const char* kind, size_t count);
+
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -16245,26 +16230,13 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     LLCullResult& result = *prep.mResult;
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
-    // R1a: in the ray-only modes with resident fragments nothing reads this cascade's lists of the static (non-rigged) types: the builder is not submitted (shadowPrepSubmitBuilds) and
-    // render_shadow_packets takes the casters from the fragments; the main thread decided (generateSunShadow)
-    const bool skip_static = sViewJobsSkipStatic.load(std::memory_order_relaxed);
     const S32 skip_alpha = sViewJobsSkipAlpha.load(std::memory_order_relaxed);
-    const bool raster_rt = sViewJobsRasterRt.load(std::memory_order_relaxed);       // step 3d: a raster pass of the ray tracing modes: no fast way (its summary names the ray scene's form), the raster form's draws are the named ones
-    U64 n_alpha_skipped = 0;
-    // J1 K6 S5b: the walk of a group's draw map is not made when its current fragment says what the walk would find (scene_fragment_walk_summary), in the modes where the fragments name everything the walk skips (static
-    // casters left out, rigged and alpha casters named by the fragments); (LL_VK_SHADOW_WALK and LL_VK_SHADOW_WALK_VERIFY are gone)
-    const bool walk_modes_ok = skip_static && shadow_rigfrag_usable() && shadow_rigalpha_mode() == 1 && skip_alpha != 0;       // (1 raster, 2 the sun cascades of the ray-only modes; the raster passes of the ray tracing modes (step 3d) take the fast way by the summary of their own form)
-    U64 n_plan_skipped = 0;
-    U64 plan_inputs = 0;                        // what the job's answer depends on besides the group: the render types of its view and the switches
-    {
-        plan_inputs = 1469598103934665603ull;
-        for (U32 t = 0; t < LLPipeline::NUM_RENDER_TYPES; ++t)
-        {
-            plan_inputs = (plan_inputs ^ (hasRenderType(t) ? 0x9Eu + t : 0x31u)) * 1099511628211ull;
-        }
-        plan_inputs = (plan_inputs ^ (U64)(skip_static ? 1 : 0) ^ ((U64)skip_alpha << 1) ^ (scene_resident_on() ? 4ull : 0ull) ^ (cascade_cull_active ? 8ull : 0ull) ^ (raster_rt ? 0x10000ull : 0ull) ^ ((U64)(shadow_rigfrag_usable() ? 1 : 0) << 5) ^ ((U64)(shadow_rigfrag_usable() ? shadow_rigalpha_mode() : 0) << 8)) * 1099511628211ull;
-    }
-    U64 n_groups = 0, n_resident = 0, n_static = 0, n_rigged = 0, n_alpha = 0, n_other = 0, n_skipped = 0;
+    const bool raster_rt = sViewJobsRasterRt.load(std::memory_order_relaxed);       // step 3d: a raster pass of the ray tracing modes: its summary is the raster form's (a draw only the ray scene's form carries is not named)
+    // J1 K6 stage 1, 2026-11-12: the render map job no longer walks the draw maps. What it used to push (the draw infos no fragment mechanism names) is served: the static casters by the fragments' entries, the
+    // rigged ones by their items' sources, the alpha casters by the entries of the fragments (windows for batches of more than four textures, two texture matrices, no texture coordinate array), so the
+    // job takes from each group's current fragment what the cascade needs and pushes no draw info. A group whose draw map holds a pass type nothing names (an item the table could not serve: a texture matrix
+    // slot it could not get) or whose fragment is not current (the fragment is made at the end of every group rebuild: an invariant) is counted as a dropped caster, ShadowPackets, as the others are.
+    U64 n_groups = 0, n_resident = 0, n_rigged = 0;
 
     LLCullResult::sg_iterator visible_groups = result.beginVisibleGroups();
     for (U32 gi = begin; gi < end; ++gi)
@@ -16284,23 +16256,25 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
 
         ++n_groups;
         const LLSceneFragment* walk_frag = group->mSceneFragment;
-        bool walk_ok = walk_modes_ok;
-        walk_ok = walk_ok && walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid);
-        if (walk_ok)
+        const bool current = walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid);
+        bool has_unnamed = false;
+        if (current)
         {
             for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed))
             {
-                if (hasRenderType(t)) { walk_ok = false; break; }
+                if (hasRenderType(t)) { has_unnamed = true; break; }
             }
         }
-        const bool fast = walk_ok;
         {
-            // why a group is walked (counted over all jobs, logged every 20000 groups): 0 fast, 1 modes off, 2 no current fragment, 3 a rendered pass type no mechanism names
-            static std::atomic<U64> why[4], by_type[128], groups{ 0 };
+            // how the groups were served (counted over all jobs, logged every 20000 groups): 0 from the fragment, 2 no current fragment (an empty draw map has none: ", with draws" counts the others), 3 a rendered pass type nothing names
+            static std::atomic<U64> why[4], by_type[128], orphans{ 0 }, groups{ 0 };
             U32 reason = 0;
-            if (!walk_modes_ok) { reason = 1; }
-            else if (!(walk_frag && walk_frag->mSerial == group->mDrawMapSerial && walk_frag->mWalkValid && (!raster_rt || walk_frag->mWalkRasterValid))) { reason = 2; }
-            else if (!walk_ok)
+            if (!current)
+            {
+                reason = 2;
+                if (!group->mDrawMap.empty()) { orphans.fetch_add(1, std::memory_order_relaxed); }
+            }
+            else if (has_unnamed)
             {
                 reason = 3;
                 for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed)) { if (hasRenderType(t)) { by_type[std::min<U32>(t, 127u)].fetch_add(1, std::memory_order_relaxed); } }
@@ -16310,52 +16284,27 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             {
                 std::string text;
                 for (U32 t = 0; t < 128; ++t) { const U64 n = by_type[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
-                LL_INFOS("ShadowPrep") << "shadow walk: groups by way over the run: fast " << why[0].load() << ", modes off " << why[1].load() << ", no current fragment " << why[2].load() << ", unnamed rendered type " << why[3].load() << " (types:" << text << ")" << LL_ENDL;
+                LL_INFOS("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << why[0].load() << ", no current fragment " << why[2].load() << " (with draws " << orphans.load()
+                                       << "), unnamed rendered type " << why[3].load() << " (types:" << text << ")" << LL_ENDL;
             }
         }
-        bool expect_frag = false;
-        if (walk_ok)
+        if (!current)
         {
-            for (const auto& at : (raster_rt ? walk_frag->mWalkAlphaTypesRaster : walk_frag->mWalkAlphaTypes))
+            if (!group->mDrawMap.empty())
             {
-                if (hasRenderType(at[0]) && ((at[1] && !(skip_alpha == 2 ? walk_frag->mAlphaSent : walk_frag->mAlphaResSent)) || at[2])) { expect_frag = true; }
+                shadow_caster_dropped("group without a current fragment", 1);
+                local.mSceneGroups.push_back(group);        // (the worker's table makes the fragment on the main thread)
             }
+            continue;
         }
-        U64 plan_key = 0;
-        if (!fast)
+        if (has_unnamed)
         {
-            const LLSceneFragment* f = group->mSceneFragment;
-            plan_key = plan_inputs;
-            auto mix = [&](U64 v) { plan_key = (plan_key ^ v) * 1099511628211ull; };
-            mix(group->mDrawMapSerial);
-            mix((U64)(uintptr_t)f);
-            if (f)
-            {
-                mix(f->mSerial | ((U64)(f->mResident ? 1 : 0) << 32) | ((U64)(f->mAlphaResSent ? 1 : 0) << 33) | ((U64)f->mAlpha.size() << 34));
-                mix(f->mAlphaSent ? 0x51u : 0x17u);       // (the ray-only walk's answer depends on it: skip_alpha 2)
-            }
-            plan_key &= ~31ull;
-            const U64 plan = group->mMapPlan.load(std::memory_order_relaxed);
-            if ((plan & 1) && (plan & ~31ull) == plan_key)
-            {
-                // nothing to push, as the last walk found: the group's alpha entries still go on the alpha lists
-                ++n_plan_skipped;
-                if (plan & 8) { ++n_resident; }
-                if (plan & 2) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); } }
-                if (plan & 4) { if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) && hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); } }
-                if (plan & 16) { local.mAlphaFragGroups.push_back(group); }
-                continue;
-            }
+            shadow_caster_dropped("unnamed pass type", 1);
         }
-        const size_t plan_cull_mark = local.mSceneGroups.size();
-        U64 plan_pushed = 0;
-        U64 plan_avatar_skips = 0;
-        bool plan_frag = false;
-        if (scene_resident_on() && (fast ? walk_frag->mWalkNonEmpty : !group->mDrawMap.empty()))
+        if (walk_frag->mWalkNonEmpty)
         {
             // S2: a group with a current resident fragment is culled and drawn from the worker's table; the others stay on the per-pass list
-            const LLSceneFragment* fragment = group->mSceneFragment;
-            if (!(fragment && fragment->mSerial == group->mDrawMapSerial && fragment->mResident))
+            if (!walk_frag->mResident)
             {
                 local.mSceneGroups.push_back(group);
             }
@@ -16395,137 +16344,37 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
                 }
                 if (cascade_cull_active && rig.mAvatar.notNull() && shadow_cascade_skips_avatar(rig.mAvatar.get(), cascade_cull))
                 {
-                    ++plan_avatar_skips;
-                    continue;
+                        continue;
                 }
-                ++plan_pushed;
                 ++n_rigged;
                 local.mRigSources.push_back({ rigged_type, &rig });
             }
         }
 
-        for (LLSpatialGroup::draw_map_t::iterator j = fast ? group->mDrawMap.end() : group->mDrawMap.begin(); j != group->mDrawMap.end(); ++j)
+        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
-            LLSpatialGroup::drawmap_elem_t& src_vec = j->second;
-            if (!hasRenderType(j->first))
+            if (walk_frag->mWalkAlphaBits & 1)
             {
-                continue;
+                if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); }
             }
+            if (walk_frag->mWalkAlphaBits & 2)
             {
-                const int cls = shadow_view_class(j->first);
-                if (cls == 0 && skip_static)
-                {
-                    n_skipped += src_vec.size();
-                    continue;
-                }
-                (cls == 0 ? n_static : (cls == 1 ? n_rigged : (cls == 2 ? n_alpha : n_other))) += src_vec.size();
-            }
-
-            for (LLSpatialGroup::drawmap_elem_t::iterator k = src_vec.begin(); k != src_vec.end(); ++k)
-            {
-                LLDrawInfo* info = *k;
-
-                if (cascade_cull_active && info->mAvatar.notNull() && shadow_cascade_skips_avatar(info->mAvatar.get(), cascade_cull))
-                {
-                    ++plan_avatar_skips;
-                    continue; // <FS> rigged avatar entirely in a nearer cascade's slice: not needed in this cascade
-                }
-
-                if (skip_alpha && !info->mAvatar && alpha_source_type(j->first))
-                {
-                    if (alpha_info_resident(*info, group, skip_alpha == 2))
-                    {
-                        ++n_alpha_skipped;
-                        continue;           // (the worker draws it from its table: renderShadow would drop the builder's entry for it)
-                    }
-                    else if ((info->mAlphaInFragment || (raster_rt ? info->mRasterFrag : info->mAlphaFragTex)) && group->mSceneFragment && group->mSceneFragment->mSerial == group->mDrawMapSerial)
-                    {
-                        // C5 J3: the group's fragment names this caster and the worker does not hold it yet: renderShadow makes the entry from the fragment (mode 2 also pushes the draw info, to compare)
-                        plan_frag = true;
-                        ++n_alpha_skipped;
-                        continue;
-                    }
-                }
-
-                if (rig_current && rig_mode == 1 && info->mGeoServed && shadow_view_class(j->first) == 1)
-                {
-                    continue;           // J1 K3a: a fragment names this draw (above): the builder reads its item
-                }
-                if (rig_current && rigalpha_mode == 1 && info->mRigAlphaSrc && info->mGeoServed)
-                {
-                    continue;           // J1 K3d: the same for the rigged alpha masked casters (the alpha builder reads their items)
-                }
-
-                ++plan_pushed;
-                if (sCascadeTypeCensus) { sCascadeTypePushed[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); if (info->mAvatar.notNull()) { sCascadeTypeAvatar[std::min<U32>(j->first, 127u)].fetch_add(1, std::memory_order_relaxed); } }
-                sCull->pushDrawInfo(j->first, info);
+                if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); }
             }
         }
-
-        bool plan_alpha = false, plan_rigged_alpha = false;
-        if (fast)
+        for (const auto& at : (raster_rt ? walk_frag->mWalkAlphaTypesRaster : walk_frag->mWalkAlphaTypes))
         {
-            if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+            if (hasRenderType(at[0]) && ((at[1] && !(skip_alpha == 2 ? walk_frag->mAlphaSent : walk_frag->mAlphaResSent)) || at[2]))
             {
-                if (walk_frag->mWalkAlphaBits & 1)
-                {
-                    plan_alpha = true;
-                    if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushAlphaGroup(group); }
-                }
-                if (walk_frag->mWalkAlphaBits & 2)
-                {
-                    plan_rigged_alpha = true;
-                    if (hasRenderType(LLDrawPool::POOL_ALPHA)) { sCull->pushRiggedAlphaGroup(group); }
-                }
+                local.mAlphaFragGroups.push_back(group);
+                break;
             }
-            plan_frag = expect_frag;
-        }
-        else if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
-        {
-            LLSpatialGroup::draw_map_t::iterator alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
-
-            if (alpha != group->mDrawMap.end())
-            {  // store alpha groups for sorting
-                plan_alpha = true;
-                if (hasRenderType(LLDrawPool::POOL_ALPHA))
-                {
-                    sCull->pushAlphaGroup(group);
-                }
-            }
-
-            LLSpatialGroup::draw_map_t::iterator rigged_alpha = group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
-
-            if (rigged_alpha != group->mDrawMap.end())
-            {
-                plan_rigged_alpha = true;
-                if (hasRenderType(LLDrawPool::POOL_ALPHA))
-                {
-                    sCull->pushRiggedAlphaGroup(group);
-                }
-            }
-        }
-        if (plan_frag)
-        {
-            local.mAlphaFragGroups.push_back(group);
-        }
-        if (!fast)
-        {
-            const bool empty = plan_pushed == 0 && plan_avatar_skips == 0 && local.mSceneGroups.size() == plan_cull_mark;
-            const LLSceneFragment* f = group->mSceneFragment;
-            const bool resident = scene_resident_on() && !group->mDrawMap.empty() && f && f->mSerial == group->mDrawMapSerial && f->mResident;
-            group->mMapPlan.store(plan_key | (empty ? 1ull : 0ull) | (plan_alpha ? 2ull : 0ull) | (plan_rigged_alpha ? 4ull : 0ull) | (resident ? 8ull : 0ull) | (plan_frag ? 16ull : 0ull), std::memory_order_relaxed);
         }
     }
     sViewJobs.mJobs.fetch_add(1, std::memory_order_relaxed);
     sViewJobs.mGroups.fetch_add(n_groups, std::memory_order_relaxed);
     sViewJobs.mResidentGroups.fetch_add(n_resident, std::memory_order_relaxed);
-    sViewJobs.mStatic.fetch_add(n_static, std::memory_order_relaxed);
     sViewJobs.mRiggedStatic.fetch_add(n_rigged, std::memory_order_relaxed);
-    sViewJobs.mAlpha.fetch_add(n_alpha, std::memory_order_relaxed);
-    sViewJobs.mOther.fetch_add(n_other, std::memory_order_relaxed);
-    sViewJobs.mSkippedStatic.fetch_add(n_skipped, std::memory_order_relaxed);
-    sViewJobs.mSkippedAlpha.fetch_add(n_alpha_skipped, std::memory_order_relaxed);
-    sViewJobs.mPlanSkipped.fetch_add(n_plan_skipped, std::memory_order_relaxed);
 }
 
 // main thread, right before the cascade is drawn: the pools and the sky, which every cascade fills for itself
