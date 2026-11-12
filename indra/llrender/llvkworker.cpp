@@ -4947,7 +4947,12 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         g.mFlags = flags;
-        g.mPad = (texmats.mAddress && e.mTexMatrix <= h.mTexmats) ? e.mTexMatrix : 0u;      // C5 J3: the draw's texture matrix (0 = none)
+        {
+            // C5 J3: the draw's texture matrix (0 = none); a second one (the glTF transform after a texture animation) in the high half
+            const U32 tm_a = (texmats.mAddress && e.mTexMatrix <= h.mTexmats) ? e.mTexMatrix : 0u;
+            const U32 tm_b = (texmats.mAddress && e.mTexMatrix2 <= h.mTexmats) ? e.mTexMatrix2 : 0u;
+            g.mPad = tm_a | (tm_b << 16);
+        }
         if (flags & LLVkBridge::ALPHA_RIGGED)
         {
             if (!shared_palettes && !palettes.mAddress)

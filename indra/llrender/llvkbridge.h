@@ -212,6 +212,7 @@ namespace LLVkBridge
         U32 mMaterial;              // ray tracing: RtMaterialDef id of the draw, 0 = none
         U32 mNormalOffset;          // ray tracing: byte offset of the normal array, 0 = none
         U32 mTexMatrix;             // kind 1 (raster): 1 + the number of the draw's texture matrix among the record's mTexmats (after the palettes), 0 = none
+        U32 mTexMatrix2;            // kind 1 (raster): the same for a second matrix, applied after the first (a glTF face with a texture animation: the animation, then the glTF transform), 0 = none
     };
     // kind 10 (ray tracing only, nothing is drawn): mEntries RtMaterialDef rows to store (new materials, or ones whose texture names changed); the ids are the viewer's, stable for as long as a
     // material is in use. The draws name their material by id (mMaterial of the entries above). Texture names are GL names, resolved by the viewer; the worker turns them into bindless slots.
