@@ -1343,6 +1343,14 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderGlow", handleSetShaderChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlowResolutionPow", handleReleaseGLBufferChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlowHDR", handleReleaseGLBufferChanged);
+    // <FS> (2026-11-12, the user) the check box "HDR and Emissive" (RenderDisableVintageMode) is the master of HDR and the emissive buffer, in the preferences, the advanced graphics floater and the photo tools. It writes the two
+    // only when it is clicked (handleDisableVintageMode), so a settings file that held another RenderHDREnabled (it was saved off while the box was checked by its default) kept HDR off under a checked box. At start they follow
+    // the box, before their listeners exist (nothing is rebuilt by it); a new install has all three on by default and is in sync already, and an unchecked box (also what the low spec detection sets) keeps both off.
+    {
+        const bool modern = gSavedSettings.getBOOL("RenderDisableVintageMode");
+        gSavedSettings.setBOOL("RenderEnableEmissiveBuffer", modern);
+        gSavedSettings.setBOOL("RenderHDREnabled", modern);
+    }
     setting_setup_signal_listener(gSavedSettings, "RenderEnableEmissiveBuffer", handleEnableEmissiveChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderDisableVintageMode", handleDisableVintageMode);
     setting_setup_signal_listener(gSavedSettings, "RenderHDREnabled", handleEnableHDR);
