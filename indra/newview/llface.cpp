@@ -180,7 +180,6 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
     row().referenceIndex = -1;
 
     mTextureMatrix = NULL;
-    mDrawInfo = NULL;
 
     row().faceColor = LLColor4(1,0,0,1);
 
@@ -239,8 +238,6 @@ void LLFace::destroy()
             }
         }
     }
-
-    setDrawInfo(NULL);
 
     mDrawablep = NULL;
     mVObjp = NULL;
@@ -494,13 +491,6 @@ void LLFace::setTextureIndex(U8 index)
         if (row().textureIndex != FACE_DO_NOT_BATCH_TEXTURES)
         {
             mDrawablep->setState(LLDrawable::REBUILD_POSITION);
-        }
-        else
-        {
-            if (mDrawInfo && !mDrawInfo->mTextureList.empty())
-            {
-                LL_ERRS() << "Face with no texture index references indexed texture draw info." << LL_ENDL;
-            }
         }
     }
 }
@@ -816,11 +806,6 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
         gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
         renderFace(mDrawablep, this);
     }
-}
-
-void LLFace::setDrawInfo(LLDrawInfo* draw_info)
-{
-    mDrawInfo = draw_info;
 }
 
 void LLFace::printDebugInfo() const

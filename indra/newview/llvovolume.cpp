@@ -6349,11 +6349,6 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
             }
         }
 
-        // if (type == LLRenderPass::PASS_ALPHA) // always populate the draw_info ptr
-        { //for alpha sorting
-            facep->setDrawInfo(draw_info);
-        }
-
         if (index < FACE_DO_NOT_BATCH_TEXTURES)
         { //initialize texture list for texture batching
             draw_info->mTextureList.resize(index+1);
@@ -7955,7 +7950,6 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
                     }
 
                     //face has no texture index
-                    facep->mDrawInfo = NULL;
                     facep->setTextureIndex(FACE_DO_NOT_BATCH_TEXTURES);
 
                     if (geom_count + facep->getGeomCount() > max_vertices)

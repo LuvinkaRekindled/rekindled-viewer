@@ -770,8 +770,6 @@ void LLGrassPartition::getGeometry(LLSpatialGroup* group)
                 buffer, object->isSelected(), fullbright);
 
             draw_vec.push_back(info);
-            //for alpha sorting
-            facep->setDrawInfo(info);
         }
     }
 
