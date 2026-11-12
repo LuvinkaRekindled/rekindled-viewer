@@ -1707,6 +1707,9 @@ void LLShaderProgram::dumpProgramCensus()
         ++count;
     }
     LL_INFOS("ProgramCensus") << "programs loaded " << count << LL_ENDL;
+#if defined(LL_VULKAN)
+    LLVk::dumpNativeCensus();
+#endif
 }
 
 void LLShaderProgram::bind()

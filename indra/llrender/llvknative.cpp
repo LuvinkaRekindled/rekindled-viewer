@@ -441,6 +441,9 @@ struct Def
     U32 mGlobalGen = 0;        // the generation of the viewer's global defines the program was built with
     S32 mNext = -1;            // the next manifest line that names the same program (a variant), -1: none
     U64 mUses = 0;             // draws made with the native program (logged every 2000)
+    // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the draws of the old program that did NOT take the native program, by reason. Kept on the first manifest line that names the program.
+    enum { FB_FAMILY_OFF, FB_NOT_FIT, FB_RT, FB_NOT_READY, FB_OUTPUTS, FB_COUNT };
+    U64 mFallback[FB_COUNT] = {};
 };
 
 struct Manager
@@ -675,6 +678,8 @@ Program* nativeOverride(Program* p)
     }
     // several manifest lines may name the same program (variants for the cases the old shader covers with a branch: `when classic_mode=1`, ...): the first whose conditions hold is the stand-in
     Def* chosen = nullptr;
+    Def& head = *m.mDefs[(size_t)idx];
+    bool unfit = false;
     for (S32 i = idx; i >= 0 && !chosen; i = m.mDefs[(size_t)i]->mNext)
     {
         Def& c = *m.mDefs[(size_t)i];
@@ -696,14 +701,20 @@ Program* nativeOverride(Program* p)
         {
             chosen = &c;
         }
+        else
+        {
+            unfit = true;
+        }
     }
     if (!chosen)
     {
+        ++head.mFallback[unfit ? Def::FB_NOT_FIT : Def::FB_FAMILY_OFF];
         return p;
     }
     Def& d = *chosen;
     if (p->getInfo().mUsesRt)
     {
+        ++head.mFallback[Def::FB_RT];
         return p;               // the ray traced variants are the RT track
     }
     const auto now = std::chrono::steady_clock::now();
@@ -738,6 +749,7 @@ Program* nativeOverride(Program* p)
     }
     if (!d.mProgram || !d.mProgram->isValid())
     {
+        ++head.mFallback[Def::FB_NOT_READY];
         return p;
     }
     // another set of outputs (the sun program with the blocker distance of the ray traced shadows). Not for the G-buffer family: the viewer's programs declare one array (`out vec4 frag_data[4]`, one name) and the
@@ -745,6 +757,7 @@ Program* nativeOverride(Program* p)
     // (found 2026-11-09 evening, when the native terrain compiled and showed no draws)
     if (d.mFamily != "gbuffer" && p->getInfo().mOutputs.size() != d.mProgram->getInfo().mOutputs.size())
     {
+        ++head.mFallback[Def::FB_OUTPUTS];
         return p;
     }
     d.mProgram->adoptFrom(*p);
@@ -759,6 +772,32 @@ Program* nativeOverride(Program* p)
         LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
     }
     return d.mProgram.get();
+}
+
+// <FS> shader cleanup (stage 4): one log line (tag NativeCensus) for every manifest line: the draws it made and, on the first line of a program, the draws of the old program that did not take the native one,
+// by reason. Printed with the program census (LL_VK_PROGRAM_CENSUS=1) and only when a draw has been counted. Read by doc/vulkan/inventory-shaders.py.
+void dumpNativeCensus()
+{
+    Manager& m = manager();
+    U64 total = 0;
+    for (const auto& d : m.mDefs)
+    {
+        total += d->mUses;
+        for (int r = 0; r < Def::FB_COUNT; ++r)
+        {
+            total += d->mFallback[r];
+        }
+    }
+    if (total == 0)
+    {
+        return;
+    }
+    for (const auto& d : m.mDefs)
+    {
+        LL_INFOS("NativeCensus") << "native | " << d->mTarget << " | family " << d->mFamily << " | uses " << d->mUses << " | family_off " << d->mFallback[Def::FB_FAMILY_OFF]
+            << " | not_fit " << d->mFallback[Def::FB_NOT_FIT] << " | rt " << d->mFallback[Def::FB_RT] << " | not_ready " << d->mFallback[Def::FB_NOT_READY]
+            << " | outputs " << d->mFallback[Def::FB_OUTPUTS] << LL_ENDL;
+    }
 }
 
 } // namespace LLVk

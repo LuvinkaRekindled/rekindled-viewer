@@ -48,6 +48,9 @@ void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string
 // The program to draw with in place of 'p' (p itself when no native program stands in for it or its family is off). Called on the worker thread for every draw.
 Program* nativeOverride(Program* p);
 
+// <FS> shader cleanup (stage 4): logs the native draws and the fallbacks by reason (tag NativeCensus); LL_VK_PROGRAM_CENSUS=1
+void dumpNativeCensus();
+
 } // namespace LLVk
 
 #endif // LL_VULKAN
