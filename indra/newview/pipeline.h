@@ -408,7 +408,6 @@ public:
     void sortDryRun(const View& view, bool parallel, void* result);
     void sortParallelCheck(const View& view);
     void refillPools(LLCullResult& result);
-    void checkRenderMapLive(LLCullResult& result);     // LL_VK_BUILDER_VERIFY: every draw info in the render map is still one of its group's
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
     void stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed = false);
     void stateSort(LLDrawable* drawablep, LLCamera& camera);
@@ -585,8 +584,6 @@ public:
 
     void setLight(LLDrawable *drawablep, bool is_light);
 
-    LLCullResult::drawinfo_iterator beginRenderMap(U32 type);
-    LLCullResult::drawinfo_iterator endRenderMap(U32 type);
     LLCullResult::sg_iterator beginAlphaGroups();
     LLCullResult::sg_iterator endAlphaGroups();
     LLCullResult::sg_iterator beginRiggedAlphaGroups();

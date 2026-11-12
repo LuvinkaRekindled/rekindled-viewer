@@ -653,29 +653,10 @@ public:
     typedef std::vector<LLSpatialGroup*> sg_list_t;
     typedef std::vector<LLDrawable*> drawable_list_t;
     typedef std::vector<LLSpatialBridge*> bridge_list_t;
-    typedef std::vector<LLDrawInfo*> drawinfo_list_t;
 
     typedef LLSpatialGroup** sg_iterator;
     typedef LLSpatialBridge** bridge_iterator;
-    typedef LLDrawInfo** drawinfo_iterator;
     typedef LLDrawable** drawable_iterator;
-
-    // Helper function for taking advantage of _mm_prefetch when iterating over cull results
-    static inline void increment_iterator(LLCullResult::drawinfo_iterator& i, const LLCullResult::drawinfo_iterator& end)
-    {
-        ++i;
-
-        if (i != end)
-        {
-            _mm_prefetch((char*)(*i)->mVertexBuffer.get(), _MM_HINT_NTA);
-
-            auto* ni = i + 1;
-            if (ni != end)
-            {
-                _mm_prefetch((char*)*ni, _MM_HINT_NTA);
-            }
-        }
-    }
 
     void clear();
     void clearRenderLists();       // J1 K6 B: the draw lists, the alpha group lists and what the render map job makes, not the visible groups (a serial shadow pass makes them again from the fragments)
@@ -703,19 +684,6 @@ public:
     bridge_iterator beginVisibleBridge();
     bridge_iterator endVisibleBridge();
 
-    // <FS> C5: the main view's postSort did not fill the lists of the blended alpha types (PASS_ALPHA, PASS_ALPHA_RIGGED): the alpha pool reads the groups' own draw maps and the alpha group lists; a reader that asks
-    // for them anyway is logged (LLCullResult::beginRenderMap)
-    bool mAlphaListsSkipped = false;
-    // <FS> C5 J4: the pass types the scene table has no kind for (INVISIBLE, FULLBRIGHT_SHINY, BUMP, POST_BUMP and their rigged variants, SHINY ...): postSort lists the GROUPS that have draws of the type (in the
-    // visible group order), and the render map list of the type is made from those groups' draw maps when a pool asks for it (beginRenderMap / endRenderMap), once a frame
-    bool mLazyTypes = false;
-    std::vector<LLSpatialGroup*> mLazyGroups[LLRenderPass::NUM_RENDER_TYPES];
-    bool mLazyDone[LLRenderPass::NUM_RENDER_TYPES] = {};
-    void pushLazyGroup(U32 type, LLSpatialGroup* group) { mLazyGroups[type].push_back(group); mLazyTypes = true; }
-    void materializeLazy(U32 type);
-    drawinfo_iterator beginRenderMap(U32 type);
-    drawinfo_iterator endRenderMap(U32 type);
-
     void pushVisibleGroup(LLSpatialGroup* group);
     // <FS> LL_VK_SHADOW_HULL: keeps, in order, the visible groups the predicate answers true for; returns how many it took out
     template <class Keep> U32 filterVisibleGroups(Keep keep)
@@ -740,7 +708,6 @@ public:
     void pushDrawableGroup(LLSpatialGroup* group);
     void pushDrawable(LLDrawable* drawable);
     void pushBridge(LLSpatialBridge* bridge);
-    void pushDrawInfo(U32 type, LLDrawInfo* draw_info);
 
     U32 getVisibleGroupsSize()      { return mVisibleGroupsSize; }
     U32 getAlphaGroupsSize()        { return mAlphaGroupsSize; }
@@ -748,9 +715,6 @@ public:
     U32 getDrawableGroupsSize()     { return mDrawableGroupsSize; }
     U32 getVisibleListSize()        { return mVisibleListSize; }
     U32 getVisibleBridgeSize()      { return mVisibleBridgeSize; }
-    U32 getRenderMapSize(U32 type)  { return mRenderMapSize[type]; }
-
-    void assertDrawMapsEmpty();
 
     // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
     // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
@@ -786,8 +750,6 @@ private:
     U32                 mVisibleListAllocated;
     U32                 mVisibleBridgeAllocated;
 
-    U32                 mRenderMapSize[LLRenderPass::NUM_RENDER_TYPES];
-
     sg_list_t           mVisibleGroups;
     sg_iterator         mVisibleGroupsEnd;
     sg_list_t           mAlphaGroups;
@@ -802,9 +764,6 @@ private:
     drawable_iterator   mVisibleListEnd;
     bridge_list_t       mVisibleBridge;
     bridge_iterator     mVisibleBridgeEnd;
-    drawinfo_list_t     mRenderMap[LLRenderPass::NUM_RENDER_TYPES];
-    U32                 mRenderMapAllocated[LLRenderPass::NUM_RENDER_TYPES];
-    drawinfo_iterator mRenderMapEnd[LLRenderPass::NUM_RENDER_TYPES];
 
 };
 
