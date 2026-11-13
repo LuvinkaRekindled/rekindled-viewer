@@ -25830,8 +25830,7 @@ void LLPipeline::doWaterHaze()
         gRender.setColorMask(true, true);
 
         // apply haze
-        const bool haze_pull = !sUnderWaterRender && ll_water_pull();       // (the water patches above the water as one record; the full screen triangle under the water stays a buffer draw)
-        LLShaderProgram& haze_shader = haze_pull ? gWaterHazePullProgram : gHazeWaterProgram;
+        LLShaderProgram& haze_shader = gWaterHazePullProgram;       // (the water patches above the water are one record; the full screen triangle under it is an entry of one: LLVertexBuffer::pullDraw)
 
         LL_PROFILE_GPU_ZONE("haze");
         bindDeferredShader(haze_shader, nullptr, &mWaterDis);
@@ -25862,15 +25861,8 @@ void LLPipeline::doWaterHaze()
 
             if (mWaterPool)
             {
-                if (haze_pull)
-                {
-                    gRender.syncMatrices();         // (loose matrices of the program: written as a draw writes them)
-                    mWaterPool->pushFacesPull(false);
-                }
-                else
-                {
-                    mWaterPool->pushFaceGeometry();
-                }
+                gRender.syncMatrices();         // (loose matrices of the program: written as a draw writes them)
+                mWaterPool->pushFacesPull(false);
             }
         }
 

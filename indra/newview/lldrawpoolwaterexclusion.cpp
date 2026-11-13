@@ -60,10 +60,8 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
     {
         // Just treat our water planes as double sided for the purposes of generating the exclusion mask.
         LLRenderState::CullScope cullface(false);
-        pwaterpool->pushWaterPlanes(0, pull);
-
-        // Take care of the edge water tiles.
-        pwaterpool->pushWaterPlanes(1, pull);
+        // (the planes once: the edge water tiles are faces of the same pool, and a second push of the same entries wrote the same mask)
+        pwaterpool->pushWaterPlanes();
     }
 
     color_program->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 0, 0, 0, 1);

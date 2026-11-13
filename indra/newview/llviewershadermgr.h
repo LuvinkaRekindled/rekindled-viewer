@@ -184,11 +184,12 @@ extern LLShaderProgram        gPhysicsPreviewProgram;
 extern LLShaderProgram     gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
-extern LLShaderProgram         gWaterProgram;
-extern LLShaderProgram         gUnderWaterProgram;
 extern LLShaderProgram         gWaterPullProgram;          // <FS> the table form of the water planes (WATER_PULL: the planes' vertex buffers read by address)
 extern LLShaderProgram         gUnderWaterPullProgram;
-bool ll_water_pull();            // the water planes go as table entries (not in a session with ray queries: the stock Water Shader stands in there)
+extern LLShaderProgram         gWaterPullRtProgram;        // <FS> the water with the ray queries of the stock water (a session with ray queries)
+extern LLShaderProgram         gWaterPullRtReflectionProgram;       // <FS> and the one that also traces the reflection (FSVkRTWater)
+bool ll_water_rt_reflection();   // it was made (the material table can be on)
+bool ll_water_rt();              // the water seen from above is drawn with it (a session with ray queries and sun shadows)
 extern LLShaderProgram         gGlowProgram;
 extern LLShaderProgram         gGlowExtractProgram;
 
@@ -222,7 +223,6 @@ extern LLShaderProgram         gDeferredMultiSpotLightProgram;
 extern LLShaderProgram         gDeferredSunProgram;
 extern LLShaderProgram         gDeferredSunProbeProgram;
 extern LLShaderProgram         gHazeProgram;
-extern LLShaderProgram         gHazeWaterProgram;
 extern LLShaderProgram         gWaterHazePullProgram;       // <FS> the table form of the water patches of the haze
 extern LLShaderProgram         gDeferredBlurLightProgram;
 extern LLShaderProgram         gNativeSunHalfProgram;           // <FS> native only (llvknative.h): the sun lightmap at half resolution

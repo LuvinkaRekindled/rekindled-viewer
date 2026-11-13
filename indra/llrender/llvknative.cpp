@@ -131,6 +131,11 @@ std::string stage_head(int stage, const std::vector<std::pair<std::string, std::
     for (const auto& d : defines)
     {
         head += "#define " + d.first + " " + d.second + "\n";
+        if (d.first == "LL_RT_QUERY")
+        {
+            // a program that traces rays against the frame's scene (the manifest define LL_RT_QUERY; native/lib/rt_scene.glsl declares set 3): the extension has to come before any code, so the head has it
+            head += "#extension GL_EXT_ray_query : require\n";
+        }
     }
     head += "#include \"ll_native.glsl\"\n";
     return head;
@@ -382,6 +387,10 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         {
             return fail("SPIR-V generation produced nothing: " + logger.getAllMessages());
         }
+    }
+    for (const auto& d : defines)
+    {
+        out.mUsesRt = out.mUsesRt || d.first == "LL_RT_QUERY";       // (the draw binds the ray tracing descriptor set 3: the frame's scene)
     }
     if (files)
     {
