@@ -2712,18 +2712,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasSrgb = true;
             shader->mFeatures.isDeferred = true;
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-            shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
+            // <FS> a native only program (native/manifest.txt): no stock files
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             ok = shader->createShader();
             if (!ok)
@@ -2753,14 +2742,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasAtmospherics = true;
         shader->mFeatures.hasSrgb = true;
         shader->mFeatures.isDeferred = true;
-        shader->mShaderFiles.clear();
-        shader->clearPermutations();
-        shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-        shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
-        shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-        shader->addPermutation("IS_HUD", "1");
-        add_common_permutations(shader);
+        // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (shader->createShader())
         {
@@ -2784,15 +2766,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasGamma = true;
         shader->mFeatures.hasSrgb = true;
         shader->mFeatures.hasReflectionProbes = true;
-        shader->mShaderFiles.clear();
-        shader->clearPermutations();
-        shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
-        shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
-        shader->addPermutation("IS_SHINY_PULL", "1");
-        shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-        shader->addPermutation("IS_HUD", "1");
-        add_common_permutations(shader);
+        // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (shader->createShader())
         {
@@ -2826,19 +2800,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasSrgb = true;
             shader->mFeatures.hasReflectionProbes = true;
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
-            shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
-            shader->addPermutation("IS_SHINY_PULL", "1");
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
+            // <FS> a native only program (native/manifest.txt): no stock files
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             ok = shader->createShader();
             if (!ok)
@@ -3200,8 +3162,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mName = name;
             shader->mShaderFiles.clear();
             shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            if (vertex)             // (null: a native only program, native/manifest.txt: no stock files)
+            {
+                shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
+            }
+            if (fragment)
+            {
+                shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            }
             for (const auto& p : permutations)
             {
                 shader->addPermutation(p.first, p.second);
@@ -3236,8 +3204,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasSrgb = true;
             shader->mFeatures.isDeferred = true;
-            gAlphaHudPullReady = make_pull(shader, "HUD Fullbright Alpha Pull Shader", "deferred/alphaPullV.glsl", "deferred/fullbrightF.glsl",
-                { { "HAS_ALPHA_MASK", "1" }, { "IS_ALPHA", "1" }, { "IS_HUD", "1" }, { "IS_FULLBRIGHT_PULL", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, false);
+            gAlphaHudPullReady = make_pull(shader, "HUD Fullbright Alpha Pull Shader", nullptr, nullptr, {}, false);
             shader = &gHUDPBRAlphaPullProgram;
             shader->mFeatures.hasSrgb = true;
             gAlphaHudPbrReady = make_pull(shader, "HUD PBR Alpha Pull Shader", "deferred/pbrAlphaPullV.glsl", "deferred/pbralphaF.glsl", { { "IS_HUD", "1" }, { "LL_BINDLESS_PBR", "1" } }, false);
