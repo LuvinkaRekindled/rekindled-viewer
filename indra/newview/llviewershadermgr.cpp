@@ -164,18 +164,6 @@ LLShaderProgram* ll_pull_or(LLShaderProgram* src)
     return twin ? twin : src;
 }
 
-bool ll_is_pull_twin(const LLShaderProgram* program)
-{
-    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
-    {
-        if (program == &sPullTwins[k])
-        {
-            return sPullTwinReady[k];
-        }
-    }
-    return false;
-}
-
 static void make_pull_twins()
 {
     LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDeferredAvatarAlphaProgram };
@@ -185,10 +173,10 @@ static void make_pull_twins()
         sPullTwinReady[k] = false;
         LLShaderProgram& src = *sources[k];
         LLShaderProgram& twin = sPullTwins[k];
-        static const bool twins_off = []() { const char* e = getenv("LL_VK_PULL_TWINS"); return e && e[0] == '0'; }();       // (the old draws, for a comparison run)
-        static const std::string skip_list = []() { const char* e = getenv("LL_VK_PULL_TWIN_SKIP"); return std::string(",") + (e ? e : "0,1,2") + ","; }();       // <FS> 0, 1, 2 (water, underwater, water haze) are off by default: with the water twin the water reflection flickered and did not reflect right (2026-10-27, found with LL_VK_PULL_TWINS=0); an empty value turns them back on       // (indices of twins to leave off, e.g. "16,17": a bisect for a comparison run)
-        const bool skipped = skip_list.find("," + std::to_string(k) + ",") != std::string::npos;
-        if (twins_off || skipped || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
+        // <FS> the slots 0, 1, 2 (water, underwater, water haze) are never made: with the water twin the water reflection flickered and did not reflect right (2026-10-27); they wait for the water rewrite. (The switches
+        // LL_VK_PULL_TWINS and LL_VK_PULL_TWIN_SKIP, A/B tools of the twin era, are gone: PLAN-twin-removal.md, section 8.)
+        const bool skipped = k < 3;
+        if (skipped || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
         {
             continue;
         }
