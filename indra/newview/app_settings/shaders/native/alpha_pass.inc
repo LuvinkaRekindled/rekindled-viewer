@@ -113,6 +113,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float distanceBias;
     float depthRejectBias;
     float adaptiveStepMultiplier;
+    float ssrTraceMode;                 // bits of the improved reflection trace (pipeline.cpp ssr_trace_mode_bits): 1 water, 2 other surfaces (read here), 4 water takes fewer steps
 #endif
 };
 

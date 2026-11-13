@@ -473,7 +473,7 @@ std::string trim(const std::string& s)
 // <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
 bool native_only_family(const std::string& family)
 {
-    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post" };
+    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post", "resolve" };
     for (const char* f : kNativeOnlyFamilies)
     {
         if (family == f)
@@ -851,12 +851,6 @@ Program* nativeOverride(Program* p)
         return p;
     }
     d.mProgram->adoptFrom(*p);
-    if (d.mTarget == "Deferred Soften Shader")
-    {
-        // a uniform that only the native resolve has (the old program has no such name to copy it from): its live debug view, rt-debug.txt resolve_dbg (0 = none)
-        const S32 resolve_dbg = (S32)nativeKey("resolve_dbg", 0);
-        d.mProgram->setInts("resolve_dbg", &resolve_dbg, 1);
-    }
     if (++d.mUses % 2000 == 1)
     {
         LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
