@@ -74,3 +74,10 @@ Tool: `LL_VK_INTERFACE_DIFF=1` (with `LL_VK_UNICENSUS=1` for the uniforms the ca
 - Not covered: the ray traced variants (stock compiled with ray tracing; an RT-on run of the dump is a separate pass), and the lines of other terrain detail levels.
 
 Consequence for the pilot: `copy` and `blur` are clean (the one dropped write of the blur shader, `blur_size`, is not read by `blur_light.frag`), so step 1 can start. The `ssrTraceMode` declaration is the prerequisite of step 3 (`resolve`).
+
+## 8. Step 0, the RT-on run (2026-11-12)
+
+The same dump with ray tracing on (`inventory-data/interface-diff-rt.txt`, `INTERFACE-DIFF-RT.md`; 305 stock programs, 115 native lines built, none failed). 97 lines compared, 73 clean (74 with RT off), the same four `ssrTraceMode` lines for Soften. Only six lines differ from the RT-off run, and all six are the ray traced boundary:
+- the four alpha pull programs that have an RT variant (Alpha Uber Material Pull and Skin, PBR Alpha Pull and Skin) also receive the `rt_*` uniforms the callers write for the ray traced sun shadow (`rt_sun_radius`, `rt_sun_samples`, `rt_sun_lod`, `rt_sun_maxdist`, `rt_sun_pen_rays`, `rt_sun_alpha`, `rt_sun_self_off`, `rt_noise_frame`); the native programs declare none of them;
+- Deferred Sun Shader receives `rt_sun_radius`, `rt_sun_strength`, `rt_sun_self_off` and its RT stock variant has 2 fragment outputs (the blocker distance) against 1 in the native program.
+In RT mode those draws are made by the stock RT variant (`mUsesRt`, 894,418 draws on 23 programs in the lap), not by the native program, so nothing is lost today and nothing changes at removal: it is the reason section 3.6 keeps the RT variants stock until the RT track's port, and it shows what that port has to bring over (the `rt_*` block above and the second output of the sun program). No new issue for the pilot or for steps 2-5; the 23 programs with an RT variant need their stock GLSL kept (compiled only with ray tracing on) until then.

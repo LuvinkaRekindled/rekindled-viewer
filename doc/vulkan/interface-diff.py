@@ -13,7 +13,7 @@ Output: doc/vulkan/INTERFACE-DIFF.md. The question: when the stock program behin
     does not need a value under another name;
   - type mismatches (same name, different type or array size), native only samplers, attribute locations that differ, a different number of fragment outputs (the G-buffer family is expected to differ: the stock
     program declares one array `frag_data[4]`, the native one four variables).
-Usage: interface-diff.py [log text file]   (default: inventory-data/interface-diff.txt next to this script)
+Usage: interface-diff.py [log text file [output file]]   (defaults: inventory-data/interface-diff.txt next to this script, INTERFACE-DIFF.md; the RT-on run: inventory-data/interface-diff-rt.txt INTERFACE-DIFF-RT.md)
 """
 import collections
 import os
@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'inventory-data', 'interface-diff.txt')
 MANIFEST = os.path.join(REPO, 'indra', 'newview', 'app_settings', 'shaders', 'native', 'manifest.txt')
-OUT = os.path.join(HERE, 'INTERFACE-DIFF.md')
+OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'INTERFACE-DIFF.md')
 BROADCAST_SHARE = 0.10          # a name written on more than this share of the stock programs is an environment value the manager writes everywhere
 
 
