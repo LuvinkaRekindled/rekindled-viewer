@@ -161,3 +161,7 @@ override | Avatar Velocity (body) pull | velocity_body.vert | velocity.frag | po
 # the draw color program's pull twin: the flat colour of the highlight pass with no skin; the avatar pool's alpha masked draw without vertex colour (a mesh drawn by range under the pass's loose matrices)
 override | Draw Color Shader pull | alpha.vert | highlight.frag | alpha | define HIGHLIGHT_PASS=1 | default on
 override | Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | mask_nocolor.vert | mask_nocolor.frag | gbuffer | define AVATAR_PASS=1 | define MASK_NOCOLOR=1 | default on
+# the avatar pool's blended parts (the twin of "Deferred Avatar Alpha Shader": avatar.vert without the cloth, lit as the object programs are: lib/shade_lit.glsl) and the impostor render's alpha (texture times colour, the cutoff, no lighting)
+override | Deferred Avatar Alpha Shader pull | avatar.vert | avatar_alpha.frag | alpha | define AVATAR_PASS=1 | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rt
+override | Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | default on
+override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on

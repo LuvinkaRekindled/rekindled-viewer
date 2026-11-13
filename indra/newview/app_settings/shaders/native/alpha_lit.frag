@@ -14,6 +14,7 @@
 #ifdef ALPHA_PROBES
 #include "lib/probe.glsl"
 #endif
+#include "lib/shade_lit.glsl"
 #ifdef ALPHA_MAT
 #if defined(SSR)
 #include "lib/viewpos.glsl"
@@ -65,48 +66,5 @@ void main()
         return;
     }
 #endif
-    const float alpha = texel.a * vertex_color.a;
-    if (alpha < minimum_alpha)
-    {
-        discard;
-    }
-    const vec3 diffuse = srgb_to_linear(texel.rgb * vertex_color.rgb);
-
-    const vec3 pos = vary_position;
-    const vec3 norm = vary_norm;
-    const vec3 light_dir = sun_up_factor == 1 ? sun_dir : moon_dir;
-
-    // the cascade lookup comes after the alpha discard: pixels that are thrown away do not pay for it
-    const float shadow = sun_shadow(pos, norm, gl_FragCoord.y / screen_res.y);
-
-    vec3 sunlit, amblit, additive, atten;
-    atmos_terms_lit(pos, norm, light_dir, sunlit, amblit, additive, atten);
-    if (classic_mode > 0)
-    {
-        sunlit *= 1.35;
-    }
-
-    const float ndl = clamp(dot(norm, light_dir), 0.0, 1.0);
-    vec3 color;
-    if (classic_mode > 0)
-    {
-        // classic mode mixes the sky and the sun in sRGB, then goes back to linear
-        const vec3 sun_contrib = vec3(min(pow(ndl, 1.2), shadow));
-        color = srgb_to_linear(amblit * 0.9 + linear_to_srgb(sun_contrib) * sunlit * 0.7);
-    }
-    else
-    {
-        // the ambient light of the other skies comes from the reflection probes
-        vec3 irradiance = amblit;
-#ifdef ALPHA_PROBES
-        probe_gather(pos);
-        irradiance = probe_ambient(pos, norm, amblit);
-#endif
-        color = irradiance + min(ndl, shadow) * sunlit;
-    }
-    color *= diffuse;
-    color += alpha_lights_sum(diffuse, pos, norm);
-    color = apply_sky_and_water_fog(pos, additive, atten, color);
-
-    frag_color = max(vec4(color * (classic_mode > 0 ? 1.1 : 1.0), alpha), vec4(0.0));
+    frag_color = shade_lit(vary_position, vary_norm, texel, vertex_color);       // (lib/shade_lit.glsl, shared with avatar_alpha.frag)
 }
