@@ -50,8 +50,9 @@ The only things that stop the work are a look decision that is Adam's (a program
   for each pass and preset) and the PBR terrain paint bake (`terrain_bake.vert / .frag`, one line for each bit depth of the paint map: the loader names it by the octal of the depth, `Terrain Bake Shader RGB10` is 8 bits).
   Checked: build read, RT lap s84 (GLTFEnabled forced: 216 programs built, the lap before 204 + the 12 SMAA ones), RT-off lap s85 (196): no errors; the ground was in the darker, plaza-lights-off state in both (Adam: no glare
   on the ground = lights off; settled, do not chase). Not checked by eye: SMAA (RenderFSAAType 2), the terrain bake (LocalTerrainPaintEnabled), the materials passes of non-default views.
-- B: `pushFaceGeometry` 3, `renderIndexed` 7, `pushBufferVerts` 6, `postSort` 39 (lines).
-- C: errorF / errorV (the old loader's fallback shaders: they go with the old loader path, step 6).
+- B: DONE (4c62282013): `pushFaceGeometry` deleted; `renderIndexed`, `pushBufferVerts` and `postSort` are live primitives of non-scene draws, not an old path. 102 no-op stock permutation statements removed from the mgr.
+- C: DONE (errorF / errorV deleted with the loader).
+- State 2026-11-13: `native-inventory.py` exits 0. Laps s86: 216 programs (RT + GLTF), 196 (RT off), no errors. Open by choice: the LLDrawInfo rename (Adam, DESIGN-draw-info 6.9), stale comments that mention the stock loader, the three non-literal `addPermutation` / `mDefines` copies in the mgr.
 
 ## Order
 
