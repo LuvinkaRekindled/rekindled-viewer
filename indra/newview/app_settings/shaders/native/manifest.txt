@@ -194,3 +194,9 @@ override | Brdf Gen Shader | copy.vert | brdf_gen.frag | post | default on
 override | Glow CombineFXAA Shader | copy.vert | glow_fxaa.frag | post | default on
 override | One Texture Filter Shader | texfilter.vert | texfilter.frag | post | default on
 override | Two Texture Compare Shader | texcompare.vert | texcompare.frag | post | default on
+# FXAA (the anti-aliasing option RenderFSAAType 1: the four quality presets) and the GPU benchmark (a texture copy)
+override | FXAA Shader (Low) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=12 | default on
+override | FXAA Shader (Medium) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=23 | default on
+override | FXAA Shader (High) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=28 | default on
+override | FXAA Shader (Ultra) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=39 | default on
+override | Benchmark Shader | copy.vert | copy.frag | copy | default on
