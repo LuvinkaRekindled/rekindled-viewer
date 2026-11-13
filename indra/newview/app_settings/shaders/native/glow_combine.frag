@@ -1,0 +1,15 @@
+// glow_combine.frag: the lit picture plus the glow target: the sum of two textures. A line for line translation of "Glow Combine Shader" (interface/glowcombineF.glsl); pairs with fullscreen.vert.
+
+layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+{
+    uint ll_ti_diffuseRect;
+    uint ll_ti_emissiveRect;
+};
+
+layout(location = 0) in vec2 vary_fragcoord;
+layout(location = 0) out vec4 frag_color;
+
+void main()
+{
+    frag_color = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord) + texture(ll_tbl2d[LL_HM(ll_ti_emissiveRect)], vary_fragcoord);
+}
