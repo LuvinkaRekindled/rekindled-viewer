@@ -585,6 +585,20 @@ std::mutex gGlobalLock;
 std::vector<std::pair<std::string, std::string>> gGlobalDefines;
 U32 gGlobalGen = 1;
 
+// <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
+bool native_only_family(const std::string& family)
+{
+    static const char* const kNativeOnlyFamilies[] = { "copy", "blur" };
+    for (const char* f : kNativeOnlyFamilies)
+    {
+        if (family == f)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void build(Manager& m, Def& d)
 {
     d.mTried = true;
@@ -644,6 +658,46 @@ const std::string& nativeRoot()
     return m.mRoot;
 }
 
+// <FS> shader cleanup (stage 4 step 1): the lookup of createShader (main thread). It reads its own parse of the manifest, under its own lock: the manager above belongs to the worker thread.
+static std::mutex gLookupLock;
+static Manager gLookup;
+
+bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines)
+{
+    std::lock_guard<std::mutex> guard(gLookupLock);
+    if (!gLookup.mReady)
+    {
+        load_manifest(gLookup);
+    }
+    const Def* line = nullptr;
+    int count = 0;
+    for (const auto& d : gLookup.mDefs)
+    {
+        if (d->mTarget == program)
+        {
+            ++count;
+            if (!line)
+            {
+                line = d.get();
+            }
+        }
+    }
+    if (!line || count != 1 || !native_only_family(line->mFamily) || !line->mDefaultOn || !line->mRequire.empty() || !line->mWhen.empty() || !line->mSpec.empty())
+    {
+        return false;
+    }
+    vertex = line->mVertex;
+    fragment = line->mFragment;
+    defines = line->mDefines;
+    return true;
+}
+
+std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy()
+{
+    std::lock_guard<std::mutex> guard(gGlobalLock);
+    return gGlobalDefines;
+}
+
 int nativeKey(const std::string& key, int def)
 {
     return debug_key(key, def);
@@ -669,7 +723,7 @@ Program* nativeOverride(Program* p)
         const auto built_at = std::chrono::steady_clock::now();
         for (auto& line : m.mDefs)
         {
-            if (!line->mTried)
+            if (!line->mTried && !native_only_family(line->mFamily))
             {
                 build(m, *line);
                 line->mChecked = built_at;
@@ -826,6 +880,10 @@ void dumpNativeInterfaces()
     Manager& m = manager();
     for (const auto& d : m.mDefs)
     {
+        if (native_only_family(d->mFamily))
+        {
+            continue;           // (the program of the same name is the native program itself)
+        }
         if (d->mProgram)
         {
             LL_INFOS("InterfaceDiff") << "native | " << d->mTarget << " | " << d->mFamily << " | " << d->mVertex << "," << d->mFragment << " | " << interfaceText(d->mProgram->getInfo()) << LL_ENDL;
@@ -857,6 +915,10 @@ void dumpNativeCensus()
     }
     for (const auto& d : m.mDefs)
     {
+        if (native_only_family(d->mFamily))
+        {
+            continue;           // (a native only program is not swapped in at the draw: its binds are in the program census)
+        }
         LL_INFOS("NativeCensus") << "native | " << d->mTarget << " | family " << d->mFamily << " | uses " << d->mUses << " | family_off " << d->mFallback[Def::FB_FAMILY_OFF]
             << " | not_fit " << d->mFallback[Def::FB_NOT_FIT] << " | rt " << d->mFallback[Def::FB_RT] << " | not_ready " << d->mFallback[Def::FB_NOT_READY]
             << " | outputs " << d->mFallback[Def::FB_OUTPUTS] << LL_ENDL;

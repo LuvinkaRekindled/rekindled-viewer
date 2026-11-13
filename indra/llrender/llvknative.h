@@ -51,6 +51,12 @@ Program* nativeOverride(Program* p);
 // <FS> shader cleanup (stage 4): logs the native draws and the fallbacks by reason (tag NativeCensus); LL_VK_PROGRAM_CENSUS=1
 void dumpNativeCensus();
 
+// <FS> shader cleanup (stage 4, step 1 of DESIGN-stock-carrier-removal.md): a program of a converted family (kNativeOnlyFamilies in llvknative.cpp) has no stock twin: createShader asks here for the
+// manifest line of its name and builds the program from the native source (the way Native Sun Half does). False when the program has no line, its family is not converted, the line has `require` /
+// `when` / `spec` options, or several lines name the program. `defines` are the manifest line's own; the viewer's global defines are added by the caller (nativeGlobalDefinesCopy)
+bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines);
+std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
+
 // <FS> shader cleanup (stage 4, step 0 of DESIGN-stock-carrier-removal.md): the interface of a program as one line of text: the loose uniforms (name:type, arrays name:type[n]; the ll_ti_ slot members left out),
 // the samplers, the vertex inputs and the number of fragment outputs. Used for the stock and the native side of the interface comparison.
 std::string interfaceText(const ProgramInfo& info);
