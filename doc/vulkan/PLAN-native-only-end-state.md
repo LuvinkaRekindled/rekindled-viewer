@@ -12,13 +12,18 @@ The only things that stop the work are a look decision that is Adam's (a program
 - B: the buffer-attribute draw paths of the old pools are gone (`pushFaceGeometry`, `renderIndexed`, `pushBufferVerts`, the `postSort` lists): every draw is a record of table entries.
 - C: no stock shader file under `app_settings/shaders/class1..3` is left that no program names (the stock directories themselves are deleted when empty).
 
-## State on 2026-11-13 (before this list)
+## State (the inventory script prints it; first count 2026-11-13: A 28, later in the day 13)
 
-- A: 28 programs with stock files. Post and screen passes (CAS x2, CoF, DoFCombine, Gamma x2, Post, Visualize Buffers, Vignette, Snapshot Frame, RLVa Sphere, Rim Lift, Velocity Debug, RR Guides, RR Reflection Motion,
-  Ray Scene Material Debug: 17), Avatar Shader, Avatar Alpha pull, Impostor, GLTF PBR Metallic Roughness, No color alpha mask, Deferred Sun Shader (stock vertex), RT Reflection, Pathfinding x2, Object Preview,
-  Preview Physics, Reflection Probe Display.
+- A: stock programs left (13): Avatar Shader, Deferred Avatar Alpha Shader pull (stock files for the `rt` sessions), Deferred RT Reflection Shader, Deferred Sun Shader (stock vertex, the RT sun fragment), GLTF PBR Metallic
+  Roughness, Impostor, No color alpha mask, Object Preview, Pathfinding x2, Preview Physics, Ray Scene Material Debug, Reflection Probe Display. Done today (step 2): CoF, DoFCombine, Deferred Post (DoF), Buffer
+  Visualization, Avatar Velocity Debug, Vignette, Snapshot Frame, CAS x2 (cas.frag generated from the stock file by <work>\make_cas.py; the CPU half of that file is a C++ header now, `ffxcas.h`), Gamma x2,
+  RLVa Sphere, DLSS-NR Rim Lift, RR Guides, RR Reflection Motion.
+- A2: five stock file lines with computed names (llviewershadermgr.cpp: the sun program's fragment choice and the loop over the shader list at the end).
+- A3: 17 manifest lines with `rt`: the lit alpha programs (Deferred Alpha Pull x2, Uber x4, PBR x2, Material Pull 1/5/9/13 x2) and the avatar alpha program keep a stock program in a session with ray queries. The RT track's
+  port: the same as the water (lib/rt.glsl is the stock ray query code as a native include; a manifest define LL_RT_QUERY gives the program the extension and set 3). The sun lightmap's RT program and the RT Reflection
+  Shader are the same kind.
 - B: `pushFaceGeometry` 3, `renderIndexed` 7, `pushBufferVerts` 6, `postSort` 39 (lines).
-- C: the water files of class1/class3 are dead since today (the stock water programs are gone).
+- C: errorF / errorV (the old loader's fallback shaders: they go with the old loader path, step 6).
 
 ## Order
 

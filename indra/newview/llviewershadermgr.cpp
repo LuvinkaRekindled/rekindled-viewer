@@ -1273,8 +1273,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
     {
         gPostVignetteProgram.mName = "Vignette Post";
         gPostVignetteProgram.mShaderFiles.clear();
-        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", ShaderStage::Vertex));
-        gPostVignetteProgram.mShaderFiles.push_back(make_pair("post/exoVignetteF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPostVignetteProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gPostVignetteProgram.createShader();
     }
@@ -1284,8 +1283,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
     {
         gPostSnapshotFrameProgram.mName = "Snapshot Frame Post";
         gPostSnapshotFrameProgram.mShaderFiles.clear();
-        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/exoPostBaseV.glsl", ShaderStage::Vertex));
-        gPostSnapshotFrameProgram.mShaderFiles.push_back(make_pair("post/snapshotFrameF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPostSnapshotFrameProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gPostSnapshotFrameProgram.createShader();
     }
@@ -2936,9 +2934,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRGuidesProgram.mFeatures.isDeferred = true;
         gRRGuidesProgram.mFeatures.hasFullGBuffer = true;
         gRRGuidesProgram.mShaderFiles.clear();
-        gRRGuidesProgram.clearPermutations();
-        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gRRGuidesProgram.mShaderFiles.push_back(make_pair("deferred/rrGuidesF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gRRGuidesProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gRRGuidesProgram);
         if (!gRRGuidesProgram.createShader())
@@ -2949,9 +2945,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRRReflMotionProgram.mName = "Ray Reconstruction Reflection Motion";
         gRRReflMotionProgram.mFeatures.isDeferred = true;
         gRRReflMotionProgram.mShaderFiles.clear();
-        gRRReflMotionProgram.clearPermutations();
-        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gRRReflMotionProgram.mShaderFiles.push_back(make_pair("deferred/rrReflMotionF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gRRReflMotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gRRReflMotionProgram);
         if (!gRRReflMotionProgram.createShader())
@@ -2961,9 +2955,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gNRRimLiftProgram.mName = "DLSS-NR Rim Lift";
         gNRRimLiftProgram.mShaderFiles.clear();
-        gNRRimLiftProgram.clearPermutations();
-        gNRRimLiftProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gNRRimLiftProgram.mShaderFiles.push_back(make_pair("deferred/nrRimLiftF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gNRRimLiftProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gNRRimLiftProgram.createShader())
         {
@@ -2973,8 +2965,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
         gAvatarVelocityDebugProgram.mShaderFiles.clear();
         gAvatarVelocityDebugProgram.clearPermutations();
-        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gAvatarVelocityDebugProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityDebugF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gAvatarVelocityDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarVelocityDebugProgram.createShader())
         {
@@ -3006,9 +2997,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostGammaCorrectProgram.mFeatures.hasSrgb = true;
         gDeferredPostGammaCorrectProgram.mFeatures.isDeferred = true;
         gDeferredPostGammaCorrectProgram.mShaderFiles.clear();
-        gDeferredPostGammaCorrectProgram.clearPermutations();
-        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -3020,10 +3009,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gLegacyPostGammaCorrectProgram.mFeatures.hasSrgb = true;
         gLegacyPostGammaCorrectProgram.mFeatures.isDeferred = true;
         gLegacyPostGammaCorrectProgram.mShaderFiles.clear();
-        gLegacyPostGammaCorrectProgram.clearPermutations();
-        gLegacyPostGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gLegacyPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLegacyPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -3251,8 +3237,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gCASProgram.mName = "Contrast Adaptive Sharpening Shader";
         gCASProgram.mFeatures.hasSrgb = true;
         gCASProgram.mShaderFiles.clear();
-        gCASProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gCASProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gCASProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCASProgram.createShader();
         // llassert(success);
@@ -3269,12 +3254,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gCASLegacyGammaProgram.mName = "Contrast Adaptive Sharpening Legacy Gamma Shader";
         gCASLegacyGammaProgram.mFeatures.hasSrgb = true;
         gCASLegacyGammaProgram.mShaderFiles.clear();
-        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gCASLegacyGammaProgram.mShaderFiles.push_back(make_pair("deferred/CASF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gCASLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gCASLegacyGammaProgram.clearPermutations();
-        gCASLegacyGammaProgram.addPermutation("GAMMA_CORRECT", "1");
-        gCASLegacyGammaProgram.addPermutation("LEGACY_GAMMA", "1");
         success = gCASLegacyGammaProgram.createShader();
         // llassert(success);
         if (!success)
@@ -3290,8 +3271,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostProgram.mName = "Deferred Post Shader";
         gDeferredPostProgram.mFeatures.isDeferred = true;
         gDeferredPostProgram.mShaderFiles.clear();
-        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostProgram.createShader();
         llassert(success);
@@ -3302,8 +3282,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredCoFProgram.mName = "Deferred CoF Shader";
         gDeferredCoFProgram.mShaderFiles.clear();
         gDeferredCoFProgram.mFeatures.isDeferred = true;
-        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredCoFProgram.mShaderFiles.push_back(make_pair("deferred/cofF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredCoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredCoFProgram.createShader();
         llassert(success);
@@ -3314,8 +3293,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDoFCombineProgram.mName = "Deferred DoFCombine Shader";
         gDeferredDoFCombineProgram.mFeatures.isDeferred = true;
         gDeferredDoFCombineProgram.mShaderFiles.clear();
-        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/dofCombineF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredDoFCombineProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredDoFCombineProgram.createShader();
         llassert(success);
@@ -3450,8 +3428,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success) {
         gDeferredBufferVisualProgram.mName = "Deferred Buffer Visualization Shader";
         gDeferredBufferVisualProgram.mShaderFiles.clear();
-        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredVisualizeBuffers.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredBufferVisualProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         add_common_permutations(&gDeferredBufferVisualProgram);
@@ -3464,8 +3441,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gRlvSphereProgram.mName = "RLVa Sphere Post Processing Shader";
         gRlvSphereProgram.mFeatures.isDeferred = true;
         gRlvSphereProgram.mShaderFiles.clear();
-        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvV.glsl", ShaderStage::Vertex));
-        gRlvSphereProgram.mShaderFiles.push_back(make_pair("deferred/rlvF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gRlvSphereProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gRlvSphereProgram.createShader();
     }
@@ -3488,8 +3464,7 @@ bool LLViewerShaderMgr::loadShadersObject()
         gObjectAlphaMaskNoColorProgram.mFeatures.hasLighting = true;
         gObjectAlphaMaskNoColorProgram.mFeatures.hasAlphaMask = true;
         gObjectAlphaMaskNoColorProgram.mShaderFiles.clear();
-        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoColorV.glsl", ShaderStage::Vertex));
-        gObjectAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("objects/simpleF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gObjectAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gObjectAlphaMaskNoColorProgram.createShader();
     }
@@ -3499,8 +3474,7 @@ bool LLViewerShaderMgr::loadShadersObject()
         gImpostorProgram.mName = "Impostor Shader";
         gImpostorProgram.mFeatures.hasSrgb = true;
         gImpostorProgram.mShaderFiles.clear();
-        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorV.glsl", ShaderStage::Vertex));
-        gImpostorProgram.mShaderFiles.push_back(make_pair("objects/impostorF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gImpostorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gImpostorProgram.createShader();
     }
@@ -3509,8 +3483,7 @@ bool LLViewerShaderMgr::loadShadersObject()
     {
         gObjectPreviewProgram.mName = "Object Preview Shader";
         gObjectPreviewProgram.mShaderFiles.clear();
-        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewV.glsl", ShaderStage::Vertex));
-        gObjectPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gObjectPreviewProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = make_rigged_variant(gObjectPreviewProgram, gSkinnedObjectPreviewProgram);
         success = gObjectPreviewProgram.createShader();
@@ -3527,8 +3500,7 @@ bool LLViewerShaderMgr::loadShadersObject()
         gPhysicsPreviewProgram.mFeatures.hasAtmospherics = false;
         gPhysicsPreviewProgram.mFeatures.hasLighting = false;
         gPhysicsPreviewProgram.mShaderFiles.clear();
-        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsV.glsl", ShaderStage::Vertex));
-        gPhysicsPreviewProgram.mShaderFiles.push_back(make_pair("objects/previewPhysicsF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPhysicsPreviewProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gPhysicsPreviewProgram.createShader();
         gPhysicsPreviewProgram.mFeatures.hasLighting = false;
@@ -3559,8 +3531,7 @@ bool LLViewerShaderMgr::loadShadersAvatar()
         gAvatarProgram.mFeatures.hasLighting = true;
         gAvatarProgram.mFeatures.hasAlphaMask = true;
         gAvatarProgram.mShaderFiles.clear();
-        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarV.glsl", ShaderStage::Vertex));
-        gAvatarProgram.mShaderFiles.push_back(make_pair("avatar/avatarF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gAvatarProgram.mShaderLevel = mShaderLevel[SHADER_AVATAR];
         success = gAvatarProgram.createShader();
 
@@ -3664,8 +3635,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gPathfindingProgram.mName = "Pathfinding Shader";
         gPathfindingProgram.mShaderFiles.clear();
-        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingV.glsl", ShaderStage::Vertex));
-        gPathfindingProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPathfindingProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gPathfindingProgram.createShader();
     }
@@ -3674,8 +3644,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gPathfindingNoNormalsProgram.mName = "PathfindingNoNormals Shader";
         gPathfindingNoNormalsProgram.mShaderFiles.clear();
-        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingNoNormalV.glsl", ShaderStage::Vertex));
-        gPathfindingNoNormalsProgram.mShaderFiles.push_back(make_pair("interface/pathfindingF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPathfindingNoNormalsProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gPathfindingNoNormalsProgram.createShader();
     }
@@ -3796,8 +3765,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gReflectionProbeDisplayProgram.mFeatures.hasGamma = true;
         gReflectionProbeDisplayProgram.mFeatures.isDeferred = true;
         gReflectionProbeDisplayProgram.mShaderFiles.clear();
-        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeV.glsl", ShaderStage::Vertex));
-        gReflectionProbeDisplayProgram.mShaderFiles.push_back(make_pair("interface/reflectionprobeF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gReflectionProbeDisplayProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gReflectionProbeDisplayProgram.createShader();
     }
