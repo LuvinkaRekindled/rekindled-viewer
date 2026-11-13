@@ -451,7 +451,7 @@ static const char* const kTexAnimCore =
 // the main vertex shaders that read texture matrices from a record's table without the generic rewrite
 static bool texanim_hand_written_pull(const std::string& filename)
 {
-    static const char* const names[] = { "alphaPullV.glsl", "diffusePullV.glsl", "emissivePullV.glsl", "materialPullV.glsl", "pbrAlphaPullV.glsl", "pbrGlowPullV.glsl", "shadowAlphaPullV.glsl" };
+    static const char* const names[] = { "alphaPullV.glsl", "materialPullV.glsl", "pbrAlphaPullV.glsl", "pbrGlowPullV.glsl", "shadowAlphaPullV.glsl" };
     for (const char* n : names)
     {
         const size_t len = strlen(n);

@@ -2029,12 +2029,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredImpostorProgram.mName = "Deferred Impostor Shader";
         gDeferredImpostorProgram.mFeatures.hasSrgb = true;
-        gDeferredImpostorProgram.mShaderFiles.clear();
-        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorV.glsl", ShaderStage::Vertex));
-        gDeferredImpostorProgram.mShaderFiles.push_back(make_pair("deferred/impostorF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredImpostorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredImpostorProgram);
 
         success = gDeferredImpostorProgram.createShader();
         llassert(success);
@@ -2984,8 +2980,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             else
             {
                 shader->mFeatures.hasSrgb = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskIndexedF.glsl", ShaderStage::Fragment));
+                // <FS> the diffuse alpha mask pull programs are native only (native/manifest.txt, family gbuffer): no stock files (the fullbright mask programs above stay swapped)
             }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             shader->addPermutation("LL_MASK_CUTOFF", "1");
@@ -3156,8 +3151,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasSrgb = srgb;
             shader->mShaderFiles.clear();
             shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            if (vertex)             // (null: a native only program, native/manifest.txt: no stock files)
+            {
+                shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
+            }
+            if (fragment)
+            {
+                shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+            }
             shader->addPermutation(bindless, "1");
             if (skin)
             {
@@ -3177,9 +3178,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             return true;
         };
-        bool plain_ok = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", "deferred/emissivePullV.glsl", "deferred/emissiveF.glsl", "LL_BINDLESS_DIFFUSE", false, false);
+        bool plain_ok = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", nullptr, nullptr, "LL_BINDLESS_DIFFUSE", false, false);
         plain_ok = plain_ok && gAlphaLitSkinReady && ll_rigged_indexed()
-            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", "deferred/emissivePullV.glsl", "deferred/emissiveF.glsl", "LL_BINDLESS_DIFFUSE", true, false);
+            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", nullptr, nullptr, "LL_BINDLESS_DIFFUSE", true, false);
         gAlphaGlowPullReady = plain_ok;
         bool pbr_ok = gAlphaPbrPullReady && gAlphaPbrSkinReady && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", false, true);
         pbr_ok = pbr_ok && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", true, true);
@@ -3568,9 +3569,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredDiffusePullProgram.mName = "Deferred Diffuse Pull Shader";
         gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
-        gDeferredDiffusePullProgram.mShaderFiles.clear();
-        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
-        gDeferredDiffusePullProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredDiffusePullProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
         add_common_permutations(&gDeferredDiffusePullProgram);
@@ -3582,9 +3581,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> S4 A1: ... and its rigged variant (HAS_SKIN: the draw's weights and palette are read by address). Optional.
         gDeferredDiffusePullSkinProgram.mName = "Deferred Diffuse Pull Skin Shader";
         gDeferredDiffusePullSkinProgram.mFeatures.hasSrgb = true;
-        gDeferredDiffusePullSkinProgram.mShaderFiles.clear();
-        gDeferredDiffusePullSkinProgram.mShaderFiles.push_back(make_pair("deferred/diffusePullV.glsl", ShaderStage::Vertex));
-        gDeferredDiffusePullSkinProgram.mShaderFiles.push_back(make_pair("deferred/diffuseIndexedF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullSkinProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredDiffusePullSkinProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
         gDeferredDiffusePullSkinProgram.addPermutation("HAS_SKIN", "1");
