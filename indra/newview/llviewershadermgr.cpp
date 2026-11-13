@@ -2081,12 +2081,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSunProbeProgram.mFeatures.isDeferred = true;
         gDeferredSunProbeProgram.mFeatures.hasShadows = true;
 
-        gDeferredSunProbeProgram.mShaderFiles.clear();
-        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", ShaderStage::Vertex));
-        gDeferredSunProbeProgram.mShaderFiles.push_back(make_pair("deferred/sunLightF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag with LL_NO_AO): no stock files
         gDeferredSunProbeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredSunProbeProgram);
 
         success = gDeferredSunProbeProgram.createShader();
         llassert(success);
@@ -3803,24 +3799,16 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> the penumbra filter of the ray traced sun shadow (PLAN-rt-shadow-penumbra.md step 2b): two separable passes over the lightmap's sun channel, sized by the blocker distance map
         gRtShadowFilterProgram.mName = "RT Shadow Penumbra Filter";
         gRtShadowFilterProgram.mFeatures.isDeferred = true;
-        gRtShadowFilterProgram.mShaderFiles.clear();
-        gRtShadowFilterProgram.clearPermutations();
-        gRtShadowFilterProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
-        gRtShadowFilterProgram.mShaderFiles.push_back(make_pair("deferred/rtShadowFilterF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family sun: rt_shadow_filter.frag): no stock files
         gRtShadowFilterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gRtShadowFilterProgram);
         if (!gRtShadowFilterProgram.createShader())
         {
             LL_WARNS("VkRt") << "the RT shadow penumbra filter did not compile: the centre ray's shadow stays hard" << LL_ENDL;
         }
         gRtShadowPrepProgram.mName = "RT Shadow Penumbra Prep";
         gRtShadowPrepProgram.mFeatures.isDeferred = true;
-        gRtShadowPrepProgram.mShaderFiles.clear();
-        gRtShadowPrepProgram.clearPermutations();
-        gRtShadowPrepProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
-        gRtShadowPrepProgram.mShaderFiles.push_back(make_pair("deferred/rtShadowPrepF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family sun: rt_shadow_prep.frag): no stock files
         gRtShadowPrepProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gRtShadowPrepProgram);
         if (!gRtShadowPrepProgram.createShader())
         {
             LL_WARNS("VkRt") << "the RT shadow penumbra prep pass did not compile: the centre ray's shadow stays hard" << LL_ENDL;
