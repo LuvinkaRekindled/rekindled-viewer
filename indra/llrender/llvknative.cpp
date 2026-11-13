@@ -124,10 +124,10 @@ U32 std140_bytes(const std::string& type, U32 array_size)
     return elem;
 }
 
-std::string stage_head(bool vertex, const std::vector<std::pair<std::string, std::string>>& defines)
+std::string stage_head(int stage, const std::vector<std::pair<std::string, std::string>>& defines)
 {
     std::string head = "#version 460\n#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : require\n";
-    head += vertex ? "#define LL_VERTEX_STAGE 1\n" : "#define LL_FRAGMENT_STAGE 1\n";
+    head += stage == 0 ? "#define LL_VERTEX_STAGE 1\n" : (stage == 1 ? "#define LL_FRAGMENT_STAGE 1\n" : "#define LL_GEOMETRY_STAGE 1\n");
     for (const auto& d : defines)
     {
         head += "#define " + d.first + " " + d.second + "\n";
@@ -139,7 +139,7 @@ std::string stage_head(bool vertex, const std::vector<std::pair<std::string, std
 } // namespace
 
 bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
-                          const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error)
+                          const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error, const std::string& geometry_file)
 {
     const auto t0 = std::chrono::steady_clock::now();
     auto fail = [&](const std::string& why)
@@ -163,11 +163,12 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     std::vector<std::unique_ptr<glslang::TShader>> shaders;
     std::vector<std::string> keep;      // the text glslang points into
     glslang::TProgram program;
-    bool have_stage[2] = { false, false };
-    const std::string stage_files[2] = { vertex_file, fragment_file };
+    bool have_stage[3] = { false, false, false };
+    size_t body_index[3] = { 0, 0, 0 };        // where the stage's source is in 'keep'
+    const std::string stage_files[3] = { vertex_file, fragment_file, geometry_file };
     const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
     keep.reserve(8);
-    for (int s = 0; s < 2; ++s)
+    for (int s = 0; s < 3; ++s)
     {
         if (stage_files[s].empty())
         {
@@ -180,9 +181,10 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
             return fail("cannot read " + path);
         }
         read_files.push_back(path);
-        const EShLanguage lang = s == 0 ? EShLangVertex : EShLangFragment;
-        keep.push_back(stage_head(s == 0, defines));
+        const EShLanguage lang = s == 0 ? EShLangVertex : (s == 1 ? EShLangFragment : EShLangGeometry);
+        keep.push_back(stage_head(s, defines));
         keep.push_back(body);
+        body_index[s] = keep.size() - 1;
         const char* strings[2] = { keep[keep.size() - 2].c_str(), keep[keep.size() - 1].c_str() };
         const int lengths[2] = { (int)keep[keep.size() - 2].size(), (int)keep[keep.size() - 1].size() };
         const char* names[2] = { "native-prelude", stage_files[s].c_str() };
@@ -202,6 +204,10 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     if (!have_stage[0] && !have_stage[1])
     {
         return fail("no stages");
+    }
+    if (have_stage[2] && !(have_stage[0] && have_stage[1]))
+    {
+        return fail("a geometry stage needs a vertex and a fragment stage");
     }
     if (!program.link(msgs))
     {
@@ -326,7 +332,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         static const std::regex out_re(R"(layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*out\s+(\w+)\s+(\w+)\s*;)");
         if (have_stage[0])
         {
-            const std::string& body = keep[1];
+            const std::string& body = keep[body_index[0]];
             for (std::sregex_iterator it(body.begin(), body.end(), in_re), end; it != end; ++it)
             {
                 out.mAttributeLocations.push_back((U32)atoi((*it)[1].str().c_str()));
@@ -336,7 +342,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         }
         if (have_stage[1])
         {
-            const std::string& body = keep.back();
+            const std::string& body = keep[body_index[1]];
             for (std::sregex_iterator it(body.begin(), body.end(), out_re), end; it != end; ++it)
             {
                 out.mOutputs.push_back((*it)[3].str());
@@ -344,13 +350,13 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         }
     }
 
-    for (int s = 0; s < 2; ++s)
+    for (int s = 0; s < 3; ++s)
     {
         if (!have_stage[s])
         {
             continue;
         }
-        glslang::TIntermediate* inter = program.getIntermediate(s == 0 ? EShLangVertex : EShLangFragment);
+        glslang::TIntermediate* inter = program.getIntermediate(s == 0 ? EShLangVertex : (s == 1 ? EShLangFragment : EShLangGeometry));
         if (!inter)
         {
             return fail("no intermediate for a stage");
@@ -369,8 +375,8 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         *files = read_files;
     }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    const size_t words = out.mSpirv[0].size() + out.mSpirv[1].size();
-    LL_INFOS("VkNative") << "native program '" << name << "': " << out.mSpirv[0].size() << " + " << out.mSpirv[1].size() << " SPIR-V words, " << out.mUniforms.size() << " uniforms, " << out.mSamplers.size()
+    const size_t words = out.mSpirv[0].size() + out.mSpirv[1].size() + out.mSpirv[2].size();
+    LL_INFOS("VkNative") << "native program '" << name << "': " << out.mSpirv[0].size() << " + " << out.mSpirv[1].size() << (have_stage[2] ? " + " + std::to_string(out.mSpirv[2].size()) : std::string()) << " SPIR-V words, " << out.mUniforms.size() << " uniforms, " << out.mSamplers.size()
         << " texture slots, compiled in " << ms << " ms" << LL_ENDL;
     if (words > 40000 || ms > 150.0)
     {
@@ -429,7 +435,7 @@ U64 file_stamp(const std::string& path)
 
 struct Def
 {
-    std::string mTarget, mVertex, mFragment, mFamily;
+    std::string mTarget, mVertex, mFragment, mFamily, mGeometry;       // mGeometry: the option `geometry <file>` (a third stage, optional)
     std::vector<std::pair<std::string, std::string>> mDefines;
     std::vector<std::pair<U32, U32>> mSpec;
     bool mDefaultOn = false;                                // `default on` in the manifest: the family is on unless rt-debug.txt says native_<family>=0
@@ -558,6 +564,11 @@ void load_manifest(Manager& m)
                 d->mRtVariant = true;
                 continue;
             }
+            if (kind == "geometry")
+            {
+                d->mGeometry = rest;
+                continue;
+            }
             const size_t eq = rest.find('=');
             if (eq == std::string::npos)
             {
@@ -642,7 +653,7 @@ void build(Manager& m, Def& d)
         d.mGlobalGen = gGlobalGen;
     }
     defines.insert(defines.end(), d.mDefines.begin(), d.mDefines.end());
-    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, defines, info, &files, &error);
+    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, defines, info, &files, &error, d.mGeometry);
     files.push_back(m.mRoot + "/manifest.txt");
     for (const std::string& f : files)
     {
@@ -691,7 +702,7 @@ const std::string& nativeRoot()
 static std::mutex gLookupLock;
 static Manager gLookup;
 
-bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines)
+bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines, std::string& geometry)
 {
     std::lock_guard<std::mutex> guard(gLookupLock);
     if (!gLookup.mReady)
@@ -717,6 +728,7 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
     }
     vertex = line->mVertex;
     fragment = line->mFragment;
+    geometry = line->mGeometry;
     defines = line->mDefines;
     return true;
 }

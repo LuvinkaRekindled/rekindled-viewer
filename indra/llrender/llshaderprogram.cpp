@@ -890,12 +890,13 @@ bool LLShaderProgram::createShader()
     if (mNativeFragment.empty() || mNativeFromManifest)
     {
         // <FS> stage 4 step 1: a program of a converted family is built from its manifest line (no stock files behind it)
-        std::string native_vertex, native_fragment;
+        std::string native_vertex, native_fragment, native_geometry;
         std::vector<std::pair<std::string, std::string>> native_defines;
-        if (LLVk::nativeOnlyLine(mName, native_vertex, native_fragment, native_defines))
+        if (LLVk::nativeOnlyLine(mName, native_vertex, native_fragment, native_defines, native_geometry))
         {
             mNativeVertex = native_vertex;
             mNativeFragment = native_fragment;
+            mNativeGeometry = native_geometry;
             mNativeDefines = native_defines;
             mNativeFromManifest = true;
         }
@@ -1604,7 +1605,7 @@ bool LLShaderProgram::link(bool suppress_errors)
             // Lightmap Half, Native Light Upsample) did not get them until step 4 of the stock carrier removal made `sun_shadow()` depend on SUN_SHADOW: without it the half resolution sun lightmap had no shadow
             std::vector<std::pair<std::string, std::string>> native_defines = LLVk::nativeGlobalDefinesCopy();
             native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
-            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error))
+            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error, mNativeGeometry))
             {
                 return;
             }
@@ -1760,7 +1761,7 @@ void LLShaderProgram::dumpProgramCensus()
             files += f.first;
         }
         LL_INFOS("ProgramCensus") << "program | " << (p->mName.empty() ? std::string("(unnamed)") : p->mName) << " | loaded " << (p->mProgramObject != 0 ? 1 : 0) << " | binds " << p->mCensusBinds
-            << " | level " << p->mShaderLevel << " | files " << files << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << LL_ENDL;
+            << " | level " << p->mShaderLevel << " | files " << files << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << (p->mNativeGeometry.empty() ? "" : ";" + p->mNativeGeometry) << LL_ENDL;
         ++count;
     }
     LL_INFOS("ProgramCensus") << "programs loaded " << count << LL_ENDL;

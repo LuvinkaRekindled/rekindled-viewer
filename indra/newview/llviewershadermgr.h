@@ -165,7 +165,6 @@ enum NormalDebugShaderVariant : S32
     NORMAL_DEBUG_SHADER_COUNT
 };
 extern LLShaderProgram         gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-extern LLShaderProgram         gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
 extern LLShaderProgram         gBenchmarkProgram;
 extern LLShaderProgram         gReflectionProbeDisplayProgram;
 extern LLShaderProgram         gCopyProgram;

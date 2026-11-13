@@ -32,8 +32,10 @@ class Program;
 
 // Compile one native program from the files under 'root' (vertex or fragment may be empty for a one stage program). 'defines' become `#define NAME VALUE` before the prelude. Fills 'out'
 // (SPIR-V, the loose uniform blocks as reflected, the texture slots, the vertex inputs and the outputs). 'files' lists every file read (the shader files and their includes) for hot reload.
+// 'geometry_file' (optional, needs both the vertex and the fragment stage): a geometry stage between them (the manifest option `geometry <file>`; the stage macro is LL_GEOMETRY_STAGE; the outputs of the vertex
+// stage and the inputs of the geometry stage have explicit locations as everywhere else).
 bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
-                          const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error);
+                          const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error, const std::string& geometry_file = std::string());
 
 // The directory the native shaders are read from (LL_VK_NATIVE_DIR, else app_settings/shaders/native next to the executable).
 const std::string& nativeRoot();
@@ -54,7 +56,7 @@ void dumpNativeCensus();
 // <FS> shader cleanup (stage 4, step 1 of DESIGN-stock-carrier-removal.md): a program of a converted family (kNativeOnlyFamilies in llvknative.cpp) has no stock twin: createShader asks here for the
 // manifest line of its name and builds the program from the native source (the way Native Sun Half does). False when the program has no line, its family is not converted, the line has `require` /
 // `when` / `spec` options, or several lines name the program. `defines` are the manifest line's own; the viewer's global defines are added by the caller (nativeGlobalDefinesCopy)
-bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines);
+bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines, std::string& geometry);
 std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
 
 // <FS> stage 4 step 4: whether this session's stock programs carry ray query code (the global define LL_RT_SHADOWS is set). A manifest line with the option `rt` is native only while it is not: with ray traced
