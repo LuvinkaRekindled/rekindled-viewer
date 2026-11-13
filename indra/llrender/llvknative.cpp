@@ -444,6 +444,8 @@ struct Def
     // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the draws of the old program that did NOT take the native program, by reason. Kept on the first manifest line that names the program.
     enum { FB_FAMILY_OFF, FB_NOT_FIT, FB_RT, FB_NOT_READY, FB_OUTPUTS, FB_COUNT };
     U64 mFallback[FB_COUNT] = {};
+    bool mRtVariant = false;                                // `rt` in the manifest: the program has a stock ray traced variant that draws in RT mode (mUsesRt), so its stock program stays until the RT track's port
+    bool mNativeOnly = false;                               // set by load_manifest: converted family, the only line of the program, default on, no require / when / spec, no ray traced variant: createShader builds it, nativeOverride never swaps it
 };
 
 struct Manager
@@ -466,6 +468,20 @@ std::string trim(const std::string& s)
     size_t a = s.find_first_not_of(" \t\r\n");
     size_t b = s.find_last_not_of(" \t\r\n");
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+// <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
+bool native_only_family(const std::string& family)
+{
+    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post" };
+    for (const char* f : kNativeOnlyFamilies)
+    {
+        if (family == f)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void load_manifest(Manager& m)
@@ -534,6 +550,11 @@ void load_manifest(Manager& m)
                 d->mDefaultOn = true;
                 continue;
             }
+            if (kind == "rt")
+            {
+                d->mRtVariant = true;
+                continue;
+            }
             const size_t eq = rest.find('=');
             if (eq == std::string::npos)
             {
@@ -565,6 +586,19 @@ void load_manifest(Manager& m)
             }
         }
     }
+    for (size_t i = 0; i < m.mDefs.size(); ++i)
+    {
+        Def& d = *m.mDefs[i];
+        int lines = 0;
+        for (const auto& other : m.mDefs)
+        {
+            if (other->mTarget == d.mTarget)
+            {
+                ++lines;
+            }
+        }
+        d.mNativeOnly = native_only_family(d.mFamily) && lines == 1 && d.mDefaultOn && !d.mRtVariant && d.mRequire.empty() && d.mWhen.empty() && d.mSpec.empty();
+    }
     LL_INFOS("VkNative") << m.mDefs.size() << " native program(s) in " << m.mRoot << "/manifest.txt" << LL_ENDL;
 }
 
@@ -584,20 +618,6 @@ bool stale(const Def& d)
 std::mutex gGlobalLock;
 std::vector<std::pair<std::string, std::string>> gGlobalDefines;
 U32 gGlobalGen = 1;
-
-// <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
-bool native_only_family(const std::string& family)
-{
-    static const char* const kNativeOnlyFamilies[] = { "copy", "blur" };
-    for (const char* f : kNativeOnlyFamilies)
-    {
-        if (family == f)
-        {
-            return true;
-        }
-    }
-    return false;
-}
 
 void build(Manager& m, Def& d)
 {
@@ -682,7 +702,7 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
             }
         }
     }
-    if (!line || count != 1 || !native_only_family(line->mFamily) || !line->mDefaultOn || !line->mRequire.empty() || !line->mWhen.empty() || !line->mSpec.empty())
+    if (!line || count != 1 || !line->mNativeOnly)
     {
         return false;
     }
@@ -723,7 +743,7 @@ Program* nativeOverride(Program* p)
         const auto built_at = std::chrono::steady_clock::now();
         for (auto& line : m.mDefs)
         {
-            if (!line->mTried && !native_only_family(line->mFamily))
+            if (!line->mTried && !line->mNativeOnly)
             {
                 build(m, *line);
                 line->mChecked = built_at;
@@ -880,7 +900,7 @@ void dumpNativeInterfaces()
     Manager& m = manager();
     for (const auto& d : m.mDefs)
     {
-        if (native_only_family(d->mFamily))
+        if (d->mNativeOnly)
         {
             continue;           // (the program of the same name is the native program itself)
         }
@@ -915,7 +935,7 @@ void dumpNativeCensus()
     }
     for (const auto& d : m.mDefs)
     {
-        if (native_only_family(d->mFamily))
+        if (d->mNativeOnly)
         {
             continue;           // (a native only program is not swapped in at the draw: its binds are in the program census)
         }
