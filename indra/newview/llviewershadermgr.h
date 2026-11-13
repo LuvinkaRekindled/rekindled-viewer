@@ -221,7 +221,6 @@ extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram
 extern LLShaderProgram         gDeferredNonIndexedDiffuseProgram;
 extern LLShaderProgram         gDeferredTerrainProgram;
 extern LLShaderProgram         gDeferredTreeProgram;
-extern LLShaderProgram         gDeferredTreeShadowProgram;
 extern LLShaderProgram         gDeferredMultiLightProgram;
 extern LLShaderProgram         gDeferredMultiSpotLightProgram;
 extern LLShaderProgram         gDeferredSunProgram;
