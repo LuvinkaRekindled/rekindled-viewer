@@ -1,6 +1,9 @@
 # Native programs (llrender/llvknative.h). One line each:
 #   override | <name of the viewer program it stands in for> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE] [| spec ID=VALUE]
 # The family is the live key native_<family>=1 in rt-debug.txt (0 or missing: the old program). native_reload=0 turns the watching of the files off.
+# Native only families (kNativeOnlyFamilies in llvknative.cpp; DESIGN-stock-carrier-removal.md): a program whose family is listed there, which has this one line only (no require / when / spec) and no `rt`, is
+# built from its line when the viewer's shaders are loaded and has no stock program behind it (no old files, no swap at the draw, no native_<family> switch, no rebuild when a source is saved).
+# `rt` (an option of a line): the program has a stock ray traced variant that still draws in RT mode (the RT track has no native port yet): its stock program stays and the line is swapped in at the draw.
 override | Copy Shader | copy.vert | copy.frag | copy | default on
 override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur | default on
 override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | require ssao_radius | require ll_ti_shadowMap0 | default on
@@ -111,8 +114,8 @@ override | Reflection Mip Shader | reflectionmip.vert | reflectionmip.frag | pos
 override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=32 | default on
 override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
 override | UI Shader | ui.vert | ui.frag | post | default on
-override | Haze Shader | fullscreen.vert | haze.frag | post | default on
-override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
+override | Haze Shader | fullscreen.vert | haze.frag | post | default on | rt
+override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on | rt
 override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
 override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | gbuffer | default on
 override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on

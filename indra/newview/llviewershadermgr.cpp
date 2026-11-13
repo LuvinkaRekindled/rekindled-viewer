@@ -1375,10 +1375,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
 
     if (success)
     {
-        gGlowProgram.mName = "Glow Shader (Post)";
-        gGlowProgram.mShaderFiles.clear();
-        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowV.glsl", ShaderStage::Vertex));
-        gGlowProgram.mShaderFiles.push_back(make_pair("effects/glowF.glsl", ShaderStage::Fragment));
+        gGlowProgram.mName = "Glow Shader (Post)";       // <FS> native only (native/manifest.txt, family post): no stock files
         gGlowProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
         success = gGlowProgram.createShader();
         if (!success)
@@ -3953,11 +3950,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gLuminanceProgram.mName = "Luminance";
-        gLuminanceProgram.mShaderFiles.clear();
-        gLuminanceProgram.clearPermutations();
-        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/luminanceF.glsl", ShaderStage::Fragment));
+        gLuminanceProgram.mName = "Luminance";       // <FS> native only (native/manifest.txt, family post): no stock files
         gLuminanceProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLuminanceProgram.createShader();
         llassert(success);
@@ -3965,11 +3958,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gMotionVectorProgram.mName = "Motion Vectors";
-        gMotionVectorProgram.mShaderFiles.clear();
-        gMotionVectorProgram.clearPermutations();
-        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gMotionVectorProgram.mShaderFiles.push_back(make_pair("deferred/motionVectorsF.glsl", ShaderStage::Fragment));
+        gMotionVectorProgram.mName = "Motion Vectors";       // <FS> native only (native/manifest.txt, family post): no stock files
         gMotionVectorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gMotionVectorProgram.createShader();
         llassert(success);
@@ -4144,14 +4133,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredPostTonemapProgram.mName = "Deferred Tonemap Post Process";
+        gDeferredPostTonemapProgram.mName = "Deferred Tonemap Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gDeferredPostTonemapProgram.mFeatures.hasSrgb = true;
         gDeferredPostTonemapProgram.mFeatures.isDeferred = true;
         gDeferredPostTonemapProgram.mFeatures.hasTonemap = true;
-        gDeferredPostTonemapProgram.mShaderFiles.clear();
-        gDeferredPostTonemapProgram.clearPermutations();
-        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapProgram.createShader();
         llassert(success);
@@ -4159,15 +4144,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gNoPostTonemapProgram.mName = "No Post Tonemap Post Process";
+        gNoPostTonemapProgram.mName = "No Post Tonemap Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gNoPostTonemapProgram.mFeatures.hasSrgb = true;
         gNoPostTonemapProgram.mFeatures.isDeferred = true;
         gNoPostTonemapProgram.mFeatures.hasTonemap = true;
-        gNoPostTonemapProgram.mShaderFiles.clear();
-        gNoPostTonemapProgram.clearPermutations();
-        gNoPostTonemapProgram.addPermutation("NO_POST", "1");
-        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapProgram.createShader();
         llassert(success);
@@ -4175,15 +4155,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredPostTonemapGammaCorrectProgram.mName = "Deferred Tonemap Gamma Post Process";
+        gDeferredPostTonemapGammaCorrectProgram.mName = "Deferred Tonemap Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gDeferredPostTonemapGammaCorrectProgram.mFeatures.hasSrgb = true;
         gDeferredPostTonemapGammaCorrectProgram.mFeatures.isDeferred = true;
         gDeferredPostTonemapGammaCorrectProgram.mFeatures.hasTonemap = true;
-        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.clear();
-        gDeferredPostTonemapGammaCorrectProgram.clearPermutations();
-        gDeferredPostTonemapGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
-        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -4191,16 +4166,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gNoPostTonemapGammaCorrectProgram.mName = "No Post Tonemap Gamma Post Process";
+        gNoPostTonemapGammaCorrectProgram.mName = "No Post Tonemap Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gNoPostTonemapGammaCorrectProgram.mFeatures.hasSrgb = true;
         gNoPostTonemapGammaCorrectProgram.mFeatures.isDeferred = true;
         gNoPostTonemapGammaCorrectProgram.mFeatures.hasTonemap = true;
-        gNoPostTonemapGammaCorrectProgram.mShaderFiles.clear();
-        gNoPostTonemapGammaCorrectProgram.clearPermutations();
-        gNoPostTonemapGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
-        gNoPostTonemapGammaCorrectProgram.addPermutation("NO_POST", "1");
-        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -4208,16 +4177,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mName = "Deferred Tonemap Legacy Gamma Post Process";
+        gDeferredPostTonemapLegacyGammaCorrectProgram.mName = "Deferred Tonemap Legacy Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gDeferredPostTonemapLegacyGammaCorrectProgram.mFeatures.hasSrgb = true;
         gDeferredPostTonemapProgram.mFeatures.isDeferred = true;
         gDeferredPostTonemapLegacyGammaCorrectProgram.mFeatures.hasTonemap = true;
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.clear();
-        gDeferredPostTonemapLegacyGammaCorrectProgram.clearPermutations();
-        gDeferredPostTonemapLegacyGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
-        gDeferredPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -4225,17 +4188,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gNoPostTonemapLegacyGammaCorrectProgram.mName = "No Post Tonemap Legacy Gamma Post Process";
+        gNoPostTonemapLegacyGammaCorrectProgram.mName = "No Post Tonemap Legacy Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
         gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.hasSrgb = true;
         gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.isDeferred = true;
         gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.hasTonemap = true;
-        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.clear();
-        gNoPostTonemapLegacyGammaCorrectProgram.clearPermutations();
-        gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("NO_POST", "1");
-        gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
-        gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
-        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", ShaderStage::Fragment));
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -4893,10 +4849,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success)
     {
-        gUIProgram.mName = "UI Shader";
-        gUIProgram.mShaderFiles.clear();
-        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiV.glsl", ShaderStage::Vertex));
-        gUIProgram.mShaderFiles.push_back(make_pair("interface/uiF.glsl", ShaderStage::Fragment));
+        gUIProgram.mName = "UI Shader";       // <FS> native only (native/manifest.txt, family post): no stock files
         gUIProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gUIProgram.createShader();
     }
@@ -4991,10 +4944,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success)
     {
-        gSolidColorProgram.mName = "Solid Color Shader";
-        gSolidColorProgram.mShaderFiles.clear();
-        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorV.glsl", ShaderStage::Vertex));
-        gSolidColorProgram.mShaderFiles.push_back(make_pair("interface/solidcolorF.glsl", ShaderStage::Fragment));
+        gSolidColorProgram.mName = "Solid Color Shader";       // <FS> native only (native/manifest.txt, family post): no stock files
         gSolidColorProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gSolidColorProgram.createShader();
         if (success)
@@ -5080,12 +5030,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success)
     {
-        gCopyDepthProgram.mName = "Copy Depth Shader";
-        gCopyDepthProgram.mShaderFiles.clear();
-        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", ShaderStage::Vertex));
-        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", ShaderStage::Fragment));
-        gCopyDepthProgram.clearPermutations();
-        gCopyDepthProgram.addPermutation("COPY_DEPTH", "1");
+        gCopyDepthProgram.mName = "Copy Depth Shader";       // <FS> native only (native/manifest.txt, family post): no stock files
         gCopyDepthProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gCopyDepthProgram.createShader();
     }
@@ -5170,21 +5115,14 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success && gDeviceCaps.mHasCubeMapArray)
     {
-        gRadianceGenProgram.mName = "Radiance Gen Shader";
-        gRadianceGenProgram.mShaderFiles.clear();
-        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenV.glsl", ShaderStage::Vertex));
-        gRadianceGenProgram.mShaderFiles.push_back(make_pair("interface/radianceGenF.glsl", ShaderStage::Fragment));
+        gRadianceGenProgram.mName = "Radiance Gen Shader";       // <FS> native only (native/manifest.txt, family post): no stock files
         gRadianceGenProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        gRadianceGenProgram.addPermutation("PROBE_FILTER_SAMPLES", "32");
         success = gRadianceGenProgram.createShader();
     }
 
     if (success && gDeviceCaps.mHasCubeMapArray)
     {
-        gIrradianceGenProgram.mName = "Irradiance Gen Shader";
-        gIrradianceGenProgram.mShaderFiles.clear();
-        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenV.glsl", ShaderStage::Vertex));
-        gIrradianceGenProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenF.glsl", ShaderStage::Fragment));
+        gIrradianceGenProgram.mName = "Irradiance Gen Shader";       // <FS> native only (native/manifest.txt, family post): no stock files
         gIrradianceGenProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gIrradianceGenProgram.createShader();
     }
