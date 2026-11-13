@@ -592,59 +592,19 @@ bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
 
-// <FS> Render packets for the deferred geometry passes. Setting FSDeferredPackets, or FS_DEFERRED_PACKETS_AB=1 to alternate every 30 seconds (the log says which: tag ShadowPackets).
+// <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch FS_DEFERRED_PACKETS_AB
+// (twin era tools that turned the records off) are gone; what is left is whether the programs and the worker's packet path exist.
 // static
 bool LLRenderPass::deferredPacketsEnabled()
 {
-    static LLCachedControl<bool> setting(gSavedSettings, "FSDeferredPackets", false);
-    static const bool alternate = getenv("FS_DEFERRED_PACKETS_AB") != nullptr;
-    bool on = setting;
-    if (alternate)
-    {
-        const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        on = ((seconds / 30) % 2) == 1;
-        static int last = -1;
-        if ((int)on != last)
-        {
-            last = (int)on;
-            LL_INFOS("ShadowPackets") << "[phase] deferred packets now " << (on ? "ON" : "off") << LL_ENDL;
-        }
-    }
-    return on && gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable();
+    return gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable();
 }
 
-// <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records. LL_VK_RIGGED_PACKETS=1 (needs FSDeferredPackets), LL_VK_RIGGED_PACKETS_AB=<seconds> alternates it (log marker
-// "[phase] rigged packets now ON/off"), LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
-bool ll_scene_geo_rigged_env()
-{
-    return true;        // (the switch LL_VK_SCENE_GEO_RIGGED is gone, 2026-11-12: always on, as pipeline.cpp scene_geo_rigged_on)
-}
-
+// <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
+// LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
 bool ll_rigged_packets_enabled()
 {
-    static const int base = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS"); return (v ? atoi(v) : 1) || ll_scene_geo_rigged_env(); }();       // (default on; =0 off)
-    static const int period = []() { const char* v = getenv("LL_VK_RIGGED_PACKETS_AB"); return v ? atoi(v) : 0; }();
-    static U32 frame = ~0u;
-    static bool now = false;
-    if (frame != (U32)gFrameCount)
-    {
-        frame = (U32)gFrameCount;
-        bool on = base != 0 || period > 0;
-        if (period > 0)
-        {
-            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool phase = ((seconds / period) % 2) == 1;
-            static int last = -1;
-            if ((int)phase != last)
-            {
-                last = (int)phase;
-                LL_INFOS("VkScene") << "[phase] rigged packets now " << (phase ? "ON" : "off") << LL_ENDL;
-            }
-            on = on && phase;
-        }
-        now = on && gDeferredDiffusePullSkinProgram.mProgramObject != 0;
-    }
-    return now && LLRenderPass::deferredPacketsEnabled();
+    return gDeferredDiffusePullSkinProgram.mProgramObject != 0 && LLRenderPass::deferredPacketsEnabled();
 }
 
 bool ll_rigged_indexed()
@@ -1514,7 +1474,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LLCullResult* cull = gPipeline.getCull();
     const int tn = ll_scene_geo_type_number(type);
-    if (tn < 0 || !((!rigged || ll_scene_geo_rigged_env()) && ll_scene_geo_serving() && ll_scene_geo_main_view()))
+    if (tn < 0 || !(ll_scene_geo_serving() && ll_scene_geo_main_view()))
     {
         return;
     }

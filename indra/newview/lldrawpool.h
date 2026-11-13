@@ -140,12 +140,11 @@ struct LLGeometryPassInfo
     bool mSpecularMap = false;
 };
 
-// <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs); LL_VK_RIGGED_PACKETS=1, LL_VK_RIGGED_PACKETS_AB=<s> alternates
+// <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs): whether the skinned diffuse pull program and the packet path exist
 bool ll_rigged_packets_enabled();
 enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4, LL_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
 U32 ll_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
 int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
-bool ll_scene_geo_rigged_env();      // LL_VK_SCENE_GEO_RIGGED=1: S4 B, the rigged draws are served by the scene table (the rigged records stay for the frames it does not serve)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);

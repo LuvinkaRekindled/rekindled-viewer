@@ -2392,17 +2392,6 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSDeferredPackets</key>
-    <map>
-      <key>Comment</key>
-      <string>Draw the static deferred geometry (diffuse pass first) as records that the Vulkan worker reads by address (FS_DEFERRED_PACKETS_AB=1 alternates it every 30 seconds)</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>1</integer>
-    </map>
     <key>FSParallelShadowPrepCheck</key>
     <map>
       <key>Comment</key>

@@ -10506,19 +10506,19 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_SHINY)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gBumpPullSkinReady && ll_rigged_packets_enabled()) : gBumpPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gEmbossPullSkinReady && ll_rigged_packets_enabled()) : gEmbossPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE || kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_INVISIBLE)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || (gHighlightPullSkinReady && ll_rigged_packets_enabled()));      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
     }
     return true;
 }
@@ -13628,9 +13628,9 @@ bool ll_scene_geo_hud_type(int tn)
     }
     return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY) && gHUDFullbrightShinyPullReady)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY))
         || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP) && gEmbossPullReady)       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
         || ll_scene_geo_highlight_type(tn);
 }
 

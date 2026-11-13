@@ -103,7 +103,7 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
             if (rigged)
             {
                 // (the table draws the rigged materials passes in the main view only: pushGeometryPackets returns in any other view, so there is nothing to bind there; the render map is not asked, 2026-11-12)
-                if (!(ll_scene_geo_rigged_env() && ll_scene_geo_serving() && ll_scene_geo_main_view()))
+                if (!(ll_scene_geo_serving() && ll_scene_geo_main_view()))
                 {
                     mUntouched = true;
                     ll_scene_geo_count(4, 1);
