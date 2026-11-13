@@ -10,6 +10,7 @@
 #include "lib/fog.glsl"
 #include "lib/shade.glsl"
 #include "lib/shadow.glsl"
+#include "lib/shadow_alpha.glsl"
 #include "lib/light.glsl"
 #ifdef ALPHA_PROBES
 #include "lib/probe.glsl"

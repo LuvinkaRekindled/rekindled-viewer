@@ -317,9 +317,6 @@ extern LLShaderProgram         gRtMaterialDebugProgram;
 extern LLShaderProgram         gDeferredAvatarShadowProgram;
 extern LLShaderProgram         gDeferredAvatarAlphaShadowProgram;
 extern LLShaderProgram         gDeferredAvatarAlphaMaskShadowProgram;
-extern LLShaderProgram         gDeferredAlphaProgram;
-extern LLShaderProgram         gHUDAlphaProgram;
-extern LLShaderProgram         gDeferredAlphaImpostorProgram;
 extern LLShaderProgram         gDeferredAvatarAlphaProgram;
 extern LLShaderProgram         gEnvironmentMapProgram;
 extern LLShaderProgram         gDeferredWLSkyProgram;
@@ -338,7 +335,6 @@ extern LLShaderProgram         gRlvSphereProgram;
 extern LLShaderProgram         gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
 
 extern LLShaderProgram         gDeferredPBRAlphaProgram;
-extern LLShaderProgram         gHUDPBRAlphaProgram;
 
 // GLTF shaders
 extern LLShaderProgram         gGLTFPBRMetallicRoughnessProgram;

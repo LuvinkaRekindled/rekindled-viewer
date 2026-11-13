@@ -133,7 +133,7 @@ vec4 shade_material(vec3 pos, vec4 texel, vec4 vcolor, vec3 vnorm, vec3 vtangent
     spec.rgb = srgb_to_linear(spec.rgb);
     spec.a = glossiness;                        // (the lighting functions take the glossiness in the specular's alpha)
 
-    const float shadow = sun_shadow(pos, norm, tc0.y);
+    const float shadow = sun_shadow_alpha(pos, norm, tc0);
     const vec3 light_dir = sun_up_factor == 1 ? sun_dir : moon_dir;
     vec3 sunlit, amblit, additive, atten;
     atmos_terms_lit(pos, norm, light_dir, sunlit, amblit, additive, atten);

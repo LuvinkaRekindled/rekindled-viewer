@@ -9,6 +9,7 @@
 #include "lib/atmos.glsl"
 #include "lib/fog.glsl"
 #include "lib/shadow.glsl"
+#include "lib/shadow_alpha.glsl"
 #include "lib/probe.glsl"
 #if defined(SSR)
 #include "lib/viewpos.glsl"
@@ -51,7 +52,7 @@ void main()
 
     const vec3 pos = vary_position;
     const vec3 light_dir = sun_up_factor == 1 ? sun_dir : moon_dir;
-    const float scol = sun_shadow(pos, norm, gl_FragCoord.y / screen_res.y);
+    const float scol = sun_shadow_alpha(pos, norm, gl_FragCoord.xy / screen_res);
 
     vec3 sunlit, amblit, additive, atten;
     atmos_terms_lit(pos, norm, light_dir, sunlit, amblit, additive, atten);

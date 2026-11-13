@@ -119,6 +119,11 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float adaptiveStepMultiplier;
     float ssrTraceMode;                 // bits of the improved reflection trace (pipeline.cpp ssr_trace_mode_bits): 1 water, 2 other surfaces (read here), 4 water takes fewer steps
 #endif
+
+#ifdef LL_RT_QUERY
+    // a session with ray queries (the manifest option rtquery): the sun shadow of a transparent surface is a ray (lib/shadow_alpha.glsl); the alpha pass sets the sun disc, the samples and the limits by name
+#include "lib/rt_uniforms.inc"
+#endif
 };
 
 #ifdef ALPHA_PROBES
