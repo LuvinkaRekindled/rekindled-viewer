@@ -3768,10 +3768,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (LLVkBridge::shadowPacketsAvailable())
         {
             gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
-            gAvatarVelocityPullProgram.mShaderFiles.clear();
-            gAvatarVelocityPullProgram.clearPermutations();
-            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityPullV.glsl", ShaderStage::Vertex));
-            gAvatarVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
+            // <FS> a native only program (native/manifest.txt, family post): no stock files
             gAvatarVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!gAvatarVelocityPullProgram.createShader())
             {
@@ -3783,10 +3780,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (LLVkBridge::shadowPacketsAvailable())
         {
             gObjectVelocityPullProgram.mName = "Object Velocity (packets)";
-            gObjectVelocityPullProgram.mShaderFiles.clear();
-            gObjectVelocityPullProgram.clearPermutations();
-            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/objectVelocityPullV.glsl", ShaderStage::Vertex));
-            gObjectVelocityPullProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
+            // <FS> a native only program (native/manifest.txt, family post): no stock files
             gObjectVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!gObjectVelocityPullProgram.createShader())
             {
