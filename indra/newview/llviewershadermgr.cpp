@@ -78,8 +78,6 @@ S32 clamp_terrain_mapping(S32 mapping)
 }
 
 //utility shaders
-LLShaderProgram    gOcclusionProgram;
-LLShaderProgram    gSkinnedOcclusionProgram;
 LLShaderProgram    gGlowCombineProgram;
 LLShaderProgram    gReflectionMipProgram;
 LLShaderProgram    gGaussianProgram;
@@ -93,7 +91,6 @@ LLShaderProgram    gDebugProgram;
 LLShaderProgram    gSkinnedDebugProgram;
 LLShaderProgram    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
 LLShaderProgram    gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-LLShaderProgram    gClipProgram;
 LLShaderProgram    gAlphaMaskProgram;
 LLShaderProgram    gBenchmarkProgram;
 LLShaderProgram    gReflectionProbeDisplayProgram;
@@ -138,7 +135,6 @@ LLShaderProgram        gImpostorProgram;
 // Effects Shaders
 LLShaderProgram            gGlowProgram;
 LLShaderProgram            gGlowExtractProgram;
-LLShaderProgram            gPostScreenSpaceReflectionProgram;
 LLShaderProgram            gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
 LLShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapshot frame guide
 
@@ -4929,17 +4925,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     if (success) {
-        gPostScreenSpaceReflectionProgram.mName = "Screen Space Reflection Post";
-        gPostScreenSpaceReflectionProgram.mShaderFiles.clear();
-        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostV.glsl", ShaderStage::Vertex));
-        gPostScreenSpaceReflectionProgram.mShaderFiles.push_back(make_pair("deferred/screenSpaceReflPostF.glsl", ShaderStage::Fragment));
-        gPostScreenSpaceReflectionProgram.mFeatures.hasScreenSpaceReflections = true;
-        gPostScreenSpaceReflectionProgram.mFeatures.isDeferred                = true;
-        gPostScreenSpaceReflectionProgram.mShaderLevel = 3;
-        success = gPostScreenSpaceReflectionProgram.createShader();
-    }
-
-    if (success) {
         gDeferredBufferVisualProgram.mName = "Deferred Buffer Visualization Shader";
         gDeferredBufferVisualProgram.mShaderFiles.clear();
         gDeferredBufferVisualProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
@@ -5296,28 +5281,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success)
     {
-        gOcclusionProgram.mName = "Occlusion Shader";
-        gOcclusionProgram.mShaderFiles.clear();
-        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionV.glsl", ShaderStage::Vertex));
-        gOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
-        gOcclusionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        gOcclusionProgram.mRiggedVariant = &gSkinnedOcclusionProgram;
-        success = gOcclusionProgram.createShader();
-    }
-
-    if (success)
-    {
-        gSkinnedOcclusionProgram.mName = "Skinned Occlusion Shader";
-        gSkinnedOcclusionProgram.mFeatures.hasObjectSkinning = true;
-        gSkinnedOcclusionProgram.mShaderFiles.clear();
-        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionSkinnedV.glsl", ShaderStage::Vertex));
-        gSkinnedOcclusionProgram.mShaderFiles.push_back(make_pair("interface/occlusionF.glsl", ShaderStage::Fragment));
-        gSkinnedOcclusionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        success = gSkinnedOcclusionProgram.createShader();
-    }
-
-    if (success)
-    {
         gDebugProgram.mName = "Debug Shader";
         gDebugProgram.mShaderFiles.clear();
         gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugV.glsl", ShaderStage::Vertex));
@@ -5353,16 +5316,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
             success = make_rigged_variant(shader, skinned_shader);
             success = success && shader.createShader();
         }
-    }
-
-    if (success)
-    {
-        gClipProgram.mName = "Clip Shader";
-        gClipProgram.mShaderFiles.clear();
-        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipV.glsl", ShaderStage::Vertex));
-        gClipProgram.mShaderFiles.push_back(make_pair("interface/clipF.glsl", ShaderStage::Fragment));
-        gClipProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        success = gClipProgram.createShader();
     }
 
     if (success)

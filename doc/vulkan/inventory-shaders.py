@@ -82,8 +82,8 @@ def main():
             for i, l in enumerate(lines, 1):
                 if not pat.search(l):
                     continue
-                s = l.strip()
-                if s.startswith('extern') or s.startswith('//') or re.match(r'LLGLSLShader\s|LLShaderProgram\s', s):
+                s = l.strip()      # (a declaration is `LLShaderProgram gName;` alone on a line: `LLShaderProgram *shader = &gName;` is a use)
+                if s.startswith('extern') or s.startswith('//') or re.match(r'(LLGLSLShader|LLShaderProgram)\s+\w+(\[[^\]]*\])?\s*;', s):
                     continue
                 if rel.endswith('llviewershadermgr.cpp') and (setup.search(l) or re.search(r'\.createShader|\.unload\(', l)):
                     continue
