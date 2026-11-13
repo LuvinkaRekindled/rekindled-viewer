@@ -151,7 +151,6 @@ inline bool operator != (LLViewerShaderMgr::shader_iter const & a, LLViewerShade
 extern LLVector4            gShinyOrigin;
 
 //utility shaders
-extern LLShaderProgram         gOcclusionProgram;
 extern LLShaderProgram         gGlowCombineProgram;
 extern LLShaderProgram         gReflectionMipProgram;
 extern LLShaderProgram         gGaussianProgram;
@@ -168,7 +167,6 @@ enum NormalDebugShaderVariant : S32
 };
 extern LLShaderProgram         gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
 extern LLShaderProgram         gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-extern LLShaderProgram         gClipProgram;
 extern LLShaderProgram         gBenchmarkProgram;
 extern LLShaderProgram         gReflectionProbeDisplayProgram;
 extern LLShaderProgram         gCopyProgram;
@@ -215,7 +213,6 @@ extern LLShaderProgram         gAvatarProgram;
 extern LLShaderProgram         gImpostorProgram;
 
 // Post Process Shaders
-extern LLShaderProgram         gPostScreenSpaceReflectionProgram;
 extern LLShaderProgram         gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
 extern LLShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapshot Frame overlay
 
