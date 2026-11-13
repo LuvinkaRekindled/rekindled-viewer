@@ -1600,11 +1600,9 @@ bool LLShaderProgram::link(bool suppress_errors)
         LLVk::ProgramInfo info;
         if (!mNativeFragment.empty())
         {
-            std::vector<std::pair<std::string, std::string>> native_defines;
-            if (mNativeFromManifest)
-            {
-                native_defines = LLVk::nativeGlobalDefinesCopy();       // <FS> (the viewer's global defines come first, then the line's own: as the swapped in programs are built)
-            }
+            // <FS> every native program is built with the viewer's global defines first and its own after them, as the swapped in programs are (llvknative.cpp build). The programs named in C++ (Native Sun
+            // Lightmap Half, Native Light Upsample) did not get them until step 4 of the stock carrier removal made `sun_shadow()` depend on SUN_SHADOW: without it the half resolution sun lightmap had no shadow
+            std::vector<std::pair<std::string, std::string>> native_defines = LLVk::nativeGlobalDefinesCopy();
             native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
             if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error))
             {
