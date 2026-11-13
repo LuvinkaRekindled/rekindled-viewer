@@ -303,7 +303,8 @@ static void add_common_permutations(LLShaderProgram* shader)
 
 static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant, bool alpha_blend, bool rigged, bool unlit, bool multi_uv, bool use_sun_shadow)
 {
-    variant.mName = shader.mName.c_str();
+    // each variant is a program of its own (a manifest line each: gltf_scene.vert / gltf_scene.frag with ALPHA_BLEND, HAS_SKIN, UNLIT, MULTI_UV)
+    variant.mName = shader.mName + (alpha_blend ? " blend" : "") + (rigged ? " rigged" : "") + (unlit ? " unlit" : "") + (multi_uv ? " multiuv" : "");
     variant.mFeatures = shader.mFeatures;
     variant.mShaderFiles = shader.mShaderFiles;
     variant.mShaderLevel = shader.mShaderLevel;
@@ -1040,6 +1041,13 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 native_defines.push_back({ a.first, a.second });
             }
         }
+        {
+            // the sizes of the glTF scene programs' uniform blocks (make_gltf_variant: the nodes, the materials, the vec4s of a block) from the device, as the stock programs' permutations had them
+            const U32 ubo_bytes = gDeviceCaps.mMaxUniformBlockSize;
+            native_defines.push_back({ "MAX_NODES_PER_GLTF_OBJECT", std::to_string(ubo_bytes / (16 * 3)) });
+            native_defines.push_back({ "MAX_MATERIALS_PER_GLTF_OBJECT", std::to_string(ubo_bytes / (16 * 12)) });
+            native_defines.push_back({ "MAX_UBO_VEC4S", std::to_string(ubo_bytes / 16) });
+        }
         if (getenv("LL_VK_RTREFL_DEBUG"))
         {
             native_defines.push_back({ "RT_REFL_DEBUG", "1" });        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
@@ -1414,9 +1422,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gGLTFPBRMetallicRoughnessProgram.mName = "GLTF PBR Metallic Roughness Shader";
             gGLTFPBRMetallicRoughnessProgram.mFeatures.hasSrgb = true;
 
-            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.clear();
-            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessV.glsl", ShaderStage::Vertex));
-            gGLTFPBRMetallicRoughnessProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessF.glsl", ShaderStage::Fragment));
+            // <FS> native only programs (native/manifest.txt, family gbuffer: gltf_scene.vert + gltf_scene.frag, one line for each of the 16 variants): no stock files
             gGLTFPBRMetallicRoughnessProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             gGLTFPBRMetallicRoughnessProgram.clearPermutations();
 
