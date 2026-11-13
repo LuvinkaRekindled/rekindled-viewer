@@ -1186,6 +1186,10 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 native_defines.push_back({ k, found->second });
             }
         }
+        if (LLPipeline::sRenderTransparentWater)
+        {
+            native_defines.push_back({ "TRANSPARENT_WATER", "1" });     // (the native water programs read the picture below the water only then: the stock ones get it as a permutation, loadShadersWater)
+        }
         if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
         {
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
@@ -1320,16 +1324,9 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterProgram.mName = "Underwater Shader";
         gUnderWaterProgram.mFeatures.calculatesAtmospherics = true;
         gUnderWaterProgram.mFeatures.hasAtmospherics = true;
-        gUnderWaterProgram.mShaderFiles.clear();
-        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
-        gUnderWaterProgram.mShaderFiles.push_back(make_pair("environment/underWaterF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family water: water.vert + underwater.frag; the global define TRANSPARENT_WATER is pushed with the native defines): no stock files
         gUnderWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         gUnderWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
-        gUnderWaterProgram.clearPermutations();
-        if (LLPipeline::sRenderTransparentWater)
-        {
-            gUnderWaterProgram.addPermutation("TRANSPARENT_WATER", "1");
-        }
         success = gUnderWaterProgram.createShader();
         llassert(success);
     }
@@ -3253,12 +3250,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHazeProgram.mFeatures.hasShadows             = use_sun_shadow;
         gHazeProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
-        gHazeProgram.clearPermutations();
-        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
-        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/hazeF.glsl", ShaderStage::Fragment));
-
-        add_common_permutations(&gHazeProgram);
-
+        // <FS> a native only program (native/manifest.txt, family post: haze.frag): no stock files
         gHazeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         success = gHazeProgram.createShader();
@@ -3279,12 +3271,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHazeWaterProgram.mFeatures.hasShadows             = use_sun_shadow;
         gHazeWaterProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
-        gHazeWaterProgram.clearPermutations();
-        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeV.glsl", ShaderStage::Vertex));
-        gHazeWaterProgram.mShaderFiles.push_back(make_pair("deferred/waterHazeF.glsl", ShaderStage::Fragment));
-
-        add_common_permutations(&gHazeWaterProgram);
-
+        // <FS> a native only program (native/manifest.txt, family post: waterhaze.vert + waterhaze.frag): no stock files (its pull twin, index 2, is off by default and has no native line)
         gHazeWaterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         success = gHazeWaterProgram.createShader();

@@ -106,8 +106,8 @@ override | Reflection Mip Shader | reflectionmip.vert | reflectionmip.frag | pos
 override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=32 | default on
 override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
 override | UI Shader | ui.vert | ui.frag | post | default on
-override | Haze Shader | fullscreen.vert | haze.frag | post | default on | rt
-override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on | rt
+override | Haze Shader | fullscreen.vert | haze.frag | post | default on
+override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
 override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
 override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | gbuffer | default on
 override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on
@@ -169,3 +169,6 @@ override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impo
 override | Deferred Sun Probe Shader | fullscreen.vert | sun_lightmap.frag | sun | define LL_NO_AO=1 | default on
 override | RT Shadow Penumbra Prep | fullscreen.vert | rt_shadow_prep.frag | sun | default on
 override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag | sun | default on
+# the water family: the water surface seen from above (rt: the ray traced reflection of the water stays in the stock program of a session with ray queries) and from below
+override | Water Shader | water.vert | water.frag | water | default on | rt
+override | Underwater Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | default on

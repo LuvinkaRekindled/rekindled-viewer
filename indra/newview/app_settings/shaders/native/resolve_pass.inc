@@ -57,23 +57,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 };
 
-// the reflection probes of the view: one block for the whole frame, bound by the renderer (named block 0 = binding 1). The members and their order are the viewer's (the CPU side writes the block).
-#define MAX_REFMAP_COUNT 256
-layout(std140, set = 0, binding = 1) uniform ReflectionProbes
-{
-    mat4 refBox[MAX_REFMAP_COUNT];
-    mat4 heroBox;
-    vec4 refSphere[MAX_REFMAP_COUNT];
-    vec4 refParams[MAX_REFMAP_COUNT];
-    vec4 heroSphere;
-    ivec4 refIndex[MAX_REFMAP_COUNT];
-    ivec4 refNeighbor[1024];
-    ivec4 refBucket[256];
-    int refmapCount;
-    int heroShape;
-    int heroMipCount;
-    int heroProbeCount;
-};
+#include "lib/probe_block.glsl"
 
 layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 {

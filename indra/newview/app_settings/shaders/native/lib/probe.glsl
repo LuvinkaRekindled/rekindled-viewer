@@ -47,12 +47,10 @@ int probe_last(vec3 pos)
     return min(refBucket[clamp(int(floor(-pos.z)), 0, 255)].y, refmapCount);
 }
 
-// the list of probes of a point (the first one that reaches it, the neighbours it names, then the void probe 0 that smooths the automatic probes out)
-void probe_gather(vec3 pos)
-{
-    probe_count = 0;
-    probe_automatic = true;
 #if REFMAP_LEVEL > 0
+// the probes of a point: the first one that reaches it and the neighbours it names (probe_automatic says whether the automatic probes may take part; a box probe that covers the point turns it off)
+void probe_collect(vec3 pos)
+{
     const int last = probe_last(pos);
     for (int i = probe_first(pos); i < last; ++i)
     {
@@ -83,6 +81,16 @@ void probe_gather(vec3 pos)
             break;              // (the neighbours of the first probe that reaches the point are the rest of the list)
         }
     }
+}
+#endif
+
+// the list of probes of a point (the first one that reaches it, the neighbours it names, then the void probe 0 that smooths the automatic probes out)
+void probe_gather(vec3 pos)
+{
+    probe_count = 0;
+    probe_automatic = true;
+#if REFMAP_LEVEL > 0
+    probe_collect(pos);
     if (probe_automatic && probe_count < REF_SAMPLE_COUNT)
     {
         probe_list[probe_count++] = 0;
@@ -90,6 +98,22 @@ void probe_gather(vec3 pos)
 #else
     probe_list[probe_count++] = 0;
 #endif
+}
+
+// the list of probes of a point on the water: the automatic probes do not take part (the water reflects what the manual probes and the void probe show), the void probe is always in the list, and the
+// mix afterwards counts it whether or not a box probe covers the point
+void probe_gather_water(vec3 pos)
+{
+    probe_count = 0;
+    probe_automatic = false;
+#if REFMAP_LEVEL > 0
+    probe_collect(pos);
+#endif
+    probe_automatic = true;
+    if (probe_count < REF_SAMPLE_COUNT)
+    {
+        probe_list[probe_count++] = 0;
+    }
 }
 
 // where the ray (origin, dir) leaves a sphere that contains its origin
