@@ -223,9 +223,7 @@ extern LLShaderProgram         gDeferredBumpProgram;
 extern LLShaderProgram         gDeferredTerrainProgram;
 extern LLShaderProgram         gDeferredTreeProgram;
 extern LLShaderProgram         gDeferredTreeShadowProgram;
-extern LLShaderProgram         gDeferredLightProgram;
-extern LLShaderProgram         gDeferredMultiLightProgram[LL_DEFERRED_MULTI_LIGHT_COUNT];
-extern LLShaderProgram         gDeferredSpotLightProgram;
+extern LLShaderProgram         gDeferredMultiLightProgram;
 extern LLShaderProgram         gDeferredMultiSpotLightProgram;
 extern LLShaderProgram         gDeferredSunProgram;
 extern LLShaderProgram         gDeferredSunProbeProgram;
@@ -294,9 +292,7 @@ extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredPBROpaquePullProgram;             // <FS> S6 X4: the glTF opaque / mask G-buffer pass from the scene table
 extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
 extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
-extern bool                    gLightPullReady;
 extern LLShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
-extern bool                    gSpotPullReady;
 extern bool                    gPbrOpaquePullReady;
 extern bool                    gPbrOpaquePullSkinReady;
 extern bool                    gDiffuseMaskPullReady;

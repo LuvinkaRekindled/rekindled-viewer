@@ -300,11 +300,11 @@ namespace LLVkBridge
     //   pull program; the worker draws that type's commands with it.
     // kind 23 RELEASE_GEO: mEntries handles (U32). kind 24 GEO_TEX: mFragment = handle, mEntries x { local texture number, GL name } (the textures whose name changed).
     struct GeoWire { GeoEntry mE; U32 mType; };
-    // kind 33 (S6 LV1): the light volumes of a deferred lighting pass in one record. The viewer has bound the pull light program (pointLightV with LL_LIGHT_PULL) and written the pass's uniforms and
+    // kind 33 (S6 LV1): the light volumes of a deferred lighting pass in one record. The viewer has bound the pull light program (native light_volume.vert + light_point.frag) and written the pass's uniforms and
     // matrices; blob = mEntries x LightVolumeRow. The worker draws each as one 8 vertex triangle fan (the fan of the box as seen from the camera side mCypher), the light read from the table by instance.
     struct LightVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mPad[2]; };
     // kind 33 with mPass 1 (LV2): the projectors: blob = mEntries x SpotVolumeRow (11 vec4: the light, the projector's matrix and values, the GL name of its image in mTexture, which the worker replaces by the
-    // bindless slot of the frame), drawn with the pull projector program (spotLightF with LL_PROJECTOR_PULL)
+    // bindless slot of the frame), drawn with the pull projector program (native light_volume.vert + light_spot.frag)
     struct SpotVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mTexture; S32 mShadowIndex; F32 mN[3]; F32 mNear; F32 mP[3]; F32 mRange; F32 mOrigin[3]; F32 mAmbiance; F32 mFocus; F32 mLod; F32 mAmbientLod; F32 mShadowFade; F32 mMat[16]; };
     // kind 41 (2026-11-10): the avatar impostors of a deferred pass in one record, instead of one immediate mode quad (and three texture binds) a avatar. The viewer has bound the program "Deferred Impostor Shader"
     // (its native stand-in is the only one that draws: it declares ll_impostor_table) and written the pass's matrices; blob = mEntries x ImpostorQuadRow. The worker replaces the three GL names by this

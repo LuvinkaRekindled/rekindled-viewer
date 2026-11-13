@@ -25316,11 +25316,9 @@ void LLPipeline::renderDeferredLighting()
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - local lights");
                 LL_CPU_ZONE("lighting: local lights (boxes)");
                 LL_PROFILE_GPU_ZONE("local lights");
-                // <FS> S6 LV1: the boxes of the lights that are not projectors go into one record (the light of each in a table, the fan of the box made in the vertex shader) instead of five uniform writes, a matrix sync
-                // and a draw each
-                static const bool light_pull_off = getenv("LL_VK_LIGHT_PULL") && getenv("LL_VK_LIGHT_PULL")[0] == '0';        // (diagnostic: the old per light draws)
-                const bool light_pull = gLightPullReady && !light_pull_off && LLRenderPass::deferredPacketsEnabled() && LLVkBridge::sceneGeoAvailable();
-                LLShaderProgram& light_program = light_pull ? gDeferredLightPullProgram : gDeferredLightProgram;
+                // <FS> S6 LV1: the boxes of the lights that are not projectors go into one record (the light of each in a table, the fan of the box made in the vertex shader). The per light draws (five uniform
+                // writes, a matrix sync and a draw each) are gone with the old program: the device requirements (the scene table) are the viewer's floor.
+                LLShaderProgram& light_program = gDeferredLightPullProgram;
                 static std::vector<LLVkBridge::LightVolumeRow> light_rows;
                 light_rows.clear();
                 bindDeferredShader(light_program);
@@ -25328,11 +25326,6 @@ void LLPipeline::renderDeferredLighting()
                 if (mCubeVB.isNull())
                 {
                     mCubeVB = ll_create_cube_vb(LLVertexBuffer::MAP_VERTEX);
-                }
-
-                if (!light_pull)
-                {
-                    mCubeVB->setBuffer();
                 }
 
                 LLRenderState::DepthScope depth(true, false);
@@ -25468,31 +25461,18 @@ void LLPipeline::renderDeferredLighting()
                             continue;
                         }
 
-                        if (light_pull)
-                        {
-                            LLVkBridge::LightVolumeRow row = {};
-                            row.mCenter[0] = c[0];
-                            row.mCenter[1] = c[1];
-                            row.mCenter[2] = c[2];
-                            row.mSize = s;
-                            row.mColor[0] = col.mV[0];
-                            row.mColor[1] = col.mV[1];
-                            row.mColor[2] = col.mV[2];
-                            row.mFalloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
-                            row.mCypher = get_box_fan_indices(camera, center) / 8;
-                            row.mClassic = (psky->canAutoAdjust()) ? 1 : 0;
-                            light_rows.push_back(row);
-                            continue;
-                        }
-                        gDeferredLightProgram.uniform3fv(LLShaderMgr::LIGHT_CENTER, 1, c);
-                        gDeferredLightProgram.uniform1f(LLShaderMgr::LIGHT_SIZE, s);
-                        gDeferredLightProgram.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
-                        gDeferredLightProgram.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
-                        gDeferredLightProgram.uniform1i(LLShaderMgr::CLASSIC_MODE, (psky->canAutoAdjust()) ? 1 : 0);
-
-                        gRender.syncMatrices();
-
-                        mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, get_box_fan_indices(camera, center));
+                        LLVkBridge::LightVolumeRow row = {};
+                        row.mCenter[0] = c[0];
+                        row.mCenter[1] = c[1];
+                        row.mCenter[2] = c[2];
+                        row.mSize = s;
+                        row.mColor[0] = col.mV[0];
+                        row.mColor[1] = col.mV[1];
+                        row.mColor[2] = col.mV[2];
+                        row.mFalloff = volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF);
+                        row.mCypher = get_box_fan_indices(camera, center) / 8;
+                        row.mClassic = (psky->canAutoAdjust()) ? 1 : 0;
+                        light_rows.push_back(row);
                     }
                     else
                     {
@@ -25532,9 +25512,6 @@ void LLPipeline::renderDeferredLighting()
                 LL_PROFILE_GPU_ZONE("projectors");
                 LLRenderState::DepthScope depth(true, false);
                 // <FS> S6 LV2: the projectors in one record (each one's matrix, values and image in a row), the box fan made in the vertex shader
-                static const bool spot_pull_off = getenv("LL_VK_LIGHT_PULL") && getenv("LL_VK_LIGHT_PULL")[0] == '0';
-                const bool spot_pull = gSpotPullReady && !spot_pull_off && LLRenderPass::deferredPacketsEnabled() && LLVkBridge::sceneGeoAvailable();
-                if (spot_pull)
                 {
                     static std::vector<LLVkBridge::SpotVolumeRow> spot_rows;
                     spot_rows.clear();
@@ -25579,45 +25556,6 @@ void LLPipeline::renderDeferredLighting()
                     }
                     unbindDeferredShader(gDeferredSpotLightPullProgram);
                 }
-                else
-                {
-                bindDeferredShader(gDeferredSpotLightProgram);
-
-                mCubeVB->setBuffer();
-
-                gDeferredSpotLightProgram.enableTexture(LLShaderMgr::DEFERRED_PROJECTION);
-
-                for (LLDrawable::drawable_list_t::iterator iter = spot_lights.begin(); iter != spot_lights.end(); ++iter)
-                {
-                    LLDrawable *drawablep = *iter;
-
-                    LLVOVolume *volume = drawablep->getVOVolume();
-
-                    LLVector4a center;
-                    center.load3(drawablep->getPositionAgent().mV);
-                    const F32* c = center.getF32ptr();
-                    F32        s = volume->getLightRadius() * 1.5f;
-
-                    sVisibleLightCount++;
-
-                    setupSpotLight(gDeferredSpotLightProgram, drawablep);
-
-                    // send light color to shader in linear space
-                    LLColor3 col = volume->getLightLinearColor() * light_scale;
-
-                    gDeferredSpotLightProgram.uniform3fv(LLShaderMgr::LIGHT_CENTER, 1, c);
-                    gDeferredSpotLightProgram.uniform1f(LLShaderMgr::LIGHT_SIZE, s);
-                    gDeferredSpotLightProgram.uniform3fv(LLShaderMgr::DIFFUSE_COLOR, 1, col.mV);
-                    gDeferredSpotLightProgram.uniform1f(LLShaderMgr::LIGHT_FALLOFF, volume->getLightFalloff(DEFERRED_LIGHT_FALLOFF));
-                    gDeferredSpotLightProgram.uniform1i(LLShaderMgr::CLASSIC_MODE, (psky->canAutoAdjust()) ? 1 : 0);
-
-                    gRender.syncMatrices();
-
-                    mCubeVB->drawRange(LLRender::TRIANGLE_FAN, 0, 7, 8, get_box_fan_indices(camera, center));
-                }
-                gDeferredSpotLightProgram.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
-                unbindDeferredShader(gDeferredSpotLightProgram);
-                }
             }
 
             {
@@ -25645,18 +25583,18 @@ void LLPipeline::renderDeferredLighting()
                     count++;
                     if (count == max_count || fullscreen_lights.empty())
                     {
-                        U32 idx = count - 1;
-                        bindDeferredShader(gDeferredMultiLightProgram[idx]);
-                        gDeferredMultiLightProgram[idx].uniform1i(LLShaderMgr::MULTI_LIGHT_COUNT, count);
-                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT, count, (F32*)light);
-                        gDeferredMultiLightProgram[idx].uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, (F32*)col);
-                        gDeferredMultiLightProgram[idx].uniform1f(LLShaderMgr::MULTI_LIGHT_FAR_Z, far_z);
-                        gDeferredMultiLightProgram[idx].uniform1i(LLShaderMgr::CLASSIC_MODE, (psky->canAutoAdjust()) ? 1 : 0);
+                        // (one program for any number of lights: it loops to light_count, up to the 16 the arrays hold)
+                        bindDeferredShader(gDeferredMultiLightProgram);
+                        gDeferredMultiLightProgram.uniform1i(LLShaderMgr::MULTI_LIGHT_COUNT, count);
+                        gDeferredMultiLightProgram.uniform4fv(LLShaderMgr::MULTI_LIGHT, count, (F32*)light);
+                        gDeferredMultiLightProgram.uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, (F32*)col);
+                        gDeferredMultiLightProgram.uniform1f(LLShaderMgr::MULTI_LIGHT_FAR_Z, far_z);
+                        gDeferredMultiLightProgram.uniform1i(LLShaderMgr::CLASSIC_MODE, (psky->canAutoAdjust()) ? 1 : 0);
                         far_z = 0.f;
                         count = 0;
                         mScreenTriangleVB->setBuffer();
                         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-                        unbindDeferredShader(gDeferredMultiLightProgram[idx]);
+                        unbindDeferredShader(gDeferredMultiLightProgram);
                     }
                 }
 

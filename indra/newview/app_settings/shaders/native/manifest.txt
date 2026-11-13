@@ -141,3 +141,9 @@ override | HUD Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.fr
 override | HUD Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | define IS_HUD=1 | default on
 override | PBR Glow Pull Shader | alpha_pbr.vert | pbr_glow.frag | post | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define GLOW_EMISSIVE=1 | default on
 override | PBR Glow Pull Skin Shader | alpha_pbr.vert | pbr_glow.frag | post | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define GLOW_EMISSIVE=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+# family light: the local light passes of the deferred lighting (light_pass.inc). The boxes of the point lights and of the projectors are drawn from one record each (the rows are read by the instance); the lights that
+# have the camera inside their box cover the screen, up to 16 point lights in one program (a loop to light_count) and one projector at a time
+override | Deferred Light Pull Shader | light_volume.vert | light_point.frag | light | define LIGHT_VOLUME=1 | default on
+override | Deferred SpotLight Pull Shader | light_volume.vert | light_spot.frag | light | define LIGHT_VOLUME=1 | define LIGHT_SPOT=1 | default on
+override | Deferred MultiLight Shader | fullscreen.vert | light_multi.frag | light | define LIGHT_MULTI=1 | default on
+override | Deferred MultiSpotLight Shader | fullscreen.vert | light_spot.frag | light | define LIGHT_MULTI_SPOT=1 | default on
