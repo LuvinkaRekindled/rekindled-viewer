@@ -2313,6 +2313,26 @@ void LLPipeline::resetFrameStats()
     sCompiles        = 0;
     mNumVisibleFaces = 0;
 
+    // <FS> the views lap (doc/vulkan/PLAN-twin-removal.md, section 4): the live key `views` of rt-debug.txt turns the info displays on without the menus (the lap harness has no way to click them): 0 none,
+    // 1 Normals, 2 Update Type, 3 Texture Anim, 4 Render Batches. The display of the key's value is exclusive; a change of the value switches the old one off and the new one on, as the menu entries do.
+    {
+        static int applied = 0;
+        const int views = LLVkBridge::nativeKey("views", 0);
+        if (views != applied)
+        {
+            const U64 masks[5] = { 0, RENDER_DEBUG_NORMALS, RENDER_DEBUG_UPDATE_TYPE, RENDER_DEBUG_TEXTURE_ANIM, RENDER_DEBUG_BATCH_SIZE };
+            if (applied >= 1 && applied <= 4 && hasRenderDebugMask(masks[applied]))
+            {
+                toggleRenderDebug(masks[applied]);
+            }
+            if (views >= 1 && views <= 4 && !hasRenderDebugMask(masks[views]))
+            {
+                toggleRenderDebug(masks[views]);
+            }
+            applied = views;
+        }
+    }
+
     if (mOldRenderDebugMask != mRenderDebugMask)
     {
         gObjectList.clearDebugText();
