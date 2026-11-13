@@ -92,7 +92,6 @@ void LLDrawPoolGLTFPBR::renderPostDeferred(S32 pass)
     else if (mRenderType == LLPipeline::RENDER_TYPE_PASS_GLTF_PBR) // HACK -- don't render glow except for the non-alpha masked implementation
     {
         gRender.setColorMask(false, true);
-        if (gAlphaGlowPbrReady)
         {   // J1 K6 A3: the glTF glow from the scene table (the PBR glow pull programs of the alpha glow, the same rows)
             // <FS> Rekindled (2026-11-10): the glTF opaque glow writes the glow too: see LLDrawPoolGlow::renderPostDeferred
             if (LLPipeline::sRenderGlow && (ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW) || (ll_rigged_packets_enabled() && ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW_RIGGED))))

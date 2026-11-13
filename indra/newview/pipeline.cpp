@@ -10490,7 +10490,7 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mPbr == 2)
     {
-        return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPbrReady && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_MASK)
     {
@@ -10502,7 +10502,7 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
-        return LLRenderPass::deferredPacketsEnabled() && gAlphaGlowPullReady && (!rigged || ll_rigged_packets_enabled());       // (gAlphaGlowPullReady: the plain and the skinned emissive pull programs)
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_SHINY)
     {
@@ -10962,8 +10962,8 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
 // slot) or OLD (the old code draws it in place). Consecutive served draws with one key (fullbright or lit) are one segment: a run. The served draws are items of the fragment (type 26, after the
 // deferred ones); a run is a range of them.
 static bool scene_alpha_plan_env()
-{   // S5g: the table is the only alpha path: its plans are made whenever its pull programs exist
-    return gAlphaPullReady;
+{   // S5g: the table is the only alpha path: its plans are always made
+    return true;
 }
 // diagnostic (LL_VK_SCENE_ALPHA_ONLY=<mask>, default 63): which classes of draws the table takes: 1 lit, 2 fullbright, 4 draws with a texture matrix, 8 draws with a model matrix that is not a region matrix, 16 materials (S5b), 32 glTF blend (S5c), 64 rigged draws (S5d)
 // S5b: the blend function pairs of the draws (standard alpha blend = id 0); a run key carries the id in bits 8 and up
@@ -11011,7 +11011,7 @@ static int scene_alpha_only()
 }
 bool ll_alpha_glow_table(bool pbr)
 {   // S5e (bit 128 of LL_VK_SCENE_ALPHA_ONLY)
-    return (scene_alpha_only() & 128) != 0 && gAlphaGlowPullReady && (!pbr || gAlphaGlowPbrReady);
+    return (scene_alpha_only() & 128) != 0;
 }
 // S5f F2: why a draw is not served by the table (counted by the plan fill, printed with its log line)
 enum AlphaWhy { WHY_SERVED, WHY_PARTITION, WHY_RIGGED_OFF, WHY_EMPTY, WHY_PBR, WHY_GLTF_MODE, WHY_MATERIAL, WHY_SWITCH, WHY_BLEND, WHY_NOBUF, WHY_IDX32, WHY_LAYOUT, WHY_ARRAYS, WHY_TEXCOUNT, WHY_ENTRY, WHY_MATRIX, WHY_TEXMAT, WHY_COUNT };
@@ -11038,10 +11038,10 @@ static void alpha_classify(LLDrawBatch* p, bool rigged, bool table, bool whole_o
     const bool material = !LLPipeline::sRenderingHUDs && p->mHasMaterial;
     const U32 mmask = p->mShaderMask;
     const U32 blend_id = alpha_blend_id((int)p->mBlendFuncSrc, (int)p->mBlendFuncDst);
-    const bool material_ok = material && gAlphaMaterialPullReady && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
+    const bool material_ok = material && (scene_alpha_only() & 16) && mmask < 16 && (mmask & 3) == 1;
     // S5c: a draw with a glTF blend material is served by the PBR pull program (the values in a PBR row; double sided = a key bit: the run is drawn with culling off)
     const bool pbr = p->mGLTFMaterial.notNull() && p->mGLTFMaterial->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;       // (S5f F4: in the HUD too: the old loop draws it with the HUD's glTF program)
-    const bool pbr_ok = pbr && gAlphaPbrPullReady && (!rigged || gAlphaPbrSkinReady) && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
+    const bool pbr_ok = pbr && (scene_alpha_only() & 32) && vb && vb->hasDataType(LLVertexBuffer::TYPE_TANGENT);
     ac.mKey = (pbr ? 18u : (material ? 2u + mmask : (p->mFullbright ? 1u : 0u))) | (blend_id == ~0u ? 0u : blend_id << 8) | ((pbr && p->mGLTFMaterial->mDoubleSided) ? (1u << 16) : 0u) | (rigged ? (1u << 17) : 0u);
     int why = WHY_SERVED;
     bool served = table && p->mCount && (pbr ? pbr_ok : (!p->mGLTFMaterial && (material ? material_ok : (((p->mFullbright ? 2 : 1) & scene_alpha_only()) != 0))))
@@ -11137,15 +11137,15 @@ static bool alpha_transient_context_ok(U32 pkey, bool rigged, bool depth_only)
     bool have = true;
     if (LLPipeline::sRenderingHUDs)
     {
-        have = pkey == 18 ? (gAlphaHudPbrReady && !rigged) : (pkey < 2 && gAlphaHudPullReady && !rigged);
+        have = pkey == 18 ? !rigged : (pkey < 2 && !rigged);
     }
     else if (depth_only)
     {
-        have = pkey >= 2 || gAlphaMaskPullReady;
+        have = true;
     }
     else if (LLPipeline::sImpostorRender)
     {
-        have = pkey == 0 ? gAlphaImpostorPullReady : (pkey == 1 ? gAlphaMaskPullReady : true);
+        have = true;
     }
     return have;
 }
@@ -11342,7 +11342,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     const LLSpatialPartition* partition = group->getSpatialPartition();
     const U32 ptype = partition ? partition->mPartitionType : 0;
     const bool whole_old = !partition || ptype == LLViewerRegion::PARTITION_PARTICLE || ptype == LLViewerRegion::PARTITION_HUD_PARTICLE;       // (J1 K6 S1: the HUD's alpha draws have plans too: the HUD alpha pass draws them from the fragments)
-    const bool table = scene_geo_mode() >= 2 && !whole_old && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed() && (scene_alpha_only() & 64)));
+    const bool table = scene_geo_mode() >= 2 && !whole_old && (!rigged || (scene_alpha_only() & 64));
     for (LLDrawBatch* p : it->second)
     {
         if ((p->mAvatar != nullptr) != rigged)
@@ -11604,8 +11604,8 @@ int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged
 // the alpha pass is drawn from the table: the switch (LL_VK_SCENE_ALPHA=1, LL_VK_SCENE_ALPHA_AB=<s> alternates it, marker "[phase] scene alpha now ON/off"), the table serving this frame, the pull programs, and the
 // worker told this cull result's fragments
 bool ll_alpha_ab_on()
-{   // the alpha pull programs draw in every view (S5g: always, once they exist)
-    return gAlphaPullReady;
+{   // the alpha pull programs draw in every view (S5g: always)
+    return true;
 }
 
 bool ll_alpha_serving()

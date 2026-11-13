@@ -607,12 +607,6 @@ bool ll_rigged_packets_enabled()
     return gDeferredDiffusePullSkinProgram.mProgramObject != 0 && LLRenderPass::deferredPacketsEnabled();
 }
 
-bool ll_rigged_indexed()
-{
-    static const bool on = []() { const char* v = getenv("LL_VK_RIGGED_INDEXED"); return !v || atoi(v) != 0; }();      // on unless LL_VK_RIGGED_INDEXED=0 (the non-indexed pull draw costs +0.8 ms GPU in the plaza: no vertex reuse)
-    return on;
-}
-
 static bool rigged_verify()
 {
     static const bool on = getenv("LL_VK_RIGGED_VERIFY") != nullptr;

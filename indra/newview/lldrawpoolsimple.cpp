@@ -57,7 +57,7 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     gRender.setColorMask(false, true);
 
     // <FS> J1 K6 A3: the glow draws come from the scene table (the emissive pull programs of the alpha glow, the same rows); a HUD has no glow pool
-    if (!LLPipeline::sRenderingHUDs && gAlphaGlowPullReady)
+    if (!LLPipeline::sRenderingHUDs)
     {
         // <FS> Rekindled (2026-11-10, Adam: glow blinks): these opaque glow draws write the glow too, so the bloom chain must run in a frame that has only them
         // (7e383a93be set the flag in the alpha pass alone: opaque glow showed only in frames where some alpha glow draw or glowing particle was also served)

@@ -162,7 +162,6 @@ bool ll_frame_palette_first_joint(U32 offset, F32* out12);
 bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out);
 U64 ll_frame_palette_frame();       // the frame the list belongs to (a build made in another frame names offsets of another list)
 bool ll_palette_shared();           // LL_VK_PALETTE_SHARED (default 1; 0 = a palette copy in every record, as before), LL_VK_PALETTE_SHARED_AB=<s> alternates (marker "[phase] shared palettes now ON/off")
-bool ll_rigged_indexed();           // LL_VK_RIGGED_INDEXED=1: the rigged records are drawn indexed (kind 26, the shaders get HAS_INDEXED_DRAW), fixed for the run
 
 // <FS> avatar relative skinning (2026-11-09). A rigged palette holds world matrices in region coordinates; far above the ground (a skybox at 3800 m) a float there has a step of 0.24 mm, every skinned
 // vertex lands on that lattice on its own (the jagged face and chin under DLSS). Above a height the palettes are made relative to an anchor (a 64 m grid point near the camera) and the shaders add the
