@@ -17284,17 +17284,16 @@ void LLPipeline::renderDebug()
         gRender.setPointSize(1.f);
     }
 
-    // Debug stuff.
+    // Debug stuff. (Batch Size and Texture Animation are not in this list: the scene table draws them, ll_render_table_debug below; the partitions' walks have nothing to do for them)
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCTREE |
+        LLPipeline::RENDER_DEBUG_VERIFY |
         LLPipeline::RENDER_DEBUG_OCCLUSION |
         LLPipeline::RENDER_DEBUG_LIGHTS |
-        LLPipeline::RENDER_DEBUG_BATCH_SIZE |
         LLPipeline::RENDER_DEBUG_UPDATE_TYPE |
         LLPipeline::RENDER_DEBUG_BBOXES |
         LLPipeline::RENDER_DEBUG_NORMALS |
         LLPipeline::RENDER_DEBUG_POINTS |
         LLPipeline::RENDER_DEBUG_TEXTURE_AREA |
-        LLPipeline::RENDER_DEBUG_TEXTURE_ANIM |
         LLPipeline::RENDER_DEBUG_RAYCAST |
         LLPipeline::RENDER_DEBUG_AVATAR_VOLUME |
         LLPipeline::RENDER_DEBUG_AVATAR_JOINTS |

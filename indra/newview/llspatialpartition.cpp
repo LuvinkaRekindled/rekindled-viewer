@@ -3135,38 +3135,87 @@ void renderUpdateType(LLDrawable* drawablep)
         return;
     }
     LLRenderState::BlendScope blend(true);
+    LLVector4 color(0, 0, 0, 0.5f);       // (the colour of the update type; the default case keeps the colour the caller set)
+    bool colored = true;
     switch (vobj->getLastUpdateType())
     {
     case OUT_FULL:
-        gRender.diffuseColor4f(0,1,0,0.5f);
+        color.set(0,1,0,0.5f);
         break;
     case OUT_TERSE_IMPROVED:
-        gRender.diffuseColor4f(0,1,1,0.5f);
+        color.set(0,1,1,0.5f);
         break;
     case OUT_FULL_COMPRESSED:
         if (vobj->getLastUpdateCached())
         {
-            gRender.diffuseColor4f(1,0,0,0.5f);
+            color.set(1,0,0,0.5f);
         }
         else
         {
-            gRender.diffuseColor4f(1,1,0,0.5f);
+            color.set(1,1,0,0.5f);
         }
         break;
     case OUT_FULL_CACHED:
-        gRender.diffuseColor4f(0,0,1,0.5f);
+        color.set(0,0,1,0.5f);
         break;
     default:
         LL_WARNS() << "Unknown update_type " << vobj->getLastUpdateType() << LL_ENDL;
+        colored = false;
         break;
     };
+    if (colored)
+    {
+        gRender.diffuseColor4fv(color.mV);
+    }
     S32 num_faces = drawablep->getNumFaces();
     if (num_faces)
     {
+        const LLVOAvatar* lastAvatar = nullptr;
+        U64 lastMeshId = 0;
+        bool skipLastSkin = false;
+        // a rigged face's buffer holds the unskinned mesh: drawn as it is the overlay lies displaced from the avatar. The skinned form of the debug program, the view matrix and the face's palette, as the group
+        // outlines of renderOctree draw their rigged faces. The skinned program stays bound for a run of rigged faces (one bind and one matrix load a run, not a face)
+        bool skinned = false;
+        auto leave_skinned = [&]()
+        {
+            if (skinned)
+            {
+                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                gDebugProgram.bind();       // (the caller draws with the static form)
+                if (colored)
+                {
+                    gRender.diffuseColor4fv(color.mV);
+                }
+                lastAvatar = nullptr;       // (the palette is a uniform of the skinned program: sent again after the static one was bound in between)
+                skinned = false;
+            }
+        };
         for (S32 i = 0; i < num_faces; ++i)
         {
-            pushVerts(drawablep->getFace(i));
+            LLFace* face = drawablep->getFace(i);
+            if (face && face->isState(LLFace::RIGGED))
+            {
+                if (!skinned)
+                {
+                    gDebugProgram.bind(true);
+                    if (colored)
+                    {
+                        gRender.diffuseColor4fv(color.mV);
+                    }
+                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                    skinned = true;
+                }
+                if (LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
+                {
+                    pushVerts(face);
+                }
+                continue;
+            }
+            leave_skinned();
+            pushVerts(face);
         }
+        leave_skinned();
     }
 }
 
@@ -4579,7 +4628,9 @@ public:
                 renderTexelDensity(drawable);
             }
 
-            LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
+            // (the cast only for the views that read the avatar)
+            LLVOAvatar* avatar = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_AVATAR_VOLUME | LLPipeline::RENDER_DEBUG_AVATAR_JOINTS | LLPipeline::RENDER_DEBUG_AGENT_TARGET)
+                ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
 
             if (avatar && gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_AVATAR_VOLUME))
             {
@@ -4843,16 +4894,16 @@ void LLSpatialPartition::renderPhysicsShapes(bool wireframe)
 
 void LLSpatialPartition::renderDebug()
 {
+    // (Batch Size and Texture Animation are drawn from the scene table: ll_render_table_debug; this walk has nothing to do for them)
     if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCTREE |
+                                      LLPipeline::RENDER_DEBUG_VERIFY |
                                       LLPipeline::RENDER_DEBUG_OCCLUSION |
                                       LLPipeline::RENDER_DEBUG_LIGHTS |
-                                      LLPipeline::RENDER_DEBUG_BATCH_SIZE |
                                       LLPipeline::RENDER_DEBUG_UPDATE_TYPE |
                                       LLPipeline::RENDER_DEBUG_BBOXES |
                                       LLPipeline::RENDER_DEBUG_NORMALS |
                                       LLPipeline::RENDER_DEBUG_POINTS |
                                       LLPipeline::RENDER_DEBUG_TEXTURE_AREA |
-                                      LLPipeline::RENDER_DEBUG_TEXTURE_ANIM |
                                       LLPipeline::RENDER_DEBUG_RAYCAST |
                                       LLPipeline::RENDER_DEBUG_AVATAR_VOLUME |
                                       LLPipeline::RENDER_DEBUG_AVATAR_JOINTS |
@@ -4886,11 +4937,30 @@ void LLSpatialPartition::renderDebug()
         camera = NULL;
     }
 
-    LLOctreeStateCheck checker;
-    checker.traverse(mOctree);
+    // the structure check walks the whole octree (outside the frustum too) and only warns: it runs for the Verify and Octree displays, not for every view
+    if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_VERIFY | LLPipeline::RENDER_DEBUG_OCTREE))
+    {
+        LLOctreeStateCheck checker;
+        checker.traverse(mOctree);
+    }
 
-    LLOctreeRenderNonOccluded render_debug(camera);
-    render_debug.traverse(mOctree);
+    // the per group, per drawable walk: only for the views that draw something in it (the table draws Batch Size and Texture Animation; the occlusion view has its own walk below)
+    if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCTREE |
+                                     LLPipeline::RENDER_DEBUG_BBOXES |
+                                     LLPipeline::RENDER_DEBUG_NORMALS |
+                                     LLPipeline::RENDER_DEBUG_TEXTURE_AREA |
+                                     LLPipeline::RENDER_DEBUG_POINTS |
+                                     LLPipeline::RENDER_DEBUG_LIGHTS |
+                                     LLPipeline::RENDER_DEBUG_RAYCAST |
+                                     LLPipeline::RENDER_DEBUG_UPDATE_TYPE |
+                                     LLPipeline::RENDER_DEBUG_TEXEL_DENSITY |
+                                     LLPipeline::RENDER_DEBUG_AVATAR_VOLUME |
+                                     LLPipeline::RENDER_DEBUG_AVATAR_JOINTS |
+                                     LLPipeline::RENDER_DEBUG_AGENT_TARGET))
+    {
+        LLOctreeRenderNonOccluded render_debug(camera);
+        render_debug.traverse(mOctree);
+    }
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCCLUSION))
     {
