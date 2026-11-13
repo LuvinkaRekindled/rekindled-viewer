@@ -246,16 +246,12 @@ static bool alpha_noshadow()
 
 LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
 LLShaderProgram            gDeferredFullbrightPullSkinProgram;
-bool                       gFullbrightPullReady = false;
 LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
 LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
 LLShaderProgram            gHUDFullbrightPullProgram;       // J1 K6 S1: the HUD's fullbright pass from the scene table
-bool                       gHUDFullbrightPullReady = false;
 LLShaderProgram            gHUDFullbrightMaskPullProgram;
-bool                       gHUDFullbrightMaskPullReady = false;
 LLShaderProgram            gHUDFullbrightShinyPullProgram;
 LLShaderProgram            gHUDPBROpaquePullProgram;        // J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table
-bool                       gHUDPBROpaquePullReady = false;
 LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
 LLShaderProgram            gDeferredBumpPullSkinProgram;
 LLShaderProgram            gDeferredEmbossPullProgram;       // J1 K4: the post deferred emboss pass from the scene table
@@ -268,13 +264,6 @@ LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 
 LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
 LLShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (native light_volume.vert + light_spot.frag)
 LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (native light_volume.vert + light_point.frag)
-bool                       gPbrOpaquePullReady = false;
-bool                       gPbrOpaquePullSkinReady = false;
-bool                       gDiffuseMaskPullReady = false;
-bool                       gDiffuseMaskPullSkinReady = false;
-bool                       gFullbrightMaskPullReady = false;
-bool                       gFullbrightMaskPullSkinReady = false;
-bool                       gFullbrightPullSkinReady = false;
 bool                       gAlphaPullReady = false;
 LLShaderProgram            gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws the fullbright alpha draws (alphaF.glsl with ALPHA_UBER)
 LLShaderProgram            gDeferredAlphaUberPullSkinProgram;
@@ -1420,14 +1409,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAlphaUberMatReady = gAlphaUberMatSkinReady = false;
         gDeferredFullbrightPullProgram.unload();
         gDeferredFullbrightPullSkinProgram.unload();
-        gFullbrightPullReady = false;
-        gFullbrightPullSkinReady = false;
         gDeferredFullbrightShinyPullProgram.unload();
         gDeferredFullbrightShinyPullSkinProgram.unload();
         gHUDFullbrightPullProgram.unload();
-        gHUDFullbrightPullReady = false;
         gHUDFullbrightMaskPullProgram.unload();
-        gHUDFullbrightMaskPullReady = false;
         gHUDFullbrightShinyPullProgram.unload();
         gDeferredBumpPullProgram.unload();
         gDeferredBumpPullSkinProgram.unload();
@@ -1437,12 +1422,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
         gDeferredFullbrightAlphaMaskPullProgram.unload();
         gDeferredFullbrightAlphaMaskPullSkinProgram.unload();
-        gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
         gDeferredPBROpaquePullProgram.unload();
         gDeferredPBROpaquePullSkinProgram.unload();
-        gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
         gHUDPBROpaquePullProgram.unload();
-        gHUDPBROpaquePullReady = false;
         gDeferredLightPullProgram.unload();
         gDeferredSpotLightPullProgram.unload();
         gDeferredPBRAlphaPullProgram.unload();
@@ -2455,48 +2437,30 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    // <FS> S6 X1: the opaque fullbright pass from the table: the same vertex shader as the fullbright alpha pull program (rows and matrices as the G-buffer table's) with the plain fullbright fragment shader. Optional: without it the old pass draws.
-    gFullbrightPullReady = false;
-    gFullbrightPullSkinReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // <FS> S6 X1: the opaque fullbright pass from the table: the same vertex shader as the fullbright alpha pull program (rows and matrices as the G-buffer table's) with the plain fullbright fragment shader. Required
+    // (PLAN-twin-removal.md, section 8), static and rigged.
+    for (int i = 0; i < 2 && success; ++i)
     {
-        bool ok = true;
-        for (int i = 0; i < 2 && ok; ++i)
+        const bool skin = i == 1;
+        LLShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
+        shader->mName = skin ? "Deferred Fullbright Pull Skin Shader" : "Deferred Fullbright Pull Shader";
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.isDeferred = true;
+        // <FS> a native only program (native/manifest.txt): no stock files
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = shader->createShader();
+        if (!success)
         {
-            const bool skin = i == 1;
-            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
-            {
-                break;
-            }
-            LLShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
-            shader->mName = skin ? "Deferred Fullbright Pull Skin Shader" : "Deferred Fullbright Pull Shader";
-            shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.isDeferred = true;
-            // <FS> a native only program (native/manifest.txt): no stock files
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            ok = shader->createShader();
-            if (!ok)
-            {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "fullbright objects are drawn the old way" << LL_ENDL;
-                shader->unload();
-            }
-            else if (skin)
-            {
-                gFullbrightPullSkinReady = true;
-            }
-            else
-            {
-                gFullbrightPullReady = true;
-            }
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
+        llassert(success);
     }
 
-    // <FS> J1 K6 S1: the HUD's fullbright pass from the table: the fullbright pull program of the world with IS_HUD (no atmospherics, as the HUD fullbright shader). Optional: without it the HUD pool draws the old way.
-    gHUDFullbrightPullReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // <FS> J1 K6 S1: the HUD's fullbright pass from the table: the fullbright pull program of the world with IS_HUD (no atmospherics, as the HUD fullbright shader). Required.
+    if (success)
     {
         LLShaderProgram* shader = &gHUDFullbrightPullProgram;
         shader->mName = "HUD Fullbright Pull Shader";
@@ -2507,15 +2471,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (shader->createShader())
+        success = shader->createShader();
+        if (!success)
         {
-            gHUDFullbrightPullReady = true;
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's fullbright objects are drawn the old way" << LL_ENDL;
-            shader->unload();
-        }
+        llassert(success);
     }
 
     // <FS> J1 K6 S1: the HUD's fullbright shiny pass from the table (the shiny pull program with IS_HUD: no environment lighting, as the HUD shiny shader). Required (PLAN-twin-removal.md, section 8): a program
@@ -2596,9 +2557,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> S6 X3: the alpha masked passes from the table: the diffuse mask G-buffer pass (diffusePullV + diffuseAlphaMaskIndexedF) and the fullbright mask pass (alphaPullV + fullbrightF with HAS_ALPHA_MASK), the cutoff
-    // of each draw read from its row (LL_MASK_CUTOFF: a flat varying instead of the uniform). Optional.
-    gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    // of each draw read from its row (LL_MASK_CUTOFF: a flat varying instead of the uniform). Required (PLAN-twin-removal.md, section 8).
+    if (success)
     {
         // <FS> all of these are native only programs (native/manifest.txt, families gbuffer and post: the diffuse and the fullbright alpha mask pull programs, static, rigged and the HUD's): no stock files
         auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright) -> bool
@@ -2619,59 +2579,43 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!shader->createShader())
             {
-                LL_WARNS("ShadowPackets") << "the " << name << " could not be made: those draws take the old path" << LL_ENDL;
-                shader->unload();
+                LL_WARNS("ShadowPackets") << "the " << name << " could not be made" << LL_ENDL;
                 return false;
             }
             return true;
         };
-        gDiffuseMaskPullReady = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false);
-        gFullbrightMaskPullReady = make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true);
-        gHUDFullbrightMaskPullReady = make_mask(&gHUDFullbrightMaskPullProgram, "HUD Fullbright Alpha Mask Pull Shader", true);
-        if (gAlphaLitSkinReady && ll_rigged_indexed())
-        {
-            gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false);
-            gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true);
-        }
+        success = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false)
+            && make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true)
+            && make_mask(&gHUDFullbrightMaskPullProgram, "HUD Fullbright Alpha Mask Pull Shader", true)
+            && make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false)
+            && make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true);
+        llassert(success);
     }
 
-    // <FS> S6 X4: the glTF opaque and mask G-buffer pass from the table: the PBR alpha pull vertex shader (the same rows) with pbropaqueF rewritten like pbralphaF (LL_BINDLESS_PBR). Optional.
-    gPbrOpaquePullReady = gPbrOpaquePullSkinReady = false;
-    if (success && gAlphaPbrPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // <FS> S6 X4: the glTF opaque and mask G-buffer pass from the table: the PBR alpha pull vertex shader (the same rows) with pbropaqueF rewritten like pbralphaF (LL_BINDLESS_PBR). Required, static and rigged.
+    for (int i = 0; i < 2 && success; ++i)
     {
-        for (int i = 0; i < 2; ++i)
+        const bool skin = i == 1;
+        LLShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
+        shader->mName = skin ? "Deferred PBR Opaque Pull Skin Shader" : "Deferred PBR Opaque Pull Shader";
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.isDeferred = true;
+        shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+        // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque.frag): no stock files
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = shader->createShader();
+        if (!success)
         {
-            const bool skin = i == 1;
-            if (skin && !(gAlphaPbrSkinReady && ll_rigged_indexed()))
-            {
-                break;
-            }
-            LLShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
-            shader->mName = skin ? "Deferred PBR Opaque Pull Skin Shader" : "Deferred PBR Opaque Pull Shader";
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.isDeferred = true;
-            shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
-            // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque.frag): no stock files
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            if (shader->createShader())
-            {
-                (skin ? gPbrOpaquePullSkinReady : gPbrOpaquePullReady) = true;
-            }
-            else
-            {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: glTF opaque objects are drawn the old way" << LL_ENDL;
-                shader->unload();
-                break;
-            }
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
+        llassert(success);
     }
 
-    // <FS> J1 K6 S1: the HUD's glTF opaque and mask pass from the table: the PBR opaque pull program with IS_HUD (pbropaqueF has no lighting outputs in a HUD). Optional: without it the HUD pool draws the old way.
-    gHUDPBROpaquePullReady = false;
-    if (success && gPbrOpaquePullReady)
+    // <FS> J1 K6 S1: the HUD's glTF opaque and mask pass from the table: the PBR opaque pull program with IS_HUD (pbropaqueF has no lighting outputs in a HUD). Required.
+    if (success)
     {
         LLShaderProgram* shader = &gHUDPBROpaquePullProgram;
         shader->mName = "HUD PBR Opaque Pull Shader";
@@ -2683,15 +2627,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
         // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque_hud.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (shader->createShader())
+        success = shader->createShader();
+        if (!success)
         {
-            gHUDPBROpaquePullReady = true;
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's glTF objects are drawn the old way" << LL_ENDL;
-            shader->unload();
-        }
+        llassert(success);
     }
 
     // <FS> S5e: the glow second draw of the alpha items from the table: emissiveF / pbrglowF (alpha only) with the vertices read by address, static and rigged. Optional.

@@ -61,15 +61,12 @@ void LLDrawPoolGLTFPBR::renderDeferred(S32 pass)
     }
 
     // <FS> J1 K6 A3: the glTF draws are scene table records (pbr pull programs, rows with the PBR values)
-    if (gPbrOpaquePullReady)
-    {
-        gDeferredPBROpaquePullProgram.bind();
-        pushGeometryPackets(mRenderType);
-    }
+    gDeferredPBROpaquePullProgram.bind();
+    pushGeometryPackets(mRenderType);
 
     LL::GLTFSceneManager::instance().render(true, true);
 
-    if (gPbrOpaquePullReady && ll_rigged_packets_enabled() && gPbrOpaquePullSkinReady)
+    if (ll_rigged_packets_enabled())
     {
         gDeferredPBROpaquePullSkinProgram.bind();
         pushGeometryPackets(mRenderType + 1, true);
