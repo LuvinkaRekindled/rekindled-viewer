@@ -3504,10 +3504,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowCubeProgram.mName = "Deferred Shadow Cube Shader";
         gDeferredShadowCubeProgram.mFeatures.isDeferred = true;
         gDeferredShadowCubeProgram.mFeatures.hasShadows = true;
-        gDeferredShadowCubeProgram.mShaderFiles.clear();
-        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowCubeV.glsl", ShaderStage::Vertex));
-        gDeferredShadowCubeProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
-        // gDeferredShadowCubeProgram.addPermutation("DEPTH_CLAMP", "1");
+        // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowCubeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowCubeProgram.createShader();
         llassert(success);
@@ -3519,9 +3516,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
         gDeferredShadowPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowPullProgram.mFeatures.hasShadows = true;
-        gDeferredShadowPullProgram.mShaderFiles.clear();
-        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowPullV.glsl", ShaderStage::Vertex));
-        gDeferredShadowPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowPullProgram.createShader())
         {
@@ -3553,9 +3548,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowSkinPullProgram.mName = "Deferred Shadow Skin Pull Shader";
         gDeferredShadowSkinPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowSkinPullProgram.mFeatures.hasShadows = true;
-        gDeferredShadowSkinPullProgram.mShaderFiles.clear();
-        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinPullV.glsl", ShaderStage::Vertex));
-        gDeferredShadowSkinPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowSkinPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowSkinPullProgram.createShader())
         {

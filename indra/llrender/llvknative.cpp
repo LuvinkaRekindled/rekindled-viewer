@@ -476,7 +476,7 @@ std::atomic<bool> gRtSession(false);        // set by nativeSetRtSession: this s
 // <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
 bool native_only_family(const std::string& family)
 {
-    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post", "resolve", "alpha", "gbuffer" };
+    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post", "resolve", "alpha", "gbuffer", "shadow" };
     for (const char* f : kNativeOnlyFamilies)
     {
         if (family == f)

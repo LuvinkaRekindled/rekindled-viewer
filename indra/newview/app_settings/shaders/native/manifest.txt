@@ -125,3 +125,6 @@ override | Highlight Pull Skin Shader | alpha.vert | highlight.frag | alpha | de
 # the Batch Size and Texture Animation debug views (the draws of the scene table, one colour a draw / yellow for a texture matrix): the viewer's programs of these names are placeholders (the highlight shaders) that hold the `color` uniform
 override | Debug Batch Pull Shader | alpha.vert | debug_batch.frag | alpha | define HIGHLIGHT_PASS=1 | define DEBUG_ROW=1 | default on
 override | Debug Batch Pull Skin Shader | alpha.vert | debug_batch.frag | alpha | define HIGHLIGHT_PASS=1 | define DEBUG_ROW=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Shadow Pull Shader | shadow.vert | shadow.frag | shadow | default on
+override | Deferred Shadow Skin Pull Shader | shadow.vert | shadow.frag | shadow | define HAS_SKIN=1 | default on
+override | Deferred Shadow Cube Shader | shadow_cube.vert | shadow.frag | shadow | default on
