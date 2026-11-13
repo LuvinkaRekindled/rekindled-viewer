@@ -175,13 +175,6 @@ LLShaderProgram            gDeferredShadowSkinPullProgram;
 LLShaderProgram            gDeferredDiffusePullProgram;
 LLShaderProgram            gDeferredAlphaPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
-// LL_VK_ALPHA_NOSHADOW=1 (test): the alpha programs are made without the sun shadow lookup (the ray queries of the traced sun shadow are the bulk of their fragment cost: Nsight GPU Trace of 2026-10-26)
-static bool alpha_noshadow()
-{
-    static const bool v = []() { const char* e = getenv("LL_VK_ALPHA_NOSHADOW"); return e && atoi(e) != 0; }();
-    return v;
-}
-
 LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
 LLShaderProgram            gDeferredFullbrightPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
@@ -1449,26 +1442,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.isDeferred = true; // include deferredUtils
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
 
-        shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
-
-        shader->clearPermutations();
-
-        U32 alpha_mode = LLMaterial::DIFFUSE_ALPHA_MODE_BLEND;
-        shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
-        shader->addPermutation("HAS_NORMAL_MAP", "1");
-        shader->addPermutation("HAS_SPECULAR_MAP", "1"); // PBR: Packed: Occlusion, Metal, Roughness
-        shader->addPermutation("HAS_EMISSIVE_MAP", "1");
-        shader->addPermutation("USE_VERTEX_COLOR", "1");
-
-        add_common_permutations(shader);
-
-        if (use_sun_shadow && !alpha_noshadow())
-        {
-            shader->addPermutation("HAS_SUN_SHADOW", "1");
-        }
-
+        // <FS> a native only program (native/manifest.txt, family alpha: alpha_pbr_preview.vert + alpha_pbr.frag): no stock files. The material preview floater draws with it (llgltfmaterialpreviewmgr.cpp)
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
         llassert(success);
@@ -1477,7 +1451,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // See: LLRender::syncMatrices()
         shader->mFeatures.calculatesLighting = true;
         shader->mFeatures.hasLighting = true;
-
     }
 
     if (success)
@@ -1648,10 +1621,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
-                if (use_sun_shadow && !alpha_noshadow())
-                {
-                    shader->addPermutation("HAS_SUN_SHADOW", "1");
-                }
             }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             add_common_permutations(shader);
@@ -1694,10 +1663,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->addPermutation("USE_VERTEX_COLOR", "1");
         shader->addPermutation("LL_BINDLESS_PBR", "1");
         add_common_permutations(shader);
-        if (use_sun_shadow && !alpha_noshadow())
-        {
-            shader->addPermutation("HAS_SUN_SHADOW", "1");
-        }
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
         if (success)
@@ -1742,10 +1707,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
-                if (use_sun_shadow && !alpha_noshadow())
-                {
-                    shader->addPermutation("HAS_SUN_SHADOW", "1");
-                }
             }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             shader->addPermutation("HAS_SKIN", "1");
@@ -1832,10 +1793,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            if (use_sun_shadow && !alpha_noshadow())
-            {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
-            }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             shader->addPermutation("ALPHA_UBER", "1");
             if (skin)
@@ -1882,10 +1839,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            if (use_sun_shadow && !alpha_noshadow())
-            {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
-            }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             shader->addPermutation("ALPHA_UBER", "1");
             shader->addPermutation("ALPHA_UBER_MAT", "1");
