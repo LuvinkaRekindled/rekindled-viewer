@@ -1,44 +1,23 @@
-/**
- * @file postDeferredF.glsl
- *
- * $LicenseInfo:firstyear=2007&license=viewerlgpl$
- * Second Life Viewer Source Code
- * Copyright (C) 2007, Linden Research, Inc.
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation;
- * version 2.1 of the License only.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- *
- * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
- * $/LicenseInfo$
- */
+// dof.frag: the depth of field's blur: each pixel gathers samples on circles as wide as its circle of confusion (alpha of the picture): the near blur takes every sample, the far blur only the more blurred ones.
+// A line for line translation of "Deferred Post Shader" (deferred/postDeferredF.glsl); pairs with fullscreen.vert.
 
-/*[EXTRA_CODE_HERE]*/
+layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+{
+    vec2 screen_res;
+    float max_cof;
+};
 
-out vec4 frag_color;
+layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+{
+    uint ll_ti_diffuseRect;
+};
 
-uniform sampler2D diffuseRect;
-
-uniform mat4 inv_proj;
-uniform vec2 screen_res;
-uniform float max_cof;
-uniform float res_scale;
-
-in vec2 vary_fragcoord;
+layout(location = 0) in vec2 vary_fragcoord;
+layout(location = 0) out vec4 frag_color;
 
 void dofSample(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 {
-    vec4 s = texture(diffuseRect, tc);
+    vec4 s = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], tc);
 
     float sc = abs(s.a*2.0-1.0)*max_cof;
 
@@ -57,7 +36,7 @@ void dofSample(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 
 void dofSampleNear(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 {
-    vec4 s = texture(diffuseRect, tc);
+    vec4 s = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], tc);
 
     float wg = 0.25;
 
@@ -69,13 +48,19 @@ void dofSampleNear(inout vec4 diff, inout float w, float min_sc, vec2 tc)
     w += wg;
 }
 
-vec3 clampHDRRange(vec3 color);
+vec3 clampHDRRange(vec3 color)
+{
+    // there are situations where the colour goes to something insane (infinities, NaNs): a safety measure; the range is the 0 to 11.2 that HDR displays expect
+    color = mix(color, vec3(1), isinf(color));
+    color = mix(color, vec3(0.0), isnan(color));
+    return clamp(color, vec3(0.0), vec3(11.2));
+}
 
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
 
-    vec4 diff = texture(diffuseRect, vary_fragcoord.xy);
+    vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord.xy);
 
     {
         float w = 1.0;

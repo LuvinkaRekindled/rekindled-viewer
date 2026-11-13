@@ -211,3 +211,33 @@ override | FXAA Shader (Medium) | fxaa.vert | fxaa.frag | post | define FXAA_PRE
 override | FXAA Shader (High) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=28 | default on
 override | FXAA Shader (Ultra) | fxaa.vert | fxaa.frag | post | define FXAA_PRESET=39 | default on
 override | Benchmark Shader | copy.vert | copy.frag | copy | default on
+# the screen passes that were stock programs (PLAN-native-only-end-state.md, step 2): depth of field, the buffer and motion debug views, the vignette and the snapshot frame
+override | Deferred CoF Shader | fullscreen.vert | cof.frag | post | default on
+override | Deferred DoFCombine Shader | fullscreen.vert | dof_combine.frag | post | default on
+override | Deferred Post Shader | fullscreen.vert | dof.frag | post | default on
+override | Deferred Buffer Visualization Shader | fullscreen.vert | buffer_visual.frag | post | default on
+override | Avatar Velocity Debug | fullscreen.vert | velocity_debug.frag | post | default on
+override | Vignette Post | fullscreen.vert | vignette.frag | post | default on
+override | Snapshot Frame Post | fullscreen.vert | snapshot_frame.frag | post | default on
+# the sharpening, the gamma passes and the RLVa sphere (PLAN-native-only-end-state.md, step 2)
+override | Contrast Adaptive Sharpening Shader | fullscreen.vert | cas.frag | post | default on
+override | Contrast Adaptive Sharpening Legacy Gamma Shader | fullscreen.vert | cas.frag | post | define LEGACY_GAMMA=1 | default on
+override | Deferred Gamma Correction Post Process | fullscreen.vert | gamma.frag | post | default on
+override | Legacy Gamma Correction Post Process | fullscreen.vert | gamma.frag | post | define LEGACY_GAMMA=1 | default on
+override | RLVa Sphere Post Processing Shader | fullscreen.vert | rlva_sphere.frag | post | default on
+# the neural renderer and denoiser passes (PLAN-native-only-end-state.md, step 2)
+override | DLSS-NR Rim Lift | fullscreen.vert | nr_rim_lift.frag | post | default on
+override | Ray Reconstruction Reflection Motion | fullscreen.vert | rr_refl_motion.frag | post | default on
+override | Ray Reconstruction Guides | fullscreen.vert | rr_guides.frag | post | default on
+# the interface and preview programs (PLAN-native-only-end-state.md, step 4): pathfinding, the mesh upload preview, the physics preview, the probe volume display
+override | Pathfinding Shader | pathfinding.vert | pathfinding.frag | post | default on
+override | PathfindingNoNormals Shader | pathfinding.vert | pathfinding.frag | post | define PF_NO_NORMAL=1 | default on
+override | Object Preview Shader | preview.vert | preview.frag | post | default on
+override | Preview Physics Shader | preview_physics.vert | preview_physics.frag | post | default on
+override | Reflection Probe Display Shader | fullscreen.vert | probe_display.frag | post | default on
+override | Skinned Object Preview Shader | preview.vert | preview.frag | post | define HAS_SKIN=1 | default on
+# the avatar preview impostor pass (PLAN-native-only-end-state.md, step 3)
+override | Impostor Shader | impostor_forward.vert | impostor_forward.frag | post | default on
+# the forward lit programs of the avatar previews (PLAN-native-only-end-state.md, step 3)
+override | Avatar Shader | forward_lit.vert | forward_lit.frag | post | define FWD_AVATAR=1 | default on
+override | No color alpha mask Shader | forward_lit.vert | forward_lit.frag | post | default on

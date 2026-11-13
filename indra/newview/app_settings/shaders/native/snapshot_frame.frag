@@ -1,16 +1,25 @@
-out vec4 frag_color;
+// snapshot_frame.frag: the snapshot floater's frame: what lies outside the frame is blurred and gray, a border is drawn around it. A line for line translation of "Snapshot Frame Post"
+// (post/snapshotFrameF.glsl); pairs with fullscreen.vert.
 
-uniform sampler2D diffuseRect;
-uniform vec2 screen_res;
-uniform vec4 frame_rect; // x, y, width, height (normalized 0->1)
-uniform vec3 border_color;
-uniform float border_thickness; // in pixels
+layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+{
+    vec2 screen_res;
+    vec4 frame_rect; // x, y, width, height (normalized 0->1)
+    vec3 border_color;
+    float border_thickness; // in pixels
+};
 
-in vec2 vary_fragcoord;
+layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+{
+    uint ll_ti_diffuseRect;
+};
+
+layout(location = 0) in vec2 vary_fragcoord;
+layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 diff = texture(diffuseRect, vary_fragcoord);
+    vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
     vec2 tc = vary_fragcoord * screen_res;
 
     // Convert normalized frame_rect to pixel values
@@ -35,7 +44,7 @@ void main()
             for (int y = -1; y <= 1; ++y)
             {
                 vec2 offset = vec2(x, y) * blur_size / screen_res;
-                blur_color += texture(diffuseRect, vary_fragcoord + offset).rgb;
+                blur_color += texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord + offset).rgb;
             }
         }
 

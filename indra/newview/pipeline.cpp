@@ -172,7 +172,7 @@
 #endif
 #endif
 #define A_CPU 1
-#include "app_settings/shaders/class1/deferred/CASF.glsl" // This is also C++
+#include "ffxcas.h" // AMD FidelityFX CAS: the CPU side (setup of the constants); the GPU side is native/cas.frag
 #include "llitemcensus.h"
 
 extern bool gSnapshot;
