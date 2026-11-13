@@ -2824,11 +2824,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     gDiffuseMaskPullReady = gDiffuseMaskPullSkinReady = gFullbrightMaskPullReady = gFullbrightMaskPullSkinReady = false;
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
-        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright, bool skin, bool hud = false) -> bool
+        // <FS> all of these are native only programs (native/manifest.txt, families gbuffer and post: the diffuse and the fullbright alpha mask pull programs, static, rigged and the HUD's): no stock files
+        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright) -> bool
         {
             shader->mName = name;
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
             if (fullbright)
             {
                 shader->mFeatures.calculatesAtmospherics = true;
@@ -2836,28 +2835,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasSrgb = true;
                 shader->mFeatures.isDeferred = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
-                shader->addPermutation("HAS_ALPHA_MASK", "1");
-                if (hud)
-                {
-                    shader->addPermutation("IS_HUD", "1");        // (J1 K6 S1: the HUD's alpha masked fullbright pass)
-                }
             }
             else
             {
                 shader->mFeatures.hasSrgb = true;
-                // <FS> the diffuse alpha mask pull programs are native only (native/manifest.txt, family gbuffer): no stock files (the fullbright mask programs above stay swapped)
             }
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            shader->addPermutation("LL_MASK_CUTOFF", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!shader->createShader())
             {
@@ -2867,13 +2849,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             return true;
         };
-        gDiffuseMaskPullReady = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false, false);
-        gFullbrightMaskPullReady = make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true, false);
-        gHUDFullbrightMaskPullReady = make_mask(&gHUDFullbrightMaskPullProgram, "HUD Fullbright Alpha Mask Pull Shader", true, false, true);
+        gDiffuseMaskPullReady = make_mask(&gDeferredDiffuseAlphaMaskPullProgram, "Deferred Diffuse Alpha Mask Pull Shader", false);
+        gFullbrightMaskPullReady = make_mask(&gDeferredFullbrightAlphaMaskPullProgram, "Deferred Fullbright Alpha Mask Pull Shader", true);
+        gHUDFullbrightMaskPullReady = make_mask(&gHUDFullbrightMaskPullProgram, "HUD Fullbright Alpha Mask Pull Shader", true);
         if (gAlphaLitSkinReady && ll_rigged_indexed())
         {
-            gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);
-            gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true, true);
+            gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false);
+            gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true);
         }
     }
 
@@ -3082,7 +3064,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 }
             }
             gAlphaImpostorPullReady = ok;
-            // the mask programs (fullbrightF with HAS_ALPHA_MASK only): the impostor render's fullbright draws and the depth only passes
+            // the mask programs: the impostor render's fullbright draws and the depth only passes. <FS> native only programs (native/manifest.txt, family post: fullbright_mask.frag with the cutoff uniform); the
+            // static one has its own name (the G-buffer pass's program of the table has "Deferred Fullbright Alpha Mask Pull Shader")
             bool mask_ok = true;
             for (int i = 0; i < 2 && mask_ok; ++i)
             {
@@ -3092,8 +3075,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasGamma = true;
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasSrgb = true;
-                mask_ok = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Alpha Mask Pull Shader", "deferred/alphaPullV.glsl", "deferred/fullbrightF.glsl",
-                    { { "HAS_ALPHA_MASK", "1" }, { "IS_FULLBRIGHT_PULL", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, rigged);
+                mask_ok = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Mask Alpha Pull Shader", nullptr, nullptr, {}, rigged);
             }
             gAlphaMaskPullReady = mask_ok;
         }
@@ -4824,23 +4806,18 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gReflectionMipProgram.mFeatures.hasGamma = true;
         gReflectionMipProgram.mFeatures.hasAtmospherics = true;
         gReflectionMipProgram.mFeatures.calculatesAtmospherics = true;
-        gReflectionMipProgram.mShaderFiles.clear();
-        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", ShaderStage::Vertex));
-        gReflectionMipProgram.mShaderFiles.push_back(make_pair("interface/reflectionmipF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: reflectionmip.vert + reflectionmip.frag): no stock files
         gReflectionMipProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gReflectionMipProgram.createShader();
     }
 
     if (success)
     {
-        gGaussianProgram.mName = "Reflection Mip Shader";
+        gGaussianProgram.mName = "Reflection Mip Gaussian Shader";       // <FS> (it shared its name with the program above: the manifest tells programs apart by name) a native only program (family post: reflectionmip.vert + gaussian.frag): no stock files
         gGaussianProgram.mFeatures.isDeferred = true;
         gGaussianProgram.mFeatures.hasGamma = true;
         gGaussianProgram.mFeatures.hasAtmospherics = true;
         gGaussianProgram.mFeatures.calculatesAtmospherics = true;
-        gGaussianProgram.mShaderFiles.clear();
-        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/splattexturerectV.glsl", ShaderStage::Vertex));
-        gGaussianProgram.mShaderFiles.push_back(make_pair("interface/gaussianF.glsl", ShaderStage::Fragment));
         gGaussianProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGaussianProgram.createShader();
     }
