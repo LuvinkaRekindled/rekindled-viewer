@@ -112,10 +112,8 @@ LLShaderProgram        gUnderWaterProgram;
 LLShaderProgram        gHighlightProgram;
 LLShaderProgram        gSkinnedHighlightProgram;
 LLShaderProgram        gHighlightPullSkinProgram;       // <FS> K6 B1: "Highlight Pull Skin Shader": a placeholder (the highlight shaders with HAS_SKIN) for its native stand-in (highlight.frag + alpha.vert), which draws the rigged table items of the Highlight Transparent view
-bool                   gHighlightPullSkinReady = false;
 LLShaderProgram        gDebugBatchPullProgram;          // <FS> K6 B1: "Debug Batch Pull Shader" and its skinned twin: placeholders (the highlight shaders) for the native programs of the Batch Size and Texture Animation views
 LLShaderProgram        gDebugBatchPullSkinProgram;
-bool                   gDebugBatchPullReady = false;
 LLShaderProgram        gHighlightNormalProgram;
 LLShaderProgram        gHighlightSpecularProgram;
 
@@ -251,24 +249,17 @@ LLShaderProgram            gDeferredFullbrightPullSkinProgram;
 bool                       gFullbrightPullReady = false;
 LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
 LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
-bool                       gFullbrightShinyPullReady = false;
-bool                       gFullbrightShinyPullSkinReady = false;
 LLShaderProgram            gHUDFullbrightPullProgram;       // J1 K6 S1: the HUD's fullbright pass from the scene table
 bool                       gHUDFullbrightPullReady = false;
 LLShaderProgram            gHUDFullbrightMaskPullProgram;
 bool                       gHUDFullbrightMaskPullReady = false;
 LLShaderProgram            gHUDFullbrightShinyPullProgram;
-bool                       gHUDFullbrightShinyPullReady = false;
 LLShaderProgram            gHUDPBROpaquePullProgram;        // J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table
 bool                       gHUDPBROpaquePullReady = false;
 LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
 LLShaderProgram            gDeferredBumpPullSkinProgram;
-bool                       gBumpPullReady = false;
-bool                       gBumpPullSkinReady = false;
 LLShaderProgram            gDeferredEmbossPullProgram;       // J1 K4: the post deferred emboss pass from the scene table
 LLShaderProgram            gDeferredEmbossPullSkinProgram;
-bool                       gEmbossPullReady = false;
-bool                       gEmbossPullSkinReady = false;
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
 LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
@@ -1433,22 +1424,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gFullbrightPullSkinReady = false;
         gDeferredFullbrightShinyPullProgram.unload();
         gDeferredFullbrightShinyPullSkinProgram.unload();
-        gFullbrightShinyPullReady = false;
-        gFullbrightShinyPullSkinReady = false;
         gHUDFullbrightPullProgram.unload();
         gHUDFullbrightPullReady = false;
         gHUDFullbrightMaskPullProgram.unload();
         gHUDFullbrightMaskPullReady = false;
         gHUDFullbrightShinyPullProgram.unload();
-        gHUDFullbrightShinyPullReady = false;
         gDeferredBumpPullProgram.unload();
         gDeferredBumpPullSkinProgram.unload();
-        gBumpPullReady = false;
-        gBumpPullSkinReady = false;
         gDeferredEmbossPullProgram.unload();
         gDeferredEmbossPullSkinProgram.unload();
-        gEmbossPullReady = false;
-        gEmbossPullSkinReady = false;
         gDeferredDiffuseAlphaMaskPullProgram.unload();
         gDeferredDiffuseAlphaMaskPullSkinProgram.unload();
         gDeferredFullbrightAlphaMaskPullProgram.unload();
@@ -1465,10 +1449,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
         gHighlightPullSkinProgram.unload();
-        gHighlightPullSkinReady = false;
         gDebugBatchPullProgram.unload();
         gDebugBatchPullSkinProgram.unload();
-        gDebugBatchPullReady = false;
         gDeferredPBRAlphaPullSkinProgram.unload();
         gDeferredEmissivePullProgram.unload();
         gDeferredEmissivePullSkinProgram.unload();
@@ -2536,9 +2518,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    // <FS> J1 K6 S1: the HUD's fullbright shiny pass from the table (the shiny pull program with IS_HUD: no environment lighting, as the HUD shiny shader)
-    gHUDFullbrightShinyPullReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // <FS> J1 K6 S1: the HUD's fullbright shiny pass from the table (the shiny pull program with IS_HUD: no environment lighting, as the HUD shiny shader). Required (PLAN-twin-removal.md, section 8): a program
+    // that cannot be made ends the shader load.
+    if (success)
     {
         LLShaderProgram* shader = &gHUDFullbrightShinyPullProgram;
         shader->mName = "HUD Fullbright Shiny Pull Shader";
@@ -2549,125 +2531,68 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasReflectionProbes = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (shader->createShader())
+        success = shader->createShader();
+        if (!success)
         {
-            gHUDFullbrightShinyPullReady = true;
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: the HUD's shiny objects are drawn the old way" << LL_ENDL;
-            shader->unload();
-        }
+        llassert(success);
     }
 
     // <FS> J1 K4: the fullbright shiny pass from the table: the fullbright pull vertex shader with the eye space normal (IS_SHINY_PULL) and the shiny fragment shader (environment map or reflection probes, bound by the
-    // pool to whichever program draws), the diffuse texture of each row from the bindless table. Optional: without it the old pass draws.
-    gFullbrightShinyPullReady = false;
-    gFullbrightShinyPullSkinReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // pool to whichever program draws), the diffuse texture of each row from the bindless table. Required, static and rigged.
+    for (int i = 0; i < 2 && success; ++i)
     {
-        bool ok = true;
-        for (int i = 0; i < 2 && ok; ++i)
+        const bool skin = i == 1;
+        LLShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
+        shader->mName = skin ? "Deferred Fullbright Shiny Pull Skin Shader" : "Deferred Fullbright Shiny Pull Shader";
+        shader->mFeatures.calculatesAtmospherics = true;
+        shader->mFeatures.hasAtmospherics = true;
+        shader->mFeatures.hasGamma = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mFeatures.hasReflectionProbes = true;
+        // <FS> a native only program (native/manifest.txt): no stock files
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = shader->createShader();
+        if (!success)
         {
-            const bool skin = i == 1;
-            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
-            {
-                break;
-            }
-            LLShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
-            shader->mName = skin ? "Deferred Fullbright Shiny Pull Skin Shader" : "Deferred Fullbright Shiny Pull Shader";
-            shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.hasReflectionProbes = true;
-            // <FS> a native only program (native/manifest.txt): no stock files
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            ok = shader->createShader();
-            if (!ok)
-            {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "fullbright shiny objects are drawn the old way" << LL_ENDL;
-                shader->unload();
-            }
-            else if (skin)
-            {
-                gFullbrightShinyPullSkinReady = true;
-            }
-            else
-            {
-                gFullbrightShinyPullReady = true;
-            }
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
+        llassert(success);
     }
 
     // <FS> J1 K4: the deferred bump pass from the table: the pull vertex shader with the tangent frame (IS_BUMP_PULL) and bumpF with its diffuse and bump images from the bindless table by the row's slots
-    // (the materials rewrite, LL_BINDLESS_MATERIAL), the cutoff of each draw from its row (LL_MASK_CUTOFF). Optional: without it the old pass draws.
-    gBumpPullReady = false;
-    gBumpPullSkinReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // (the materials rewrite, LL_BINDLESS_MATERIAL), the cutoff of each draw from its row (LL_MASK_CUTOFF). Required, static and rigged.
+    for (int i = 0; i < 2 && success; ++i)
     {
-        bool ok = true;
-        for (int i = 0; i < 2 && ok; ++i)
+        const bool skin = i == 1;
+        LLShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
+        shader->mName = skin ? "Deferred Bump Pull Skin Shader" : "Deferred Bump Pull Shader";
+        // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_bump.frag): no stock files
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = shader->createShader();
+        if (!success)
         {
-            const bool skin = i == 1;
-            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
-            {
-                break;
-            }
-            LLShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
-            shader->mName = skin ? "Deferred Bump Pull Skin Shader" : "Deferred Bump Pull Shader";
-            // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_bump.frag): no stock files
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            ok = shader->createShader();
-            if (!ok)
-            {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "bump mapped objects are drawn the old way" << LL_ENDL;
-                shader->unload();
-            }
-            else if (skin)
-            {
-                gBumpPullSkinReady = true;
-            }
-            else
-            {
-                gBumpPullReady = true;
-            }
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
+        llassert(success);
     }
 
     // <FS> J1 K4: the post deferred emboss pass from the table: the pull vertex shader with the second texture coordinate set (IS_EMBOSS_PULL) and the object bump fragment shader, its two samplers both reading the
-    // bump image's slot of the row (the materials rewrite). Optional: without it the old pass draws.
-    gEmbossPullReady = false;
-    gEmbossPullSkinReady = false;
-    if (success && gAlphaPullReady && LLVkBridge::shadowAlphaPacketsAvailable())
+    // bump image's slot of the row (the materials rewrite). Required, static and rigged.
+    for (int i = 0; i < 2 && success; ++i)
     {
-        bool ok = true;
-        for (int i = 0; i < 2 && ok; ++i)
+        const bool skin = i == 1;
+        LLShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
+        shader->mName = skin ? "Deferred Emboss Pull Skin Shader" : "Deferred Emboss Pull Shader";
+        // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + emboss.frag): no stock files
+        shader->mShaderLevel = mShaderLevel[SHADER_OBJECT];
+        success = shader->createShader();
+        if (!success)
         {
-            const bool skin = i == 1;
-            if (skin && !(gAlphaLitSkinReady && ll_rigged_indexed()))
-            {
-                break;
-            }
-            LLShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
-            shader->mName = skin ? "Deferred Emboss Pull Skin Shader" : "Deferred Emboss Pull Shader";
-            // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + emboss.frag): no stock files
-            shader->mShaderLevel = mShaderLevel[SHADER_OBJECT];
-            ok = shader->createShader();
-            if (!ok)
-            {
-                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made: " << (skin ? "rigged " : "") << "embossed objects are drawn the old way" << LL_ENDL;
-                shader->unload();
-            }
-            else if (skin)
-            {
-                gEmbossPullSkinReady = true;
-            }
-            else
-            {
-                gEmbossPullReady = true;
-            }
+            LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
         }
+        llassert(success);
     }
 
     // <FS> S6 X3: the alpha masked passes from the table: the diffuse mask G-buffer pass (diffusePullV + diffuseAlphaMaskIndexedF) and the fullbright mask pass (alphaPullV + fullbrightF with HAS_ALPHA_MASK), the cutoff
@@ -4099,24 +4024,23 @@ bool LLViewerShaderMgr::loadShadersInterface()
         success = success && gHighlightProgram.createShader();
     }
 
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    if (success)
     {
-        // <FS> K6 B1: the rigged highlight draws (the table's rigged items, the alpha loop's kind 29 record) go through this program: the native stand-in is the only one that draws, the old shader holds the `color` uniform
+        // <FS> K6 B1: the rigged highlight draws (the table's rigged items, the alpha loop's kind 29 record) go through this program: the native stand-in is the only one that draws. Required (PLAN-twin-removal.md, section 8)
         LLShaderProgram& pull = gHighlightPullSkinProgram;
         pull.mName = "Highlight Pull Skin Shader";
         // <FS> a native only program (native/manifest.txt, family alpha): no stock files (it declares `color` and the table's address itself)
         pull.mFeatures.hasObjectSkinning = true;
         pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        gHighlightPullSkinReady = pull.createShader();
-        if (!gHighlightPullSkinReady)
+        success = pull.createShader();
+        if (!success)
         {
-            LL_WARNS("ShadowPackets") << "the Highlight Pull Skin Shader could not be made: the rigged part of Highlight Transparent will draw nothing" << LL_ENDL;
-            pull.unload();
+            LL_WARNS("ShadowPackets") << "the Highlight Pull Skin Shader could not be made" << LL_ENDL;
         }
+        llassert(success);
 
-        // <FS> K6 B1: the Batch Size and Texture Animation views draw the table's items with these (native stand-ins; the old shaders hold the `color` uniform that selects the view)
-        gDebugBatchPullReady = true;
-        for (int skin = 0; skin < 2; ++skin)
+        // <FS> K6 B1: the Batch Size and Texture Animation views draw the table's items with these (native programs: alpha.vert + debug_batch.frag; the `color` uniform selects the view)
+        for (int skin = 0; skin < 2 && success; ++skin)
         {
             LLShaderProgram& debug_program = skin ? gDebugBatchPullSkinProgram : gDebugBatchPullProgram;
             debug_program.mName = skin ? "Debug Batch Pull Skin Shader" : "Debug Batch Pull Shader";
@@ -4126,12 +4050,12 @@ bool LLViewerShaderMgr::loadShadersInterface()
                 debug_program.mFeatures.hasObjectSkinning = true;
             }
             debug_program.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-            if (!debug_program.createShader())
+            success = debug_program.createShader();
+            if (!success)
             {
-                LL_WARNS("ShadowPackets") << "the " << debug_program.mName << " could not be made: the Batch Size and Texture Animation views will draw nothing" << LL_ENDL;
-                debug_program.unload();
-                gDebugBatchPullReady = false;
+                LL_WARNS("ShadowPackets") << "the " << debug_program.mName << " could not be made" << LL_ENDL;
             }
+            llassert(success);
         }
     }
 

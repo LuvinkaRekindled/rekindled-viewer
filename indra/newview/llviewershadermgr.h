@@ -192,10 +192,8 @@ extern LLShaderProgram         gGlowExtractProgram;
 //interface shaders
 extern LLShaderProgram         gHighlightProgram;
 extern LLShaderProgram         gHighlightPullSkinProgram;      // K6 B1: the rigged Highlight Transparent draws (native stand-in)
-extern bool                    gHighlightPullSkinReady;
 extern LLShaderProgram         gDebugBatchPullProgram;         // K6 B1: the Batch Size / Texture Animation views (native stand-ins)
 extern LLShaderProgram         gDebugBatchPullSkinProgram;
-extern bool                    gDebugBatchPullReady;
 extern LLShaderProgram         gHighlightNormalProgram;
 extern LLShaderProgram         gHighlightSpecularProgram;
 
@@ -261,24 +259,17 @@ extern bool                    gFullbrightPullReady;
 extern bool                    gFullbrightPullSkinReady;
 extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
 extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
-extern bool                    gFullbrightShinyPullReady;
-extern bool                    gFullbrightShinyPullSkinReady;
 extern LLShaderProgram         gHUDFullbrightPullProgram;        // <FS> J1 K6 S1: the HUD's fullbright pass from the scene table (the fullbright pull program with IS_HUD)
 extern bool                    gHUDFullbrightPullReady;
 extern LLShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 K6 S1: the HUD's alpha masked fullbright and fullbright shiny passes from the scene table
 extern bool                    gHUDFullbrightMaskPullReady;
 extern LLShaderProgram         gHUDFullbrightShinyPullProgram;
-extern bool                    gHUDFullbrightShinyPullReady;
 extern LLShaderProgram         gHUDPBROpaquePullProgram;         // <FS> J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table (the PBR opaque pull program with IS_HUD)
 extern bool                    gHUDPBROpaquePullReady;
 extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
 extern LLShaderProgram         gDeferredBumpPullSkinProgram;
-extern bool                    gBumpPullReady;
-extern bool                    gBumpPullSkinReady;
 extern LLShaderProgram         gDeferredEmbossPullProgram;        // <FS> J1 K4: the post deferred emboss (post bump) pass from the scene table, static and rigged (alphaPullV with IS_EMBOSS_PULL + objects/bumpF)
 extern LLShaderProgram         gDeferredEmbossPullSkinProgram;
-extern bool                    gEmbossPullReady;
-extern bool                    gEmbossPullSkinReady;
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
 extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;

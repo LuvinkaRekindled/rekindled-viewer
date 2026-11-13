@@ -439,7 +439,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
         // <FS:Beq> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
         // <FS> K6 B1 (rigged): the rigged masked and invisible draws are table items too: drawn again with the "Highlight Pull Skin Shader" (its native stand-in: alpha.vert with HAS_SKIN and a flat colour), the
         // palettes the items have from the frame's own bindings; the colours are the old ones (green: the alpha mask and the invisible draws, cyan: the other masks)
-        if (sShowDebugAlphaRigged && gHighlightPullSkinReady)
+        if (sShowDebugAlphaRigged)
         {
             gHighlightPullSkinProgram.bind();
             static LLStaticHashedString waterSign("waterSign");
@@ -487,7 +487,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     // items are the ones the rigged alpha pass sent this frame, persistent at the worker: only the ranges go)
     for (int rig = 0; rig < 2; ++rig)
     {
-    LLShaderProgram* color = rig ? (LLShaderProgram*)(gHighlightPullSkinReady && LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
+    LLShaderProgram* color = rig ? (LLShaderProgram*)(LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
     if (view)
     {
         color = rig ? view->mRigged : view->mStatic;
@@ -579,7 +579,7 @@ void ll_render_table_debug()
 {
     const bool batch = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BATCH_SIZE);
     const bool anim = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_ANIM);
-    if (!(batch || anim) || !gDebugBatchPullReady)
+    if (!(batch || anim))
     {
         return;
     }
