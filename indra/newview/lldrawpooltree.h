@@ -50,10 +50,7 @@ public:
     /*virtual*/ void endDeferredPass(S32 pass);
     /*virtual*/ void renderDeferred(S32 pass);
 
-    /*virtual*/ S32 getNumShadowPasses() { return 1; }
-    /*virtual*/ void beginShadowPass(S32 pass);
-    /*virtual*/ void endShadowPass(S32 pass);
-    /*virtual*/ void renderShadow(S32 pass);
+    // (no shadow pass: the tree faces are entries of the cascades' shadow records, LLPipeline::renderShadow)
 
     /*virtual*/ bool verify() const;
     /*virtual*/ LLViewerTexture *getTexture();

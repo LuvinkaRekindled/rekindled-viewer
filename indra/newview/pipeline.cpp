@@ -19709,6 +19709,7 @@ struct LLPipeline::ShadowAlphaBuild
     std::vector<LLViewerTexture*> mTextures;
     U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
     bool mFinished = false;
+    bool mTreesAdded = false;                   // <FS> the Linden tree faces (LLDrawPoolTree) are among the entries
     bool mShared = false;                       // P3: the rigged entries name their palettes in the frame's shared list (by id), mPaletteFrame = the frame it was made in
     U64 mPaletteFrame = 0;
 };
@@ -27274,6 +27275,85 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             LL_CPU_ZONE("packets: shadow alpha: fragment entries");
             append_fragment_alpha(*build_owned, result.mAlphaFragGroups, rt_raster);
+        }
+        if (!rigged && !rt_skip && !build_owned->mTreesAdded)
+        {
+            // <FS> the Linden tree faces (LLDrawPoolTree: one vertex buffer a face, drawn whole under the region's render matrix, the alpha tested at 0.5 on the pool's texture, no vertex alpha, no dithering: the
+            // shadow alpha pull program's tree style entries) leave in the static record of the pass. The pool's own shadow pass, which drew them one at a time with a program of its own, is gone. The pass of the
+            // ray scene (rt_skip) names them in render_rt_extra_packets
+            LL_CPU_ZONE("packets: shadow alpha: Linden tree entries");
+            ShadowAlphaBuild& tb = *build_owned;
+            tb.mTreesAdded = true;
+            std::vector<std::pair<const LLMatrix4*, U32>> tree_matrices;
+            U32 tree_faces = 0, tree_left_out = 0;
+            for (LLDrawPool* pool : mPools)
+            {
+                if (pool->getType() != LLDrawPool::POOL_TREE)
+                {
+                    continue;
+                }
+                LLViewerTexture* tex = pool->getTexture();
+                U32 texture_number = 0;
+                for (LLFace* face : static_cast<LLFacePool*>(pool)->mDrawFace)
+                {
+                    LLVertexBuffer* vb = face->getVertexBuffer();
+                    LLDrawable* drawable = face->getDrawable();
+                    LLViewerRegion* region = drawable ? drawable->getRegion() : nullptr;
+                    if (!vb || !region || !tex)
+                    {
+                        continue;       // (no buffer yet, or no texture: nothing the old pass drew either)
+                    }
+                    if (!vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16 || vb->getNumIndices() == 0
+                        || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0 || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0))
+                    {
+                        ++tree_left_out;
+                        continue;       // (a layout the pull shader does not read: not drawn)
+                    }
+                    if (!texture_number)
+                    {
+                        tb.mTextures.push_back(tex);
+                        texture_number = (U32)tb.mTextures.size();
+                    }
+                    const LLMatrix4* model = &region->mRenderMatrix;
+                    size_t k = 0;
+                    while (k < tree_matrices.size() && tree_matrices[k].first != model)
+                    {
+                        ++k;
+                    }
+                    if (k == tree_matrices.size())
+                    {
+                        tree_matrices.push_back({ model, (U32)(tb.mMatrices.size() / 16) });
+                        const F32* m = (const F32*)model->mMatrix;
+                        tb.mMatrices.insert(tb.mMatrices.end(), m, m + 16);
+                    }
+                    LLVkBridge::ShadowAlphaEntry e = {};
+                    e.mVertexBuffer = vb->getVertexBufferId();
+                    e.mIndexBuffer = vb->getIndexBufferId();
+                    e.mFirstIndex = 0;
+                    e.mIndexCount = vb->getNumIndices();
+                    e.mMatrixId = rt_matrix_id(model);
+                    e.mMatrix = tree_matrices[k].second;
+                    e.mFlags = LLVkBridge::ALPHA_TREE | LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
+                    e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
+                    e.mTextures[0] = texture_number;
+                    e.mCutoff = 0.5f;
+                    e.mUv[0] = 1.f;         // identity texture coordinate transform
+                    e.mUv[3] = 1.f;
+                    tb.mEntries.push_back(e);
+                    ++tree_faces;
+                }
+            }
+            if (tree_left_out)
+            {
+                ll_pool_draw_dropped("Linden tree shadow casters (layout the pull shader does not read)", tree_left_out);
+            }
+            static U32 tree_calls = 0;
+            static U64 tree_faces_total = 0;
+            tree_faces_total += tree_faces;
+            if (++tree_calls % 2400 == 0)
+            {
+                LL_INFOS("VkShadow") << "Linden tree faces in the static shadow records per pass: " << (F32)tree_faces_total / tree_calls << " (over " << tree_calls << " passes)" << LL_ENDL;
+            }
         }
         { LL_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent

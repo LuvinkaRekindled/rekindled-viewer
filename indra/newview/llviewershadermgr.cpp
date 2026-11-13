@@ -147,7 +147,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 21;
+constexpr size_t PULL_TWIN_COUNT = 20;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -189,7 +189,7 @@ static void make_pull_twins()
                                                   &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
                                                   &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
                                                   &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram,
-                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gObjectBumpProgram, &gDeferredTreeShadowProgram,
+                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gObjectBumpProgram,
                                                   &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
@@ -227,8 +227,6 @@ bool                       gTerrainPbrPullReady = false;
 LLShaderProgram            gDeferredTreeProgram;
 LLShaderProgram            gDeferredTreePullProgram;
 bool                       gTreePullReady = false;
-LLShaderProgram            gDeferredTreeShadowProgram;
-LLShaderProgram            gDeferredSkinnedTreeShadowProgram;
 LLShaderProgram            gDeferredAvatarProgram;
 LLShaderProgram            gDeferredAvatarAlphaProgram;
 LLShaderProgram            gDeferredMultiLightProgram;
@@ -1419,8 +1417,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTreeProgram.unload();
         gDeferredTreePullProgram.unload();
         gTreePullReady = false;
-        gDeferredTreeShadowProgram.unload();
-        gDeferredSkinnedTreeShadowProgram.unload();
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.unload();
         gDeferredImpostorProgram.unload();
         gDeferredTerrainProgram.unload();
@@ -1909,30 +1905,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("ShadowPackets") << "the Deferred Tree Pull Shader could not be made: the trees are drawn the old way" << LL_ENDL;
             gDeferredTreePullProgram.unload();
         }
-    }
-
-    if (success)
-    {
-        gDeferredTreeShadowProgram.mName = "Deferred Tree Shadow Shader";
-        gDeferredTreeShadowProgram.mShaderFiles.clear();
-        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowV.glsl", ShaderStage::Vertex));
-        gDeferredTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", ShaderStage::Fragment));
-        gDeferredTreeShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredTreeShadowProgram.mRiggedVariant = &gDeferredSkinnedTreeShadowProgram;
-        success = gDeferredTreeShadowProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gDeferredSkinnedTreeShadowProgram.mName = "Deferred Skinned Tree Shadow Shader";
-        gDeferredSkinnedTreeShadowProgram.mShaderFiles.clear();
-        gDeferredSkinnedTreeShadowProgram.mFeatures.hasObjectSkinning = true;
-        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowSkinnedV.glsl", ShaderStage::Vertex));
-        gDeferredSkinnedTreeShadowProgram.mShaderFiles.push_back(make_pair("deferred/treeShadowF.glsl", ShaderStage::Fragment));
-        gDeferredSkinnedTreeShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = gDeferredSkinnedTreeShadowProgram.createShader();
-        llassert(success);
     }
 
     if (success)

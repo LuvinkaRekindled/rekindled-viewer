@@ -44,7 +44,6 @@ S32 LLDrawPoolTree::sDiffTex = 0;
 static LLShaderProgram* shader = NULL;
 // <FS> the G-buffer pass of the Linden trees from the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face); the old loop of the G-buffer pass is gone (counted drop)
 static bool sTreePull = false;
-static bool sTreeShadowPass = false;     // (the pool's own shadow pass still draws the faces one by one with the shadow program)
 
 LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
     LLFacePool(POOL_TREE),
@@ -60,7 +59,6 @@ void LLDrawPoolTree::beginDeferredPass(S32 pass)
 {
     LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
 
-    sTreeShadowPass = false;
     sTreePull = gTreePullReady;
     shader = sTreePull ? &gDeferredTreePullProgram : &gDeferredTreeProgram;
     shader->bind();
@@ -92,28 +90,7 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
         return;
     }
 
-    if (!sTreeShadowPass)
-    {
-        ll_pool_draw_dropped("trees", mDrawFace.size());
-        return;
-    }
-
-    for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
-        iter != mDrawFace.end(); iter++)
-    {
-        LLFace* face = *iter;
-        LLVertexBuffer* buff = face->getVertexBuffer();
-
-        if (buff)
-        {
-            LLMatrix4* model_matrix = &(face->getDrawable()->getRegion()->mRenderMatrix);
-
-            LLRenderPass::applyModelMatrix(model_matrix);
-
-            buff->setBuffer();
-            buff->drawRange(LLRender::TRIANGLES, 0, buff->getNumVerts() - 1, buff->getNumIndices(), 0);
-        }
-    }
+    ll_pool_draw_dropped("trees", mDrawFace.size());        // (no pull program: the old per face draw is gone)
 }
 
 void LLDrawPoolTree::endDeferredPass(S32 pass)
@@ -122,46 +99,6 @@ void LLDrawPoolTree::endDeferredPass(S32 pass)
 
     shader->unbind();
     sTreePull = false;
-}
-
-//============================================
-// shadow implementation
-//============================================
-void LLDrawPoolTree::beginShadowPass(S32 pass)
-{
-    LL_PROFILE_ZONE_SCOPED;
-
-    static LLCachedControl<F32> shadow_offset(gSavedSettings, "RenderDeferredTreeShadowOffset");
-    static LLCachedControl<F32> shadow_bias(gSavedSettings, "RenderDeferredTreeShadowBias");
-    gRender.setPolygonOffset(shadow_offset(), shadow_bias());
-
-    LLEnvironment& environment = LLEnvironment::instance();
-
-    sTreeShadowPass = true;
-    sTreePull = false;      // (the shadow pass draws the faces one by one here, with the shadow program: the packet path of the cascades does not come through this pool)
-    gDeferredTreeShadowProgram.bind();
-    gDeferredTreeShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
-    gDeferredTreeShadowProgram.setMinimumAlpha(0.5f);
-}
-
-void LLDrawPoolTree::renderShadow(S32 pass)
-{
-    renderDeferred(pass);
-}
-
-void LLDrawPoolTree::endShadowPass(S32 pass)
-{
-    LL_PROFILE_ZONE_SCOPED;
-
-    // <FS:PP> Attempt to speed up things a little
-    // glPolygonOffset(gSavedSettings.getF32("RenderDeferredSpotShadowOffset"),
-    //                  gSavedSettings.getF32("RenderDeferredSpotShadowBias"));
-    static LLCachedControl<F32> RenderDeferredSpotShadowOffset(gSavedSettings, "RenderDeferredSpotShadowOffset");
-    static LLCachedControl<F32> RenderDeferredSpotShadowBias(gSavedSettings, "RenderDeferredSpotShadowBias");
-    gRender.setPolygonOffset(RenderDeferredSpotShadowOffset, RenderDeferredSpotShadowBias);
-    // </FS:PP>
-
-    gDeferredTreeShadowProgram.unbind();
 }
 
 bool LLDrawPoolTree::verify() const
