@@ -165,3 +165,7 @@ override | Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | mask_n
 override | Deferred Avatar Alpha Shader pull | avatar.vert | avatar_alpha.frag | alpha | define AVATAR_PASS=1 | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rt
 override | Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | default on
 override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+# the sun lightmap family: the probe snapshot's lightmap (the main view's program without the occlusion) and the two passes of the ray traced sun shadow's penumbra (the stock ray traced sun program stays: the RT track)
+override | Deferred Sun Probe Shader | fullscreen.vert | sun_lightmap.frag | sun | define LL_NO_AO=1 | default on
+override | RT Shadow Penumbra Prep | fullscreen.vert | rt_shadow_prep.frag | sun | default on
+override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag | sun | default on

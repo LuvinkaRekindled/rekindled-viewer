@@ -2,6 +2,8 @@
 // Same lookups, weights and rules as the old sun program with SSAO; what is different is the cost: the view position of a pixel and of every occlusion tap is rebuilt from its depth with
 // the few multiplications the projection leaves (lib/viewpos.glsl), and the cascade lookup is one function that goes straight to the cascade(s) the pixel is in.
 // This program stands in for the old one only when the old one has shadows and SSAO and no ray tracing (manifest: require). With LL_HALF it is the half resolution lightmap (gNativeSunHalfProgram).
+// With LL_NO_AO it is the lightmap of a reflection probe's snapshot ("Deferred Sun Probe Shader", native only): the same without the occlusion (g is 1: the probe's own light has none), so no noise texture, no tap
+// loop and none of the occlusion uniforms.
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
@@ -19,11 +21,13 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float shadow_offset;
     float spot_shadow_bias;
     float spot_shadow_offset;
+#ifndef LL_NO_AO
     float ssao_radius;
     float ssao_max_radius;
     float ssao_factor;
     float ssao_factor_inv;
     float ao_noise_frame;
+#endif
     int sun_up_factor;
     int spot_shadow_mask;       // bit 0 / 1: the projector with a shadow map in slot 0 / 1 exists this frame
 #ifdef LL_HALF
@@ -35,7 +39,9 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 {
     uint ll_ti_depthMap;
     uint ll_ti_normalMap;
+#ifndef LL_NO_AO
     uint ll_ti_noiseMap;
+#endif
     uint ll_ti_shadow_shadowMap0;
     uint ll_ti_shadow_shadowMap1;
     uint ll_ti_shadow_shadowMap2;
@@ -88,6 +94,7 @@ float spot_shadow(vec3 pos, vec3 norm, int index)
     return shadow / w;
 }
 
+#ifndef LL_NO_AO
 // ambient occlusion: eight taps spread (squared) around the pixel, each one an occluding sphere of the same size; samples much closer to the camera are "no data", not "no occlusion"
 const vec2 kAoKern[8] = vec2[8](
     vec2(-1.0, 0.0) * 0.125 * 0.125, vec2(1.0, 0.0) * 0.250 * 0.250, vec2(0.0, 1.0) * 0.375 * 0.375, vec2(0.0, -1.0) * 0.500 * 0.500,
@@ -114,6 +121,7 @@ float ambient_occlusion(vec3 pos, vec3 norm, vec2 uv)
     const float ret = 1.0 - (points > 0.0 ? angle_hidden : 0.0);
     return clamp(ret, 0.0, 1.0);
 }
+#endif
 
 void main()
 {
@@ -135,7 +143,11 @@ void main()
 
     vec4 col;
     col.r = sun_shadow(pos, norm, uv.y);
+#ifdef LL_NO_AO
+    col.g = 1.0;
+#else
     col.g = ambient_occlusion(pos, norm, uv);
+#endif
     col.b = (spot_shadow_mask & 1) != 0 ? spot_shadow(pos, norm, 0) : 1.0;
     col.a = (spot_shadow_mask & 2) != 0 ? spot_shadow(pos, norm, 1) : 1.0;
     frag_color = clamp(col, vec4(0.0), vec4(1.0));
