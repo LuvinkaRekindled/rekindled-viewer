@@ -135,9 +135,7 @@ LLShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapsho
 // Deferred rendering shaders
 LLShaderProgram            gDeferredImpostorProgram;
 LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
-LLShaderProgram            gDeferredTerrainProgram;
 LLShaderProgram            gDeferredTerrainPullProgram;
-bool                       gTerrainPullReady = false;
 
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
@@ -213,10 +211,7 @@ static void make_pull_twins()
     }
 }
 LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
-bool                       gTerrainPbrPullReady = false;
-LLShaderProgram            gDeferredTreeProgram;
 LLShaderProgram            gDeferredTreePullProgram;
-bool                       gTreePullReady = false;
 LLShaderProgram            gDeferredAvatarProgram;
 LLShaderProgram            gDeferredAvatarAlphaProgram;
 LLShaderProgram            gDeferredMultiLightProgram;
@@ -360,7 +355,6 @@ LLShaderProgram            gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
 LLShaderProgram            gHUDPBRAlphaProgram;
 LLShaderProgram            gDeferredPBRAlphaProgram;
 LLShaderProgram            gDeferredSkinnedPBRAlphaProgram;
-LLShaderProgram            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 
 LLShaderProgram            gGLTFPBRMetallicRoughnessProgram;
 
@@ -576,14 +570,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     }
 
     mShaderList.push_back(&gDeferredAvatarProgram);
-    mShaderList.push_back(&gDeferredTerrainProgram);
-
-    for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
-    {
-        mShaderList.push_back(&gDeferredPBRTerrainProgram[paint_type]);
-    }
-
-    mShaderList.push_back(&gDeferredTreeProgram);
 
     // make sure there are no redundancies
     llassert(no_redundant_shaders(mShaderList));
@@ -1378,14 +1364,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
-        gDeferredTreeProgram.unload();
         gDeferredTreePullProgram.unload();
-        gTreePullReady = false;
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.unload();
         gDeferredImpostorProgram.unload();
-        gDeferredTerrainProgram.unload();
         gDeferredTerrainPullProgram.unload();
-        gTerrainPullReady = false;
         gDeferredMultiLightProgram.unload();
         gDeferredMultiSpotLightProgram.unload();
         gDeferredSunProgram.unload();
@@ -1530,7 +1512,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedPBRAlphaProgram.unload();
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
         {
-            gDeferredPBRTerrainProgram[paint_type].unload();
             gDeferredPBRTerrainPullProgram[paint_type].unload();
         }
 
@@ -1761,11 +1742,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         S32 detail = gSavedSettings.getS32("RenderTerrainPBRDetail");
         detail = llclamp(detail, TERRAIN_PBR_DETAIL_MIN, TERRAIN_PBR_DETAIL_MAX);
         const S32 mapping = clamp_terrain_mapping(gSavedSettings.getS32("RenderTerrainPBRPlanarSampleCount"));
-        gTerrainPbrPullReady = LLVkBridge::shadowAlphaPacketsAvailable();
-        for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
+        for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT && success; ++paint_type)
         {
-            LLShaderProgram* shader = &gDeferredPBRTerrainProgram[paint_type];
-            shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s",
+            // <FS> the PBR terrain pass from the geometry packet path (the patch's vertex buffer read by address): native only programs, one for each detail level, paint type and mapping (native/manifest.txt, family
+            // gbuffer: pbrterrain.vert + pbrterrain.frag); required (PLAN-twin-removal.md, section 8)
+            LLShaderProgram* shader = &gDeferredPBRTerrainPullProgram[paint_type];
+            shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s pull",
                     detail,
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
                     (mapping == 1 ? "flat" : "triplanar"));
@@ -1776,76 +1758,29 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasTransport = true;
             shader->mFeatures.isPBRTerrain = true;
-
-            shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", ShaderStage::Fragment));
+            shader->addPermutation("LL_VERTEX_PULL", "1");       // (as the pull twin had it: a draw of a vertex buffer under it is one entry of a geometry record)
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            shader->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
-            shader->addPermutation("TERRAIN_PAINT_TYPE", llformat("%d", paint_type));
-            shader->addPermutation("TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", llformat("%d", mapping));
-
-            add_common_permutations(shader);
-
-            success = success && shader->createShader();
-            llassert(success);
-
-            // <FS> S6.6a: the pull twin (pbrterrainPullV.glsl: the same permutations, the vertices read by address)
-            if (success && gTerrainPbrPullReady)
+            success = shader->createShader();
+            if (!success)
             {
-                LLShaderProgram* pull = &gDeferredPBRTerrainPullProgram[paint_type];
-                pull->mName = shader->mName + " pull";
-                pull->mFeatures = shader->mFeatures;
-                pull->mShaderFiles.clear();
-                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", ShaderStage::Vertex));
-                pull->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", ShaderStage::Fragment));
-                pull->clearPermutations();
-                pull->addPermutation("LL_VERTEX_PULL", "1");
-                pull->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-                pull->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
-                pull->addPermutation("TERRAIN_PAINT_TYPE", llformat("%d", paint_type));
-                pull->addPermutation("TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", llformat("%d", mapping));
-                add_common_permutations(pull);
-                if (!pull->createShader())
-                {
-                    LL_WARNS("ShadowPackets") << "the " << pull->mName << " could not be made: the PBR terrain is drawn the old way" << LL_ENDL;
-                    pull->unload();
-                    gTerrainPbrPullReady = false;
-                }
+                LL_WARNS("ShadowPackets") << "the " << shader->mName << " could not be made" << LL_ENDL;
             }
+            llassert(success);
         }
     }
 
+    // <FS> the Linden tree pass from the geometry packet path, as the terrain's: the tree faces' buffers are read by address (LLDrawPoolTree::renderDeferred sends them as one record). A native only program (native/manifest.txt,
+    // family gbuffer: tree.vert + tree.frag): no stock files; required (PLAN-twin-removal.md, section 8)
     if (success)
     {
-        gDeferredTreeProgram.mName = "Deferred Tree Shader";
-        gDeferredTreeProgram.mShaderFiles.clear();
-        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeV.glsl", ShaderStage::Vertex));
-        gDeferredTreeProgram.mShaderFiles.push_back(make_pair("deferred/treeF.glsl", ShaderStage::Fragment));
-        gDeferredTreeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredTreeProgram);
-
-        success = gDeferredTreeProgram.createShader();
-    }
-
-    // <FS> the Linden tree pass from the geometry packet path, as the terrain's: the tree faces' buffers are read by address (LLDrawPoolTree::renderDeferred sends them as one record), the program is the tree program's own
-    gTreePullReady = false;
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
-    {
         gDeferredTreePullProgram.mName = "Deferred Tree Pull Shader";
-        gDeferredTreePullProgram.mFeatures = gDeferredTreeProgram.mFeatures;
-        // <FS> a native only program (native/manifest.txt, family gbuffer: tree.vert + tree.frag): no stock files
         gDeferredTreePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (gDeferredTreePullProgram.createShader())
+        success = gDeferredTreePullProgram.createShader();
+        if (!success)
         {
-            gTreePullReady = true;
+            LL_WARNS("ShadowPackets") << "the Deferred Tree Pull Shader could not be made" << LL_ENDL;
         }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the Deferred Tree Pull Shader could not be made: the trees are drawn the old way" << LL_ENDL;
-            gDeferredTreePullProgram.unload();
-        }
+        llassert(success);
     }
 
     if (success)
@@ -3114,43 +3049,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
+    // <FS> S6.6a: the terrain pass from the geometry packet path: the patch's vertex buffer read by address. A native only program (native/manifest.txt, family gbuffer: terrain.vert + terrain.frag): no stock files;
+    // required (PLAN-twin-removal.md, section 8)
     if (success)
     {
-        gDeferredTerrainProgram.mName = "Deferred Terrain Shader";
-        gDeferredTerrainProgram.mFeatures.hasSrgb = true;
-        gDeferredTerrainProgram.mFeatures.isAlphaLighting = true;
-        gDeferredTerrainProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredTerrainProgram.mFeatures.hasAtmospherics = true;
-        gDeferredTerrainProgram.mFeatures.hasGamma = true;
-
-        gDeferredTerrainProgram.mShaderFiles.clear();
-        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", ShaderStage::Vertex));
-        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", ShaderStage::Fragment));
-
-        add_common_permutations(&gDeferredTerrainProgram);
-
-        gDeferredTerrainProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = gDeferredTerrainProgram.createShader();
-        llassert(success);
-    }
-
-    // <FS> S6.6a: the terrain pass from the geometry packet path: the patch's vertex buffer read by address (terrainPullV.glsl), the fragment shader is the terrain program's own
-    gTerrainPullReady = false;
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
-    {
         gDeferredTerrainPullProgram.mName = "Deferred Terrain Pull Shader";
-        gDeferredTerrainPullProgram.mFeatures = gDeferredTerrainProgram.mFeatures;
-        // <FS> a native only program (native/manifest.txt, family gbuffer: terrain.vert + terrain.frag): no stock files
+        gDeferredTerrainPullProgram.mFeatures.hasSrgb = true;
+        gDeferredTerrainPullProgram.mFeatures.isAlphaLighting = true;
+        gDeferredTerrainPullProgram.mFeatures.calculatesAtmospherics = true;
+        gDeferredTerrainPullProgram.mFeatures.hasAtmospherics = true;
+        gDeferredTerrainPullProgram.mFeatures.hasGamma = true;
         gDeferredTerrainPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (gDeferredTerrainPullProgram.createShader())
+        success = gDeferredTerrainPullProgram.createShader();
+        if (!success)
         {
-            gTerrainPullReady = true;
+            LL_WARNS("ShadowPackets") << "the Deferred Terrain Pull Shader could not be made" << LL_ENDL;
         }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the Deferred Terrain Pull Shader could not be made: the terrain is drawn the old way" << LL_ENDL;
-            gDeferredTerrainPullProgram.unload();
-        }
+        llassert(success);
     }
 
     if (success)

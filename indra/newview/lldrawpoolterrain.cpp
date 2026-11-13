@@ -62,8 +62,6 @@ S32 LLDrawPoolTerrain::sPBRDetailMode = 0;
 F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
 static LLShaderProgram* sShader = NULL;
-static bool sPull = false;
-// (S6.6a: sPull: the pass being drawn is the pull variant (drawPull))
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
 
 
@@ -286,8 +284,7 @@ void LLDrawPoolTerrain::renderFullShader()
     if (use_textures)
     {
         // Use textures
-        sPull = gTerrainPullReady;
-        sShader = sPull ? &gDeferredTerrainPullProgram : &gDeferredTerrainProgram;
+        sShader = &gDeferredTerrainPullProgram;
         sShader->bind();
         renderFullShaderTextures();
     }
@@ -296,8 +293,7 @@ void LLDrawPoolTerrain::renderFullShader()
         // Use materials
         U32 paint_type = use_local_materials ? gLocalTerrainMaterials.getPaintType() : compp->getPaintType();
         paint_type = llclamp(paint_type, 0, TERRAIN_PAINT_TYPE_COUNT);
-        sPull = gTerrainPbrPullReady;
-        sShader = sPull ? &gDeferredPBRTerrainPullProgram[paint_type] : &gDeferredPBRTerrainProgram[paint_type];
+        sShader = &gDeferredPBRTerrainPullProgram[paint_type];
         sShader->bind();
         renderFullShaderPBR(use_local_materials);
     }
@@ -372,14 +368,7 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     gRender.getTexUnit(alpha_ramp)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
 
     // GL_BLEND disabled by default
-    if (sPull)
-    {
-        drawPull();
-    }
-    else
-    {
-        ll_pool_draw_dropped("terrain", mDrawFace.size());
-    }
+    drawPull();
 
     // Disable multitexture
     sShader->disableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
@@ -630,14 +619,7 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
     shader->uniform4f(LLShaderMgr::TERRAIN_MINIMUM_ALPHAS, minimum_alphas[0], minimum_alphas[1], minimum_alphas[2], minimum_alphas[3]);
 
     // GL_BLEND disabled by default
-    if (sPull)
-    {
-        drawPull();
-    }
-    else
-    {
-        ll_pool_draw_dropped("terrain", mDrawFace.size());
-    }
+    drawPull();
 
     // Disable multitexture
 

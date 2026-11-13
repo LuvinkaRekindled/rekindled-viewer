@@ -42,8 +42,7 @@
 
 S32 LLDrawPoolTree::sDiffTex = 0;
 static LLShaderProgram* shader = NULL;
-// <FS> the G-buffer pass of the Linden trees from the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face); the old loop of the G-buffer pass is gone (counted drop)
-static bool sTreePull = false;
+// <FS> the G-buffer pass of the Linden trees is the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face)
 
 LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :
     LLFacePool(POOL_TREE),
@@ -59,8 +58,7 @@ void LLDrawPoolTree::beginDeferredPass(S32 pass)
 {
     LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
 
-    sTreePull = gTreePullReady;
-    shader = sTreePull ? &gDeferredTreePullProgram : &gDeferredTreeProgram;
+    shader = &gDeferredTreePullProgram;
     shader->bind();
     shader->setMinimumAlpha(0.5f);
 }
@@ -84,13 +82,7 @@ void LLDrawPoolTree::renderDeferred(S32 pass)
 //    gRender.getTexUnit(sDiffTex)->bindFast(mTexturep);
     mTexturep->addTextureStats(1024.f * 1024.f); // <=== keep Linden tree textures at full res
 
-    if (sTreePull && shader == &gDeferredTreePullProgram)
-    {
-        pushWholeBufferFacesPull();
-        return;
-    }
-
-    ll_pool_draw_dropped("trees", mDrawFace.size());        // (no pull program: the old per face draw is gone)
+    pushWholeBufferFacesPull();
 }
 
 void LLDrawPoolTree::endDeferredPass(S32 pass)
@@ -98,7 +90,6 @@ void LLDrawPoolTree::endDeferredPass(S32 pass)
     LL_RECORD_BLOCK_TIME(FTM_RENDER_TREES);
 
     shader->unbind();
-    sTreePull = false;
 }
 
 bool LLDrawPoolTree::verify() const
