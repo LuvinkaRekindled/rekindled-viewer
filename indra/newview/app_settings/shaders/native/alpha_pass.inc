@@ -16,6 +16,16 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #ifdef ALPHA_PBR
     uvec2 ll_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
 #endif
+#ifdef PBR_PREVIEW
+    // the material preview (alpha_pbr_preview.vert): the material of the draw as loose values (the row of the pull program): the texture transforms (scale and rotation, offset) and the factors
+    vec4 texture_base_color_transform[2];
+    vec4 texture_normal_transform[2];
+    vec4 texture_metallic_roughness_transform[2];
+    vec4 texture_emissive_transform[2];
+    vec3 emissiveColor;
+    float metallicFactor;
+    float roughnessFactor;
+#endif
 
     // the sky of the pass (the haze and the sun/moon terms)
     vec3 lightnorm;
@@ -144,6 +154,17 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 {
 #ifdef AVATAR_PASS
     uint ll_ti_diffuseMap;              // the body part's texture
+#endif
+#ifdef PBR_PREVIEW
+    // the material preview: the matrices of the draw and the material's textures (the slots a row of the pull program holds)
+    mat4 modelview_matrix;
+    mat4 modelview_projection_matrix;
+    mat3 normal_matrix;
+    mat4 texture_matrix0;
+    uint ll_ti_diffuseMap;
+    uint ll_ti_bumpMap;
+    uint ll_ti_specularMap;
+    uint ll_ti_emissiveMap;
 #endif
 #ifdef MASK_NOCOLOR
     // a mesh drawn by range under the matrices of the pass (mask_nocolor.vert): the draw's own matrices, loose

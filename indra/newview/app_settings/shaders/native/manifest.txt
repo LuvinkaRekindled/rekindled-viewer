@@ -243,3 +243,5 @@ override | Avatar Shader | forward_lit.vert | forward_lit.frag | post | define F
 override | No color alpha mask Shader | forward_lit.vert | forward_lit.frag | post | default on
 # the ray scene material debug view (PLAN-native-only-end-state.md): the line itself defines LL_RT_QUERY (made only in a session with the material table)
 override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag | post | define LL_RT_QUERY=1 | default on
+# the material preview floater's glTF blend program (PLAN-native-only-end-state.md): the attribute vertex stage, the scene blend surfaces' fragment stage; no ray query variant: the preview draws with white shadow maps (llgltfmaterialpreviewmgr.cpp)
+override | Deferred PBR Alpha Shader | alpha_pbr_preview.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define PBR_PREVIEW=1 | default on
