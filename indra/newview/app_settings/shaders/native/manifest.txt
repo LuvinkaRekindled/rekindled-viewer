@@ -154,3 +154,7 @@ override | Exposure | fullscreen.vert | exposure.frag | post | define USE_LAST_E
 override | Exposure (no fade) | fullscreen.vert | exposure.frag | post | default on
 override | Deferred Post NoDoF Shader | fullscreen.vert | post_nodof.frag | post | default on
 override | Deferred Post NoDoF Noise Shader | fullscreen.vert | post_nodof.frag | post | define HAS_NOISE=1 | default on
+# the motion vector pass of the avatars and the moving objects (velocity_pass.inc): the rigged parts and the moving objects are native only; the body parts stand in for the body program's pull twin
+override | Avatar Velocity (rigged, packets) | velocity_skin.vert | velocity.frag | post | define VEL_SKIN=1 | define HAS_SKIN=1 | default on
+override | Object Velocity (packets) | velocity_object.vert | velocity.frag | post | define VEL_OBJECT=1 | default on
+override | Avatar Velocity (body) pull | velocity_body.vert | velocity.frag | post | define VEL_BODY=1 | default on
