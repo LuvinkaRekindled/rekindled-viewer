@@ -137,67 +137,6 @@ LLShaderProgram            gDeferredImpostorProgram;
 LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
 LLShaderProgram            gDeferredTerrainPullProgram;
 
-// S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
-namespace
-{
-constexpr size_t PULL_TWIN_COUNT = 4;
-LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
-LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
-bool sPullTwinReady[PULL_TWIN_COUNT] = {};
-}
-
-LLShaderProgram* ll_pull_twin(LLShaderProgram* src)
-{
-    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
-    {
-        if (sPullTwinSources[k] == src && sPullTwinReady[k])
-        {
-            return &sPullTwins[k];
-        }
-    }
-    return nullptr;
-}
-
-LLShaderProgram* ll_pull_or(LLShaderProgram* src)
-{
-    LLShaderProgram* twin = ll_pull_twin(src);
-    return twin ? twin : src;
-}
-
-static void make_pull_twins()
-{
-    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDeferredAvatarAlphaProgram };
-    for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
-    {
-        sPullTwinSources[k] = sources[k];
-        sPullTwinReady[k] = false;
-        LLShaderProgram& src = *sources[k];
-        LLShaderProgram& twin = sPullTwins[k];
-        // <FS> the slots 0, 1, 2 (water, underwater, water haze) are never made: with the water twin the water reflection flickered and did not reflect right (2026-10-27); they wait for the water rewrite. (The switches
-        // LL_VK_PULL_TWINS and LL_VK_PULL_TWIN_SKIP, A/B tools of the twin era, are gone: PLAN-twin-removal.md, section 8.)
-        const bool skipped = k < 3;
-        if (skipped || !LLVkBridge::shadowAlphaPacketsAvailable() || src.mProgramObject == 0)
-        {
-            continue;
-        }
-        twin.mName = src.mName + " pull";
-        twin.mFeatures = src.mFeatures;
-        twin.mShaderFiles = src.mShaderFiles;
-        twin.mDefines = src.mDefines;
-        twin.addPermutation("LL_VERTEX_PULL", "1");
-        twin.mShaderLevel = src.mShaderLevel;
-        twin.mShaderGroup = src.mShaderGroup;
-        if (twin.createShader())
-        {
-            sPullTwinReady[k] = true;
-        }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the " << twin.mName << " could not be made: those draws are made the old way" << LL_ENDL;
-            twin.unload();
-        }
-    }
-}
 LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
 LLShaderProgram            gDeferredTreePullProgram;
 LLShaderProgram            gDeferredAvatarProgram;
@@ -790,11 +729,6 @@ void LLViewerShaderMgr::setShaders()
     llassert(loaded);
     loaded = loaded && loadShadersDeferred();
     llassert(loaded);
-    if (loaded)
-    {
-        make_pull_twins();
-    }
-
     if (!LLAppViewer::instance()->isSecondInstance())
     {
         persistShaderCacheMetadata();
@@ -2834,7 +2768,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredAvatarAlphaProgram.mName = "Deferred Avatar Alpha Shader";
+        // <FS> the avatar pool's blended parts: the pull program itself (it was the stock program of this name and its pull twin: the twin machinery is gone, PLAN-twin-removal.md, section 9). Native only without ray
+        // traced shadows (native/manifest.txt, `rt`: avatar.vert + avatar_alpha.frag), the stock files are for the sessions with ray queries
+        gDeferredAvatarAlphaProgram.mName = "Deferred Avatar Alpha Shader pull";
         gDeferredAvatarAlphaProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarAlphaProgram.mFeatures.calculatesLighting = false;
         gDeferredAvatarAlphaProgram.mFeatures.hasLighting = false;
@@ -2854,6 +2790,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.clearPermutations();
         gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");
         gDeferredAvatarAlphaProgram.addPermutation("IS_AVATAR_SKIN", "1");
+        gDeferredAvatarAlphaProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         if (use_sun_shadow)
         {
             gDeferredAvatarAlphaProgram.addPermutation("HAS_SUN_SHADOW", "1");

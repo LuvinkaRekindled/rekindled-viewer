@@ -238,9 +238,6 @@ extern LLShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> i
 extern LLShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
 extern LLShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
-// <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none
-LLShaderProgram* ll_pull_twin(LLShaderProgram* src);
-LLShaderProgram* ll_pull_or(LLShaderProgram* src);          // the twin when there is one, else src
 extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;

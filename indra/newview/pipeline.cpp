@@ -25830,8 +25830,7 @@ void LLPipeline::doWaterHaze()
         gRender.setColorMask(true, true);
 
         // apply haze
-        LLShaderProgram* haze_pull = sUnderWaterRender ? nullptr : ll_pull_twin(&gHazeWaterProgram);       // S6.6: the water patches of the haze come as one record of entries
-        LLShaderProgram& haze_shader = haze_pull ? *haze_pull : gHazeWaterProgram;
+        LLShaderProgram& haze_shader = gHazeWaterProgram;
 
         LL_PROFILE_GPU_ZONE("haze");
         bindDeferredShader(haze_shader, nullptr, &mWaterDis);
@@ -25862,14 +25861,7 @@ void LLPipeline::doWaterHaze()
 
             if (mWaterPool)
             {
-                if (haze_pull)
-                {
-                    mWaterPool->pushFacesPull(false);
-                }
-                else
-                {
-                    mWaterPool->pushFaceGeometry();
-                }
+                mWaterPool->pushFaceGeometry();
             }
         }
 
