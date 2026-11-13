@@ -63,7 +63,7 @@ F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
 static LLShaderProgram* sShader = NULL;
 static bool sPull = false;
-static bool sShadowPull = false;     // S6.6c: the shadow pass being drawn takes the pull program (drawShadowPull)      // S6.6a: sPull: the pass being drawn is the pull variant (drawPull)
+// (S6.6a: sPull: the pass being drawn is the pull variant (drawPull))
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
 
 
@@ -177,23 +177,14 @@ void LLDrawPoolTerrain::beginShadowPass(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_TERRAIN);
     LLFacePool::beginRenderPass(pass);
     gRender.getTexUnit(0)->bindWhite();
-    sShadowPull = gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
-    if (sShadowPull)
-    {
-        gDeferredShadowPullProgram.bind();      // S6.6c
-        return;
-    }
-    gDeferredShadowProgram.bind();
-
-    LLEnvironment& environment = LLEnvironment::instance();
-    gDeferredShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+    gDeferredShadowPullProgram.bind();      // S6.6c (a required program: the shadow pass has no other path)
 }
 
 void LLDrawPoolTerrain::endShadowPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_SHADOW_TERRAIN);
     LLFacePool::endRenderPass(pass);
-    gDeferredShadowProgram.unbind();
+    gDeferredShadowPullProgram.unbind();
 }
 
 void LLDrawPoolTerrain::renderShadow(S32 pass)
@@ -205,14 +196,7 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
     }
     //LLGLEnable offset(GL_POLYGON_OFFSET);
     //glCullFace(GL_FRONT);
-    if (sShadowPull)
-    {
-        drawShadowPull();
-    }
-    else
-    {
-        ll_pool_draw_dropped("terrain shadow", mDrawFace.size());
-    }
+    drawShadowPull();
     //glCullFace(GL_BACK);
 }
 

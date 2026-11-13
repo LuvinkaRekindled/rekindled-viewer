@@ -233,7 +233,6 @@ extern LLShaderProgram         gNativeLightUpsampleProgram;     // <FS> native o
 extern LLShaderProgram         gDeferredAvatarProgram;
 extern LLShaderProgram         gDeferredSoftenProgram;
 extern LLShaderProgram         gDeferredRtReflectionProgram;     // <FS> the traced glossy reflection as a pass of its own (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md)
-extern LLShaderProgram         gDeferredShadowProgram;
 extern LLShaderProgram         gDeferredShadowCubeProgram;
 extern LLShaderProgram         gDeferredShadowPullProgram;   // <FS> render packets: reads vertices and indices by address (Vulkan mirror only)
 extern LLShaderProgram         gDeferredShadowAlphaPullProgram;   // <FS> render packets: the same for alpha masked casters, textures from the bindless table
