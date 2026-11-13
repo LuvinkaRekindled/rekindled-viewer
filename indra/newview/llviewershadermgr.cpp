@@ -147,7 +147,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 14;
+constexpr size_t PULL_TWIN_COUNT = 7;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -185,11 +185,8 @@ bool ll_is_pull_twin(const LLShaderProgram* program)
 
 static void make_pull_twins()
 {
-    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
-                                                  &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
-                                                  &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram,
-                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gObjectBumpProgram,
-                                                  &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
+    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDeferredAvatarAlphaProgram,
+                                                  &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gObjectBumpProgram };
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
         sPullTwinSources[k] = sources[k];
@@ -1604,12 +1601,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mName = "Deferred Diffuse Non-Indexed Alpha Mask No Color Shader";
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.clear();
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseNoColorV.glsl", ShaderStage::Vertex));
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderFiles.push_back(make_pair("deferred/diffuseAlphaMaskNoColorF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family alpha: mask_nocolor.vert + mask_nocolor.frag): no stock files (it was the pull twin of a stock program of this name, deleted)
+        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mName = "Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull";
+        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram);
         success = gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.createShader();
         llassert(success);
     }
@@ -3281,12 +3276,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredAvatarShadowProgram.mName = "Deferred Avatar Shadow Shader";
+        // <FS> a native only program (native/manifest.txt, family shadow: avatar_shadow.vert + avatar_shadow.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
+        gDeferredAvatarShadowProgram.mName = "Deferred Avatar Shadow Shader pull";
         gDeferredAvatarShadowProgram.mFeatures.hasSkinning = true;
-
-        gDeferredAvatarShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowV.glsl", ShaderStage::Vertex));
-        gDeferredAvatarShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarShadowF.glsl", ShaderStage::Fragment));
+        gDeferredAvatarShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarShadowProgram.createShader();
         llassert(success);
@@ -3294,22 +3287,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredAvatarAlphaShadowProgram.mName = "Deferred Avatar Alpha Shadow Shader";
+        gDeferredAvatarAlphaShadowProgram.mName = "Deferred Avatar Alpha Shadow Shader pull";       // <FS> a native only program (family shadow), as above
         gDeferredAvatarAlphaShadowProgram.mFeatures.hasSkinning = true;
-        gDeferredAvatarAlphaShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", ShaderStage::Vertex));
-        gDeferredAvatarAlphaShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowF.glsl", ShaderStage::Fragment));
+        gDeferredAvatarAlphaShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaShadowProgram.createShader();
         llassert(success);
     }
     if (success)
     {
-        gDeferredAvatarAlphaMaskShadowProgram.mName = "Deferred Avatar Alpha Mask Shadow Shader";
+        gDeferredAvatarAlphaMaskShadowProgram.mName = "Deferred Avatar Alpha Mask Shadow Shader pull";       // <FS> a native only program (family shadow), as above
         gDeferredAvatarAlphaMaskShadowProgram.mFeatures.hasSkinning  = true;
-        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaShadowV.glsl", ShaderStage::Vertex));
-        gDeferredAvatarAlphaMaskShadowProgram.mShaderFiles.push_back(make_pair("deferred/avatarAlphaMaskShadowF.glsl", ShaderStage::Fragment));
+        gDeferredAvatarAlphaMaskShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaMaskShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaMaskShadowProgram.createShader();
         llassert(success);
@@ -3356,16 +3345,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredAvatarProgram.mName = "Deferred Avatar Shader";
+        // <FS> a native only program (native/manifest.txt, family gbuffer: avatar.vert + avatar.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
+        gDeferredAvatarProgram.mName = "Deferred Avatar Shader pull";
         gDeferredAvatarProgram.mFeatures.hasSkinning = true;
-        gDeferredAvatarProgram.mShaderFiles.clear();
-        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarV.glsl", ShaderStage::Vertex));
-        gDeferredAvatarProgram.mShaderFiles.push_back(make_pair("deferred/avatarF.glsl", ShaderStage::Fragment));
+        gDeferredAvatarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        gDeferredAvatarProgram.clearPermutations();
-        add_common_permutations(&gDeferredAvatarProgram);
-        gDeferredAvatarProgram.addPermutation("AVATAR_CLOTH", LLPipeline::RenderAvatarCloth ? "1" : "0");
 
         success = gDeferredAvatarProgram.createShader();
         llassert(success);
@@ -3474,11 +3458,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
         }
 
-        gAvatarBodyVelocityProgram.mName = "Avatar Velocity (body)";
-        gAvatarBodyVelocityProgram.mShaderFiles.clear();
-        gAvatarBodyVelocityProgram.clearPermutations();
-        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarBodyVelocityV.glsl", ShaderStage::Vertex));
-        gAvatarBodyVelocityProgram.mShaderFiles.push_back(make_pair("deferred/avatarVelocityF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: velocity_body.vert + velocity.frag): the system avatar's body parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
+        gAvatarBodyVelocityProgram.mName = "Avatar Velocity (body) pull";
+        gAvatarBodyVelocityProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gAvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarBodyVelocityProgram.createShader())
         {
@@ -4429,11 +4411,9 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
     if (success)
     {
-        gDrawColorProgram.mName = "Draw Color Shader";
-        gDrawColorProgram.mShaderFiles.clear();
-        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleNoAtmosV.glsl", ShaderStage::Vertex));
-        gDrawColorProgram.mShaderFiles.push_back(make_pair("objects/simpleColorF.glsl", ShaderStage::Fragment));
-        gDrawColorProgram.clearPermutations();
+        // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + highlight.frag with HIGHLIGHT_PASS): the flat colour of the water exclusion and the highlight views, read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
+        gDrawColorProgram.mName = "Draw Color Shader pull";
+        gDrawColorProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDrawColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gDrawColorProgram.createShader();
     }

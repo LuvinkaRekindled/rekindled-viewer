@@ -10498,7 +10498,7 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE || kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_INVISIBLE)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gHighlightPullSkinReady && ll_rigged_packets_enabled()) : ll_pull_twin(&gDrawColorProgram) != nullptr);      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || (gHighlightPullSkinReady && ll_rigged_packets_enabled()));      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
     }
     return true;
 }
@@ -21720,7 +21720,7 @@ void LLPipeline::renderAvatarVelocity()
     }
 
     // K6 group D: the system avatar's body parts through the body program's pull twin, one record of one entry each (ll_pull_draw_range, as the G-buffer draws them); no twin, no body motion vectors
-    LLShaderProgram* body_velocity = ll_pull_twin(&gAvatarBodyVelocityProgram);
+    LLShaderProgram* body_velocity = &gAvatarBodyVelocityProgram;
     if (!LLViewerJointMesh::sVelocityDraws.empty() && body_velocity)
     {
         setup(*body_velocity);
