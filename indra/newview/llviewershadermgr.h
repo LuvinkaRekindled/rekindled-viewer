@@ -155,7 +155,6 @@ extern LLShaderProgram         gGlowCombineProgram;
 extern LLShaderProgram         gReflectionMipProgram;
 extern LLShaderProgram         gGaussianProgram;
 extern LLShaderProgram         gRadianceGenProgram;
-extern LLShaderProgram         gHeroRadianceGenProgram;
 extern LLShaderProgram         gIrradianceGenProgram;
 extern LLShaderProgram         gGlowCombineFXAAProgram;
 extern LLShaderProgram         gDebugProgram;
@@ -218,9 +217,6 @@ extern LLShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapsho
 
 // Deferred rendering shaders
 extern LLShaderProgram         gDeferredImpostorProgram;
-extern LLShaderProgram         gDeferredDiffuseProgram;
-extern LLShaderProgram         gDeferredDiffuseAlphaMaskProgram;
-extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseProgram;
 extern LLShaderProgram         gDeferredBumpProgram;
@@ -336,7 +332,6 @@ extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render 
 extern LLShaderProgram         gDeferredDiffusePullSkinProgram;  // <FS> S4 A1: the rigged variants of the two (weights and palette read by address)
 extern LLShaderProgram         gDeferredMaterialPullSkinProgram[16];
 extern LLShaderProgram         gDeferredShadowAlphaMaskProgram;
-extern LLShaderProgram         gDeferredShadowGLTFAlphaMaskProgram;
 extern LLShaderProgram         gDeferredShadowGLTFAlphaBlendProgram;
 extern LLShaderProgram         gDeferredShadowFullbrightAlphaMaskProgram;
 extern LLShaderProgram         gDeferredPostProgram;
@@ -378,14 +373,8 @@ extern LLShaderProgram         gDeferredAvatarAlphaMaskShadowProgram;
 extern LLShaderProgram         gDeferredAlphaProgram;
 extern LLShaderProgram         gHUDAlphaProgram;
 extern LLShaderProgram         gDeferredAlphaImpostorProgram;
-extern LLShaderProgram         gDeferredFullbrightProgram;
 extern LLShaderProgram         gHUDFullbrightProgram;
-extern LLShaderProgram         gDeferredFullbrightAlphaMaskProgram;
 extern LLShaderProgram         gHUDFullbrightAlphaMaskProgram;
-extern LLShaderProgram         gDeferredFullbrightAlphaMaskAlphaProgram;
-extern LLShaderProgram         gHUDFullbrightAlphaMaskAlphaProgram;
-extern LLShaderProgram         gDeferredEmissiveProgram;
-extern LLShaderProgram         gDeferredAvatarEyesProgram;
 extern LLShaderProgram         gDeferredAvatarAlphaProgram;
 extern LLShaderProgram         gEnvironmentMapProgram;
 extern LLShaderProgram         gDeferredWLSkyProgram;
@@ -405,8 +394,6 @@ extern LLShaderProgram         gRlvSphereProgram;
 // Deferred materials shaders
 extern LLShaderProgram         gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
 
-extern LLShaderProgram         gHUDPBROpaqueProgram;
-extern LLShaderProgram         gPBRGlowProgram;
 extern LLShaderProgram         gDeferredPBROpaqueProgram;
 extern LLShaderProgram         gDeferredPBRAlphaProgram;
 extern LLShaderProgram         gHUDPBRAlphaProgram;

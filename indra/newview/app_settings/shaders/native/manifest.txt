@@ -109,7 +109,6 @@ override | Copy Depth Shader | copy.vert | copydepth.frag | post | default on
 override | Reflection Mip Shader | reflectionmip.vert | gaussian.frag | post | require resScale | default on
 override | Reflection Mip Shader | reflectionmip.vert | reflectionmip.frag | post | default on
 override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=32 | default on
-override | Hero Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=4 | default on
 override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
 override | UI Shader | ui.vert | ui.frag | post | default on
 override | Haze Shader | fullscreen.vert | haze.frag | post | default on
