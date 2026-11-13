@@ -3957,21 +3957,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 gFXAAProgram[i].mName = llformat("FXAA Shader (%s)", quality_pair.second.c_str());
                 gFXAAProgram[i].mFeatures.isDeferred = true;
-                gFXAAProgram[i].mShaderFiles.clear();
-                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/postDeferredV.glsl", ShaderStage::Vertex));
-                gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/fxaaF.glsl", ShaderStage::Fragment));
-
-                gFXAAProgram[i].clearPermutations();
-                gFXAAProgram[i].addPermutation("FXAA_QUALITY__PRESET", quality_pair.first);
-                if (gDeviceCaps.mApiVersionNumber > 3.9)
-                {
-                    gFXAAProgram[i].addPermutation("FXAA_GLSL_400", "1");
-                }
-                else
-                {
-                    gFXAAProgram[i].addPermutation("FXAA_GLSL_130", "1");
-                }
-
+                // <FS> native only programs (native/manifest.txt, family post: fxaa.vert + fxaa.frag, FXAA_PRESET = the quality preset's number: 12, 23, 28, 39): no stock files
                 gFXAAProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gFXAAProgram[i].createShader();
                 // llassert(success);
@@ -4713,9 +4699,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gBenchmarkProgram.mName = "Benchmark Shader";
-        gBenchmarkProgram.mShaderFiles.clear();
-        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkV.glsl", ShaderStage::Vertex));
-        gBenchmarkProgram.mShaderFiles.push_back(make_pair("interface/benchmarkF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family copy: copy.vert + copy.frag): no stock files
         gBenchmarkProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gBenchmarkProgram.createShader();
     }
