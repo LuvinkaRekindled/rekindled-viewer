@@ -292,29 +292,15 @@ static bool fullbright_shiny_table(bool rigged)
     return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightShinyPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightShinyPullReady);
 }
 
-void LLDrawPoolBump::beginFullbrightShiny(bool table)
+void LLDrawPoolBump::beginFullbrightShiny()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
 
     sVertexMask = VERTEX_MASK_SHINY | LLVertexBuffer::MAP_TEXCOORD0;
 
     // Second pass: environment map
-    // S6.6: the static draws take the pull twin; the rigged variant is a program of its own (the twin has none)
-    LLShaderProgram* base_shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyProgram : &gDeferredFullbrightShinyProgram;
-    shader = base_shader;
-    if (table)
-    {
-        shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyPullProgram : (mRigged ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram);
-    }
-    else if (mRigged)
-    {
-        llassert(shader->mRiggedVariant);
-        shader = shader->mRiggedVariant;
-    }
-    else
-    {
-        shader = ll_pull_or(base_shader);
-    }
+    // the scene table's programs (native only): the HUD's, the static and the rigged one
+    shader = LLPipeline::sRenderingHUDs ? &gHUDFullbrightShinyPullProgram : (mRigged ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram);
 
     // bind exposure map so fullbright shader can cancel out exposure
     S32 channel = shader->enableTexture(LLShaderMgr::EXPOSURE_MAP);
@@ -471,27 +457,13 @@ bool LLDrawPoolBump::bindBumpMap(U8 bump_code, LLViewerTexture* texture, S32 cha
 }
 
 //static
-void LLDrawPoolBump::beginBump(bool table)
+void LLDrawPoolBump::beginBump()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
     sVertexMask = VERTEX_MASK_BUMP;
     // Optional second pass: emboss bump map
 
-    shader = &gObjectBumpProgram;
-
-    if (table)
-    {
-        shader = mRigged ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;       // J1 K4: the rows' program
-    }
-    else if (mRigged)
-    {
-        llassert(shader->mRiggedVariant);
-        shader = shader->mRiggedVariant;
-    }
-    else
-    {
-        shader = ll_pull_or(shader);       // S6.6
-    }
+    shader = mRigged ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;       // J1 K4: the rows' program (native only)
 
     shader->bind();
 
@@ -574,14 +546,14 @@ void LLDrawPoolBump::renderPostDeferred(S32 pass)
         // J1 K6 A3: render shiny and bump (emboss) from the scene table; a pass whose table is not available draws nothing
         if (fullbright_shiny_table(mRigged))
         {
-            beginFullbrightShiny(true);
+            beginFullbrightShiny();
             renderFullbrightShiny();
             endFullbrightShiny();
         }
 
         if (emboss_table(mRigged))
         {
-            beginBump(true);
+            beginBump();
             renderBump();
             endBump();
         }

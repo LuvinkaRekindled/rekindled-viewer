@@ -103,8 +103,6 @@ LLShaderProgram        gObjectPreviewProgram;
 LLShaderProgram        gSkinnedObjectPreviewProgram;
 LLShaderProgram        gPhysicsPreviewProgram;
 LLShaderProgram        gObjectFullbrightAlphaMaskProgram;
-LLShaderProgram        gObjectBumpProgram;
-LLShaderProgram        gSkinnedObjectBumpProgram;
 LLShaderProgram        gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
@@ -147,7 +145,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 7;
+constexpr size_t PULL_TWIN_COUNT = 4;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -185,8 +183,7 @@ bool ll_is_pull_twin(const LLShaderProgram* program)
 
 static void make_pull_twins()
 {
-    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDeferredAvatarAlphaProgram,
-                                                  &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gObjectBumpProgram };
+    LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDeferredAvatarAlphaProgram };
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
         sPullTwinSources[k] = sources[k];
@@ -372,9 +369,6 @@ LLShaderProgram            gDeferredWLCloudProgram;
 LLShaderProgram            gDeferredWLSunProgram;
 LLShaderProgram            gDeferredWLMoonProgram;
 LLShaderProgram            gDeferredStarProgram;
-LLShaderProgram            gDeferredFullbrightShinyProgram;
-LLShaderProgram            gHUDFullbrightShinyProgram;
-LLShaderProgram            gDeferredSkinnedFullbrightShinyProgram;
 LLShaderProgram            gNormalMapGenProgram;
 LLShaderProgram            gDeferredGenBrdfLutProgram;
 LLShaderProgram            gDeferredBufferVisualProgram;
@@ -565,7 +559,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gAvatarProgram);
     mShaderList.push_back(&gWaterProgram);
     mShaderList.push_back(&gImpostorProgram);
-    mShaderList.push_back(&gObjectBumpProgram);
     mShaderList.push_back(&gObjectFullbrightAlphaMaskProgram);
     mShaderList.push_back(&gObjectAlphaMaskNoColorProgram);
     mShaderList.push_back(&gUnderWaterProgram);
@@ -580,8 +573,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gDeferredAlphaProgram);
     mShaderList.push_back(&gHUDAlphaProgram);
     mShaderList.push_back(&gDeferredAlphaImpostorProgram);
-    mShaderList.push_back(&gDeferredFullbrightShinyProgram);
-    mShaderList.push_back(&gHUDFullbrightShinyProgram);
     mShaderList.push_back(&gDeferredAvatarAlphaProgram);
     mShaderList.push_back(&gEnvironmentMapProgram);
     mShaderList.push_back(&gDeferredWLSkyProgram);
@@ -1559,9 +1550,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSunProgram.unload();
         gDeferredWLMoonProgram.unload();
         gDeferredStarProgram.unload();
-        gDeferredFullbrightShinyProgram.unload();
-        gHUDFullbrightShinyProgram.unload();
-        gDeferredSkinnedFullbrightShinyProgram.unload();
 
         gDeferredHighlightProgram.unload();
 
@@ -2931,49 +2919,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredFullbrightShinyProgram.mName = "Deferred FullbrightShiny Shader";
-        gDeferredFullbrightShinyProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredFullbrightShinyProgram.mFeatures.hasAtmospherics = true;
-        gDeferredFullbrightShinyProgram.mFeatures.hasGamma = true;
-        gDeferredFullbrightShinyProgram.mFeatures.hasSrgb = true;
-        gDeferredFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-        gDeferredFullbrightShinyProgram.mShaderFiles.clear();
-        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
-        gDeferredFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
-        gDeferredFullbrightShinyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredFullbrightShinyProgram.mFeatures.hasReflectionProbes = true;
-
-        add_common_permutations(&gDeferredFullbrightShinyProgram);
-
-        success = make_rigged_variant(gDeferredFullbrightShinyProgram, gDeferredSkinnedFullbrightShinyProgram);
-        success = success && gDeferredFullbrightShinyProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gHUDFullbrightShinyProgram.mName = "HUD FullbrightShiny Shader";
-        gHUDFullbrightShinyProgram.mFeatures.calculatesAtmospherics = true;
-        gHUDFullbrightShinyProgram.mFeatures.hasAtmospherics = true;
-        gHUDFullbrightShinyProgram.mFeatures.hasGamma = true;
-        gHUDFullbrightShinyProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightShinyProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-        gHUDFullbrightShinyProgram.mShaderFiles.clear();
-        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyV.glsl", ShaderStage::Vertex));
-        gHUDFullbrightShinyProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightShinyF.glsl", ShaderStage::Fragment));
-        gHUDFullbrightShinyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gHUDFullbrightShinyProgram.mFeatures.hasReflectionProbes = true;
-        gHUDFullbrightShinyProgram.clearPermutations();
-        gHUDFullbrightShinyProgram.addPermutation("IS_HUD", "1");
-
-        add_common_permutations(&gHUDFullbrightShinyProgram);
-
-        success = gHUDFullbrightShinyProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
         gDeferredSoftenProgram.mName = "Deferred Soften Shader";
         gDeferredSoftenProgram.mShaderFiles.clear();
         gDeferredSoftenProgram.mFeatures.hasSrgb = true;
@@ -4030,28 +3975,6 @@ bool LLViewerShaderMgr::loadShadersObject()
 {
     LL_PROFILE_ZONE_SCOPED;
     bool success = true;
-
-    if (success)
-    {
-        gObjectBumpProgram.mName = "Bump Shader";
-        gObjectBumpProgram.mShaderFiles.clear();
-        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpV.glsl", ShaderStage::Vertex));
-        gObjectBumpProgram.mShaderFiles.push_back(make_pair("objects/bumpF.glsl", ShaderStage::Fragment));
-        gObjectBumpProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
-        success = make_rigged_variant(gObjectBumpProgram, gSkinnedObjectBumpProgram);
-        success = success && gObjectBumpProgram.createShader();
-        if (success)
-        { //lldrawpoolbump assumes "texture0" has channel 0 and "texture1" has channel 1
-            LLShaderProgram* shader[] = { &gObjectBumpProgram, &gSkinnedObjectBumpProgram };
-            for (int i = 0; i < 2; ++i)
-            {
-                shader[i]->bind();
-                shader[i]->uniform1i(sTexture0, 0);
-                shader[i]->uniform1i(sTexture1, 1);
-                shader[i]->unbind();
-            }
-        }
-    }
 
     if (success)
     {
