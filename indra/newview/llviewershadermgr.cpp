@@ -280,7 +280,6 @@ static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& rigged
     riggedShader.mFeatures.hasObjectSkinning = true;
     riggedShader.mDefines = shader.mDefines;    // NOTE: Must come before addPermutation
 
-    riggedShader.addPermutation("HAS_SKIN", "1");
     riggedShader.mShaderLevel = shader.mShaderLevel;
     riggedShader.mShaderGroup = shader.mShaderGroup;
 
@@ -294,7 +293,6 @@ static void add_common_permutations(LLShaderProgram* shader)
 
     if (emissive)
     {
-        shader->addPermutation("HAS_EMISSIVE", "1");
     }
 }
 
@@ -311,35 +309,28 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
 
     U32 node_size = 16 * 3;
     U32 max_nodes = gDeviceCaps.mMaxUniformBlockSize / node_size;
-    variant.addPermutation("MAX_NODES_PER_GLTF_OBJECT", std::to_string(max_nodes));
 
     U32 material_size = 16 * 12;
     U32 max_materials = gDeviceCaps.mMaxUniformBlockSize / material_size;
     LLShaderProgram::sMaxGLTFMaterials = max_materials;
 
-    variant.addPermutation("MAX_MATERIALS_PER_GLTF_OBJECT", std::to_string(max_materials));
 
     U32 max_vec4s = gDeviceCaps.mMaxUniformBlockSize / 16;
-    variant.addPermutation("MAX_UBO_VEC4S", std::to_string(max_vec4s));
 
     if (rigged)
     {
-        variant.addPermutation("HAS_SKIN", "1");
     }
 
     if (unlit)
     {
-        variant.addPermutation("UNLIT", "1");
     }
 
     if (multi_uv)
     {
-        variant.addPermutation("MULTI_UV", "1");
     }
 
     if (alpha_blend)
     {
-        variant.addPermutation("ALPHA_BLEND", "1");
 
         variant.mFeatures.calculatesLighting = false;
         variant.mFeatures.hasLighting = false;
@@ -354,7 +345,6 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
 
         if (use_sun_shadow)
         {
-            variant.addPermutation("HAS_SUN_SHADOW", "1");
         }
 
         bool success = variant.createShader();
@@ -1027,7 +1017,6 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterPullProgram.mFeatures.hasReflectionProbes = true;
         gWaterPullProgram.mFeatures.hasTonemap = true;
         gWaterPullProgram.mFeatures.hasShadows = use_sun_shadow;
-        gWaterPullProgram.clearPermutations();
         gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1040,7 +1029,6 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gWaterPullRtProgram.mName = "Water Pull RT Shader";
         gWaterPullRtProgram.mFeatures = gWaterPullProgram.mFeatures;
-        gWaterPullRtProgram.clearPermutations();
         gWaterPullRtProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterPullRtProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterPullRtProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1055,7 +1043,6 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gWaterPullRtReflectionProgram.mName = "Water Pull RT Reflection Shader";
         gWaterPullRtReflectionProgram.mFeatures = gWaterPullProgram.mFeatures;
-        gWaterPullRtReflectionProgram.clearPermutations();
         gWaterPullRtReflectionProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterPullRtReflectionProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterPullRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1069,7 +1056,6 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterPullProgram.mName = "Underwater Pull Shader";
         gUnderWaterPullProgram.mFeatures.calculatesAtmospherics = true;
         gUnderWaterPullProgram.mFeatures.hasAtmospherics = true;
-        gUnderWaterPullProgram.clearPermutations();
         gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gUnderWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1204,7 +1190,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
             // <FS> native only programs (native/manifest.txt, family gbuffer: gltf_scene.vert + gltf_scene.frag, one line for each of the 16 variants): no stock files
             gGLTFPBRMetallicRoughnessProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            gGLTFPBRMetallicRoughnessProgram.clearPermutations();
 
             add_common_permutations(&gGLTFPBRMetallicRoughnessProgram);
 
@@ -1397,7 +1382,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.calculatesAtmospherics = true;
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasSrgb = true;
-            shader->clearPermutations();
             if (fullbright)
             {
                 // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
@@ -1412,11 +1396,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
-                shader->addPermutation("USE_VERTEX_COLOR", "1");
-                shader->addPermutation("HAS_ALPHA_MASK", "1");
-                shader->addPermutation("USE_INDEXED_TEX", "1");
             }
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
@@ -1448,13 +1428,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasShadows = use_sun_shadow;
         shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
-        shader->clearPermutations();
-        shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
-        shader->addPermutation("HAS_NORMAL_MAP", "1");
-        shader->addPermutation("HAS_SPECULAR_MAP", "1");
-        shader->addPermutation("HAS_EMISSIVE_MAP", "1");
-        shader->addPermutation("USE_VERTEX_COLOR", "1");
-        shader->addPermutation("LL_BINDLESS_PBR", "1");
         add_common_permutations(shader);
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
@@ -1481,7 +1454,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.calculatesAtmospherics = true;
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasSrgb = true;
-            shader->clearPermutations();
             if (fullbright)
             {
                 // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
@@ -1496,13 +1468,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
-                shader->addPermutation("USE_VERTEX_COLOR", "1");
-                shader->addPermutation("HAS_ALPHA_MASK", "1");
-                shader->addPermutation("USE_INDEXED_TEX", "1");
             }
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            shader->addPermutation("HAS_SKIN", "1");
-            shader->addPermutation("HAS_INDEXED_DRAW", "1");
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
@@ -1532,19 +1498,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.isDeferred = true;
             shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
-            shader->clearPermutations();
-            shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
-            shader->addPermutation("HAS_NORMAL_MAP", "1");
-            shader->addPermutation("HAS_SPECULAR_MAP", "1");
-            shader->addPermutation("HAS_EMISSIVE_MAP", "1");
-            shader->addPermutation("USE_VERTEX_COLOR", "1");
-            shader->addPermutation("LL_BINDLESS_PBR", "1");
-            shader->addPermutation("HAS_SKIN", "1");
-            shader->addPermutation("HAS_INDEXED_DRAW", "1");
             add_common_permutations(shader);
             if (use_sun_shadow)
             {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
             }
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
@@ -1579,16 +1535,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
-            shader->clearPermutations();
-            shader->addPermutation("USE_VERTEX_COLOR", "1");
-            shader->addPermutation("HAS_ALPHA_MASK", "1");
-            shader->addPermutation("USE_INDEXED_TEX", "1");
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            shader->addPermutation("ALPHA_UBER", "1");
             if (skin)
             {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
             }
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1624,17 +1572,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
-            shader->clearPermutations();
-            shader->addPermutation("USE_VERTEX_COLOR", "1");
-            shader->addPermutation("HAS_ALPHA_MASK", "1");
-            shader->addPermutation("USE_INDEXED_TEX", "1");
-            shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            shader->addPermutation("ALPHA_UBER", "1");
-            shader->addPermutation("ALPHA_UBER_MAT", "1");
             if (skin)
             {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
             }
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1857,12 +1796,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             shader->mName = name;
             shader->mFeatures.hasSrgb = srgb;
-            shader->clearPermutations();         // (native only programs, native/manifest.txt: no stock files)
             shader->addPermutation(bindless, "1");
             if (skin)
             {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
             }
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1887,19 +1823,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         auto make_pull = [&](LLShaderProgram* shader, const char* name, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
         {
             shader->mName = name;
-            shader->clearPermutations();         // (native only programs, native/manifest.txt: no stock files)
             for (const auto& p : permutations)
             {
                 shader->addPermutation(p.first, p.second);
             }
             if (skin)
             {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
             }
             if (sun_shadow)
             {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
             }
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2093,7 +2025,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredDiffusePullProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
         add_common_permutations(&gDeferredDiffusePullProgram);
         success = gDeferredDiffusePullProgram.createShader();
         if (!success)
@@ -2106,12 +2037,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullSkinProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullSkinProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredDiffusePullSkinProgram.addPermutation("LL_BINDLESS_DIFFUSE", "1");
-        gDeferredDiffusePullSkinProgram.addPermutation("HAS_SKIN", "1");
-        gDeferredDiffusePullSkinProgram.addPermutation("HAS_INDEXED_DRAW", "1");
         if (getenv("LL_VK_SKIN_TEST"))
         {
-            gDeferredDiffusePullSkinProgram.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
         }
         add_common_permutations(&gDeferredDiffusePullSkinProgram);
         success = success && gDeferredDiffusePullSkinProgram.createShader();
@@ -2141,22 +2068,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             if (alpha_mode == 1)
             {
-                pull.clearPermutations();
                 if (i & 0x8)
                 {
-                    pull.addPermutation("HAS_NORMAL_MAP", "1");
                 }
                 if (i & 0x4)
                 {
-                    pull.addPermutation("HAS_SPECULAR_MAP", "1");
                 }
-                pull.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
-                pull.addPermutation("HAS_ALPHA_MASK", "1");
                 if (use_sun_shadow)
                 {
-                    pull.addPermutation("HAS_SUN_SHADOW", "1");
                 }
-                pull.addPermutation("LL_BINDLESS_MATERIAL", "1");
                 add_common_permutations(&pull);
             }
             pull.mFeatures.hasSrgb = true;
@@ -2187,27 +2107,17 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             if (alpha_mode == 1)
             {
-                skin.clearPermutations();
                 if (i & 0x8)
                 {
-                    skin.addPermutation("HAS_NORMAL_MAP", "1");
                 }
                 if (i & 0x4)
                 {
-                    skin.addPermutation("HAS_SPECULAR_MAP", "1");
                 }
-                skin.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
-                skin.addPermutation("HAS_ALPHA_MASK", "1");
                 if (use_sun_shadow)
                 {
-                    skin.addPermutation("HAS_SUN_SHADOW", "1");
                 }
-                skin.addPermutation("LL_BINDLESS_MATERIAL", "1");
-                skin.addPermutation("HAS_SKIN", "1");
-                skin.addPermutation("HAS_INDEXED_DRAW", "1");
                 if (getenv("LL_VK_SKIN_TEST"))
                 {
-                    skin.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
                 }
                 add_common_permutations(&skin);
             }
@@ -2311,13 +2221,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.mFeatures.hasReflectionProbes = true;
 
 
-        gDeferredAvatarAlphaProgram.clearPermutations();
-        gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");
-        gDeferredAvatarAlphaProgram.addPermutation("IS_AVATAR_SKIN", "1");
         gDeferredAvatarAlphaProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         if (use_sun_shadow)
         {
-            gDeferredAvatarAlphaProgram.addPermutation("HAS_SUN_SHADOW", "1");
         }
 
         gDeferredAvatarAlphaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2453,7 +2359,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
 
         gAvatarVelocityDebugProgram.mName = "Avatar Velocity Debug";
-        gAvatarVelocityDebugProgram.clearPermutations();
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gAvatarVelocityDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gAvatarVelocityDebugProgram.createShader())
@@ -2630,8 +2535,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAAEdgeDetectProgram[i].mName = llformat("SMAA Edge Detection (%s)", smaa_pair.second.c_str());
                 gSMAAEdgeDetectProgram[i].mFeatures.isDeferred = true;
 
-                gSMAAEdgeDetectProgram[i].clearPermutations();
-                gSMAAEdgeDetectProgram[i].addPermutations(defines);
 
                 gSMAAEdgeDetectProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAAEdgeDetectProgram[i].createShader();
@@ -2651,8 +2554,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAABlendWeightsProgram[i].mName = llformat("SMAA Blending Weights (%s)", smaa_pair.second.c_str());
                 gSMAABlendWeightsProgram[i].mFeatures.isDeferred = true;
 
-                gSMAABlendWeightsProgram[i].clearPermutations();
-                gSMAABlendWeightsProgram[i].addPermutations(defines);
 
                 gSMAABlendWeightsProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAABlendWeightsProgram[i].createShader();
@@ -2672,8 +2573,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gSMAANeighborhoodBlendProgram[i].mName = llformat("SMAA Neighborhood Blending (%s)", smaa_pair.second.c_str());
                 gSMAANeighborhoodBlendProgram[i].mFeatures.isDeferred = true;
 
-                gSMAANeighborhoodBlendProgram[i].clearPermutations();
-                gSMAANeighborhoodBlendProgram[i].addPermutations(defines);
 
                 gSMAANeighborhoodBlendProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gSMAANeighborhoodBlendProgram[i].createShader();
@@ -3261,7 +3160,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
 
             shader->mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             const U32 value_range = (1 << bit_depth) - 1;
-            shader->addPermutation("TERRAIN_PAINT_PRECISION", llformat("%d", value_range));
             success = success && shader->createShader();
             //llassert(success);
             if (!success)

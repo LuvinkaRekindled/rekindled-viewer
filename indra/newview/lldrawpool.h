@@ -121,7 +121,6 @@ public:
     virtual LLViewerTexture* getTexture() = 0;
     virtual bool isFacePool() { return false; }
     virtual void resetDrawOrders() = 0;
-    virtual void pushFaceGeometry() {}
     virtual void pushFacesPull(bool region_matrix) {}       // S6.6 (LLFacePool)
 
     S32 mShaderLevel;
@@ -466,8 +465,6 @@ public:
 
     bool isFacePool() { return true; }
 
-    // call drawIndexed on every draw face
-    void pushFaceGeometry();
     // S6.6: the faces of the pool as ONE record of geometry entries (kind 32) drawn with the pull program bound now (region_matrix: each face's region render matrix is its model matrix, else none)
     void pushFacesPull(bool region_matrix);
     void pushWholeBufferFacesPull();        // <FS> the faces whose buffer is drawn whole (the Linden trees: index 0 to the buffer's last index) under the region's render matrix, as one record
