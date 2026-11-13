@@ -6,12 +6,13 @@
 #include "alpha_pass.inc"
 #include "lib/rows.glsl"
 
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RowFloats { float f[]; };
 
 layout(std140, set = 0, binding = 8) uniform LLLooseSkin
 {
     vec4 matrixPalette[45];             // joint i: rows at i, i + 15 and i + 30
 };
+
+#include "lib/avatarskin.glsl"
 
 layout(location = 0) out vec3 vary_position;
 layout(location = 1) out vec2 vary_texcoord0;
@@ -31,24 +32,9 @@ void main()
     const vec3 normal = RowVec4(row.normals).v[index].xyz;
     vary_texcoord0 = RowVec2(row.texcoords).t[index];
 
-    // the skinning transform: a NaN or out of range weight reads joint 0 (the vertex data is rewritten every update); joint 14 blends with itself
-    float wx = (row.weights.x != 0u || row.weights.y != 0u) ? RowFloats(row.weights).f[index] : 0.0;
-    if (!(wx >= 0.0 && wx <= 14.0))
-    {
-        wx = 0.0;
-    }
-    const int i = int(floor(wx));
-    const int n = min(i + 1, 14);
-    const float x = fract(wx);
-    vec4 t0 = matrixPalette[i];
-    vec4 t1 = matrixPalette[i + 15];
-    vec4 t2 = matrixPalette[i + 30];
-    if (x > 0.0)
-    {
-        t0 = mix(t0, matrixPalette[n], x);
-        t1 = mix(t1, matrixPalette[n + 15], x);
-        t2 = mix(t2, matrixPalette[n + 30], x);
-    }
+    // the skinning transform (lib/avatarskin.glsl, shared with avatar_shadow.vert)
+    vec4 t0, t1, t2;
+    avatar_skin(row, index, t0, t1, t2);
 
     vec3 norm = normalize(vec3(dot(t0.xyz, normal), dot(t1.xyz, normal), dot(t2.xyz, normal)));
     const vec4 pos_in = vec4(position, 1.0);

@@ -3531,9 +3531,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
         gDeferredShadowAlphaPullProgram.mFeatures.isDeferred = true;
         gDeferredShadowAlphaPullProgram.mFeatures.hasShadows = true;
-        gDeferredShadowAlphaPullProgram.mShaderFiles.clear();
-        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullV.glsl", ShaderStage::Vertex));
-        gDeferredShadowAlphaPullProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaPullF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowAlphaPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gDeferredShadowAlphaPullProgram.createShader())
         {

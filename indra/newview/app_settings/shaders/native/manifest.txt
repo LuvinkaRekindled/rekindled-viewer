@@ -128,3 +128,7 @@ override | Debug Batch Pull Skin Shader | alpha.vert | debug_batch.frag | alpha 
 override | Deferred Shadow Pull Shader | shadow.vert | shadow.frag | shadow | default on
 override | Deferred Shadow Skin Pull Shader | shadow.vert | shadow.frag | shadow | define HAS_SKIN=1 | default on
 override | Deferred Shadow Cube Shader | shadow_cube.vert | shadow.frag | shadow | default on
+override | Deferred Shadow Alpha Pull Shader | shadow_alpha.vert | shadow_alpha.frag | shadow | define HAS_SKIN=1 | default on
+override | Deferred Avatar Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | default on
+override | Deferred Avatar Alpha Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | define SHADOW_COLOR_ALPHA=1 | default on
+override | Deferred Avatar Alpha Mask Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | default on
