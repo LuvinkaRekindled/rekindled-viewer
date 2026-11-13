@@ -158,3 +158,6 @@ override | Deferred Post NoDoF Noise Shader | fullscreen.vert | post_nodof.frag 
 override | Avatar Velocity (rigged, packets) | velocity_skin.vert | velocity.frag | post | define VEL_SKIN=1 | define HAS_SKIN=1 | default on
 override | Object Velocity (packets) | velocity_object.vert | velocity.frag | post | define VEL_OBJECT=1 | default on
 override | Avatar Velocity (body) pull | velocity_body.vert | velocity.frag | post | define VEL_BODY=1 | default on
+# the draw color program's pull twin: the flat colour of the highlight pass with no skin; the avatar pool's alpha masked draw without vertex colour (a mesh drawn by range under the pass's loose matrices)
+override | Draw Color Shader pull | alpha.vert | highlight.frag | alpha | define HIGHLIGHT_PASS=1 | default on
+override | Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | mask_nocolor.vert | mask_nocolor.frag | gbuffer | define AVATAR_PASS=1 | define MASK_NOCOLOR=1 | default on

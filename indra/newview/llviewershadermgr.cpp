@@ -4570,12 +4570,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         // <FS> K6 B1: the rigged highlight draws (the table's rigged items, the alpha loop's kind 29 record) go through this program: the native stand-in is the only one that draws, the old shader holds the `color` uniform
         LLShaderProgram& pull = gHighlightPullSkinProgram;
         pull.mName = "Highlight Pull Skin Shader";
-        pull.mShaderFiles.clear();
-        pull.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
-        pull.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
-        pull.clearPermutations();
-        pull.addPermutation("HAS_SKIN", "1");
-        pull.addPermutation("LL_VERTEX_PULL", "1");     // (the worker draws a table record only with a program that has the table uniform ll_packet_table: a pull program; without it the record is dropped before the native stand-in is looked at)
+        // <FS> a native only program (native/manifest.txt, family alpha): no stock files (it declares `color` and the table's address itself)
         pull.mFeatures.hasObjectSkinning = true;
         pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         gHighlightPullSkinReady = pull.createShader();
@@ -4591,14 +4586,9 @@ bool LLViewerShaderMgr::loadShadersInterface()
         {
             LLShaderProgram& debug_program = skin ? gDebugBatchPullSkinProgram : gDebugBatchPullProgram;
             debug_program.mName = skin ? "Debug Batch Pull Skin Shader" : "Debug Batch Pull Shader";
-            debug_program.mShaderFiles.clear();
-            debug_program.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
-            debug_program.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
-            debug_program.clearPermutations();
-            debug_program.addPermutation("LL_VERTEX_PULL", "1");        // (see the Highlight Pull Skin Shader: a table record needs a pull program)
+            // <FS> a native only program (native/manifest.txt, family alpha): no stock files
             if (skin)
             {
-                debug_program.addPermutation("HAS_SKIN", "1");
                 debug_program.mFeatures.hasObjectSkinning = true;
             }
             debug_program.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
