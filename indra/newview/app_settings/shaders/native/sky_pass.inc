@@ -45,6 +45,13 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float moon_brightness;
     float custom_alpha;
     float time;
+
+#ifdef HDRI
+    // the HDRI sky (the program "Environment Map Program pull": an HDRI image is loaded)
+    float sky_hdr_scale;
+    float hdri_split_screen;    // how much of the screen (from the left) shows the HDRI: 1 all of it, 0 none
+    mat3 env_mat;               // the HDRI's rotation
+#endif
 };
 
 layout(std140, set = 0, binding = 5) uniform LLLooseDraw
@@ -55,6 +62,9 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_altDiffuseMap;
     uint ll_ti_cloud_noise_texture;
     uint ll_ti_cloud_noise_texture_next;
+#ifdef HDRI
+    uint ll_ti_environmentMap;  // the HDRI image (equirectangular)
+#endif
 };
 
 layout(std140, set = 0, binding = 6) uniform LLLooseMaterial

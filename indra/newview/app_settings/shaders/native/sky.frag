@@ -1,11 +1,16 @@
 // sky.frag: the sky dome's colour: the vertex haze colour plus the rainbow and the ice halo, times two, clamped; written as the emissive colour (or the albedo without the emissive target) with the flag that
-// keeps the lighting resolve's atmosphere off the sky. A line for line translation of "Deferred Windlight Sky Shader pull" (deferred/skyF.glsl, no HDRI); pairs with sky.vert.
+// keeps the lighting resolve's atmosphere off the sky. A line for line translation of "Deferred Windlight Sky Shader pull" (deferred/skyF.glsl); pairs with sky.vert. With HDRI (the manifest line "Environment Map Program pull": an HDRI image is loaded) the part of the
+// screen left of the split line shows the image instead of the sky (the HAS_HDRI part of the old shader).
 
 #include "sky_pass.inc"
 #include "lib/flags.glsl"
 
 layout(location = 0) in vec3 vary_HazeColor;
 layout(location = 1) in float vary_LightNormPosDot;
+#ifdef HDRI
+layout(location = 2) in vec4 vary_position;
+layout(location = 3) in vec3 vary_rel_pos;
+#endif
 
 layout(location = 0) out vec4 frag_albedo;
 layout(location = 1) out vec4 frag_spec;
@@ -46,6 +51,19 @@ void main()
 {
     vec3 sky_color;
 
+#ifdef HDRI
+    const vec3 frag_coord = vary_position.xyz / vary_position.w;
+    if (-frag_coord.x > ((1.0 - hdri_split_screen) * 2.0 - 1.0))
+    {
+        vec3 pos = normalize(vary_rel_pos);
+        pos = env_mat * pos;
+        const vec2 tex_coord = vec2(atan(pos.z, pos.x) + PI, acos(pos.y)) / vec2(2.0 * PI, PI);
+        sky_color = textureLod(ll_tbl2d[LL_HM(ll_ti_environmentMap)], tex_coord, 0.0).rgb * sky_hdr_scale;
+        sky_color = min(sky_color, vec3(8192.0 * 8192.0 * 16.0));       // stupidly large value arrived at by binary search -- avoids framebuffer corruption from some HDRIs
+        frag_normal = vec4(0.0, 0.0, 0.0, GBUFFER_FLAG_HAS_HDRI);
+    }
+    else
+#endif
     {
         // Potential Fill-rate optimization.  Add cloud calculation
         // back in and output alpha of 0 (so that alpha culling kills
