@@ -117,6 +117,7 @@ override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | defa
 override | UI Shader | ui.vert | ui.frag | post | default on
 override | Haze Shader | fullscreen.vert | haze.frag | post | default on
 override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
+override | Water Haze Pull Shader | waterhaze.vert | waterhaze.frag | post | define WATER_PULL=1 | default on
 override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
 # the HDRI sky (use_hdri_sky(): an HDRI image is loaded): the same programs with the HDRI branch
 override | Environment Map Program pull | sky.vert | sky.frag | gbuffer | define HDRI=1 | default on
@@ -183,6 +184,9 @@ override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag |
 # the water family: the water surface seen from above (rt: the ray traced reflection of the water stays in the stock program of a session with ray queries) and from below
 override | Water Shader | water.vert | water.frag | water | default on | rt
 override | Underwater Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | default on
+# the table form of the water planes (the pool and the haze draw the planes' vertex buffers by address: WATER_PULL): the same programs; made in every session, used where the stock Water Shader does not stand in (no ray queries)
+override | Water Pull Shader | water.vert | water.frag | water | define WATER_PULL=1 | default on
+override | Underwater Pull Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | define WATER_PULL=1 | default on
 # the selection highlight: the selected faces, the "paint em red" faces, the normal map and specular map views (the face's own texture coordinate: HL_UV 0, 1, 2) and the parcel owners' tint of the terrain (HL_GBUFFER). The skinned form of Highlight Shader is the old rigged draws of the alpha pool's debug view
 override | Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | default on
 override | Highlight Normals Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=1 | default on

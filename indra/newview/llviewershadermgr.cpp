@@ -107,6 +107,9 @@ LLShaderProgram        gObjectAlphaMaskNoColorProgram;
 //environment shaders
 LLShaderProgram        gWaterProgram;
 LLShaderProgram        gUnderWaterProgram;
+LLShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
+LLShaderProgram        gUnderWaterPullProgram;
+static bool            sRtSessionShaders = false;     // the stock programs of this session carry ray query code (the `rt` lines of the manifest keep them): the water planes keep the stock water program then
 
 //interface shaders
 LLShaderProgram        gHighlightProgram;
@@ -147,6 +150,14 @@ LLShaderProgram            gDeferredSunProgram;
 LLShaderProgram            gDeferredSunProbeProgram;
 LLShaderProgram            gHazeProgram;
 LLShaderProgram            gHazeWaterProgram;
+LLShaderProgram            gWaterHazePullProgram;        // <FS> the table form of the water patches of the haze (native only: waterhaze.vert / waterhaze.frag with WATER_PULL)
+
+// <FS> the water planes go as table entries (one record of the planes' vertex buffers) with the pull programs above, except in a session with ray queries: the stock Water Shader keeps the ray traced reflection of the
+// water there (an `rt` program: the RT track's port), and a stock program is drawn from the vertex buffers by attribute
+bool ll_water_pull()
+{
+    return !sRtSessionShaders;
+}
 LLShaderProgram            gDeferredBlurLightProgram;
 LLShaderProgram            gNativeSunHalfProgram;
 LLShaderProgram            gNativeLightUpsampleProgram;
@@ -1030,7 +1041,8 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         {
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
         }
-        LLVkBridge::nativeRtSession(attribs.find("LL_RT_SHADOWS") != attribs.end());      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
+        sRtSessionShaders = attribs.find("LL_RT_SHADOWS") != attribs.end();
+        LLVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
         LLVkBridge::nativeGlobalDefines(native_defines);
     }
 
@@ -1164,6 +1176,30 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         gUnderWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         success = gUnderWaterProgram.createShader();
+        llassert(success);
+    }
+
+    // <FS> the table form of the water planes: the same programs with the planes' vertex buffers read by address (native/manifest.txt: Water Pull Shader, Underwater Pull Shader, native only, no stock files). Made in
+    // every session; the pool uses them where the stock Water Shader does not stand in (ll_water_pull: no ray queries)
+    if (success)
+    {
+        gWaterPullProgram.mName = "Water Pull Shader";
+        gWaterPullProgram.mFeatures = gWaterProgram.mFeatures;
+        gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
+        success = gWaterPullProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gUnderWaterPullProgram.mName = "Underwater Pull Shader";
+        gUnderWaterPullProgram.mFeatures = gUnderWaterProgram.mFeatures;
+        gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gUnderWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
+        success = gUnderWaterPullProgram.createShader();
         llassert(success);
     }
 
@@ -2500,6 +2536,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         // <FS> a native only program (native/manifest.txt, family post: waterhaze.vert + waterhaze.frag): no stock files (its pull twin, index 2, is off by default and has no native line)
         gHazeWaterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        // <FS> the table form of the same program, for the water patches above the water (a draw of the planes' vertex buffers as one record): native only (manifest: Water Haze Pull Shader)
+        gWaterHazePullProgram.mName = "Water Haze Pull Shader";
+        gWaterHazePullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterHazePullProgram.mFeatures = gHazeWaterProgram.mFeatures;
+        gWaterHazePullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterHazePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gWaterHazePullProgram.createShader();
+        llassert(success);
 
         success = gHazeWaterProgram.createShader();
         llassert(success);

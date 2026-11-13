@@ -5,6 +5,13 @@
 
 layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 {
+#ifdef WATER_PULL
+    // the table form of the water planes (the manifest lines "Water Pull Shader", "Underwater Pull Shader": WATER_PULL): the vertex buffers of the planes are read by address, three buffer addresses written by the
+    // draw record. The matrices below are still the loose draw values (the record has no model matrix of its own: the planes are drawn under the matrices of the pass)
+    uvec2 ll_packet_table;
+    uvec2 ll_packet_models;
+    uvec2 ll_packet_texmats;
+#endif
     // the waves: where the camera is, how the two wave maps move
     vec2 waveDir1;
     vec2 waveDir2;

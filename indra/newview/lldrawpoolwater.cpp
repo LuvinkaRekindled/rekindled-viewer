@@ -199,13 +199,15 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // Not to mention, re-binding the the same shader and state for that shader is kind of wasteful.
     // - Geenz 2025-02-11
     // select shader
+    // the planes go as one record of table entries (the pull programs: the same shaders with the planes' vertex buffers read by address), except in a session with ray queries: the stock Water Shader stands in there
+    const bool water_pull = ll_water_pull();
     if (underwater)
     {
-        shader = &gUnderWaterProgram;
+        shader = water_pull ? &gUnderWaterPullProgram : &gUnderWaterProgram;
     }
     else
     {
-        shader = &gWaterProgram;
+        shader = water_pull ? &gWaterPullProgram : &gWaterProgram;
     }
     gPipeline.bindDeferredShader(*shader, nullptr, &gPipeline.mWaterDis);
 
@@ -321,7 +323,11 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // They also had the same exact state with the sole exception setting an edge water flag.
     // That flag was not actually used anywhere in the shaders.
     // - Geenz 2025-02-11
-    pushWaterPlanes(0);
+    if (water_pull)
+    {
+        gRender.syncMatrices();         // (the program's matrices are loose values: written as a draw writes them, the record has no model matrix of its own)
+    }
+    pushWaterPlanes(0, water_pull);
 
     // clean up
     gPipeline.unbindDeferredShader(*shader);
