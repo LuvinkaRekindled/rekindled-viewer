@@ -1299,6 +1299,11 @@ void LLVkBridge::nativeGlobalDefines(const std::vector<std::pair<std::string, st
     LLVk::nativeSetGlobalDefines(defines);
 }
 
+void LLVkBridge::nativeRtSession(bool on)
+{
+    LLVk::nativeSetRtSession(on);
+}
+
 S32 LLVkBridge::rtSunFilter()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunFilter() : 0;

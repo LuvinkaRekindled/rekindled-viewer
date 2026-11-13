@@ -4,6 +4,7 @@
 
 #define SHADOW_MAP(slot) ll_tbl2dshadow[LL_HM(slot)]
 
+#ifdef SUN_SHADOW
 // one cascade: five taps with the weights 4 + 1 + 1 + 1 + 1 over 8
 float pcf_sun(uint slot, vec4 stc, float jitter)
 {
@@ -61,3 +62,10 @@ float sun_shadow(vec3 pos, vec3 norm, float jitter)
     }
     return shadow / weight;
 }
+#else
+// the session has no sun shadows (the viewer's global define SUN_SHADOW is off: the cascades are not rendered): nothing shades the sun. The viewer's programs take the same branch (no HAS_SUN_SHADOW)
+float sun_shadow(vec3 pos, vec3 norm, float jitter)
+{
+    return 1.0;
+}
+#endif

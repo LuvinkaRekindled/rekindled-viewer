@@ -19,6 +19,7 @@
 #include <chrono>
 #include <fstream>
 #include <memory>
+#include <atomic>
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
@@ -445,7 +446,7 @@ struct Def
     enum { FB_FAMILY_OFF, FB_NOT_FIT, FB_RT, FB_NOT_READY, FB_OUTPUTS, FB_COUNT };
     U64 mFallback[FB_COUNT] = {};
     bool mRtVariant = false;                                // `rt` in the manifest: the program has a stock ray traced variant that draws in RT mode (mUsesRt), so its stock program stays until the RT track's port
-    bool mNativeOnly = false;                               // set by load_manifest: converted family, the only line of the program, default on, no require / when / spec, no ray traced variant: createShader builds it, nativeOverride never swaps it
+    bool mNativeOnly = false;                               // set by load_manifest: converted family, the only line of its program, default on, no require / when / spec: createShader builds it, nativeOverride never swaps it (an `rt` line: only while the session has no ray traced shadows, see native_only_now)
 };
 
 struct Manager
@@ -470,10 +471,12 @@ std::string trim(const std::string& s)
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
 
+std::atomic<bool> gRtSession(false);        // set by nativeSetRtSession: this session's stock programs carry ray query code
+
 // <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
 bool native_only_family(const std::string& family)
 {
-    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post", "resolve" };
+    static const char* const kNativeOnlyFamilies[] = { "copy", "blur", "post", "resolve", "alpha" };
     for (const char* f : kNativeOnlyFamilies)
     {
         if (family == f)
@@ -597,7 +600,7 @@ void load_manifest(Manager& m)
                 ++lines;
             }
         }
-        d.mNativeOnly = native_only_family(d.mFamily) && lines == 1 && d.mDefaultOn && !d.mRtVariant && d.mRequire.empty() && d.mWhen.empty() && d.mSpec.empty();
+        d.mNativeOnly = native_only_family(d.mFamily) && lines == 1 && d.mDefaultOn && d.mRequire.empty() && d.mWhen.empty() && d.mSpec.empty();
     }
     LL_INFOS("VkNative") << m.mDefs.size() << " native program(s) in " << m.mRoot << "/manifest.txt" << LL_ENDL;
 }
@@ -618,6 +621,12 @@ bool stale(const Def& d)
 std::mutex gGlobalLock;
 std::vector<std::pair<std::string, std::string>> gGlobalDefines;
 U32 gGlobalGen = 1;
+
+// the line is built by createShader (no stock program behind it) in this session
+bool native_only_now(const Def& d)
+{
+    return d.mNativeOnly && !(d.mRtVariant && gRtSession.load());
+}
 
 void build(Manager& m, Def& d)
 {
@@ -702,7 +711,7 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
             }
         }
     }
-    if (!line || count != 1 || !line->mNativeOnly)
+    if (!line || count != 1 || !native_only_now(*line))
     {
         return false;
     }
@@ -716,6 +725,11 @@ std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy()
 {
     std::lock_guard<std::mutex> guard(gGlobalLock);
     return gGlobalDefines;
+}
+
+void nativeSetRtSession(bool on)
+{
+    gRtSession = on;
 }
 
 int nativeKey(const std::string& key, int def)
@@ -743,7 +757,7 @@ Program* nativeOverride(Program* p)
         const auto built_at = std::chrono::steady_clock::now();
         for (auto& line : m.mDefs)
         {
-            if (!line->mTried && !line->mNativeOnly)
+            if (!line->mTried && !native_only_now(*line))
             {
                 build(m, *line);
                 line->mChecked = built_at;
@@ -894,7 +908,7 @@ void dumpNativeInterfaces()
     Manager& m = manager();
     for (const auto& d : m.mDefs)
     {
-        if (d->mNativeOnly)
+        if (native_only_now(*d))
         {
             continue;           // (the program of the same name is the native program itself)
         }
@@ -929,7 +943,7 @@ void dumpNativeCensus()
     }
     for (const auto& d : m.mDefs)
     {
-        if (d->mNativeOnly)
+        if (native_only_now(*d))
         {
             continue;           // (a native only program is not swapped in at the draw: its binds are in the program census)
         }
