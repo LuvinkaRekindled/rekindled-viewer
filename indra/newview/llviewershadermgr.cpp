@@ -1031,9 +1031,18 @@ std::string LLViewerShaderMgr::loadBasicShaders()
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
         }
         sRtSessionShaders = attribs.find("LL_RT_SHADOWS") != attribs.end();
-        if (sRtSessionShaders)
+        // the ray query code's own defines (LL_RT_SHADOWS: the mode of the traced sun shadow, 1 the rays, 4 and 5 the test views of lib/rt.glsl rt_sun_shadow; LL_RT_SUN_*, LL_RT_MAX_CANDIDATES, LL_RT_CAP_DEBUG: the tuning
+        // and test switches of the environment, set only when the environment asks) and the spot shadow switch: what the stock programs' library files saw, the native ones see too
+        for (const auto& a : attribs)
         {
-            native_defines.push_back({ "LL_RT_SHADOWS", attribs["LL_RT_SHADOWS"] });      // (the mode of the traced sun shadow: 1 the rays, 4 and 5 the test views of lib/rt.glsl rt_sun_shadow)
+            if (a.first.compare(0, 6, "LL_RT_") == 0 || a.first == "SPOT_SHADOW")
+            {
+                native_defines.push_back({ a.first, a.second });
+            }
+        }
+        if (getenv("LL_VK_RTREFL_DEBUG"))
+        {
+            native_defines.push_back({ "RT_REFL_DEBUG", "1" });        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
         }
         LLVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
         LLVkBridge::nativeGlobalDefines(native_defines);
@@ -2206,17 +2215,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredRtReflectionProgram.mFeatures.hasShadows = true;
         gDeferredRtReflectionProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
-        gDeferredRtReflectionProgram.clearPermutations();
         add_common_permutations(&gDeferredRtReflectionProgram);
-        gDeferredRtReflectionProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
-        gDeferredRtReflectionProgram.mShaderFiles.push_back(make_pair("deferred/rtReflectionF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredRtReflectionProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        gDeferredRtReflectionProgram.addPermutation("LL_RT_REFLECTIONS", "1");
-        if (getenv("LL_VK_RTREFL_DEBUG"))
-        {
-            gDeferredRtReflectionProgram.addPermutation("RT_REFL_DEBUG", "1");        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
-        }
         success = gDeferredRtReflectionProgram.createShader();
         llassert(success);
     }
