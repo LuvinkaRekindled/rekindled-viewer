@@ -132,3 +132,10 @@ override | Deferred Shadow Alpha Pull Shader | shadow_alpha.vert | shadow_alpha.
 override | Deferred Avatar Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | default on
 override | Deferred Avatar Alpha Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | define SHADOW_COLOR_ALPHA=1 | default on
 override | Deferred Avatar Alpha Mask Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | default on
+override | Deferred Fullbright Pull Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | default on
+override | Deferred Fullbright Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | HUD Fullbright Pull Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define IS_HUD=1 | default on
+override | Deferred Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | default on
+override | Deferred Fullbright Shiny Pull Skin Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | HUD Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define IS_HUD=1 | default on
+override | HUD Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | define IS_HUD=1 | default on
