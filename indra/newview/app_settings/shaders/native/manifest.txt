@@ -110,7 +110,7 @@ override | No Post Tonemap Legacy Gamma Post Process | fullscreen.vert | tonemap
 override | Glow Shader (Post) | glow.vert | glow.frag | post | default on
 override | Solid Color Shader | solidcolor.vert | solidcolor.frag | post | default on
 override | Copy Depth Shader | copy.vert | copydepth.frag | post | default on
-override | Reflection Mip Shader | reflectionmip.vert | gaussian.frag | post | require resScale | default on
+override | Reflection Mip Gaussian Shader | reflectionmip.vert | gaussian.frag | post | default on
 override | Reflection Mip Shader | reflectionmip.vert | reflectionmip.frag | post | default on
 override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define PROBE_FILTER_SAMPLES=32 | default on
 override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
@@ -122,7 +122,7 @@ override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | g
 override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on
 override | Deferred Windlight Sun Program pull | sundisc.vert | sundisc.frag | gbuffer | default on
 override | Deferred Star Program pull | stars.vert | stars.frag | gbuffer | default on
-override | Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | require minimum_alpha | default on
+override | Deferred Fullbright Mask Alpha Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | default on
 override | Deferred Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | default on
 override | Deferred Fullbright Alpha Mask Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | post | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Skinned Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
