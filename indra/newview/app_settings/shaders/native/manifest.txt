@@ -139,3 +139,5 @@ override | Deferred Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shi
 override | Deferred Fullbright Shiny Pull Skin Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | HUD Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define IS_HUD=1 | default on
 override | HUD Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | define IS_HUD=1 | default on
+override | PBR Glow Pull Shader | alpha_pbr.vert | pbr_glow.frag | post | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define GLOW_EMISSIVE=1 | default on
+override | PBR Glow Pull Skin Shader | alpha_pbr.vert | pbr_glow.frag | post | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define GLOW_EMISSIVE=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on

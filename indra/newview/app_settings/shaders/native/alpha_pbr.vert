@@ -2,6 +2,7 @@
 // (ll_packet_pbr: 10 vec4 = the transforms of the four textures, then roughness / metallic / emissive colour, then the cutoff); the vertex reads its own data from the arrays the row names.
 // Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw: the hardware reads the indices, the vertex number is the index), ALPHA_PBR_HUD (the fullbright HUD form: only the base colour and the emissive
 // texture are used, so no normals or tangents are made).
+// GLOW_EMISSIVE (with ALPHA_PBR_HUD: no normals): the glow second draw of a glTF blend surface (pbr_glow.frag): the vertex colour is the emissive array.
 // Outputs (alpha_pbr.frag and alpha_pbr_hud.frag read these): eye space position, vertex colour (sRGB), the four texture coordinates, the TBN frame, and flat: the four texture slots and the material factors.
 
 #include "alpha_pass.inc"
@@ -16,8 +17,8 @@ layout(location = 2) out vec2 vary_tc_base;
 layout(location = 5) out vec2 vary_tc_emissive;
 layout(location = 9) flat out uvec4 vary_slots;         // base colour, normal, occlusion roughness metallic, emissive
 layout(location = 11) flat out vec3 vary_emissive;      // the emissive colour factor (linear)
-#ifdef PBR_OPAQUE
-layout(location = 12) flat out float vary_cutoff;       // the alpha cutoff of the material (opaque and mask surfaces of the G-buffer pass: pbr_opaque.frag)
+#if defined(PBR_OPAQUE) || defined(GLOW_EMISSIVE)
+layout(location = 12) flat out float vary_cutoff;       // the alpha cutoff of the material (opaque and mask surfaces of the G-buffer pass: pbr_opaque.frag; the glow pass: pbr_glow.frag)
 #endif
 #ifndef ALPHA_PBR_HUD
 layout(location = 3) out vec2 vary_tc_normal;
@@ -73,12 +74,23 @@ void main()
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 
     vary_position = eye.xyz;
+#ifdef GLOW_EMISSIVE
+    {
+        // the glow pass (PBR Glow Pull Shader, pbrGlowPullV.glsl): the colour is the emissive array: the first byte of the vertex buffer (the positions) plus its offset in the row (pad2), as in alpha.vert
+        uint carry;
+        uvec2 emissive_address = row.positions;
+        emissive_address.x = uaddCarry(emissive_address.x, floatBitsToUint(row.pad2), carry);
+        emissive_address.y += carry;
+        vertex_color = unpackUnorm4x8(RowWords(emissive_address).w[index]);
+    }
+#else
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
+#endif
     vary_tc_base = gltf_texcoord(texcoord, base0, base1, animation);
     vary_tc_emissive = gltf_texcoord(texcoord, table.q[at_row + 6u], table.q[at_row + 7u], animation);
     vary_slots = uvec4(row.slots.x & 0xFFFFu, row.slots.x >> 16, row.slots.y & 0xFFFFu, row.slots.y >> 16);
     vary_emissive = vec3(misc0.z, misc0.w, misc1.x);
-#ifdef PBR_OPAQUE
+#if defined(PBR_OPAQUE) || defined(GLOW_EMISSIVE)
     vary_cutoff = misc1.y;
 #endif
 

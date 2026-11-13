@@ -3144,8 +3144,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         plain_ok = plain_ok && gAlphaLitSkinReady && ll_rigged_indexed()
             && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", nullptr, nullptr, "LL_BINDLESS_DIFFUSE", true, false);
         gAlphaGlowPullReady = plain_ok;
-        bool pbr_ok = gAlphaPbrPullReady && gAlphaPbrSkinReady && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", false, true);
-        pbr_ok = pbr_ok && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "deferred/pbrGlowPullV.glsl", "deferred/pbrglowF.glsl", "LL_BINDLESS_PBR", true, true);
+        bool pbr_ok = gAlphaPbrPullReady && gAlphaPbrSkinReady && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", nullptr, nullptr, "LL_BINDLESS_PBR", false, true);
+        pbr_ok = pbr_ok && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", nullptr, nullptr, "LL_BINDLESS_PBR", true, true);
         gAlphaGlowPbrReady = pbr_ok;
     }
 
