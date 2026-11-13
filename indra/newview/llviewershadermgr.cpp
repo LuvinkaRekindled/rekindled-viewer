@@ -4344,9 +4344,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gNormalMapGenProgram.mName = "Normal Map Generation Program";
-        gNormalMapGenProgram.mShaderFiles.clear();
-        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenV.glsl", ShaderStage::Vertex));
-        gNormalMapGenProgram.mShaderFiles.push_back(make_pair("deferred/normgenF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: normgen.vert + normgen.frag): no stock files
         gNormalMapGenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gNormalMapGenProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gNormalMapGenProgram.createShader();
@@ -4355,9 +4353,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredGenBrdfLutProgram.mName = "Brdf Gen Shader";
-        gDeferredGenBrdfLutProgram.mShaderFiles.clear();
-        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutV.glsl", ShaderStage::Vertex));
-        gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: copy.vert + brdf_gen.frag): no stock files
         gDeferredGenBrdfLutProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredGenBrdfLutProgram.createShader();
     }
@@ -4636,9 +4632,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gGlowCombineFXAAProgram.mName = "Glow CombineFXAA Shader";
-        gGlowCombineFXAAProgram.mShaderFiles.clear();
-        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAV.glsl", ShaderStage::Vertex));
-        gGlowCombineFXAAProgram.mShaderFiles.push_back(make_pair("interface/glowcombineFXAAF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: copy.vert + glow_fxaa.frag): no stock files
         gGlowCombineFXAAProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGlowCombineFXAAProgram.createShader();
         if (success)
@@ -4654,9 +4648,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gTwoTextureCompareProgram.mName = "Two Texture Compare Shader";
-        gTwoTextureCompareProgram.mShaderFiles.clear();
-        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareV.glsl", ShaderStage::Vertex));
-        gTwoTextureCompareProgram.mShaderFiles.push_back(make_pair("interface/twotexturecompareF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: texcompare.vert + texcompare.frag): no stock files
         gTwoTextureCompareProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gTwoTextureCompareProgram.createShader();
         if (success)
@@ -4671,9 +4663,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gOneTextureFilterProgram.mName = "One Texture Filter Shader";
-        gOneTextureFilterProgram.mShaderFiles.clear();
-        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterV.glsl", ShaderStage::Vertex));
-        gOneTextureFilterProgram.mShaderFiles.push_back(make_pair("interface/onetexturefilterF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: texfilter.vert + texfilter.frag): no stock files
         gOneTextureFilterProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gOneTextureFilterProgram.createShader();
         if (success)
@@ -4705,7 +4695,9 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugF.glsl", ShaderStage::Fragment));
         gDebugProgram.mRiggedVariant = &gSkinnedDebugProgram;
         gDebugProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        // the skinned form keeps the stock files (make_rigged_variant copies the base program's files); the static program is native only (native/manifest.txt, family post: debug.vert + debug.frag)
         success = make_rigged_variant(gDebugProgram, gSkinnedDebugProgram);
+        gDebugProgram.mShaderFiles.clear();
         success = success && gDebugProgram.createShader();
     }
 
@@ -4820,9 +4812,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gAlphaMaskProgram.mName = "Alpha Mask Shader";
-        gAlphaMaskProgram.mShaderFiles.clear();
-        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskV.glsl", ShaderStage::Vertex));
-        gAlphaMaskProgram.mShaderFiles.push_back(make_pair("interface/alphamaskF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: alphamask.vert + alphamask.frag): no stock files
         gAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gAlphaMaskProgram.createShader();
     }

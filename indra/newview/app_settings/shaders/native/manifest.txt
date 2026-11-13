@@ -186,3 +186,11 @@ override | Highlight Shader | highlight_face.vert | highlight_face.frag | post |
 override | Highlight Normals Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=1 | default on
 override | Highlight Spec Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=2 | default on
 override | Deferred Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | define HL_GBUFFER=1 | default on
+# the interface and tool programs: the avatar bake's alpha mask, the bump map generator, the flat colour of the manipulators and debug draws (the skinned form of Debug Shader stays a stock program), the BRDF lookup generator, the FXAA input pass, the scene monitor's two filters
+override | Alpha Mask Shader | alphamask.vert | alphamask.frag | post | default on
+override | Normal Map Generation Program | normgen.vert | normgen.frag | post | default on
+override | Debug Shader | debug.vert | debug.frag | post | default on
+override | Brdf Gen Shader | copy.vert | brdf_gen.frag | post | default on
+override | Glow CombineFXAA Shader | copy.vert | glow_fxaa.frag | post | default on
+override | One Texture Filter Shader | texfilter.vert | texfilter.frag | post | default on
+override | Two Texture Compare Shader | texcompare.vert | texcompare.frag | post | default on
