@@ -13,7 +13,7 @@ vec4 shade_lit(vec3 pos, vec3 norm, vec4 texel, vec4 vertex_colour)
     const vec3 light_dir = sun_up_factor == 1 ? sun_dir : moon_dir;
 
     // the cascade lookup comes after the alpha discard: pixels that are thrown away do not pay for it
-    const float shadow = sun_shadow(pos, norm, gl_FragCoord.y / screen_res.y);
+    const float shadow = sun_shadow_alpha(pos, norm, gl_FragCoord.xy / screen_res);
 
     vec3 sunlit, amblit, additive, atten;
     atmos_terms_lit(pos, norm, light_dir, sunlit, amblit, additive, atten);

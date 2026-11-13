@@ -473,6 +473,7 @@ struct Def
     // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the draws of the old program that did NOT take the native program, by reason. Kept on the first manifest line that names the program.
     enum { FB_FAMILY_OFF, FB_NOT_FIT, FB_RT, FB_NOT_READY, FB_OUTPUTS, FB_COUNT };
     U64 mFallback[FB_COUNT] = {};
+    bool mRtQuery = false;                                  // `rtquery` in the manifest: in a session with ray queries the program is built with LL_RT_QUERY (the ray query code of lib/rt.glsl, the extension and the draw's set 3: PLAN-native-only-end-state.md, A3)
     bool mRtVariant = false;                                // `rt` in the manifest: the program has a stock ray traced variant that draws in RT mode (mUsesRt), so its stock program stays until the RT track's port
     bool mNativeOnly = false;                               // set by load_manifest: converted family, the only line of its program, default on, no require / when / spec: createShader builds it, nativeOverride never swaps it (an `rt` line: only while the session has no ray traced shadows, see native_only_now)
 };
@@ -586,6 +587,11 @@ void load_manifest(Manager& m)
                 d->mRtVariant = true;
                 continue;
             }
+            if (kind == "rtquery")
+            {
+                d->mRtQuery = true;
+                continue;
+            }
             if (kind == "geometry")
             {
                 d->mGeometry = rest;
@@ -675,6 +681,10 @@ void build(Manager& m, Def& d)
         d.mGlobalGen = gGlobalGen;
     }
     defines.insert(defines.end(), d.mDefines.begin(), d.mDefines.end());
+    if (d.mRtQuery && gRtSession.load())
+    {
+        defines.push_back({ "LL_RT_QUERY", "1" });      // a session with ray queries: the program traces its sun shadow (compileNativeProgram adds the extension and sets mUsesRt)
+    }
     const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, defines, info, &files, &error, d.mGeometry);
     files.push_back(m.mRoot + "/manifest.txt");
     for (const std::string& f : files)
@@ -752,6 +762,10 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
     fragment = line->mFragment;
     geometry = line->mGeometry;
     defines = line->mDefines;
+    if (line->mRtQuery && gRtSession.load())
+    {
+        defines.push_back({ "LL_RT_QUERY", "1" });      // a session with ray queries (the manifest option rtquery): the program traces its sun shadow (compileNativeProgram adds the extension and sets mUsesRt)
+    }
     return true;
 }
 

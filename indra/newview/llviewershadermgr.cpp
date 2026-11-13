@@ -226,11 +226,6 @@ LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
 LLShaderProgram            gDeferredAvatarShadowProgram;
 LLShaderProgram            gDeferredAvatarAlphaShadowProgram;
 LLShaderProgram            gDeferredAvatarAlphaMaskShadowProgram;
-LLShaderProgram            gDeferredAlphaProgram;
-LLShaderProgram            gHUDAlphaProgram;
-LLShaderProgram            gDeferredSkinnedAlphaProgram;
-LLShaderProgram            gDeferredAlphaImpostorProgram;
-LLShaderProgram            gDeferredSkinnedAlphaImpostorProgram;
 LLShaderProgram            gDeferredPostProgram;
 LLShaderProgram            gDeferredCoFProgram;
 LLShaderProgram            gDeferredDoFCombineProgram;
@@ -279,9 +274,7 @@ LLShaderProgram            gRlvSphereProgram;
 
 // Deferred materials shaders
 LLShaderProgram            gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
-LLShaderProgram            gHUDPBRAlphaProgram;
 LLShaderProgram            gDeferredPBRAlphaProgram;
-LLShaderProgram            gDeferredSkinnedPBRAlphaProgram;
 
 LLShaderProgram            gGLTFPBRMetallicRoughnessProgram;
 
@@ -471,9 +464,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gWaterHazePullProgram);
     mShaderList.push_back(&gDeferredSoftenProgram);
     mShaderList.push_back(&gDeferredRtReflectionProgram);
-    mShaderList.push_back(&gDeferredAlphaProgram);
-    mShaderList.push_back(&gHUDAlphaProgram);
-    mShaderList.push_back(&gDeferredAlphaImpostorProgram);
     mShaderList.push_back(&gDeferredAvatarAlphaProgram);
     mShaderList.push_back(&gEnvironmentMapProgram);
     mShaderList.push_back(&gDeferredWLSkyProgram);
@@ -481,7 +471,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gDeferredWLMoonProgram);
     mShaderList.push_back(&gDeferredWLSunProgram);
     mShaderList.push_back(&gDeferredPBRAlphaProgram);
-    mShaderList.push_back(&gHUDPBRAlphaProgram);
     mShaderList.push_back(&gDeferredPostTonemapProgram);
     mShaderList.push_back(&gNoPostTonemapProgram);
     mShaderList.push_back(&gDeferredPostTonemapGammaCorrectProgram);
@@ -1477,11 +1466,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
 
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = make_rigged_variant(*shader, gDeferredSkinnedPBRAlphaProgram);
-        if (success)
-        {
-            success = shader->createShader();
-        }
+        success = shader->createShader();
         llassert(success);
 
         // Alpha Shader Hack
@@ -1489,30 +1474,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.calculatesLighting = true;
         shader->mFeatures.hasLighting = true;
 
-        shader->mRiggedVariant->mFeatures.calculatesLighting = true;
-        shader->mRiggedVariant->mFeatures.hasLighting = true;
-    }
-
-    if (success)
-    {
-        LLShaderProgram* shader = &gHUDPBRAlphaProgram;
-        shader->mName = "HUD PBR Alpha Shader";
-
-        shader->mFeatures.hasSrgb = true;
-
-        shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
-
-        shader->clearPermutations();
-
-        shader->addPermutation("IS_HUD", "1");
-
-        add_common_permutations(shader);
-
-        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = shader->createShader();
-        llassert(success);
     }
 
     if (success)
@@ -1670,139 +1631,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNativeLightUpsampleProgram.createShader();
     }
 
-    if (success)
-    {
-        for (int i = 0; i < 3 && success; ++i)
-        {
-            LLShaderProgram* shader = nullptr;
-            bool rigged = (i == 1);
-            bool hud = (i == 2);
-
-            if (hud)
-            {
-                shader = &gHUDAlphaProgram;
-                shader->mName = "HUD Alpha Shader";
-            }
-            else if (!rigged)
-            {
-                shader = &gDeferredAlphaProgram;
-                shader->mName = "Deferred Alpha Shader";
-                shader->mRiggedVariant = &gDeferredSkinnedAlphaProgram;
-            }
-            else
-            {
-                shader = &gDeferredSkinnedAlphaProgram;
-                shader->mName = "Skinned Deferred Alpha Shader";
-                shader->mFeatures.hasObjectSkinning = true;
-            }
-
-            shader->mFeatures.calculatesLighting = false;
-            shader->mFeatures.hasLighting = false;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
-            shader->mFeatures.hasReflectionProbes = true;
-            shader->mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-
-            shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
-
-            shader->clearPermutations();
-            shader->addPermutation("USE_VERTEX_COLOR", "1");
-            shader->addPermutation("HAS_ALPHA_MASK", "1");
-            shader->addPermutation("USE_INDEXED_TEX", "1");
-            if (use_sun_shadow && !alpha_noshadow())
-            {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
-            }
-
-            add_common_permutations(shader);
-
-            if (rigged)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-            }
-
-            if (hud)
-            {
-                shader->addPermutation("IS_HUD", "1");
-            }
-
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-            success = shader->createShader();
-            llassert(success);
-
-            // Hack
-            shader->mFeatures.calculatesLighting = true;
-            shader->mFeatures.hasLighting = true;
-        }
-    }
-
-    if (success)
-    {
-        LLShaderProgram* shaders[] = {
-            &gDeferredAlphaImpostorProgram,
-            &gDeferredSkinnedAlphaImpostorProgram
-        };
-
-        for (int i = 0; i < 2 && success; ++i)
-        {
-            bool rigged = i == 1;
-            LLShaderProgram* shader = shaders[i];
-
-            shader->mName = rigged ? "Skinned Deferred Alpha Impostor Shader" : "Deferred Alpha Impostor Shader";
-
-            // Begin Hack
-            shader->mFeatures.calculatesLighting = false;
-            shader->mFeatures.hasLighting = false;
-
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
-            shader->mFeatures.hasReflectionProbes = true;
-            shader->mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-
-            shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
-
-            shader->clearPermutations();
-            shader->addPermutation("USE_INDEXED_TEX", "1");
-            shader->addPermutation("FOR_IMPOSTOR", "1");
-            shader->addPermutation("HAS_ALPHA_MASK", "1");
-            shader->addPermutation("USE_VERTEX_COLOR", "1");
-            if (rigged)
-            {
-                shader->mFeatures.hasObjectSkinning = true;
-                shader->addPermutation("HAS_SKIN", "1");
-            }
-
-            if (use_sun_shadow && !alpha_noshadow())
-            {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
-            }
-
-            add_common_permutations(shader);
-
-            shader->mRiggedVariant = &gDeferredSkinnedAlphaImpostorProgram;
-            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            if (!rigged)
-            {
-                shader->mRiggedVariant = shaders[1];
-            }
-            success = shader->createShader();
-            llassert(success);
-
-            // End Hack
-            shader->mFeatures.calculatesLighting = true;
-            shader->mFeatures.hasLighting = true;
-        }
-    }
+    // <FS> the old alpha programs of the vertex buffer path (Deferred Alpha, its skinned and HUD variants, the impostor pair) are gone: no code bound them; the alpha passes draw the pull programs below
 
     // <FS> S5a (doc/vulkan/S5-design.md): the lit and the fullbright alpha programs with the vertices read by address and the diffuse texture from the bindless table. Required (PLAN-twin-removal.md, section 8): a program
     // that cannot be made ends the shader load.
@@ -1832,8 +1661,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
@@ -1843,14 +1670,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 }
             }
             shader->addPermutation("LL_BINDLESS_DIFFUSE", "1");
-            if (const char* dbg = getenv("LL_VK_SCENE_ALPHA_DBG"))
-            {
-                shader->addPermutation("ALPHA_PULL_DBG", dbg);       // (diagnostic, see alphaPullV.glsl)
-            }
-            if (const char* dbgf = getenv("LL_VK_SCENE_ALPHA_DBGF"))
-            {
-                shader->addPermutation("ALPHA_PULL_DBGF", dbgf);     // (diagnostic, see alphaF.glsl: the lit program only)
-            }
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
@@ -1883,8 +1702,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
         shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
         shader->clearPermutations();
         shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
         shader->addPermutation("HAS_NORMAL_MAP", "1");
@@ -1898,10 +1715,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("HAS_SUN_SHADOW", "1");
         }
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (getenv("LL_VK_SCENE_ALPHA_DBGF"))
-        {
-            shader->addPermutation("ALPHA_PULL_DBGF", getenv("LL_VK_SCENE_ALPHA_DBGF"));
-        }
         success = shader->createShader();
         if (success)
         {
@@ -1942,8 +1755,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
                 shader->addPermutation("USE_VERTEX_COLOR", "1");
                 shader->addPermutation("HAS_ALPHA_MASK", "1");
                 shader->addPermutation("USE_INDEXED_TEX", "1");
@@ -1985,8 +1796,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.isDeferred = true;
             shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", ShaderStage::Fragment));
             shader->clearPermutations();
             shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
             shader->addPermutation("HAS_NORMAL_MAP", "1");
@@ -2036,8 +1845,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasReflectionProbes = true;
             shader->mShaderFiles.clear();
             shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
@@ -2088,8 +1895,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasReflectionProbes = true;
             shader->mShaderFiles.clear();
             shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
@@ -2322,20 +2127,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> S5e: the glow second draw of the alpha items from the table: emissiveF / pbrglowF (alpha only) with the vertices read by address, static and rigged. Required.
     if (success)
     {
-        auto make_glow = [&](LLShaderProgram* shader, const char* name, const char* vertex, const char* fragment, const char* bindless, bool skin, bool srgb) -> bool
+        auto make_glow = [&](LLShaderProgram* shader, const char* name, const char* bindless, bool skin, bool srgb) -> bool
         {
             shader->mName = name;
             shader->mFeatures.hasSrgb = srgb;
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            if (vertex)             // (null: a native only program, native/manifest.txt: no stock files)
-            {
-                shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
-            }
-            if (fragment)
-            {
-                shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
-            }
+            shader->clearPermutations();         // (native only programs, native/manifest.txt: no stock files)
             shader->addPermutation(bindless, "1");
             if (skin)
             {
@@ -2351,10 +2147,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             return true;
         };
-        success = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", nullptr, nullptr, "LL_BINDLESS_DIFFUSE", false, false)
-            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", nullptr, nullptr, "LL_BINDLESS_DIFFUSE", true, false)
-            && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", nullptr, nullptr, "LL_BINDLESS_PBR", false, true)
-            && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", nullptr, nullptr, "LL_BINDLESS_PBR", true, true);
+        success = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", "LL_BINDLESS_DIFFUSE", false, false)
+            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", "LL_BINDLESS_DIFFUSE", true, false)
+            && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "LL_BINDLESS_PBR", false, true)
+            && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "LL_BINDLESS_PBR", true, true);
         llassert(success);
     }
 
@@ -2362,19 +2158,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // Required (PLAN-twin-removal.md, section 8).
     if (success)
     {
-        auto make_pull = [&](LLShaderProgram* shader, const char* name, const char* vertex, const char* fragment, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
+        auto make_pull = [&](LLShaderProgram* shader, const char* name, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
         {
             shader->mName = name;
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            if (vertex)             // (null: a native only program, native/manifest.txt: no stock files)
-            {
-                shader->mShaderFiles.push_back(make_pair(vertex, ShaderStage::Vertex));
-            }
-            if (fragment)
-            {
-                shader->mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
-            }
+            shader->clearPermutations();         // (native only programs, native/manifest.txt: no stock files)
             for (const auto& p : permutations)
             {
                 shader->addPermutation(p.first, p.second);
@@ -2405,12 +2192,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasSrgb = true;
             shader->mFeatures.isDeferred = true;
-            success = make_pull(shader, "HUD Fullbright Alpha Pull Shader", nullptr, nullptr, {}, false);
+            success = make_pull(shader, "HUD Fullbright Alpha Pull Shader", {}, false);
             if (success)
             {
                 shader = &gHUDPBRAlphaPullProgram;
                 shader->mFeatures.hasSrgb = true;
-                success = make_pull(shader, "HUD PBR Alpha Pull Shader", nullptr, nullptr, {}, false);       // (a native only program: alpha_pbr.vert + alpha_pbr_hud.frag)
+                success = make_pull(shader, "HUD PBR Alpha Pull Shader", {}, false);       // (a native only program: alpha_pbr.vert + alpha_pbr_hud.frag)
             }
         }
         // the impostor render's lit program, static and rigged
@@ -2425,7 +2212,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
             // <FS> a native only program (native/manifest.txt, family alpha): no stock files
-            success = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", nullptr, nullptr, {}, rigged);
+            success = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", {}, rigged);
             if (success)
             {
                 shader->mFeatures.calculatesLighting = true;        // (as the ordinary impostor alpha program: the hack that follows its createShader)
@@ -2442,7 +2229,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasAtmospherics = true;
             shader->mFeatures.hasSrgb = true;
-            success = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Mask Alpha Pull Shader", nullptr, nullptr, {}, rigged);
+            success = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Mask Alpha Pull Shader", {}, rigged);
         }
         llassert(success);
     }
@@ -2815,8 +2602,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.mFeatures.hasReflectionProbes = true;
 
         gDeferredAvatarAlphaProgram.mShaderFiles.clear();
-        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", ShaderStage::Vertex));
-        gDeferredAvatarAlphaProgram.mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", ShaderStage::Fragment));
 
         gDeferredAvatarAlphaProgram.clearPermutations();
         gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");

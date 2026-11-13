@@ -18,10 +18,13 @@ The only things that stop the work are a look decision that is Adam's (a program
   Roughness, Impostor, No color alpha mask, Object Preview, Pathfinding x2, Preview Physics, Ray Scene Material Debug, Reflection Probe Display. Done today (step 2): CoF, DoFCombine, Deferred Post (DoF), Buffer
   Visualization, Avatar Velocity Debug, Vignette, Snapshot Frame, CAS x2 (cas.frag generated from the stock file by <work>\make_cas.py; the CPU half of that file is a C++ header now, `ffxcas.h`), Gamma x2,
   RLVa Sphere, DLSS-NR Rim Lift, RR Guides, RR Reflection Motion.
-- A2: five stock file lines with computed names (llviewershadermgr.cpp: the sun program's fragment choice and the loop over the shader list at the end).
-- A3: 17 manifest lines with `rt`: the lit alpha programs (Deferred Alpha Pull x2, Uber x4, PBR x2, Material Pull 1/5/9/13 x2) and the avatar alpha program keep a stock program in a session with ray queries. The RT track's
-  port: the same as the water (lib/rt.glsl is the stock ray query code as a native include; a manifest define LL_RT_QUERY gives the program the extension and set 3). The sun lightmap's RT program and the RT Reflection
-  Shader are the same kind.
+- A2: one stock file line with a computed name (llviewershadermgr.cpp: the sun program's fragment choice). The loops of the glow and pull programs had two dead stock-file parameters: gone.
+- A3 DONE (2026-11-13): the 17 `rt` lines (lit alpha programs, the PBR alpha, the material blends, the avatar alpha) are `rtquery` lines now: a session with ray queries builds them with LL_RT_QUERY (the loader adds the
+  extension and the draw binds set 3), and the sun shadow of a transparent surface is a ray (lib/shadow_alpha.glsl: `sun_shadow_alpha`, the stock text of lib/rt.glsl; the uniforms the alpha pass sets are the members of
+  lib/rt_uniforms.inc in alpha_pass.inc). Their stock files and the dead old alpha programs (Deferred Alpha, Skinned, HUD, the impostor pair, the HUD PBR alpha: bound by no code) are deleted. Sizes of the RT variants:
+  alpha lit 24,064 SPIR-V words, PBR alpha 33,398, avatar alpha 23,894 (non-RT: 13,812 as before). Checked: matrix 0 failures (with the ray query profile), RT lap and RT-off lap, no errors, ground 140 / 142. Not checked
+  by eye: the hair and glass shadows in the traced sessions against the stock look (Adam). The programs left: the RT sun lightmap (Deferred Sun Shader), the RT Reflection Shader, Ray Scene Material Debug, the glTF scene
+  program (GLTF PBR Metallic Roughness), and Deferred PBR Alpha Shader (the material preview's attribute program).
 - B: `pushFaceGeometry` 3, `renderIndexed` 7, `pushBufferVerts` 6, `postSort` 39 (lines).
 - C: errorF / errorV (the old loader's fallback shaders: they go with the old loader path, step 6).
 

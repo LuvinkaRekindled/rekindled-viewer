@@ -14,17 +14,17 @@ override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | d
 override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | default on
 override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the lit case (plain diffuse), two variants of each program by the sky: classic_mode=1 (small: the ambient light is the sky's) and classic_mode=0 (ALPHA_PROBES: the ambient light comes from the reflection probes)
-override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rt
-override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rtquery
+override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 # the merged lit + fullbright program (the row's fullbright flag picks the branch): the program the alpha runs use when alphamat is 0 (the material draws have their own programs then)
-override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | default on | rt
-override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | default on | rtquery
+override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 # the merged program with the material draws too (the program the alpha runs use by default): fullbright, lit and material draws in one native program; the probes are used by the material path in every sky
-override | Deferred Alpha Uber Material Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rt
-override | Deferred Alpha Uber Material Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Deferred Alpha Uber Material Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
+override | Deferred Alpha Uber Material Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 # the glTF (PBR) blend surfaces: lit with the probes in every sky (classic skies keep their own mixing at run time), static and rigged, and the HUD's fullbright form
-override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | default on | rt
-override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | default on | rtquery
+override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 override | HUD PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr_hud.frag | alpha | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | default on
 # family 3: the G-buffer fill (doc/vulkan/SHADERS-F3-gbuffer.md). The glTF opaque and mask pass from the scene table: the same vertex program as the blend surfaces (PBR_OPAQUE adds the material's cutoff), a small fragment program that writes the three targets (the emissive one with RenderEnableEmissiveBuffer); static, rigged and the HUD's fullbright form
 override | Deferred PBR Opaque Pull Shader | alpha_pbr.vert | pbr_opaque.frag | gbuffer | define ALPHA_PBR=1 | define PBR_OPAQUE=1 | default on
@@ -65,14 +65,14 @@ override | Material Pull Skin Shader 12 | gbuffer.vert | gbuffer_material.frag |
 override | Material Pull Skin Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Material Pull Skin Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the material blend variants of the old programs (1, 5, 9, 13): the alpha runs draw them where the merged program is not used (the depth only passes, the HUD, the impostor render, alphauber=0); the merged lit program with the material path draws them too, from the same rows. rt: the stock blend variant has the ray traced sun shadow
-override | Material Pull Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rt
-override | Material Pull Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rt
-override | Material Pull Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rt
-override | Material Pull Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rt
-override | Material Pull Skin Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
-override | Material Pull Skin Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
-override | Material Pull Skin Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
-override | Material Pull Skin Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
+override | Material Pull Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
+override | Material Pull Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
+override | Material Pull Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
+override | Material Pull Skin Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Material Pull Skin Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Material Pull Skin Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Material Pull Skin Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | default on
 override | Deferred Bump Pull Skin Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Deferred Emboss Pull Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | default on
@@ -173,7 +173,7 @@ override | Avatar Velocity (body) pull | velocity_body.vert | velocity.frag | po
 override | Draw Color Shader pull | alpha.vert | highlight.frag | alpha | define HIGHLIGHT_PASS=1 | default on
 override | Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | mask_nocolor.vert | mask_nocolor.frag | gbuffer | define AVATAR_PASS=1 | define MASK_NOCOLOR=1 | default on
 # the avatar pool's blended parts (the twin of "Deferred Avatar Alpha Shader": avatar.vert without the cloth, lit as the object programs are: lib/shade_lit.glsl) and the impostor render's alpha (texture times colour, the cutoff, no lighting)
-override | Deferred Avatar Alpha Shader pull | avatar.vert | avatar_alpha.frag | alpha | define AVATAR_PASS=1 | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rt
+override | Deferred Avatar Alpha Shader pull | avatar.vert | avatar_alpha.frag | alpha | define AVATAR_PASS=1 | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rtquery
 override | Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | default on
 override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the sun lightmap family: the probe snapshot's lightmap (the main view's program without the occlusion) and the two passes of the ray traced sun shadow's penumbra (the stock ray traced sun program stays: the RT track)
