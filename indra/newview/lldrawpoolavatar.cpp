@@ -298,7 +298,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
 
     if (pass == SHADOW_PASS_AVATAR_OPAQUE)
     {
-        sVertexProgram = ll_pull_or(&gDeferredAvatarShadowProgram);
+        sVertexProgram = &gDeferredAvatarShadowProgram;
 
         if ((sShaderLevel > 0))  // for hardware blending
         {
@@ -310,7 +310,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_BLEND)
     {
-        sVertexProgram = ll_pull_or(&gDeferredAvatarAlphaShadowProgram);
+        sVertexProgram = &gDeferredAvatarAlphaShadowProgram;
 
         // bind diffuse tex so we can reference the alpha channel...
         S32 loc = sVertexProgram->getUniformLocation(LLViewerShaderMgr::DIFFUSE_MAP);
@@ -330,7 +330,7 @@ void LLDrawPoolAvatar::beginShadowPass(S32 pass)
     }
     else if (pass == SHADOW_PASS_AVATAR_ALPHA_MASK)
     {
-        sVertexProgram = ll_pull_or(&gDeferredAvatarAlphaMaskShadowProgram);
+        sVertexProgram = &gDeferredAvatarAlphaMaskShadowProgram;
 
         // bind diffuse tex so we can reference the alpha channel...
         S32 loc = sVertexProgram->getUniformLocation(LLViewerShaderMgr::DIFFUSE_MAP);
@@ -600,7 +600,7 @@ void LLDrawPoolAvatar::beginDeferredRigid()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
-    sVertexProgram = ll_pull_or(&gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram);       // S6.6
+    sVertexProgram = &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;       // S6.6 (the native pull program: there is no other form of it)
     sDiffuseChannel = sVertexProgram->enableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
     sVertexProgram->bind();
     sVertexProgram->setMinimumAlpha(LLDrawPoolAvatar::sMinimumAlpha);
@@ -662,7 +662,7 @@ void LLDrawPoolAvatar::beginDeferredSkinned()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     sShaderLevel = mShaderLevel;
-    sVertexProgram = ll_pull_or(&gDeferredAvatarProgram);
+    sVertexProgram = &gDeferredAvatarProgram;
     sRenderingSkinned = true;
 
     sVertexProgram->bind();

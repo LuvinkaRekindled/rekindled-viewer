@@ -44,12 +44,8 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
 {                                             // render invisiprims
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; // LL_RECORD_BLOCK_TIME(FTM_RENDER_INVISIBLE);
 
-    LLShaderProgram* color_program = ll_pull_twin(&gDrawColorProgram);      // S6.6: the water planes and the invisible draws come as records of entries
-    const bool pull = color_program != nullptr;
-    if (!pull)
-    {
-        color_program = &gDrawColorProgram;
-    }
+    LLShaderProgram* color_program = &gDrawColorProgram;      // S6.6: the water planes and the invisible draws come as records of entries
+    const bool pull = true;
     if (gPipeline.shadersLoaded())
     {
         color_program->bind();

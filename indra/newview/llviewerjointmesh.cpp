@@ -622,13 +622,13 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
             uploadJointMatrices();
         }
 
-        if (ll_is_pull_twin(LLShaderProgram::sCurBoundShaderPtr))
+        if (LLShaderProgram::sCurBoundShaderPtr && LLShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
             ll_pull_draw_range(buff, offset, count);        // S6.6d
         }
         else
         {
-            ll_pool_draw_dropped("avatar body part (skinned)", 1);        // (the old direct draw is gone: no pull twin bound)
+            ll_pool_draw_dropped("avatar body part (skinned)", 1);        // (the old direct draw is gone: no pull program bound)
         }
     }
     else
@@ -636,13 +636,13 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
         LLMatrix4 jointToWorld = getWorldMatrix();
         LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
-        if (ll_is_pull_twin(LLShaderProgram::sCurBoundShaderPtr))
+        if (LLShaderProgram::sCurBoundShaderPtr && LLShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
             ll_pull_draw_range(buff, offset, count);        // S6.6d
         }
         else
         {
-            ll_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull twin bound)
+            ll_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull program bound)
         }
         LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
     }

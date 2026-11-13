@@ -413,8 +413,8 @@ void LLDrawPoolAlpha::renderDebugAlpha()
         // <FS> K6 B1 step 1: the alpha masked and the invisible draws are table items (the render map no longer lists them in a view the table serves): the same items are drawn again with the colour program's
         // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: the alpha mask and the invisible alpha draws, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
         // lists, prepares and elides these types while this view is on (ll_scene_geo_hud_type), so it draws them the same way.
-        if (LLShaderProgram* color = ll_pull_twin(&gDrawColorProgram))
         {
+            LLShaderProgram* color = &gDrawColorProgram;
             static LLStaticHashedString waterSign("waterSign");
             color->bind();
             color->uniform1f(waterSign, 1.f);
@@ -487,7 +487,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     // items are the ones the rigged alpha pass sent this frame, persistent at the worker: only the ranges go)
     for (int rig = 0; rig < 2; ++rig)
     {
-    LLShaderProgram* color = rig ? (LLShaderProgram*)(gHighlightPullSkinReady && LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : ll_pull_twin(&gDrawColorProgram);
+    LLShaderProgram* color = rig ? (LLShaderProgram*)(gHighlightPullSkinReady && LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
     if (view)
     {
         color = rig ? view->mRigged : view->mStatic;
