@@ -175,18 +175,24 @@ struct Joint { vec4 c0; vec4 c1; vec4 c2; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SkinJoints { Joint j[]; };
 
 // the palette has one entry more than the mesh has joints: the tail, whose first row holds the anchor (x, y, z, 1), all zeros for a plain palette
-vec3 row_rig_anchor(Row row)
+vec3 skin_rig_anchor(uvec2 palette_address, uint joints)
 {
-    return SkinJoints(row.palette).j[row.joints].c0.xyz;
+    return SkinJoints(palette_address).j[joints].c0.xyz;
 }
 
-void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
+vec3 row_rig_anchor(Row row)
 {
-    const vec4 joint_and_weight = SkinVertexWeights(row.weights).w[index];
+    return skin_rig_anchor(row.palette, row.joints);
+}
+
+// the skin of one vertex out of a weights array and a palette named by address: a scene row (row_skin) and a shadow packet (shadow.vert) both come here
+void skin_vertex(uvec2 weights_address, uvec2 palette_address, uint joints, uint index, out mat3 rotation, out vec3 translation)
+{
+    const vec4 joint_and_weight = SkinVertexWeights(weights_address).w[index];
     vec4 weight = fract(joint_and_weight);
-    const vec4 joint = clamp(floor(joint_and_weight), vec4(0.0), vec4(float(row.joints - 1u)));
+    const vec4 joint = clamp(floor(joint_and_weight), vec4(0.0), vec4(float(joints - 1u)));
     weight /= weight.x + weight.y + weight.z + weight.w;
-    SkinJoints palette = SkinJoints(row.palette);
+    SkinJoints palette = SkinJoints(palette_address);
     rotation = mat3(0.0);
     translation = vec3(0.0);
     for (int k = 0; k < 4; ++k)
@@ -198,6 +204,11 @@ void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
             translation += vec3(j.c0.w, j.c1.w, j.c2.w) * weight[k];
         }
     }
+}
+
+void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
+{
+    skin_vertex(row.weights, row.palette, row.joints, index, rotation, translation);
 }
 #else
 // ---- a particle row (flags bit 4): one row a particle in the arrays (positions: the centre in agent space, w > 0.5: a ribbon piece; normals: the velocity of a follow-velocity particle or the
