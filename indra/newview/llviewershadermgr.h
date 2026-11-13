@@ -332,7 +332,6 @@ extern LLShaderProgram         gRlvSphereProgram;
 // [/RLVa:KB]
 
 // Deferred materials shaders
-extern LLShaderProgram         gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
 
 extern LLShaderProgram         gDeferredPBRAlphaProgram;
 

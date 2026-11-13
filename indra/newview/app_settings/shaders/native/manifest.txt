@@ -265,3 +265,25 @@ override | GLTF PBR Metallic Roughness Shader unlit multiuv | gltf_scene.vert | 
 override | GLTF PBR Metallic Roughness Shader blend unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
 override | GLTF PBR Metallic Roughness Shader rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on
 override | GLTF PBR Metallic Roughness Shader blend rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
+# SMAA (the anti-aliasing option): three passes in four presets, the stock library text in lib/smaa.glsl (PLAN-native-only-end-state.md)
+override | SMAA Edge Detection (Low) | smaa_edge.vert | smaa_edge.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_LOW=1 | default on
+override | SMAA Blending Weights (Low) | smaa_weights.vert | smaa_weights.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_LOW=1 | default on
+override | SMAA Neighborhood Blending (Low) | smaa_blend.vert | smaa_blend.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_LOW=1 | default on
+override | SMAA Edge Detection (Medium) | smaa_edge.vert | smaa_edge.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_MEDIUM=1 | default on
+override | SMAA Blending Weights (Medium) | smaa_weights.vert | smaa_weights.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_MEDIUM=1 | default on
+override | SMAA Neighborhood Blending (Medium) | smaa_blend.vert | smaa_blend.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_MEDIUM=1 | default on
+override | SMAA Edge Detection (High) | smaa_edge.vert | smaa_edge.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_HIGH=1 | default on
+override | SMAA Blending Weights (High) | smaa_weights.vert | smaa_weights.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_HIGH=1 | default on
+override | SMAA Neighborhood Blending (High) | smaa_blend.vert | smaa_blend.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_HIGH=1 | default on
+override | SMAA Edge Detection (Ultra) | smaa_edge.vert | smaa_edge.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_ULTRA=1 | default on
+override | SMAA Blending Weights (Ultra) | smaa_weights.vert | smaa_weights.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_ULTRA=1 | default on
+override | SMAA Neighborhood Blending (Ultra) | smaa_blend.vert | smaa_blend.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_ULTRA=1 | default on
+# the PBR terrain's paint bake, one line for each bit depth of the paint map (the name is made by llformat("%o", bit depth): the octal of the depth; the precision is (1 << depth) - 1)
+override | Terrain Bake Shader RGB1 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=1 | default on
+override | Terrain Bake Shader RGB2 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=3 | default on
+override | Terrain Bake Shader RGB3 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=7 | default on
+override | Terrain Bake Shader RGB4 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=15 | default on
+override | Terrain Bake Shader RGB5 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=31 | default on
+override | Terrain Bake Shader RGB6 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=63 | default on
+override | Terrain Bake Shader RGB7 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=127 | default on
+override | Terrain Bake Shader RGB10 | terrain_bake.vert | terrain_bake.frag | post | define TERRAIN_PAINT_PRECISION=255 | default on

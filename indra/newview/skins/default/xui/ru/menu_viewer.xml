@@ -601,7 +601,6 @@
 			<menu_item_check label="Прорисовка присоединенных источников света" name="Render Attached Lights"/>
 			<menu_item_check label="Прорисовка присоединенных частиц" name="Render Attached Particles"/>
 			<menu_item_check label="Сбор буферов вершин шрифтов" name="Collect Font Vertex Buffers"/>
-			<menu_item_check label="Включить кэш шейдеров" name="Enable Shader Cache"/>
 			<menu_item_call label="Очистить кэш шейдеров" name="Shader Cache Clear"/>
 			<menu_item_call label="Восстановить местность" name="Rebuild Terrain"/>
 		</menu>

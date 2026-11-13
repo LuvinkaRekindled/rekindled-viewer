@@ -203,11 +203,9 @@ void LLShaderProgram::dumpStats(boost::json::object& stats)
     auto& files = filesit->value().as_array();
     LL_INFOS() << "=============================================" << LL_ENDL;
     LL_INFOS() << mName << LL_ENDL;
-    for (U32 i = 0; i < mShaderFiles.size(); ++i)
-    {
-        LL_INFOS() << mShaderFiles[i].first << LL_ENDL;
-        files.emplace_back(mShaderFiles[i].first);
-    }
+    LL_INFOS() << mNativeVertex << " " << mNativeFragment << LL_ENDL;
+    files.emplace_back(mNativeVertex);
+    files.emplace_back(mNativeFragment);
     LL_INFOS() << "=============================================" << LL_ENDL;
 
     constexpr float  mega = 1'000'000.f;
@@ -352,7 +350,6 @@ LLShaderProgram::~LLShaderProgram()
 
 void LLShaderProgram::unload()
 {
-    mShaderFiles.clear();
     mDefines.clear();
     mFeatures = LLShaderFeatures();
 
@@ -368,7 +365,6 @@ void LLShaderProgram::unloadInternal()
     mTexture.clear();
     mUniform.clear();
 
-    mAttachedObjects.clear();
     mProgramObject = 0;
 
     if (mTimerQuery)
@@ -910,9 +906,9 @@ bool LLShaderProgram::createShader()
     }
     mLightHash = 0xFFFFFFFF;
 
-    if (mShaderFiles.empty() && mNativeFragment.empty())
+    if (mNativeFragment.empty())
     {
-        LL_WARNS("ShaderLoading") << "program " << mName << " has no stock files and no native source (a converted family needs its line in native/manifest.txt)" << LL_ENDL;
+        LL_WARNS() << "program " << mName << " has no native source (it needs its line in native/manifest.txt)" << LL_ENDL;
         return false;
     }
 
@@ -934,32 +930,6 @@ bool LLShaderProgram::createShader()
 
     mUsingBinaryProgram = false;
 
-    if (!mUsingBinaryProgram && mNativeFragment.empty())
-    {
-
-        //compile new source
-        vector< pair<string, ShaderStage> >::iterator fileIter = mShaderFiles.begin();
-        for (; fileIter != mShaderFiles.end(); fileIter++)
-        {
-            U32 shaderhandle = LLShaderMgr::instance()->loadShaderFile((*fileIter).first, mShaderLevel, (*fileIter).second, &mDefines, mFeatures.mIndexedTextureChannels);
-            LL_DEBUGS("ShaderLoading") << "SHADER FILE: " << (*fileIter).first << " mShaderLevel=" << mShaderLevel << LL_ENDL;
-            if (shaderhandle)
-            {
-                attachObject(shaderhandle);
-            }
-            else
-            {
-                success = false;
-            }
-        }
-    }
-
-    // Attach existing objects
-    if (mNativeFragment.empty() && !LLShaderMgr::instance()->attachShaderFeatures(this))
-    {
-        unloadInternal();
-        return false;
-    }
     // Map attributes and uniforms
     if (success)
     {
@@ -1091,96 +1061,6 @@ bool LLShaderProgram::createShader()
     return success;
 }
 
-
-bool LLShaderProgram::attachVertexObject(std::string object_path)
-{
-    // <FS> S6.6: a pull program (LL_VERTEX_PULL) takes the library vertex shaders that declare attributes (the avatar skin function reads `weight`) in their rewritten form: loaded once under their own key
-    if (mDefines.find("LL_VERTEX_PULL") != mDefines.end() && (object_path == "avatar/avatarSkinV.glsl" || object_path == "objects/indexedTextureV.glsl"))
-    {
-        const std::string key = object_path + "#pull";
-        LLShaderMgr* mgr = LLShaderMgr::instance();
-        if (mgr->mVertexShaderObjects.count(key) == 0)
-        {
-            std::map<std::string, std::string> defines;
-            defines["LL_VERTEX_PULL"] = "1";
-            S32 level = 1;
-            const auto original = mgr->mVertexShaderObjects.find(object_path);
-            const bool had_original = original != mgr->mVertexShaderObjects.end();
-            const U32 original_handle = had_original ? original->second : 0;
-            const U32 object = mgr->loadShaderFile(object_path, level, ShaderStage::Vertex, &defines, 0);      // (it registers the object under the file name: put the plain one back)
-            if (had_original)
-            {
-                mgr->mVertexShaderObjects[object_path] = original_handle;
-            }
-            else
-            {
-                mgr->mVertexShaderObjects.erase(object_path);
-            }
-            if (object)
-            {
-                mgr->mVertexShaderObjects[key] = object;
-            }
-        }
-        if (mgr->mVertexShaderObjects.count(key) > 0)
-        {
-            mAttachedObjects.push_back(mgr->mVertexShaderObjects[key]);
-            return true;
-        }
-    }
-    if (LLShaderMgr::instance()->mVertexShaderObjects.count(object_path) > 0)
-    {
-        mAttachedObjects.push_back(LLShaderMgr::instance()->mVertexShaderObjects[object_path]);
-        return true;
-    }
-    else
-    {
-        LL_SHADER_LOADING_WARNS() << "Attempting to attach shader object: '" << object_path << "' that hasn't been compiled." << LL_ENDL;
-        return false;
-    }
-}
-
-bool LLShaderProgram::attachFragmentObject(std::string object_path)
-{
-    if(mUsingBinaryProgram)
-        return true;
-
-    if (LLShaderMgr::instance()->mFragmentShaderObjects.count(object_path) > 0)
-    {
-        mAttachedObjects.push_back(LLShaderMgr::instance()->mFragmentShaderObjects[object_path]);
-        return true;
-    }
-    else
-    {
-        LL_SHADER_LOADING_WARNS() << "Attempting to attach shader object: '" << object_path << "' that hasn't been compiled." << LL_ENDL;
-        return false;
-    }
-}
-
-void LLShaderProgram::attachObject(U32 object)
-{
-    if(mUsingBinaryProgram)
-        return;
-
-    if (object != 0)
-    {
-        mAttachedObjects.push_back(object);
-    }
-    else
-    {
-        LL_SHADER_LOADING_WARNS() << "Attempting to attach non existing shader object. " << LL_ENDL;
-    }
-}
-
-void LLShaderProgram::attachObjects(U32* objects, S32 count)
-{
-    if(mUsingBinaryProgram)
-        return;
-
-    for (S32 i = 0; i < count; i++)
-    {
-        attachObject(objects[i]);
-    }
-}
 
 bool LLShaderProgram::mapAttributes()
 {
@@ -1561,33 +1441,7 @@ bool LLShaderProgram::link(bool suppress_errors)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    // the attached shader objects are compiled together into one program (the build runs on the render thread, which owns Vulkan)
-    LLShaderMgr* mgr = LLShaderMgr::instance();
-    std::vector<LLVk::StageSource> stages;
-    for (U32 object : mAttachedObjects)
-    {
-        auto it = mgr->mRecordedShaders.find(object);
-        if (it == mgr->mRecordedShaders.end())
-        {
-            continue;
-        }
-        LLVk::StageSource s;
-        s.mName = it->second.mFile;
-        s.mSource = it->second.mSource;
-        switch (it->second.mType)
-        {
-        case ShaderStage::Vertex: s.mStage = LLVk::StageSource::Vertex; break;
-        case ShaderStage::Fragment: s.mStage = LLVk::StageSource::Fragment; break;
-        case ShaderStage::Geometry: s.mStage = LLVk::StageSource::Geometry; break;
-        default: continue;
-        }
-        stages.push_back(std::move(s));
-    }
-    LLVk::ShaderEnv env;
-    env.mAttributeNames = mgr->mReservedAttribs;
-    env.mUniformBlockNames = { "ReflectionProbes", "GLTFJoints", "GLTFNodes", "GLTFMaterials" };
-    const char* dump = getenv("LL_VK_SHADER_DUMP_DIR");
-
+    // the native source (llvknative.h) is compiled into one program (the build runs on the render thread, which owns Vulkan)
     LLVk::Program* program = nullptr;
     std::string error;
     auto build = [&]()
@@ -1599,20 +1453,11 @@ bool LLShaderProgram::link(bool suppress_errors)
             return;
         }
         LLVk::ProgramInfo info;
-        if (!mNativeFragment.empty())
+        // <FS> every native program is built with the viewer's global defines first and its own after them, as the swapped in programs are (llvknative.cpp build)
+        std::vector<std::pair<std::string, std::string>> native_defines = LLVk::nativeGlobalDefinesCopy();
+        native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
+        if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error, mNativeGeometry))
         {
-            // <FS> every native program is built with the viewer's global defines first and its own after them, as the swapped in programs are (llvknative.cpp build). The programs named in C++ (Native Sun
-            // Lightmap Half, Native Light Upsample) did not get them until step 4 of the stock carrier removal made `sun_shadow()` depend on SUN_SHADOW: without it the half resolution sun lightmap had no shadow
-            std::vector<std::pair<std::string, std::string>> native_defines = LLVk::nativeGlobalDefinesCopy();
-            native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
-            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error, mNativeGeometry))
-            {
-                return;
-            }
-        }
-        else if (!LLVk::compileProgram(mName, stages, env, info, dump ? dump : ""))
-        {
-            error = info.mError;
             return;
         }
         std::unique_ptr<LLVk::Program> made(new LLVk::Program);
@@ -1621,15 +1466,12 @@ bool LLShaderProgram::link(bool suppress_errors)
             error = "the program could not be created";
             return;
         }
-        if (!mNativeFragment.empty())
-        {
-            made->setNativeIdx(-1);         // <FS> a native only program is not replaced at the draw (nativeOverride)
-        }
+        made->setNativeIdx(-1);         // <FS> a native only program is not replaced at the draw (nativeOverride)
         program = made.release();
     };
-    if (stages.empty() && mNativeFragment.empty())
+    if (mNativeFragment.empty())
     {
-        error = "no shader objects attached";
+        error = "no native source";
     }
     else if (LLVkAsync::gEnabled)
     {
@@ -1754,14 +1596,8 @@ void LLShaderProgram::dumpProgramCensus()
     U32 count = 0;
     for (const LLShaderProgram* p : sInstances)
     {
-        std::string files;
-        for (const auto& f : p->mShaderFiles)
-        {
-            files += files.empty() ? "" : ";";
-            files += f.first;
-        }
         LL_INFOS("ProgramCensus") << "program | " << (p->mName.empty() ? std::string("(unnamed)") : p->mName) << " | loaded " << (p->mProgramObject != 0 ? 1 : 0) << " | binds " << p->mCensusBinds
-            << " | level " << p->mShaderLevel << " | files " << files << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << (p->mNativeGeometry.empty() ? "" : ";" + p->mNativeGeometry) << LL_ENDL;
+            << " | level " << p->mShaderLevel << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << (p->mNativeGeometry.empty() ? "" : ";" + p->mNativeGeometry) << LL_ENDL;
         ++count;
     }
     LL_INFOS("ProgramCensus") << "programs loaded " << count << LL_ENDL;
@@ -2814,11 +2650,8 @@ LLUUID LLShaderProgram::hash()
     hash_obj.update(mName);
     hash_obj.update(&mShaderGroup, sizeof(mShaderGroup));
     hash_obj.update(&mShaderLevel, sizeof(mShaderLevel));
-    for (const auto& shdr_pair : mShaderFiles)
-    {
-        hash_obj.update(shdr_pair.first);
-        hash_obj.update(&shdr_pair.second, sizeof(ShaderStage));
-    }
+    hash_obj.update(mNativeVertex);
+    hash_obj.update(mNativeFragment);
     for (const auto& define_pair : mDefines)
     {
         hash_obj.update(define_pair.first);

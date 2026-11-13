@@ -371,52 +371,21 @@ public:
 
     virtual void initAttribsAndUniforms(void);
 
-    bool attachShaderFeatures(LLShaderProgram * shader);
-    U32 loadShaderFile(const std::string& filename, S32 & shader_level, ShaderStage type, std::map<std::string, std::string>* defines = NULL, S32 texture_index_channels = -1);
-
     // Implemented in the application to actually point to the shader directory.
     virtual std::string getShaderDirPrefix(void) = 0; // Pure Virtual
 
     // Implemented in the application to actually update out of date uniforms for a particular shader
     virtual void updateShaderUniforms(LLShaderProgram * shader) = 0; // Pure Virtual
 
-    void initShaderCache(bool enabled, const LLUUID& old_cache_version, const LLUUID& current_cache_version, bool second_instance);
-    void clearShaderCache();
-    void persistShaderCacheMetadata();
+    void clearShaderCache();       // (removes the cache directory of the old GL program binaries, if one is left on the disk)
 
 
 public:
-    // Map of shader names to compiled
-    std::map<std::string, U32> mVertexShaderObjects;
-    std::map<std::string, U32> mFragmentShaderObjects;
-
     //global (reserved slot) shader parameters
     std::vector<std::string> mReservedAttribs;
 
     std::vector<std::string> mReservedUniforms;
 
-    struct ProgramBinaryData
-    {
-        S32 mBinaryLength = 0;
-        S32 mBinaryFormat = 0;
-        F32 mLastUsedTime = 0.0;
-    };
-    std::map<LLUUID, ProgramBinaryData> mShaderBinaryCache;
-    LLUUID mShaderCacheVersion;
-    bool mShaderCacheEnabled = false;
-    std::string mShaderCacheDir;
-
-    // <FS> Vulkan shader check (set LL_VK_SHADER_CHECK=1): remembers the final GLSL of every shader object so
-    // each program can also be compiled through the Vulkan path once it has linked. Disables the shader cache.
-    struct RecordedShader
-    {
-        ShaderStage mType = ShaderStage::Vertex;
-        std::string mFile;
-        std::string mSource;
-    };
-    bool mRecordShaderSources = false;
-    U32 mNextShaderObject = 0;       // a shader object is a recorded source text (mRecordedShaders) under a handle allocated here
-    std::map<U32, RecordedShader> mRecordedShaders;
 
 protected:
 

@@ -45,7 +45,6 @@ set(llrender_SOURCE_FILES
     llvkformat.cpp
     llvkrenderer.cpp
     llvkrt.cpp
-    llvkshader.cpp
     llvknative.cpp
     llvkstate.cpp
     llvkvma.cpp
