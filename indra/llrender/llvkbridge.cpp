@@ -16,6 +16,8 @@ bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
 std::string LLVkBridge::accelCensus() { return std::string(); }
 bool LLVkBridge::readbackAffordable() { return true; }
 bool LLVkBridge::ensureReady() { return false; }
+std::string LLVkBridge::startupFailureMessage() { return std::string(); }
+void LLVkBridge::setStartupFailureHandler(void (*)()) {}
 void LLVkBridge::setMainWindow(void*) {}
 bool LLVkBridge::describeDevice(DeviceInfo&) { return false; }
 bool LLVkBridge::inFrame() { return false; }
@@ -137,6 +139,7 @@ struct MirrorState
 {
     bool mReady = false;
     bool mFailed = false;
+    std::string mFailureMessage;    // <FS> what the user was told when Vulkan could not start
     bool mInFrame = false;
     bool mHold = false;
     bool mOffscreen = false;        // the open frame has no swapchain image (work recorded after the present)
@@ -349,9 +352,32 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     return true;
 }
 
-bool LLVkBridge::ensureReady()
+static void (*sStartupFailureHandler)() = nullptr;
+
+void LLVkBridge::setStartupFailureHandler(void (*handler)())
+{
+    sStartupFailureHandler = handler;
+}
+
+// <FS> what the user is told when Vulkan cannot start: the reasons the Vulkan context collected, and what Rekindled needs
+static std::string startup_failure_text(const std::string& detail)
+{
+    return "Rekindled cannot start: the graphics of this computer could not be set up.\n\n" + detail + "\n"
+        "Rekindled needs a graphics card and driver with Vulkan 1.3 and these features: dynamic rendering, descriptor indexing (bindless textures), multi-draw indirect and buffer device "
+        "addresses. Graphics cards from about 2016 on usually have them (for example GeForce GTX 900 series and newer, Radeon RX 400 series and newer, Intel graphics of the 6th generation "
+        "Core and newer), with an up to date graphics driver.\n\n"
+        "If your card is that recent, please update the graphics driver and start again. The same details are in the log file.";
+}
+
+std::string LLVkBridge::startupFailureMessage()
 {
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    return sMirror.mFailureMessage;
+}
+
+bool LLVkBridge::ensureReady()
+{
+    std::unique_lock<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     if (sMirror.mReady)
     {
         return true;
@@ -366,9 +392,27 @@ bool LLVkBridge::ensureReady()
         || !sMirror.mSwapchain.create(ctx.getSurface(), sMirror.mWindow))
     {
         LL_WARNS("VkMirror") << "Vulkan initialisation failed: there is no other renderer" << LL_ENDL;
+        const std::string detail = ctx.failureReason();
         sMirror.mFailed = true;
         shutdown();
         sMirror.mFailed = true;
+        if (sMirror.mFailureMessage.empty())
+        {
+            // <FS> the first failure: tell the user why (once; the app leaves through its normal failure path when it gets back to init(), see LLAppViewer::init)
+            sMirror.mFailureMessage = startup_failure_text(detail.empty() ? std::string("The graphics device could not be set up (the details are in the log file).\n") : detail);
+            LL_WARNS("VkMirror") << sMirror.mFailureMessage << LL_ENDL;
+            const std::string message = sMirror.mFailureMessage;
+            lock.unlock();
+            static const bool no_box = getenv("LL_VK_NO_MESSAGE_BOX") != nullptr;      // (for tests that must not wait for a person)
+            if (!no_box)
+            {
+                OSMessageBox(message, "Rekindled cannot start", OSMB_OK);
+            }
+            if (sStartupFailureHandler)
+            {
+                sStartupFailureHandler();       // (the app leaves: it does not return)
+            }
+        }
         return false;
     }
     sMirror.mReady = true;
