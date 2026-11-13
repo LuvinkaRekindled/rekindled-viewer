@@ -229,4 +229,15 @@ vec4 applyWaterFogViewLinearNoClip(vec3 pos, vec4 color)
 
     return color;
 }
+
+// the same for a point that may be above the water plane: there the air is not water, nothing is added
+vec4 applyWaterFogViewLinear(vec3 pos, vec4 color)
+{
+    if (dot(pos, waterPlane.xyz) + waterPlane.w > 0.0)
+    {
+        return color;
+    }
+
+    return applyWaterFogViewLinearNoClip(pos, color);
+}
 #endif
