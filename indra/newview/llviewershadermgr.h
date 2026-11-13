@@ -214,8 +214,6 @@ extern LLShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapsho
 extern LLShaderProgram         gDeferredImpostorProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseProgram;
-extern LLShaderProgram         gDeferredTerrainProgram;
-extern LLShaderProgram         gDeferredTreeProgram;
 extern LLShaderProgram         gDeferredMultiLightProgram;
 extern LLShaderProgram         gDeferredMultiSpotLightProgram;
 extern LLShaderProgram         gDeferredSunProgram;
@@ -244,15 +242,12 @@ extern LLShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
 extern bool                    gAlphaUberMatReady;
 extern bool                    gAlphaUberMatSkinReady;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
-extern bool                    gTerrainPullReady;
 extern LLShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
-extern bool                    gTreePullReady;
 // <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none
 LLShaderProgram* ll_pull_twin(LLShaderProgram* src);
 LLShaderProgram* ll_pull_or(LLShaderProgram* src);          // the twin when there is one, else src
 bool ll_is_pull_twin(const LLShaderProgram* program);       // a pull twin (what is bound decides how a draw is made)
 extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
-extern bool                    gTerrainPbrPullReady;
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
@@ -385,5 +380,4 @@ enum TerrainPaintType : U32
     TERRAIN_PAINT_TYPE_PBR_PAINTMAP         = 1,
     TERRAIN_PAINT_TYPE_COUNT                = 2,
 };
-extern LLShaderProgram         gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 #endif
