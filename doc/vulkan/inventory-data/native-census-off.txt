@@ -94,7 +94,6 @@ Copy Depth Shader | family post | uses 32387 | family_off 0 | not_fit 0 | rt 0 |
 Reflection Mip Shader | family post | uses 5866 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
 Reflection Mip Shader | family post | uses 20531 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
 Radiance Gen Shader | family post | uses 10248 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
-Hero Radiance Gen Shader | family post | uses 0 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
 Irradiance Gen Shader | family post | uses 1464 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
 UI Shader | family post | uses 3648095 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
 Haze Shader | family post | uses 8830 | family_off 0 | not_fit 0 | rt 0 | not_ready 0 | outputs 0
