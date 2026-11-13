@@ -1391,15 +1391,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
         const std::string glow_noise_label = use_glow_noise ? " (+Noise)" : "";
 
         gGlowExtractProgram.mName = llformat("Glow Extract Shader (Post)%s", glow_noise_label.c_str());
-        gGlowExtractProgram.mShaderFiles.clear();
-        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", ShaderStage::Vertex));
-        gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gGlowExtractProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
-
-        if (use_glow_noise)
-        {
-            gGlowExtractProgram.addPermutation("HAS_NOISE", "1");
-        }
 
         success = gGlowExtractProgram.createShader();
         if (!success)
@@ -3736,11 +3729,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgram.mName = "Exposure";
         gExposureProgram.mFeatures.hasSrgb = true;
         gExposureProgram.mFeatures.isDeferred = true;
-        gExposureProgram.mShaderFiles.clear();
-        gExposureProgram.clearPermutations();
-        gExposureProgram.addPermutation("USE_LAST_EXPOSURE", "1");
-        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gExposureProgram.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gExposureProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgram.createShader();
         llassert(success);
@@ -3751,10 +3740,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gExposureProgramNoFade.mName = "Exposure (no fade)";
         gExposureProgramNoFade.mFeatures.hasSrgb = true;
         gExposureProgramNoFade.mFeatures.isDeferred = true;
-        gExposureProgramNoFade.mShaderFiles.clear();
-        gExposureProgramNoFade.clearPermutations();
-        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gExposureProgramNoFade.mShaderFiles.push_back(make_pair("deferred/exposureF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gExposureProgramNoFade.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgramNoFade.createShader();
         llassert(success);
@@ -4253,9 +4239,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredPostNoDoFProgram.mName = "Deferred Post NoDoF Shader";
         gDeferredPostNoDoFProgram.mFeatures.isDeferred = true;
-        gDeferredPostNoDoFProgram.mShaderFiles.clear();
-        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostNoDoFProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostNoDoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFProgram.createShader();
         llassert(success);
@@ -4265,13 +4249,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredPostNoDoFNoiseProgram.mName = "Deferred Post NoDoF Noise Shader";
         gDeferredPostNoDoFNoiseProgram.mFeatures.isDeferred = true;
-        gDeferredPostNoDoFNoiseProgram.mShaderFiles.clear();
-        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-        gDeferredPostNoDoFNoiseProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoDoFF.glsl", ShaderStage::Fragment));
-
-        gDeferredPostNoDoFNoiseProgram.clearPermutations();
-        gDeferredPostNoDoFNoiseProgram.addPermutation("HAS_NOISE", "1");
-
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostNoDoFNoiseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFNoiseProgram.createShader();
         llassert(success);
@@ -4689,9 +4667,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gGlowCombineProgram.mName = "Glow Combine Shader";
-        gGlowCombineProgram.mShaderFiles.clear();
-        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineV.glsl", ShaderStage::Vertex));
-        gGlowCombineProgram.mShaderFiles.push_back(make_pair("interface/glowcombineF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
         gGlowCombineProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGlowCombineProgram.createShader();
         if (success)

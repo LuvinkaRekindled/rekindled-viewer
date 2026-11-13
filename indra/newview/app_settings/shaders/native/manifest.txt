@@ -147,3 +147,10 @@ override | Deferred Light Pull Shader | light_volume.vert | light_point.frag | l
 override | Deferred SpotLight Pull Shader | light_volume.vert | light_spot.frag | light | define LIGHT_VOLUME=1 | define LIGHT_SPOT=1 | default on
 override | Deferred MultiLight Shader | fullscreen.vert | light_multi.frag | light | define LIGHT_MULTI=1 | default on
 override | Deferred MultiSpotLight Shader | fullscreen.vert | light_spot.frag | light | define LIGHT_MULTI_SPOT=1 | default on
+override | Glow Combine Shader | fullscreen.vert | glow_combine.frag | post | default on
+override | Glow Extract Shader (Post) | fullscreen.vert | glow_extract.frag | post | default on
+override | Glow Extract Shader (Post) (+Noise) | fullscreen.vert | glow_extract.frag | post | define HAS_NOISE=1 | default on
+override | Exposure | fullscreen.vert | exposure.frag | post | define USE_LAST_EXPOSURE=1 | default on
+override | Exposure (no fade) | fullscreen.vert | exposure.frag | post | default on
+override | Deferred Post NoDoF Shader | fullscreen.vert | post_nodof.frag | post | default on
+override | Deferred Post NoDoF Noise Shader | fullscreen.vert | post_nodof.frag | post | define HAS_NOISE=1 | default on
