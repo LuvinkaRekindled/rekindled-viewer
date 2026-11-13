@@ -339,6 +339,7 @@ public:
     // a native program (llvknative.h): written for Vulkan from scratch, read from the native shader directory, no counterpart among the viewer's translated programs. Set the fragment file (and the vertex file)
     // instead of mShaderFiles; the defines become `#define NAME VALUE` in front of the files.
     std::string mNativeVertex, mNativeFragment;
+    bool mNativeFromManifest = false;           // <FS> stage 4: the native source was taken from the manifest line of this program's name (a converted family), not set by the shader manager
     std::vector< std::pair< std::string, std::string > > mNativeDefines;
     std::string mName;
     typedef std::map<std::string, std::string> defines_map_t; //NOTE: this must be an ordered map to maintain hash consistency

@@ -886,6 +886,22 @@ bool LLShaderProgram::createShader()
     sInstances.insert(this);
     mCensusBinds = 0;
 
+#if defined(LL_VULKAN)
+    if (mNativeFragment.empty() || mNativeFromManifest)
+    {
+        // <FS> stage 4 step 1: a program of a converted family is built from its manifest line (no stock files behind it)
+        std::string native_vertex, native_fragment;
+        std::vector<std::pair<std::string, std::string>> native_defines;
+        if (LLVk::nativeOnlyLine(mName, native_vertex, native_fragment, native_defines))
+        {
+            mNativeVertex = native_vertex;
+            mNativeFragment = native_fragment;
+            mNativeDefines = native_defines;
+            mNativeFromManifest = true;
+        }
+    }
+#endif
+
     //reloading, reset matrix hash values
     for (U32 i = 0; i < LLRender::NUM_MATRIX_MODES; ++i)
     {
@@ -893,7 +909,11 @@ bool LLShaderProgram::createShader()
     }
     mLightHash = 0xFFFFFFFF;
 
-    llassert_always(!mShaderFiles.empty() || !mNativeFragment.empty());
+    if (mShaderFiles.empty() && mNativeFragment.empty())
+    {
+        LL_WARNS("ShaderLoading") << "program " << mName << " has no stock files and no native source (a converted family needs its line in native/manifest.txt)" << LL_ENDL;
+        return false;
+    }
 
 #if LL_DARWIN
     if(!gDeviceCaps.mIsApple)
@@ -1580,7 +1600,13 @@ bool LLShaderProgram::link(bool suppress_errors)
         LLVk::ProgramInfo info;
         if (!mNativeFragment.empty())
         {
-            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, mNativeDefines, info, nullptr, &error))
+            std::vector<std::pair<std::string, std::string>> native_defines;
+            if (mNativeFromManifest)
+            {
+                native_defines = LLVk::nativeGlobalDefinesCopy();       // <FS> (the viewer's global defines come first, then the line's own: as the swapped in programs are built)
+            }
+            native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
+            if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error))
             {
                 return;
             }
@@ -1595,6 +1621,10 @@ bool LLShaderProgram::link(bool suppress_errors)
         {
             error = "the program could not be created";
             return;
+        }
+        if (!mNativeFragment.empty())
+        {
+            made->setNativeIdx(-1);         // <FS> a native only program is not replaced at the draw (nativeOverride)
         }
         program = made.release();
     };

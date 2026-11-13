@@ -2183,12 +2183,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredBlurLightProgram.mName = "Deferred Blur Light Shader";
         gDeferredBlurLightProgram.mFeatures.isDeferred = true;
 
-        gDeferredBlurLightProgram.mShaderFiles.clear();
-        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightV.glsl", ShaderStage::Vertex));
-        gDeferredBlurLightProgram.mShaderFiles.push_back(make_pair("deferred/blurLightF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family blur): no stock files
         gDeferredBlurLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredBlurLightProgram);
 
         success = gDeferredBlurLightProgram.createShader();
         llassert(success);
@@ -5077,9 +5073,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gCopyProgram.mName = "Copy Shader";
-        gCopyProgram.mShaderFiles.clear();
-        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", ShaderStage::Vertex));
-        gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family copy): no stock files (copyV/copyF stay for the Copy Depth Shader)
         gCopyProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gCopyProgram.createShader();
     }
