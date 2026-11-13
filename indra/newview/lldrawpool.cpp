@@ -593,18 +593,18 @@ LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
 
 // <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch FS_DEFERRED_PACKETS_AB
-// (twin era tools that turned the records off) are gone; what is left is whether the programs and the worker's packet path exist.
+// (twin era tools that turned the records off) are gone, and so are the checks that the pull programs exist (they are required: a program that cannot be made ends the shader load); what is left is the worker's packet path.
 // static
 bool LLRenderPass::deferredPacketsEnabled()
 {
-    return gDeferredDiffusePullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable();
+    return LLVkBridge::shadowAlphaPacketsAvailable();
 }
 
 // <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
 // LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
 bool ll_rigged_packets_enabled()
 {
-    return gDeferredDiffusePullSkinProgram.mProgramObject != 0 && LLRenderPass::deferredPacketsEnabled();
+    return LLRenderPass::deferredPacketsEnabled();
 }
 
 static bool rigged_verify()

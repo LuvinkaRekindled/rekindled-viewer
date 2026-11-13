@@ -109,12 +109,12 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
                     ll_scene_geo_count(4, 1);
                     return;
                 }
-                if (ll_rigged_packets_enabled() && gDeferredMaterialPullSkinProgram[idx].mProgramObject != 0)
+                if (ll_rigged_packets_enabled())
                 {
                     return;     // S4 A1: renderDeferred binds the rigged pull program, and this one only if a draw is left for it
                 }
             }
-            else if (gDeferredMaterialPullProgram[idx].mProgramObject != 0)
+            else
             {
                 ll_scene_geo_count(5, 1);
                 return;
@@ -191,16 +191,13 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     {
         const U32 idx = sMaterialPassShader[pass];
         LLShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
-        if (pull->mProgramObject != 0)
         {
-            {
-                LL_CPU_ZONE("materials: bind pull program");
-                gPipeline.bindDeferredShader(*pull);
-            }
-            {
-                LL_CPU_ZONE("materials: push packets");
-                pushGeometryPackets(type, rigged);
-            }
+            LL_CPU_ZONE("materials: bind pull program");
+            gPipeline.bindDeferredShader(*pull);
+        }
+        {
+            LL_CPU_ZONE("materials: push packets");
+            pushGeometryPackets(type, rigged);
         }
     }
 }
