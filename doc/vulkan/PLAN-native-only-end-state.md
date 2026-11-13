@@ -23,8 +23,15 @@ The only things that stop the work are a look decision that is Adam's (a program
   extension and the draw binds set 3), and the sun shadow of a transparent surface is a ray (lib/shadow_alpha.glsl: `sun_shadow_alpha`, the stock text of lib/rt.glsl; the uniforms the alpha pass sets are the members of
   lib/rt_uniforms.inc in alpha_pass.inc). Their stock files and the dead old alpha programs (Deferred Alpha, Skinned, HUD, the impostor pair, the HUD PBR alpha: bound by no code) are deleted. Sizes of the RT variants:
   alpha lit 24,064 SPIR-V words, PBR alpha 33,398, avatar alpha 23,894 (non-RT: 13,812 as before). Checked: matrix 0 failures (with the ray query profile), RT lap and RT-off lap, no errors, ground 140 / 142. Not checked
-  by eye: the hair and glass shadows in the traced sessions against the stock look (Adam). The programs left: the RT sun lightmap (Deferred Sun Shader), the RT Reflection Shader, Ray Scene Material Debug, the glTF scene
-  program (GLTF PBR Metallic Roughness), and Deferred PBR Alpha Shader (the material preview's attribute program).
+  by eye: the hair and glass shadows in the traced sessions against the stock look (Adam).
+- The sun lightmap and the material debug view DONE (same day): "Deferred Sun Shader" is one native only line (`sun_lightmap.frag`, option rtquery): a session with ray queries traces the sun ray (rt_sun_shadow) and writes the
+  blocker distance to attachment 1 (frag_blocker, LL_RT_QUERY), a session without ambient occlusion (no global HAS_SSAO) builds it as LL_NO_AO; the traced mode (LL_RT_SHADOWS 1, 4 x-ray view, 5 swung sun) is a global define of
+  the native programs of such a session and lib/rt.glsl's `rt_sun_shadow` has the two test views of the stock wrapper. "Ray Scene Material Debug" is `rt_material_debug.frag` (generated from the stock text by
+  <work>\make_material_debug.py, the line defines LL_RT_QUERY). Checked: RT laps (s71 sun 16,683 words, s72 material debug 10,101 words: no errors, ground 141 / 142), RT-off laps s73 (another avatar stood in the view:
+  a ground region differed by 10 levels, the tree shadows the same) and s74 (the same view as before: ground regions within 2 levels, means equal, 141.5). Not checked by eye: the traced sun shadow's penumbra against the stock.
+- LEFT (3 programs): Deferred RT Reflection Shader (stock class3 rtReflectionF + softenLightV: a soften-style pass with its own lighting, probes and projector code: needs the stock lighting library functions as native text),
+  GLTF PBR Metallic Roughness (the glTF scene renderer: 16 variants of 660 lines of stock text, the experimental glTF scene path), Deferred PBR Alpha Shader (the material preview floater's attribute program: pbralphaV +
+  class2 pbralphaF). Then A2 (the 34 library files the loader attaches), B (the old buffer draw symbols), the error fallback shaders (errorF / errorV) and the old loader path itself.
 - B: `pushFaceGeometry` 3, `renderIndexed` 7, `pushBufferVerts` 6, `postSort` 39 (lines).
 - C: errorF / errorV (the old loader's fallback shaders: they go with the old loader path, step 6).
 

@@ -6,7 +6,7 @@
 # `rt` (an option of a line): the program has a stock ray traced variant that still draws in RT mode (the RT track has no native port yet): its stock program stays and the line is swapped in at the draw.
 override | Copy Shader | copy.vert | copy.frag | copy | default on
 override | Deferred Blur Light Shader | fullscreen.vert | blur_light.frag | blur | default on
-override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | require ssao_radius | require ll_ti_shadowMap0 | default on
+override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | default on | rtquery
 # family 1: the lighting resolve (doc/vulkan/SHADERS-F1-lighting.md): every variant of the soften program (the traced glossy reflection is the RT Reflection pass's, read by the resolve as a texture), the screen space reflection of the original marcher only
 # ssrTraceMode is a float (bit 0: the improved trace for water, bit 1: for other surfaces, bit 2: the water trace adaptive); a `when` compares the float's bits: the native resolve only has the original marcher for surfaces, so it stands in for the modes without bit 1: 0, 1, 4, 5
 override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | default on
@@ -241,3 +241,5 @@ override | Impostor Shader | impostor_forward.vert | impostor_forward.frag | pos
 # the forward lit programs of the avatar previews (PLAN-native-only-end-state.md, step 3)
 override | Avatar Shader | forward_lit.vert | forward_lit.frag | post | define FWD_AVATAR=1 | default on
 override | No color alpha mask Shader | forward_lit.vert | forward_lit.frag | post | default on
+# the ray scene material debug view (PLAN-native-only-end-state.md): the line itself defines LL_RT_QUERY (made only in a session with the material table)
+override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag | post | define LL_RT_QUERY=1 | default on
