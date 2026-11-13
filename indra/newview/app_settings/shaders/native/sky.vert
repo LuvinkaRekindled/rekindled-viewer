@@ -1,6 +1,7 @@
 // sky.vert: the sky dome: the haze colour of each vertex from the sky of the pass (rayleigh and mie terms, the sun's light attenuated by the air, the glow around the sun, the colour below the clouds blended
 // in at the horizon) and the dot product with the light for the rainbow. A line for line translation of "Deferred Windlight Sky Shader pull" (deferred/skyV.glsl with LL_VERTEX_PULL; HAS_HDRI is not set for
-// this program: the HDRI sky is another program). Pairs with sky.frag.
+// this program). With HDRI (the manifest line "Environment Map Program pull") the same vertex shader also passes on the clip position and the position relative to the camera (the HAS_HDRI part of the old
+// shader, deferred/skyV.glsl). Pairs with sky.frag.
 
 #include "sky_pass.inc"
 #include "lib/rows.glsl"
@@ -9,6 +10,10 @@
 // Output parameters
 layout(location = 0) out vec3 vary_HazeColor;
 layout(location = 1) out float vary_LightNormPosDot;
+#ifdef HDRI
+layout(location = 2) out vec4 vary_position;
+layout(location = 3) out vec3 vary_rel_pos;
+#endif
 
 void main()
 {
@@ -24,6 +29,11 @@ void main()
 
     // Get relative position
     vec3 rel_pos = position.xyz - camPosLocal.xyz + vec3(0, 50, 0);
+
+#ifdef HDRI
+    vary_rel_pos = rel_pos;         // (before the altitude is clamped, as the old shader)
+    vary_position = pos;            // (the clip position of the old (GL) convention)
+#endif
 
     // Adj position vector to clamp altitude
     if (rel_pos.y > 0.)

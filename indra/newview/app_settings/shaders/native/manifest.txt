@@ -118,6 +118,8 @@ override | UI Shader | ui.vert | ui.frag | post | default on
 override | Haze Shader | fullscreen.vert | haze.frag | post | default on
 override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
 override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
+# the HDRI sky (use_hdri_sky(): an HDRI image is loaded): the same programs with the HDRI branch
+override | Environment Map Program pull | sky.vert | sky.frag | gbuffer | define HDRI=1 | default on
 override | Deferred Windlight Cloud Program pull | clouds.vert | clouds.frag | gbuffer | default on
 override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffer | default on
 override | Deferred Windlight Sun Program pull | sundisc.vert | sundisc.frag | gbuffer | default on

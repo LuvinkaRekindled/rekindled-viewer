@@ -3914,19 +3914,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        // <FS> the HDRI sky (use_hdri_sky(): an HDRI image is loaded): not ported to a native program yet (the native sky shader has no HDRI path), so it keeps its stock files, drawn by attributes
-        gEnvironmentMapProgram.mName = "Environment Map Program";
-        gEnvironmentMapProgram.mShaderFiles.clear();
+        // <FS> the HDRI sky (use_hdri_sky(): an HDRI image is loaded): a native only program (native/manifest.txt, family gbuffer: sky.vert + sky.frag with HDRI), read by address like the sky: no stock files
+        gEnvironmentMapProgram.mName = "Environment Map Program pull";
         gEnvironmentMapProgram.mFeatures.calculatesAtmospherics = true;
         gEnvironmentMapProgram.mFeatures.hasAtmospherics = true;
         gEnvironmentMapProgram.mFeatures.hasGamma = true;
         gEnvironmentMapProgram.mFeatures.hasSrgb = true;
-
-        gEnvironmentMapProgram.clearPermutations();
-        gEnvironmentMapProgram.addPermutation("HAS_HDRI", "1");
-        add_common_permutations(&gEnvironmentMapProgram);
-        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
-        gEnvironmentMapProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
+        gEnvironmentMapProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gEnvironmentMapProgram.mShaderGroup = LLShaderProgram::SG_SKY;
 
