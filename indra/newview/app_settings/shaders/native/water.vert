@@ -5,7 +5,12 @@
 
 #include "water_pass.inc"
 
+// WATER_PULL (the table form of the planes): the position is read from the record's rows, the rest of the program is the same
+#ifdef WATER_PULL
+#include "lib/rows.glsl"
+#else
 layout(location = 0) in vec3 position;
+#endif
 
 layout(location = 0) out vec4 refCoord;         // xyz: the clip position (z pushed by 0.2, the old shader's way of making it a w), w: the big wave's x
 layout(location = 1) out vec4 littleWave;      // the two small waves' coordinates
@@ -14,6 +19,13 @@ layout(location = 3) out vec3 vary_position;
 
 void main()
 {
+#ifdef WATER_PULL
+    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const uint at = row.first + uint(gl_VertexIndex);
+    const uint word = RowWords(row.indices).w[at >> 1];
+    const uint index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
+    const vec3 position = RowVec4(row.positions).v[index].xyz;
+#endif
     const vec4 pos = vec4(position, 1.0);
     vary_position = (modelview_matrix * pos).xyz;
 
