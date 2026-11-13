@@ -181,3 +181,8 @@ override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag |
 # the water family: the water surface seen from above (rt: the ray traced reflection of the water stays in the stock program of a session with ray queries) and from below
 override | Water Shader | water.vert | water.frag | water | default on | rt
 override | Underwater Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | default on
+# the selection highlight: the selected faces, the "paint em red" faces, the normal map and specular map views (the face's own texture coordinate: HL_UV 0, 1, 2) and the parcel owners' tint of the terrain (HL_GBUFFER). The skinned form of Highlight Shader (the old rigged draws of the alpha pool's debug view) stays a stock program
+override | Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | default on
+override | Highlight Normals Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=1 | default on
+override | Highlight Spec Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=2 | default on
+override | Deferred Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | define HL_GBUFFER=1 | default on

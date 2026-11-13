@@ -1633,11 +1633,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredHighlightProgram.mName = "Deferred Highlight Shader";
-        gDeferredHighlightProgram.mShaderFiles.clear();
-        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
-        gDeferredHighlightProgram.mShaderFiles.push_back(make_pair("deferred/highlightF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: highlight_face.vert + highlight_face.frag with HL_GBUFFER; the viewer's HAS_EMISSIVE reaches it as a global define): no stock files
         gDeferredHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        add_common_permutations(&gDeferredHighlightProgram);
         success = gDeferredHighlightProgram.createShader();
     }
 
@@ -4536,7 +4533,9 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
         gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         gHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        // the skinned form (the old rigged draws of the alpha pool's debug view) keeps the stock files; the static program is native only (native/manifest.txt, family post: highlight_face.vert + highlight_face.frag)
         success = make_rigged_variant(gHighlightProgram, gSkinnedHighlightProgram);
+        gHighlightProgram.mShaderFiles.clear();
         success = success && gHighlightProgram.createShader();
     }
 
@@ -4579,9 +4578,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gHighlightNormalProgram.mName = "Highlight Normals Shader";
-        gHighlightNormalProgram.mShaderFiles.clear();
-        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightNormV.glsl", ShaderStage::Vertex));
-        gHighlightNormalProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: highlight_face.vert with HL_UV=1): no stock files
         gHighlightNormalProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gHighlightNormalProgram.createShader();
     }
@@ -4589,9 +4586,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gHighlightSpecularProgram.mName = "Highlight Spec Shader";
-        gHighlightSpecularProgram.mShaderFiles.clear();
-        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightSpecV.glsl", ShaderStage::Vertex));
-        gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post: highlight_face.vert with HL_UV=2): no stock files
         gHighlightSpecularProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gHighlightSpecularProgram.createShader();
     }
