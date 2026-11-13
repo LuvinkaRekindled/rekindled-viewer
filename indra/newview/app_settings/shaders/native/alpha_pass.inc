@@ -71,6 +71,10 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec4 object_plane_t;
 #endif
 
+#ifdef ALPHA_IMPOSTOR
+    int classic_mode;                   // (the impostor render's colour scale: alpha_impostor.frag)
+#endif
+
 #ifdef ALPHA_LIT
     int classic_mode;
     float sky_sunlight_scale;

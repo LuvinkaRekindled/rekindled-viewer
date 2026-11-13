@@ -3083,8 +3083,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 shader->mFeatures.isAlphaLighting = true;
                 shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
-                ok = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", "deferred/alphaPullV.glsl", "deferred/alphaF.glsl",
-                    { { "USE_INDEXED_TEX", "1" }, { "FOR_IMPOSTOR", "1" }, { "HAS_ALPHA_MASK", "1" }, { "USE_VERTEX_COLOR", "1" }, { "LL_BINDLESS_DIFFUSE", "1" } }, rigged, use_sun_shadow);
+                // <FS> a native only program (native/manifest.txt, family alpha): no stock files
+                ok = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", nullptr, nullptr, {}, rigged);
                 if (ok)
                 {
                     shader->mFeatures.calculatesLighting = true;        // (as the ordinary impostor alpha program: the hack that follows its createShader)
