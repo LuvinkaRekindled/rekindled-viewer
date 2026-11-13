@@ -234,9 +234,7 @@ LLShaderProgram            gDeferredTreeShadowProgram;
 LLShaderProgram            gDeferredSkinnedTreeShadowProgram;
 LLShaderProgram            gDeferredAvatarProgram;
 LLShaderProgram            gDeferredAvatarAlphaProgram;
-LLShaderProgram            gDeferredLightProgram;
-LLShaderProgram            gDeferredMultiLightProgram[16];
-LLShaderProgram            gDeferredSpotLightProgram;
+LLShaderProgram            gDeferredMultiLightProgram;
 LLShaderProgram            gDeferredMultiSpotLightProgram;
 LLShaderProgram            gDeferredSunProgram;
 LLShaderProgram            gDeferredSunProbeProgram;
@@ -292,10 +290,8 @@ LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
 LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
 LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
 LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
-LLShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (spotLightF with LL_PROJECTOR_PULL)
-bool                       gSpotPullReady = false;
-LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (pointLightV with LL_LIGHT_PULL)
-bool                       gLightPullReady = false;
+LLShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (native light_volume.vert + light_spot.frag)
+LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (native light_volume.vert + light_point.frag)
 bool                       gPbrOpaquePullReady = false;
 bool                       gPbrOpaquePullSkinReady = false;
 bool                       gDiffuseMaskPullReady = false;
@@ -1459,12 +1455,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTerrainProgram.unload();
         gDeferredTerrainPullProgram.unload();
         gTerrainPullReady = false;
-        gDeferredLightProgram.unload();
-        for (U32 i = 0; i < LL_DEFERRED_MULTI_LIGHT_COUNT; ++i)
-        {
-            gDeferredMultiLightProgram[i].unload();
-        }
-        gDeferredSpotLightProgram.unload();
+        gDeferredMultiLightProgram.unload();
         gDeferredMultiSpotLightProgram.unload();
         gDeferredSunProgram.unload();
         gDeferredBlurLightProgram.unload();
@@ -1520,9 +1511,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDPBROpaquePullProgram.unload();
         gHUDPBROpaquePullReady = false;
         gDeferredLightPullProgram.unload();
-        gLightPullReady = false;
         gDeferredSpotLightPullProgram.unload();
-        gSpotPullReady = false;
         gDeferredPBRAlphaPullProgram.unload();
         gDeferredAlphaPullSkinProgram.unload();
         gDeferredFullbrightAlphaPullSkinProgram.unload();
@@ -2036,89 +2025,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
-    if (success)
+    // <FS> the local light passes (native/manifest.txt, family light): native only programs, no stock files. The point light volumes and the projectors are drawn from one record each (the table of their rows),
+    // the lights that have the camera inside their box on the full screen triangle: one program for any number of point lights (it loops to light_count) and one for a projector.
+    for (LLShaderProgram* shader : { &gDeferredLightPullProgram, &gDeferredSpotLightPullProgram, &gDeferredMultiLightProgram, &gDeferredMultiSpotLightProgram })
     {
-        gDeferredLightProgram.mName = "Deferred Light Shader";
-        gDeferredLightProgram.mFeatures.isDeferred = true;
-        gDeferredLightProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredLightProgram.mFeatures.hasShadows = true;
-        gDeferredLightProgram.mFeatures.hasSrgb = true;
-
-        gDeferredLightProgram.mShaderFiles.clear();
-        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
-        gDeferredLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightF.glsl", ShaderStage::Fragment));
-        gDeferredLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        gDeferredLightProgram.clearPermutations();
-
-        add_common_permutations(&gDeferredLightProgram);
-
-        success = gDeferredLightProgram.createShader();
-        llassert(success);
-    }
-
-    for (U32 i = 0; i < LL_DEFERRED_MULTI_LIGHT_COUNT; i++)
-    {
-        if (success)
+        if (!success)
         {
-            gDeferredMultiLightProgram[i].mName = llformat("Deferred MultiLight Shader %d", i);
-            gDeferredMultiLightProgram[i].mFeatures.isDeferred = true;
-            gDeferredMultiLightProgram[i].mFeatures.hasFullGBuffer = true;
-            gDeferredMultiLightProgram[i].mFeatures.hasShadows = true;
-            gDeferredMultiLightProgram[i].mFeatures.hasSrgb = true;
-
-            gDeferredMultiLightProgram[i].clearPermutations();
-            gDeferredMultiLightProgram[i].mShaderFiles.clear();
-            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", ShaderStage::Vertex));
-            gDeferredMultiLightProgram[i].mShaderFiles.push_back(make_pair("deferred/multiPointLightF.glsl", ShaderStage::Fragment));
-            gDeferredMultiLightProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            gDeferredMultiLightProgram[i].addPermutation("LIGHT_COUNT", llformat("%d", i+1));
-
-            add_common_permutations(&gDeferredMultiLightProgram[i]);
-
-            success = gDeferredMultiLightProgram[i].createShader();
-            llassert(success);
+            break;
         }
-    }
-
-    if (success)
-    {
-        gDeferredSpotLightProgram.mName = "Deferred SpotLight Shader";
-        gDeferredSpotLightProgram.mShaderFiles.clear();
-        gDeferredSpotLightProgram.mFeatures.hasSrgb = true;
-        gDeferredSpotLightProgram.mFeatures.isDeferred = true;
-        gDeferredSpotLightProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredSpotLightProgram.mFeatures.hasShadows = true;
-
-        gDeferredSpotLightProgram.clearPermutations();
-        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
-        gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
-        gDeferredSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredSpotLightProgram);
-
-        success = gDeferredSpotLightProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gDeferredMultiSpotLightProgram.mName = "Deferred MultiSpotLight Shader";
-        gDeferredMultiSpotLightProgram.mFeatures.hasSrgb = true;
-        gDeferredMultiSpotLightProgram.mFeatures.isDeferred = true;
-        gDeferredMultiSpotLightProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredMultiSpotLightProgram.mFeatures.hasShadows = true;
-
-        gDeferredMultiSpotLightProgram.clearPermutations();
-        gDeferredMultiSpotLightProgram.addPermutation("MULTI_SPOTLIGHT", "1");
-        gDeferredMultiSpotLightProgram.mShaderFiles.clear();
-        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", ShaderStage::Vertex));
-        gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
-        gDeferredMultiSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredMultiSpotLightProgram);
-
-        success = gDeferredMultiSpotLightProgram.createShader();
+        shader->mName = shader == &gDeferredLightPullProgram ? "Deferred Light Pull Shader"
+            : shader == &gDeferredSpotLightPullProgram ? "Deferred SpotLight Pull Shader"
+            : shader == &gDeferredMultiLightProgram ? "Deferred MultiLight Shader" : "Deferred MultiSpotLight Shader";
+        shader->mFeatures.isDeferred = true;
+        shader->mFeatures.hasFullGBuffer = true;
+        shader->mFeatures.hasShadows = true;
+        shader->mFeatures.hasSrgb = true;
+        shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = shader->createShader();
         llassert(success);
     }
 
@@ -2968,62 +2891,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             gDiffuseMaskPullSkinReady = make_mask(&gDeferredDiffuseAlphaMaskPullSkinProgram, "Deferred Diffuse Alpha Mask Pull Skin Shader", false, true);
             gFullbrightMaskPullSkinReady = make_mask(&gDeferredFullbrightAlphaMaskPullSkinProgram, "Deferred Fullbright Alpha Mask Pull Skin Shader", true, true);
-        }
-    }
-
-    // <FS> S6 LV1: the point light volumes of the deferred lighting pass from one record: pointLightV / pointLightF with LL_LIGHT_PULL (the light of each box read from a table). Optional.
-    gLightPullReady = false;
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
-    {
-        gDeferredLightPullProgram.mName = "Deferred Light Pull Shader";
-        gDeferredLightPullProgram.mFeatures.isDeferred = true;
-        gDeferredLightPullProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredLightPullProgram.mFeatures.hasShadows = true;
-        gDeferredLightPullProgram.mFeatures.hasSrgb = true;
-        gDeferredLightPullProgram.mShaderFiles.clear();
-        gDeferredLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
-        gDeferredLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightF.glsl", ShaderStage::Fragment));
-        gDeferredLightPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredLightPullProgram.clearPermutations();
-        gDeferredLightPullProgram.addPermutation("LL_LIGHT_PULL", "1");
-        add_common_permutations(&gDeferredLightPullProgram);
-        if (gDeferredLightPullProgram.createShader())
-        {
-            gLightPullReady = true;
-        }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the deferred light pull shader could not be made: the point lights are drawn one at a time" << LL_ENDL;
-            gDeferredLightPullProgram.unload();
-        }
-    }
-
-    // <FS> S6 LV2: the projectors of the lighting pass from one record. Optional.
-    gSpotPullReady = false;
-    if (success && gLightPullReady)
-    {
-        gDeferredSpotLightPullProgram.mName = "Deferred SpotLight Pull Shader";
-        gDeferredSpotLightPullProgram.mFeatures.hasSrgb = true;
-        gDeferredSpotLightPullProgram.mFeatures.isDeferred = true;
-        gDeferredSpotLightPullProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredSpotLightPullProgram.mFeatures.hasShadows = true;
-        gDeferredSpotLightPullProgram.mShaderFiles.clear();
-        gDeferredSpotLightPullProgram.mShaderFiles.push_back(make_pair("deferred/pointLightV.glsl", ShaderStage::Vertex));
-        gDeferredSpotLightPullProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", ShaderStage::Fragment));
-        gDeferredSpotLightPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredSpotLightPullProgram.clearPermutations();
-        gDeferredSpotLightPullProgram.addPermutation("LL_LIGHT_PULL", "1");
-        gDeferredSpotLightPullProgram.addPermutation("LL_PROJECTOR_PULL", "1");
-        gDeferredSpotLightPullProgram.addPermutation("LL_BINDLESS_PROJECTOR", "1");
-        add_common_permutations(&gDeferredSpotLightPullProgram);
-        if (gDeferredSpotLightPullProgram.createShader())
-        {
-            gSpotPullReady = true;
-        }
-        else
-        {
-            LL_WARNS("ShadowPackets") << "the deferred projector pull shader could not be made: the projectors are drawn one at a time" << LL_ENDL;
-            gDeferredSpotLightPullProgram.unload();
         }
     }
 
