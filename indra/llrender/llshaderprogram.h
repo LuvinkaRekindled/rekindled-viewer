@@ -199,10 +199,6 @@ public:
     bool readProfileQuery(bool for_runtime = false, bool force_read = false);
 
     bool createShader();
-    bool attachFragmentObject(std::string object);
-    bool attachVertexObject(std::string object);
-    void attachObject(U32 object);
-    void attachObjects(U32* objects = NULL, S32 count = 0);
     bool mapAttributes();
     bool mapUniforms();
     void mapUniform(S32 index);
@@ -335,9 +331,8 @@ public:
     static U32 sEnvUniformEpoch;
     U32 mEnvUniformEpoch = 0;
     LLShaderFeatures mFeatures;
-    std::vector< std::pair< std::string, ShaderStage > > mShaderFiles;
-    // a native program (llvknative.h): written for Vulkan from scratch, read from the native shader directory, no counterpart among the viewer's translated programs. Set the fragment file (and the vertex file)
-    // instead of mShaderFiles; the defines become `#define NAME VALUE` in front of the files.
+    // a native program (llvknative.h): written for Vulkan, read from the native shader directory (native/manifest.txt names the files and the defines of a program by its name; a program the shader manager names in C++
+    // sets the fragment file and the vertex file here); the defines become `#define NAME VALUE` in front of the files.
     std::string mNativeVertex, mNativeFragment, mNativeGeometry;       // mNativeGeometry: the manifest line's optional geometry stage
     bool mNativeFromManifest = false;           // <FS> stage 4: the native source was taken from the manifest line of this program's name (a converted family), not set by the shader manager
     std::vector< std::pair< std::string, std::string > > mNativeDefines;
@@ -352,7 +347,6 @@ public:
     // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
     LLVk::Program* mVkProgram = nullptr;
     LLVk::Program* mVkProgramPending = nullptr;     // built by link(); becomes mVkProgram once the viewer-side mapping is done (mirrorCreate)
-    std::vector<U32> mAttachedObjects;           // the shader objects (source texts) the program is built from
     // a uniform location is the program's own uniform index (>= 0), or SAMPLER_LOCATION_BASE + the sampler index
     static constexpr S32 SAMPLER_LOCATION_BASE = 0x40000000;
     S32 vkTwinOf(S32 location) const;

@@ -34,24 +34,9 @@
 namespace LLVk
 {
 
-struct StageSource
-{
-    enum Stage { Vertex = 0, Fragment = 1, Geometry = 2 };
-    Stage mStage = Vertex;
-    std::string mName;      // file name, for messages
-    std::string mSource;    // the complete GLSL text the viewer would hand to glShaderSource
-};
-
-struct ShaderEnv
-{
-    std::vector<std::string> mAttributeNames;       // vertex attribute locations, by index
-    std::vector<std::string> mUniformBlockNames;    // named uniform blocks, binding = 1 + index
-};
-
 // How often a loose uniform changes (doc/vulkan/uniform-classes.tsv): each class is a block of its own, copied independently
 enum UniformClass : U8 { UC_PASS = 0, UC_DRAW, UC_MATERIAL, UC_LIGHT, UC_SKIN, UC_COUNT };
 constexpr U32 UC_BINDING[UC_COUNT] = { 0, 5, 6, 7, 8 };         // set 0 binding of each class's block (dynamic uniform buffers, in this order)
-UniformClass uniformClassOf(const std::string& name);
 
 struct LooseUniform
 {
@@ -83,23 +68,17 @@ struct ProgramInfo
     std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
     std::vector<std::string> mAttributeTypes;   // their GLSL types ("vec4", "int", ...)
     std::vector<std::string> mOutputs;          // fragment outputs
-    std::vector<U32> mSpirv[3];                 // indexed by StageSource::Stage
+    std::vector<U32> mSpirv[3];                 // 0 vertex, 1 fragment, 2 geometry
     std::vector<std::pair<U32, U32>> mSpec;     // native programs: specialization constants (constant_id, value), applied to every stage when a pipeline is made
     std::string mError;
 };
 
-// Compile one program. On failure returns false and mError says why. If dump_dir is not empty the
-// rewritten source of a failing stage is written there for inspection.
-bool compileProgram(const std::string& program_name, const std::vector<StageSource>& stages, const ShaderEnv& env,
-                    ProgramInfo& out, const std::string& dump_dir);
-
-// debug: the sampler2D names (in the order the generated debug code numbers them) of a program compiled with the fragment debug wrapper
-const std::vector<std::string>* findDebugSamplers(const std::string& program_name);
-bool debugShadersEnabled();
-
-// Programs compiled by the check path are remembered by name so Vulkan code can use the viewer's real shaders.
-void registerCompiledProgram(const std::string& name, const ProgramInfo& info);
-const ProgramInfo* findCompiledProgram(const std::string& name);
+// LL_VK_DEBUG_SHADERS (environment): the draw state overrides of <work>/vk-debug.txt (llvkworker.cpp)
+inline bool debugShadersEnabled()
+{
+    static const bool enabled = getenv("LL_VK_DEBUG_SHADERS") != nullptr;
+    return enabled;
+}
 
 } // namespace LLVk
 

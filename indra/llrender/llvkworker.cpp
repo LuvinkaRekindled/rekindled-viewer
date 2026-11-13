@@ -1777,23 +1777,6 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         sync_textures(r, *program);
     }
     LLVkBridge::gLastLap = 204;
-    if (debugShadersEnabled() && program->hasUniform("ll_dbg_mode"))
-    {
-        S32 mode = 0, sampler = 0;
-        if (sDbgMode && program->getName().find(sDbgFilter) != std::string::npos)
-        {
-            mode = sDbgMode;
-            if (const std::vector<std::string>* names = findDebugSamplers(program->getName()))
-            {
-                auto sit = std::find(names->begin(), names->end(), sDbgSampler);
-                sampler = sit == names->end() ? 0 : (S32)(sit - names->begin());
-            }
-        }
-        const F32 size[2] = { (F32)gPassState.mCurTargetW, (F32)gPassState.mCurTargetH };
-        program->setInts("ll_dbg_mode", &mode, 1);
-        program->setInts("ll_dbg_sampler", &sampler, 1);
-        program->setFloats("ll_dbg_size", size, 2);
-    }
     if (sStatsEnabled)
     {
         LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATS);

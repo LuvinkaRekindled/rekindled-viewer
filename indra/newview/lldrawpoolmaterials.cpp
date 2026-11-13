@@ -62,67 +62,20 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
         rigged = true;
         pass -= 12;
     }
-    U32 shader_idx[] =
-    {
-        0, //LLRenderPass::PASS_MATERIAL,
-        //1, //LLRenderPass::PASS_MATERIAL_ALPHA,
-        2, //LLRenderPass::PASS_MATERIAL_ALPHA_MASK,
-        3, //LLRenderPass::PASS_MATERIAL_ALPHA_GLOW,
-        4, //LLRenderPass::PASS_SPECMAP,
-        //5, //LLRenderPass::PASS_SPECMAP_BLEND,
-        6, //LLRenderPass::PASS_SPECMAP_MASK,
-        7, //LLRenderPass::PASS_SPECMAP_GLOW,
-        8, //LLRenderPass::PASS_NORMMAP,
-        //9, //LLRenderPass::PASS_NORMMAP_BLEND,
-        10, //LLRenderPass::PASS_NORMMAP_MASK,
-        11, //LLRenderPass::PASS_NORMMAP_GLOW,
-        12, //LLRenderPass::PASS_NORMSPEC,
-        //13, //LLRenderPass::PASS_NORMSPEC_BLEND,
-        14, //LLRenderPass::PASS_NORMSPEC_MASK,
-        15, //LLRenderPass::PASS_NORMSPEC_GLOW,
-    };
-
-    U32 idx = shader_idx[pass];
-
-    mShader = &(gDeferredMaterialProgram[idx]);
-
+    // <FS> the draws of a pass are one scene table record, drawn by renderDeferred with the pull program of the pass (bound there, when something is drawn with it); there is no program of the vertex buffer path
+    // (it was the old Material Shader of the pass, bound only where the records were not available: they are the only way these passes draw, PLAN-twin-removal.md, section 8)
+    mUntouched = false;
     if (rigged)
     {
-        llassert(mShader->mRiggedVariant != nullptr);
-        mShader = mShader->mRiggedVariant;
-    }
-
-    // <FS> S3 G4: the program of a pass is bound (deferred shader setup: lights, shadow maps, probes) only when something is drawn with it. A rigged pass with no draws binds nothing; a static pass
-    // that the packets draw binds its pull program in renderDeferred, and this program only if a draw is left for it
-    mUntouched = false;
-    if (deferredPacketsEnabled())
-    {
-        static const bool lazy = !(getenv("LL_VK_POOL_LAZY") && getenv("LL_VK_POOL_LAZY")[0] == '0');
-        if (lazy)
+        // (the table draws the rigged materials passes in the main view only: pushGeometryPackets returns in any other view, so there is nothing to bind there; the render map is not asked, 2026-11-12)
+        if (!(ll_scene_geo_serving() && ll_scene_geo_main_view()))
         {
-            if (rigged)
-            {
-                // (the table draws the rigged materials passes in the main view only: pushGeometryPackets returns in any other view, so there is nothing to bind there; the render map is not asked, 2026-11-12)
-                if (!(ll_scene_geo_serving() && ll_scene_geo_main_view()))
-                {
-                    mUntouched = true;
-                    ll_scene_geo_count(4, 1);
-                    return;
-                }
-                if (ll_rigged_packets_enabled())
-                {
-                    return;     // S4 A1: renderDeferred binds the rigged pull program, and this one only if a draw is left for it
-                }
-            }
-            else
-            {
-                ll_scene_geo_count(5, 1);
-                return;
-            }
+            mUntouched = true;
+            ll_scene_geo_count(4, 1);
         }
+        return;
     }
-
-    gPipeline.bindDeferredShader(*mShader);
+    ll_scene_geo_count(5, 1);
 }
 
 void LLDrawPoolMaterials::endDeferredPass(S32 pass)
@@ -132,7 +85,7 @@ void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 
     if (!mUntouched)
     {
-        mShader->unbind();      // (unbinds whatever program is current)
+        LLShaderProgram::unbind();      // (the pull program renderDeferred bound)
     }
     mUntouched = false;
 
