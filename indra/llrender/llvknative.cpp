@@ -452,6 +452,7 @@ struct Manager
     std::vector<std::unique_ptr<Def>> mDefs;
     std::vector<std::pair<std::unique_ptr<Program>, U64>> mRetired;     // replaced programs, destroyed some frames later (the GPU may still draw with them)
     bool mReady = false;
+    bool mBuiltAll = false;                                 // LL_VK_NATIVE_BUILD_ALL=1: every line has been built once (the interface comparison of stage 4)
 };
 
 Manager& manager()
@@ -660,6 +661,21 @@ Program* nativeOverride(Program* p)
     {
         load_manifest(m);
     }
+    static const bool build_all = getenv("LL_VK_NATIVE_BUILD_ALL") != nullptr;
+    if (build_all && !m.mBuiltAll)
+    {
+        // <FS> stage 4 step 0: every manifest line is built now (a long first draw, for the interface comparison only)
+        m.mBuiltAll = true;
+        const auto built_at = std::chrono::steady_clock::now();
+        for (auto& line : m.mDefs)
+        {
+            if (!line->mTried)
+            {
+                build(m, *line);
+                line->mChecked = built_at;
+            }
+        }
+    }
     if (idx == -2)
     {
         idx = -1;
@@ -772,6 +788,53 @@ Program* nativeOverride(Program* p)
         LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
     }
     return d.mProgram.get();
+}
+
+std::string interfaceText(const ProgramInfo& info)
+{
+    std::string out = "u ";
+    bool first = true;
+    for (const LooseUniform& u : info.mUniforms)
+    {
+        if (u.mName.compare(0, 6, "ll_ti_") == 0)
+        {
+            continue;
+        }
+        out += (first ? "" : ";") + u.mName + ":" + u.mType + (u.mArraySize ? "[" + std::to_string(u.mArraySize) + "]" : "");
+        first = false;
+    }
+    out += " | s ";
+    first = true;
+    for (const SamplerInfo& s : info.mSamplers)
+    {
+        out += (first ? "" : ";") + s.mName + ":" + s.mType;
+        first = false;
+    }
+    out += " | a ";
+    first = true;
+    for (size_t i = 0; i < info.mAttributes.size(); ++i)
+    {
+        out += (first ? "" : ";") + info.mAttributes[i] + "@" + std::to_string(i < info.mAttributeLocations.size() ? info.mAttributeLocations[i] : 0u);
+        first = false;
+    }
+    out += " | o " + std::to_string(info.mOutputs.size());
+    return out;
+}
+
+void dumpNativeInterfaces()
+{
+    Manager& m = manager();
+    for (const auto& d : m.mDefs)
+    {
+        if (d->mProgram)
+        {
+            LL_INFOS("InterfaceDiff") << "native | " << d->mTarget << " | " << d->mFamily << " | " << d->mVertex << "," << d->mFragment << " | " << interfaceText(d->mProgram->getInfo()) << LL_ENDL;
+        }
+        else
+        {
+            LL_INFOS("InterfaceDiff") << "native-none | " << d->mTarget << " | " << d->mFamily << " | " << (d->mTried ? "build failed" : "never built") << LL_ENDL;
+        }
+    }
 }
 
 // <FS> shader cleanup (stage 4): one log line (tag NativeCensus) for every manifest line: the draws it made and, on the first line of a program, the draws of the old program that did not take the native one,

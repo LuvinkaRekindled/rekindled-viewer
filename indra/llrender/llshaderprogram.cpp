@@ -1689,6 +1689,35 @@ std::string LLShaderProgram::vkUniformAt(U32 cls, U32 offset) const
 void LLShaderProgram::dumpProgramCensus()
 {
     static const bool on = getenv("LL_VK_PROGRAM_CENSUS") != nullptr;
+    static const bool iface = getenv("LL_VK_INTERFACE_DIFF") != nullptr;
+#if defined(LL_VULKAN)
+    if (iface)
+    {
+        // <FS> stage 4 step 0: what each loaded program declares, and (with LL_VK_UNICENSUS=1) which of its uniforms the callers wrote; doc/vulkan/interface-diff.py compares it with the native side
+        U32 shown = 0;
+        for (const LLShaderProgram* p : sInstances)
+        {
+            if (!p->mVkProgram)
+            {
+                continue;
+            }
+            std::string written;
+            for (size_t i = 0; i < p->mCensus.mUniCalls.size(); ++i)
+            {
+                if (p->mCensus.mUniCalls[i] + (i < p->mCensus.mUniChanged.size() ? p->mCensus.mUniChanged[i] : 0u) > 0)
+                {
+                    const std::string* n = p->censusUniformName(i);
+                    written += (written.empty() ? "" : ";") + (n ? *n : std::string("?"));
+                }
+            }
+            LL_INFOS("InterfaceDiff") << "stock | " << (p->mName.empty() ? std::string("(unnamed)") : p->mName) << " | " << LLVk::interfaceText(p->mVkProgram->getInfo())
+                << " | set " << written << LL_ENDL;
+            ++shown;
+        }
+        LL_INFOS("InterfaceDiff") << "stock programs " << shown << LL_ENDL;
+        LLVk::dumpNativeInterfaces();
+    }
+#endif
     if (!on)
     {
         return;

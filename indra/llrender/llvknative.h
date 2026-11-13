@@ -51,6 +51,14 @@ Program* nativeOverride(Program* p);
 // <FS> shader cleanup (stage 4): logs the native draws and the fallbacks by reason (tag NativeCensus); LL_VK_PROGRAM_CENSUS=1
 void dumpNativeCensus();
 
+// <FS> shader cleanup (stage 4, step 0 of DESIGN-stock-carrier-removal.md): the interface of a program as one line of text: the loose uniforms (name:type, arrays name:type[n]; the ll_ti_ slot members left out),
+// the samplers, the vertex inputs and the number of fragment outputs. Used for the stock and the native side of the interface comparison.
+std::string interfaceText(const ProgramInfo& info);
+
+// logs the interface of every built native program, one line each (tag InterfaceDiff, `native | <program> | ...`); LL_VK_INTERFACE_DIFF=1. LL_VK_NATIVE_BUILD_ALL=1 builds every manifest line at the first
+// draw so that the lines no scene reaches have an interface too
+void dumpNativeInterfaces();
+
 } // namespace LLVk
 
 #endif // LL_VULKAN
