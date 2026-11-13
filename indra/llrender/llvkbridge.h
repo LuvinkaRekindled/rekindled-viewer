@@ -46,6 +46,8 @@ namespace LLVkBridge
 
     // initialises Vulkan lazily on first use; returns isReady()
     bool ensureReady();
+    void setStartupFailureHandler(void (*handler)());   // <FS> called once, after the user has been told why Vulkan could not start (ensureReady): the app leaves quietly (no generic video driver text, no fatal error flow)
+    std::string startupFailureMessage();    // <FS> the message the user was shown when Vulkan could not start (empty while it has not failed); the app leaves its start-up through the normal failure path when it is not empty
 
     // LL_VK_NOGL: the viewer has no OpenGL context, so the main window is given here (once it exists) and the picture is presented into it
     void setMainWindow(void* hwnd);

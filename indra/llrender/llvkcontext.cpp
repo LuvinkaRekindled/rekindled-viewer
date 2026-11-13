@@ -386,6 +386,14 @@ const char* missing_feature(const FeatureChain& c)
     if (!c.f2.features.fillModeNonSolid) return "fillModeNonSolid";
     if (!c.f2.features.independentBlend) return "independentBlend";
     if (!c.f2.features.imageCubeArray) return "imageCubeArray";
+    // <FS> the scene table (every draw of the world): bindless sampled images, indirect draws, buffer addresses
+    if (!c.f12.runtimeDescriptorArray) return "descriptor indexing (runtimeDescriptorArray)";
+    if (!c.f12.descriptorBindingPartiallyBound) return "descriptor indexing (descriptorBindingPartiallyBound)";
+    if (!c.f12.descriptorBindingSampledImageUpdateAfterBind) return "descriptor indexing (descriptorBindingSampledImageUpdateAfterBind)";
+    if (!c.f12.shaderSampledImageArrayNonUniformIndexing) return "descriptor indexing (shaderSampledImageArrayNonUniformIndexing)";
+    if (!c.f12.bufferDeviceAddress) return "bufferDeviceAddress";
+    if (!c.f2.features.multiDrawIndirect) return "multiDrawIndirect";
+    if (!c.f2.features.drawIndirectFirstInstance) return "drawIndirectFirstInstance";
     return nullptr;
 }
 
@@ -681,15 +689,31 @@ bool Context::pickDevice()
     vkEnumeratePhysicalDevices(mInstance, &count, devices.data());
 
     S32 best_score = -1;
+    std::string reasons;        // <FS> every device that was turned down and why, for the message the user gets when none is left
+    auto rejected = [&](const char* device, const std::string& why)
+    {
+        LL_INFOS("Vulkan") << "  rejected: " << why << LL_ENDL;
+        reasons += std::string("  ") + device + ": " + why + "\n";
+    };
+    if (devices.empty())
+    {
+        reasons += "  Vulkan reports no graphics device at all (the graphics driver may be missing or too old).\n";
+    }
     for (VkPhysicalDevice dev : devices)
     {
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(dev, &props);
         LL_INFOS("Vulkan") << "device: " << props.deviceName << " (api " << VK_API_VERSION_MAJOR(props.apiVersion) << "."
                            << VK_API_VERSION_MINOR(props.apiVersion) << "." << VK_API_VERSION_PATCH(props.apiVersion) << ")" << LL_ENDL;
+        if (getenv("LL_VK_TEST_NO_DEVICE"))
+        {
+            rejected(props.deviceName, "(test) LL_VK_TEST_NO_DEVICE is set");        // (tries the start-up message without a device that fails)
+            continue;
+        }
         if (props.apiVersion < VK_API_VERSION_1_3)
         {
-            LL_INFOS("Vulkan") << "  rejected: needs Vulkan 1.3" << LL_ENDL;
+            rejected(props.deviceName, "its driver supports Vulkan " + std::to_string(VK_API_VERSION_MAJOR(props.apiVersion)) + "." + std::to_string(VK_API_VERSION_MINOR(props.apiVersion))
+                + ", Rekindled needs Vulkan 1.3");
             continue;
         }
 
@@ -708,7 +732,7 @@ bool Context::pickDevice()
         }
         if (missing_ext)
         {
-            LL_INFOS("Vulkan") << "  rejected: missing extension " << missing_ext << LL_ENDL;
+            rejected(props.deviceName, std::string("the Vulkan extension ") + missing_ext + " is missing");
             continue;
         }
 
@@ -727,7 +751,7 @@ bool Context::pickDevice()
         vkGetPhysicalDeviceFeatures2(dev, &chain.f2);
         if (const char* missing = missing_feature(chain))
         {
-            LL_INFOS("Vulkan") << "  rejected: missing feature " << missing << LL_ENDL;
+            rejected(props.deviceName, std::string("the Vulkan feature ") + missing + " is missing");
             continue;
         }
 
@@ -756,7 +780,7 @@ bool Context::pickDevice()
         }
         if (family < 0)
         {
-            LL_INFOS("Vulkan") << "  rejected: no graphics+compute+present queue" << LL_ENDL;
+            rejected(props.deviceName, "it has no queue that can draw, compute and present to the window");
             continue;
         }
 
@@ -904,9 +928,16 @@ bool Context::pickDevice()
         }
     }
 
+    if (mPhysical != VK_NULL_HANDLE && mCaps.mBindlessSlots == 0)
+    {
+        // <FS> the features are there, but the limits leave no room for the table of textures (at least 1024 sampled images per shader stage after the other tables)
+        reasons += std::string("  ") + mCaps.mDeviceName + ": its limit on sampled images per shader stage is too small for bindless textures\n";
+        mPhysical = VK_NULL_HANDLE;
+    }
     if (mPhysical == VK_NULL_HANDLE)
     {
         LL_WARNS("Vulkan") << "no suitable Vulkan device found" << LL_ENDL;
+        mFailureReason = "What was found:\n" + reasons;
         return false;
     }
     LL_INFOS("Vulkan") << "using " << mCaps.mDeviceName << ", queue family " << mQueueFamily << ", timestamp period "
@@ -1187,10 +1218,37 @@ bool Context::init(HWND present_window)
     }
     mWindow = present_window;
 
-    if (!loadLoader() || !createInstance() || !pickDevice() || !createDevice() || !createFrames() || !selfTest())
+    mFailureReason.clear();
+    bool ok = false;
+    if (!loadLoader())
+    {
+        mFailureReason = "The Vulkan runtime (vulkan-1.dll) was not found. It comes with the graphics driver: please install or update the driver.\n";
+    }
+    else if (!createInstance())
+    {
+        mFailureReason = "Vulkan could not be started (the instance could not be created). Please install or update the graphics driver.\n";
+    }
+    else if (!pickDevice())
+    {
+        if (mFailureReason.empty())
+        {
+            mFailureReason = "No suitable graphics device was found.\n";
+        }
+    }
+    else if (!createDevice() || !createFrames() || !selfTest())
+    {
+        mFailureReason = "The graphics device could not be set up (the details are in the log file).\n";
+    }
+    else
+    {
+        ok = true;
+    }
+    if (!ok)
     {
         LL_WARNS("Vulkan") << "Vulkan context initialisation failed" << LL_ENDL;
+        const std::string reason = mFailureReason;
         shutdown();
+        mFailureReason = reason;
         return false;
     }
     mReady = true;

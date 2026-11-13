@@ -236,6 +236,8 @@ public:
     // Creates the instance, picks a device that can present to the window, creates the device, allocator
     // and frame ring, and runs a self test. Returns false (and logs why) if this machine is not suitable.
     bool init(HWND present_window);
+    // <FS> why init() returned false, in words for the user (the devices that were found and what each lacks, or the missing Vulkan runtime); empty when it did not fail
+    const std::string& failureReason() const { return mFailureReason; }
     void shutdown();
     bool isReady() const { return mReady; }
 
@@ -433,6 +435,7 @@ private:
     bool loadLoader();
     bool createInstance();
     bool pickDevice();
+    std::string mFailureReason;
     bool createDevice();
     bool createFrames();
     bool selfTest();

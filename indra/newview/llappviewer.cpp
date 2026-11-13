@@ -1268,6 +1268,14 @@ bool LLAppViewer::init()
     // Initialize the window
     //
     gRenderActive = true;
+    // <FS> when Vulkan cannot start the user is told why (llvkbridge.cpp ensureReady) and the viewer leaves without the old video driver text or the fatal error flow; the exec marker goes so that the
+    // next start is not taken for a crash
+    LLVkBridge::setStartupFailureHandler([]()
+    {
+        LL_WARNS("InitInfo") << "Vulkan could not be started: quitting" << LL_ENDL;
+        LLAppViewer::instance()->removeMarkerFiles();
+        std::quick_exit(1);
+    });
     initWindow();
     LL_INFOS("InitInfo") << "Window is initialized." << LL_ENDL ;
     // <FS:Beq> allow detected hardware to be overridden.
