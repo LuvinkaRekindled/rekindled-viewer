@@ -36,41 +36,40 @@ override | Deferred Diffuse Pull Skin Shader | gbuffer.vert | gbuffer_diffuse.fr
 override | Deferred Diffuse Alpha Mask Pull Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | default on
 override | Deferred Diffuse Alpha Mask Pull Skin Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the legacy (texture) terrain of the G-buffer pass: the detail layers that show are fetched, the ramp coordinates are worked out in the fragment program
-override | Deferred Terrain Pull Shader | terrain.vert | terrain.frag | gbuffer | require ll_ti_alpha_ramp | default on
+override | Deferred Terrain Pull Shader | terrain.vert | terrain.frag | gbuffer | default on
 # the Linden trees of the G-buffer pass: one record of all the pool's faces (LLDrawPoolTree::renderDeferred), alpha tested diffuse, no vertex colour
-override | Deferred Tree Pull Shader | tree.vert | tree.frag | gbuffer | require ll_ti_diffuseMap | default on
+override | Deferred Tree Pull Shader | tree.vert | tree.frag | gbuffer | default on
 # the legacy material draws of the G-buffer pass (alpha mode in bits 0-1 of the program number: 0 none, 2 mask, 3 emissive; specular map bit 2, normal map bit 3), static and rigged; the blend ones (1, 5, 9, 13) are the alpha family's
-override | Material Pull Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | default on
-override | Material Pull Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | default on
-override | Material Pull Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | default on
-override | Material Pull Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Skin Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
-override | Material Pull Skin Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Material Pull Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | default on | rt
+override | Material Pull Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | default on | rt
+override | Material Pull Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | default on | rt
+override | Material Pull Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | default on | rt
+override | Material Pull Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | default on | rt
+override | Material Pull Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | default on | rt
+override | Material Pull Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on | rt
+override | Material Pull Skin Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
+override | Material Pull Skin Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rt
 override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | default on
 override | Deferred Bump Pull Skin Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Deferred Emboss Pull Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | default on
 override | Deferred Emboss Pull Skin Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Deferred Impostor Shader | impostor.vert | impostor.frag | gbuffer | default on
-override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | define AVATAR_CLOTH=1 | require gWindDir | default on
-override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | default on
+override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | define AVATAR_CLOTH=1 | default on
 override | Deferred PBR Terrain Shader 0 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
 override | Deferred PBR Terrain Shader 0 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
 override | Deferred PBR Terrain Shader 0 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
