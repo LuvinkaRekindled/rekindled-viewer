@@ -95,6 +95,12 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float adaptiveStepMultiplier;
     float ssrTraceMode;         // bits of the improved reflection trace (pipeline.cpp ssr_trace_mode_bits): 1 water, 2 other surfaces, 4 water takes fewer steps
 #endif
+
+#ifdef LL_RT_QUERY
+    // the sessions with ray queries ("Water Pull RT Shader": the manifest define LL_RT_QUERY): the sun shadow of the water is a ray, and the water can reflect the ray scene
+    int rt_water_reflections;   // the ray traced reflection of the water (LLDrawPoolWater: the setting FSVkRTWater, rt-debug.txt waterrt): 0 off, 1 on, 2 a test colour, 3 hits / misses as colours
+    // (the other uniforms of the ray query code, lib/rt.glsl, are 0 in the water pass: constants in water.frag)
+#endif
 #endif
 };
 

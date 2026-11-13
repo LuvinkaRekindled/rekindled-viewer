@@ -19,6 +19,24 @@
 #include "lib/pbr_core.glsl"
 #include "lib/shadow.glsl"
 #include "lib/probe.glsl"
+#ifdef LL_RT_QUERY
+#include "lib/rt_scene.glsl"
+// the water pass sets none of the ray query code's other uniforms (the `uniform` lines of lib/rt.glsl): in the stock water they were 0 for every pixel (one hard sun ray, no avatar self shadow work, no alpha pass limits, no soft hit shadows).
+// As constants the code behind them is not in the program (the soft ray loops, the receiver probe, the hair walk): the same picture, a smaller program
+const float rt_sun_radius = 0.0;
+const int rt_sun_samples = 0;
+const float rt_sun_alpha = 0.0;
+const float rt_sun_maxdist = 0.0;
+const vec2 rt_sun_lod = vec2(0.0);
+const float rt_noise_frame = 0.0;
+const float rt_sun_strength = 0.0;
+const int rt_sun_pen_rays = 0;
+const float rt_sun_self_off = 0.0;
+const int rt_hit_shadow_variant = 0;
+const int rt_hair_soft = 0;
+const int rt_hit_shadow_samples = 0;
+#include "lib/rt.glsl"
+#endif
 #ifdef SSR
 #include "lib/poisson.glsl"
 #include "lib/ssr.glsl"
@@ -131,7 +149,11 @@ void main()
         sunlit = srgb_to_linear(sunlit);
     }
     sunlit *= sky_sunlight_scale;
+#if defined(LL_RT_QUERY) && defined(SUN_SHADOW)
+    const float shadow = rt_sun_shadow(pos, norm, distort);       // (a session with ray queries: the sun shadow of the stock water is a ray, sampleDirectionalShadow of shadowUtil.glsl)
+#else
     const float shadow = sun_shadow(pos, norm, distort.y);
+#endif
 
 #ifdef TRANSPARENT_WATER
     // the picture below: where the water is cut out (exclusion mask) the ripples do not push it; where the surface under the water is nearer than the water, they do not either
@@ -150,6 +172,35 @@ void main()
 
     const float perceptualRoughness = blurMultiplier;
     vec3 radiance = water_reflection(distort2, pos, wave_ibl, 1.0 - perceptualRoughness);
+
+// the reflection is a variant of its own (the manifest define LL_RT_WATER_REFLECTION): the water without it is the sun shadow ray alone, a much smaller program (the setting FSVkRTWater is off by default)
+#if defined(LL_RT_QUERY) && defined(SUN_SHADOW) && defined(LL_RT_WATER_REFLECTION)
+    if (rt_water_reflections == 2)
+    {
+        radiance = vec3(1.0, 0.0, 1.0);        // plumbing check: the code runs
+    }
+    else if (rt_water_reflections != 0)
+    {
+        // <FS> a ray from the water surface into the ray scene: a hit replaces what the probes and the screen space trace found, a miss keeps it (3: hits green, misses red, upward rays only)
+        const vec3 rt_dir = normalize(reflect(pos, wave_ibl));
+        if (dot(rt_dir, up) > 0.0)
+        {
+            const vec4 rt_refl = rtReflection(pos + wave_ibl * 0.05, rt_dir, normalize(transform_normal(lightDir)), sunlit, amblit, distort, radiance);
+            if (rt_water_reflections == 3)
+            {
+                radiance = rt_refl.a > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            }
+            else
+            {
+                radiance = mix(radiance, rt_refl.rgb, rt_refl.a);
+            }
+        }
+        else if (rt_water_reflections == 3)
+        {
+            radiance = vec3(0.0, 0.0, 1.0);    // the reflection ray points down
+        }
+    }
+#endif
 
     // the sun's glint: the specular lobe of a metal (no diffuse light) in the sun's colour
     const vec3 specular_linear = srgb_to_linear(specular);

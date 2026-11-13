@@ -45,8 +45,6 @@ protected:
 
 public:
     static bool sSkipScreenCopy;
-    static bool sNeedsReflectionUpdate;
-    static bool sNeedsDistortionUpdate;
     static F32 sWaterFogEnd;
 
     enum
@@ -74,7 +72,7 @@ public:
     void setOpaqueTexture(const LLUUID& opaqueTextureId);
     void setNormalMaps(const LLUUID& normalMapId, const LLUUID& nextNormalMapId);
 
-    void pushWaterPlanes(int pass, bool pull = false);       // pull: the program bound is a pull program (the water exclusion pass): the planes go as one record
+    void pushWaterPlanes();       // the planes go as one record (the program bound is a pull program)
 
 protected:
     void renderOpaqueLegacyWater();

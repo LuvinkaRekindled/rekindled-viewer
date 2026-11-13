@@ -3,11 +3,9 @@
 
 layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 {
-#ifdef WATER_PULL
-    uvec2 ll_packet_table;      // the table form of the water patches (WATER_PULL, "Water Haze Pull Shader"): three buffer addresses written by the draw record
+    uvec2 ll_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
     uvec2 ll_packet_models;
     uvec2 ll_packet_texmats;
-#endif
     mat4 inv_proj;
     vec4 waterPlane;
     int above_water;
@@ -23,22 +21,20 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_depthMap;
 };
 
-#ifdef WATER_PULL
 #include "lib/rows.glsl"
-#else
-layout(location = 0) in vec3 position;
-#endif
 layout(location = 0) out vec4 vary_fragcoord;
 
 void main()
 {
-#ifdef WATER_PULL
     const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
     const uint at = row.first + uint(gl_VertexIndex);
-    const uint word = RowWords(row.indices).w[at >> 1];
-    const uint index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
+    uint index = at;                    // (a draw of vertices without indices: the full screen triangle)
+    if ((row.flags & 4u) == 0u)
+    {
+        const uint word = RowWords(row.indices).w[at >> 1];
+        index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
+    }
     const vec3 position = RowVec4(row.positions).v[index].xyz;
-#endif
     //transform vertex
     vec4 pos = vec4(position.xyz, 1.0);
 

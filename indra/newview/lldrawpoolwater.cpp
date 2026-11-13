@@ -51,8 +51,6 @@
 #include "llsettingswater.h"
 
 bool LLDrawPoolWater::sSkipScreenCopy = false;
-bool LLDrawPoolWater::sNeedsReflectionUpdate = true;
-bool LLDrawPoolWater::sNeedsDistortionUpdate = true;
 F32 LLDrawPoolWater::sWaterFogEnd = 0.f;
 
 extern bool gCubeSnapshot;
@@ -199,15 +197,26 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // Not to mention, re-binding the the same shader and state for that shader is kind of wasteful.
     // - Geenz 2025-02-11
     // select shader
-    // the planes go as one record of table entries (the pull programs: the same shaders with the planes' vertex buffers read by address), except in a session with ray queries: the stock Water Shader stands in there
-    const bool water_pull = ll_water_pull();
+    // the planes go as one record of table entries (the pull programs: the planes' vertex buffers read by address); a session with ray queries draws the water seen from above with the ray traced sun shadow
+    // and reflection (manifest: Water Pull RT Shader)
+    // the ray traced reflection of the water (rt-debug.txt waterrt, or the preference FSVkRTWater with the material table): decided here, the reflection is a program of its own
+    static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
+    S32 rt_water_mode = LLVkBridge::rtWaterReflections();
+    if (rt_water_mode == 0 && rt_water_setting && LLVkBridge::rtMaterialsAvailable())
+    {
+        rt_water_mode = 1;      // the preference (Graphics > Vulkan); rt-debug.txt waterrt=N still overrides it for tests
+    }
     if (underwater)
     {
-        shader = water_pull ? &gUnderWaterPullProgram : &gUnderWaterProgram;
+        shader = &gUnderWaterPullProgram;
+    }
+    else if (ll_water_rt())
+    {
+        shader = (rt_water_mode != 0 && ll_water_rt_reflection()) ? &gWaterPullRtReflectionProgram : &gWaterPullRtProgram;
     }
     else
     {
-        shader = water_pull ? &gWaterPullProgram : &gWaterProgram;
+        shader = &gWaterPullProgram;
     }
     gPipeline.bindDeferredShader(*shader, nullptr, &gPipeline.mWaterDis);
 
@@ -240,12 +249,6 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     {
         // <FS> ray traced reflections on the water (rt-debug.txt waterrt, rtReflection in shadowUtil.glsl)
         static LLStaticHashedString rt_water_s("rt_water_reflections");
-        S32 rt_water_mode = LLVkBridge::rtWaterReflections();
-        static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
-        if (rt_water_mode == 0 && rt_water_setting && LLVkBridge::rtMaterialsAvailable())
-        {
-            rt_water_mode = 1;      // the preference (Graphics > Vulkan); rt-debug.txt waterrt=N still overrides it for tests
-        }
         shader->uniform1i(rt_water_s, rt_water_mode);
     }
 
@@ -323,11 +326,8 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // They also had the same exact state with the sole exception setting an edge water flag.
     // That flag was not actually used anywhere in the shaders.
     // - Geenz 2025-02-11
-    if (water_pull)
-    {
-        gRender.syncMatrices();         // (the program's matrices are loose values: written as a draw writes them, the record has no model matrix of its own)
-    }
-    pushWaterPlanes(0, water_pull);
+    gRender.syncMatrices();             // (the program's matrices are loose values: written as a draw writes them, the record has no model matrix of its own)
+    pushWaterPlanes();
 
     // clean up
     gPipeline.unbindDeferredShader(*shader);
@@ -335,32 +335,9 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     gRender.setColorMask(true, false);
 }
 
-void LLDrawPoolWater::pushWaterPlanes(int pass, bool pull)
+void LLDrawPoolWater::pushWaterPlanes()
 {
-    LLVOWater* water = nullptr;
-    if (pull)
-    {
-        pushFacesPull(false);       // S6.6: the planes as entries (the water exclusion pass: the colour pull program is bound); the loop below only keeps its bookkeeping
-    }
-    for (LLFace* const& face : mDrawFace)
-    {
-        water = static_cast<LLVOWater*>(face->getViewerObject());
-
-        if (!pull)
-        {
-            face->renderIndexed();
-        }
-
-        // Note non-void water being drawn, updates required
-        // Previously we had some logic to determine if this pass was also our water edge pass.
-        // Now we only have one pass.  Check if we're doing a region water plane or void water plane.
-        // - Geenz 2025-02-11
-        if (!water->getIsEdgePatch())
-        {
-            sNeedsReflectionUpdate = true;
-            sNeedsDistortionUpdate = true;
-        }
-    }
+    pushFacesPull(false);       // the planes as entries of one record (the program bound is a pull program). (The flags sNeedsReflectionUpdate and sNeedsDistortionUpdate this loop used to set were never read: gone)
 }
 
 LLViewerTexture *LLDrawPoolWater::getDebugTexture()

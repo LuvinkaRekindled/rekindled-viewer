@@ -116,8 +116,7 @@ override | Radiance Gen Shader | radiance.vert | radiance.frag | post | define P
 override | Irradiance Gen Shader | radiance.vert | irradiance.frag | post | default on
 override | UI Shader | ui.vert | ui.frag | post | default on
 override | Haze Shader | fullscreen.vert | haze.frag | post | default on
-override | Water Haze Shader | waterhaze.vert | waterhaze.frag | post | default on
-override | Water Haze Pull Shader | waterhaze.vert | waterhaze.frag | post | define WATER_PULL=1 | default on
+override | Water Haze Pull Shader | waterhaze.vert | waterhaze.frag | post | default on
 override | Deferred Windlight Sky Shader pull | sky.vert | sky.frag | gbuffer | default on
 # the HDRI sky (use_hdri_sky(): an HDRI image is loaded): the same programs with the HDRI branch
 override | Environment Map Program pull | sky.vert | sky.frag | gbuffer | define HDRI=1 | default on
@@ -181,11 +180,12 @@ override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impo
 override | Deferred Sun Probe Shader | fullscreen.vert | sun_lightmap.frag | sun | define LL_NO_AO=1 | default on
 override | RT Shadow Penumbra Prep | fullscreen.vert | rt_shadow_prep.frag | sun | default on
 override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag | sun | default on
-# the water family: the water surface seen from above (rt: the ray traced reflection of the water stays in the stock program of a session with ray queries) and from below
-override | Water Shader | water.vert | water.frag | water | default on | rt
-override | Underwater Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | default on
-# the table form of the water planes (the pool and the haze draw the planes' vertex buffers by address: WATER_PULL): the same programs; made in every session, used where the stock Water Shader does not stand in (no ray queries)
+# the water family: the water surface seen from above and from below; the planes' vertex buffers are read by address (WATER_PULL), and a session with ray queries has its own variant of the surface (LL_RT_QUERY)
 override | Water Pull Shader | water.vert | water.frag | water | define WATER_PULL=1 | default on
+# the same program with the ray queries of the stock water (LL_RT_QUERY: the loader adds the extension, the draw binds set 3), code from lib/rt.glsl (the stock text as it is): the sun shadow ray; and the variant that also traces the reflection of the water
+# (LL_RT_WATER_REFLECTION: a program of its own, much larger: the water draws with it when the setting FSVkRTWater is on). Made only in a session with ray queries (the reflection variant when the material table is on)
+override | Water Pull RT Shader | water.vert | water.frag | water | define WATER_PULL=1 | define LL_RT_QUERY=1 | default on
+override | Water Pull RT Reflection Shader | water.vert | water.frag | water | define WATER_PULL=1 | define LL_RT_QUERY=1 | define LL_RT_WATER_REFLECTION=1 | default on
 override | Underwater Pull Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | define WATER_PULL=1 | default on
 # the selection highlight: the selected faces, the "paint em red" faces, the normal map and specular map views (the face's own texture coordinate: HL_UV 0, 1, 2) and the parcel owners' tint of the terrain (HL_GBUFFER). The skinned form of Highlight Shader is the old rigged draws of the alpha pool's debug view
 override | Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | default on

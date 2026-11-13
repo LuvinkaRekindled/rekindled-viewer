@@ -105,10 +105,12 @@ LLShaderProgram        gObjectFullbrightAlphaMaskProgram;
 LLShaderProgram        gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
-LLShaderProgram        gWaterProgram;
-LLShaderProgram        gUnderWaterProgram;
 LLShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
 LLShaderProgram        gUnderWaterPullProgram;
+LLShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting FSVkRTWater; needs the material table)
+LLShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, LL_RT_QUERY), made in a session with ray queries
+static bool            sWaterRtReflectionMade = false;
+static bool            sWaterRtMade = false;       // the program above was made in this session
 static bool            sRtSessionShaders = false;     // the stock programs of this session carry ray query code (the `rt` lines of the manifest keep them): the water planes keep the stock water program then
 
 //interface shaders
@@ -149,14 +151,17 @@ LLShaderProgram            gDeferredMultiSpotLightProgram;
 LLShaderProgram            gDeferredSunProgram;
 LLShaderProgram            gDeferredSunProbeProgram;
 LLShaderProgram            gHazeProgram;
-LLShaderProgram            gHazeWaterProgram;
 LLShaderProgram            gWaterHazePullProgram;        // <FS> the table form of the water patches of the haze (native only: waterhaze.vert / waterhaze.frag with WATER_PULL)
 
-// <FS> the water planes go as table entries (one record of the planes' vertex buffers) with the pull programs above, except in a session with ray queries: the stock Water Shader keeps the ray traced reflection of the
-// water there (an `rt` program: the RT track's port), and a stock program is drawn from the vertex buffers by attribute
-bool ll_water_pull()
+// <FS> the water seen from above in a session with ray queries (the ray traced sun shadow and reflection of the water): the pull program with the ray queries, native/manifest.txt `Water Pull RT Shader`
+bool ll_water_rt()
 {
-    return !sRtSessionShaders;
+    return sWaterRtMade;
+}
+
+bool ll_water_rt_reflection()
+{
+    return sWaterRtReflectionMade;
 }
 LLShaderProgram            gDeferredBlurLightProgram;
 LLShaderProgram            gNativeSunHalfProgram;
@@ -451,17 +456,19 @@ void LLViewerShaderMgr::finalizeShaderList()
 {
     //ONLY shaders that need WL Param management should be added here
     mShaderList.push_back(&gAvatarProgram);
-    mShaderList.push_back(&gWaterProgram);
+    mShaderList.push_back(&gWaterPullProgram);
     mShaderList.push_back(&gImpostorProgram);
     mShaderList.push_back(&gObjectFullbrightAlphaMaskProgram);
     mShaderList.push_back(&gObjectAlphaMaskNoColorProgram);
-    mShaderList.push_back(&gUnderWaterProgram);
+    mShaderList.push_back(&gUnderWaterPullProgram);
+    mShaderList.push_back(&gWaterPullRtProgram);
+    mShaderList.push_back(&gWaterPullRtReflectionProgram);
     mShaderList.push_back(&gDeferredSunProgram);
     mShaderList.push_back(&gNativeSunHalfProgram);
     mShaderList.push_back(&gNativeLightUpsampleProgram);
     mShaderList.push_back(&gDeferredSunProbeProgram);
     mShaderList.push_back(&gHazeProgram);
-    mShaderList.push_back(&gHazeWaterProgram);
+    mShaderList.push_back(&gWaterHazePullProgram);
     mShaderList.push_back(&gDeferredSoftenProgram);
     mShaderList.push_back(&gDeferredRtReflectionProgram);
     mShaderList.push_back(&gDeferredAlphaProgram);
@@ -1124,67 +1131,27 @@ bool LLViewerShaderMgr::loadShadersWater()
 
     if (mShaderLevel[SHADER_WATER] == 0)
     {
-        gWaterProgram.unload();
-        gUnderWaterProgram.unload();
+        gWaterPullProgram.unload();
+        gUnderWaterPullProgram.unload();
+        gWaterPullRtProgram.unload();
+        gWaterPullRtReflectionProgram.unload();
         return true;
     }
 
-    if (success)
-    {
-        // load water shader
-        gWaterProgram.mName = "Water Shader";
-        gWaterProgram.mFeatures.calculatesAtmospherics = true;
-        gWaterProgram.mFeatures.hasAtmospherics = true;
-        gWaterProgram.mFeatures.hasGamma = true;
-        gWaterProgram.mFeatures.hasSrgb = true;
-        gWaterProgram.mFeatures.hasReflectionProbes = true;
-        gWaterProgram.mFeatures.hasTonemap = true;
-        gWaterProgram.mFeatures.hasShadows = use_sun_shadow;
-        gWaterProgram.mShaderFiles.clear();
-        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterV.glsl", ShaderStage::Vertex));
-        gWaterProgram.mShaderFiles.push_back(make_pair("environment/waterF.glsl", ShaderStage::Fragment));
-        // (the device is not up yet when the water is configured: LLVkBridge::rtShadowMode() still says 0; the launcher's environment is the early answer. The ray traced reflection (rtReflection in shadowUtil.glsl) needs the scene and the material table; the program's own files only see the permutations, the global defines such as SUN_SHADOW reach the library files only)
-        const bool rt_water_reflections_possible = use_sun_shadow && rt_reflections_possible();
-        gWaterProgram.clearPermutations();
-        if (rt_water_reflections_possible)
-        {
-            gWaterProgram.addPermutation("LL_RT_REFLECTIONS", "1");      // after clearPermutations: it wipes them
-        }
-        if (LLPipeline::sRenderTransparentWater)
-        {
-            gWaterProgram.addPermutation("TRANSPARENT_WATER", "1");
-        }
-
-        if (use_sun_shadow)
-        {
-            gWaterProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        }
-
-        gWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
-        gWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
-        success = gWaterProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        //load under water vertex shader
-        gUnderWaterProgram.mName = "Underwater Shader";
-        gUnderWaterProgram.mFeatures.calculatesAtmospherics = true;
-        gUnderWaterProgram.mFeatures.hasAtmospherics = true;
-        // <FS> a native only program (native/manifest.txt, family water: water.vert + underwater.frag; the global define TRANSPARENT_WATER is pushed with the native defines): no stock files
-        gUnderWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
-        gUnderWaterProgram.mShaderGroup = LLShaderProgram::SG_WATER;
-        success = gUnderWaterProgram.createShader();
-        llassert(success);
-    }
-
-    // <FS> the table form of the water planes: the same programs with the planes' vertex buffers read by address (native/manifest.txt: Water Pull Shader, Underwater Pull Shader, native only, no stock files). Made in
-    // every session; the pool uses them where the stock Water Shader does not stand in (ll_water_pull: no ray queries)
+    // <FS> the water programs are native only (native/manifest.txt, family water: water.vert + water.frag / underwater.frag): no stock files, no stock program. The planes are drawn as one record of table
+    // entries (WATER_PULL: their vertex buffers read by address); in a session with ray queries the water seen from above has the ray traced sun shadow and reflection (Water Pull RT Shader, LL_RT_QUERY).
+    // The global defines (SUN_SHADOW, TRANSPARENT_WATER, ...) are pushed with the native defines
     if (success)
     {
         gWaterPullProgram.mName = "Water Pull Shader";
-        gWaterPullProgram.mFeatures = gWaterProgram.mFeatures;
+        gWaterPullProgram.mFeatures.calculatesAtmospherics = true;
+        gWaterPullProgram.mFeatures.hasAtmospherics = true;
+        gWaterPullProgram.mFeatures.hasGamma = true;
+        gWaterPullProgram.mFeatures.hasSrgb = true;
+        gWaterPullProgram.mFeatures.hasReflectionProbes = true;
+        gWaterPullProgram.mFeatures.hasTonemap = true;
+        gWaterPullProgram.mFeatures.hasShadows = use_sun_shadow;
+        gWaterPullProgram.clearPermutations();
         gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1192,10 +1159,41 @@ bool LLViewerShaderMgr::loadShadersWater()
         llassert(success);
     }
 
+    sWaterRtMade = false;
+    if (success && sRtSessionShaders && use_sun_shadow)
+    {
+        gWaterPullRtProgram.mName = "Water Pull RT Shader";
+        gWaterPullRtProgram.mFeatures = gWaterPullProgram.mFeatures;
+        gWaterPullRtProgram.clearPermutations();
+        gWaterPullRtProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullRtProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullRtProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
+        success = gWaterPullRtProgram.createShader();
+        llassert(success);
+        sWaterRtMade = success;
+    }
+
+    // the variant with the traced reflection: only when the material table can be on (the reflection reads it); a program of its own, the water draws with it when the setting FSVkRTWater is on
+    sWaterRtReflectionMade = false;
+    if (success && sWaterRtMade && rt_reflections_possible())
+    {
+        gWaterPullRtReflectionProgram.mName = "Water Pull RT Reflection Shader";
+        gWaterPullRtReflectionProgram.mFeatures = gWaterPullProgram.mFeatures;
+        gWaterPullRtReflectionProgram.clearPermutations();
+        gWaterPullRtReflectionProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullRtReflectionProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
+        success = gWaterPullRtReflectionProgram.createShader();
+        llassert(success);
+        sWaterRtReflectionMade = success;
+    }
+
     if (success)
     {
         gUnderWaterPullProgram.mName = "Underwater Pull Shader";
-        gUnderWaterPullProgram.mFeatures = gUnderWaterProgram.mFeatures;
+        gUnderWaterPullProgram.mFeatures.calculatesAtmospherics = true;
+        gUnderWaterPullProgram.mFeatures.hasAtmospherics = true;
+        gUnderWaterPullProgram.clearPermutations();
         gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gUnderWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1204,10 +1202,10 @@ bool LLViewerShaderMgr::loadShadersWater()
     }
 
     /// Keep track of water shader levels
-    if (gWaterProgram.mShaderLevel != mShaderLevel[SHADER_WATER]
-        || gUnderWaterProgram.mShaderLevel != mShaderLevel[SHADER_WATER])
+    if (gWaterPullProgram.mShaderLevel != mShaderLevel[SHADER_WATER]
+        || gUnderWaterPullProgram.mShaderLevel != mShaderLevel[SHADER_WATER])
     {
-        mShaderLevel[SHADER_WATER] = llmin(gWaterProgram.mShaderLevel, gUnderWaterProgram.mShaderLevel);
+        mShaderLevel[SHADER_WATER] = llmin(gWaterPullProgram.mShaderLevel, gUnderWaterPullProgram.mShaderLevel);
     }
 
     if (!success)
@@ -2523,29 +2521,20 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gHazeWaterProgram.mName = "Water Haze Shader";
-        gHazeWaterProgram.mShaderFiles.clear();
-        gHazeWaterProgram.mShaderGroup           = LLShaderProgram::SG_WATER;
-        gHazeWaterProgram.mFeatures.hasSrgb                = true;
-        gHazeWaterProgram.mFeatures.calculatesAtmospherics = true;
-        gHazeWaterProgram.mFeatures.hasAtmospherics        = true;
-        gHazeWaterProgram.mFeatures.hasGamma               = true;
-        gHazeWaterProgram.mFeatures.isDeferred             = true;
-        gHazeWaterProgram.mFeatures.hasShadows             = use_sun_shadow;
-        gHazeWaterProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
-
-        // <FS> a native only program (native/manifest.txt, family post: waterhaze.vert + waterhaze.frag): no stock files (its pull twin, index 2, is off by default and has no native line)
-        gHazeWaterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        // <FS> the table form of the same program, for the water patches above the water (a draw of the planes' vertex buffers as one record): native only (manifest: Water Haze Pull Shader)
+        // <FS> a native only program (native/manifest.txt, family post: waterhaze.vert + waterhaze.frag): no stock files. The water patches above the water and the full screen triangle under it are entries of
+        // a record (the vertex buffers read by address)
         gWaterHazePullProgram.mName = "Water Haze Pull Shader";
-        gWaterHazePullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
-        gWaterHazePullProgram.mFeatures = gHazeWaterProgram.mFeatures;
+        gWaterHazePullProgram.mShaderGroup           = LLShaderProgram::SG_WATER;
+        gWaterHazePullProgram.mFeatures.hasSrgb                = true;
+        gWaterHazePullProgram.mFeatures.calculatesAtmospherics = true;
+        gWaterHazePullProgram.mFeatures.hasAtmospherics        = true;
+        gWaterHazePullProgram.mFeatures.hasGamma               = true;
+        gWaterHazePullProgram.mFeatures.isDeferred             = true;
+        gWaterHazePullProgram.mFeatures.hasShadows             = use_sun_shadow;
+        gWaterHazePullProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
         gWaterHazePullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterHazePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gWaterHazePullProgram.createShader();
-        llassert(success);
-
-        success = gHazeWaterProgram.createShader();
         llassert(success);
     }
 
