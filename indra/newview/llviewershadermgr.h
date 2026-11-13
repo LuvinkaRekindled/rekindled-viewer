@@ -232,15 +232,10 @@ extern LLShaderProgram         gDeferredShadowAlphaPullProgram;   // <FS> render
 extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render packets: rigged casters (weights and palette read by address)
 extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
-extern bool                    gAlphaPullReady;
 extern LLShaderProgram         gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws fullbright alpha draws (ALPHA_UBER)
 extern LLShaderProgram         gDeferredAlphaUberPullSkinProgram;
-extern bool                    gAlphaUberReady;
-extern bool                    gAlphaUberSkinReady;
 extern LLShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws
 extern LLShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
-extern bool                    gAlphaUberMatReady;
-extern bool                    gAlphaUberMatSkinReady;
 extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
 extern LLShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
 // <FS> S6.6: the program a face based draw uses instead of `src` (the same files, defines and features, the vertex shader rewritten by LL_VERTEX_PULL: geometry from a record's entries); null: none
@@ -269,29 +264,19 @@ extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
 extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
 extern LLShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
 extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
-extern bool                    gAlphaPbrPullReady;
 extern LLShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)
 extern LLShaderProgram         gDeferredFullbrightAlphaPullSkinProgram;
 extern LLShaderProgram         gDeferredPBRAlphaPullSkinProgram;
-extern bool                    gAlphaRiggedPullReady;         // lit, fullbright and the material blend variants exist
-extern bool                    gAlphaPbrSkinReady;
 extern LLShaderProgram         gDeferredEmissivePullProgram;          // <FS> S5e: the glow second draw of the alpha items from the table (alpha only): plain, rigged, PBR, PBR rigged
 extern LLShaderProgram         gDeferredEmissivePullSkinProgram;
 extern LLShaderProgram         gPBRGlowPullProgram;
 extern LLShaderProgram         gPBRGlowPullSkinProgram;
-extern bool                    gAlphaGlowPullReady;            // the plain static and rigged glow programs exist
-extern bool                    gAlphaGlowPbrReady;             // ... the PBR ones
 extern LLShaderProgram         gHUDFullbrightAlphaPullProgram;         // <FS> S5f F4: the HUD, impostor and depth only (mask) variants of the alpha pull programs
 extern LLShaderProgram         gHUDPBRAlphaPullProgram;
 extern LLShaderProgram         gDeferredAlphaImpostorPullProgram;
 extern LLShaderProgram         gDeferredAlphaImpostorPullSkinProgram;
 extern LLShaderProgram         gDeferredFullbrightMaskPullProgram;
 extern LLShaderProgram         gDeferredFullbrightMaskPullSkinProgram;
-extern bool                    gAlphaHudPullReady;             // HUD fullbright
-extern bool                    gAlphaHudPbrReady;              // HUD glTF
-extern bool                    gAlphaImpostorPullReady;        // impostor lit, static and rigged
-extern bool                    gAlphaMaskPullReady;            // the mask programs (impostor fullbright, depth only passes), static and rigged
-extern bool                    gAlphaMaterialPullReady;       // <FS> S5b: the blend variants (masks 1, 5, 9, 13) of gDeferredMaterialPullProgram[] exist
 extern LLShaderProgram         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
 extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
 extern LLShaderProgram         gDeferredDiffusePullSkinProgram;  // <FS> S4 A1: the rigged variants of the two (weights and palette read by address)

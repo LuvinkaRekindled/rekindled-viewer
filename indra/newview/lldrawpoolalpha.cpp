@@ -104,7 +104,6 @@ extern S32 rrAlphaSunOld();    // pipeline.cpp: test switch, 1 = the old one har
 
 // <FS> U1 (pipeline.cpp: LL_VK_PASSUNI, _VERIFY, _AB)
 extern bool ll_pass_uni_on();
-extern bool ll_rigged_indexed();       // lldrawpool.cpp (S4 A1)
 extern bool ll_pass_uni_verify();
 extern U64 gPassUniAlphaMade, gPassUniAlphaSkipped, gPassUniAlphaMismatch;
 static U32 sAlphaEpoch = 1;
@@ -487,7 +486,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     // items are the ones the rigged alpha pass sent this frame, persistent at the worker: only the ranges go)
     for (int rig = 0; rig < 2; ++rig)
     {
-    LLShaderProgram* color = rig ? (LLShaderProgram*)(LLDrawPoolAlpha::sShowDebugAlphaRigged && gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
+    LLShaderProgram* color = rig ? (LLShaderProgram*)(LLDrawPoolAlpha::sShowDebugAlphaRigged && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
     if (view)
     {
         color = rig ? view->mRigged : view->mStatic;
@@ -614,7 +613,7 @@ void ll_render_table_debug()
         }
         AlphaTableView alpha_view;
         alpha_view.mStatic = programs[0];
-        alpha_view.mRigged = (gAlphaRiggedPullReady && ll_rigged_indexed() && !LLPipeline::sRenderingHUDs) ? programs[1] : nullptr;
+        alpha_view.mRigged = !LLPipeline::sRenderingHUDs ? programs[1] : nullptr;
         alpha_view.mColor[0] = mode;
         static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn[2];
         highlight_alpha_from_table(table_drawn, &alpha_view);
@@ -787,10 +786,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     static const bool dbg_no_fragments = getenv("LL_VK_ALPHA_NO_FRAGMENTS") != nullptr, dbg_no_transient = getenv("LL_VK_ALPHA_NO_TRANSIENT") != nullptr;
     // J1 K6 S5c: the impostor images and the probes' cube faces are views the table serves (their cull results are prepared): their alpha draws come from the fragments' plans too (LL_VK_ALPHA_VIEWS=0 = transient entries from the draw infos as before)
     static const bool alpha_views = !getenv("LL_VK_ALPHA_VIEWS") || getenv("LL_VK_ALPHA_VIEWS")[0] != '0';
-    const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || ll_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
+    const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || ll_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
     // S5f F4: the draws the fragments do not keep are sent as transient entries in EVERY view that has its pull programs (HUD, impostor render, probe and reflection renders, the depth only passes): a pass
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
-    const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && (!rigged || (gAlphaRiggedPullReady && ll_rigged_indexed())) && !(LLPipeline::sRenderingHUDs && rigged);
+    const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && !(LLPipeline::sRenderingHUDs && rigged);
     struct PendingRange { U32 mHandle, mFirst, mCount; };
     struct PendingSrc { const GeoRigSource* mRig; const U32* mWire; U32 mRank, mCount, mHandle; U32* mBound = nullptr; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
@@ -814,40 +813,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         return dof_pass && (program == &gDeferredFullbrightMaskPullProgram || program == &gDeferredFullbrightMaskPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
     };
-    // item D1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the colour pass of the world draws the fullbright alpha draws with the lit program (ALPHA_UBER, the row's GEO_FULLBRIGHT flag), so a lit and a fullbright
-    // draw in the blend order are one run. LL_VK_ALPHAUBER=1 starts it on, rt-debug.txt alphauber=0/1 switches it live (a same-lap A/B).
-    static const bool uber_env = []() { const char* e = getenv("LL_VK_ALPHAUBER"); return !e || atoi(e) != 0; }();      // on unless LL_VK_ALPHAUBER=0 (the user judged the picture: fine, 2026-11-04)
-    static S32 uber_live = -1;
-    // item D2: the merged program also draws the material alpha draws (the row's GEO_MATERIAL flags). LL_VK_ALPHAMAT=0 starts it off, rt-debug.txt alphamat=0/1 switches it live (a same-lap A/B against D1).
-    static const bool mat_env = []() { const char* e = getenv("LL_VK_ALPHAMAT"); return !e || atoi(e) != 0; }();
-    static S32 mat_live = -1;
-    {
-        static std::chrono::steady_clock::time_point uber_last;
-        const auto uber_now = std::chrono::steady_clock::now();
-        if (uber_now - uber_last >= std::chrono::milliseconds(500))
-        {
-            uber_last = uber_now;
-            S32 v = -1, vm = -1;
-            std::ifstream in("D:/claude/rt-debug.txt");
-            std::string line;
-            while (std::getline(in, line))
-            {
-                if (line.compare(0, 10, "alphauber=") == 0)
-                {
-                    v = atoi(line.c_str() + 10);
-                }
-                else if (line.compare(0, 9, "alphamat=") == 0)
-                {
-                    vm = atoi(line.c_str() + 9);
-                }
-            }
-            uber_live = v;
-            mat_live = vm;
-        }
-    }
-    const bool uber_ctx = (uber_live >= 0 ? uber_live != 0 : uber_env) && gAlphaUberReady && (!rigged || gAlphaUberSkinReady) && !depth_only && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender;
+    // item D1 / D2 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the colour pass of the world draws the fullbright and the material alpha draws with the lit program (ALPHA_UBER, ALPHA_UBER_MAT: the row's GEO_FULLBRIGHT and
+    // GEO_MATERIAL flags), so a lit, a fullbright and a material draw in the blend order are one run (the A/B keys alphauber and alphamat, LL_VK_ALPHAUBER and LL_VK_ALPHAMAT are gone: PLAN-twin-removal.md, section 8)
     // (the HUD draws all its plain draws with its fullbright program; the depth only passes draw lit and fullbright ones with the mask program)
-    const bool mat_ctx = uber_ctx && (mat_live >= 0 ? mat_live != 0 : mat_env) && gAlphaUberMatReady && (!rigged || gAlphaUberMatSkinReady);
+    const bool uber_ctx = !depth_only && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender;
+    const bool mat_ctx = uber_ctx;
     auto run_key = [&](U32 key) -> int
     {
         if (uber_ctx && (key & 0xFF) == 1)
