@@ -501,14 +501,6 @@ void ll_pool_draw_dropped(const char* what, size_t count)
     total += count;
 }
 
-void LLFacePool::pushFaceGeometry()
-{
-    for (LLFace* const& face : mDrawFace)
-    {
-        face->renderIndexed();
-    }
-}
-
 bool LLFacePool::verify() const
 {
     bool ok = true;
