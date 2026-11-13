@@ -26384,7 +26384,7 @@ static LLTrace::BlockTimerStatHandle FTM_SHADOW_FULLBRIGHT_ALPHA_MASKED("Fullbri
 // its pull program are there.
 static bool shadow_packets_enabled()
 {
-    return gDeferredShadowPullProgram.mProgramObject != 0 && LLVkBridge::shadowPacketsAvailable();
+    return LLVkBridge::shadowPacketsAvailable();        // (the shadow pull programs are required: the manager does not load the shaders without them)
 }
 
 // <FS> K6 group C step 2: a caster the record cannot carry is not drawn any more (the old per draw fallbacks are deleted: a daylight session logged 0 of them in every kind, and the refusal reasons are
@@ -27546,20 +27546,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         bool rigged = j == 1;
         LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
-        const bool packets = !rigged && shadow_packets_enabled();
-        const bool skin_packets = rigged && shadow_packets_enabled() && gDeferredShadowSkinPullProgram.mProgramObject != 0;
-        if (packets)
-        {
-            gDeferredShadowPullProgram.bind();
-        }
-        else if (skin_packets)
-        {
-            gDeferredShadowSkinPullProgram.bind();
-        }
-        else
-        {
-            gDeferredShadowProgram.bind(rigged);
-        }
+        // <FS> the shadow pull programs are required (the manager fails to load the shaders without them): the static casters leave as one record, the rigged ones as another
+        (rigged ? gDeferredShadowSkinPullProgram : gDeferredShadowPullProgram).bind();
 
         gRender.diffuseColor4f(1, 1, 1, 1);
 
@@ -27579,17 +27567,13 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             gShadowDrawStats.beginStaticPass();
         }
-        if (packets)
+        if (!rigged)
         {
             render_shadow_packets(types, kShadowStaticTypeCount);
         }
-        else if (skin_packets)
-        {
-            render_skin_packets(types, kShadowStaticTypeCount);
-        }
         else
         {
-            ll_pool_draw_dropped(rigged ? "shadow rigged casters (no pull program or worker)" : "shadow static casters (no pull program or worker)", 1);       // K6: the old per draw loops are gone
+            render_skin_packets(types, kShadowStaticTypeCount);
         }
         if (!rigged)
         {
@@ -27621,7 +27605,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
             // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them). K6 group C: the per draw loops this chose between (the alpha mask,
             // fullbright mask, grass and material mask passes, drawn from the render map one draw at a time) are deleted with the switches
-            if (shadow_packets_enabled() && gDeferredShadowAlphaPullProgram.mProgramObject != 0 && LLVkBridge::shadowAlphaPacketsAvailable())
+            if (LLVkBridge::shadowAlphaPacketsAvailable())
             {
                 render_alpha_packets(sun_up, target_width, rigged);
             }

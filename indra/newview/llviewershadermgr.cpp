@@ -147,7 +147,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 20;
+constexpr size_t PULL_TWIN_COUNT = 19;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -189,7 +189,7 @@ static void make_pull_twins()
                                                   &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
                                                   &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
                                                   &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram,
-                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gObjectBumpProgram,
+                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gObjectBumpProgram,
                                                   &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
@@ -240,8 +240,6 @@ LLShaderProgram            gNativeSunHalfProgram;
 LLShaderProgram            gNativeLightUpsampleProgram;
 LLShaderProgram            gDeferredSoftenProgram;
 LLShaderProgram            gDeferredRtReflectionProgram;
-LLShaderProgram            gDeferredShadowProgram;
-LLShaderProgram            gDeferredSkinnedShadowProgram;
 LLShaderProgram            gDeferredShadowCubeProgram;
 LLShaderProgram            gDeferredShadowPullProgram;
 LLShaderProgram            gDeferredShadowAlphaPullProgram;
@@ -1430,8 +1428,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNativeLightUpsampleProgram.unload();
         gDeferredSoftenProgram.unload();
         gDeferredRtReflectionProgram.unload();
-        gDeferredShadowProgram.unload();
-        gDeferredSkinnedShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
         gDeferredShadowPullProgram.unload();
         gDeferredShadowAlphaPullProgram.unload();
@@ -3075,36 +3071,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredShadowProgram.mName = "Deferred Shadow Shader";
-        gDeferredShadowProgram.mShaderFiles.clear();
-        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowV.glsl", ShaderStage::Vertex));
-        gDeferredShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
-        gDeferredShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredShadowProgram.mRiggedVariant = &gDeferredSkinnedShadowProgram;
-        success = gDeferredShadowProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gDeferredSkinnedShadowProgram.mName = "Deferred Skinned Shadow Shader";
-        gDeferredSkinnedShadowProgram.mFeatures.isDeferred = true;
-        gDeferredSkinnedShadowProgram.mFeatures.hasShadows = true;
-        gDeferredSkinnedShadowProgram.mFeatures.hasObjectSkinning = true;
-        gDeferredSkinnedShadowProgram.mShaderFiles.clear();
-        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowSkinnedV.glsl", ShaderStage::Vertex));
-        gDeferredSkinnedShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", ShaderStage::Fragment));
-        gDeferredSkinnedShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        add_common_permutations(&gDeferredSkinnedShadowProgram);
-
-        // gDeferredSkinnedShadowProgram.addPermutation("DEPTH_CLAMP", "1"); // disable depth clamp for now
-        success = gDeferredSkinnedShadowProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
         gDeferredShadowCubeProgram.mName = "Deferred Shadow Cube Shader";
         gDeferredShadowCubeProgram.mFeatures.isDeferred = true;
         gDeferredShadowCubeProgram.mFeatures.hasShadows = true;
@@ -3114,7 +3080,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
-    // <FS> Render packets: the shadow program that reads vertices and indices by address. Not needed to run: if it cannot be made the packets stay off.
+    // <FS> Render packets: the shadow program that reads vertices and indices by address. Required (there is no other shadow path): a failure to make it is a failure to load the shaders.
     if (success && LLVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
@@ -3122,14 +3088,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gDeferredShadowPullProgram.createShader())
-        {
-            LL_WARNS("ShadowPackets") << "the shadow pull shader could not be made: shadow packets stay off" << LL_ENDL;
-            gDeferredShadowPullProgram.unload();
-        }
+        success = gDeferredShadowPullProgram.createShader();
+        llassert(success);
     }
 
-    // <FS> ... and the one for the alpha masked casters, which needs the device to index sampled images at run time. Also optional.
+    // <FS> ... and the one for the alpha masked casters, which needs the device to index sampled images at run time (a required device feature). Also required.
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
         gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
@@ -3137,11 +3100,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowAlphaPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowAlphaPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gDeferredShadowAlphaPullProgram.createShader())
-        {
-            LL_WARNS("ShadowPackets") << "the shadow alpha pull shader could not be made: alpha masked casters stay on the old path" << LL_ENDL;
-            gDeferredShadowAlphaPullProgram.unload();
-        }
+        success = gDeferredShadowAlphaPullProgram.createShader();
+        llassert(success);
     }
 
     // <FS> ... and the one for rigged casters
@@ -3152,11 +3112,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredShadowSkinPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowSkinPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gDeferredShadowSkinPullProgram.createShader())
-        {
-            LL_WARNS("ShadowPackets") << "the shadow skin pull shader could not be made: rigged casters stay on the old path" << LL_ENDL;
-            gDeferredShadowSkinPullProgram.unload();
-        }
+        success = gDeferredShadowSkinPullProgram.createShader();
+        llassert(success);
     }
 
     // <FS> The deferred diffuse pass from render packets (same fragment shader as the old non-pull diffuse program (deleted), the diffuse lookup from the bindless table). Optional.
