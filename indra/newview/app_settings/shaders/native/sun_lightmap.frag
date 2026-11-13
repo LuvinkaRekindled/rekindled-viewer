@@ -4,6 +4,12 @@
 // This program stands in for the old one only when the old one has shadows and SSAO and no ray tracing (manifest: require). With LL_HALF it is the half resolution lightmap (gNativeSunHalfProgram).
 // With LL_NO_AO it is the lightmap of a reflection probe's snapshot ("Deferred Sun Probe Shader", native only): the same without the occlusion (g is 1: the probe's own light has none), so no noise texture, no tap
 // loop and none of the occlusion uniforms.
+// A session without ambient occlusion (the viewer's global define HAS_SSAO is off) has no occlusion uniforms or noise texture either: the same as LL_NO_AO. A session with ray queries (the manifest option rtquery: LL_RT_QUERY)
+// traces the sun's ray instead of sampling the cascades (lib/rt.glsl, the stock text of the ray traced sun lightmap: sampleDirectionalShadow with LL_RT_SHADOWS) and writes the blocker distance of the centre ray to the
+// second attachment (PLAN-rt-shadow-penumbra.md step 1).
+#if !defined(LL_NO_AO) && !defined(HAS_SSAO)
+#define LL_NO_AO 1
+#endif
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
@@ -30,6 +36,11 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
     int sun_up_factor;
     int spot_shadow_mask;       // bit 0 / 1: the projector with a shadow map in slot 0 / 1 exists this frame
+#ifdef LL_RT_QUERY
+    float rt_sun_radius;        // the sun disc's tangent (the setting RenderRTShadowSoftness)
+    float rt_sun_strength;      // the translucency floor of the avatar self shadow (rt-debug.txt sunstrength)
+    float rt_sun_self_off;      // 1: the avatar self shadow work off, 2: on with the full hair walk (rt-debug.txt sunself)
+#endif
 #ifdef LL_HALF
     vec2 half_offset;           // which pixel of its 2x2 block a half resolution pixel reads: (1, 1) the lower right one, or one of the four, a different one each frame with the upscaler (lightmap_upsample.frag uses the same)
 #endif
@@ -52,8 +63,26 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 
 layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 0) out vec4 frag_color;
+#ifdef LL_RT_QUERY
+layout(location = 1) out vec4 frag_blocker;     // attachment 1 (R16F): the blocker distance of the centre sun ray in metres (0 = none)
+#endif
 
 #include "lib/shadow.glsl"
+
+#ifdef LL_RT_QUERY
+// the other uniforms of the ray query code (lib/rt_uniforms.inc) are 0 in this pass: the stock sun lightmap sets only the three above (the alpha passes set the rest)
+const int rt_sun_samples = 0;
+const float rt_sun_alpha = 0.0;
+const float rt_sun_maxdist = 0.0;
+const vec2 rt_sun_lod = vec2(0.0);
+const float rt_noise_frame = 0.0;
+const int rt_sun_pen_rays = 0;
+const int rt_hit_shadow_variant = 0;
+const int rt_hair_soft = 0;
+const int rt_hit_shadow_samples = 0;
+#include "lib/rt_scene.glsl"
+#include "lib/rt.glsl"
+#endif
 
 float pcf_spot(uint slot, vec4 stc, float bias_scale, vec2 snap_seed)
 {
@@ -136,13 +165,20 @@ void main()
     if (depth >= 1.0)
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
+#ifdef LL_RT_QUERY
+        frag_blocker = vec4(0.0);
+#endif
         return;
     }
     const vec3 pos = ll_view_pos(inv_proj, uv, depth);
     const vec3 norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], uv).xy);
 
     vec4 col;
+#ifdef LL_RT_QUERY
+    col.r = rt_sun_shadow(pos, norm, uv);
+#else
     col.r = sun_shadow(pos, norm, uv.y);
+#endif
 #ifdef LL_NO_AO
     col.g = 1.0;
 #else
@@ -151,4 +187,7 @@ void main()
     col.b = (spot_shadow_mask & 1) != 0 ? spot_shadow(pos, norm, 0) : 1.0;
     col.a = (spot_shadow_mask & 2) != 0 ? spot_shadow(pos, norm, 1) : 1.0;
     frag_color = clamp(col, vec4(0.0), vec4(1.0));
+#ifdef LL_RT_QUERY
+    frag_blocker = vec4(rtSunBlockerT(), 0.0, 0.0, 1.0);
+#endif
 }

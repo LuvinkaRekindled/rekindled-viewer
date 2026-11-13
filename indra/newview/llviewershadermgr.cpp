@@ -1038,6 +1038,10 @@ std::string LLViewerShaderMgr::loadBasicShaders()
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
         }
         sRtSessionShaders = attribs.find("LL_RT_SHADOWS") != attribs.end();
+        if (sRtSessionShaders)
+        {
+            native_defines.push_back({ "LL_RT_SHADOWS", attribs["LL_RT_SHADOWS"] });      // (the mode of the traced sun shadow: 1 the rays, 4 and 5 the test views of lib/rt.glsl rt_sun_shadow)
+        }
         LLVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
         LLVkBridge::nativeGlobalDefines(native_defines);
     }
@@ -1555,35 +1559,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        std::string fragment;
         bool use_ao = gSavedSettings.getBOOL("RenderDeferredSSAO");
-        if (use_ao)
-        {
-            fragment = "deferred/sunLightSSAOF.glsl";
-        }
-        else
-        {
-            fragment = "deferred/sunLightF.glsl";
-        }
 
         gDeferredSunProgram.mName = "Deferred Sun Shader";
         gDeferredSunProgram.mFeatures.isDeferred    = true;
         gDeferredSunProgram.mFeatures.hasShadows    = true;
         gDeferredSunProgram.mFeatures.hasAmbientOcclusion = use_ao;
 
-        gDeferredSunProgram.mShaderFiles.clear();
-        gDeferredSunProgram.mShaderFiles.push_back(make_pair("deferred/sunLightV.glsl", ShaderStage::Vertex));
-        gDeferredSunProgram.mShaderFiles.push_back(make_pair(fragment, ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag; the ray traced sun lightmap is its rtquery variant, a session without occlusion its LL_NO_AO one): no stock files
         gDeferredSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        // <FS> a program's own files are compiled with its mDefines: the global map (LL_RT_SHADOWS, SUN_SHADOW, see attribs above) reaches only the shared utility files. The sun lightmap shader
-        // needs the ray traced mode in its own text for its second output (the blocker distance, PLAN-rt-shadow-penumbra.md step 1) and the adaptive-rays hook, which an `#if` on the global
-        // define had left out until 2026-11-04
-        gDeferredSunProgram.clearPermutations();
-        if (const U32 rt_mode = LLVkBridge::rtShadowMode())
-        {
-            gDeferredSunProgram.addPermutation("LL_RT_SHADOWS", std::to_string(rt_mode));
-        }
-
         add_common_permutations(&gDeferredSunProgram);
 
         success = gDeferredSunProgram.createShader();
@@ -2764,9 +2748,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
             gRtMaterialDebugProgram.mFeatures.isDeferred = true;
             gRtMaterialDebugProgram.mShaderFiles.clear();
-            gRtMaterialDebugProgram.clearPermutations();
-            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", ShaderStage::Vertex));
-            gRtMaterialDebugProgram.mShaderFiles.push_back(make_pair("deferred/rtMaterialDebugF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family post): no stock files
             gRtMaterialDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             add_common_permutations(&gRtMaterialDebugProgram);
             if (!gRtMaterialDebugProgram.createShader())

@@ -1211,9 +1211,39 @@ float rtSunShadow(vec3 pos, vec3 norm, vec3 light_dir, vec2 pos_screen)
     return lit;
 }
 
-// the sun shadow of a surface in a session with ray queries (shadowUtil.glsl sampleDirectionalShadow with LL_RT_SHADOWS 1: the rays only; the test views of the other modes are not translated)
+// the sun shadow of a surface in a session with ray queries (shadowUtil.glsl sampleDirectionalShadow with LL_RT_SHADOWS: 1 the rays only, 5 and 4 the test views; the modes 2 (split screen) and 3 (disagreement map) were
+// retired with the cascades' removal from the traced sessions and are not translated). LL_RT_SHADOWS is a global define of the native programs of a session with ray queries (llviewershadermgr.cpp)
 float rt_sun_shadow(vec3 pos, vec3 norm, vec2 pos_screen)
 {
     vec3 light_dir = normalize((sun_up_factor == 1) ? sun_dir : moon_dir);
-    return rtSunShadow(pos, norm, light_dir, pos_screen);
+    float rt = rtSunShadow(pos, norm, light_dir, pos_screen);
+#if LL_RT_SHADOWS == 5
+    // debug: rays only, with the sun swung sideways so that shadows fall far from their casters (a high sun puts them under the feet and hides what is in the scene)
+    return rtSunShadow(pos, norm, normalize(light_dir + vec3(1.2, 0.0, 0.0)), pos_screen);
+#elif LL_RT_SHADOWS == 4
+    // x-ray of the skinned avatar structures (instance mask 4): a ray from the eye through this pixel; lit where the ray scene has a surface at the depth of the visible one,
+    // dark elsewhere. Shows what of the avatars the ray scene really covers, in their current pose.
+    float depth = length(pos);
+    mat3 x_to_scene;
+    vec3 x_camera;
+    rtSceneFrame(x_to_scene, x_camera);
+    rayQueryEXT xq;
+    rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, x_camera, 0.01, x_to_scene * (pos / depth), depth + 3.0);
+    uint x_steps = 0u;
+    while (rayQueryProceedEXT(xq))
+    {
+        if (++x_steps > 96u)
+        {
+            rayQueryTerminateEXT(xq);
+            break;
+        }
+    }
+    if (rayQueryGetIntersectionTypeEXT(xq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+    {
+        return 0.0;
+    }
+    return abs(rayQueryGetIntersectionTEXT(xq, true) - depth) < max(0.04, 0.012 * depth) ? 1.0 : 0.0;
+#else
+    return rt;
+#endif
 }
