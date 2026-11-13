@@ -245,3 +245,5 @@ override | No color alpha mask Shader | forward_lit.vert | forward_lit.frag | po
 override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag | post | define LL_RT_QUERY=1 | default on
 # the material preview floater's glTF blend program (PLAN-native-only-end-state.md): the attribute vertex stage, the scene blend surfaces' fragment stage; no ray query variant: the preview draws with white shadow maps (llgltfmaterialpreviewmgr.cpp)
 override | Deferred PBR Alpha Shader | alpha_pbr_preview.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define PBR_PREVIEW=1 | default on
+# the traced glossy reflection pass (PLAN-native-only-end-state.md): the stock text of rtReflectionF and its library files as one native fragment shader (<work>\freeze_stock.py), the vertex stage is fullscreen.vert; made only in a session with ray queries and the material table
+override | Deferred RT Reflection Shader | fullscreen.vert | rt_reflection.frag | post | define HAS_SUN_SHADOW=1 | define LL_RT_REFLECTIONS=1 | define LL_RT_QUERY=1 | default on
