@@ -140,8 +140,6 @@ LLShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapsho
 // Deferred rendering shaders
 LLShaderProgram            gDeferredImpostorProgram;
 LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
-LLShaderProgram            gDeferredSkinnedBumpProgram;
-LLShaderProgram            gDeferredBumpProgram;
 LLShaderProgram            gDeferredTerrainProgram;
 LLShaderProgram            gDeferredTerrainPullProgram;
 bool                       gTerrainPullReady = false;
@@ -149,7 +147,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 28;
+constexpr size_t PULL_TWIN_COUNT = 21;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -190,9 +188,8 @@ static void make_pull_twins()
     LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
                                                   &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
                                                   &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
-                                                  &gHUDFullbrightProgram, &gHUDFullbrightAlphaMaskProgram, &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram, &gDeferredBumpProgram,
-                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gDeferredPBROpaqueProgram, &gObjectBumpProgram,
-                                                  &gDeferredShadowAlphaMaskProgram, &gDeferredShadowFullbrightAlphaMaskProgram, &gDeferredTreeShadowProgram, &gDeferredShadowGLTFAlphaBlendProgram,
+                                                  &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram,
+                                                  &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gDeferredShadowProgram, &gObjectBumpProgram, &gDeferredTreeShadowProgram,
                                                   &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
     for (size_t k = 0; k < PULL_TWIN_COUNT; ++k)
     {
@@ -336,12 +333,6 @@ bool                       gAlphaMaskPullReady = false;
 LLShaderProgram            gDeferredMaterialPullProgram[16];
 LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
 LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
-LLShaderProgram            gDeferredShadowAlphaMaskProgram;
-LLShaderProgram            gDeferredSkinnedShadowAlphaMaskProgram;
-LLShaderProgram            gDeferredShadowGLTFAlphaBlendProgram;
-LLShaderProgram            gDeferredSkinnedShadowGLTFAlphaBlendProgram;
-LLShaderProgram            gDeferredShadowFullbrightAlphaMaskProgram;
-LLShaderProgram            gDeferredSkinnedShadowFullbrightAlphaMaskProgram;
 LLShaderProgram            gDeferredAvatarShadowProgram;
 LLShaderProgram            gDeferredAvatarAlphaShadowProgram;
 LLShaderProgram            gDeferredAvatarAlphaMaskShadowProgram;
@@ -350,8 +341,6 @@ LLShaderProgram            gHUDAlphaProgram;
 LLShaderProgram            gDeferredSkinnedAlphaProgram;
 LLShaderProgram            gDeferredAlphaImpostorProgram;
 LLShaderProgram            gDeferredSkinnedAlphaImpostorProgram;
-LLShaderProgram            gHUDFullbrightProgram;
-LLShaderProgram            gHUDFullbrightAlphaMaskProgram;
 LLShaderProgram            gDeferredPostProgram;
 LLShaderProgram            gDeferredCoFProgram;
 LLShaderProgram            gDeferredDoFCombineProgram;
@@ -403,8 +392,6 @@ LLShaderProgram            gRlvSphereProgram;
 
 // Deferred materials shaders
 LLShaderProgram            gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
-LLShaderProgram            gDeferredPBROpaqueProgram;
-LLShaderProgram            gDeferredSkinnedPBROpaqueProgram;
 LLShaderProgram            gHUDPBRAlphaProgram;
 LLShaderProgram            gDeferredPBRAlphaProgram;
 LLShaderProgram            gDeferredSkinnedPBRAlphaProgram;
@@ -601,8 +588,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gDeferredAlphaProgram);
     mShaderList.push_back(&gHUDAlphaProgram);
     mShaderList.push_back(&gDeferredAlphaImpostorProgram);
-    mShaderList.push_back(&gHUDFullbrightProgram);
-    mShaderList.push_back(&gHUDFullbrightAlphaMaskProgram);
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
     mShaderList.push_back(&gDeferredAvatarAlphaProgram);
@@ -622,8 +607,6 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gCASLegacyGammaProgram);
     mShaderList.push_back(&gDeferredPostGammaCorrectProgram); // for gamma
     mShaderList.push_back(&gLegacyPostGammaCorrectProgram);
-    mShaderList.push_back(&gDeferredBumpProgram);
-    mShaderList.push_back(&gDeferredPBROpaqueProgram);
 
     if (gSavedSettings.getBOOL("GLTFEnabled"))
     {
@@ -1439,8 +1422,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredTreeShadowProgram.unload();
         gDeferredSkinnedTreeShadowProgram.unload();
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.unload();
-        gDeferredBumpProgram.unload();
-        gDeferredSkinnedBumpProgram.unload();
         gDeferredImpostorProgram.unload();
         gDeferredTerrainProgram.unload();
         gDeferredTerrainPullProgram.unload();
@@ -1541,10 +1522,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             pull.unload();
         }
-        gDeferredShadowAlphaMaskProgram.unload();
-        gDeferredSkinnedShadowAlphaMaskProgram.unload();
-        gDeferredShadowFullbrightAlphaMaskProgram.unload();
-        gDeferredSkinnedShadowFullbrightAlphaMaskProgram.unload();
         gDeferredAvatarShadowProgram.unload();
         gDeferredAvatarAlphaShadowProgram.unload();
         gDeferredAvatarAlphaMaskShadowProgram.unload();
@@ -1553,8 +1530,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaProgram.unload();
         gHUDAlphaProgram.unload();
         gDeferredSkinnedAlphaProgram.unload();
-        gHUDFullbrightProgram.unload();
-        gHUDFullbrightAlphaMaskProgram.unload();
         gDeferredPostProgram.unload();
         gDeferredCoFProgram.unload();
         gDeferredDoFCombineProgram.unload();
@@ -1611,9 +1586,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredMaterialProgram[i].unload();
         }
 
-        gDeferredPBROpaqueProgram.unload();
         gGLTFPBRMetallicRoughnessProgram.unload();
-        gDeferredSkinnedPBROpaqueProgram.unload();
         gDeferredPBRAlphaProgram.unload();
         gDeferredSkinnedPBRAlphaProgram.unload();
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
@@ -1647,19 +1620,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram);
         success = gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gDeferredBumpProgram.mName = "Deferred Bump Shader";
-        gDeferredBumpProgram.mShaderFiles.clear();
-        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpV.glsl", ShaderStage::Vertex));
-        gDeferredBumpProgram.mShaderFiles.push_back(make_pair("deferred/bumpF.glsl", ShaderStage::Fragment));
-        gDeferredBumpProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gDeferredBumpProgram);
-        success = make_rigged_variant(gDeferredBumpProgram, gDeferredSkinnedBumpProgram);
-        success = success && gDeferredBumpProgram.createShader();
         llassert(success);
     }
 
@@ -1755,27 +1715,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     gDeferredMaterialProgram[5+LLMaterial::SHADER_COUNT].mFeatures.hasLighting = true;
     gDeferredMaterialProgram[9+LLMaterial::SHADER_COUNT].mFeatures.hasLighting = true;
     gDeferredMaterialProgram[13+LLMaterial::SHADER_COUNT].mFeatures.hasLighting = true;
-
-    if (success)
-    {
-        gDeferredPBROpaqueProgram.mName = "Deferred PBR Opaque Shader";
-        gDeferredPBROpaqueProgram.mFeatures.hasSrgb = true;
-
-        gDeferredPBROpaqueProgram.mShaderFiles.clear();
-        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueV.glsl", ShaderStage::Vertex));
-        gDeferredPBROpaqueProgram.mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
-        gDeferredPBROpaqueProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredPBROpaqueProgram.clearPermutations();
-
-        add_common_permutations(&gDeferredPBROpaqueProgram);
-
-        success = make_rigged_variant(gDeferredPBROpaqueProgram, gDeferredSkinnedPBROpaqueProgram);
-        if (success)
-        {
-            success = gDeferredPBROpaqueProgram.createShader();
-        }
-        llassert(success);
-    }
 
     if (gSavedSettings.getBOOL("GLTFEnabled"))
     {
@@ -3030,49 +2969,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gHUDFullbrightProgram.mName = "HUD Fullbright Shader";
-        gHUDFullbrightProgram.mFeatures.calculatesAtmospherics = true;
-        gHUDFullbrightProgram.mFeatures.hasGamma = true;
-        gHUDFullbrightProgram.mFeatures.hasAtmospherics = true;
-        gHUDFullbrightProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-        gHUDFullbrightProgram.mShaderFiles.clear();
-        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
-        gHUDFullbrightProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-        gHUDFullbrightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gHUDFullbrightProgram.clearPermutations();
-        gHUDFullbrightProgram.addPermutation("IS_HUD", "1");
-
-        add_common_permutations(&gHUDFullbrightProgram);
-
-        success = gHUDFullbrightProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gHUDFullbrightAlphaMaskProgram.mName = "HUD Fullbright Alpha Masking Shader";
-        gHUDFullbrightAlphaMaskProgram.mFeatures.calculatesAtmospherics = true;
-        gHUDFullbrightAlphaMaskProgram.mFeatures.hasGamma = true;
-        gHUDFullbrightAlphaMaskProgram.mFeatures.hasAtmospherics = true;
-        gHUDFullbrightAlphaMaskProgram.mFeatures.hasSrgb = true;
-        gHUDFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-        gHUDFullbrightAlphaMaskProgram.mShaderFiles.clear();
-        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", ShaderStage::Vertex));
-        gHUDFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-        gHUDFullbrightAlphaMaskProgram.clearPermutations();
-        gHUDFullbrightAlphaMaskProgram.addPermutation("HAS_ALPHA_MASK", "1");
-        gHUDFullbrightAlphaMaskProgram.addPermutation("IS_HUD", "1");
-
-        add_common_permutations(&gHUDFullbrightAlphaMaskProgram);
-
-        gHUDFullbrightAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = gHUDFullbrightAlphaMaskProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
         gDeferredFullbrightShinyProgram.mName = "Deferred FullbrightShiny Shader";
         gDeferredFullbrightShinyProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredFullbrightShinyProgram.mFeatures.hasAtmospherics = true;
@@ -3454,57 +3350,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gAlphaRiggedPullReady = blend_skin_ok && gAlphaLitSkinReady;
     }
 
-    if (success)
-    {
-        gDeferredShadowFullbrightAlphaMaskProgram.mName = "Deferred Shadow Fullbright Alpha Mask Shader";
-        gDeferredShadowFullbrightAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", ShaderStage::Fragment));
-
-        gDeferredShadowFullbrightAlphaMaskProgram.clearPermutations();
-        gDeferredShadowFullbrightAlphaMaskProgram.addPermutation("DEPTH_CLAMP", "1");
-        gDeferredShadowFullbrightAlphaMaskProgram.addPermutation("IS_FULLBRIGHT", "1");
-
-        add_common_permutations(&gDeferredShadowFullbrightAlphaMaskProgram);
-
-        gDeferredShadowFullbrightAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = make_rigged_variant(gDeferredShadowFullbrightAlphaMaskProgram, gDeferredSkinnedShadowFullbrightAlphaMaskProgram);
-        success = success && gDeferredShadowFullbrightAlphaMaskProgram.createShader();
-        llassert(success);
-    }
-
-    if (success)
-    {
-        gDeferredShadowAlphaMaskProgram.mName = "Deferred Shadow Alpha Mask Shader";
-        gDeferredShadowAlphaMaskProgram.mFeatures.mIndexedTextureChannels = LLShaderProgram::sIndexedTextureChannels;
-
-        gDeferredShadowAlphaMaskProgram.mShaderFiles.clear();
-        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskV.glsl", ShaderStage::Vertex));
-        gDeferredShadowAlphaMaskProgram.mShaderFiles.push_back(make_pair("deferred/shadowAlphaMaskF.glsl", ShaderStage::Fragment));
-        gDeferredShadowAlphaMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = make_rigged_variant(gDeferredShadowAlphaMaskProgram, gDeferredSkinnedShadowAlphaMaskProgram);
-        success = success && gDeferredShadowAlphaMaskProgram.createShader();
-        llassert(success);
-    }
-
-
-    if (success)
-    {
-        gDeferredShadowGLTFAlphaBlendProgram.mName = "Deferred GLTF Shadow Alpha Blend Shader";
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.clear();
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaMaskV.glsl", ShaderStage::Vertex));
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderFiles.push_back(make_pair("deferred/pbrShadowAlphaBlendF.glsl", ShaderStage::Fragment));
-        gDeferredShadowGLTFAlphaBlendProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredShadowGLTFAlphaBlendProgram.clearPermutations();
-
-        add_common_permutations(&gDeferredShadowGLTFAlphaBlendProgram);
-
-        success = make_rigged_variant(gDeferredShadowGLTFAlphaBlendProgram, gDeferredSkinnedShadowGLTFAlphaBlendProgram);
-        success = success && gDeferredShadowGLTFAlphaBlendProgram.createShader();
-        llassert(success);
-    }
 
     if (success)
     {

@@ -219,7 +219,6 @@ extern LLShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapsho
 extern LLShaderProgram         gDeferredImpostorProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
 extern LLShaderProgram         gDeferredNonIndexedDiffuseProgram;
-extern LLShaderProgram         gDeferredBumpProgram;
 extern LLShaderProgram         gDeferredTerrainProgram;
 extern LLShaderProgram         gDeferredTreeProgram;
 extern LLShaderProgram         gDeferredTreeShadowProgram;
@@ -327,9 +326,6 @@ extern LLShaderProgram         gDeferredDiffusePullProgram;      // <FS> render 
 extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
 extern LLShaderProgram         gDeferredDiffusePullSkinProgram;  // <FS> S4 A1: the rigged variants of the two (weights and palette read by address)
 extern LLShaderProgram         gDeferredMaterialPullSkinProgram[16];
-extern LLShaderProgram         gDeferredShadowAlphaMaskProgram;
-extern LLShaderProgram         gDeferredShadowGLTFAlphaBlendProgram;
-extern LLShaderProgram         gDeferredShadowFullbrightAlphaMaskProgram;
 extern LLShaderProgram         gDeferredPostProgram;
 extern LLShaderProgram         gDeferredCoFProgram;
 extern LLShaderProgram         gDeferredDoFCombineProgram;
@@ -369,8 +365,6 @@ extern LLShaderProgram         gDeferredAvatarAlphaMaskShadowProgram;
 extern LLShaderProgram         gDeferredAlphaProgram;
 extern LLShaderProgram         gHUDAlphaProgram;
 extern LLShaderProgram         gDeferredAlphaImpostorProgram;
-extern LLShaderProgram         gHUDFullbrightProgram;
-extern LLShaderProgram         gHUDFullbrightAlphaMaskProgram;
 extern LLShaderProgram         gDeferredAvatarAlphaProgram;
 extern LLShaderProgram         gEnvironmentMapProgram;
 extern LLShaderProgram         gDeferredWLSkyProgram;
@@ -390,7 +384,6 @@ extern LLShaderProgram         gRlvSphereProgram;
 // Deferred materials shaders
 extern LLShaderProgram         gDeferredMaterialProgram[LLMaterial::SHADER_COUNT*2];
 
-extern LLShaderProgram         gDeferredPBROpaqueProgram;
 extern LLShaderProgram         gDeferredPBRAlphaProgram;
 extern LLShaderProgram         gHUDPBRAlphaProgram;
 
