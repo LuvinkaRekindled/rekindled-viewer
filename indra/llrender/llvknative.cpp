@@ -165,6 +165,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     glslang::TProgram program;
     bool have_stage[3] = { false, false, false };
     size_t body_index[3] = { 0, 0, 0 };        // where the stage's source is in 'keep'
+    std::vector<std::string> stage_includes[3];     // the files the stage's #include lines read (a vertex input declared in an include is a vertex input of the program)
     const std::string stage_files[3] = { vertex_file, fragment_file, geometry_file };
     const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
     keep.reserve(8);
@@ -181,6 +182,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
             return fail("cannot read " + path);
         }
         read_files.push_back(path);
+        const size_t includes_from = read_files.size();
         const EShLanguage lang = s == 0 ? EShLangVertex : (s == 1 ? EShLangFragment : EShLangGeometry);
         keep.push_back(stage_head(s, defines));
         keep.push_back(body);
@@ -197,6 +199,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         {
             return fail("compile failed for " + stage_files[s] + ": " + sh->getInfoLog());
         }
+        stage_includes[s].assign(read_files.begin() + includes_from, read_files.end());
         program.addShader(sh.get());
         shaders.push_back(std::move(sh));
         have_stage[s] = true;
@@ -332,7 +335,17 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         static const std::regex out_re(R"(layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*out\s+(\w+)\s+(\w+)\s*;)");
         if (have_stage[0])
         {
-            const std::string& body = keep[body_index[0]];
+            // the vertex shader's own text and the files its #include lines read (lib/objectskin.glsl declares the weights): a declaration in an include was never seen here, and the program drew with no weights
+            std::string body = keep[body_index[0]];
+            for (const std::string& inc : stage_includes[0])
+            {
+                std::string text;
+                if (read_file(inc, text))
+                {
+                    body += '\n';
+                    body += text;
+                }
+            }
             for (std::sregex_iterator it(body.begin(), body.end(), in_re), end; it != end; ++it)
             {
                 out.mAttributeLocations.push_back((U32)atoi((*it)[1].str().c_str()));
