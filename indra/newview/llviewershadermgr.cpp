@@ -1959,12 +1959,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredTreePullProgram.mName = "Deferred Tree Pull Shader";
         gDeferredTreePullProgram.mFeatures = gDeferredTreeProgram.mFeatures;
-        gDeferredTreePullProgram.mShaderFiles.clear();
-        gDeferredTreePullProgram.mShaderFiles.push_back(make_pair("deferred/treeV.glsl", ShaderStage::Vertex));
-        gDeferredTreePullProgram.mShaderFiles.push_back(make_pair("deferred/treeF.glsl", ShaderStage::Fragment));
-        gDeferredTreePullProgram.clearPermutations();
-        gDeferredTreePullProgram.addPermutation("LL_VERTEX_PULL", "1");
-        add_common_permutations(&gDeferredTreePullProgram);
+        // <FS> a native only program (native/manifest.txt, family gbuffer: tree.vert + tree.frag): no stock files
         gDeferredTreePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (gDeferredTreePullProgram.createShader())
         {
@@ -2262,13 +2257,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->clearPermutations();
             if (fullbright)
             {
+                // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.isDeferred = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-                shader->addPermutation("HAS_ALPHA_MASK", "1");
-                shader->addPermutation("IS_ALPHA", "1");
-                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
             }
             else
             {
@@ -2383,13 +2374,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->clearPermutations();
             if (fullbright)
             {
+                // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
                 shader->mFeatures.hasAtmospherics = true;
                 shader->mFeatures.isDeferred = true;
-                shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-                shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", ShaderStage::Fragment));
-                shader->addPermutation("HAS_ALPHA_MASK", "1");
-                shader->addPermutation("IS_ALPHA", "1");
-                shader->addPermutation("IS_FULLBRIGHT_PULL", "1");
             }
             else
             {
@@ -2741,20 +2728,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             LLShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
             shader->mName = skin ? "Deferred Bump Pull Skin Shader" : "Deferred Bump Pull Shader";
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/bumpF.glsl", ShaderStage::Fragment));
-            shader->addPermutation("IS_BUMP_PULL", "1");
-            shader->addPermutation("LL_BINDLESS_MATERIAL", "1");
-            shader->addPermutation("HAS_NORMAL_MAP", "1");
-            shader->addPermutation("LL_MASK_CUTOFF", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
+            // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_bump.frag): no stock files
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             ok = shader->createShader();
             if (!ok)
@@ -2789,18 +2763,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             LLShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
             shader->mName = skin ? "Deferred Emboss Pull Skin Shader" : "Deferred Emboss Pull Shader";
-            shader->mShaderFiles.clear();
-            shader->clearPermutations();
-            shader->mShaderFiles.push_back(make_pair("deferred/alphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("objects/bumpF.glsl", ShaderStage::Fragment));
-            shader->addPermutation("IS_EMBOSS_PULL", "1");
-            shader->addPermutation("LL_BINDLESS_MATERIAL", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
+            // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + emboss.frag): no stock files
             shader->mShaderLevel = mShaderLevel[SHADER_OBJECT];
             ok = shader->createShader();
             if (!ok)
@@ -2878,17 +2841,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.isDeferred = true;
             shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
-            shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
-            shader->mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
-            shader->clearPermutations();
-            shader->addPermutation("LL_BINDLESS_PBR", "1");
-            if (skin)
-            {
-                shader->addPermutation("HAS_SKIN", "1");
-                shader->addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            add_common_permutations(shader);
+            // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque.frag): no stock files
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (shader->createShader())
             {
@@ -2915,13 +2868,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mFeatures.hasGamma = true;
         shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
-        shader->mShaderFiles.clear();
-        shader->mShaderFiles.push_back(make_pair("deferred/pbrAlphaPullV.glsl", ShaderStage::Vertex));
-        shader->mShaderFiles.push_back(make_pair("deferred/pbropaqueF.glsl", ShaderStage::Fragment));
-        shader->clearPermutations();
-        shader->addPermutation("LL_BINDLESS_PBR", "1");
-        shader->addPermutation("IS_HUD", "1");
-        add_common_permutations(shader);
+        // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque_hud.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (shader->createShader())
         {
@@ -3039,7 +2986,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gAlphaHudPullReady = make_pull(shader, "HUD Fullbright Alpha Pull Shader", nullptr, nullptr, {}, false);
             shader = &gHUDPBRAlphaPullProgram;
             shader->mFeatures.hasSrgb = true;
-            gAlphaHudPbrReady = make_pull(shader, "HUD PBR Alpha Pull Shader", "deferred/pbrAlphaPullV.glsl", "deferred/pbralphaF.glsl", { { "IS_HUD", "1" }, { "LL_BINDLESS_PBR", "1" } }, false);
+            gAlphaHudPbrReady = make_pull(shader, "HUD PBR Alpha Pull Shader", nullptr, nullptr, {}, false);       // (a native only program: alpha_pbr.vert + alpha_pbr_hud.frag)
         }
         // the impostor render's lit program, static and rigged
         if (gAlphaLitSkinReady && ll_rigged_indexed())
@@ -3392,32 +3339,37 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LLShaderProgram& pull = gDeferredMaterialPullProgram[i];
             pull.mName = llformat("Material Pull Shader %d", i);
-            pull.mShaderFiles.clear();
-            pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
-            pull.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
-            pull.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            pull.clearPermutations();
-            if (i & 0x8)
-            {
-                pull.addPermutation("HAS_NORMAL_MAP", "1");
-            }
-            if (i & 0x4)
-            {
-                pull.addPermutation("HAS_SPECULAR_MAP", "1");
-            }
+            // <FS> the programs of the alpha modes 0, 2 and 3 are native only (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_material.frag): no stock files; the blend variants (1, 5, 9, 13: native
+            // outside the sessions with ray queries) keep theirs
             const U32 alpha_mode = i & 0x3;
-            pull.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+            pull.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (alpha_mode != 0)
             {
                 pull.mFeatures.hasAlphaMask = true;
-                pull.addPermutation("HAS_ALPHA_MASK", "1");
             }
-            if (use_sun_shadow)
+            if (alpha_mode == 1)
             {
-                pull.addPermutation("HAS_SUN_SHADOW", "1");
+                pull.mShaderFiles.clear();
+                pull.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
+                pull.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
+                pull.clearPermutations();
+                if (i & 0x8)
+                {
+                    pull.addPermutation("HAS_NORMAL_MAP", "1");
+                }
+                if (i & 0x4)
+                {
+                    pull.addPermutation("HAS_SPECULAR_MAP", "1");
+                }
+                pull.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+                pull.addPermutation("HAS_ALPHA_MASK", "1");
+                if (use_sun_shadow)
+                {
+                    pull.addPermutation("HAS_SUN_SHADOW", "1");
+                }
+                pull.addPermutation("LL_BINDLESS_MATERIAL", "1");
+                add_common_permutations(&pull);
             }
-            pull.addPermutation("LL_BINDLESS_MATERIAL", "1");
-            add_common_permutations(&pull);
             pull.mFeatures.hasSrgb = true;
             pull.mFeatures.calculatesAtmospherics = true;
             pull.mFeatures.hasAtmospherics = true;
@@ -3441,40 +3393,43 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             // <FS> S4 A1: the rigged variant of the same pass (HAS_SKIN)
             LLShaderProgram& skin = gDeferredMaterialPullSkinProgram[i];
             skin.mName = llformat("Material Pull Skin Shader %d", i);
-            skin.mShaderFiles.clear();
-            skin.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
-            skin.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
             skin.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            skin.clearPermutations();
-            if (i & 0x8)
-            {
-                skin.addPermutation("HAS_NORMAL_MAP", "1");
-            }
-            if (i & 0x4)
-            {
-                skin.addPermutation("HAS_SPECULAR_MAP", "1");
-            }
-            skin.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
             if (alpha_mode != 0)
             {
                 skin.mFeatures.hasAlphaMask = true;
+            }
+            if (alpha_mode == 1)
+            {
+                skin.mShaderFiles.clear();
+                skin.mShaderFiles.push_back(make_pair("deferred/materialPullV.glsl", ShaderStage::Vertex));
+                skin.mShaderFiles.push_back(make_pair("deferred/materialF.glsl", ShaderStage::Fragment));
+                skin.clearPermutations();
+                if (i & 0x8)
+                {
+                    skin.addPermutation("HAS_NORMAL_MAP", "1");
+                }
+                if (i & 0x4)
+                {
+                    skin.addPermutation("HAS_SPECULAR_MAP", "1");
+                }
+                skin.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
                 skin.addPermutation("HAS_ALPHA_MASK", "1");
+                if (use_sun_shadow)
+                {
+                    skin.addPermutation("HAS_SUN_SHADOW", "1");
+                }
+                skin.addPermutation("LL_BINDLESS_MATERIAL", "1");
+                skin.addPermutation("HAS_SKIN", "1");
+                if (ll_rigged_indexed())
+                {
+                    skin.addPermutation("HAS_INDEXED_DRAW", "1");
+                }
+                if (getenv("LL_VK_SKIN_TEST"))
+                {
+                    skin.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
+                }
+                add_common_permutations(&skin);
             }
-            if (use_sun_shadow)
-            {
-                skin.addPermutation("HAS_SUN_SHADOW", "1");
-            }
-            skin.addPermutation("LL_BINDLESS_MATERIAL", "1");
-            skin.addPermutation("HAS_SKIN", "1");
-            if (ll_rigged_indexed())
-            {
-                skin.addPermutation("HAS_INDEXED_DRAW", "1");
-            }
-            if (getenv("LL_VK_SKIN_TEST"))
-            {
-                skin.addPermutation("SKIN_NOOP", "1");       // (diagnostic: a wrong picture, only for the GPU time)
-            }
-            add_common_permutations(&skin);
             skin.mFeatures.hasSrgb = true;
             skin.mFeatures.calculatesAtmospherics = true;
             skin.mFeatures.hasAtmospherics = true;
@@ -3613,12 +3568,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredTerrainPullProgram.mName = "Deferred Terrain Pull Shader";
         gDeferredTerrainPullProgram.mFeatures = gDeferredTerrainProgram.mFeatures;
-        gDeferredTerrainPullProgram.mShaderFiles.clear();
-        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", ShaderStage::Vertex));
-        gDeferredTerrainPullProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", ShaderStage::Fragment));
-        gDeferredTerrainPullProgram.clearPermutations();
-        gDeferredTerrainPullProgram.addPermutation("LL_VERTEX_PULL", "1");
-        add_common_permutations(&gDeferredTerrainPullProgram);
+        // <FS> a native only program (native/manifest.txt, family gbuffer: terrain.vert + terrain.frag): no stock files
         gDeferredTerrainPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (gDeferredTerrainPullProgram.createShader())
         {
