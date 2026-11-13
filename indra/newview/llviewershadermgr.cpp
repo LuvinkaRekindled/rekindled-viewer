@@ -147,7 +147,7 @@ bool                       gTerrainPullReady = false;
 // S6.6: the pull twins of the programs the face based draws use (water, its haze, the water exclusion mask)
 namespace
 {
-constexpr size_t PULL_TWIN_COUNT = 19;
+constexpr size_t PULL_TWIN_COUNT = 14;
 LLShaderProgram sPullTwins[PULL_TWIN_COUNT];
 LLShaderProgram* sPullTwinSources[PULL_TWIN_COUNT] = {};
 bool sPullTwinReady[PULL_TWIN_COUNT] = {};
@@ -187,7 +187,6 @@ static void make_pull_twins()
 {
     LLShaderProgram* sources[PULL_TWIN_COUNT] = { &gWaterProgram, &gUnderWaterProgram, &gHazeWaterProgram, &gDrawColorProgram,
                                                   &gDeferredAvatarProgram, &gDeferredAvatarAlphaProgram, &gDeferredAvatarShadowProgram, &gDeferredAvatarAlphaShadowProgram, &gDeferredAvatarAlphaMaskShadowProgram,
-                                                  &gDeferredWLSkyProgram, &gDeferredWLCloudProgram, &gDeferredWLMoonProgram, &gDeferredWLSunProgram, &gDeferredStarProgram,
                                                   &gHUDFullbrightShinyProgram, &gDeferredFullbrightShinyProgram,
                                                   &gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram, &gObjectBumpProgram,
                                                   &gAvatarBodyVelocityProgram };       // (K6 group D: the system avatar's body parts in the avatar velocity pass)
@@ -3915,6 +3914,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
+        // <FS> the HDRI sky (use_hdri_sky(): an HDRI image is loaded): not ported to a native program yet (the native sky shader has no HDRI path), so it keeps its stock files, drawn by attributes
         gEnvironmentMapProgram.mName = "Environment Map Program";
         gEnvironmentMapProgram.mShaderFiles.clear();
         gEnvironmentMapProgram.mFeatures.calculatesAtmospherics = true;
@@ -3936,99 +3936,73 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredWLSkyProgram.mName = "Deferred Windlight Sky Shader";
-        gDeferredWLSkyProgram.mShaderFiles.clear();
+        // <FS> a native only program (native/manifest.txt, family gbuffer: sky.vert + sky.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
+        gDeferredWLSkyProgram.mName = "Deferred Windlight Sky Shader pull";
+        gDeferredWLSkyProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSkyProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSkyProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLSkyProgram.mFeatures.hasGamma = true;
         gDeferredWLSkyProgram.mFeatures.hasSrgb = true;
-
-        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyV.glsl", ShaderStage::Vertex));
-        gDeferredWLSkyProgram.mShaderFiles.push_back(make_pair("deferred/skyF.glsl", ShaderStage::Fragment));
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSkyProgram.mShaderGroup = LLShaderProgram::SG_SKY;
-
-        add_common_permutations(&gDeferredWLSkyProgram);
-
         success = gDeferredWLSkyProgram.createShader();
         llassert(success);
     }
 
     if (success)
     {
-        gDeferredWLCloudProgram.mName = "Deferred Windlight Cloud Program";
-        gDeferredWLCloudProgram.mShaderFiles.clear();
+        // <FS> a native only program (native/manifest.txt, family gbuffer: clouds.vert + clouds.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
+        gDeferredWLCloudProgram.mName = "Deferred Windlight Cloud Program pull";
+        gDeferredWLCloudProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLCloudProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLCloudProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLCloudProgram.mFeatures.hasGamma = true;
         gDeferredWLCloudProgram.mFeatures.hasSrgb = true;
-
-        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsV.glsl", ShaderStage::Vertex));
-        gDeferredWLCloudProgram.mShaderFiles.push_back(make_pair("deferred/cloudsF.glsl", ShaderStage::Fragment));
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLCloudProgram.mShaderGroup = LLShaderProgram::SG_SKY;
-        gDeferredWLCloudProgram.addConstant( LLShaderProgram::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
-
-        add_common_permutations(&gDeferredWLCloudProgram);
-
         success = gDeferredWLCloudProgram.createShader();
         llassert(success);
     }
 
     if (success)
     {
-        gDeferredWLSunProgram.mName = "Deferred Windlight Sun Program";
+        // <FS> a native only program (native/manifest.txt, family gbuffer: sundisc.vert + sundisc.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
+        gDeferredWLSunProgram.mName = "Deferred Windlight Sun Program pull";
+        gDeferredWLSunProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSunProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSunProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLSunProgram.mFeatures.hasGamma = true;
         gDeferredWLSunProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLSunProgram.mFeatures.hasSrgb = true;
-        gDeferredWLSunProgram.mShaderFiles.clear();
-        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscV.glsl", ShaderStage::Vertex));
-        gDeferredWLSunProgram.mShaderFiles.push_back(make_pair("deferred/sunDiscF.glsl", ShaderStage::Fragment));
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSunProgram.mShaderGroup = LLShaderProgram::SG_SKY;
-
-        add_common_permutations(&gDeferredWLSunProgram);
-
         success = gDeferredWLSunProgram.createShader();
         llassert(success);
     }
 
     if (success)
     {
-        gDeferredWLMoonProgram.mName = "Deferred Windlight Moon Program";
+        // <FS> a native only program (native/manifest.txt, family gbuffer: moon.vert + moon.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
+        gDeferredWLMoonProgram.mName = "Deferred Windlight Moon Program pull";
+        gDeferredWLMoonProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLMoonProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLMoonProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLMoonProgram.mFeatures.hasGamma = true;
         gDeferredWLMoonProgram.mFeatures.hasAtmospherics = true;
         gDeferredWLMoonProgram.mFeatures.hasSrgb = true;
-
-        gDeferredWLMoonProgram.mShaderFiles.clear();
-        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonV.glsl", ShaderStage::Vertex));
-        gDeferredWLMoonProgram.mShaderFiles.push_back(make_pair("deferred/moonF.glsl", ShaderStage::Fragment));
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLMoonProgram.mShaderGroup = LLShaderProgram::SG_SKY;
-        gDeferredWLMoonProgram.addConstant( LLShaderProgram::SHADER_CONST_CLOUD_MOON_DEPTH ); // SL-14113
-
-        add_common_permutations(&gDeferredWLMoonProgram);
-
         success = gDeferredWLMoonProgram.createShader();
         llassert(success);
     }
 
     if (success)
     {
-        gDeferredStarProgram.mName = "Deferred Star Program";
-        gDeferredStarProgram.mShaderFiles.clear();
-        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsV.glsl", ShaderStage::Vertex));
-        gDeferredStarProgram.mShaderFiles.push_back(make_pair("deferred/starsF.glsl", ShaderStage::Fragment));
+        // <FS> a native only program (native/manifest.txt, family gbuffer: stars.vert + stars.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
+        gDeferredStarProgram.mName = "Deferred Star Program pull";
+        gDeferredStarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredStarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredStarProgram.mShaderGroup = LLShaderProgram::SG_SKY;
-        gDeferredStarProgram.addConstant( LLShaderProgram::SHADER_CONST_STAR_DEPTH ); // SL-14113
-
-        add_common_permutations(&gDeferredStarProgram);
-
         success = gDeferredStarProgram.createShader();
         llassert(success);
     }

@@ -75,12 +75,12 @@ bool LLDrawPoolWLSky::sSkyLate = false;
 
 void LLDrawPoolWLSky::beginDeferredPass(S32 pass)
 {
-    sky_shader = ll_pull_or(&gDeferredWLSkyProgram);        // S6.6: the dome, clouds, sun, moon and stars as entries
-    cloud_shader = ll_pull_or(&gDeferredWLCloudProgram);
+    sky_shader = &gDeferredWLSkyProgram;        // S6.6: the dome, clouds, sun, moon and stars as entries (native programs that read the vertices by address: there is no other form of them)
+    cloud_shader = &gDeferredWLCloudProgram;
 
-    sun_shader = ll_pull_or(&gDeferredWLSunProgram);
+    sun_shader = &gDeferredWLSunProgram;
 
-    moon_shader = ll_pull_or(&gDeferredWLMoonProgram);
+    moon_shader = &gDeferredWLMoonProgram;
 }
 
 void LLDrawPoolWLSky::endDeferredPass(S32 pass)
@@ -239,7 +239,7 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
         return;
     }
 
-    LLShaderProgram& star_program = *ll_pull_or(&gDeferredStarProgram);       // S6.6
+    LLShaderProgram& star_program = gDeferredStarProgram;       // S6.6
     star_program.bind();
 
     LLViewerTexture* tex_a = gSky.mVOSkyp->getBloomTex();
