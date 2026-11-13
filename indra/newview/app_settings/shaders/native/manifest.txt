@@ -247,3 +247,21 @@ override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag |
 override | Deferred PBR Alpha Shader | alpha_pbr_preview.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define PBR_PREVIEW=1 | default on
 # the traced glossy reflection pass (PLAN-native-only-end-state.md): the stock text of rtReflectionF and its library files as one native fragment shader (<work>\freeze_stock.py), the vertex stage is fullscreen.vert; made only in a session with ray queries and the material table
 override | Deferred RT Reflection Shader | fullscreen.vert | rt_reflection.frag | post | define HAS_SUN_SHADOW=1 | define LL_RT_REFLECTIONS=1 | define LL_RT_QUERY=1 | default on
+# the glTF scene programs (the glTF objects of the scene manager; PLAN-native-only-end-state.md): the stock text of pbrmetallicroughnessV / F and the library files of the stock loader, 16 variants by define; the blended
+# variants have the ray traced sun shadow in a session with ray queries (rtquery). The names are the variants' (llviewershadermgr.cpp make_gltf_variant)
+override | GLTF PBR Metallic Roughness Shader | gltf_scene.vert | gltf_scene.frag | gbuffer | default on
+override | GLTF PBR Metallic Roughness Shader blend | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define MULTI_UV=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define MULTI_UV=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define MULTI_UV=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define MULTI_UV=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | define MULTI_UV=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
