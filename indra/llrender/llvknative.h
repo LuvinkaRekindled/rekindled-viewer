@@ -57,6 +57,10 @@ void dumpNativeCensus();
 bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines);
 std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
 
+// <FS> stage 4 step 4: whether this session's stock programs carry ray query code (the global define LL_RT_SHADOWS is set). A manifest line with the option `rt` is native only while it is not: with ray traced
+// shadows on, the stock program with its ray query code stays and the line is swapped in at the draw. Set with the global defines each time the viewer's shaders are set up (main thread).
+void nativeSetRtSession(bool on);
+
 // <FS> shader cleanup (stage 4, step 0 of DESIGN-stock-carrier-removal.md): the interface of a program as one line of text: the loose uniforms (name:type, arrays name:type[n]; the ll_ti_ slot members left out),
 // the samplers, the vertex inputs and the number of fragment outputs. Used for the stock and the native side of the interface comparison.
 std::string interfaceText(const ProgramInfo& info);

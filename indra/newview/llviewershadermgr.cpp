@@ -1194,6 +1194,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         {
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
         }
+        LLVkBridge::nativeRtSession(attribs.find("LL_RT_SHADOWS") != attribs.end());      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
         LLVkBridge::nativeGlobalDefines(native_defines);
     }
 
