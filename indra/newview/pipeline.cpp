@@ -10478,15 +10478,15 @@ static bool geo_type_available(size_t t, bool rigged)
 {
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GRASS)
     {
-        return !rigged && LLRenderPass::deferredPacketsEnabled() && gDiffuseMaskPullReady;
+        return !rigged && LLRenderPass::deferredPacketsEnabled();
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mPbr == 1)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gPbrOpaquePullSkinReady && ll_rigged_packets_enabled()) : gPbrOpaquePullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mPbr == 2)
     {
@@ -10494,11 +10494,11 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_MASK)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gDiffuseMaskPullSkinReady && ll_rigged_packets_enabled()) : gDiffuseMaskPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (rigged ? (gFullbrightMaskPullSkinReady && ll_rigged_packets_enabled()) : gFullbrightMaskPullReady);
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
@@ -13626,10 +13626,10 @@ bool ll_scene_geo_hud_type(int tn)
     {
         return false;
     }
-    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT) && gHUDFullbrightPullReady)
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK) && gHUDFullbrightMaskPullReady)
+    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT))
+        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY))
-        || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)) && gHUDPBROpaquePullReady)
+        || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)))
         || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
         || ll_scene_geo_highlight_type(tn);
 }

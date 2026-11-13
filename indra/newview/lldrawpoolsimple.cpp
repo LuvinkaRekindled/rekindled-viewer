@@ -132,15 +132,12 @@ void LLDrawPoolAlphaMask::renderDeferred(S32 pass)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_ALPHA_MASK_DEFERRED);
 
     // <FS> J1 K6 A3: the alpha masked draws from the scene table (the cutoff of each draw in its row)
-    if (gDiffuseMaskPullReady)
+    gDeferredDiffuseAlphaMaskPullProgram.bind();
+    pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
+    if (ll_rigged_packets_enabled())
     {
-        gDeferredDiffuseAlphaMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
-        if (ll_rigged_packets_enabled() && gDiffuseMaskPullSkinReady)
-        {
-            gDeferredDiffuseAlphaMaskPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true);
-        }
+        gDeferredDiffuseAlphaMaskPullSkinProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true);
     }
 }
 
@@ -155,11 +152,8 @@ void LLDrawPoolGrass::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     // <FS> J1 K6 A3: the grass draws from the scene table (the alpha masked diffuse pull program, the 0.5 cutoff in each row)
-    if (gDiffuseMaskPullReady)
-    {
-        gDeferredDiffuseAlphaMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_GRASS);
-    }
+    gDeferredDiffuseAlphaMaskPullProgram.bind();
+    pushGeometryPackets(LLRenderPass::PASS_GRASS);
 }
 
 
@@ -187,15 +181,12 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
     }
 
     // <FS> J1 K6 A3: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass)
-    if (gFullbrightPullReady)
+    gDeferredFullbrightPullProgram.bind();
+    pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
+    if (ll_rigged_packets_enabled())
     {
-        gDeferredFullbrightPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
-        if (ll_rigged_packets_enabled() && gFullbrightPullSkinReady)
-        {
-            gDeferredFullbrightPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true);
-        }
+        gDeferredFullbrightPullSkinProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true);
     }
 }
 
@@ -221,14 +212,11 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     }
 
     // <FS> J1 K6 A3: the alpha masked fullbright draws from the scene table
-    if (gFullbrightMaskPullReady)
+    gDeferredFullbrightAlphaMaskPullProgram.bind();
+    pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
+    if (ll_rigged_packets_enabled())
     {
-        gDeferredFullbrightAlphaMaskPullProgram.bind();
-        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
-        if (ll_rigged_packets_enabled() && gFullbrightMaskPullSkinReady)
-        {
-            gDeferredFullbrightAlphaMaskPullSkinProgram.bind();
-            pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true);
-        }
+        gDeferredFullbrightAlphaMaskPullSkinProgram.bind();
+        pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true);
     }
 }

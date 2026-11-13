@@ -255,17 +255,12 @@ extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S
 extern bool                    gTerrainPbrPullReady;
 extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
 extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
-extern bool                    gFullbrightPullReady;
-extern bool                    gFullbrightPullSkinReady;
 extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
 extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
 extern LLShaderProgram         gHUDFullbrightPullProgram;        // <FS> J1 K6 S1: the HUD's fullbright pass from the scene table (the fullbright pull program with IS_HUD)
-extern bool                    gHUDFullbrightPullReady;
 extern LLShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 K6 S1: the HUD's alpha masked fullbright and fullbright shiny passes from the scene table
-extern bool                    gHUDFullbrightMaskPullReady;
 extern LLShaderProgram         gHUDFullbrightShinyPullProgram;
 extern LLShaderProgram         gHUDPBROpaquePullProgram;         // <FS> J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table (the PBR opaque pull program with IS_HUD)
-extern bool                    gHUDPBROpaquePullReady;
 extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
 extern LLShaderProgram         gDeferredBumpPullSkinProgram;
 extern LLShaderProgram         gDeferredEmbossPullProgram;        // <FS> J1 K4: the post deferred emboss (post bump) pass from the scene table, static and rigged (alphaPullV with IS_EMBOSS_PULL + objects/bumpF)
@@ -278,12 +273,6 @@ extern LLShaderProgram         gDeferredPBROpaquePullProgram;             // <FS
 extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
 extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
 extern LLShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
-extern bool                    gPbrOpaquePullReady;
-extern bool                    gPbrOpaquePullSkinReady;
-extern bool                    gDiffuseMaskPullReady;
-extern bool                    gDiffuseMaskPullSkinReady;
-extern bool                    gFullbrightMaskPullReady;
-extern bool                    gFullbrightMaskPullSkinReady;
 extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
 extern bool                    gAlphaPbrPullReady;
 extern LLShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)
