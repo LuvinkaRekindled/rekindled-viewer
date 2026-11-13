@@ -107,6 +107,103 @@ bool ssr_trace(vec3 position, vec3 reflection, out vec3 hit)
     return false;
 }
 
+// <FS> the improved trace for surfaces other than water (the setting FSSSRSurfaceTrace, bit 1 of ssrTraceMode): the non water case of traceScreenRayFast of the viewer's screenSpaceReflUtil.glsl. The marcher
+// above takes growing steps and only counts a hit that lands within distanceBias of a surface, so which step the ray happens to land on decides if it hits (flat bands of reflection, grain). This one walks a fixed
+// number of steps in screen space (perspective correct), accepts a crossing within a thickness that grows with the step, and finds the exact crossing with a binary search. The step is fixed per pixel (no shimmer).
+bool ssr_trace_fast(vec3 position, vec3 reflection, out vec3 hit)
+{
+    hit = vec3(0.0);
+    const vec3 p0 = (inv_modelview_delta * vec4(position, 1.0)).xyz;           // the picture and depth are the previous frame's: work in its camera space
+    const vec3 r = normalize(mat3(inv_modelview_delta) * reflection);
+    const float near_z = 0.1;
+    vec3 p1 = p0 + r * 400.0;
+    if (p1.z > -near_z)
+    {
+        p1 = p0 + (p1 - p0) * ((-near_z - p0.z) / (p1.z - p0.z));
+    }
+    const vec4 c0 = projection_matrix * vec4(p0, 1.0);
+    const vec4 c1 = projection_matrix * vec4(p1, 1.0);
+    const float k0 = 1.0 / c0.w;
+    const float k1 = 1.0 / c1.w;
+    const vec2 s0 = c0.xy * k0 * 0.5 + 0.5;
+    const vec2 d = c1.xy * k1 * 0.5 + 0.5 - s0;
+
+    // stop where the ray leaves the screen
+    float tmax = 1.0;
+    if (d.x > 0.0) { tmax = min(tmax, (1.0 - s0.x) / d.x); } else if (d.x < 0.0) { tmax = min(tmax, -s0.x / d.x); }
+    if (d.y > 0.0) { tmax = min(tmax, (1.0 - s0.y) / d.y); } else if (d.y < 0.0) { tmax = min(tmax, -s0.y / d.y); }
+    tmax = max(tmax, 0.0);
+
+    const float len_px = length(d * vec2(textureSize(SCENE_DEPTH, 0))) * tmax;
+    if (len_px < 2.0)
+    {
+        return false;
+    }
+    const int max_steps = 48;
+    const int steps = int(clamp(ceil(len_px / 5.0), 2.0, float(max_steps)));
+    const float dt = tmax / float(steps);
+    const float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float prev_t = 0.0;
+    float prev_z = 1.0 / k0;
+    for (int i = 1; i <= max_steps; ++i)
+    {
+        if (i > steps)
+        {
+            break;
+        }
+        const float t = min(dt * (float(i) + jitter), tmax);
+        const float z = 1.0 / (k0 + (k1 - k0) * t);
+        const float diff = z - ssr_scene_depth(s0 + d * t);                      // positive: the ray is behind the surface
+        const float thick = max(0.3, abs(z - prev_z) * 1.5);
+        if (diff > 0.0 && diff < thick)
+        {
+            // the crossing is between prev_t and t: narrow it down
+            float lo = prev_t;
+            float hi = t;
+            for (int b = 0; b < 6; ++b)
+            {
+                const float mid = 0.5 * (lo + hi);
+                const float mz = 1.0 / (k0 + (k1 - k0) * mid);
+                if (mz - ssr_scene_depth(s0 + d * mid) > 0.0)
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid;
+                }
+            }
+            const vec2 huv = s0 + d * hi;
+            const vec3 hp = ll_view_pos(inv_proj, huv, textureLod(SCENE_DEPTH, huv, 0.0).r);
+            if (length(hp - p0) < 0.15)
+            {
+                return false;                       // the surface itself
+            }
+            const vec2 e2 = min(huv, 1.0 - huv);
+            if (!(clamp(min(e2.x, e2.y) * 10.0, 0.0, 1.0) > 0.0))
+            {
+                return false;                       // (a hit on the very edge of the picture has no weight: the old trace's alpha was zero there too)
+            }
+            hit = ssr_scene_color(huv);
+            return true;
+        }
+        prev_t = t;
+        prev_z = z;
+    }
+    return false;
+}
+
+// the trace for a surface that is not water: the improved one when the setting asks for it (bit 1 of ssrTraceMode), the original marcher otherwise. The opaque lighting resolve and the transparent
+// surfaces share it (the viewer's shader took the setting for both; the native transparent path ignored it until now)
+bool ssr_trace_surface(vec3 position, vec3 reflection, out vec3 hit)
+{
+    if ((int(ssrTraceMode + 0.5) & 2) != 0)
+    {
+        return ssr_trace_fast(position, reflection, hit);
+    }
+    return ssr_trace(position, reflection, hit);
+}
+
 // the reflection of the screen in a transparent surface: rgb the colour, a how much of it to use (0 = nothing: not glossy, off screen, nothing hit).
 // tc is the position the old shader fades the reflection out by, as it passes it: the surface's eye space x and y as 0..1 (not a screen position; the fade is the old one's, kept for the same picture)
 vec4 ssr_transparent(vec2 tc, vec3 view_pos, vec3 norm, float glossiness)
@@ -125,7 +222,7 @@ vec4 ssr_transparent(vec2 tc, vec3 view_pos, vec3 norm, float glossiness)
         return vec4(0.0);
     }
     vec3 hit;
-    if (!ssr_trace(view_pos, normalize(reflect(view_pos, norm)), hit))
+    if (!ssr_trace_surface(view_pos, normalize(reflect(view_pos, norm)), hit))
     {
         return vec4(0.0);
     }
@@ -169,7 +266,7 @@ vec4 ssr_opaque(vec2 tc, vec3 view_pos, vec3 norm, float gloss)
         const vec2 coeffs = vec2(ssr_random(tc + vec2(0.0, float(i))) + ssr_random(tc + vec2(float(i), 0.0)));
         const vec3 scattered = dir + (first * coeffs.x + second * coeffs.y) * rough;
         vec3 hit;
-        if (ssr_trace(view_pos, normalize(scattered), hit))
+        if (ssr_trace_surface(view_pos, normalize(scattered), hit))
         {
             ++hits;
             collected += hit;

@@ -1190,6 +1190,10 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 native_defines.push_back({ k, found->second });
             }
         }
+        if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
+        {
+            native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
+        }
         LLVkBridge::nativeGlobalDefines(native_defines);
     }
 
@@ -3375,23 +3379,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSoftenProgram.mFeatures.hasShadows = false;      // <FS> the lighting pass reads the lightmap only; shadowUtil.glsl (the ray scene declarations) stays out so the ray traced variants of this program, and the native stand-in refusing them, are gone
         gDeferredSoftenProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
-        gDeferredSoftenProgram.clearPermutations();
-        add_common_permutations(&gDeferredSoftenProgram);
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", ShaderStage::Vertex));
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightF.glsl", ShaderStage::Fragment));
-
+        // <FS> a native only program (native/manifest.txt, family resolve): no stock files. The sun shadow and the ambient occlusion reach it as the native global defines SUN_SHADOW and HAS_SSAO.
         gDeferredSoftenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-
-        if (use_sun_shadow)
-        {
-            gDeferredSoftenProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        }
-
-        if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
-        { //if using SSAO, take screen space light map into account as if shadows are enabled
-            gDeferredSoftenProgram.mShaderLevel = llmax(gDeferredSoftenProgram.mShaderLevel, 2);
-            gDeferredSoftenProgram.addPermutation("HAS_SSAO", "1");
-        }
 
         success = gDeferredSoftenProgram.createShader();
         llassert(success);

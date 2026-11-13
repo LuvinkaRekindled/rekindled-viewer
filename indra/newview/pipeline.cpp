@@ -25246,6 +25246,10 @@ void LLPipeline::renderDeferredLighting()
             LL_PROFILE_GPU_ZONE("atmospherics");
             bindDeferredShader(soften_shader);
 
+            // <FS> the live debug view of the native resolve (rt-debug.txt resolve_dbg, 0 = none): the program is native only now, so the pass writes it (the loader did on the swap path)
+            static LLStaticHashedString resolve_dbg_str("resolve_dbg");
+            soften_shader.uniform1i(resolve_dbg_str, LLVkBridge::nativeKey("resolve_dbg", 0));
+
             static LLCachedControl<F32> ssao_scale(gSavedSettings, "RenderSSAOIrradianceScale", 0.5f);
             static LLCachedControl<F32> ssao_max(gSavedSettings, "RenderSSAOIrradianceMax", 0.25f);
             static LLStaticHashedString ssao_scale_str("ssao_irradiance_scale");

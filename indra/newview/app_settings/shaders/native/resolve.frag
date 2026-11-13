@@ -39,7 +39,11 @@ bool is_flag(float data, float flag)
 // how much of the sky's ambient light the occlusion takes away: occluded places get the sky's light through the occlusion matrix, free ones keep it
 vec3 adjust_irradiance(vec3 irradiance, float ambocc)
 {
+#ifdef HAS_SSAO
     return mix(ssao_effect_mat * min(irradiance * ssao_irradiance_scale, vec3(ssao_irradiance_max)), irradiance, ambocc);
+#else
+    return irradiance;                  // (no ambient occlusion: the sky's light is not taken away anywhere)
+#endif
 }
 
 void main()
@@ -77,10 +81,24 @@ void main()
     const vec3 norm = ll_decode_normal(normal_info.xy);
     // (explicit level 0 from here on: the sky pixels have returned, so the flow differs between neighbouring pixels and an implicit level is undefined; none of these textures has a level chain)
     const vec4 spec = textureLod(G_TAP(ll_ti_specularRect), tc, 0.0);
+    // the lightmap (red: the sun's shadow, green: the ambient occlusion) is made by the lighting pass only with sun shadows (SUN_SHADOW) or ambient occlusion (HAS_SSAO), the viewer's global defines;
+    // with neither, nothing is read: no shadow takes the sun and nothing is occluded
+#if defined(SUN_SHADOW) || defined(HAS_SSAO)
     const vec2 lightmap = textureLod(G_TAP(ll_ti_lightMap), tc, 0.0).rg;
+#else
+    const vec2 lightmap = vec2(1.0);
+#endif
     const vec3 light_dir = sun_up_factor == 1 ? sun_dir : moon_dir;
+#ifdef SUN_SHADOW
     float scol = max(lightmap.r, albedo.a);            // (the albedo's alpha is a legacy surface's emissive: lit by itself, so no shadow takes it)
+#else
+    float scol = 1.0;
+#endif
+#ifdef HAS_SSAO
     const float ambocc = lightmap.g;
+#else
+    const float ambocc = 1.0;
+#endif
 
     // live debug views (rt-debug.txt resolve_dbg=N, no restart): 2 the lightmap (red: sun shadow, green: occlusion), 3 the albedo, 4 the flag, 5 the normal, 6 the specular, 12 the surface's angle to the light
     if (resolve_dbg != 0)
