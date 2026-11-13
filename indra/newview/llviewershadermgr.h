@@ -182,8 +182,6 @@ extern LLShaderProgram         gOneTextureFilterProgram;
 //object shaders
 extern LLShaderProgram     gObjectPreviewProgram;
 extern LLShaderProgram        gPhysicsPreviewProgram;
-extern LLShaderProgram     gObjectBumpProgram;
-extern LLShaderProgram        gSkinnedObjectBumpProgram;
 extern LLShaderProgram     gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
@@ -370,8 +368,6 @@ extern LLShaderProgram         gDeferredWLCloudProgram;
 extern LLShaderProgram         gDeferredWLSunProgram;
 extern LLShaderProgram         gDeferredWLMoonProgram;
 extern LLShaderProgram         gDeferredStarProgram;
-extern LLShaderProgram         gDeferredFullbrightShinyProgram;
-extern LLShaderProgram         gHUDFullbrightShinyProgram;
 extern LLShaderProgram         gNormalMapGenProgram;
 extern LLShaderProgram         gDeferredGenBrdfLutProgram;
 extern LLShaderProgram         gDeferredBufferVisualProgram;

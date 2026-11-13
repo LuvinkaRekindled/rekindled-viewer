@@ -57,11 +57,11 @@ public:
 
     S32 numBumpPasses();
 
-    void beginFullbrightShiny(bool table = false);
+    void beginFullbrightShiny();
     void renderFullbrightShiny();
     void endFullbrightShiny();
 
-    void beginBump(bool table = false);
+    void beginBump();
     void renderBump();
     void endBump(U32 pass = LLRenderPass::PASS_BUMP);
 
