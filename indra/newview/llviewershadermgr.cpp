@@ -89,7 +89,6 @@ LLShaderProgram    gOneTextureFilterProgram;
 LLShaderProgram    gDebugProgram;
 LLShaderProgram    gSkinnedDebugProgram;
 LLShaderProgram    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-LLShaderProgram    gSkinnedNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
 LLShaderProgram    gAlphaMaskProgram;
 LLShaderProgram    gBenchmarkProgram;
 LLShaderProgram    gReflectionProbeDisplayProgram;
@@ -4090,13 +4089,13 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gHighlightProgram.mName = "Highlight Shader";
-        gHighlightProgram.mShaderFiles.clear();
-        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightV.glsl", ShaderStage::Vertex));
-        gHighlightProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", ShaderStage::Fragment));
         gHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        // the skinned form (the old rigged draws of the alpha pool's debug view) keeps the stock files; the static program is native only (native/manifest.txt, family post: highlight_face.vert + highlight_face.frag)
-        success = make_rigged_variant(gHighlightProgram, gSkinnedHighlightProgram);
-        gHighlightProgram.mShaderFiles.clear();
+        // both forms are native only (native/manifest.txt, family post: highlight_face.vert + highlight_face.frag, the skinned one with HAS_SKIN: the old rigged draws of the alpha pool's debug view)
+        gSkinnedHighlightProgram.mName = "Skinned Highlight Shader";
+        gSkinnedHighlightProgram.mFeatures.hasObjectSkinning = true;
+        gSkinnedHighlightProgram.mShaderLevel = gHighlightProgram.mShaderLevel;
+        gHighlightProgram.mRiggedVariant = &gSkinnedHighlightProgram;
+        success = gSkinnedHighlightProgram.createShader();
         success = success && gHighlightProgram.createShader();
     }
 
@@ -4255,14 +4254,13 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gDebugProgram.mName = "Debug Shader";
-        gDebugProgram.mShaderFiles.clear();
-        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugV.glsl", ShaderStage::Vertex));
-        gDebugProgram.mShaderFiles.push_back(make_pair("interface/debugF.glsl", ShaderStage::Fragment));
-        gDebugProgram.mRiggedVariant = &gSkinnedDebugProgram;
         gDebugProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-        // the skinned form keeps the stock files (make_rigged_variant copies the base program's files); the static program is native only (native/manifest.txt, family post: debug.vert + debug.frag)
-        success = make_rigged_variant(gDebugProgram, gSkinnedDebugProgram);
-        gDebugProgram.mShaderFiles.clear();
+        // both forms are native only (native/manifest.txt, family post: debug.vert + debug.frag, the skinned one with HAS_SKIN)
+        gSkinnedDebugProgram.mName = "Skinned Debug Shader";
+        gSkinnedDebugProgram.mFeatures.hasObjectSkinning = true;
+        gSkinnedDebugProgram.mShaderLevel = gDebugProgram.mShaderLevel;
+        gDebugProgram.mRiggedVariant = &gSkinnedDebugProgram;
+        success = gSkinnedDebugProgram.createShader();
         success = success && gDebugProgram.createShader();
     }
 
@@ -4270,26 +4268,11 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         for (S32 variant = 0; variant < NORMAL_DEBUG_SHADER_COUNT; ++variant)
         {
+            // native only (native/manifest.txt, family post: normal_debug.vert + normal_debug.geom + normal_debug.frag, the tangent form with HAS_ATTRIBUTE_TANGENT); the skinned form was never bound
             LLShaderProgram& shader = gNormalDebugProgram[variant];
-            LLShaderProgram& skinned_shader = gSkinnedNormalDebugProgram[variant];
-            shader.mName = "Normal Debug Shader";
-            shader.mShaderFiles.clear();
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugV.glsl", ShaderStage::Vertex));
-            // *NOTE: Geometry shaders have a reputation for being slow.
-            // Consider using compute shaders instead, which have a reputation
-            // for being fast. This geometry shader in particular seems to run
-            // fine on my machine, but I won't vouch for this in
-            // performance-critical areas.  -Cosmic,2023-09-28
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugG.glsl", ShaderStage::Geometry));
-            shader.mShaderFiles.push_back(make_pair("interface/normaldebugF.glsl", ShaderStage::Fragment));
-            shader.mRiggedVariant = &skinned_shader;
+            shader.mName = variant == NORMAL_DEBUG_SHADER_WITH_TANGENTS ? "Normal Debug Tangents Shader" : "Normal Debug Shader";
             shader.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
-            if (variant == NORMAL_DEBUG_SHADER_WITH_TANGENTS)
-            {
-                shader.addPermutation("HAS_ATTRIBUTE_TANGENT", "1");
-            }
-            success = make_rigged_variant(shader, skinned_shader);
-            success = success && shader.createShader();
+            success = shader.createShader();
         }
     }
 
