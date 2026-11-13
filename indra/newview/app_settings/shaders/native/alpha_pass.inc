@@ -152,6 +152,12 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 #ifdef AVATAR_PASS
     uint ll_ti_diffuseMap;              // the body part's texture
 #endif
+#ifdef MASK_NOCOLOR
+    // a mesh drawn by range under the matrices of the pass (mask_nocolor.vert): the draw's own matrices, loose
+    mat4 modelview_projection_matrix;
+    mat4 texture_matrix0;
+    mat3 normal_matrix;
+#endif
 #ifdef ALPHA_LIT
     uint ll_ti_shadow_shadowMap0;
     uint ll_ti_shadow_shadowMap1;
