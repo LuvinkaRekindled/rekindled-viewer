@@ -10659,7 +10659,7 @@ static U64 sGeoRiggedBindings = 0, sGeoRiggedNs = 0, sGeoRiggedUpdates = 0;
 static U32 sRebindEpoch = 1, sGeoDroppedSeen = 0;
 static bool geo_persist_on()
 {
-    static const bool on = (getenv("LL_VK_GEOPERSIST") ? atoi(getenv("LL_VK_GEOPERSIST")) != 0 : true) && ll_palette_ids_on();
+    static const bool on = (getenv("LL_VK_GEOPERSIST") ? atoi(getenv("LL_VK_GEOPERSIST")) != 0 : true);
     return on;
 }
 bool ll_geo_persist() { return geo_persist_on(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
@@ -21145,7 +21145,6 @@ struct VelocityRiggedWork
     std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
     std::vector<GeoRange> mRanges;              // <FS> by entry: the range of its draw, and its avatar: the main thread looks up the simplified list the G-buffer draws with (the same lists, the same pixels)
     std::vector<LLVOAvatar*> mEntryAvatars;
-    std::vector<F32> mPalettes, mPrevPalettes;
     U32 mSkipped = 0, mStill = 0;
     std::vector<LLVkBridge::ShadowPacketEntry> mObjEntries;     // step 1b: draws that move as a whole, their matrices (this frame's, last frame's)
     std::vector<F32> mObjCur, mObjPrev;
@@ -21193,20 +21192,11 @@ static void velocity_prepare(VelocityRiggedWork& w, F32 map_height)
     w.mEntries.clear();
     w.mRanges.clear();
     w.mEntryAvatars.clear();
-    w.mPalettes.clear();
-    w.mPrevPalettes.clear();
     w.mSkipped = w.mStill = 0;
     w.mObjEntries.clear();
     w.mObjCur.clear();
     w.mObjPrev.clear();
     w.mObjUnfit = 0;
-}
-
-// P3 (LL_VK_VELIDS, default on while palette ids are on): the velocity pass's rigged entries name their palettes by id, as the G-buffer's rows do; 0 = this frame's and last frame's palettes are copied into the record
-static bool velocity_ids_on()
-{
-    static const bool on = (getenv("LL_VK_VELIDS") ? atoi(getenv("LL_VK_VELIDS")) != 0 : true) && ll_palette_ids_on();
-    return on;
 }
 
 static void build_velocity_rigged(VelocityRiggedWork& w)
@@ -21290,7 +21280,6 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
         }
         if (use_packets && vb->getVertexBufferId() && vb->getIndexBufferId() && vb->getIndicesType() == ComponentType::U16 && vb->getOffset(LLVertexBuffer::TYPE_VERTEX) == 0)
         {
-            if (velocity_ids_on())
             {
                 // P3: the palette is named by its id (this frame's palette list, and last frame's by the same id at the worker): nothing is copied
                 U32 id = 0, id_joints = 0;
@@ -21300,13 +21289,6 @@ static void build_velocity_rigged(VelocityRiggedWork& w)
                 }
                 mpc.mOffset = id;
                 mpc.mOffsetFrame = vel_frame;
-            }
-            else if (mpc.mOffsetFrame != vel_frame)
-            {
-                mpc.mOffset = (U32)w.mPalettes.size();
-                mpc.mOffsetFrame = vel_frame;
-                w.mPalettes.insert(w.mPalettes.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)(joints + 1) * 12);
-                w.mPrevPalettes.insert(w.mPrevPalettes.end(), mpc.mPrevGLMp.begin(), mpc.mPrevGLMp.begin() + (size_t)(joints + 1) * 12);
             }
             LLVkBridge::ShadowSkinEntry e = {};
             e.mVertexBuffer = vb->getVertexBufferId();
@@ -21567,19 +21549,18 @@ void LLPipeline::renderAvatarVelocity()
                 velocity_prepare(again, (F32)mAvatarVelocityMap.getHeight());
                 build_velocity_rigged(again);
                 ++checks;
-                if (again.mEntries.size() != work.mEntries.size() || again.mPalettes.size() != work.mPalettes.size() || again.mSkipped != work.mSkipped
+                if (again.mEntries.size() != work.mEntries.size() || again.mSkipped != work.mSkipped
                     || again.mStill != work.mStill || again.mObjEntries.size() != work.mObjEntries.size() || again.mObjCur.size() != work.mObjCur.size() || again.mObjUnfit != work.mObjUnfit
                     || (!again.mObjEntries.empty() && memcmp(again.mObjEntries.data(), work.mObjEntries.data(), again.mObjEntries.size() * sizeof(again.mObjEntries[0])) != 0)
                     || (!again.mObjCur.empty() && memcmp(again.mObjCur.data(), work.mObjCur.data(), again.mObjCur.size() * sizeof(F32)) != 0)
-                    || (!again.mEntries.empty() && memcmp(again.mEntries.data(), work.mEntries.data(), again.mEntries.size() * sizeof(again.mEntries[0])) != 0)
-                    || (!again.mPalettes.empty() && memcmp(again.mPalettes.data(), work.mPalettes.data(), again.mPalettes.size() * sizeof(F32)) != 0))
+                    || (!again.mEntries.empty() && memcmp(again.mEntries.data(), work.mEntries.data(), again.mEntries.size() * sizeof(again.mEntries[0])) != 0))
                 {
                     ++differences;
                 }
                 if (checks % 600 == 0)
                 {
                     LL_INFOS("VkMotion") << "avatar velocity job check: " << differences << " of " << checks << " passes differed from the build on the main thread (entries " << work.mEntries.size() << " vs " << again.mEntries.size()
-                                         << ", palettes " << work.mPalettes.size() << " vs " << again.mPalettes.size() << ", still " << work.mStill << " vs " << again.mStill << ")" << LL_ENDL;
+                                         << ", still " << work.mStill << " vs " << again.mStill << ")" << LL_ENDL;
                 }
             }
         }
@@ -21589,8 +21570,6 @@ void LLPipeline::renderAvatarVelocity()
             build_velocity_rigged(work);
         }
         std::vector<LLVkBridge::ShadowSkinEntry>& entries = work.mEntries;
-        std::vector<F32>& palettes = work.mPalettes;
-        std::vector<F32>& prev_palettes = work.mPrevPalettes;
         rigged_skipped = work.mSkipped;
         still_draws = work.mStill;
 
@@ -21641,19 +21620,13 @@ void LLPipeline::renderAvatarVelocity()
             header.mPass = 6;
             header.mEntries = (U32)entries.size();
             header.mMatrices = 0;
-            header.mPaletteFloats = (U32)palettes.size();
-            if (velocity_ids_on())
-            {
-                header.mFragment = 1;                   // P3: the entries name their palettes by id; mViewerFrame says in which frame's table
-                header.mViewerFrame = (U32)gFrameCount;
-                ll_frame_palette_flush();               // (the palettes and their ids go first)
-            }
+            header.mFragment = 1;                       // P3: the entries name their palettes by id; mViewerFrame says in which frame's table
+            header.mViewerFrame = (U32)gFrameCount;
+            ll_frame_palette_flush();                   // (the palettes and their ids go first)
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
-            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + 2 * palettes.size() * sizeof(F32));
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]), palettes.data(), palettes.size() * sizeof(F32));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + palettes.size() * sizeof(F32), prev_palettes.data(), prev_palettes.size() * sizeof(F32));
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
             packet_draws = (U32)entries.size();
             gAvatarVelocityPullProgram.unbind();

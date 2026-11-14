@@ -150,7 +150,6 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
 void ll_frame_palette_flush();
 void ll_rig_census_add(int what, U64 n);          // <FS> P3 census (LL_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see ll_rig_census_log)
 void ll_rig_census_log();
-bool ll_palette_ids_on();                        // <FS> P1 step 3: records name shared palettes by id (LL_VK_PALID, default on)
 U32 ll_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
 void ll_palette_id_free(U32 id);
 void ll_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread, before the palette jobs: the list of the coming frame begins and takes its palette arena
