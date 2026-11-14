@@ -5323,9 +5323,136 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     }
 }
 
+extern std::string fs_describe_address(const void* pc);       // (llgpuzonetimer.cpp)
+
+// <FS> LL_VK_CHURNCENSUS=1 (doc/vulkan/PLAN-hitchless-loading.md, Sirens Beach): who keeps drawables rebuilding. Counts, over 600 frames, the asks of markRebuild (by the rebuild flags: V volume,
+// T texture coordinates, C colour, P positions, and by what the object is: avatar, attachment, animated object, flexi, mesh, sculpt, prim, other) and by caller; the asks of markMoved by class and
+// caller; the time of drawable->updateGeometry by class. One ChurnCensus line a window.
+namespace
+{
+const char* const kChurnClass[] = { "no object", "avatar", "attachment", "animesh", "flexi", "mesh", "sculpt", "prim", "other (tree, grass, particles, ...)" };
+U32 churn_class(LLDrawable* d)
+{
+    LLViewerObject* vo = d ? d->getVObj().get() : nullptr;
+    if (!vo) return 0;
+    if (vo->isAvatar()) return 1;
+    if (vo->isAttachment()) return 2;
+    if (vo->isAnimatedObject()) return 3;
+    if (vo->getPCode() == LL_PCODE_VOLUME)
+    {
+        LLVOVolume* vol = static_cast<LLVOVolume*>(vo);
+        if (vol->isFlexible()) return 4;
+        if (vol->isMesh()) return 5;
+        if (vol->isSculpted()) return 6;
+        return 7;
+    }
+    return 8;
+}
+struct ChurnCensus
+{
+    std::mutex mLock;
+    std::map<std::tuple<U32, U32>, U64> mRebuildByFlagsClass;            // (flags V|T|C|P bits, class)
+    std::map<const void*, U64> mRebuildBySite;
+    std::map<std::pair<U32, const void*>, U64> mMovedByClassSite;
+    U64 mRebuildAsks = 0, mRebuildRedundant = 0, mMovedAsks = 0;
+    std::unordered_set<LLDrawable*> mDistinct;
+    U64 mGeomCalls[9] = {}, mGeomNs[9] = {};
+    U32 mFrame0 = 0;
+    LLTimer mTimer;
+};
+ChurnCensus& churn()
+{
+    static ChurnCensus* c = new ChurnCensus;
+    return *c;
+}
+const bool kChurnOn = getenv("LL_VK_CHURNCENSUS") != nullptr;
+
+void churn_report_if_due()
+{
+    ChurnCensus& c = churn();
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (!c.mFrame0)
+    {
+        c.mFrame0 = frame;
+        c.mTimer.reset();
+        return;
+    }
+    if (frame - c.mFrame0 < 600)
+    {
+        return;
+    }
+    const F32 secs = c.mTimer.getElapsedTimeF32();
+    const U32 frames = frame - c.mFrame0;
+    std::string flags_text, site_text, moved_text, geom_text;
+    {
+        std::vector<std::pair<U64, std::tuple<U32, U32>>> rows;
+        for (const auto& kv : c.mRebuildByFlagsClass) rows.push_back({ kv.second, kv.first });
+        std::sort(rows.rbegin(), rows.rend());
+        for (size_t i = 0; i < rows.size() && i < 10; ++i)
+        {
+            const U32 f = std::get<0>(rows[i].second);
+            std::string fl;
+            if (f & 1) fl += "V"; if (f & 2) fl += "T"; if (f & 4) fl += "C"; if (f & 8) fl += "P";
+            flags_text += llformat(" [%llu %s %s]", (unsigned long long)rows[i].first, fl.c_str(), kChurnClass[std::get<1>(rows[i].second)]);
+        }
+    }
+    {
+        std::vector<std::pair<U64, const void*>> rows;
+        for (const auto& kv : c.mRebuildBySite) rows.push_back({ kv.second, kv.first });
+        std::sort(rows.rbegin(), rows.rend());
+        for (size_t i = 0; i < rows.size() && i < 8; ++i)
+        {
+            site_text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, fs_describe_address(rows[i].second).c_str());
+        }
+    }
+    {
+        std::vector<std::pair<U64, std::pair<U32, const void*>>> rows;
+        for (const auto& kv : c.mMovedByClassSite) rows.push_back({ kv.second, kv.first });
+        std::sort(rows.rbegin(), rows.rend());
+        for (size_t i = 0; i < rows.size() && i < 6; ++i)
+        {
+            moved_text += llformat(" [%llu %s: %s]", (unsigned long long)rows[i].first, kChurnClass[rows[i].second.first], fs_describe_address(rows[i].second.second).c_str());
+        }
+    }
+    for (U32 k = 0; k < 9; ++k)
+    {
+        if (c.mGeomCalls[k])
+        {
+            geom_text += llformat(" [%s: %llu calls, %.2f ms]", kChurnClass[k], (unsigned long long)c.mGeomCalls[k], (double)c.mGeomNs[k] / 1.0e6);
+        }
+    }
+    LL_INFOS("ChurnCensus") << frames << " frames, " << secs << " s: rebuild asks " << c.mRebuildAsks << " (" << c.mRebuildRedundant << " for a drawable already queued, " << c.mDistinct.size()
+                            << " distinct drawables), moved asks " << c.mMovedAsks << "; by flags and class:" << flags_text << "; by caller:" << site_text << "; moved by class and caller:" << moved_text
+                            << "; updateGeometry:" << geom_text << LL_ENDL;
+    c.mRebuildByFlagsClass.clear();
+    c.mRebuildBySite.clear();
+    c.mMovedByClassSite.clear();
+    c.mDistinct.clear();
+    c.mRebuildAsks = c.mRebuildRedundant = c.mMovedAsks = 0;
+    for (U32 k = 0; k < 9; ++k) { c.mGeomCalls[k] = 0; c.mGeomNs[k] = 0; }
+    c.mFrame0 = frame;
+    c.mTimer.reset();
+}
+}
+
 bool LLPipeline::updateDrawableGeom(LLDrawable* drawablep)
 {
-    bool update_complete = drawablep->updateGeometry();
+    bool update_complete;
+    if (kChurnOn)
+    {
+        const U32 cls = churn_class(drawablep);
+        const auto t0 = std::chrono::steady_clock::now();
+        update_complete = drawablep->updateGeometry();
+        const U64 ns = (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+        ChurnCensus& c = churn();
+        std::lock_guard<std::mutex> guard(c.mLock);
+        ++c.mGeomCalls[cls];
+        c.mGeomNs[cls] += ns;
+    }
+    else
+    {
+        update_complete = drawablep->updateGeometry();
+    }
     if (update_complete && assertInitialized())
     {
         drawablep->setState(LLDrawable::BUILT);
@@ -5674,6 +5801,14 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
         return;
     }
 
+    if (kChurnOn)
+    {
+        ChurnCensus& c = churn();
+        std::lock_guard<std::mutex> guard(c.mLock);
+        ++c.mMovedAsks;
+        ++c.mMovedByClassSite[std::make_pair(churn_class(drawablep), _ReturnAddress())];
+    }
+
     if (drawablep->getParent())
     {
         //ensure that parent drawables are moved first
@@ -5870,6 +6005,18 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
 
 void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag)
 {
+    if (kChurnOn && drawablep)
+    {
+        ChurnCensus& c = churn();
+        std::lock_guard<std::mutex> guard(c.mLock);
+        const U32 f = ((flag & LLDrawable::REBUILD_VOLUME) ? 1u : 0u) | ((flag & LLDrawable::REBUILD_TCOORD) ? 2u : 0u) | ((flag & LLDrawable::REBUILD_COLOR) ? 4u : 0u) | ((flag & LLDrawable::REBUILD_POSITION) ? 8u : 0u);
+        ++c.mRebuildAsks;
+        if (drawablep->isState(LLDrawable::IN_REBUILD_Q)) ++c.mRebuildRedundant;
+        c.mDistinct.insert(drawablep);
+        ++c.mRebuildByFlagsClass[std::make_tuple(f, churn_class(drawablep))];
+        ++c.mRebuildBySite[_ReturnAddress()];
+        churn_report_if_due();
+    }
     // <FS> LL_VK_REBUILDCENSUS=1: who asks for REBUILD_POSITION of a drawable that belongs to an avatar (attachments and their children), by call site (counted before the sort split sinks the call, so
     // the caller is still the original one); every 3000 asks the top sites are logged (tag RebuildCensus). The avatar bridge groups go through the volume geometry rebuild every frame (lap rqb).
     static const bool rebuild_census = getenv("LL_VK_REBUILDCENSUS") != nullptr;
