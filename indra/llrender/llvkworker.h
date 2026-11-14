@@ -44,7 +44,7 @@ namespace LLVkWorker
     // as "own avatar texture <label>" lines (worker thread; the viewer's Show Textures command asks for it for the bake slots of the agent's avatar, see LLVkBridge::describeTextures)
     // finest[i] is the sampled hash of the finest BC7 level the viewer uploaded for names[i] (0 = none known): for a BC7 image the worker reads level 0 back from the GPU and compares. quiet: only a line with
     // something wrong in it is logged (the periodic check of the agent's bake slots)
-    void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, bool quiet);
+    void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet);
 }
 
 #endif // LL_VULKAN

@@ -56,6 +56,9 @@ public:
 
     bool enabled() const { return mEnabled.load(std::memory_order_relaxed); }
 
+    // <FS> 2026-11-14 (a server bake that shows another texture's image after BC7 at decode): whether a hit of this cache has served this texture id lately (the last 4096 ids; the BakeTex log asks)
+    bool recentlyServed(const LLUUID& id) const;
+
 private:
     FSDecodedTextureCache();
     ~FSDecodedTextureCache();
@@ -83,6 +86,8 @@ private:
     std::mutex mIndexMutex;
     std::unordered_map<LLUUID, Entry> mIndex;           // what is on disk (the writer keeps it; readers look up)
     std::unordered_set<LLUUID> mConverting;             // ids with a conversion or mark queued (index lock; one job per file)
+    mutable std::mutex mServedMutex;                    // <FS> the ids a hit served lately (recentlyServed)
+    std::unordered_set<LLUUID> mServed;
     U64 mTotalBytes = 0;                                // sum of mIndex sizes
     bool mScanned = false;
     bool mInitialised = false;

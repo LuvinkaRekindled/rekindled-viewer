@@ -193,6 +193,9 @@ public:
     U64 getUploadHash() const { return mUploadHash; }
     U64 getUploadBytes() const { return mUploadBytes; }
     void setUploadHash(U64 hash, U64 bytes, U64 finest = 0) { mUploadHash = hash; mUploadBytes = bytes; mUploadFinestHash = finest; }
+    // the sampled hash of each level of the BC7 chain of that upload, finest first (count 0: not a BC7 image)
+    void setUploadLevelHashes(const std::vector<U64>& hashes) { mUploadLevelHashes = hashes; }
+    const std::vector<U64>& getUploadLevelHashes() const { return mUploadLevelHashes; }
     U64 getUploadFinestHash() const { return mUploadFinestHash; }       // the sampled hash of the finest BC7 level of that upload (0: not a BC7 image)
     // <FS> S texture identity: an id that stays with this texture object for its life (the GL name changes when the texture is made again or another discard level is loaded), and the
     // names that changed since the events were last taken: the ids of the objects whose name changed. A consumer keeps what it knows about a texture by id and hears about changes instead of
@@ -288,6 +291,7 @@ private:
     bool     mImageTextureCreated ;
     U32 mTexName;
     U64 mUploadHash = 0, mUploadBytes = 0, mUploadFinestHash = 0;     // <FS> see getUploadHash()
+    std::vector<U64> mUploadLevelHashes;
     U32 mTexId = 0;                   // see getTexId()
     void noteNameChange();
     U16      mWidth;

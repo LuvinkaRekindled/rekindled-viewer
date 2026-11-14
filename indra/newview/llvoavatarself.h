@@ -410,6 +410,7 @@ protected:
 public:
     static void     dumpTotalLocalTextureByteCount();
     void            dumpLocalTextures() const;
+    void            monitorBakeSlots();                     // <FS> every frame: logs a bake slot (and what the floater's tile reads for it) whenever its TE id, texture object, GL name or state changes
     void            logBakeTextures(bool quiet) const;      // <FS> the bake slots and the attachment faces that use them (Show Textures; quiet: the periodic check, only what is wrong)
     static void     dumpScratchTextureByteCount();
     void            dumpWearableInfo(LLAPRFile& outfile);

@@ -1934,8 +1934,27 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
             finest = fs_sparse_hash(mRawImage->getFinestLevelData(), (size_t)LLImageBC7::blockBytes((U32)mRawImage->getWidth(), (U32)mRawImage->getHeight()));
         }
         mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize(), finest);
+        std::vector<U64> level_hashes;
+        if (mRawImage->isCompressed())
+        {
+            std::vector<std::vector<U8>> levels;
+            if (LLImageBC7::splitLevels(mRawImage, levels))
+            {
+                for (const auto& level : levels)
+                {
+                    level_hashes.push_back(fs_sparse_hash(level.data(), level.size()));
+                }
+            }
+        }
+        mImageTexp->setUploadLevelHashes(level_hashes);
     }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    if (mFTType == FTT_SERVER_BAKE)
+    {
+        // <FS> a server bake's image was created: the id with the GL name its texture object has now (a loader thread's new image takes the name over a moment later), so a GL name seen in a failing check can be tied to an id
+        LL_INFOS("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
+                          << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
+    }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
 
     return res;

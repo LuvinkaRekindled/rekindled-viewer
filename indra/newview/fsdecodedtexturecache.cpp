@@ -399,9 +399,23 @@ LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard,
         return nullptr;
     }
     ++mHits;
+    {
+        std::lock_guard<std::mutex> lock(mServedMutex);
+        if (mServed.size() >= 4096)
+        {
+            mServed.clear();
+        }
+        mServed.insert(id);
+    }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("dechit", id, discard, (S32)format, (S64)result->getDataSize());
     post([this, id]() { touch(id); });
     return result;
+}
+
+bool FSDecodedTextureCache::recentlyServed(const LLUUID& id) const
+{
+    std::lock_guard<std::mutex> lock(mServedMutex);
+    return mServed.find(id) != mServed.end();
 }
 
 void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw)

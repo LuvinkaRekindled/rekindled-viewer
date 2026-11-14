@@ -4036,7 +4036,7 @@ std::string bindless_probe(Tex& t, bool& wrong)
 // <FS> 2026-11-14 (the user: the eyes bake slot shows a brown texture while the iris slot has the right one, until a rebake; the floater is drawn through the same handles as the avatar, so it cannot say whether
 // the bake is brown or a handle shows another texture's image): per GL texture name, what the worker holds, and what the handle of the texture shows now: the image the handle points at belongs to the GL
 // texture that "handle shows" names; a handle whose image belongs to ANOTHER texture is the bug
-void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, bool quiet)
+void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet)
 {
     for (size_t i = 0; i < names.size(); ++i)
     {
@@ -4086,6 +4086,41 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                 {
                     text += " | GPU level 0: readback failed";
                 }
+            }
+            // every mip level the image holds, read back and compared with the hash of the same level of the chain the viewer uploaded: the draws of a small face sample the higher levels, which level 0 and the probe
+            // (both at level 0) do not cover. And the sampler's level limits (the base and max level the viewer set, the levels that hold data)
+            {
+                char sb[200];
+                snprintf(sb, sizeof(sb), " | sampler: base level %d, max level %d, levels holding data %u of %u", (int)t.mSampler.mBaseLevel, (int)t.mSampler.mMaxLevel, t.mValidLevels, t.mLevels);
+                text += sb;
+            }
+            if (i < level_hashes.size() && !level_hashes[i].empty() && t.mImage.valid() && formatInfo(t.mImage.mFormat).mCompressed)
+            {
+                Renderer& r = Renderer::instance();
+                bool ok = true;
+                if (LLVkBridge::inFrame() && !r.flushAndRestart(6))
+                {
+                    ok = false;
+                }
+                std::string lv = " | mip levels against the upload:";
+                for (U32 k = 0; ok && k < level_hashes[i].size() && k < t.mImage.mMipLevels; ++k)
+                {
+                    if (k >= t.mValidLevels)
+                    {
+                        lv += " L" + std::to_string(k) + " no data";
+                        continue;
+                    }
+                    std::vector<U8> blocks;
+                    if (!r.readbackCompressedMip(t.mImage, k, 0, blocks))
+                    {
+                        lv += " L" + std::to_string(k) + " readback failed";
+                        continue;
+                    }
+                    const bool same = fs_sparse_hash(blocks.data(), blocks.size()) == level_hashes[i][k];
+                    lv += " L" + std::to_string(k) + (same ? " same" : " DIFFERENT");
+                    wrong = wrong || !same;
+                }
+                text += lv;
             }
             // what the shaders see through the handle, in every frame slot, against the image read directly
             if (t.mHandle && t.mImage.valid())

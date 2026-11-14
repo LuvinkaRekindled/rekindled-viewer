@@ -31,6 +31,7 @@
 
 #include "pipeline.h"
 #include "llvkbridge.h"             // <FS> LLVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
+#include "llviewertexturelist.h"    // <FS> TEX_LIST_STANDARD (monitorBakeSlots)
 
 #include "llagent.h" //  Get state values from here
 #include "llattachmentsmgr.h"
@@ -1042,6 +1043,7 @@ void LLVOAvatarSelf::idleUpdate(LLAgent &agent, const F64 &time)
         LLVOAvatar::idleUpdate(agent, time);
         idleUpdateTractorBeam();
 
+        monitorBakeSlots();
         {
             // <FS> 2026-11-14 (the bake slots that show another texture's image): every 10 s, once the avatar has been in the world for 20 s, the periodic check of the bake slots and the attachment faces that use them,
             // quiet: a line only when a GPU image differs from what was uploaded, a handle map differs or a face holds another texture object. The time of the first such line says when it went wrong
@@ -2505,12 +2507,68 @@ void LLVOAvatarSelf::dumpLocalTextures() const
     logBakeTextures(false);
 }
 
+// <FS> 2026-11-14 (the user: "monitor the ear and aux slot in the floater to see what's filling it"). The avatar textures floater draws a bake slot from the TE id of the avatar (getTEref(te).getID(), every frame),
+// by looking the texture up BY THAT ID (LLTextureCtrl::draw: getFetchedTexture(id), then BOOST_PREVIEW and forceToSaveRawImage on it), not from the avatar's image object. This logs, for each bake slot, every
+// change of: the TE id, the avatar's texture object (id, GL name, discard level, missing flag) and the object the floater's lookup by the TE id returns (is it the same object, what state is it in)
+void LLVOAvatarSelf::monitorBakeSlots()
+{
+    struct Seen
+    {
+        LLUUID mTeId, mTexId;
+        LLViewerTexture* mTexture = nullptr;
+        LLViewerFetchedTexture* mTile = nullptr;
+        U32 mGl = 0, mTileGl = 0;
+        S32 mDiscard = -9, mTileDiscard = -9;
+        bool mMissing = false, mTileMissing = false, mSeen = false;
+    };
+    static Seen prev[LLAvatarAppearanceDefines::BAKED_NUM_INDICES];
+    static U32 logged = 0;
+    for (U32 i = 0; i < LLAvatarAppearanceDefines::BAKED_NUM_INDICES; ++i)
+    {
+        const LLAvatarAppearanceDictionary::BakedEntry* baked = sAvatarDictionary->getBakedTexture((EBakedTextureIndex)i);
+        if (!baked)
+        {
+            continue;
+        }
+        const LLTextureEntry* te = getTE(baked->mTextureIndex);
+        Seen now;
+        now.mTeId = te ? te->getID() : LLUUID::null;
+        LLViewerTexture* tex = getTEImage(baked->mTextureIndex);
+        LLViewerFetchedTexture* fetched = dynamic_cast<LLViewerFetchedTexture*>(tex);
+        now.mTexture = tex;
+        now.mTexId = fetched ? fetched->getID() : LLUUID::null;
+        now.mGl = tex && tex->getImageTexture() ? tex->getImageTexture()->getTexName() : 0;
+        now.mDiscard = fetched ? fetched->getDiscardLevel() : -9;
+        now.mMissing = fetched && fetched->isMissingAsset();
+        now.mTile = now.mTeId.notNull() ? LLViewerTextureManager::findFetchedTexture(now.mTeId, TEX_LIST_STANDARD) : nullptr;
+        now.mTileGl = now.mTile && now.mTile->getImageTexture() ? now.mTile->getImageTexture()->getTexName() : 0;
+        now.mTileDiscard = now.mTile ? now.mTile->getDiscardLevel() : -9;
+        now.mTileMissing = now.mTile && now.mTile->isMissingAsset();
+        Seen& p = prev[i];
+        if (!p.mSeen || p.mTeId != now.mTeId || p.mTexture != now.mTexture || p.mGl != now.mGl || p.mDiscard != now.mDiscard || p.mMissing != now.mMissing
+            || p.mTile != now.mTile || p.mTileGl != now.mTileGl || p.mTileDiscard != now.mTileDiscard || p.mTileMissing != now.mTileMissing)
+        {
+            if (logged++ < 600)
+            {
+                LL_INFOS("VkTex") << "bake slot " << baked->mName << " changed: TE id " << (p.mSeen ? p.mTeId.asString().substr(0, 8) : "-") << " -> " << now.mTeId.asString().substr(0, 8)
+                                  << "; the avatar's texture " << (p.mSeen ? p.mTexId.asString().substr(0, 8) : "-") << " GL " << p.mGl << " discard " << p.mDiscard << (p.mMissing ? " MISSING" : "") << " -> "
+                                  << now.mTexId.asString().substr(0, 8) << " GL " << now.mGl << " discard " << now.mDiscard << (now.mMissing ? " MISSING" : "")
+                                  << "; the floater's lookup by the TE id: " << (now.mTile ? (now.mTile == fetched ? "the same object" : "ANOTHER object") : "none") << " GL " << now.mTileGl << " discard " << now.mTileDiscard
+                                  << (now.mTileMissing ? " MISSING" : "") << LL_ENDL;
+            }
+            p = now;
+            p.mSeen = true;
+        }
+    }
+}
+
 // <FS> the bake slots of the agent's avatar (Show Textures: all lines; the periodic check, quiet: only what is wrong)
 void LLVOAvatarSelf::logBakeTextures(bool quiet) const
 {
     {
         std::vector<U32> names;
         std::vector<U64> finest;
+        std::vector<std::vector<U64>> level_hashes;
         std::vector<std::string> labels;
         for (const auto& entry : sAvatarDictionary->getBakedTextures())
         {
@@ -2523,6 +2581,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
             std::string label = entry.second->mName;
             U32 gl_name = 0;
             U64 finest_hash = 0;
+            std::vector<U64> levels_here;
             if (tex)
             {
                 std::string uploaded;
@@ -2530,6 +2589,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
                 {
                     gl_name = gl->getTexName();
                     finest_hash = gl->getUploadFinestHash();
+                    levels_here = gl->getUploadLevelHashes();
                     char hbuf[80];
                     snprintf(hbuf, sizeof(hbuf), ", last upload %llu bytes hash %llx", (unsigned long long)gl->getUploadBytes(), (unsigned long long)gl->getUploadHash());
                     uploaded = hbuf;
@@ -2549,14 +2609,15 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
             names.push_back(gl_name);
             labels.push_back(label);
             finest.push_back(finest_hash);
+            level_hashes.push_back(levels_here);
         }
-        LLVkBridge::describeTextures(names, labels, finest, quiet);
+        LLVkBridge::describeTextures(names, labels, finest, level_hashes, quiet);
     }
 
     // the faces of the agent's attachments that name a bake by its magic id (Bakes on Mesh: a mesh head's eyes and ears): the texture object each face holds now against the one the avatar's slot holds
     // (a face that holds another object, or the default image, is a face that missed a refreshBakeTexture, which is stock)
     {
-        U32 faces = 0, differs = 0;
+        U32 faces = 0, differs = 0, face_differs = 0;
         std::string examples;
         for (const auto& point : mAttachmentPoints)
         {
@@ -2593,7 +2654,15 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
                         ++faces;
                         LLViewerTexture* expected = const_cast<LLVOAvatarSelf*>(this)->getBakedTexture(LLAvatarAppearanceDictionary::assetIdToBakedTextureIndex(tep->getID()));
                         LLViewerTexture* held = obj->getTEImage(te);
-                        if (held != expected)
+                        // what is DRAWN: the object's drawable keeps its own pointer to the texture in each face (LLFace), set when the geometry is rebuilt; refreshBakeTexture (stock) changes only the
+                        // object's pointer (changeTEImage does not mark the drawable), so a face that was built while the bake was missing can keep drawing the old one until something rebuilds it
+                        LLFace* face = obj->mDrawable.notNull() ? obj->mDrawable->getFace(te) : nullptr;
+                        LLViewerTexture* drawn = face ? face->getTexture(LLRender::DIFFUSE_MAP) : held;
+                        if (drawn != expected)
+                        {
+                            ++face_differs;
+                        }
+                        if (held != expected || drawn != expected)
                         {
                             ++differs;
                             if (examples.size() < 900)
@@ -2603,7 +2672,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
                                     LLImageTex* g = t ? t->getImageTexture() : nullptr;
                                     return std::string(f ? f->getID().asString().substr(0, 8) : (t ? "not fetched" : "none")) + " GL " + std::to_string(g ? g->getTexName() : 0);
                                 };
-                                examples += " [object " + obj->getID().asString().substr(0, 8) + " face " + std::to_string(te) + " magic " + tep->getID().asString().substr(0, 8) + ": holds " + describe(held) + ", the slot holds " + describe(expected) + "]";
+                                examples += " [object " + obj->getID().asString().substr(0, 8) + " face " + std::to_string(te) + " magic " + tep->getID().asString().substr(0, 8) + ": the object holds " + describe(held) + ", the face DRAWS " + describe(drawn) + ", the slot holds " + describe(expected) + "]";
                             }
                         }
                     }
@@ -2612,7 +2681,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
         }
         if (!quiet || differs)
         {
-            LL_INFOS("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold another texture object than the avatar's slot" << examples << LL_ENDL;
+            LL_INFOS("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold or draw another texture object than the avatar's slot (" << face_differs << " DRAW another one: the face's own texture)" << examples << LL_ENDL;
         }
     }
 }
