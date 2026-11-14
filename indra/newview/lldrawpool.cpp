@@ -580,7 +580,6 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
     }
 }
 
-bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);       // pipeline.cpp (S4 A1)
 LLShadowDrawStats gShadowDrawStats;
 LLGeometryPacketStats gGeometryPacketStats;
 
@@ -896,33 +895,6 @@ static U32 palette_real_offset(U32 value)
 U64 ll_frame_palette_frame()
 {
     return gFrameCount;
-}
-
-bool ll_palette_shared()
-{
-    static const int base = []() { const char* v = getenv("LL_VK_PALETTE_SHARED"); return v ? atoi(v) : 1; }();
-    static const int period = []() { const char* v = getenv("LL_VK_PALETTE_SHARED_AB"); return v ? atoi(v) : 0; }();
-    static U64 frame = ~0ull;
-    static bool now = true;
-    if (frame != gFrameCount)
-    {
-        frame = gFrameCount;
-        bool on = base != 0;
-        if (period > 0)
-        {
-            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool phase = ((seconds / period) % 2) == 1;
-            static int last = -1;
-            if ((int)phase != last)
-            {
-                last = (int)phase;
-                LL_INFOS("VkScene") << "[phase] shared palettes now " << (phase ? "ON" : "off") << LL_ENDL;
-            }
-            on = on && phase;
-        }
-        now = on;
-    }
-    return now;
 }
 
 static std::atomic<U64> sArenaJobWrites{ 0 };       // palettes the palette jobs wrote into an arena (census)

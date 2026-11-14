@@ -14838,17 +14838,14 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
 }
 
 // the entries the fragments make against the builder's, as sets (the fragments' order is by group, the builder's by type)
-static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints);
 static U32 rt_avatar_kind(LLVOAvatar* avatar);
 
 struct LLPipeline::ShadowSkinBuild
 {
     std::vector<LLVkBridge::ShadowSkinEntry> mEntries;
     std::vector<F32> mMatrices;
-    std::vector<F32> mPalettes;         // the record's own palettes (LL_VK_PALETTE_SHARED=0; empty when they are in the frame's shared list)
     std::vector<GeoRange> mDraws;       // the range behind each entry: what the shadow LOD and LL_VK_SHADOWLOD_DRY read (J1 K3a: from a draw info or from a fragment item)
     size_t mPaletteCount = 0;
-    bool mShared = false;               // S4 A2: the entries' palette offsets belong to the shared list of mPaletteFrame
     U64 mPaletteFrame = ~0ull;
 };
 
@@ -14893,20 +14890,15 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
     out = LLPipeline::ShadowSkinBuild();
     std::vector<LLVkBridge::ShadowSkinEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
-    std::vector<F32>& palettes = out.mPalettes;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
-    std::unordered_map<const F32*, U32> palette_offsets;
     std::unordered_set<U32> palettes_used;
-    const bool shared_palettes = ll_palette_shared();
-    out.mShared = shared_palettes;
-    out.mPaletteFrame = ll_frame_palette_frame();
+    out.mPaletteFrame = ll_frame_palette_frame();       // (the entries' palette offsets belong to the list of this frame)
     // the entry of one rigged draw, from its parts (a draw info's, or a fragment item's source): false = the skin is not loaded yet, not drawn
     auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, LLVkBridge::ShadowSkinEntry& e, const RtMatSource* mat = nullptr) -> bool
     {
         e = {};
-        if (!(shared_palettes ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
-                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+        if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
         {
             return false;       // the skin is not loaded yet: not drawn, as before
         }
@@ -19723,28 +19715,25 @@ struct LLPipeline::ShadowAlphaBuild
     std::vector<LLVkBridge::ShadowAlphaEntry> mEntries;
     std::vector<LLVkBridge::ShadowAlphaEntry> mDrawOnly;    // J1 K6 step 3d: the raster form of the glTF and texture matrix casters of a raster pass in the ray tracing modes: a record of its own the ray scene does not take (ray scene items name them)
     std::vector<F32> mMatrices;
-    std::vector<F32> mPalettes;
     std::vector<F32> mTexmats;                  // C5 J3: the texture matrices of the draws (16 floats each; an entry's mTexMatrix is 1 + its number)
     std::vector<LLViewerTexture*> mTextures;
     U32 mFbGLTF = 0, mFbLayout = 0, mFbRigged = 0, mFbManyTextures = 0, mFbTextureMatrix = 0;
     bool mFinished = false;
     bool mTreesAdded = false;                   // <FS> the Linden tree faces (LLDrawPoolTree) are among the entries
-    bool mShared = false;                       // P3: the rigged entries name their palettes in the frame's shared list (by id), mPaletteFrame = the frame it was made in
+    bool mRigged = false;                       // P3: the rigged entries name their palettes in the frame's list (by id), mPaletteFrame = the frame it was made in
     U64 mPaletteFrame = 0;
 };
 
 static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::ShadowAlphaBuild& out)
 {
     out = LLPipeline::ShadowAlphaBuild();
-    out.mShared = rigged && ll_palette_shared();
+    out.mRigged = rigged;
     out.mPaletteFrame = ll_frame_palette_frame();
     std::vector<LLVkBridge::ShadowAlphaEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
-    std::vector<F32>& palettes = out.mPalettes;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
     std::unordered_map<const void*, U32> matrix_numbers;
-    std::unordered_map<const F32*, U32> palette_offsets;
     std::unordered_map<const LLViewerTexture*, U32> texture_numbers;
     auto texture_ref = [&](LLViewerTexture* tex) -> U32
     {
@@ -19771,8 +19760,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             F32 tm[16];
             bool has_tm = false;
             LLViewerTexture* tex = shadow_gltf_entry_parts(vb, mat, rig.mOffset, rig.mCount, nullptr, rig.mTexture.get(), gk, e, tm, has_tm);
-            if (!(out.mShared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
-                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+            if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
             {
                 return false;       // the skin is not loaded yet: not drawn, as before
             }
@@ -19890,8 +19878,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 e.mFirstIndex = rig.mOffset;
                 e.mIndexCount = rig.mCount;
                 e.mMatrixId = rt_matrix_id(nullptr);
-                if (!(out.mShared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
-                                  : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+                if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
                 {
                     continue;       // the skin is not loaded yet: not drawn, as before
                 }
@@ -20544,36 +20531,6 @@ void LLPipeline::shadowPrepSubmitBuilds(ShadowCascadePrep& prep)
     }
 }
 
-
-// <FS> The palette of a rigged draw, added once to the palettes of a packet record: its offset (in floats) and joint count. False when the old path would not draw it
-// either (no avatar, skin not loaded yet). The palette is what uploadMatrixPalette() sends as matrixPalette: 12 floats per joint.
-static bool shadow_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
-{
-    if (!avatar || !skin)
-    {
-        return false;
-    }
-    const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);
-    joints = (U32)mpc.mMatrixPalette.size();
-    if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12)        // (one entry more than the mesh has joints: the tail with the anchor of a relative palette)
-    {
-        return false;
-    }
-    auto it = offsets.find(mpc.mGLMp.data());
-    if (it == offsets.end())
-    {
-        it = offsets.emplace(mpc.mGLMp.data(), (U32)data.size()).first;
-        data.insert(data.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + (size_t)(joints + 1) * 12);
-    }
-    offset = it->second;
-    return true;
-}
-
-// <FS> S4 A1: the same palette function for the geometry records (lldrawpool.cpp)
-bool ll_skin_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, std::vector<F32>& data, std::unordered_map<const F32*, U32>& offsets, U32& offset, U32& joints)
-{
-    return shadow_palette(avatar, skin, data, offsets, offset, joints);
-}
 
 void apply_cube_face_rotation(U32 face)
 {
@@ -24169,7 +24126,7 @@ static void rt_name_rigged_main_view()
     pose_best.clear();
     // census (LL_VK_SCENECENSUS): what the naming sends each frame, averaged over 600 frames
     static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
-    static U64 cs_frames = 0, cs_opaque = 0, cs_frag = 0, cs_alpha = 0, cs_pal_opaque = 0, cs_pal_alpha = 0, cs_matrices = 0, cs_blob_bytes = 0;
+    static U64 cs_frames = 0, cs_opaque = 0, cs_frag = 0, cs_alpha = 0, cs_matrices = 0, cs_blob_bytes = 0;
     U32 cs_opaque_entries = 0;
     if (LLVkBridge::rtBodyRename())
     {
@@ -24187,9 +24144,6 @@ static void rt_name_rigged_main_view()
         std::vector<F32> matrices(16, 0.f);
         matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
         std::unordered_map<const void*, U32> matrix_numbers;
-        std::vector<F32> palettes;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        const bool note_shared = ll_palette_shared();       // P3: the notes name their palettes by id like the shadow records (kind 6 with mFragment = 1)
         // <FS> one rigged draw named to the ray scene (S4 B: the render map or, for the draws the scene table serves, the visible fragments' items)
         // J1 K6 R1: what one rigged draw is named from: a draw info (the render map's leftovers) or a fragment item's source (GeoRigSource, with its own material source): the same fields either way
         struct RigNamed
@@ -24210,8 +24164,7 @@ static void rt_name_rigged_main_view()
                     return;
                 }
                 LLVkBridge::ShadowSkinEntry e = {};
-                if (!(note_shared ? ll_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints)
-                                  : shadow_palette(d.mAvatar, d.mSkin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+                if (!ll_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints))
                 {
                     return;
                 }
@@ -24284,22 +24237,16 @@ static void rt_name_rigged_main_view()
             LL_CPU_ZONE("rt name: opaque blob + shadowPackets");
             cs_frag += entries.size() - cs_opaque_entries;
             cs_opaque += cs_opaque_entries;
-            cs_pal_opaque += palettes.size();
             cs_matrices += matrices.size() / 16;
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 6;
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
-            header.mPaletteFloats = (U32)palettes.size();
-            if (note_shared)
-            {
-                header.mFragment = 1;
-                ll_frame_palette_flush();
-            }
-            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+            header.mFragment = 1;       // the palettes are named by id in the frame's list
+            ll_frame_palette_flush();
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
             cs_blob_bytes += blob.size();
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         }
@@ -24324,9 +24271,6 @@ static void rt_name_rigged_main_view()
         matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
         std::unordered_map<const void*, U32> matrix_numbers;
         std::unordered_map<const LLViewerTexture*, U32> texture_names;
-        std::vector<F32> palettes;
-        std::unordered_map<const F32*, U32> palette_offsets;
-        const bool note_shared = ll_palette_shared();       // P3: by id like the opaque notes (kind 7 with mFragment = 1)
         auto texture_name = [&](LLViewerTexture* tex) -> U32
         {
             auto found = texture_names.find(tex);
@@ -24368,8 +24312,7 @@ static void rt_name_rigged_main_view()
             e.mFirstIndex = rig.mOffset;
             e.mIndexCount = rig.mCount;
             e.mMatrixId = rt_matrix_id(nullptr);
-            if (!(note_shared ? ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints)
-                              : shadow_palette(avatar, skin, palettes, palette_offsets, e.mPaletteOffset, e.mJoints)))
+            if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
             {
                 return;
             }
@@ -24497,22 +24440,16 @@ static void rt_name_rigged_main_view()
         {
             LL_CPU_ZONE("rt name: alpha blob + shadowPackets");
             cs_alpha += entries.size();
-            cs_pal_alpha += palettes.size();
             cs_matrices += matrices.size() / 16;
             LLVkBridge::ShadowPacketsHeader header;
             header.mKind = 7;
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
-            header.mPaletteFloats = (U32)palettes.size();
-            if (note_shared)
-            {
-                header.mFragment = 1;
-                ll_frame_palette_flush();
-            }
-            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+            header.mFragment = 1;       // the palettes are named by id in the frame's list
+            ll_frame_palette_flush();
+            std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-            memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
             cs_blob_bytes += blob.size();
             LLVkBridge::shadowPackets(header, blob.data(), blob.size());
         }
@@ -24568,8 +24505,8 @@ static void rt_name_rigged_main_view()
     {
         const double n = 600.0;
         LL_INFOS("RtNameCensus") << "rigged naming per frame (600 frames): opaque entries " << cs_opaque / n << ", fragment entries " << cs_frag / n << ", alpha entries " << cs_alpha / n
-                                 << ", palette floats opaque " << cs_pal_opaque / n << " alpha " << cs_pal_alpha / n << ", matrices " << cs_matrices / n << ", blob bytes " << cs_blob_bytes / n << LL_ENDL;
-        cs_frames = cs_opaque = cs_frag = cs_alpha = cs_pal_opaque = cs_pal_alpha = cs_matrices = cs_blob_bytes = 0;
+                                 << ", matrices " << cs_matrices / n << ", blob bytes " << cs_blob_bytes / n << LL_ENDL;
+        cs_frames = cs_opaque = cs_frag = cs_alpha = cs_matrices = cs_blob_bytes = 0;
     }
 }
 
@@ -26893,7 +26830,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             prepared->mSkinJob->wait();
         }
         const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
-        if (source && source->mShared && source->mPaletteFrame != ll_frame_palette_frame())
+        if (source && source->mPaletteFrame != ll_frame_palette_frame())
         {
             source = nullptr;       // S4 A2: made in another frame: its palette offsets name that frame's list
         }
@@ -26906,7 +26843,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         // J1 K3b (LL_VK_SHADOW_SLIM, default on): a record no ray scene reads (and whose palettes are ids of the frame's list) carries the slim entries, a third of the size, and the LOD is applied as patches while they
         // are made: no copy of the entries; else the full entries with a patched copy as before
         static const bool slim_env = !getenv("LL_VK_SHADOW_SLIM") || atoi(getenv("LL_VK_SHADOW_SLIM")) != 0;
-        const bool slim = slim_env && !rt_skip && source->mShared && source->mPalettes.empty() && LLVkBridge::rtShadowMode() == 0;
+        const bool slim = slim_env && !rt_skip && LLVkBridge::rtShadowMode() == 0;
         static thread_local std::vector<LLVkBridge::ShadowSkinEntry> lod_scratch;       // (reused: the entries were copied into a fresh vector for every record)
         static thread_local std::vector<ShadowLodPatch> lod_patches;
         std::vector<LLVkBridge::ShadowSkinEntry>& lod_entries = lod_scratch;
@@ -26930,7 +26867,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         const std::vector<LLVkBridge::ShadowSkinEntry>& entries = lod_entries.empty() ? source->mEntries : lod_entries;
         const std::vector<F32>& matrices = source->mMatrices;
-        const std::vector<F32>& palettes = source->mPalettes;
         const size_t palette_count = source->mPaletteCount;
         if (!entries.empty())
         {
@@ -26940,10 +26876,8 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             header.mPass = shadow_pass_index();
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
-            header.mPaletteFloats = (U32)palettes.size();
-            if (source->mShared)
+            header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
             {
-                header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
                 LL_CPU_ZONE("packets: shadow rigged: palette flush");
                 ll_frame_palette_flush();
             }
@@ -26976,10 +26910,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             else
             {
-                std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32) + palettes.size() * sizeof(F32));
+                std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
                 memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
                 memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-                memcpy(blob.data() + entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32), palettes.data(), palettes.size() * sizeof(F32));
                 LLVkBridge::shadowPackets(header, blob.data(), blob.size());
             }
             gShadowDrawStats.mSkinEntries += entries.size();
@@ -27277,7 +27210,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
-        if (build_owned->mShared && build_owned->mPaletteFrame != ll_frame_palette_frame())
+        if (build_owned->mRigged && build_owned->mPaletteFrame != ll_frame_palette_frame())
         {
             // P3: made in another frame (an id is only in the table of the frames whose list holds its palette): made again in this one
             build_owned = std::make_shared<ShadowAlphaBuild>();
@@ -27412,7 +27345,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         std::vector<LLVkBridge::ShadowAlphaEntry>& entries = build_owned->mEntries;
         std::vector<F32>& matrices = build_owned->mMatrices;
-        std::vector<F32>& palettes = build_owned->mPalettes;
         if (!entries.empty())
         {
             if (!rt_skip)
@@ -27447,12 +27379,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 std::vector<U8> blob(count * sizeof(entries[0]) + matrices.size() * sizeof(F32));
                 memcpy(blob.data(), first, count * sizeof(entries[0]));
                 memcpy(blob.data() + count * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
-                header.mPaletteFloats = (U32)palettes.size();
-                if (!palettes.empty())
-                {
-                    blob.insert(blob.end(), (const U8*)palettes.data(), (const U8*)(palettes.data() + palettes.size()));
-                }
-                if (build_owned->mShared)
+                if (build_owned->mRigged)
                 {
                     header.mFragment = 1;       // P3: the rigged entries name their palettes by id (the frame's shared list)
                     ll_frame_palette_flush();
