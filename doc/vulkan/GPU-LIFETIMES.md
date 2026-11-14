@@ -215,3 +215,14 @@ Read from the code and checked in laps s96 / s97 (RT on). Verdicts: **ok** = a r
 2. **A deliberate break of the compute queue ordering: built, to be run.** `LL_VK_BREAK_ORDER=1` removes the compute work's wait for the uploads of its own frame, `=2` removes the frame's last submit's wait for the compute work (`llvkcontext.cpp`, debug only, default off). A lap with RT on (`LL_VK_RT_EARLY` 3, the default) and each setting must show something (a missing or wrong ray traced shadow or reflection, flicker, a device lost): if it shows nothing the hazard is not observable in a lap and the stress lap cannot be said to cover that ordering; if it shows, the ordering is real and the unbroken stress lap is evidence that it holds.
 3. **Step 7 (depth by the reader's stamp): stays optional** (only if another depth bug appears).
 4. **The stress laps** (`REGRESSION-CHECKLIST.md`) on all of the above: the unbroken laps first (`LL_VK_FRAMES` 6 and 2, poison, magenta, with the deferred uploads on), then the two broken ones.
+
+**Stress laps on all of the above (2026-11-15, Sirens Beach, the last location of the harness; Adam watching):**
+
+| Lap | Settings | Result |
+|---|---|---|
+| lt6 | `LL_VK_FRAMES=6`, poison, magenta stand-in, 16 MB arena blocks, `LL_VK_RT_EARLY=1`, RT materials | clean: no device lost, no magenta or flicker seen, "written in place" and "view release guard" not logged (0), retire list "count rose again 0", thread phase totals 0, 45 stale checks (rule G1, handled), 9 late frame episodes (worst 152 ms at start-up). The palette arena takeover counter reached 256, all within the first 2 s after arriving at Sirens (the viewer frames that sent no rigged record before the avatars loaded, taken over 10 frames later: the designed fallback; the plaza lap had 3 because it loaded faster) |
+| lt6b | `LL_VK_FRAMES=6`, magenta stand-in, 16 MB blocks, the default `LL_VK_RT_EARLY` 3 (split frames), no poison | clean: no device lost, thread phase totals 0. Magenta on the beach waves while loading: the known split-frame placeholder (a texture created in a split frame has no entry in that frame's handle map, the counter read 1000 "entries not written into the map of a split frame"; the stand-in is only magenta with this switch) |
+| lt2 | the same with `LL_VK_FRAMES=2` | clean: no device lost, thread phase totals 0, the placeholder counter not logged, no magenta except behind the loading screen (Adam) |
+| brk1 | the lt6b settings with `LL_VK_BREAK_ORDER=1` (the compute work does not wait for its frame's uploads) | **froze**: a worker command waited 10 s and then 30 s on a fence, the watchdog said "viewer is hung" and the harness had to end the viewer. The break is observable: with the ordering intact a clean lap is evidence that it holds |
+
+`LL_VK_BREAK_ORDER=2` (the frame's last submit does not wait for the compute work) has not been run.
