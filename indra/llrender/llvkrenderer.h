@@ -676,6 +676,18 @@ private:
     struct DeferredCopy { VkBuffer mDst; VkDeviceSize mDstOffset; std::vector<U8> mData; VkDeviceSize mFillSize = 0; U32 mFillValue = 0; };      // mFillSize: a fill, no data
     std::vector<BufferCopy> mPendingCopies;         // in staging memory, to be recorded
     std::vector<DeferredCopy> mDeferredCopies;      // written outside a frame: staged when the next frame begins
+    // <FS> hitchless loading (doc/vulkan/PLAN-hitchless-loading.md): a texture upload made between frames (the viewer updates its textures in idle(), outside display(): most uploads of a login) used to be a
+    // submit to the queue and a wait for the GPU, one for each upload, on the render worker. It is now kept (filled into a staging block at once) and recorded into the next frame before anything
+    // draws, one barrier pair a texture. LL_VK_UPLOAD_BATCH=0 brings the old path back.
+    struct DeferredUpload { Image* mImage; VkImage mHandle; U32 mMip, mLayer, mX, mY, mW, mH, mD; VkDeviceSize mOffset; U32 mBlock; };
+    std::vector<Buffer> mDeferredBlocks;            // host visible staging blocks the deferred uploads were filled into
+    VkDeviceSize mDeferredBlockUsed = 0;
+    VkDeviceSize mDeferredBytes = 0;
+    std::vector<DeferredUpload> mDeferredUploads;
+    std::mutex mDeferredMutex;
+    void flushDeferredUploads(VkCommandBuffer cmd);     // records them (outside a render pass); the staging blocks are given back (freed once the frame has completed)
+    void flushDeferredUploadsNow();                     // outside a frame: records and submits them (before anything else that submits on its own or reads an image back)
+    void dropDeferredUploads(VkImage handle);           // the image is being destroyed
 public:
     // LL_VK_PHASES diagnostics: how many indexed draws changed nothing but the draw command, and how many of those continued the previous draw's index range
     struct DrawDiag { U32 mDraws = 0, mUnchanged = 0, mMergeable = 0; };

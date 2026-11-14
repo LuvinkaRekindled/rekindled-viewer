@@ -2268,6 +2268,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
             }
         }
     }
+    flushDeferredUploads(cmd);      // <FS> the texture uploads made between frames, before anything draws
     mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
     ++mRingEpoch;       // every program's cached ring offset is void: the ring starts again from 0 (a mid-frame flush keeps the frame number, so the frame number cannot tell)
@@ -3131,6 +3132,7 @@ void Renderer::bindlessStart()
     vkUpdateDescriptorSets(Context::instance().getDevice(), (U32)writes.size(), writes.data(), 0, nullptr);
     mHandles.init(mBindlessCap, Context::frameCount());
     mBindlessFilled = true;
+    Context::instance().setImageDestroyHook([this](VkImage handle) { dropDeferredUploads(handle); });
     Context::instance().setViewReleaseHook([this](U64 view_id) { releaseViewHandles(view_id); });       // <FS> the guard: no handle shows a view whose image is being freed
     LL_INFOS("Vulkan") << "texture handles: every descriptor of the " << Context::frameCount() << " frame sets holds the placeholder (" << mBindlessCap[0] << " 2D descriptors)" << LL_ENDL;
 }
@@ -4840,6 +4842,7 @@ void Renderer::withCommandBuffer(const std::function<void(VkCommandBuffer)>& rec
         record(mCmd);
         return;
     }
+    flushDeferredUploadsNow();      // <FS> what was uploaded before this must be there first
     Context::instance().immediateSubmit(record);
 }
 
@@ -4969,6 +4972,37 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
     return uploadTextureDirect(image, mip, layer, x, y, width, height, depth, bytes, [](void* ctx, U8* dst, VkDeviceSize n) { memcpy(dst, ((const Src*)ctx)->mData, (size_t)n); }, &src);
 }
 
+// <FS> LL_VK_UPLOADLOG=1 (also on with the hitch watcher): what the worker spends on texture uploads, every 2 s (doc/vulkan/PLAN-hitchless-loading.md, texture uploads): the number, the bytes, the time
+// filling the staging memory and the time of the whole call (fill + recording the copies and their barriers), the longest single upload, how many ended a render pass, how many had a buffer of their
+// own (the old path outside a frame) and how many were kept for the next frame
+static void note_upload_log(VkDeviceSize bytes, U64 fill_us, U64 total_us, U32 split, U32 own, U32 deferred)
+{
+    static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
+    if (!log_on)
+    {
+        return;
+    }
+    struct Acc { U64 mN = 0, mBytes = 0, mFillUs = 0, mTotalUs = 0, mMaxUs = 0, mSplits = 0, mOwn = 0, mDeferred = 0; std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now(); };
+    static Acc a;
+    ++a.mN;
+    a.mBytes += bytes;
+    a.mFillUs += fill_us;
+    a.mTotalUs += total_us;
+    a.mMaxUs = std::max(a.mMaxUs, total_us);
+    a.mSplits += split;
+    a.mOwn += own;
+    a.mDeferred += deferred;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - a.mT0 >= std::chrono::seconds(2))
+    {
+        LL_INFOS("VkUpload") << "texture uploads in " << std::chrono::duration_cast<std::chrono::milliseconds>(now - a.mT0).count() << " ms: " << a.mN << " uploads, "
+                             << (double)a.mBytes / (1024.0 * 1024.0) << " MB, fill " << (double)a.mFillUs / 1000.0 << " ms, whole calls " << (double)a.mTotalUs / 1000.0
+                             << " ms, longest " << (double)a.mMaxUs / 1000.0 << " ms, " << a.mSplits << " ended a render pass, " << a.mOwn << " with a buffer of their own, "
+                             << a.mDeferred << " kept for the next frame" << LL_ENDL;
+        a = Acc();
+    }
+}
+
 bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* fill_ctx)
 {
     const auto t_start = std::chrono::steady_clock::now();
@@ -4991,6 +5025,52 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
         return false;
     }
 
+    // <FS> between frames: keep the upload for the next frame instead of a submit and a wait for each (see mDeferredUploads)
+    static const bool batch = getenv("LL_VK_UPLOAD_BATCH") == nullptr || atoi(getenv("LL_VK_UPLOAD_BATCH")) != 0;
+    if (mCmd == VK_NULL_HANDLE && batch && expected <= 64ull * 1024 * 1024)
+    {
+        const VkDeviceSize align = std::max<VkDeviceSize>(4, fi.mBytesPerBlock);
+        U64 fill_us_d = 0;
+        {
+            std::lock_guard<std::mutex> lock(mDeferredMutex);
+            VkDeviceSize start = 0;
+            if (!mDeferredBlocks.empty())
+            {
+                start = (mDeferredBlockUsed + align - 1) / align * align;
+            }
+            if (mDeferredBlocks.empty() || start + expected > mDeferredBlocks.back().mSize)
+            {
+                Buffer block;
+                if (!ctx.createBuffer(std::max<VkDeviceSize>(expected + align, 32ull * 1024 * 1024), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, block) || !block.mMapped)
+                {
+                    block = Buffer();
+                }
+                if (block.mBuffer == VK_NULL_HANDLE)
+                {
+                    goto old_path;
+                }
+                mDeferredBlocks.push_back(block);
+                start = 0;
+            }
+            const auto t_fill_d = std::chrono::steady_clock::now();
+            fill(fill_ctx, (U8*)mDeferredBlocks.back().mMapped + start, expected);
+            fill_us_d = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_fill_d).count();
+            mDeferredBlockUsed = start + expected;
+            mDeferredBytes += expected;
+            mDeferredUploads.push_back({ &image, image.mImage, mip, layer, x, y, width, height, std::max<U32>(depth, 1), start, (U32)(mDeferredBlocks.size() - 1) });
+        }
+        ++mUploadStats.mCount;
+        mUploadStats.mBytes += expected;
+        const U64 total_d = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count();
+        LLVkAsync::noteTexWorker(0, fill_us_d, total_d, 1);
+        note_upload_log(expected, fill_us_d, total_d, 0, 0, 1);
+        if (mDeferredBytes > 256ull * 1024 * 1024)
+        {
+            flushDeferredUploadsNow();      // (bounds the staging memory held between frames)
+        }
+        return true;
+    }
+old_path:
     Buffer own;                 // used only when no frame is active
     StagingAlloc stage;
     if (mCmd != VK_NULL_HANDLE)
@@ -5061,32 +5141,113 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
     }
     const U64 total_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count();
     LLVkAsync::noteTexWorker(0, fill_us, total_us, 1);
+    note_upload_log(expected, fill_us, total_us, (mCmd != VK_NULL_HANDLE && mRendering) ? 1 : 0, used_own_buffer ? 1 : 0, 0);
+    return true;
+}
+
+void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
+{
+    std::lock_guard<std::mutex> lock(mDeferredMutex);
+    if (mDeferredUploads.empty())
     {
-        // <FS> LL_VK_UPLOADLOG=1 (also on with the hitch watcher): what the worker spends on texture uploads, every 2 s (doc/vulkan/PLAN-hitchless-loading.md, texture uploads): the number, the bytes, the time
-        // filling the staging memory and the time of the whole call (fill + recording the copies and their barriers), the longest single upload, and how many ended a render pass in progress
-        static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
-        if (log_on)
+        for (Buffer& b : mDeferredBlocks)
         {
-            struct Acc { U64 mN = 0, mBytes = 0, mFillUs = 0, mTotalUs = 0, mMaxUs = 0, mSplits = 0, mOwn = 0; std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now(); };
-            static Acc a;
-            ++a.mN;
-            a.mBytes += expected;
-            a.mFillUs += fill_us;
-            a.mTotalUs += total_us;
-            a.mMaxUs = std::max(a.mMaxUs, total_us);
-            a.mSplits += (mCmd != VK_NULL_HANDLE && mRendering) ? 1 : 0;
-            a.mOwn += used_own_buffer ? 1 : 0;
-            const auto now = std::chrono::steady_clock::now();
-            if (now - a.mT0 >= std::chrono::seconds(2))
+            Context::instance().destroyBuffer(b);
+        }
+        mDeferredBlocks.clear();
+        mDeferredBlockUsed = 0;
+        mDeferredBytes = 0;
+        return;
+    }
+    Context& ctx = Context::instance();
+    // one barrier pair a texture: the uploads of one image together (a stable sort keeps the order of the levels), the regions of one staging block in one copy
+    std::stable_sort(mDeferredUploads.begin(), mDeferredUploads.end(), [](const DeferredUpload& a, const DeferredUpload& b) { return a.mHandle < b.mHandle; });
+    size_t i = 0;
+    U32 images = 0, copies = 0;
+    while (i < mDeferredUploads.size())
+    {
+        size_t j = i;
+        while (j < mDeferredUploads.size() && mDeferredUploads[j].mHandle == mDeferredUploads[i].mHandle)
+        {
+            ++j;
+        }
+        Image* image = mDeferredUploads[i].mImage;
+        if (image && image->valid() && image->mImage == mDeferredUploads[i].mHandle)
+        {
+            const bool is_3d = image->mViewType == VK_IMAGE_VIEW_TYPE_3D;
+            transition(cmd, *image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            for (size_t k = i; k < j; )
             {
-                LL_INFOS("VkUpload") << "texture uploads in " << std::chrono::duration_cast<std::chrono::milliseconds>(now - a.mT0).count() << " ms: " << a.mN << " uploads, "
-                                     << (double)a.mBytes / (1024.0 * 1024.0) << " MB, fill " << (double)a.mFillUs / 1000.0 << " ms, whole calls " << (double)a.mTotalUs / 1000.0
-                                     << " ms, longest " << (double)a.mMaxUs / 1000.0 << " ms, " << a.mSplits << " ended a render pass, " << a.mOwn << " with a buffer of their own" << LL_ENDL;
-                a = Acc();
+                size_t m = k;
+                std::vector<VkBufferImageCopy> regions;
+                while (m < j && mDeferredUploads[m].mBlock == mDeferredUploads[k].mBlock)
+                {
+                    const DeferredUpload& u = mDeferredUploads[m];
+                    VkBufferImageCopy c = {};
+                    c.bufferOffset = u.mOffset;
+                    c.imageSubresource = { image->mAspect, u.mMip, is_3d ? 0 : u.mLayer, 1 };
+                    c.imageOffset = { (S32)u.mX, (S32)u.mY, is_3d ? (S32)u.mLayer : 0 };
+                    c.imageExtent = { u.mW, u.mH, u.mD };
+                    regions.push_back(c);
+                    ++m;
+                }
+                vkCmdCopyBufferToImage(cmd, mDeferredBlocks[mDeferredUploads[k].mBlock].mBuffer, image->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (U32)regions.size(), regions.data());
+                ++copies;
+                k = m;
             }
+            transition(cmd, *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            ++images;
+        }
+        i = j;
+    }
+    static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
+    if (log_on && mDeferredUploads.size() >= 200)
+    {
+        LL_INFOS("VkUpload") << "recorded " << mDeferredUploads.size() << " uploads kept from between frames: " << images << " images, " << copies << " copies, "
+                             << (double)mDeferredBytes / (1024.0 * 1024.0) << " MB" << LL_ENDL;
+    }
+    for (Buffer& b : mDeferredBlocks)
+    {
+        ctx.destroyBuffer(b);       // (freed once the frame that copies from it has completed)
+    }
+    mDeferredBlocks.clear();
+    mDeferredUploads.clear();
+    mDeferredBlockUsed = 0;
+    mDeferredBytes = 0;
+}
+
+void Renderer::flushDeferredUploadsNow()
+{
+    {
+        std::lock_guard<std::mutex> lock(mDeferredMutex);
+        if (mDeferredUploads.empty())
+        {
+            return;
         }
     }
-    return true;
+    if (mCmd != VK_NULL_HANDLE)
+    {
+        endRendering(PE_COMMAND_BUFFER);
+        flushDeferredUploads(mCmd);
+        return;
+    }
+    Context::instance().immediateSubmit([&](VkCommandBuffer cmd) { flushDeferredUploads(cmd); });
+}
+
+void Renderer::dropDeferredUploads(VkImage handle)
+{
+    std::lock_guard<std::mutex> lock(mDeferredMutex);
+    for (size_t i = 0; i < mDeferredUploads.size(); )
+    {
+        if (mDeferredUploads[i].mHandle == handle)
+        {
+            mDeferredUploads.erase(mDeferredUploads.begin() + i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
 }
 
 bool Renderer::copyBaseLevel(Image& src, Image& dst)
@@ -5196,6 +5357,7 @@ bool Renderer::generateMipmaps(Image& image)
 
 bool Renderer::readbackImage(Image& view_or_image, U32 mip, U32 layer, std::vector<U8>& texels)
 {
+    flushDeferredUploadsNow();      // <FS> uploads made between frames are in the image before it is read
     Context& ctx = Context::instance();
     Image* image = root_of(&view_or_image);
     const FormatInfo fi = formatInfo(image->mFormat);
@@ -5563,6 +5725,7 @@ std::string Renderer::takeFlushReport(double frames)
 
 bool Renderer::readbackRegion(Image& view_or_image, U32 mip, U32 layer, S32 x, S32 y, U32 w, U32 h, std::vector<U8>& texels)
 {
+    flushDeferredUploadsNow();      // <FS> uploads made between frames are in the image before it is read
     Context& ctx = Context::instance();
     Image* image = root_of(&view_or_image);
     const FormatInfo fi = formatInfo(image->mFormat);
@@ -5609,6 +5772,7 @@ U32 Renderer::compressedMipBytes(const Image& image, U32 mip)
 
 bool Renderer::readbackCompressedMip(Image& view_or_image, U32 mip, U32 layer, std::vector<U8>& blocks)
 {
+    flushDeferredUploadsNow();      // <FS> uploads made between frames are in the image before it is read
     Context& ctx = Context::instance();
     Image* image = root_of(&view_or_image);
     const U32 bytes = compressedMipBytes(*image, mip);
