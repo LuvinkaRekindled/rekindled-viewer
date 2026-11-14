@@ -20,6 +20,7 @@
 #define LL_LLFORKJOINPOOL_H
 
 #include "llthread.h"
+#include "llphasecheck.h"       // GPU-LIFETIMES.md step 4: the phase counter
 #include <string>
 #include <algorithm>
 #include <atomic>
@@ -27,6 +28,8 @@
 #include <cstdlib>
 #include "llvkplatform.h"
 #include <condition_variable>
+#include <random>
+#include <vector>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -129,6 +132,7 @@ public:
                 if (mBatches[i].mActive.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
                 {
                     slot = i;
+                    LLPhaseCheck::sPhaseDepth.fetch_add(1, std::memory_order_relaxed);      // (GPU-LIFETIMES.md step 4: a parallel phase is running until the join ends)
                     break;
                 }
             }
@@ -254,6 +258,7 @@ public:
             }
         }
         b.mFn = nullptr;
+        LLPhaseCheck::sPhaseDepth.fetch_sub(1, std::memory_order_relaxed);
         b.mActive.store(false, std::memory_order_release);      // (the slot can be launched again; its claim word already has the index at the count)
     }
 
@@ -265,6 +270,56 @@ public:
             return;
         }
         join(launch(count, fn));
+    }
+
+    // A stress test of the pool and a trial of the thread phase check (GPU-LIFETIMES.md step 4; incident row 11, the double claim that a standalone test of this header found in seconds).
+    // Run once at start by LL_VK_POOL_SELFTEST=<seconds> (main thread, blocks for that long). Random batches of 1 to 1000 jobs: each index must run exactly once and nothing may be running when
+    // run() returns. Healthy = "0 wrong, 0 still running". Then the phase check is tried: a call on the main thread outside a batch must stay silent, calls from jobs must each log a PhaseCheck line.
+    static void selfTest(unsigned seconds)
+    {
+        LLForkJoinPool* pool = shared();
+        if (!pool)
+        {
+            LL_INFOS("ForkJoin") << "self test: no shared pool on this machine (fewer than 8 hardware threads)" << LL_ENDL;
+            return;
+        }
+        std::mt19937 rng(20261113u);
+        std::vector<std::atomic<unsigned>> hits(1024);
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        unsigned long long batches = 0, jobs = 0, wrong = 0, still_running = 0;
+        while (std::chrono::steady_clock::now() < end)
+        {
+            const size_t count = 1 + rng() % 1000;
+            for (size_t i = 0; i < count; ++i)
+            {
+                hits[i].store(0, std::memory_order_relaxed);
+            }
+            std::atomic<unsigned> running{ 0 };
+            pool->run(count, [&](size_t i)
+            {
+                running.fetch_add(1, std::memory_order_relaxed);
+                hits[i].fetch_add(1, std::memory_order_relaxed);
+                running.fetch_sub(1, std::memory_order_relaxed);
+            });
+            ++batches;
+            jobs += count;
+            for (size_t i = 0; i < count; ++i)
+            {
+                wrong += hits[i].load(std::memory_order_relaxed) != 1;
+            }
+            still_running += running.load(std::memory_order_relaxed) != 0;
+        }
+        LL_INFOS("ForkJoin") << "self test: " << seconds << " s, " << batches << " batches, " << jobs << " jobs: " << wrong << " wrong (an index run not exactly once), " << still_running << " still running after run() returned" << LL_ENDL;
+        ll_phase_check("self test: main thread, no batch (must not be reported)");
+        pool->run(64, [](size_t i)
+        {
+            if (i % 16 == 5)
+            {
+                ll_phase_check("self test: inside a batch (4 reports expected)");
+            }
+        });
+        LL_INFOS("ForkJoin") << "self test: phase check tried (4 reports expected, none for the main thread outside a batch):" << LL_ENDL;
+        LLPhaseCheck::logSummary();
     }
 
     // The pool the viewer shares between its parallel phases: null when the machine has too few

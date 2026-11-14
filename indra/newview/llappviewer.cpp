@@ -28,6 +28,7 @@
 #include "llgpuzonetimer.h"
 
 #include "llappviewer.h"
+#include "llforkjoinpool.h"
 #include "llretirelist.h"
 
 // Viewer includes
@@ -4139,6 +4140,10 @@ bool LLAppViewer::initWindow()
 
     gPipeline.init();
     LL_INFOS("AppInit") << "gPipeline Initialized" << LL_ENDL;
+    if (const char* pool_selftest = getenv("LL_VK_POOL_SELFTEST"))
+    {
+        LLForkJoinPool::selfTest((unsigned)std::max(atoi(pool_selftest), 1));       // (GPU-LIFETIMES.md step 4: a stress test of the pool and a trial of the phase check, nothing without the variable)
+    }
 
     gViewerWindow->initRenderDefaults();
 
