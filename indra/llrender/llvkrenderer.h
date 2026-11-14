@@ -566,6 +566,12 @@ private:
         U32 mSets = 0;
         bool mKeyed = false;            // made by handleForImage
         BindlessKey mKey;
+        // <FS> the last few things that happened to this handle, kept across the handle being given to another texture (2026-11-14, the bake slots that show another texture's image): kind 0 made, 1 set (descriptor
+        // index and the view it shows), 2 cleared, 3 released
+        struct Event { U64 mFrame = 0; U64 mView = 0; U32 mKind = 0; U32 mDesc = 0; };
+        Event mHist[6];
+        U32 mHistCount = 0;
+        void note(U32 kind, U64 frame, U32 desc, U64 view) { mHist[mHistCount % 6] = { frame, view, kind, desc }; ++mHistCount; }
     };
     std::vector<HandleInfo> mHandleInfo[BINDLESS_TABLES];
     U64 mViewGuardClears = 0;

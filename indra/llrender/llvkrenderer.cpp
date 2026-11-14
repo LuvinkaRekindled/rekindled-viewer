@@ -3262,7 +3262,13 @@ U32 Renderer::handleNew(U32 table)
     {
         mHandleInfo[table].resize(h + 1);
     }
-    mHandleInfo[table][h] = HandleInfo();
+    {
+        HandleInfo keep = mHandleInfo[table][h];            // (the history stays across the handle being given to another texture)
+        mHandleInfo[table][h] = HandleInfo();
+        for (U32 k = 0; k < 6; ++k) mHandleInfo[table][h].mHist[k] = keep.mHist[k];
+        mHandleInfo[table][h].mHistCount = keep.mHistCount;
+        mHandleInfo[table][h].note(0, Context::instance().getFrameNumber(), 0, 0);
+    }
     const U32 live = mHandles.liveHandles(table);
     if (table == 0 && live > mStatBindlessPeak.load(std::memory_order_relaxed))
     {
@@ -3319,6 +3325,7 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
         hi.mW = image->mExtent.width; hi.mH = image->mExtent.height; hi.mMips = image->mMipLevels; hi.mLayers = image->mLayers; hi.mFormat = (U32)image->mFormat; hi.mLayout = (U32)layout;
         hi.mFrame = Context::instance().getFrameNumber();
         ++hi.mSets;
+        hi.note(1, hi.mFrame, d, image->mViewId);
     }
     return true;
 }
@@ -3366,6 +3373,7 @@ void Renderer::handleClear(U32 table, U32 handle)
         HandleInfo& hi = mHandleInfo[table][handle];
         hi.mView = VK_NULL_HANDLE;
         hi.mImage = 0;
+        hi.note(2, Context::instance().getFrameNumber(), 0, 0);
     }
 }
 
@@ -3462,7 +3470,13 @@ void Renderer::handleRelease(U32 table, U32 handle)
             mKeyedHandles.erase(hi.mKey);
             ++mHandleEpoch;
         }
+        HandleInfo::Event hist[6];
+        for (U32 k = 0; k < 6; ++k) hist[k] = hi.mHist[k];
+        const U32 hist_count = hi.mHistCount;
         hi = HandleInfo();
+        for (U32 k = 0; k < 6; ++k) hi.mHist[k] = hist[k];
+        hi.mHistCount = hist_count;
+        hi.note(3, Context::instance().getFrameNumber(), 0, 0);
     }
     mHandles.release(table, handle, Context::instance().getFrameNumber());
 }
@@ -4296,7 +4310,30 @@ std::string Renderer::describeSlot(U32 id) const
     snprintf(buf, sizeof(buf), "handle %u of table %u: %s, descriptor index %u, last set %lld frames ago (%u sets), image %ux%u format %u mips %u layers %u layout %u, view id %llu, %s",
              handle, table, mHandles.live(table, handle) ? "live" : "FREE", mHandles.descriptorOf(table, handle), (long long)(frame - s.mFrame), s.mSets, s.mW, s.mH, s.mFormat, s.mMips, s.mLayers, s.mLayout,
              (unsigned long long)s.mViewId, dead ? "image DESTROYED" : "image alive");
-    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mImage) + ": " + Context::instance().describeBinding(s.mImage) + " | " + LLVkWorker::describe_texture_of_view(s.mViewId);
+    // <FS> 2026-11-14 (the user's eyes and ears bake slots show another texture's image while the texture object, its image and its handle are all right): what each frame slot's handle map holds for this
+    // handle (the descriptor index the draws of that slot read it through) against the descriptor index the handle table says it has; a slot that differs shows another texture's image
+    std::string maps;
+    {
+        // the handle's last events, newest first: made / set (descriptor index, the view it showed) / cleared / released, with the frames ago
+        maps = " | history:";
+        const U32 n = std::min<U32>(s.mHistCount, 6);
+        for (U32 k = 0; k < n; ++k)
+        {
+            const HandleInfo::Event& e = s.mHist[(s.mHistCount - 1 - k) % 6];
+            static const char* const kinds[4] = { "made", "set", "cleared", "released" };
+            maps += std::string(" [") + kinds[e.mKind & 3] + (e.mKind == 1 ? " desc " + std::to_string(e.mDesc) + " view " + std::to_string((unsigned long long)e.mView) : std::string()) + ", " + std::to_string((long long)(frame - e.mFrame)) + " frames ago]";
+        }
+    }
+    maps += " | handle map by frame slot (expected descriptor " + std::to_string(mHandles.descriptorOf(table, handle)) + "):";
+    for (U32 k = 0; k < Context::frameCount() && k < Context::FRAMES_IN_FLIGHT; ++k)
+    {
+        if (mHandleMap[k].valid() && mHandleMap[k].mMapped)
+        {
+            const U32 value = ((const U32*)mHandleMap[k].mMapped)[(table << 16) | handle];
+            maps += " slot" + std::to_string(k) + "=" + std::to_string(value) + (value == mHandles.descriptorOf(table, handle) ? "" : " DIFFERS");
+        }
+    }
+    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mImage) + ": " + Context::instance().describeBinding(s.mImage) + " | " + LLVkWorker::describe_texture_of_view(s.mViewId) + maps;
 }
 
 std::string Renderer::auditBindless() const
