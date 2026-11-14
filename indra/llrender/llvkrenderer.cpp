@@ -5044,6 +5044,7 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
         transition(cmd, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
 
+    const bool used_own_buffer = own.valid();       // <FS> (the upload log below)
     if (own.valid())
     {
         if (mCmd != VK_NULL_HANDLE)
@@ -5058,7 +5059,33 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
             vmaDestroyBuffer(ctx.getAllocator(), own.mBuffer, own.mAllocation);
         }
     }
-    LLVkAsync::noteTexWorker(0, fill_us, (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count(), 1);
+    const U64 total_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count();
+    LLVkAsync::noteTexWorker(0, fill_us, total_us, 1);
+    {
+        // <FS> LL_VK_UPLOADLOG=1 (also on with the hitch watcher): what the worker spends on texture uploads, every 2 s (doc/vulkan/PLAN-hitchless-loading.md, texture uploads): the number, the bytes, the time
+        // filling the staging memory and the time of the whole call (fill + recording the copies and their barriers), the longest single upload, and how many ended a render pass in progress
+        static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
+        if (log_on)
+        {
+            struct Acc { U64 mN = 0, mBytes = 0, mFillUs = 0, mTotalUs = 0, mMaxUs = 0, mSplits = 0, mOwn = 0; std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now(); };
+            static Acc a;
+            ++a.mN;
+            a.mBytes += expected;
+            a.mFillUs += fill_us;
+            a.mTotalUs += total_us;
+            a.mMaxUs = std::max(a.mMaxUs, total_us);
+            a.mSplits += (mCmd != VK_NULL_HANDLE && mRendering) ? 1 : 0;
+            a.mOwn += used_own_buffer ? 1 : 0;
+            const auto now = std::chrono::steady_clock::now();
+            if (now - a.mT0 >= std::chrono::seconds(2))
+            {
+                LL_INFOS("VkUpload") << "texture uploads in " << std::chrono::duration_cast<std::chrono::milliseconds>(now - a.mT0).count() << " ms: " << a.mN << " uploads, "
+                                     << (double)a.mBytes / (1024.0 * 1024.0) << " MB, fill " << (double)a.mFillUs / 1000.0 << " ms, whole calls " << (double)a.mTotalUs / 1000.0
+                                     << " ms, longest " << (double)a.mMaxUs / 1000.0 << " ms, " << a.mSplits << " ended a render pass, " << a.mOwn << " with a buffer of their own" << LL_ENDL;
+                a = Acc();
+            }
+        }
+    }
     return true;
 }
 

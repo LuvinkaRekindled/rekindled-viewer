@@ -103,3 +103,23 @@ The Citadel table above, by group, with the fix in the plan's mechanisms B and C
 - Login at Citadel, warm cache, after both: 12 episodes in the whole session (about five of them start-up frames before the world), worst 167 ms.
 
 Left, by the late-frame samples so far: `beginFrame` waits (the worker finishing a slow frame; one third of the samples), the volume builds, UI and HTTP reply parsing, render CPU, vertex buffer pool allocation. A profile of the late frames at a 25 ms watcher is the next measurement (`<work>\run-viewer-hitch25.bat`, `<work>\hitch-profile.py <log>`: each capture is one sample of where the main thread was in a frame that was already late, grouped by subsystem).
+
+## Texture uploads (design, 2026-11-15; Adam: "Tackle uploads")
+
+### What happens today (read from `Renderer::uploadTextureDirect`, llvkrenderer.cpp)
+
+An upload arrives on the render worker as a command (`tex_subimage2D` -> `upload_level`), in the order the main thread issued it among the draws. For each one the worker (1) takes staging memory from the frame's staging arena (`ctx.allocStaging`; a buffer of its own when the arena is full), (2) **fills it on the worker thread**: a `memcpy`, or `convert_rgba8_rows` for the common 8 bit RGB / RGBA into RGBA8 (the one-copy path, `LLVkAsync::gTexOneCopy`), or the generic per texel `convert_pixels` for the other formats (the slow path: it showed in a stall capture), (3) records into **the frame's own command buffer**, at the point where the command stream is: `transition(image -> TRANSFER_DST)`, `vkCmdCopyBufferToImage`, `transition(image -> SHADER_READ_ONLY)` (two barriers a call), and **when a render pass is in progress it ends the pass and starts it again** (`mPassSplits`; the pass split is the expensive part and is counted but not reported). With no frame active it is an `immediateSubmit` (submit to the one queue and wait). Everything is in one queue with the rendering: a login's 550 MB of textures, hundreds of uploads a frame, are part of the frames that hold the present.
+
+So a frame that carries a burst of uploads is late for four separate reasons: the CPU fill on the worker, the barriers and pass splits recorded between draws, the GPU copy time in the same queue, and the descriptor / handle bookkeeping.
+
+### Measurement first (built 2026-11-15, not run): `LL_VK_UPLOADLOG`
+
+A line every 2 s (`VkUpload`, also on with the hitch watcher): uploads, MB, the fill ms, the whole call ms (fill + recording), the longest single upload, how many ended a render pass, how many used a buffer of their own. A Citadel login with `run-viewer-hitch25.bat` shows which of the four reasons carries the weight.
+
+### The steps, in order of risk
+
+- **U1. One batch a frame, outside the render passes (same queue).** Uploads are collected during the frame (image, region, staging offset) and recorded once, at the start of the frame before its first pass (or after the previous frame's last one): one barrier for all the images to TRANSFER_DST, the copies, one barrier back to SHADER_READ_ONLY. No pass splits, no barrier pair per upload. Semantics to keep: a texture drawn before and after an update in the same frame sees the new data from the start (a streaming mip upload: harmless; a dynamic texture or a font page re-uploaded within the frame: keep these on the old path, a flag on the image). The barrier cost of 2 a call and the splits go; the CPU fill and the GPU copy stay.
+- **U2. The fill off the worker.** The decoded image is written straight into the staging ring by the thread that has it (the image decode thread already has an RGBA8 buffer; the one-copy path hands the pointer over): the worker only records the copy. The generic `convert_pixels` path gets a vectorised version or the conversion moves to the sender (the formats that reach it are to be counted from the log).
+- **U3. A transfer queue.** The copies run on a dedicated transfer queue family (the card has one) with its own command pool and a timeline semaphore; a texture's descriptor changes from the white fallback to the real image only when the semaphore has passed its upload (placeholder rule 2, white until the first mip is resident, falls out for free). The final layout change to SHADER_READ_ONLY cannot be recorded on a transfer only queue (shader stages are not allowed there): it goes into the graphics batch of U1, so U1 is a prerequisite. The images need concurrent sharing between the two families (or release / acquire pairs). Largest change, and the one that takes the GPU copy out of the frame's queue.
+
+U1 first (it removes the part of the cost that lives between the draws), measure, U2 only if the fill shows up in the log, U3 only if the GPU copy time does.
