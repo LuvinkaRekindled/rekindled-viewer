@@ -1479,10 +1479,14 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
     if ((g.flags & 4096u) != 0u)
     {
         slot = ll_rt_slot(slot);            // the record holds a pin index (the persistent bindless table)
     }
+    // <FS> (2026-11-14, the user: a head or hair shaped dark patch of the sun shadow for one frame) the same rule as the CPU side (pipeline.cpp rt_texture_ready: a masked caster whose texture has no data is not
+    // named): a handle whose entry in this frame slot's handle map is 0 draws the opaque placeholder image, so a card that reads it would block the sun for a frame. Such a record casts nothing.
+    if (slot_assigned && LL_HM(slot) == 0u) { return false; }
     float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod).a;
     if ((g.flags & 64u) != 0u)
     {
@@ -1558,10 +1562,14 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
+    const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
     if ((g.flags & 4096u) != 0u)
     {
         slot = ll_rt_slot(slot);
     }
+    // <FS> (2026-11-14, the user: a head or hair shaped dark patch of the sun shadow for one frame) the same rule as the CPU side (pipeline.cpp rt_texture_ready: a masked caster whose texture has no data is not
+    // named): a handle whose entry in this frame slot's handle map is 0 draws the opaque placeholder image, so a card that reads it would block the sun for a frame. Such a record casts nothing.
+    if (slot_assigned && LL_HM(slot) == 0u) { return 0.0; }
     float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod + 2.0).a;
     if ((g.flags & 64u) != 0u || ((g.flags & 2u) == 0u && (g.flags & 1u) == 0u))
     {
