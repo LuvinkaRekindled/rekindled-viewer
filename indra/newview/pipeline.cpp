@@ -14339,6 +14339,7 @@ static void scene_alpha_frame(U64 frame)
     static std::vector<LLViewerTexture*> changed;
     changed.clear();
     const auto t_events = std::chrono::steady_clock::now();
+    U32 lost_now = 0;
     if (!ids.empty())
     {
         std::sort(ids.begin(), ids.end());
@@ -14402,8 +14403,19 @@ static void scene_alpha_frame(U64 frame)
                     info.mName = name;
                     info.mReady = ready;
                     changed.push_back(tex);
+                    // (blink diagnostic, 2026-11-14) the ones that lost their picture in this event: a GL name that went to 0 (the default image) or a readiness that went away
+                    if (!ready || !gl->getTexName())
+                    {
+                        ++lost_now;
+                    }
                 }
             }
+        }
+        // <FS> the user 2026-11-14: "alpha shadows blink out all at once intermittently" (RT on). A masked draw whose texture has no GL name is not named to the ray scene (rt_texture_ready), so a frame in which many
+        // registry textures lose their name or readiness at once would take their shadows away together. Logged when 8 or more do in one frame (the time says which blink it was)
+        if (lost_now >= 8)
+        {
+            LL_INFOS("VkScene") << "alpha textures that lost their picture or readiness in one frame: " << lost_now << " of " << ids.size() << " name events (frame " << frame << ", " << changed.size() << " changed in all)" << LL_ENDL;
         }
     }
     // the safety net: every 256th frame every registry entry is compared with its texture as it is now; a difference is an event that did not reach us (counted)
