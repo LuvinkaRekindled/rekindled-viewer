@@ -4570,6 +4570,18 @@ static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U
     Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)a.mAddress, (unsigned long long)h.mPass);
 }
 
+// GPU-LIFETIMES.md step 3: the buffers a record entry draws from are found through this one: finding them IS the stamp (the GPU reads them this frame: a CPU rewrite of a host-written range
+// has to rename first, see write_buffer). A record kind that looks its buffers up this way cannot forget the stamp; a buffer that was found and then not drawn is only held one frame longer.
+static Buf* packet_buffer_used(U32 name, U64 frame)
+{
+    Buf* b = packet_buffer(name);
+    if (b)
+    {
+        b->mLastUseFrame = frame;
+    }
+    return b;
+}
+
 // the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
 static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -4885,8 +4897,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         const LLVkBridge::ShadowAlphaEntry& e = entries[i];
         AlphaGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = packet_buffer(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
@@ -4961,8 +4973,6 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mCutoff = e.mCutoff;
         counts[i] = e.mIndexCount;
         alpha_index_buffers[i] = ib;
-        vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -5142,8 +5152,8 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         memset(raw, 0, stride);
         GeoGpu& g = *(GeoGpu*)raw;
         const bool no_index = (e.mFlags & LLVkBridge::GEO_NO_INDEX) != 0;       // S6.6: a drawArrays: no index buffer
-        Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = no_index ? nullptr : packet_buffer(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = no_index ? nullptr : packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !vb->mVk.valid() || !vb->mVk.mAddress || (!no_index && (!ib || !ib->mVk.valid() || !ib->mVk.mAddress)))
         {
             // (said once per program and reason: a draw that goes missing is not a silent one)
@@ -5238,11 +5248,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mBrightness = e.mBrightness;
         counts[i] = e.mIndexCount;
         index_buffers[i] = ib;
-        vb->mLastUseFrame = frame_now;
-        if (ib)
-        {
-            ib->mLastUseFrame = frame_now;
-        }
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -5466,8 +5471,8 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
         const LLVkBridge::ShadowSkinEntry& e = entries[i];
         SkinGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = packet_buffer(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
@@ -5495,8 +5500,6 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
         }
         counts[i] = e.mIndexCount;
         shadow_index_buffers[i] = ib;
-        vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -5621,8 +5624,8 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         const LLVkBridge::ShadowSkinEntry& e = entries[i];
         VelocityGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = packet_buffer(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
@@ -5653,8 +5656,6 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mJoints = e.mJoints;
         counts[i] = e.mIndexCount;
         velocity_index_buffers[i] = ib;
-        vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -5780,8 +5781,8 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
         const LLVkBridge::ShadowPacketEntry& e = entries[i];
         ObjectGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer(e.mVertexBuffer);
-        Buf* ib = packet_buffer(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
@@ -5796,8 +5797,6 @@ static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h,
         g.mModel = e.mMatrix;
         counts[i] = e.mIndexCount;
         object_index_buffers[i] = ib;
-        vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
         {
             packet_used.push_back(e.mVertexBuffer);
@@ -11190,8 +11189,8 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const U32* j = in + 16ull * i;
-        Buf* vb = packet_buffer(j[0]);
-        Buf* rb = packet_buffer(j[1]);
+        Buf* vb = packet_buffer_used(j[0], frame_now);
+        Buf* rb = packet_buffer_used(j[1], frame_now);
         if (!vb || !rb || !vb->mVk.valid() || !rb->mVk.valid() || !vb->mVk.mAddress || !rb->mVk.mAddress)
         {
             ++s.mBad;
@@ -11214,8 +11213,6 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         o[15] = j[13];
         o[16] = j[14];
-        vb->mLastUseFrame = frame_now;
-        rb->mLastUseFrame = frame_now;
         used.push_back(j[0]);
         used.push_back(j[1]);
         ++valid;
@@ -11575,40 +11572,14 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     PacketGpu* out = (PacketGpu*)table.mPtr;
-    // the buffers of the draws: a direct-mapped cache of the entries of sGL.mBuffers (their nodes keep their place until erased, and erasing starts the cache over)
-    static Buf* cache_buf[1024];
-    static U32 cache_name[1024];
-    static U64 cache_generation = ~0ull;
-    if (cache_generation != sPacketBufferGeneration)
-    {
-        memset(cache_buf, 0, sizeof(cache_buf));
-        memset(cache_name, 0, sizeof(cache_name));
-        cache_generation = sPacketBufferGeneration;
-    }
-    auto lookup = [&](U32 name) -> Buf*
-    {
-        const U32 slot = (name * 2654435761u) >> 22;
-        if (cache_name[slot] == name && cache_buf[slot])
-        {
-            return cache_buf[slot];
-        }
-        auto it = sGL.mBuffers.find(name);
-        if (it == sGL.mBuffers.end())
-        {
-            return nullptr;
-        }
-        cache_name[slot] = name;
-        cache_buf[slot] = &it->second;
-        return &it->second;
-    };
     U32 last_vb = 0, last_ib = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         const LLVkBridge::ShadowPacketEntry& e = entries[i];
         PacketGpu& g = out[i];
         memset(&g, 0, sizeof(g));
-        Buf* vb = lookup(e.mVertexBuffer);
-        Buf* ib = lookup(e.mIndexBuffer);
+        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
+        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
         last_vb = e.mVertexBuffer;
         last_ib = e.mIndexBuffer;
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -11637,8 +11608,6 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         g.mCount = e.mIndexCount;
         g.mModel = e.mMatrix;
         counts[i] = e.mIndexCount;
-        vb->mLastUseFrame = frame_now;
-        ib->mLastUseFrame = frame_now;
         if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != last_vb || packet_used.back() != last_ib)
         {
             packet_used.push_back(last_vb);
