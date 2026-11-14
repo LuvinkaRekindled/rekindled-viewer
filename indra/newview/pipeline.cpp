@@ -24376,6 +24376,112 @@ static bool rt_name_avatar_due(LLVOAvatar* avatar)
     return due;
 }
 
+// <FS> LL_VK_POSEPROBE=1 (a diagnostic, off by default; 2026-11-14, Adam's head shaped dark patch on his own hair, one frame, running away from the sun): is the pose the ray scene is skinned with the pose of the frame the
+// pixels are lit in? The own avatar's biggest palette is copied when the main view names its rigged draws to the ray scene (pose_probe_note) and fetched again at the lighting pass of the same frame, after the
+// G-buffer (pose_probe_check); the render position of the avatar the same way. Any difference above a millimetre is logged (tag PoseProbe, with the frame number and the time of the log line), with the largest
+// motion of the palette from one frame to the next for scale and a summary every 600 frames.
+namespace
+{
+struct PoseProbe
+{
+    U64 mFrame = 0, mPrevFrame = 0;
+    LLVOAvatar* mAvatar = nullptr;
+    const LLMeshSkinInfo* mSkin = nullptr;
+    std::vector<F32> mPalette, mPrevPalette;
+    LLVector3 mPos;
+    U64 mChecks = 0, mDiffer = 0, mPosDiffer = 0, mFrozen = 0, mMoves = 0;
+    F32 mWorst = 0.f, mWorstPos = 0.f, mMoveSum = 0.f, mMoveMax = 0.f;
+};
+PoseProbe sPoseProbe;
+bool pose_probe_on()
+{
+    static const bool on = getenv("LL_VK_POSEPROBE") != nullptr;
+    return on;
+}
+}
+
+static void pose_probe_note(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const std::vector<F32>& palette)
+{
+    PoseProbe& p = sPoseProbe;
+    const U64 frame = (U64)gFrameCount;
+    if (p.mFrame != frame)
+    {
+        p.mPrevPalette.swap(p.mPalette);
+        p.mPrevFrame = p.mFrame;
+        p.mPalette.clear();
+        p.mFrame = frame;
+        p.mAvatar = avatar;
+        p.mSkin = nullptr;
+        p.mPos = avatar->getRenderPosition();
+    }
+    if (palette.size() > p.mPalette.size())
+    {
+        p.mPalette = palette;
+        p.mSkin = skin;
+    }
+}
+
+static void pose_probe_check()
+{
+    PoseProbe& p = sPoseProbe;
+    if (p.mFrame != (U64)gFrameCount || !p.mSkin || p.mPalette.empty() || !p.mAvatar || !LLVOAvatar::isLiveInstance(p.mAvatar))
+    {
+        return;
+    }
+    ++p.mChecks;
+    const LLVOAvatar::MatrixPaletteCache& mpc = p.mAvatar->updateSkinInfoMatrixPalette(p.mSkin);
+    F32 worst = 0.f;
+    size_t at = 0;
+    const bool same_size = mpc.mGLMp.size() == p.mPalette.size();
+    if (same_size)
+    {
+        for (size_t i = 0; i < p.mPalette.size(); ++i)
+        {
+            const F32 d = fabsf(mpc.mGLMp[i] - p.mPalette[i]);
+            if (d > worst)
+            {
+                worst = d;
+                at = i;
+            }
+        }
+    }
+    else
+    {
+        worst = 1.0e9f;
+    }
+    const F32 pos_diff = (p.mAvatar->getRenderPosition() - p.mPos).length();
+    F32 moved = -1.f;
+    if (p.mPrevFrame + 1 == p.mFrame && p.mPrevPalette.size() == p.mPalette.size())
+    {
+        moved = 0.f;
+        for (size_t i = 0; i < p.mPalette.size(); ++i)
+        {
+            moved = std::max(moved, fabsf(p.mPalette[i] - p.mPrevPalette[i]));
+        }
+        ++p.mMoves;
+        p.mMoveSum += moved;
+        p.mMoveMax = std::max(p.mMoveMax, moved);
+        p.mFrozen += moved == 0.f;
+    }
+    p.mWorst = std::max(p.mWorst, worst);
+    p.mWorstPos = std::max(p.mWorstPos, pos_diff);
+    const bool palette_differs = worst > 0.001f;
+    const bool pos_differs = pos_diff > 0.001f;
+    p.mDiffer += palette_differs;
+    p.mPosDiffer += pos_differs;
+    if ((palette_differs || pos_differs) && (p.mDiffer + p.mPosDiffer <= 60 || (p.mDiffer + p.mPosDiffer) % 100 == 0))
+    {
+        LL_INFOS("PoseProbe") << "frame " << gFrameCount << ": the own avatar's pose at the lighting differs from the one named to the ray scene: palette up to " << (same_size ? worst : -1.f) << (same_size ? " at joint " : " (size changed) ")
+            << (same_size ? (S32)(at / 12) : -1) << ", render position by " << pos_diff << " m, palette motion since the frame before " << moved << LL_ENDL;
+    }
+    if (p.mChecks % 600 == 0)
+    {
+        LL_INFOS("PoseProbe") << p.mChecks << " frames checked: palette differed in " << p.mDiffer << " (worst " << p.mWorst << "), render position in " << p.mPosDiffer << " (worst " << p.mWorstPos << " m); palette identical to the frame before in "
+            << p.mFrozen << " of " << p.mMoves << " frames, motion from one frame to the next: mean " << (p.mMoves ? p.mMoveSum / (F32)p.mMoves : 0.f) << ", largest " << p.mMoveMax << LL_ENDL;
+        p.mWorst = p.mWorstPos = p.mMoveMax = 0.f;
+    }
+}
+
 static void rt_name_rigged_main_view()
 {
     // census (LL_VK_ITEMCENSUS): how far the pose of an avatar moved between two namings (the ray scene refits an avatar's structure as often as it is named): the largest change of a joint matrix element
@@ -24427,6 +24533,10 @@ static void rt_name_rigged_main_view()
                 if (!ll_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints))
                 {
                     return;
+                }
+                if (pose_probe_on() && d.mAvatar->isSelf())
+                {
+                    pose_probe_note(d.mAvatar, d.mSkin, d.mAvatar->updateSkinInfoMatrixPalette(d.mSkin).mGLMp);
                 }
                 if (pose_census)
                 {
@@ -24922,6 +25032,10 @@ void LLPipeline::renderDeferredLighting()
             { LL_CPU_ZONE("lighting: rtScene call"); LLVkBridge::rtScene(scene); }
         }
 
+        if (pose_probe_on() && !gCubeSnapshot)
+        {
+            pose_probe_check();
+        }
         {
             // <FS> where the sun is, every 600 frames of the main view (the leaf shadows of the ray traced sun come out dense in some laps and thin in others: does it follow the sun angle?)
             static U32 sun_frames = 0;
