@@ -1,6 +1,6 @@
 /**
  * @file llvkfsr.h
- * @brief AMD FSR 3.1 upscaler for the Vulkan mirror, through the FidelityFX SDK v1.1.4 ffx-api (amd_fidelityfx_vk.dll, loaded at run time). The second backend of
+ * @brief AMD FSR 3.1 upscaler for the Vulkan mirror, from the FidelityFX SDK v1.1.4 source (MIT) built into static libraries, no DLL. The second backend of
  *        llvkupscale.h: it takes the same Params as DLSS and works on any GPU. Compiled in when the SDK headers were found at configure time (LL_FSR); stubs otherwise.
  *        doc/vulkan/PLAN-fsr-upscaler.md
  */
@@ -18,7 +18,7 @@ namespace LLVkFsr
     // VK_KHR_get_memory_requirements2 not enabled the pointer is null and ffxCreateContext crashed, 2026-10-27). Only the ones the device has are added.
     void addDeviceExtensions(VkPhysicalDevice device, std::vector<const char*>& out);
 
-    // after the device exists: loads the DLL; false (and a log line saying why) if FSR cannot be used here
+    // after the device exists: sets up the SDK backend; false (and a log line saying why) if FSR cannot be used here
     bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
     bool ready();
     void shutdown();
