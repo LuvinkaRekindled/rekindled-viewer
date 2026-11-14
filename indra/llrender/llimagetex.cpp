@@ -1433,6 +1433,10 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
     S32 w = raw_w << discard_level;
     S32 h = raw_h << discard_level;
 
+    // <FS> what this texture object is about to upload (hash and size of the decoded image: the same function as the BakeTex log of a server bake's decode)
+    mUploadHash = fs_sparse_hash(imageraw->getData(), (size_t)imageraw->getDataSize());
+    mUploadBytes = (U64)imageraw->getDataSize();
+
     // setSize may call destroyImageTexture if the size does not match
     if (!setSize(w, h, imageraw->getComponents(), discard_level))
     {

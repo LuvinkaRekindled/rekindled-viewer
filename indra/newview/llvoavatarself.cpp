@@ -2501,11 +2501,16 @@ void LLVOAvatarSelf::dumpLocalTextures() const
             U32 gl_name = 0;
             if (tex)
             {
+                std::string uploaded;
                 if (LLImageTex* gl = tex->getImageTexture())
                 {
                     gl_name = gl->getTexName();
+                    char hbuf[80];
+                    snprintf(hbuf, sizeof(hbuf), ", last upload %llu bytes hash %llx", (unsigned long long)gl->getUploadBytes(), (unsigned long long)gl->getUploadHash());
+                    uploaded = hbuf;
                 }
                 LLViewerFetchedTexture* fetched = dynamic_cast<LLViewerFetchedTexture*>(tex);
+                label += uploaded;
                 if (fetched)
                 {
                     label += " " + fetched->getID().asString() + ", discard " + std::to_string(fetched->getDiscardLevel()) + ", " + std::to_string(fetched->getWidth()) + "x" + std::to_string(fetched->getHeight())

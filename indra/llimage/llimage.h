@@ -489,4 +489,24 @@ public:
     static S32 sGlobalFormattedMemory;
 };
 
+// <FS> 2026-11-14 (the user: the eyes and ears bake slots show another texture's image): a sampled hash of a buffer (size, then up to 4096 evenly spaced 8 byte words): the same function hashes what a server bake's decode
+// made (the BakeTex log, lltexturefetch.cpp) and what a texture object last uploaded (LLImageTex::getUploadHash, printed with the bake slots by Show Textures), so the two can be compared
+inline U64 fs_sparse_hash(const U8* data, size_t size)
+{
+    U64 h = 1469598103934665603ull ^ (U64)size;
+    if (!data || size < 8)
+    {
+        return h;
+    }
+    const size_t words = size / 8;
+    const size_t step = words / 4096 > 1 ? words / 4096 : 1;
+    for (size_t i = 0; i < words; i += step)
+    {
+        U64 w;
+        memcpy(&w, data + i * 8, 8);
+        h = (h ^ w) * 1099511628211ull;
+    }
+    return h;
+}
+
 #endif
