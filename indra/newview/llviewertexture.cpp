@@ -1924,6 +1924,14 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         mImageTexp->setNeedsAlphaAndPickMask(false);
         mImageTexp->setIsMask(mRawImage->getAlphaIsMask() == 1);
     }
+    // <FS> the sampled hash of every level of a BC7 upload, finest first: entered in the registry of recent BC7 levels (so that a level found in a GPU image that was not uploaded to it can be named: id, level,
+    // size, discard), and kept by the texture object of a server bake for Show Textures and the periodic check
+    std::vector<U64> bc7_level_hashes;
+    if (mRawImage->isCompressed())
+    {
+        LLImageBC7::levelHashes(mRawImage, bc7_level_hashes);
+        LLImageBC7::registerLevels(bc7_level_hashes, mID.asString().substr(0, 8), mRawDiscardLevel, (U32)mRawImage->getWidth(), (U32)mRawImage->getHeight());
+    }
     if (mFTType == FTT_SERVER_BAKE)
     {
         // <FS> what this server bake's texture object is about to upload (the same hash as the BakeTex log of the decode; printed with the bake slot by Show Textures)
@@ -1934,19 +1942,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
             finest = fs_sparse_hash(mRawImage->getFinestLevelData(), (size_t)LLImageBC7::blockBytes((U32)mRawImage->getWidth(), (U32)mRawImage->getHeight()));
         }
         mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize(), finest);
-        std::vector<U64> level_hashes;
-        if (mRawImage->isCompressed())
-        {
-            std::vector<std::vector<U8>> levels;
-            if (LLImageBC7::splitLevels(mRawImage, levels))
-            {
-                for (const auto& level : levels)
-                {
-                    level_hashes.push_back(fs_sparse_hash(level.data(), level.size()));
-                }
-            }
-        }
-        mImageTexp->setUploadLevelHashes(level_hashes);
+        mImageTexp->setUploadLevelHashes(bc7_level_hashes);
     }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
     if (mFTType == FTT_SERVER_BAKE)

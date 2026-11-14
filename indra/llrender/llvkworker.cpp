@@ -16,6 +16,7 @@
 
 #include "llvkbridge.h"
 #include "llimage.h"            // <FS> fs_sparse_hash (describe_textures)
+#include "llimagebc7.h"         // <FS> LLImageBC7::lookupLevel (the mip levels of a bake slot that are not what was uploaded)
 #include "llvknative.h"
 #include "llvktexanim.h"
 #include "llshaderprogram.h"
@@ -369,6 +370,12 @@ struct Tex
     U32 mValidLevels = 0;               // contiguous mip levels from 0 that hold data (the rest would sample as black)
     LLVkFormat::Swizzle mSwizzle[4] = { LLVkFormat::SW_R, LLVkFormat::SW_G, LLVkFormat::SW_B, LLVkFormat::SW_A };
     bool mSwizzleSet = false;
+    // <FS> the last 32 things that happened to this texture's image (2026-11-14, the bake slots whose mip levels are not what was uploaded): 1 the image kept for the same specification, 2 a new image (size), 3 the mip chain
+    // grown into a new image, 4 a compressed level uploaded (level, width), 5 a level uploaded (level, width), 6 another image committed into this texture, 7 levels dropped, 8 mipmaps generated, 9 the image destroyed
+    struct Event { U64 mFrame = 0; U64 mImage = 0; S32 mA = 0, mB = 0; U8 mKind = 0; };
+    Event mEvents[32];
+    U32 mEventCount = 0;
+    void note(U8 kind, S32 a, S32 b);
     std::map<std::pair<U32, U32>, std::unique_ptr<Image>> mViews;     // (level, layer) -> render-target view
     VkSampler mVkSampler = VK_NULL_HANDLE;      // cached sampler for the parameters hashed in mSamplerSig
     U64 mSamplerSig = 0;
@@ -385,6 +392,12 @@ struct Tex
 // <FS> something about this texture that a bindless descriptor depends on changed (image, view, sampler parameters, levels): a pin of it is looked at again at the next ray scene call
 void pin_touch(Tex& t);
 void pin_wake_name(U32 name);
+
+void Tex::note(U8 kind, S32 a, S32 b)
+{
+    mEvents[mEventCount % 32] = { Context::instance().getFrameNumber(), (U64)mImage.mImage, a, b, kind };
+    ++mEventCount;
+}
 
 VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
 {
@@ -667,6 +680,7 @@ inline S32 edit_unpack_row_length() { return tlsEditPS ? tlsEditPS->mRowLength :
 
 void destroy_tex_images(Tex& t)
 {
+    t.note(9, 0, 0);
     pin_touch(t);
     ++gPassState.mTargetEpoch;
     Context& ctx = Context::instance();
@@ -706,6 +720,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
 
     if (t.mImage.valid() && t.mDim == tg.mDim && t.mWidth == w && t.mHeight == h && t.mDepth == depth && t.mStore == st)
     {
+        t.note(1, (S32)w, (S32)h);
         return true;        // same specification again: keep the image and just upload into it
     }
     ++gPassState.mTargetEpoch;
@@ -781,6 +796,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     t.mLevels = td.mMips;
     t.mStore = st;
     t.mFormat = fm;
+    t.note(2, (S32)w, (S32)h);
     pin_touch(t);
     return true;
 }
@@ -829,6 +845,7 @@ bool grow_levels(Tex& t)
     destroy_tex_images(t);
     t.mImage = fresh;
     t.mLevels = full;
+    t.note(3, (S32)full, 0);
     pin_touch(t);
     for (auto& kv : sGL.mTextures)
     {
@@ -916,6 +933,7 @@ bool drop_levels(Tex& t, U32 k)
     t.mHeight = td.mHeight;
     t.mValidLevels = t.mValidLevels - k;
     t.mLevels = td.mMips;
+    t.note(7, (S32)k, 0);
     pin_touch(t);
     for (auto& kv : sGL.mTextures)
     {
@@ -946,6 +964,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
         ++t.mValidLevels;       // levels are normally defined in order, level 0 first
         pin_touch(t);
     }
+    t.note(5, level, (S32)w);
     const void* src = pixels;
     if (!src)
     {
@@ -2397,6 +2416,7 @@ void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S
     {
         return;
     }
+    t->note(4, level, width);
     const U32 layer = tg.mFace >= 0 ? (U32)tg.mFace : 0;
     Renderer::instance().uploadTexture(t->mImage, (U32)level, layer, 0, 0, (U32)width, (U32)height, 1, src, (VkDeviceSize)imageSize);
 }
@@ -2439,6 +2459,7 @@ void edit_mipmap()
     if (t && t->mImage.valid() && grow_levels(*t))
     {
         Renderer::instance().generateMipmaps(t->mImage);
+        t->note(8, 0, 0);
         t->mValidLevels = t->mLevels;
         pin_touch(*t);
     }
@@ -2588,6 +2609,7 @@ void tex_commit_image(unsigned id, unsigned staged)
     Tex& st = sit->second;
     destroy_tex_images(d);
     d.mImage = st.mImage;
+    d.note(6, (S32)staged, (S32)st.mValidLevels);
     d.mViews = std::move(st.mViews);
     d.mDim = st.mDim;
     d.mWidth = st.mWidth; d.mHeight = st.mHeight; d.mDepth = st.mDepth;
@@ -4093,6 +4115,19 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                 char sb[200];
                 snprintf(sb, sizeof(sb), " | sampler: base level %d, max level %d, levels holding data %u of %u", (int)t.mSampler.mBaseLevel, (int)t.mSampler.mMaxLevel, t.mValidLevels, t.mLevels);
                 text += sb;
+                // the image's life, oldest first (the last 32 events): kept image / new image (size) / grown chain / level uploaded (level, width) / committed from a staged name (name, its valid levels) / levels dropped / mipmaps / destroyed;
+                // the tail of the image handle shows when the image changed
+                static const char* const kinds[10] = { "?", "kept", "NEW", "GROWN", "up-bc", "up", "COMMIT", "drop", "mipmap", "destroy" };
+                const U32 n = std::min<U32>(t.mEventCount, 32);
+                text += " | image events (oldest first):";
+                const U64 now_frame = Context::instance().getFrameNumber();
+                for (U32 e = 0; e < n; ++e)
+                {
+                    const Tex::Event& ev = t.mEvents[(t.mEventCount - n + e) % 32];
+                    char eb[120];
+                    snprintf(eb, sizeof(eb), " [%s %d %d img..%04x %lld ago]", kinds[ev.mKind < 10 ? ev.mKind : 0], ev.mA, ev.mB, (unsigned)(ev.mImage & 0xFFFF), (long long)(now_frame - ev.mFrame));
+                    text += eb;
+                }
             }
             if (i < level_hashes.size() && !level_hashes[i].empty() && t.mImage.valid() && formatInfo(t.mImage.mFormat).mCompressed)
             {
@@ -4116,8 +4151,24 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                         lv += " L" + std::to_string(k) + " readback failed";
                         continue;
                     }
-                    const bool same = fs_sparse_hash(blocks.data(), blocks.size()) == level_hashes[i][k];
+                    const U64 gpu_hash = fs_sparse_hash(blocks.data(), blocks.size());
+                    const bool same = gpu_hash == level_hashes[i][k];
                     lv += " L" + std::to_string(k) + (same ? " same" : " DIFFERENT");
+                    if (!same)
+                    {
+                        // what the level holds instead: all zeros, the level of a known BC7 upload (the registry of the viewer's recent uploads: texture id, level, size, discard), or nothing known
+                        bool zeros = true;
+                        for (U8 b : blocks)
+                        {
+                            if (b)
+                            {
+                                zeros = false;
+                                break;
+                            }
+                        }
+                        const std::string known = LLImageBC7::lookupLevel(gpu_hash);
+                        lv += zeros ? " (ALL ZERO)" : (known.empty() ? " (matches no known upload)" : " (holds " + known + ")");
+                    }
                     wrong = wrong || !same;
                 }
                 text += lv;
