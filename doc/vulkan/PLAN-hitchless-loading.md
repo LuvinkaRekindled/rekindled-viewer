@@ -95,3 +95,11 @@ The Citadel table above, by group, with the fix in the plan's mechanisms B and C
 ### Order
 
 1. Volume stats counters (A1's gate) and one CPU zone run of a Citadel login, so "other" and the budgets are known. 2. A2's `calcPixelArea` reuse and the avatar texture bookkeeping cache (small, local). 3. A1, if the gate says LOD 2 and 3 dominate. 4. The rest as the new stall table says. Each step ends with the same Citadel login and teleport (`run-viewer-hitch50.bat`, `hitch-summary.py`), compared with this table.
+
+## Done so far (2026-11-14/15)
+
+- **Sculpt map readback** (f0bf8415c7): a sculpt keeps its shape until the decoded map it asked the texture system to keep arrives; only a map that has not come for 180 frames is read back. Citadel login, before and after: four stalls of 72 to 130 ms gone (one 9.6 ms call left).
+- **Avatar bake morph mask readback** (47d63e5fe2): `LLTexLayer::renderMorphMasks` reads the mask without the main thread waiting (`LLVkAsync::postCall`, `ll_read_pixels_async`, `LLTexLayer::updatePendingMorphMasks` once a frame). The `readPixels` waits of the Citadel login (3 calls, 260 ms in 10 s) are gone from the `VkSync` reports. Adam, 2026-11-15: "it looked normal. a faster rez" (his own avatar rezzed faster: the bake no longer waits for the GPU between layers).
+- Login at Citadel, warm cache, after both: 12 episodes in the whole session (about five of them start-up frames before the world), worst 167 ms.
+
+Left, by the late-frame samples so far: `beginFrame` waits (the worker finishing a slow frame; one third of the samples), the volume builds, UI and HTTP reply parsing, render CPU, vertex buffer pool allocation. A profile of the late frames at a 25 ms watcher is the next measurement (`<work>\run-viewer-hitch25.bat`, `<work>\hitch-profile.py <log>`: each capture is one sample of where the main thread was in a frame that was already late, grouped by subsystem).
