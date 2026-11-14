@@ -13083,6 +13083,8 @@ static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
     memcpy(p.mViewProjInverse, a.mViewProjInverse, sizeof(p.mViewProjInverse));
     memcpy(p.mEye, a.mEye, sizeof(p.mEye));
     p.mDepthSigma = a.mDepthSigma;
+    p.mHistoryBlend = a.mHistoryBlend;
+    p.mHistorySamples = a.mHistorySamples;
     p.mFrameIndex = a.mFrameIndex;
     std::vector<std::pair<Image*, VkImageLayout>> needs;
     for (Image* image : { p.mHitSource, p.mOutput, p.mDepth, p.mNormals, p.mMotion })
