@@ -72,3 +72,6 @@ unbound programs. A step that fails one of these is fixed before the next starts
 ## Not on this list (separate plans)
 
 GPU lifetimes, the repo move, the beta; the GPU particles; the OpenAL work.
+
+## Palette copies (2026-11-13, dfda24a1c7)
+The own-palette mode of the rigged shadow records, the rigged alpha shadow records and the ray scene notes is deleted (palettes are ids in the frame's list only; `LL_VK_PALETTE_SHARED` and `ll_palette_shared` are gone). Laps s88: 216 / 196 programs, no errors. Left with own palettes: the avatar velocity record (kind 8, needs last frame's palettes beside this frame's) and the rigged G-buffer kinds' `own_palettes` branch (llvkworker.cpp ~5136); both are candidates for the same treatment.
