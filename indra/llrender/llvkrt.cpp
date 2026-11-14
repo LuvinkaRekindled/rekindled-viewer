@@ -67,8 +67,31 @@ struct GpuGeom
     U32 mMaterial;          // row of the material table (0 = none)
     F32 mUv[6];             // texture coordinate transform (uv' = uv0 * u + uv1 * v + uv2)
     U32 mNormals[2];        // address of the normal array (flag kRecNormals); record 0 (the header) carries the address of the material table of the call here
+    U32 mVertexLimit;       // <FS> (2026-11-14, a device lost: the alpha test read 0.6 to 1.5 MB past a vertex array through a stale index) the number of vertices the arrays this record's shader reads hold; the shaders clamp a vertex
+                            // index to it (rtClampVertex). 0 = no limit (the header, records that read nothing)
+    U32 mPad;
 };
-static_assert(sizeof(GpuGeom) == 88, "geometry record");
+static_assert(sizeof(GpuGeom) == 96, "geometry record");
+
+// the number of vertices an alpha test may index in the arrays of a record: the least of what each array it reads can hold (positions from the first byte, texcoords, colours and normals from their offsets in the
+// vertex buffer, 8, 4 and 16 bytes a vertex). A well formed buffer holds all of its arrays for every vertex, so this is never below the vertex count; a stale index into a buffer that is now shorter cannot leave it.
+static U32 rec_vertex_limit(U64 position_vertices, U64 vertex_bytes, U32 flags, U32 texcoord_offset, U32 color_offset, U32 normal_offset)
+{
+    U64 limit = position_vertices;
+    if (flags & 8u)
+    {
+        limit = std::min<U64>(limit, vertex_bytes > texcoord_offset ? (vertex_bytes - texcoord_offset) / 8ull : 0ull);
+    }
+    if (flags & 16u)
+    {
+        limit = std::min<U64>(limit, vertex_bytes > color_offset ? (vertex_bytes - color_offset) / 4ull : 0ull);
+    }
+    if (normal_offset)
+    {
+        limit = std::min<U64>(limit, vertex_bytes > normal_offset ? (vertex_bytes - normal_offset) / 16ull : 0ull);
+    }
+    return (U32)std::max<U64>(1ull, std::min<U64>(limit, 65536ull));
+}
 constexpr U32 kRecNormals = 1024;                           // record flag: mNormals is valid
 constexpr U32 kRecOpaque = 2048;                            // record flag: a record of an opaque structure (no alpha test data)
 constexpr U32 kRecPinned = 4096;                            // record flag: mSlots hold PIN indices (16 bit each), the shader looks the slots up in the pin table
@@ -4005,6 +4028,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 rec.mCutoff = a.mCutoff;
                 rec.mFirst = r.mFirst;
                 memcpy(rec.mUv, a.mUv, sizeof(rec.mUv));
+                rec.mVertexLimit = rec_vertex_limit(lvi.mSize / 16ull, lvi.mSize, a.mFlags, a.mTexcoordOffset, a.mColorOffset, a.mNormalOffset);
                 recs.push_back(rec);
                 names.push_back({ a.mTextures[0], a.mTextures[1], a.mTextures[2], a.mTextures[3] });
             }
@@ -4599,6 +4623,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 rec.mCutoff = d.mAlpha.mCutoff;
                 rec.mFirst = d.mFirst;
                 memcpy(rec.mUv, d.mAlpha.mUv, sizeof(rec.mUv));
+                // (the skinned positions and normals hold the draw's own vertices, indexed from its first vertex; texcoords and colours are the vertex buffer's)
+                rec.mVertexLimit = rec_vertex_limit((U64)d.mVertexFirst + d.mVertexCount, vis[k].mSize, d.mAlpha.mFlags, d.mAlpha.mTexcoordOffset, d.mAlpha.mColorOffset, 0u);
                 if (with_material)
                 {
                     // ray scene materials: the texture is in the material row; the normals are the triangles' own (the skinned copy holds positions only)
