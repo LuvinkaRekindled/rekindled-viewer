@@ -5,7 +5,7 @@
  * The denoiser component and its Vulkan backend are linked from static libraries built from the SDK's source (see llrender/CMakeLists.txt); without them every call here says no.
  * The caller (the worker thread: LLVkWorker::on_denoise_reflections / on_denoise_shadows) hands it images and the camera; it keeps the denoiser's own helper images (for the reflections the second
  * radiance and the two variance images of the ping-pong, the tile list of the dispatch and its indirect arguments; for the shadows the hit mask) and the denoiser context, and makes them again when
- * the render size or the set of kinds changes.
+ * the render size changes. Each kind has a context of its own, so turning one kind on or off never rebuilds the other's.
  *
  * The matrices are the viewer's (OpenGL conventions: the depth buffer holds (z_ndc + 1) / 2, the texture coordinate v of a row is (y_ndc + 1) / 2); the conversion to the denoiser's (Direct3D
  * conventions: v = 1 - (y_ndc + 1) / 2, the depth is z_ndc) is done here.

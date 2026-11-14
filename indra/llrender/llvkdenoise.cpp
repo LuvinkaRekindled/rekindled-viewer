@@ -1,6 +1,9 @@
 /**
  * @file llvkdenoise.cpp
  * @brief The AMD FidelityFX Denoiser 1.3 for the traced reflections and the traced sun shadow (see llvkdenoise.h, doc/vulkan/PLAN-amd-denoiser.md)
+ *
+ * Each kind has a denoiser context of its own (and its own helper images): turning one on or off, or changing its size, never touches the other. (A first version made one context for both kinds
+ * and rebuilt it when the set changed: switching the reflection denoiser on while the shadow denoiser ran crashed the SDK's next shadow dispatch, 2026-11-14.)
  */
 
 #include "linden_common.h"
@@ -33,14 +36,19 @@ VkDevice gDevice = VK_NULL_HANDLE;
 VkDeviceContext gDeviceContext = {};        // (the FidelityFX device points at it: it has to stay)
 FfxInterface gBackend = {};
 void* gScratch = nullptr;
+constexpr size_t kContexts = 2 * FFX_DENOISER_CONTEXT_COUNT;       // one a kind
 
-bool gContextMade = false;
-FfxDenoiserContext gContext = {};
-U32 gWidth = 0, gHeight = 0, gKinds = 0;
-Image gRadianceB, gVarianceA, gVarianceB;       // the reflection denoiser's own images of this size
-Buffer gTiles, gArgs;                           // the tile list (every 8x8 tile of the picture) and the indirect arguments of its three dispatches (one workgroup for a tile)
-Image gHitMask;                                 // the shadow denoiser's hit mask (R32_UINT, a texel a tile of 8 x 4 pixels)
-bool gFirst = true;                             // the first dispatch after the context was made: the history is empty
+// one kind: its denoiser context, its size and its own images and buffers
+struct State
+{
+    bool mMade = false;
+    FfxDenoiserContext mContext = {};
+    U32 mWidth = 0, mHeight = 0;
+    bool mFirst = true;             // the first dispatch after the context was made: the history is empty
+    Image mA, mB, mC;               // reflections: the second radiance and the two variance images; shadows: mA is the hit mask (R32_UINT, a texel a tile of 8 x 4 pixels)
+    Buffer mTiles, mArgs;           // reflections: the tile list (every 8x8 tile) and the indirect arguments of its three dispatches (one workgroup for a tile)
+};
+State gRefl, gShad;
 
 bool ffx_ok(FfxErrorCode code, const char* what)
 {
@@ -56,28 +64,26 @@ bool ffx_ok(FfxErrorCode code, const char* what)
     return false;
 }
 
-void release_context()
+void release_state(State& s)
 {
-    if (gContextMade)
+    if (s.mMade)
     {
         Context::instance().waitIdle();         // (the denoiser's resources must not be in use: a resize is rare)
-        ffxDenoiserContextDestroy(&gContext);
-        gContextMade = false;
+        ffxDenoiserContextDestroy(&s.mContext);
+        s.mMade = false;
     }
     Context& ctx = Context::instance();
-    ctx.destroyImage(gRadianceB);
-    ctx.destroyImage(gVarianceA);
-    ctx.destroyImage(gVarianceB);
-    ctx.destroyImage(gHitMask);
-    ctx.destroyBuffer(gTiles);
-    ctx.destroyBuffer(gArgs);
-    gRadianceB = Image();
-    gVarianceA = Image();
-    gVarianceB = Image();
-    gHitMask = Image();
-    gTiles = Buffer();
-    gArgs = Buffer();
-    gWidth = gHeight = gKinds = 0;
+    ctx.destroyImage(s.mA);
+    ctx.destroyImage(s.mB);
+    ctx.destroyImage(s.mC);
+    ctx.destroyBuffer(s.mTiles);
+    ctx.destroyBuffer(s.mArgs);
+    s.mA = Image();
+    s.mB = Image();
+    s.mC = Image();
+    s.mTiles = Buffer();
+    s.mArgs = Buffer();
+    s.mWidth = s.mHeight = 0;
 }
 
 // the FidelityFX resource of an image: the state it is in now (the caller leaves every image shader-read-only; the backend moves it where a pass needs it and back)
@@ -162,6 +168,25 @@ void copy_hit_mask(VkCommandBuffer cmd, Image& source, Image& dest, U32 tiles_x,
     barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, any, all);
     barrier(dest, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, any, all);
 }
+
+bool make_context(State& s, uint32_t flags, U32 width, U32 height)
+{
+    FfxDenoiserContextDescription desc = {};
+    desc.flags = flags;
+    desc.windowSize.width = width;
+    desc.windowSize.height = height;
+    desc.normalsHistoryBufferFormat = FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT;
+    desc.backendInterface = gBackend;
+    if (!ffx_ok(ffxDenoiserContextCreate(&s.mContext, &desc), "ffxDenoiserContextCreate"))
+    {
+        return false;
+    }
+    s.mMade = true;
+    s.mWidth = width;
+    s.mHeight = height;
+    s.mFirst = true;
+    return true;
+}
 }
 
 bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
@@ -180,14 +205,14 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
     gDeviceContext.vkDevice = device;
     gDeviceContext.vkPhysicalDevice = physical;
     gDeviceContext.vkDeviceProcAddr = vkGetDeviceProcAddr;
-    const size_t scratch_size = ffxGetScratchMemorySizeVK(physical, FFX_DENOISER_CONTEXT_COUNT);
+    const size_t scratch_size = ffxGetScratchMemorySizeVK(physical, kContexts);
     gScratch = calloc(1, scratch_size);
     if (!gScratch)
     {
         return false;
     }
     const FfxDevice ffx_device = ffxGetDeviceVK(&gDeviceContext);
-    if (!ffx_ok(ffxGetInterfaceVK(&gBackend, ffx_device, gScratch, scratch_size, FFX_DENOISER_CONTEXT_COUNT), "ffxGetInterfaceVK"))
+    if (!ffx_ok(ffxGetInterfaceVK(&gBackend, ffx_device, gScratch, scratch_size, kContexts), "ffxGetInterfaceVK"))
     {
         free(gScratch);
         gScratch = nullptr;
@@ -209,7 +234,8 @@ void shutdown()
     {
         return;
     }
-    release_context();
+    release_state(gRefl);
+    release_state(gShad);
     free(gScratch);
     gScratch = nullptr;
     gReady = false;
@@ -217,36 +243,36 @@ void shutdown()
 
 bool prepare(U32 width, U32 height, U32 kinds, std::vector<Image*>& own)
 {
-    if (!gReady || !width || !height || !kinds)
+    if (!gReady || !width || !height)
     {
         return false;
     }
-    const U32 tiles8x4_x = (width + 7) / 8, tiles8x4_y = (height + 3) / 4;
-    if (width != gWidth || height != gHeight || kinds != gKinds)
+    Context& ctx = Context::instance();
+    if (kinds & KIND_REFLECTIONS)
     {
-        release_context();
-        Context& ctx = Context::instance();
-        if (kinds & KIND_REFLECTIONS)
+        State& s = gRefl;
+        if (!s.mMade || width != s.mWidth || height != s.mHeight)
         {
+            release_state(s);
             const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-            if (!ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT, usage, gRadianceB)
-                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceA)
-                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceB))
+            if (!ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT, usage, s.mA)
+                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, s.mB)
+                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, s.mC))
             {
-                release_context();
+                release_state(s);
                 return false;
             }
             // every 8x8 tile of the picture is denoised: the tile list names them by the pixel of their corner (x in the low 16 bits, y in the high ones), the three dispatches read one workgroup for a tile
             const U32 tiles_x = (width + 7) / 8, tiles_y = (height + 7) / 8;
             const U32 tile_count = tiles_x * tiles_y;
-            if (!ctx.createBuffer((VkDeviceSize)tile_count * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gTiles)
-                || !ctx.createBuffer(12 * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gArgs)
-                || !gTiles.mMapped || !gArgs.mMapped)
+            if (!ctx.createBuffer((VkDeviceSize)tile_count * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, s.mTiles)
+                || !ctx.createBuffer(12 * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, s.mArgs)
+                || !s.mTiles.mMapped || !s.mArgs.mMapped)
             {
-                release_context();
+                release_state(s);
                 return false;
             }
-            U32* tiles = (U32*)gTiles.mMapped;
+            U32* tiles = (U32*)s.mTiles.mMapped;
             for (U32 y = 0; y < tiles_y; ++y)
             {
                 for (U32 x = 0; x < tiles_x; ++x)
@@ -254,55 +280,49 @@ bool prepare(U32 width, U32 height, U32 kinds, std::vector<Image*>& own)
                     tiles[y * tiles_x + x] = ((y * 8) << 16) | (x * 8);
                 }
             }
-            U32* args = (U32*)gArgs.mMapped;
+            U32* args = (U32*)s.mArgs.mMapped;
             memset(args, 0, 12 * sizeof(U32));
             args[3] = tile_count;       // (the three passes dispatch at byte offset 12)
             args[4] = 1;
             args[5] = 1;
-        }
-        if (kinds & KIND_SHADOWS)
-        {
-            if (!ctx.createImage2D(tiles8x4_x, tiles8x4_y, 1, 1, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, gHitMask))
+            if (!make_context(s, FFX_DENOISER_REFLECTIONS, width, height))
             {
-                release_context();
+                release_state(s);
                 return false;
             }
+            LL_INFOS("VkDenoise") << "the reflection denoiser context was made for " << width << "x" << height << " (" << tile_count << " tiles)" << LL_ENDL;
         }
-
-        FfxDenoiserContextDescription desc = {};
-        desc.flags = ((kinds & KIND_REFLECTIONS) ? FFX_DENOISER_REFLECTIONS : 0u) | ((kinds & KIND_SHADOWS) ? FFX_DENOISER_SHADOWS : 0u);
-        desc.windowSize.width = width;
-        desc.windowSize.height = height;
-        desc.normalsHistoryBufferFormat = FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT;
-        desc.backendInterface = gBackend;
-        if (!ffx_ok(ffxDenoiserContextCreate(&gContext, &desc), "ffxDenoiserContextCreate"))
-        {
-            release_context();
-            return false;
-        }
-        gContextMade = true;
-        gWidth = width;
-        gHeight = height;
-        gKinds = kinds;
-        gFirst = true;
-        LL_INFOS("VkDenoise") << "the denoiser context was made for " << width << "x" << height << (kinds & KIND_REFLECTIONS ? ", reflections" : "") << (kinds & KIND_SHADOWS ? ", shadows" : "") << LL_ENDL;
-    }
-    if (kinds & KIND_REFLECTIONS)
-    {
-        own.push_back(&gRadianceB);
-        own.push_back(&gVarianceA);
-        own.push_back(&gVarianceB);
+        own.push_back(&s.mA);
+        own.push_back(&s.mB);
+        own.push_back(&s.mC);
     }
     if (kinds & KIND_SHADOWS)
     {
-        own.push_back(&gHitMask);
+        State& s = gShad;
+        if (!s.mMade || width != s.mWidth || height != s.mHeight)
+        {
+            release_state(s);
+            if (!ctx.createImage2D((width + 7) / 8, (height + 3) / 4, 1, 1, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, s.mA))
+            {
+                release_state(s);
+                return false;
+            }
+            if (!make_context(s, FFX_DENOISER_SHADOWS, width, height))
+            {
+                release_state(s);
+                return false;
+            }
+            LL_INFOS("VkDenoise") << "the shadow denoiser context was made for " << width << "x" << height << LL_ENDL;
+        }
+        own.push_back(&s.mA);
     }
     return true;
 }
 
 bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
 {
-    if (!gReady || !gContextMade || !(gKinds & KIND_REFLECTIONS) || p.mWidth != gWidth || p.mHeight != gHeight
+    State& s = gRefl;
+    if (!gReady || !s.mMade || p.mWidth != s.mWidth || p.mHeight != s.mHeight
         || !p.mRadiance || !p.mOutput || !p.mDepth || !p.mNormals || !p.mRoughness || !p.mMotion)
     {
         return false;
@@ -313,12 +333,12 @@ bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
     d.motionVectors = image_resource(*p.mMotion, false, L"dnsr_motion");
     d.normal = image_resource(*p.mNormals, false, L"dnsr_normal");
     d.radianceA = image_resource(*p.mRadiance, true, L"dnsr_radiance_a");
-    d.radianceB = image_resource(gRadianceB, true, L"dnsr_radiance_b");
-    d.varianceA = image_resource(gVarianceA, true, L"dnsr_variance_a");
-    d.varianceB = image_resource(gVarianceB, true, L"dnsr_variance_b");
+    d.radianceB = image_resource(s.mA, true, L"dnsr_radiance_b");
+    d.varianceA = image_resource(s.mB, true, L"dnsr_variance_a");
+    d.varianceB = image_resource(s.mC, true, L"dnsr_variance_b");
     d.extractedRoughness = image_resource(*p.mRoughness, false, L"dnsr_roughness");
-    d.denoiserTileList = buffer_resource(gTiles, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"dnsr_tile_list");
-    d.indirectArgumentsBuffer = buffer_resource(gArgs, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, FFX_RESOURCE_STATE_INDIRECT_ARGUMENT, L"dnsr_indirect_args");
+    d.denoiserTileList = buffer_resource(s.mTiles, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, FFX_RESOURCE_STATE_UNORDERED_ACCESS, L"dnsr_tile_list");
+    d.indirectArgumentsBuffer = buffer_resource(s.mArgs, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, FFX_RESOURCE_STATE_INDIRECT_ARGUMENT, L"dnsr_indirect_args");
     d.output = image_resource(*p.mOutput, true, L"dnsr_output");
     d.renderSize.width = p.mWidth;
     d.renderSize.height = p.mHeight;
@@ -338,23 +358,24 @@ bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
     d.temporalStabilityFactor = p.mTemporalStability;
     d.roughnessThreshold = p.mRoughnessThreshold;
     d.frameIndex = p.mFrameIndex;
-    d.reset = p.mReset || gFirst;
-    gFirst = false;
-    return ffx_ok(ffxDenoiserContextDispatchReflections(&gContext, &d), "ffxDenoiserContextDispatchReflections");
+    d.reset = p.mReset || s.mFirst;
+    s.mFirst = false;
+    return ffx_ok(ffxDenoiserContextDispatchReflections(&s.mContext, &d), "ffxDenoiserContextDispatchReflections");
 }
 
 bool shadows(VkCommandBuffer cmd, const ShadowParams& p)
 {
-    if (!gReady || !gContextMade || !(gKinds & KIND_SHADOWS) || p.mWidth != gWidth || p.mHeight != gHeight
-        || !p.mHitSource || !p.mOutput || !p.mDepth || !p.mNormals || !p.mMotion || !gHitMask.valid())
+    State& s = gShad;
+    if (!gReady || !s.mMade || p.mWidth != s.mWidth || p.mHeight != s.mHeight
+        || !p.mHitSource || !p.mOutput || !p.mDepth || !p.mNormals || !p.mMotion || !s.mA.valid())
     {
         return false;
     }
-    copy_hit_mask(cmd, *p.mHitSource, gHitMask, (p.mWidth + 7) / 8, (p.mHeight + 3) / 4);
+    copy_hit_mask(cmd, *p.mHitSource, s.mA, (p.mWidth + 7) / 8, (p.mHeight + 3) / 4);
 
     FfxDenoiserShadowsDispatchDescription d = {};
     d.commandList = ffxGetCommandListVK(cmd);
-    d.hitMaskResults = image_resource(gHitMask, false, L"dnsr_hit_mask");
+    d.hitMaskResults = image_resource(s.mA, false, L"dnsr_hit_mask");
     d.depth = image_resource(*p.mDepth, false, L"dnsr_shadow_depth");
     d.velocity = image_resource(*p.mMotion, false, L"dnsr_shadow_motion");
     d.normal = image_resource(*p.mNormals, false, L"dnsr_shadow_normal");
@@ -374,7 +395,8 @@ bool shadows(VkCommandBuffer cmd, const ShadowParams& p)
     multiply(kT, step, d.reprojectionMatrix);
     multiply(p.mViewProjInverse, kS, d.viewProjectionInverse);
     d.depthSimilaritySigma = p.mDepthSigma;
-    return ffx_ok(ffxDenoiserContextDispatchShadows(&gContext, &d), "ffxDenoiserContextDispatchShadows");
+    s.mFirst = false;
+    return ffx_ok(ffxDenoiserContextDispatchShadows(&s.mContext, &d), "ffxDenoiserContextDispatchShadows");
 }
 
 #else   // no FidelityFX denoiser libraries in this build
