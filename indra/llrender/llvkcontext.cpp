@@ -3523,6 +3523,10 @@ void Context::destroyImage(Image& image)
     {
         return;
     }
+    if (mImageDestroyHook)
+    {
+        mImageDestroyHook(image.mImage);        // <FS> uploads the renderer still holds for this image are dropped
+    }
     noteDestroyedView(image.mViewId);
     forgetView(image.mView);
     VkImage i = image.mImage;

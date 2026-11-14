@@ -264,6 +264,8 @@ public:
     // <FS> the guard of the device lost fix (2026-11-09): called with the view id of an image just before its view and memory are freed, so that a bindless handle that still shows that view is pointed at the placeholder
     // instead of at memory that is about to go (set by the renderer; the call runs on the worker thread with the other frame-begin destroys)
     void setViewReleaseHook(std::function<void(U64)> hook) { mViewReleaseHook = std::move(hook); }
+    // <FS> called at the start of destroyImage with the image about to go (the renderer drops the uploads it still holds for it)
+    void setImageDestroyHook(std::function<void(VkImage)> hook) { mImageDestroyHook = std::move(hook); }
     U64 destroyedViewCount() const { return mDestroyedCount.load(); }                                  // views destroyed so far (a sequence number)
     U64 destroyedViewIdAt(U64 seq) const { return mDestroyedIds[seq % DESTROYED_RING]; }                // the view destroyed as number seq (valid for the last DESTROYED_RING)
     static constexpr size_t destroyedRing() { return DESTROYED_RING; }
@@ -276,6 +278,7 @@ public:
     struct DedicatedBuffer { unsigned long long mAddress, mSize; unsigned mUsage, mMemory; unsigned long long mCreated, mDestroyed; bool mAlive; };
     std::mutex mDedicatedMutex;
     std::function<void(U64)> mViewReleaseHook;      // called when an image is really destroyed: no handle may show its view any more
+    std::function<void(VkImage)> mImageDestroyHook;
     std::mutex mDeferredNextMutex;
     std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
     std::vector<DedicatedBuffer> mDedicated;
