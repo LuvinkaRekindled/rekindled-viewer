@@ -2609,6 +2609,7 @@ void tex_commit_image(unsigned id, unsigned staged)
     Tex& st = sit->second;
     destroy_tex_images(d);
     d.mImage = st.mImage;
+    Renderer::instance().retargetDeferredUploads(&st.mImage, &d.mImage);       // (uploads still queued for the staged image: see retargetDeferredUploads)
     d.note(6, (S32)staged, (S32)st.mValidLevels);
     d.mViews = std::move(st.mViews);
     d.mDim = st.mDim;
@@ -8746,7 +8747,8 @@ void geo_write_items(GeoFrag& f)
                     }
                 }
             }
-            g.mSkinPad[1] = first_array / 16u;
+            static const bool clamp_on = getenv("LL_VK_VERTEX_CLAMP") == nullptr || atoi(getenv("LL_VK_VERTEX_CLAMP")) != 0;       // 0: no limit (the clamp of the pull shaders does nothing): an A/B for a rigged draw that goes missing
+            g.mSkinPad[1] = clamp_on ? first_array / 16u : 0u;
         }
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
