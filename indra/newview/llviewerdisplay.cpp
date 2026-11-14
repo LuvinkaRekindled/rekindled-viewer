@@ -38,6 +38,7 @@
 #include <memory>
 
 #include "llviewerdisplay.h"
+#include "lltexlayer.h"
 #include "llgpuzonetimer.h"
 #include "llvkbridge.h"
 
@@ -881,6 +882,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     {
         LLAppViewer::instance()->pingMainloopTimeout("Display:DynamicTextures");
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update Dynamic Textures");
+        LLTexLayer::updatePendingMorphMasks();      // <FS> the morph masks the worker has finished reading (renderMorphMasks starts the reads without waiting)
         if (LLViewerDynamicTexture::updateAllInstances())
         {
             gRender.setColorMask(true, true);

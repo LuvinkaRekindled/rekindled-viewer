@@ -160,7 +160,7 @@ public:
     bool                    findNetColor(LLColor4* color) const;
     /*virtual*/ bool        blendAlphaTexture(S32 x, S32 y, S32 width, S32 height); // Multiplies a single alpha texture against the frame buffer
     /*virtual*/ void        gatherAlphaMasks(U8 *data, S32 originX, S32 originY, S32 width, S32 height, LLRenderTarget* bound_target);
-    void                    renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLColor4 &layer_color, LLRenderTarget* bound_target, bool force_render);
+    void                    renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLColor4 &layer_color, LLRenderTarget* bound_target, bool force_render, bool allow_async = false);     // <FS> allow_async: the read of the mask need not be waited for (the caller does not use the mask now)
     void                    addAlphaMask(U8 *data, S32 originX, S32 originY, S32 width, S32 height, LLRenderTarget* bound_target);
     /*virtual*/ bool        isInvisibleAlphaMask() const;
 
@@ -170,7 +170,10 @@ public:
     /*virtual*/ void        asLLSD(LLSD& sd) const;
 
     static void             calculateTexLayerColor(const param_color_list_t &param_list, LLColor4 &net_color);
+    // <FS> hitchless loading: the morph masks of other avatars are read back without the main thread waiting (renderMorphMasks starts the read, this takes the finished ones; once a frame)
+    static void             updatePendingMorphMasks();
 protected:
+    void                    finishMorphMask(U32 cache_index, U8* alpha_data, S32 width, S32 height);     // <FS> keeps a mask that has been read and applies it to the avatar's morphs
     LLUUID                  getUUID() const;
     typedef std::map<U32, U8*> alpha_cache_t;
     alpha_cache_t           mAlphaCache;

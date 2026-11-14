@@ -1559,6 +1559,11 @@ void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat forma
     LLVkTarget::readPixels(LLRenderTarget::currentId(file, line), x, y, width, height, format, type, data, file, line);
 }
 
+std::shared_ptr<LLReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes)
+{
+    return LLVkTarget::readPixelsAsync(LLRenderTarget::currentId(__FILE__, __LINE__), x, y, width, height, format, type, bytes, __FILE__, __LINE__);
+}
+
 void LLRender::genQueries(S32 count, U32* ids)
 {
     LLVkQuery::create(count, ids);

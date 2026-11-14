@@ -87,6 +87,7 @@ set(llrender_HEADER_FILES
     llvertexbuffer.h
     llvkcontext.h
     llvkngx.h
+    llreadback.h
     llvkdlssnr.h
     llvkdenoise.h
     llvkfsr.h
