@@ -1518,6 +1518,14 @@ bool LLVkBridge::paletteArenaAcquire(U32 frame, PaletteArena& out)
             {
                 return false;
             }
+            // GPU-LIFETIMES.md finding 5.7: taken over from a frame that never freed it. Right for an aborted frame (no record was sent); wrong when the worker is `count` viewer frames behind with
+            // that frame's record still queued (the arena would be rewritten before it is played). Counted: it is expected only after an aborted frame (healthy = 0 in a lap).
+            static std::atomic<U32> takeovers{ 0 };
+            const U32 n = takeovers.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 5 || (n & (n - 1)) == 0)        // (the first 5, then at every power of two: the last line says the order of the total)
+            {
+                LL_WARNS("PalArena") << "palette arena " << index << " taken over from viewer frame " << (busy - 1) << " (now " << frame << ", " << count << " arenas): " << n << " so far" << LL_ENDL;
+            }
         }
         if (!s.mBusy.compare_exchange_strong(busy, want, std::memory_order_acq_rel))
         {
