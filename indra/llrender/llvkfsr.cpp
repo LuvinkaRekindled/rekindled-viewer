@@ -1,6 +1,10 @@
 /**
  * @file llvkfsr.cpp
  * @brief AMD FSR 3.1 upscaler for the Vulkan mirror (see llvkfsr.h)
+ *
+ * Built from the FidelityFX SDK v1.1.4 source (MIT) into static libraries (ffx_fsr3upscaler, ffx_backend_vk: llrender/CMakeLists.txt, doc/vulkan/PLAN-amd-denoiser.md): the native
+ * FidelityFX API, no amd_fidelityfx_vk.dll. It follows what the SDK's ffx-api provider does with it (ffx-api/src/ffx_provider_fsr3upscale.cpp): a backend interface with its own scratch memory
+ * for each context, the three shared resources made through the backend after the context and given to every dispatch.
  */
 
 #include "linden_common.h"
@@ -11,14 +15,12 @@
 
 #if defined(LL_FSR)
 #include <vulkan/vulkan.h>
-#include "ffx_api/ffx_api.h"
-#include "ffx_api/ffx_api_types.h"
-#include "ffx_api/ffx_upscale.h"
-#include "ffx_api/ffx_api_loader.h"
-#include "ffx_api/vk/ffx_api_vk.h"
+#include <FidelityFX/host/ffx_fsr3upscaler.h>
+#include <FidelityFX/host/backends/vk/ffx_vk.h>
 #endif
 
 #include <vector>
+#include <memory>
 #include <cmath>
 
 namespace LLVkFsr
@@ -60,7 +62,7 @@ void addDeviceExtensions(VkPhysicalDevice device, std::vector<const char*>& out)
 
 bool init(VkInstance, VkPhysicalDevice, VkDevice)
 {
-    LL_WARNS("VkFsr") << "this build has no FSR support (the FidelityFX SDK was not found when it was configured)" << LL_ENDL;
+    LL_WARNS("VkFsr") << "this build has no FSR support (the FidelityFX SDK libraries were not found when it was configured)" << LL_ENDL;
     return false;
 }
 bool ready() { return false; }
@@ -76,22 +78,25 @@ bool gReady = false;
 VkInstance gInstance = VK_NULL_HANDLE;
 VkPhysicalDevice gPhysical = VK_NULL_HANDLE;
 VkDevice gDevice = VK_NULL_HANDLE;
-HMODULE gModule = nullptr;
-ffxFunctions gFn = {};
+VkDeviceContext gDeviceContext = {};        // (the FidelityFX device points at it: it has to stay)
 
 // A context is made for a maximum render and output size (a little over the first request) and serves every request that fits inside it and is not much smaller (the dispatch carries the
-// real sizes, the context is made with FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION): the live view at 1713x898 and the snapshot at 1713x911 share one, where a context per exact size made a new one
+// real sizes, the context is made with FFX_FSR3UPSCALER_ENABLE_DYNAMIC_RESOLUTION): the live view at 1713x898 and the snapshot at 1713x911 share one, where a context per exact size made a new one
 // (memory the viewer's own accounting does not see) for every snapshot, at the exit one with the video memory at 93% (device lost, 2026-10-27). Contexts of clearly different sizes (a hi-res
 // snapshot) are kept for when the size comes back and given back once the frame that last used them has completed (the same scheme as the DLSS features).
 struct Ctx
 {
     U32 mFlags = 0;                                  // the creation flags the caller asked for (without the dynamic resolution bit)
     U32 mMaxRenderW = 0, mMaxRenderH = 0, mMaxOutW = 0, mMaxOutH = 0;
-    ffxContext mContext = nullptr;
+    bool mMade = false;
+    FfxInterface mBackend = {};                      // its own backend interface and scratch memory (one context a interface, as the SDK's ffx-api provider does)
+    void* mScratch = nullptr;
+    FfxFsr3UpscalerContext mContext = {};
+    FfxResourceInternal mShared[3] = {};             // dilated depth, dilated motion vectors, reconstructed previous nearest depth
     U64 mLastFrame = 0;
 };
-std::vector<Ctx> gContexts;                                  // [0..n): all live contexts; the last one used is gCurrent
-std::vector<std::pair<ffxContext, U64>> gRetired;            // pushed out: destroyed once the frame that last used them has completed
+std::vector<Ctx*> gContexts;                                 // [0..n): all live contexts (on the heap: the FidelityFX context must not move); the last one used is gCurrent
+std::vector<Ctx*> gRetired;                                  // pushed out: destroyed once the frame that last used them has completed
 size_t gCurrent = ~(size_t)0;
 const size_t CONTEXTS_MAX = 4;
 const U64 CONTEXT_IDLE_FRAMES = 360;
@@ -102,23 +107,29 @@ float env_float(const char* name)
     return GetEnvironmentVariableA(name, buf, sizeof(buf)) > 0 ? (float)atof(buf) : 1.f;
 }
 
-bool fsr_ok(ffxReturnCode_t r, const char* what)
+bool fsr_ok(FfxErrorCode r, const char* what)
 {
-    if (r != FFX_API_RETURN_OK)
+    if (r != FFX_OK)
     {
-        LL_WARNS("VkFsr") << what << " failed: " << r << LL_ENDL;
+        LL_WARNS("VkFsr") << what << " failed: " << (S32)r << LL_ENDL;
         return false;
     }
     return true;
 }
 
-void destroy_context(ffxContext& context)
+void destroy_context(Ctx& c)
 {
-    if (context)
+    if (c.mMade)
     {
-        gFn.DestroyContext(&context, nullptr);
-        context = nullptr;
+        for (FfxResourceInternal& r : c.mShared)
+        {
+            c.mBackend.fpDestroyResource(&c.mBackend, r, 0);
+        }
+        ffxFsr3UpscalerContextDestroy(&c.mContext);
+        c.mMade = false;
     }
+    free(c.mScratch);
+    c.mScratch = nullptr;
 }
 
 void reap()
@@ -127,9 +138,9 @@ void reap()
     const U64 frame_now = ctx.getFrameNumber();
     for (size_t i = 0; i < gContexts.size(); )
     {
-        if (i != gCurrent && frame_now > gContexts[i].mLastFrame + CONTEXT_IDLE_FRAMES)
+        if (i != gCurrent && frame_now > gContexts[i]->mLastFrame + CONTEXT_IDLE_FRAMES)
         {
-            gRetired.emplace_back(gContexts[i].mContext, gContexts[i].mLastFrame);
+            gRetired.push_back(gContexts[i]);
             gContexts.erase(gContexts.begin() + i);
             if (gCurrent != ~(size_t)0 && gCurrent > i)
             {
@@ -143,9 +154,10 @@ void reap()
     }
     for (size_t i = 0; i < gRetired.size(); )
     {
-        if (ctx.frameFinished(gRetired[i].second))
+        if (ctx.frameFinished(gRetired[i]->mLastFrame))
         {
-            destroy_context(gRetired[i].first);
+            destroy_context(*gRetired[i]);
+            delete gRetired[i];
             gRetired.erase(gRetired.begin() + i);
         }
         else
@@ -167,16 +179,16 @@ bool fits(const Ctx& c, U32 flags, const LLVkDlss::Params& p)
     return render_ratio <= 1.6 && out_ratio <= 1.6;
 }
 
-// the context for this request: one that fits, or a new one (the oldest other context is pushed out when there are too many)
-ffxContext context_for(U32 flags, const LLVkDlss::Params& p)
+// the context for this request: one that fits, or a new one (the oldest other context is pushed out when there are too many); null when it could not be made
+Ctx* context_for(U32 flags, const LLVkDlss::Params& p)
 {
     reap();
     for (size_t i = 0; i < gContexts.size(); ++i)
     {
-        if (fits(gContexts[i], flags, p))
+        if (fits(*gContexts[i], flags, p))
         {
             gCurrent = i;
-            return gContexts[i].mContext;
+            return gContexts[i];
         }
     }
     while (gContexts.size() >= CONTEXTS_MAX)
@@ -184,55 +196,82 @@ ffxContext context_for(U32 flags, const LLVkDlss::Params& p)
         size_t oldest = 0;
         for (size_t i = 1; i < gContexts.size(); ++i)
         {
-            if (gContexts[i].mLastFrame < gContexts[oldest].mLastFrame) oldest = i;
+            if (gContexts[i]->mLastFrame < gContexts[oldest]->mLastFrame) oldest = i;
         }
-        gRetired.emplace_back(gContexts[oldest].mContext, gContexts[oldest].mLastFrame);
+        gRetired.push_back(gContexts[oldest]);
         gContexts.erase(gContexts.begin() + oldest);
+        gCurrent = ~(size_t)0;
     }
 
-    ffxCreateBackendVKDesc backend = {};
-    backend.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_VK;
-    backend.vkDevice = gDevice;
-    backend.vkPhysicalDevice = gPhysical;
-    backend.vkDeviceProcAddr = vkGetDeviceProcAddr;
-
-    ffxCreateContextDescUpscale create = {};
-    create.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;
-    create.header.pNext = &backend.header;
-    // 4 % over the request in each direction: the next snapshot or window resize of a few pixels fits in this context
-    const U32 max_render_w = (U32)ceilf(p.mRenderWidth * 1.04f), max_render_h = (U32)ceilf(p.mRenderHeight * 1.04f);
-    const U32 max_out_w = (U32)ceilf(p.mOutputWidth * 1.04f), max_out_h = (U32)ceilf(p.mOutputHeight * 1.04f);
-    create.flags = flags | FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION;
-    create.maxRenderSize = { max_render_w, max_render_h };
-    create.maxUpscaleSize = { max_out_w, max_out_h };
-    create.fpMessage = [](uint32_t type, const wchar_t* message)
-    {
-        char text[512] = {};
-        WideCharToMultiByte(CP_UTF8, 0, message, -1, text, (int)sizeof(text) - 1, nullptr, nullptr);
-        LL_INFOS("VkFsr") << "FSR " << (type == FFX_API_MESSAGE_TYPE_ERROR ? "error: " : "warning: ") << text << LL_ENDL;
-    };
-
-    ffxContext context = nullptr;
-    if (!fsr_ok(gFn.CreateContext(&context, &create.header, nullptr), "ffxCreateContext (upscale)"))
+    std::unique_ptr<Ctx> owner(new Ctx);
+    Ctx& c = *owner;
+    const size_t scratch_size = ffxGetScratchMemorySizeVK(gPhysical, FFX_FSR3UPSCALER_CONTEXT_COUNT);
+    c.mScratch = calloc(1, scratch_size);
+    if (!c.mScratch)
     {
         return nullptr;
     }
-    Ctx c;
+    const FfxDevice ffx_device = ffxGetDeviceVK(&gDeviceContext);
+    if (!fsr_ok(ffxGetInterfaceVK(&c.mBackend, ffx_device, c.mScratch, scratch_size, FFX_FSR3UPSCALER_CONTEXT_COUNT), "ffxGetInterfaceVK (FSR)"))
+    {
+        destroy_context(c);
+        return nullptr;
+    }
+
+    // 4 % over the request in each direction: the next snapshot or window resize of a few pixels fits in this context
+    const U32 max_render_w = (U32)ceilf(p.mRenderWidth * 1.04f), max_render_h = (U32)ceilf(p.mRenderHeight * 1.04f);
+    const U32 max_out_w = (U32)ceilf(p.mOutputWidth * 1.04f), max_out_h = (U32)ceilf(p.mOutputHeight * 1.04f);
+    FfxFsr3UpscalerContextDescription create = {};
+    create.flags = flags | FFX_FSR3UPSCALER_ENABLE_DYNAMIC_RESOLUTION;
+    create.maxRenderSize = { max_render_w, max_render_h };
+    create.maxUpscaleSize = { max_out_w, max_out_h };
+    create.backendInterface = c.mBackend;
+    create.fpMessage = [](FfxMsgType type, const wchar_t* message)
+    {
+        char text[512] = {};
+        WideCharToMultiByte(CP_UTF8, 0, message, -1, text, (int)sizeof(text) - 1, nullptr, nullptr);
+        LL_INFOS("VkFsr") << "FSR " << (type == FFX_MESSAGE_TYPE_ERROR ? "error: " : "warning: ") << text << LL_ENDL;
+    };
+
+    if (!fsr_ok(ffxFsr3UpscalerContextCreate(&c.mContext, &create), "ffxFsr3UpscalerContextCreate"))
+    {
+        destroy_context(c);
+        return nullptr;
+    }
+    c.mMade = true;
+
+    // the three shared resources the dispatch writes (the SDK's ffx-api provider makes them here too, through the backend)
+    FfxFsr3UpscalerSharedResourceDescriptions shared = {};
+    if (!fsr_ok(ffxFsr3UpscalerGetSharedResourceDescriptions(&c.mContext, &shared), "ffxFsr3UpscalerGetSharedResourceDescriptions"))
+    {
+        destroy_context(c);
+        return nullptr;
+    }
+    const FfxCreateResourceDescription* descs[3] = { &shared.dilatedDepth, &shared.dilatedMotionVectors, &shared.reconstructedPrevNearestDepth };
+    for (int i = 0; i < 3; ++i)
+    {
+        if (!fsr_ok(c.mBackend.fpCreateResource(&c.mBackend, descs[i], 0, &c.mShared[i]), "creating a shared resource"))
+        {
+            // the ones made so far are destroyed with the context: the rest are zero (the backend ignores them)
+            destroy_context(c);
+            return nullptr;
+        }
+    }
+
     c.mFlags = flags;
     c.mMaxRenderW = max_render_w;
     c.mMaxRenderH = max_render_h;
     c.mMaxOutW = max_out_w;
     c.mMaxOutH = max_out_h;
-    c.mContext = context;
-    gContexts.push_back(c);
+    gContexts.push_back(owner.release());
     gCurrent = gContexts.size() - 1;
     LL_INFOS("VkFsr") << "FSR upscale context created for " << p.mRenderWidth << "x" << p.mRenderHeight << " -> " << p.mOutputWidth << "x" << p.mOutputHeight << " (made for up to "
                       << max_render_w << "x" << max_render_h << " -> " << max_out_w << "x" << max_out_h << "), flags 0x" << std::hex << create.flags << std::dec
                       << ", " << (gContexts.size()) << " contexts" << LL_ENDL;
-    return context;
+    return gContexts[gCurrent];
 }
 
-FfxApiResource resource_of(const LLVk::Image& image, bool write)
+FfxResource resource_of(const LLVk::Image& image, bool write, const wchar_t* name)
 {
     VkImageCreateInfo info = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     info.imageType = VK_IMAGE_TYPE_2D;
@@ -242,11 +281,8 @@ FfxApiResource resource_of(const LLVk::Image& image, bool write)
     info.arrayLayers = 1;
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | (write ? VK_IMAGE_USAGE_STORAGE_BIT : 0);
-    FfxApiResource r = {};
-    r.resource = (void*)image.mImage;
-    r.description = ffxApiGetImageResourceDescriptionVK(image.mImage, info, 0);
-    r.state = write ? FFX_API_RESOURCE_STATE_UNORDERED_ACCESS : FFX_API_RESOURCE_STATE_COMPUTE_READ;
-    return r;
+    const FfxResourceDescription desc = ffxGetImageResourceDescriptionVK(image.mImage, info, write ? FFX_RESOURCE_USAGE_UAV : FFX_RESOURCE_USAGE_READ_ONLY);
+    return ffxGetResourceVK((void*)image.mImage, desc, name, write ? FFX_RESOURCE_STATE_UNORDERED_ACCESS : FFX_RESOURCE_STATE_COMPUTE_READ);
 }
 
 }
@@ -257,25 +293,20 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
     {
         return true;
     }
-    gModule = LoadLibraryA("amd_fidelityfx_vk.dll");
-    if (!gModule)
+    if (!vkGetDeviceProcAddr)
     {
-        LL_WARNS("VkFsr") << "FSR is not available: amd_fidelityfx_vk.dll was not found next to the viewer (error " << GetLastError() << ")" << LL_ENDL;
-        return false;
-    }
-    ffxLoadFunctions(&gFn, gModule);
-    if (!gFn.CreateContext || !gFn.DestroyContext || !gFn.Dispatch || !gFn.Query)
-    {
-        LL_WARNS("VkFsr") << "FSR is not available: amd_fidelityfx_vk.dll does not export the ffx-api" << LL_ENDL;
-        FreeLibrary(gModule);
-        gModule = nullptr;
+        LL_WARNS("VkFsr") << "FSR is not available: the device's function loader is missing" << LL_ENDL;
         return false;
     }
     gInstance = instance;
     gPhysical = physical;
     gDevice = device;
+    gDeviceContext.vkDevice = device;
+    gDeviceContext.vkPhysicalDevice = physical;
+    gDeviceContext.vkDeviceProcAddr = vkGetDeviceProcAddr;
     gReady = true;
-    LL_INFOS("VkFsr") << "FSR is ready (the contexts are made when the first frame is upscaled)" << LL_ENDL;
+    LL_INFOS("VkFsr") << "FSR is ready (FidelityFX SDK " << FFX_FSR3UPSCALER_VERSION_MAJOR << "." << FFX_FSR3UPSCALER_VERSION_MINOR << "." << FFX_FSR3UPSCALER_VERSION_PATCH
+                      << " built into the viewer; the contexts are made when the first frame is upscaled)" << LL_ENDL;
     return true;
 }
 
@@ -291,19 +322,19 @@ void shutdown()
         return;
     }
     vkDeviceWaitIdle(gDevice);
-    for (Ctx& c : gContexts)
+    for (Ctx* c : gContexts)
     {
-        destroy_context(c.mContext);
+        destroy_context(*c);
+        delete c;
     }
     gContexts.clear();
-    for (auto& r : gRetired)
+    for (Ctx* c : gRetired)
     {
-        destroy_context(r.first);
+        destroy_context(*c);
+        delete c;
     }
     gRetired.clear();
     gCurrent = ~(size_t)0;
-    FreeLibrary(gModule);
-    gModule = nullptr;
     gReady = false;
 }
 
@@ -317,14 +348,14 @@ bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p)
     U32 flags = 0;
     if (p.mHdr)
     {
-        flags |= FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE;
+        flags |= FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE;
     }
-    ffxContext context = context_for(flags, p);
+    Ctx* context = context_for(flags, p);
     if (!context)
     {
         return false;
     }
-    gContexts[gCurrent].mLastFrame = Context::instance().getFrameNumber();
+    context->mLastFrame = Context::instance().getFrameNumber();
 
     // LL_VK_FSR_MVX / MVY / JX / JY (default 1): multipliers for the signs, to find out which way round FSR wants them without rebuilding
     static const float mv_x = env_float("LL_VK_FSR_MVX"), mv_y = env_float("LL_VK_FSR_MVY"), j_x = env_float("LL_VK_FSR_JX"), j_y = env_float("LL_VK_FSR_JY");
@@ -336,13 +367,16 @@ bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p)
                           << " output " << p.mOutput->mFormat << ", sign multipliers mv " << mv_x << "," << mv_y << " jitter " << j_x << "," << j_y << LL_ENDL;
     }
 
-    ffxDispatchDescUpscale d = {};
-    d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
-    d.commandList = (void*)cmd;
-    d.color = resource_of(*p.mColor, false);
-    d.depth = resource_of(*p.mDepth, false);
-    d.motionVectors = resource_of(*p.mMotion, false);
-    d.output = resource_of(*p.mOutput, true);
+    FfxFsr3UpscalerDispatchDescription d = {};
+    d.commandList = ffxGetCommandListVK(cmd);
+    d.color = resource_of(*p.mColor, false, L"fsr_color");
+    d.depth = resource_of(*p.mDepth, false, L"fsr_depth");
+    d.motionVectors = resource_of(*p.mMotion, false, L"fsr_motion");
+    d.output = resource_of(*p.mOutput, true, L"fsr_output");
+    // (exposure, reactive and transparency masks stay empty: null resources)
+    d.dilatedDepth = context->mBackend.fpGetResource(&context->mBackend, context->mShared[0]);
+    d.dilatedMotionVectors = context->mBackend.fpGetResource(&context->mBackend, context->mShared[1]);
+    d.reconstructedPrevNearestDepth = context->mBackend.fpGetResource(&context->mBackend, context->mShared[2]);
     d.jitterOffset = { p.mJitterX * j_x, p.mJitterY * j_y };
     d.motionVectorScale = { p.mMotionScaleX * mv_x, p.mMotionScaleY * mv_y };
     d.renderSize = { p.mRenderWidth, p.mRenderHeight };
@@ -356,8 +390,8 @@ bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p)
     d.cameraFar = p.mCameraFar;
     d.cameraFovAngleVertical = p.mCameraFovY;
     d.viewSpaceToMetersFactor = 1.f;        // (view space is metres)
-    d.flags = p.mHdr ? 0u : (U32)FFX_UPSCALE_FLAG_NON_LINEAR_COLOR_SRGB;
-    return fsr_ok(gFn.Dispatch(&context, &d.header), "ffxDispatch (upscale)");
+    d.flags = 0;
+    return fsr_ok(ffxFsr3UpscalerContextDispatch(&context->mContext, &d), "ffxFsr3UpscalerContextDispatch");
 }
 
 #endif // LL_FSR
