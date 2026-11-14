@@ -24487,6 +24487,13 @@ static void rt_name_rigged_main_view()
                     for (const GeoRigSource& rig : f->mGeoRiggedSrc)
                     {
                         // (J1 K6 R1: the served rigged items are named from their sources, no draw info read)
+                        // <FS> (2026-11-14, Adam: the extra shadow of his own head, hair and body; the log said 23 of 79 draws of his avatar were in the ray scene twice, each a masked copy (kind 1) and an opaque copy (kind 0)
+                        // of the same range, both named in the same frame) a source the alpha section below names with its alpha test (mAlphaOk: the masked types) is not named here too: the opaque copy has no cutout,
+                        // so every transparent texel of a hair card or of an alpha-hidden body part cast a solid shadow, and the structure held the triangles twice (skinned twice, built twice, two alpha tests a ray)
+                        if (rig.mAlphaOk)
+                        {
+                            continue;
+                        }
                         name_view({ rig.mAvatar.get(), rig.mSkin.get(), rig.mVb.get(), rig.mOffset, rig.mCount, rig.mStart, rig.mEnd, nullptr, &rig.mMat });
                     }
                 }
