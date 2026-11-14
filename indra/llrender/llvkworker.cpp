@@ -5102,25 +5102,14 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     }
     const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
-    // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette, joints), the palettes follow the matrices in the blob
+    // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette id, joints), the palettes are in the frame's shared list
     const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
-    const bool own_palettes = rigged && !alpha && h.mPaletteFloats > 0;       // else (S4 A2) they are in the frame's shared list (always for the alpha kind 32: mPaletteFloats counts its PBR rows)
-    const U32 texmat_count = (!alpha && !own_palettes) ? h.mFragment : 0;       // S6.6b: kinds 3 / 25 / 26 carry the texture matrices of their draws after the matrices (kind 32: its own layout below)
+    const U32 texmat_count = !alpha ? h.mFragment : 0;       // S6.6b: kinds 3 / 25 / 26 carry the texture matrices of their draws after the matrices (kind 32: its own layout below)
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
-    Renderer::ScratchAlloc palettes;
-    if (own_palettes)
-    {
-        palettes = r.allocPaletteScratch(4 * (size_t)h.mPaletteFloats);
-        palette_cpu_register((U64)palettes.mAddress, 4u * h.mPaletteFloats, palettes.mPtr);        // (the skin catcher's snapshot)
-    }
-    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress || (own_palettes && (!palettes.mPtr || !palettes.mAddress)))
+    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
     {
         return;
-    }
-    if (own_palettes)
-    {
-        memcpy(palettes.mPtr, matrices + 44 * (size_t)h.mMatrices, 4 * (size_t)h.mPaletteFloats);
     }
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
@@ -5189,7 +5178,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         if (rigged)
         {
             U32* x = (U32*)(raw + 128);
-            const U64 wa = pa + e.mWeightOffset, pal = own_palettes ? (U64)palettes.mAddress + 4ull * e.mPaletteOffset : palette_address(e.mPaletteOffset);
+            const U64 wa = pa + e.mWeightOffset, pal = palette_address(e.mPaletteOffset);
             if (!pal)
             {
                 continue;       // (a palette the frame's list does not hold: not drawn; counts[i] stays 0)
