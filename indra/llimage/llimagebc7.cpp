@@ -356,6 +356,16 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
     if (result.notNull())
     {
         ++sCompressed;
+        if (width >= 512)
+        {
+            // <FS> each encode of 512 or more: the source's hash (the same as the BakeTex raw hash of a raw decode of the same bytes) and the chain's (the BakeTex hash of the BC7 result), 300 lines at most
+            static std::atomic<U32> logged { 0 };
+            if (logged++ < 300)
+            {
+                LL_INFOS("BC7") << "BC7 encoded " << width << "x" << height << " x" << components << ": source hash " << std::hex << fs_sparse_hash(levels[0].data(), levels[0].size()) << ", chain hash "
+                                << fs_sparse_hash(result->getData(), (size_t)result->getDataSize()) << std::dec << ", harmed blocks " << harmed_percent << "%" << LL_ENDL;
+            }
+        }
     }
     return result;
 }
