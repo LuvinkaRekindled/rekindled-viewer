@@ -8329,6 +8329,24 @@ void geo_write_items(GeoFrag& f)
         }
         g.mEmissiveOffset = e.mEmissiveOffset;      // S5e (the alpha items' glow draw), S6 X2 (the glow pass items: the emissive array; 0 for everything else)
         g.mSkinPad[0] = e.mDebugColor;              // K6 B1: the Batch Size view's colour of the draw (the row's skinPad0)
+        {
+            // <FS> the vertex limit (the row's skinPad1, 2026-11-14 device lost: an index past the vertex buffer's data read memory past its end). The position array (16 bytes a vertex) is the first in the
+            // buffer, so the nearest array start after it ends it: the smallest nonzero offset of the others gives the number of vertices it holds (the arrays are padded at most, never overlapped, so the
+            // limit is never below the real count). Particle rows count particles, not vertices, and a draw with no other array has no limit (0): the pull shaders (rows.glsl row_clamp_index) leave those alone.
+            U32 first_array = 0;
+            if (!(e.mFlags & LLVkBridge::GEO_PARTICLE_ROWS))
+            {
+                const U32 offsets[8] = { e.mNormalOffset, e.mTexcoordOffset, e.mColorOffset, e.mTangentOffset, e.mTexcoord1Offset, e.mTexcoord2Offset, (e.mFlags & LLVkBridge::GEO_RIGGED) ? e.mWeightOffset : 0u, e.mEmissiveOffset };
+                for (U32 off : offsets)
+                {
+                    if (off >= 16u && (first_array == 0 || off < first_array))
+                    {
+                        first_array = off;
+                    }
+                }
+            }
+            g.mSkinPad[1] = first_array / 16u;
+        }
         if (e.mFlags & LLVkBridge::GEO_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset;
