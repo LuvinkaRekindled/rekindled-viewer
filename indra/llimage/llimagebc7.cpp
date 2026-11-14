@@ -12,7 +12,9 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <mutex>
+#include <unordered_map>
 
 namespace
 {
@@ -368,6 +370,72 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
         }
     }
     return result;
+}
+
+void levelHashes(const LLImageRaw* compressed, std::vector<U64>& out)
+{
+    out.clear();
+    if (!compressed || !compressed->isCompressed() || !compressed->getData())
+    {
+        return;
+    }
+    const U32 w = compressed->getWidth(), h = compressed->getHeight(), n = compressed->getLevelCount();
+    U64 total = 0;
+    for (U32 k = 0; k < n; ++k) total += blockBytes(levelWidth(w, k), levelHeight(h, k));
+    if (total != (U64)compressed->getDataSize())
+    {
+        return;
+    }
+    out.resize(n);
+    const U8* p = compressed->getData();
+    for (U32 k = n; k-- > 0;)       // (the smallest level is first in the buffer)
+    {
+        const U64 bytes = blockBytes(levelWidth(w, k), levelHeight(h, k));
+        out[k] = fs_sparse_hash(p, (size_t)bytes);
+        p += bytes;
+    }
+}
+
+namespace
+{
+std::mutex sRegistryMutex;
+std::unordered_map<U64, std::string> sRegistry;
+std::deque<U64> sRegistryOrder;
+}
+
+void registerLevels(const std::vector<U64>& hashes, const std::string& id_text, S32 discard, U32 width, U32 height)
+{
+    std::lock_guard<std::mutex> lock(sRegistryMutex);
+    for (size_t k = 0; k < hashes.size(); ++k)
+    {
+        if (blockBytes(levelWidth(width, (U32)k), levelHeight(height, (U32)k)) < 1024)
+        {
+            continue;       // (tiny levels are flat colours that many textures share)
+        }
+        std::string what = id_text + " level " + std::to_string(k) + " (" + std::to_string(levelWidth(width, (U32)k)) + "x" + std::to_string(levelHeight(height, (U32)k)) + ", upload at discard " + std::to_string(discard) + ")";
+        auto found = sRegistry.find(hashes[k]);
+        if (found == sRegistry.end())
+        {
+            sRegistryOrder.push_back(hashes[k]);
+            sRegistry.emplace(hashes[k], std::move(what));
+            if (sRegistryOrder.size() > 30000)
+            {
+                sRegistry.erase(sRegistryOrder.front());
+                sRegistryOrder.pop_front();
+            }
+        }
+        else
+        {
+            found->second = std::move(what);        // the latest upload that held it
+        }
+    }
+}
+
+std::string lookupLevel(U64 hash)
+{
+    std::lock_guard<std::mutex> lock(sRegistryMutex);
+    auto found = sRegistry.find(hash);
+    return found == sRegistry.end() ? std::string() : found->second;
 }
 
 Stats takeStats()

@@ -57,6 +57,13 @@ namespace LLImageBC7
     // The block levels of a compressed image (the inverse of assemble: the decoded cache's write): out[0] the finest.
     bool splitLevels(const LLImageRaw* compressed, std::vector<std::vector<U8>>& out);
 
+    // <FS> 2026-11-14 (the bake slots whose mip levels 1 and up in the GPU image are not what was uploaded): the sampled hash (fs_sparse_hash, llimage.h) of every level of a compressed chain, finest first,
+    // taken from the buffer without copying it
+    void levelHashes(const LLImageRaw* compressed, std::vector<U64>& out);
+    // a registry of the levels of recent BC7 uploads (the last 30000 levels of 1 KB or more): a level that a GPU image holds and that was not uploaded to it can be named by the texture whose upload it was
+    void registerLevels(const std::vector<U64>& hashes, const std::string& id_text, S32 discard, U32 width, U32 height);
+    std::string lookupLevel(U64 hash);
+
     // what happened since the last call (the decoded cache's report)
     struct Stats { U32 mCompressed = 0; U32 mKeptRaw = 0; U64 mEncodeMicroseconds = 0; };
     Stats takeStats();
