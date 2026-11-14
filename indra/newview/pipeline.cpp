@@ -22198,14 +22198,14 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
     // back to the start value
     static const F32 stability_start = getenv("LL_VK_DNSR_STABILITY") ? (F32)atof(getenv("LL_VK_DNSR_STABILITY")) : 0.7f;
     static const F32 roughness_start = getenv("LL_VK_DNSR_ROUGHNESS") ? (F32)atof(getenv("LL_VK_DNSR_ROUGHNESS")) : 0.5f;
-    static F32 stability = stability_start, roughness_threshold = roughness_start;
+    static F32 stability = stability_start, roughness_threshold = roughness_start, debug_mode = 0.f;
     {
         static std::chrono::steady_clock::time_point last_poll;
         const auto poll_now = std::chrono::steady_clock::now();
         if (poll_now - last_poll >= std::chrono::milliseconds(500))
         {
             last_poll = poll_now;
-            F32 s = stability_start, r = roughness_start;
+            F32 s = stability_start, r = roughness_start, dbg = 0.f;
             std::ifstream in("D:/claude/rt-debug.txt");
             std::string line;
             while (std::getline(in, line))
@@ -22214,17 +22214,22 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
                 {
                     s = llclamp((F32)atof(line.c_str() + 9), 0.f, 1.f);
                 }
+                else if (line.compare(0, 8, "dnsrdbg=") == 0)
+                {
+                    dbg = llclamp((F32)atof(line.c_str() + 8), 0.f, 3.f);
+                }
                 else if (line.compare(0, 10, "dnsrrough=") == 0)
                 {
                     r = llclamp((F32)atof(line.c_str() + 10), 0.f, 1.f);
                 }
             }
-            if (s != stability || r != roughness_threshold)
+            if (s != stability || r != roughness_threshold || dbg != debug_mode)
             {
-                LL_INFOS("VkDenoise") << "denoiser tunables: temporal stability " << s << ", roughness threshold " << r << LL_ENDL;
+                LL_INFOS("VkDenoise") << "denoiser tunables: temporal stability " << s << ", roughness threshold " << r << ", view " << dbg << LL_ENDL;
             }
             stability = s;
             roughness_threshold = r;
+            debug_mode = dbg;
         }
     }
     static U32 last_frame = ~0u;
@@ -22260,6 +22265,8 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
     {
         RenderPassScope pass(mRtReflDenoised);
         bindDeferredShader(gDnsrUnpackProgram);
+        static LLStaticHashedString dbg_mode_s("dbg_mode");
+        gDnsrUnpackProgram.uniform1f(dbg_mode_s, debug_mode);
         gDnsrUnpackProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mDnsrOut, false, LLTexUnit::TFO_POINT, 0);
         gDnsrUnpackProgram.bindTexture(LLShaderMgr::BUMP_MAP, refl, false, LLTexUnit::TFO_POINT, 0);
         {
