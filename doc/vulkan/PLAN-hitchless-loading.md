@@ -50,3 +50,13 @@ Nothing in this lap is long (the worst is 104 ms): a warm login is nearly smooth
 ## What this plan does not do
 
 Per frame budgets for wake pacing, mip work or rebuilds (the older idea; Adam: not what he wants). The expiry design and draw info work stay as they are (they only point here for hitches).
+
+## Measurements, Citadel (2026-11-14 23:48 to 23:51, `run-viewer-hitch50.bat`, watcher at 50 ms, Adam's saved settings)
+
+Login into the last location (London City, 05:48:31Z), a teleport to Citadel (all the paint cans for sale: Adam's pick for object loading, 05:49:02Z), then two more teleports (away and back, 05:50:43Z and 05:50:56Z). 26 episodes ("the frame came back" lines).
+
+- **Login: 20 episodes of 80 to 390 ms in 8 s** (2.2 s in all). By the main thread's stack at the first capture (53 stalls under 2 s, 4.0 s in all, login and use together): volume and geometry build (`createVolumeFaces`, `refVolume`, `setVolume`, `sculpt`, `rebuildGeom`, `genDrawInfo`, `createGLBuffer`, `LLFace::init`) **15 stalls, 1.3 s**; other 12 / 0.8 s; render CPU (shadow render, lighting, pull batches) 6 / 0.5 s; **readback `syncCall`s (`LLImageTex::readBackRaw` from `LLVOVolume::sculpt`, the avatar bake's `readPixels`) 4 stalls, 0.35 s**; UI and inventory (`LLVisSet::update`, folder view filter) 5 / 0.3 s; texture bookkeeping 5 / 0.3 s; `beginFrame` waits 4 / 0.26 s; object cache and message handling 2 / 0.17 s.
+- **Teleports: three "frames" of 2.57, 2.75 and 2.50 s**, each from the teleport request to the line "arrival_fraction is 1" (the main loop's frame number does not advance while the teleport runs, and the stacks differ at every capture: UI layout, shadow render, pull batches, a sculpt readback, the inventory filter: it is several seconds of ordinary work, not one stuck call). The arrival itself afterwards is clean: the largest stall after the Citadel arrival is 154 ms (`updateDrawableGeom`). Whether the teleport screen froze for Adam is not known; about a dozen J2C decode threads were running flat out during it.
+- The second and third teleports (away and back) cost the same 2.5 s each, so it is not a cold versus warm cache effect.
+
+Tools: `<work>\hitch-summary.py <log>` (stalls and the main thread's stacks), `<work>\run-viewer-hitch50.bat`.
