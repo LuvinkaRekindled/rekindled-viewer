@@ -22146,6 +22146,42 @@ void LLPipeline::denoiseSunShadow(LLRenderTarget* light)
     }
     a.mFrameIndex = frame;
     last_frame = frame;
+    {
+        // <FS> the shadow denoiser's temporal history (a patch of the SDK, doc/vulkan/ffx-sdk-patches): the weight of the new sample once the history has settled (0.05 in the SDK: a trail of
+        // about 20 frames behind a moving shadow) and the samples that take. The environment gives the start values (LL_VK_DNSR_SHADOW_BLEND, LL_VK_DNSR_SHADOW_SAMPLES); D:/claude/rt-debug.txt
+        // dnsrshadowblend=<0.02..1> and dnsrshadowsamples=<1..32> change them live (read twice a second; a key taken out goes back to the start value); each change is logged
+        static const F32 blend_start = getenv("LL_VK_DNSR_SHADOW_BLEND") ? (F32)atof(getenv("LL_VK_DNSR_SHADOW_BLEND")) : 0.f;
+        static const F32 samples_start = getenv("LL_VK_DNSR_SHADOW_SAMPLES") ? (F32)atof(getenv("LL_VK_DNSR_SHADOW_SAMPLES")) : 0.f;
+        static F32 blend = blend_start, samples = samples_start;
+        static std::chrono::steady_clock::time_point last_poll;
+        const auto poll_now = std::chrono::steady_clock::now();
+        if (poll_now - last_poll >= std::chrono::milliseconds(500))
+        {
+            last_poll = poll_now;
+            F32 b = blend_start, n = samples_start;
+            std::ifstream in("D:/claude/rt-debug.txt");
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.compare(0, 16, "dnsrshadowblend=") == 0)
+                {
+                    b = llclamp((F32)atof(line.c_str() + 16), 0.f, 1.f);
+                }
+                else if (line.compare(0, 18, "dnsrshadowsamples=") == 0)
+                {
+                    n = llclamp((F32)atof(line.c_str() + 18), 0.f, 32.f);
+                }
+            }
+            if (b != blend || n != samples)
+            {
+                LL_INFOS("VkDenoise") << "shadow denoiser history: new sample weight " << (b > 0.f ? b : 0.05f) << (b > 0.f ? "" : " (the SDK's)") << ", samples to settle " << (n > 0.f ? n : 8.f) << (n > 0.f ? "" : " (the SDK's)") << LL_ENDL;
+            }
+            blend = b;
+            samples = n;
+        }
+        a.mHistoryBlend = blend;
+        a.mHistorySamples = samples;
+    }
     LLVkBridge::denoiseReflections(a);
 
     // the lightmap with the denoised sun channel (into the penumbra filter's temporary target, then back into the lightmap's attachment 0)

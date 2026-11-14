@@ -395,6 +395,8 @@ bool shadows(VkCommandBuffer cmd, const ShadowParams& p)
     multiply(kT, step, d.reprojectionMatrix);
     multiply(p.mViewProjInverse, kS, d.viewProjectionInverse);
     d.depthSimilaritySigma = p.mDepthSigma;
+    d.historyBlend = p.mHistoryBlend;
+    d.historySamples = p.mHistorySamples;
     s.mFirst = false;
     return ffx_ok(ffxDenoiserContextDispatchShadows(&s.mContext, &d), "ffxDenoiserContextDispatchShadows");
 }

@@ -53,6 +53,8 @@ namespace LLVkDenoise
         float mViewProjInverse[16] = {};        // column major; inverse(current view projection) (OpenGL): clip -> world
         float mEye[3] = {};                     // the camera in the same world
         float mDepthSigma = 1.f;                // the denoiser's depth similarity factor
+        float mHistoryBlend = 0.f;              // the weight of the new sample once the temporal history is settled (0 = the SDK's 0.05; larger: shorter trails, more noise; a patch of the SDK: doc/vulkan/ffx-sdk-patches)
+        float mHistorySamples = 0.f;            // the samples it takes the history to settle (0 = the SDK's 8)
         U32 mFrameIndex = 0;
     };
 

@@ -130,6 +130,7 @@ namespace LLVkBridge
         U32 mHitMask = 0;
         F32 mReprojection[16] = {}, mViewProjInverse[16] = {}, mEye[3] = {};      // column major, OpenGL conventions
         F32 mDepthSigma = 1.f;
+        F32 mHistoryBlend = 0.f, mHistorySamples = 0.f;      // the shadow denoiser's temporal history (0 = the SDK's values)
     };
     // the denoiser's context can be made (the SDK libraries are linked and the backend started)
     bool denoiseAvailable();
