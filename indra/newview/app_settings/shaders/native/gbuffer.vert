@@ -44,11 +44,11 @@ void main()
     const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
 
 #ifdef HAS_SKIN
-    const uint index = uint(gl_VertexIndex);
+    const uint index = row_clamp_index(row, uint(gl_VertexIndex));
 #else
     const uint at = row.first + uint(gl_VertexIndex);
     const uint word = RowWords(row.indices).w[at >> 1];
-    const uint index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);
+    const uint index = row_clamp_index(row, (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu));
 #endif
     const vec4 position = RowVec4(row.positions).v[index];
     const vec3 normal = RowVec4(row.normals).v[index].xyz;

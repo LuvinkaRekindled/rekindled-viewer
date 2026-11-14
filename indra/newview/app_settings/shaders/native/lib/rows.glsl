@@ -56,6 +56,13 @@ uint row_texture_slot(Row row, float position_w)
     return (pair >> ((pick & 1u) * 16u)) & 0xFFFFu;
 }
 
+// the vertex limit of a draw (the row's skinPad1, written by the worker's geo_write_items from the offsets of the vertex buffer's arrays: the number of vertices the position array holds; 0 = not known): an index past it
+// (a stale index list over a vertex buffer that was rewritten smaller) read positions from memory past the buffer, a page fault that lost the device 2026-11-14 (PLAN-texture-handles.md 17.20). Such a vertex is drawn as the last one.
+uint row_clamp_index(Row row, uint index)
+{
+    return row.skinPad1 != 0u ? min(index, row.skinPad1 - 1u) : index;
+}
+
 // ---- texture animation: a texture matrix slot may hold the PARAMETERS of an animation (a 0 in its last float) and the clock sits in slot 0 (llvktexanim.h is the CPU twin of this function) ----
 mat4 texanim_matrix(mat4 m, vec2 clock)
 {
