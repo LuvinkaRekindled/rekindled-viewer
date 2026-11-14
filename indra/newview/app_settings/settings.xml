@@ -2857,13 +2857,13 @@
     <key>FSVkAmdDenoiseShadows</key>
     <map>
       <key>Comment</key>
-      <string>Experimental: denoise the traced sun shadow with the AMD FidelityFX shadow denoiser (steadies the edges of small shadows such as leaves). Needs the upscaler on and the ray traced shadows on. LL_VK_AMD_DENOISE_SHADOWS=1 turns it on for a test. Takes effect at once.</string>
+      <string>Experimental: denoise the traced sun shadow with the AMD FidelityFX shadow denoiser (steadies the edges of small shadows such as leaves). On by default, and counts only with FSR as the upscaler (not DLSS) and the ray traced shadows on. LL_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler for a test. Takes effect at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>1</integer>
     </map>
     <key>FSVkAmdDenoise</key>
     <map>

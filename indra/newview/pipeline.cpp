@@ -21986,7 +21986,8 @@ bool LLPipeline::amdSunDenoiserWanted()
 {
     static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoiseShadows", false);
     static const bool env = getenv("LL_VK_AMD_DENOISE_SHADOWS") && atoi(getenv("LL_VK_AMD_DENOISE_SHADOWS")) != 0;
-    return (setting || env) && sDLSS && LLVkBridge::rtShadowMode() && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
+    // the setting (on by default) counts with FSR as the upscaler only (DLSS has its own handling; ray reconstruction denoises shadows itself); LL_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler
+    return ((setting && LLVkBridge::upscalerIsFsr()) || env) && sDLSS && LLVkBridge::rtShadowMode() && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
         && gDnsrPrepProgram.isComplete() && gDnsrSunPackProgram.isComplete() && gDnsrSunUnpackProgram.isComplete();
 }
 

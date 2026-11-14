@@ -94,6 +94,11 @@ const char* backendName()
     return gBackend == DLSS ? "DLSS" : (gBackend == FSR ? "FSR" : "none");
 }
 
+bool backendIsFsr()
+{
+    return gBackend == FSR;
+}
+
 bool rayReconstructionAvailable()
 {
     return gBackend == DLSS && LLVkDlss::rayReconstructionAvailable();

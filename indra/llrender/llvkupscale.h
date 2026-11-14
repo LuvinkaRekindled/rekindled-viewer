@@ -29,6 +29,7 @@ namespace LLVkUpscale
 
     // the active backend's name ("DLSS", "FSR", "none")
     const char* backendName();
+    bool backendIsFsr();                // the upscaler in use is AMD FSR (the AMD denoisers are on by default only then)
 
     // ray reconstruction (a DLSS feature): never with FSR
     bool rayReconstructionAvailable();
