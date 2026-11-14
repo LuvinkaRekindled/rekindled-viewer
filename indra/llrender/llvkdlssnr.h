@@ -61,7 +61,7 @@ namespace LLVkDlssNr
         float mStyle = 0.f, mIntensity = 1.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f;
     };
 
-    // Records the evaluation into 'cmd'. The images must already be in the layouts LLVkDlss::inputLayout / outputLayout name. Creates the feature on first
+    // Records the evaluation into 'cmd'. The images must already be in the layouts LLVkNgx::inputLayout / outputLayout name. Creates the feature on first
     // use and when the output size, quality or preset change (the old one is released once its frame has completed). False if anything failed; a failed
     // creation turns the feature off for the session.
     bool evaluate(VkCommandBuffer cmd, const Params& p);

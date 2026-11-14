@@ -240,10 +240,8 @@ LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion
 LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
-LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
 LLShaderProgram            gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
 LLShaderProgram            gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
-LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLShaderProgram            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
 LLShaderProgram            gFXAAProgram[4];
@@ -2331,17 +2329,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkRt") << "the RT shadow penumbra prep pass did not compile: the centre ray's shadow stays hard" << LL_ENDL;
         }
 
-        gRRGuidesProgram.mName = "Ray Reconstruction Guides";
-        gRRGuidesProgram.mFeatures.isDeferred = true;
-        gRRGuidesProgram.mFeatures.hasFullGBuffer = true;
-        // <FS> a native only program (native/manifest.txt, family post): no stock files
-        gRRGuidesProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gRRGuidesProgram);
-        if (!gRRGuidesProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the ray reconstruction guides program did not compile: no ray reconstruction" << LL_ENDL;
-        }
-
         // <FS> the AMD FidelityFX reflection denoiser's helper passes (PLAN-amd-denoiser.md): native only programs (native/manifest.txt, family post)
         gDnsrPrepProgram.mName = "Denoise Prep";
         gDnsrPrepProgram.mFeatures.isDeferred = true;
@@ -2383,16 +2370,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gDnsrUnpackProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the denoiser unpack program did not compile: no AMD reflection denoiser" << LL_ENDL;
-        }
-
-        gRRReflMotionProgram.mName = "Ray Reconstruction Reflection Motion";
-        gRRReflMotionProgram.mFeatures.isDeferred = true;
-        // <FS> a native only program (native/manifest.txt, family post): no stock files
-        gRRReflMotionProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        add_common_permutations(&gRRReflMotionProgram);
-        if (!gRRReflMotionProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the ray reconstruction reflection motion program did not compile: no reflection motion vectors" << LL_ENDL;
         }
 
         gNRRimLiftProgram.mName = "DLSS-NR Rim Lift";

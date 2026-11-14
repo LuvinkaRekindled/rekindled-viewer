@@ -63,7 +63,6 @@ namespace LLVkBridge
         F32 mMemoryBandwidthGBps = 0.f;     // measured; 0 = not measured
         bool mAccelStruct = false, mRayQuery = false, mRayTracingPipeline = false, mRayTracingUsable = false;
         bool mRayTracingEnabled = false;    // switched on at device creation (LL_VK_RT=1)
-        bool mRayReconstruction = false;    // DLSS ray reconstruction can run (needs DLSS on and its DLL)
         bool mNeuralRender = false;         // <FS> DLSS-NR (neural rendering) can run (DLSS on, NGX says the feature is available and supported, nvngx_dlssnr.dll next to the viewer)
     };
     // The device the viewer renders with, starting Vulkan if needed. False if Vulkan cannot be started.
@@ -96,7 +95,7 @@ namespace LLVkBridge
     // 1 = flush what has been recorded and carry on, 2 = close the off-screen frame and open a new one, 3 = like 2 but also wait for the GPU.
     void snapshotBoundary(S32 mode);
 
-    // ---- DLSS upscaling (setting FSVkDLSS; see llvkdlss.h) ----
+    // ---- upscaling (setting FSVkDLSS, the upscaler switch; see llvkupscale.h) ----
     // The GL names of four textures and what the upscaler needs to know about them; sizes are in pixels.
     struct UpscaleArgs
     {
@@ -106,13 +105,7 @@ namespace LLVkBridge
         F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         S32 mReset = 0;                                 // the history is useless (camera cut)
         S32 mHdr = 0;                                   // the colour is linear HDR
-        // ray reconstruction instead of super resolution: the GL names of the guide textures (render size) and the model preset (0 default, 4 D, 5 E, 6 F)
-        S32 mRayReconstruction = 0;
-        U32 mDiffuseAlbedo = 0, mSpecularAlbedo = 0, mNormals = 0, mExposure = 0;
-        U32 mReflectionMotion = 0;                      // render size RG16F: motion vectors of what the traced reflections show (pixels, previous minus current); 0 = none
-        U32 mSpecularHitDistance = 0;                   // render size R16F: metres from the surface to what its reflection ray hit (0: not traced); 0 here = no such guide
-        F32 mWorldToView[16] = {}, mViewToClip[16] = {};    // column-major, no jitter: only used with the hit distance
-        S32 mPreset = 0;
+        S32 mPreset = 0;                                // DLSS-NR's model preset (local builds)
         F32 mCameraNear = 0.1f, mCameraFar = 512.f, mCameraFovY = 1.f;      // <FS> the FSR backend wants them (metres, radians)
         F32 mFrameTimeMs = 16.6f;
         // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): mNeuralRender set means this is not an upscale but the neural renderer on the finished window-size colour (mColor and mOutput at
@@ -146,8 +139,6 @@ namespace LLVkBridge
     void denoiseReflections(const DenoiseArgs& args);
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
-    // DLSS ray reconstruction can run here (DLSS is ready and NGX reports the feature)
-    bool rayReconstructionAvailable();
     // <FS> the value of LL_VK_DLSS_NR (0 unset, 1 probe, 2 evaluate, 3 show), and whether the feature can run (probe said yes, nothing failed since)
     S32 neuralRenderMode();
     bool neuralRenderAvailable();

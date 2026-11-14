@@ -1,6 +1,6 @@
 /**
  * @file llvkupscale.cpp
- * @brief The upscaler of the Vulkan mirror over DLSS and FSR (see llvkupscale.h)
+ * @brief The upscaler of the Vulkan mirror over AMD FSR (see llvkupscale.h)
  */
 
 #include "linden_common.h"
@@ -9,130 +9,128 @@
 
 #include "llvkupscale.h"
 #include "llvkfsr.h"
+#include "llvkngx.h"
+
+#include <atomic>
+#include <cmath>
 
 namespace LLVkUpscale
 {
 
 namespace
 {
-enum Backend { NONE, DLSS, FSR };
-Backend gBackend = NONE;
+bool gFsr = false;
 
-// LL_VK_UPSCALER: "dlss" or "fsr" forces that backend, anything else (or nothing) lets DLSS go first
-Backend forced()
+std::atomic<float> sLodBias(0.f);       // read by the Vulkan thread when it makes a sampler, written when the render scale changes
+bool sLodBiasLocked = false;            // LL_VK_DLSS_LODBIAS is set: it stays
+
+// the value at start: the environment (the scale the viewer started with, or an explicit bias)
+void initLodBias()
 {
-    static const Backend mode = []() {
-        char buf[16] = {};
-        if (GetEnvironmentVariableA("LL_VK_UPSCALER", buf, sizeof(buf)) > 0)
+    static const bool done = []() {
+        char buf[32] = {};
+        if (GetEnvironmentVariableA("LL_VK_DLSS_LODBIAS", buf, sizeof(buf)) > 0)
         {
-            if (_stricmp(buf, "fsr") == 0) return FSR;
-            if (_stricmp(buf, "dlss") == 0) return DLSS;
+            sLodBias.store((float)atof(buf));
+            sLodBiasLocked = true;
         }
-        return NONE;
+        else if (requested() && GetEnvironmentVariableA("LL_VK_DLSS_SCALE", buf, sizeof(buf)) > 0)
+        {
+            const float scale = (float)atof(buf);
+            if (scale > 0.1f && scale < 1.f)
+            {
+                sLodBias.store(log2f(scale));
+            }
+        }
+        return true;
     }();
-    return mode;
+    (void)done;
 }
 }
 
 bool requested()
 {
-    return LLVkDlss::requested();
+    static const bool on = GetEnvironmentVariableA("LL_VK_DLSS", nullptr, 0) > 0;
+    return on;
 }
 
 void addInstanceExtensions(std::vector<const char*>& out)
 {
-    if (forced() != FSR)
-    {
-        LLVkDlss::addInstanceExtensions(out);
-    }
+    LLVkNgx::addInstanceExtensions(out);        // (DLSS-NR, local builds only: nothing in a release build)
 }
 
 void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vector<const char*>& out)
 {
-    if (forced() != FSR)
-    {
-        LLVkDlss::addDeviceExtensions(instance, device, out);
-    }
-    if (forced() != DLSS)
-    {
-        LLVkFsr::addDeviceExtensions(device, out);
-    }
+    LLVkNgx::addDeviceExtensions(instance, device, out);
+    LLVkFsr::addDeviceExtensions(device, out);
 }
 
 bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
 {
-    if (gBackend != NONE)
+    if (gFsr)
     {
         return true;
     }
-    if (forced() != FSR && LLVkDlss::init(instance, physical, device))
-    {
-        gBackend = DLSS;
-    }
-    else if (forced() != DLSS && LLVkFsr::init(instance, physical, device))
-    {
-        gBackend = FSR;
-    }
+    gFsr = LLVkFsr::init(instance, physical, device);
     LL_INFOS("VkUpscale") << "upscaler: " << backendName() << LL_ENDL;
-    return gBackend != NONE;
+    if (gFsr)
+    {
+        LLVkNgx::init(instance, physical, device);      // (DLSS-NR, local builds only; not fatal)
+    }
+    return gFsr;
 }
 
 bool ready()
 {
-    return gBackend != NONE;
+    return gFsr;
 }
 
 void shutdown()
 {
-    LLVkDlss::shutdown();
+    LLVkNgx::shutdown();
     LLVkFsr::shutdown();
-    gBackend = NONE;
+    gFsr = false;
 }
 
 const char* backendName()
 {
-    return gBackend == DLSS ? "DLSS" : (gBackend == FSR ? "FSR" : "none");
+    return gFsr ? "FSR" : "none";
 }
 
 bool backendIsFsr()
 {
-    return gBackend == FSR;
-}
-
-bool rayReconstructionAvailable()
-{
-    return gBackend == DLSS && LLVkDlss::rayReconstructionAvailable();
+    return gFsr;
 }
 
 bool evaluate(VkCommandBuffer cmd, const Params& p)
 {
-    switch (gBackend)
-    {
-    case DLSS: return LLVkDlss::evaluate(cmd, p);
-    case FSR: return LLVkFsr::evaluate(cmd, p);
-    default: return false;
-    }
+    return gFsr && LLVkFsr::evaluate(cmd, p);
 }
 
 float lodBias()
 {
-    const float bias = LLVkDlss::lodBias();         // (the one value both backends share: log2 of the render scale, set by the pipeline)
-    return (gBackend == FSR && bias < 0.f) ? bias - 1.f : bias;
+    initLodBias();
+    const float bias = sLodBias.load();
+    return (gFsr && bias < 0.f) ? bias - 1.f : bias;        // (FSR asks for one more stop when it upscales)
 }
 
 void setLodBias(float bias)
 {
-    LLVkDlss::setLodBias(bias);
+    initLodBias();
+    if (!sLodBiasLocked)
+    {
+        sLodBias.store(bias);
+    }
 }
 
 VkImageLayout inputLayout(const LLVk::Image& image)
 {
-    return gBackend == FSR ? LLVkFsr::inputLayout(image) : LLVkDlss::inputLayout(image);
+    return LLVkFsr::inputLayout(image);
 }
 
 VkImageLayout outputLayout()
 {
-    return gBackend == FSR ? LLVkFsr::outputLayout() : LLVkDlss::outputLayout();
+    return LLVkFsr::outputLayout();
 }
 
 }

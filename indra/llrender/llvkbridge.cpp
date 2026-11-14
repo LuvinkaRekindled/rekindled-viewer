@@ -27,7 +27,6 @@ void LLVkBridge::holdFrame(bool) {}
 void LLVkBridge::setPresentPreference(S32, bool) {}
 void LLVkBridge::snapshotBoundary(S32) {}
 bool LLVkBridge::upscaleAvailable() { return false; }
-bool LLVkBridge::rayReconstructionAvailable() { return false; }
 S32 LLVkBridge::neuralRenderMode() { return 0; }
 bool LLVkBridge::neuralRenderAvailable() { return false; }
 void LLVkBridge::setUpscaleLodBias(float) {}
@@ -348,7 +347,6 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     out.mRayTracingPipeline = caps.mRt.mPipeline;
     out.mRayTracingUsable = caps.mRt.mUsable;
     out.mRayTracingEnabled = caps.mRt.mEnabled;
-    out.mRayReconstruction = LLVkUpscale::rayReconstructionAvailable();
     out.mNeuralRender = LLVkUpscale::ready() && LLVkDlssNr::available();
     return true;
 }
@@ -1260,11 +1258,6 @@ void LLVkBridge::denoiseImpl(const DenoiseArgs& args)
 {
     std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
     LLVkWorker::on_denoise_reflections(args);
-}
-
-bool LLVkBridge::rayReconstructionAvailable()
-{
-    return sMirror.mReady && LLVkUpscale::rayReconstructionAvailable();
 }
 
 S32 LLVkBridge::neuralRenderMode()

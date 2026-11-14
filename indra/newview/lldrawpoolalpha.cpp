@@ -249,8 +249,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     }
 
     // final pass, render to depth for depth of field effects
-    // (<FS> not when ray reconstruction is on: the depth of field is skipped there (postProcess: !rr_done), so this pass would draw all the alpha again for a depth nothing reads)
-    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER && !gPipeline.rayReconstructionActive())
+    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
         // mask off color buffer writes as we're only writing to depth buffer
         gRender.setColorMask(false, false);

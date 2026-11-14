@@ -34,7 +34,7 @@ set(llrender_SOURCE_FILES
     lluiimage.cpp
     llvertexbuffer.cpp
     llvkcontext.cpp
-    llvkdlss.cpp
+    llvkngx.cpp
     llvkdlssnr.cpp
     llvkdenoise.cpp
     llvkfsr.cpp
@@ -86,7 +86,7 @@ set(llrender_HEADER_FILES
     lluiimage.inl
     llvertexbuffer.h
     llvkcontext.h
-    llvkdlss.h
+    llvkngx.h
     llvkdlssnr.h
     llvkdenoise.h
     llvkfsr.h
@@ -171,13 +171,20 @@ if (USE_VULKAN)
     target_compile_definitions(llrender PRIVATE LL_VULKAN=1)
     target_link_libraries(llrender ${llrender_glslang_libs} ${CMAKE_DL_LIBS})
   endif ()
-  # NVIDIA DLSS (optional): the SDK is not part of the source tree; point DLSS_SDK_DIR at a clone of github.com/NVIDIA/DLSS (its DLSS folder)
-  set(DLSS_SDK_DIR "<work>/DLSS/DLSS" CACHE PATH "NVIDIA DLSS SDK root (include/nvsdk_ngx_vk.h, lib/Windows_x86_64/x64)")
-  if (EXISTS "${DLSS_SDK_DIR}/include/nvsdk_ngx_vk.h" AND EXISTS "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
-    message(STATUS "DLSS SDK found at ${DLSS_SDK_DIR}")
-    target_include_directories(llrender SYSTEM PRIVATE "${DLSS_SDK_DIR}/include")
-    target_compile_definitions(llrender PRIVATE LL_DLSS=1)
-    target_link_libraries(llrender "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+  # NVIDIA, LOCAL builds only (doc/vulkan/PLAN-remove-nvidia.md): the viewer has no NVIDIA code in a release. With REKINDLED_LOCAL_NVIDIA=ON (never the default, never the package script) the
+  # DLSS SDK's NGX is linked for DLSS-NR (the neural renderer, llvkngx.cpp / llvkdlssnr.cpp) when it is found at DLSS_SDK_DIR (a clone of github.com/NVIDIA/DLSS, its DLSS folder), and the
+  # device asks the driver for VK_NV_device_diagnostics_config (resource tracking for the Aftermath decode of a device lost, llvkcontext.cpp: LL_LOCAL_NV_DIAG).
+  option(REKINDLED_LOCAL_NVIDIA "Local build: DLSS-NR through NGX and the NVIDIA device diagnostics (never for a release)" OFF)
+  if (REKINDLED_LOCAL_NVIDIA)
+    message(STATUS "REKINDLED_LOCAL_NVIDIA is ON: this build is for local use, not for a release")
+    target_compile_definitions(llrender PRIVATE LL_LOCAL_NV_DIAG=1)
+    set(DLSS_SDK_DIR "<work>/DLSS/DLSS" CACHE PATH "NVIDIA DLSS SDK root (include/nvsdk_ngx_vk.h, lib/Windows_x86_64/x64)")
+    if (EXISTS "${DLSS_SDK_DIR}/include/nvsdk_ngx_vk.h" AND EXISTS "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+      message(STATUS "DLSS SDK found at ${DLSS_SDK_DIR} (DLSS-NR)")
+      target_include_directories(llrender SYSTEM PRIVATE "${DLSS_SDK_DIR}/include")
+      target_compile_definitions(llrender PRIVATE LL_NGX_NR=1)
+      target_link_libraries(llrender "${DLSS_SDK_DIR}/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib")
+    endif ()
   endif ()
   # AMD FidelityFX SDK v1.1.4 (MIT, the last release with Vulkan), built to static libraries from the SDK's own source (no amd_fidelityfx_vk.dll any more): the FSR 3.1 upscaler, the denoiser
   # (1.3) and their Vulkan backend:
