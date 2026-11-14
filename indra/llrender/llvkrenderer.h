@@ -523,6 +523,10 @@ private:
 public:
     std::string describeDraw(U64 serial) const;
     std::string describeSlot(U32 slot) const;      // one slot of the 2D table: age, writes, image size, mips, layout (device lost report)
+    // <FS> the bindless probe (LLVkWorker::describe_textures): the set 2 layout and the set of a frame slot, and the descriptor writes made now (instead of at the next draw)
+    VkDescriptorSetLayout bindlessLayout() const { return mSet2Layout; }
+    VkDescriptorSet bindlessSet(U32 frame_slot) const { return frame_slot < Context::FRAMES_IN_FLIGHT ? mBindlessSet[frame_slot] : VK_NULL_HANDLE; }
+    void bindlessWritesNow() { flushPendingWrites(); }
     std::string auditBindless() const;     // the slots that still point at an image destroyed lately (a draw sampling one reads memory that is not its own)
 private:      // the description of the draw about to be made (a stamp tag), see drawTag
 public:
