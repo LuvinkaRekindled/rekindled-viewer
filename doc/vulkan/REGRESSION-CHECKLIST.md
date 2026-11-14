@@ -40,3 +40,13 @@ Run `<work>\run-viewer-guardcheck.bat` (the guard checks and `LL_VK_FORMAT_VERIF
 20. **Terrain paint and dynamic textures**: paint terrain (framebuffer sub image copy), the avatar impostor, a texture preview of a baked texture.
 21. **Texture compression** (Preferences > Graphics > Advanced > Compress textures, restart): one session with it on (the generic compressed storage path).
 22. **Sim change**: teleport between a busy sim and a quiet one twice; note the frame time after each (open: the cumulative CPU cost, see `POST-F-REVIEW.md`).
+
+## Lifetime stress lap (2026-11-13, GPU-LIFETIMES.md step 6)
+Not always on: after a change to a channel the CPU hands to the GPU (scratch rings, palettes, arenas, handle tables, buffer writes, a new record kind, the ray scene's inputs). One lap in RT mode, launcher `h6-fixed.ps1 -Mode rt`, the knobs in `H6_EXTRA_ENV` (the launcher strips `LL_VK_*` from the shell):
+
+`LL_VK_FRAMES=6;LL_VK_ARENA_POISON=1;LL_VK_STANDIN_MAGENTA=1;LL_VK_ARENA_BLOCK_MB=16;LL_VK_RT_EARLY=1;LL_VK_RT_MATERIALS=1`, `H6_EXTRA_ARGS='--set,FSVkMirrorQuality,3'`.
+
+- **Pass:** no device lost, no flicker or magenta on screen (avatar shadows, textures), and in the log: `written in place` 0, `view release guard` 0, `retire list ... count rose again` 0, `PassCheck` / `StateGuard` warnings none new.
+- **`LL_VK_RT_EARLY=1` is required with poison.** Poison fills a given-up range in graphics queue command order. With the ray scene on the compute queue (`LL_VK_RT_EARLY 3`, the default) nothing orders a structure build against that fill: the poison-only lap of 2026-11-13 lost the device inside an acceleration structure build (fault address in no arena block) and the six-slot + poison + magenta lap showed avatar shadow flicker; neither came back with `LL_VK_RT_EARLY=1`, and six slots alone (no poison) were clean. The viewer logs a warning when poison runs with the compute queue on. A real late read shows with `LL_VK_RT_EARLY=1` too.
+- **Also run once without poison but with the default `LL_VK_RT_EARLY 3`** and `LL_VK_FRAMES=6`, and once with `LL_VK_FRAMES=2`: the frame count is the lever (a symptom that changes with it is a lifetime bug; one that does not is something else).
+- A device lost: decode `gpu-fault-frame<N>.bin` (`<work>\aftermath-decode\decode.exe <blob> 56`) and read the `is in arena block` line of the log first.

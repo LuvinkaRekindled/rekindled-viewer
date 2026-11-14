@@ -1946,6 +1946,13 @@ void retire_range(ArenaRef& r)
 {
     if (arena_poison())
     {
+        static bool warned = false;
+        if (!warned && Context::instance().asyncOn())
+        {
+            warned = true;
+            LL_WARNS("Vulkan") << "LL_VK_ARENA_POISON with the ray scene on the compute queue (LL_VK_RT_EARLY 3): the fill is ordered against the graphics queue only, so a structure build running beside it can read the poison "
+                               << "(a device lost in a build or a flicker of avatar shadows is then not proof of a late read). Use LL_VK_RT_EARLY=1 for the poison lap." << LL_ENDL;
+        }
         Renderer::instance().fillBuffer(r.mBuffer, r.mOffset, (r.mSize + 3) & ~(VkDeviceSize)3, 0xDEADBEEFu);
         // the fill must be recorded before the range can be handed out again (a host range is rewritten by the CPU): name 0 makes the frame-end flush run
         sPendingBufs.push_back(0);
@@ -2120,7 +2127,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     ++b.mVersion; res_touched(b, 1);
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
-    const bool in_flight = (b.mLastUseFrame != ~0ull && frame < b.mLastUseFrame + Context::frameCount() + 1)
+    const bool in_flight = (b.mLastUseFrame != ~0ull && !ctx.frameKnownFinished(b.mLastUseFrame))
         || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame, b.mRenamedFrame != ~0ull ? b.mRenamedFrame : 0ull));
     ctx.flight(Context::FL_BUF_WRITE, (unsigned long long)name, offset, size, (unsigned long long)b.mVk.mAddress | (in_flight ? 1ull : 0ull));
     if (in_flight && b.mVk.valid())
@@ -2128,6 +2135,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
         const auto t0 = std::chrono::steady_clock::now();
         Buffer fresh;
         ArenaRef fresh_range;
+        bool renamed = false;
         if (b.mArena.valid())
         {
             // a new range of the arena instead of a new VkBuffer; the old range goes back once the frames in flight are done
@@ -2166,6 +2174,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                 b.mRenamedFrame = frame;
                 ++sRenameStats.mCount;
                 sRenameStats.mBytes += keep;
+                renamed = true;
             }
         }
         else if (ctx.createBuffer(b.mSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -2189,6 +2198,17 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
             b.mLastUseFrame = ~0ull;
             ++sRenameStats.mCount;
             sRenameStats.mBytes += keep;
+            renamed = true;
+        }
+        if (!renamed)
+        {
+            // GPU-LIFETIMES.md finding 5.4: no new range could be had for a buffer a frame in flight may read: the write below goes in place, under that frame (healthy = 0)
+            static U64 in_place = 0;
+            ++in_place;
+            if (in_place <= 20 || in_place % 2000 == 0)
+            {
+                LL_WARNS("Vulkan") << "write_buffer: buffer " << name << " (" << b.mSize << " bytes) is in flight and no new range could be made: written in place (" << in_place << " so far)" << LL_ENDL;
+            }
         }
         sRenameStats.mMicros += (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
         report_renames();

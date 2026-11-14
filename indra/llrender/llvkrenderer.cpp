@@ -3286,7 +3286,11 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
     {
         if (mViewUsers.size() > 40000)
         {
-            mViewUsers.clear();         // (views that were never destroyed through destroyImage: a bound, the guard misses what it dropped)
+            // (views that were never destroyed through destroyImage: a bound, the guard misses what it dropped) GPU-LIFETIMES.md finding 5.6: counted
+            static U64 cleared = 0;
+            ++cleared;
+            LL_WARNS("Vulkan") << "view release guard: " << mViewUsers.size() << " views noted, the list is cleared (" << cleared << " times so far): views noted before this are not guarded any more" << LL_ENDL;
+            mViewUsers.clear();
         }
         mViewUsers[image->mViewId].push_back(((U64)table << 48) | ((U64)handle << 32) | (U64)d);
     }

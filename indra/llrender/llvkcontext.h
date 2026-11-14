@@ -345,6 +345,8 @@ public:
     U64 getFrameNumber() const { return mFrameNumber; }
     // true once the GPU has finished the frame that was the n-th to be submitted (false while it is still being recorded). Right in a frame and between two frames (see mCompletedBelow). The render worker's thread.
     bool frameFinished(U64 n);
+    // the cheap form: true only for a frame something has already waited for (mCompletedBelow); never looks at a fence, so a frame that has finished but was not waited for yet answers false (the buffer writes ask this for every write)
+    bool frameKnownFinished(U64 n) const { return n < mCompletedBelow; }
     U64 earlyFinishedAvoided() const { return mEarlyFinishedAvoided; }      // times frameFinished was asked between two frames about a frame the old test called finished while it was still on the GPU
     U32 getFrameSlot() const { return mFrameSlot; }
     // GPU microseconds the "rt scene builds" pass took in the frame that last used this slot (read from the pass timestamps when the slot was reused; 0 when it had none): the ray scene paces its builds by it
