@@ -44,6 +44,7 @@
 #include "llrenderheaders.h"
 #include "llhost.h"
 #include "llimage.h"
+#include "llimagebc7.h"         // <FS> blockBytes (the upload hash of a server bake's finest BC7 level)
 #include "llimagebmp.h"
 #include "llimagej2c.h"
 #include "llimagetga.h"
@@ -1926,7 +1927,13 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     if (mFTType == FTT_SERVER_BAKE)
     {
         // <FS> what this server bake's texture object is about to upload (the same hash as the BakeTex log of the decode; printed with the bake slot by Show Textures)
-        mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize());
+        U64 finest = 0;
+        if (mRawImage->isCompressed())
+        {
+            // (the finest level of a BC7 chain is the last in the buffer: what the GPU image's level 0 has to hold, compared by Show Textures and the periodic check)
+            finest = fs_sparse_hash(mRawImage->getFinestLevelData(), (size_t)LLImageBC7::blockBytes((U32)mRawImage->getWidth(), (U32)mRawImage->getHeight()));
+        }
+        mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize(), finest);
     }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);

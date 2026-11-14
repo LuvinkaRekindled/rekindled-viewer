@@ -426,7 +426,7 @@ namespace LLVkBridge
     // plays what is queued for the mirror thread and stops it (the viewer is quitting); GL calls after this run inline
     void stopAsync();
     // asks the worker to log what it holds for each GL texture name (labels say what each is): the viewer's Show Textures command for the agent's bake slots ("own avatar texture" lines of the VkTex log)
-    void describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels);
+    void describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, bool quiet);   // finest: the sampled hash of the finest BC7 level uploaded (0 = unknown); quiet: log only what is wrong
 
 #if defined(LL_VULKAN)
     // the inline implementations of the frame calls (the worker thread runs these in async mode)

@@ -15,6 +15,7 @@
 #if defined(LL_VULKAN)
 
 #include "llvkbridge.h"
+#include "llimage.h"            // <FS> fs_sparse_hash (describe_textures)
 #include "llvknative.h"
 #include "llvktexanim.h"
 #include "llshaderprogram.h"
@@ -3807,11 +3808,12 @@ std::string describe_texture_of_view(U64 view_id)
 // <FS> 2026-11-14 (Adam: the eyes bake slot shows a brown texture while the iris slot has the right one, until a rebake; the floater is drawn through the same handles as the avatar, so it cannot say whether
 // the bake is brown or a handle shows another texture's image): per GL texture name, what the worker holds, and what the handle of the texture shows now: the image the handle points at belongs to the GL
 // texture that "handle shows" names; a handle whose image belongs to ANOTHER texture is the bug
-void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels)
+void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, bool quiet)
 {
     for (size_t i = 0; i < names.size(); ++i)
     {
         std::string text;
+        bool wrong = false;
         auto found = sGL.mTextures.find(names[i]);
         if (names[i] == 0)
         {
@@ -3823,17 +3825,46 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
         }
         else
         {
-            const Tex& t = found->second;
+            Tex& t = found->second;
             char buf[420];
             snprintf(buf, sizeof(buf), "%ux%u, %u levels allocated, %u hold data, image %s, view id %llu, bindless handle %u, pin %u, swizzle %s, store %u", t.mWidth, t.mHeight, t.mLevels, t.mValidLevels,
                      t.mImage.valid() ? "valid" : "NONE", (unsigned long long)t.mImage.mViewId, t.mHandle, t.mPinIndex, t.mSwizzleSet ? "set" : "default", (unsigned)t.mStore);
             text = buf;
             if (t.mHandle)
             {
-                text += " | handle shows: " + Renderer::instance().describeSlot(t.mHandle);
+                const std::string shows = Renderer::instance().describeSlot(t.mHandle);
+                text += " | handle shows: " + shows;
+                wrong = wrong || shows.find("DIFFERS") != std::string::npos || shows.find("FREE") != std::string::npos || shows.find("DESTROYED") != std::string::npos;
+            }
+            // the BC7 image as the GPU holds it, level 0, against what the viewer uploaded for it (a texture that was uploaded another way, or has no known hash, is not compared)
+            if (i < finest.size() && finest[i] && t.mImage.valid() && formatInfo(t.mImage.mFormat).mCompressed)
+            {
+                Renderer& r = Renderer::instance();
+                std::vector<U8> blocks;
+                bool ok = true;
+                if (LLVkBridge::inFrame() && !r.flushAndRestart(4))
+                {
+                    ok = false;
+                }
+                if (ok && r.readbackCompressedMip(t.mImage, 0, 0, blocks))
+                {
+                    const U64 h = fs_sparse_hash(blocks.data(), blocks.size());
+                    char hb[160];
+                    snprintf(hb, sizeof(hb), " | GPU level 0: %zu bytes hash %llx, the upload's %llx: %s", blocks.size(), (unsigned long long)h, (unsigned long long)finest[i], h == finest[i] ? "SAME" : "DIFFERENT");
+                    text += hb;
+                    wrong = wrong || h != finest[i];
+                }
+                else
+                {
+                    text += " | GPU level 0: readback failed";
+                }
             }
         }
-        LL_INFOS("VkTex") << "own avatar texture " << (i < labels.size() ? labels[i] : std::string("?")) << " (GL name " << names[i] << "): " << text << LL_ENDL;
+        if (quiet && !wrong)
+        {
+            continue;
+        }
+        LL_INFOS("VkTex") << (quiet ? "own avatar texture CHECK " : "own avatar texture ") << (i < labels.size() ? labels[i] : std::string("?")) << " (GL name " << names[i] << "): " << text << LL_ENDL;
     }
 }
 

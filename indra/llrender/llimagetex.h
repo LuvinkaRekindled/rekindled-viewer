@@ -192,7 +192,8 @@ public:
     // <FS> a sampled hash (fs_sparse_hash, llimage.h) of the decoded image this texture object last created its GL texture from, and its size in bytes (Show Textures prints them with the bake slots)
     U64 getUploadHash() const { return mUploadHash; }
     U64 getUploadBytes() const { return mUploadBytes; }
-    void setUploadHash(U64 hash, U64 bytes) { mUploadHash = hash; mUploadBytes = bytes; }
+    void setUploadHash(U64 hash, U64 bytes, U64 finest = 0) { mUploadHash = hash; mUploadBytes = bytes; mUploadFinestHash = finest; }
+    U64 getUploadFinestHash() const { return mUploadFinestHash; }       // the sampled hash of the finest BC7 level of that upload (0: not a BC7 image)
     // <FS> S texture identity: an id that stays with this texture object for its life (the GL name changes when the texture is made again or another discard level is loaded), and the
     // names that changed since the events were last taken: the ids of the objects whose name changed. A consumer keeps what it knows about a texture by id and hears about changes instead of
     // asking every texture every frame. Taken on the main thread (the changes are made there).
@@ -286,7 +287,7 @@ private:
 
     bool     mImageTextureCreated ;
     U32 mTexName;
-    U64 mUploadHash = 0, mUploadBytes = 0;     // <FS> see getUploadHash()
+    U64 mUploadHash = 0, mUploadBytes = 0, mUploadFinestHash = 0;     // <FS> see getUploadHash()
     U32 mTexId = 0;                   // see getTexId()
     void noteNameChange();
     U16      mWidth;

@@ -73,7 +73,7 @@ long long LLVkBridge::lastPresentTicks() { return 0; }
 void LLVkBridge::shutdown() {}
 void LLVkBridge::setBindlessPersistent(bool) {}
 void LLVkBridge::stopAsync() {}
-void LLVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&) {}
+void LLVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&, const std::vector<U64>&, bool) {}
 
 #else // LL_VULKAN
 
@@ -421,9 +421,9 @@ bool LLVkBridge::ensureReady()
     return true;
 }
 
-void LLVkBridge::describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels)
+void LLVkBridge::describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, bool quiet)
 {
-    LLVkAsync::postCall([names, labels]() { LLVkWorker::describe_textures(names, labels); });
+    LLVkAsync::postCall([names, labels, finest, quiet]() { LLVkWorker::describe_textures(names, labels, finest, quiet); });
 }
 
 void LLVkBridge::stopAsync()
