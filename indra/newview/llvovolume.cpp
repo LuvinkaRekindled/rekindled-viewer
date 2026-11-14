@@ -250,6 +250,7 @@ LLVOVolume::LLVOVolume(const LLUUID &id, const LLPCode pcode, LLViewerRegion *re
     mLODChanged = false;
     mSculptChanged = false;
     mSculptDeferred = false;
+    mSculptDeferStamp = 0;
     mColorChanged = false;
     mSpotLightPriority = 0.f;
 
@@ -1357,10 +1358,15 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
             if (mSculptDeferred)
             {
-                // <FS> the read back that sculpt() had to leave for later (see there)
-                mSculptDeferred = false;
-                gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_VOLUME);
-                mSculptChanged = true;
+                // <FS> the map sculpt() had to leave for later (see there): tried again when the decoded map is here (not every frame), or when the wait is over
+                const LLImageRaw* saved = mSculptTexture->getSavedRawImage();
+                const bool map_here = saved && saved->getWidth() >= mSculptTexture->getWidth() && saved->getHeight() >= mSculptTexture->getHeight();
+                if (map_here || LLFrameTimer::getFrameCount() - mSculptDeferStamp >= 180)
+                {
+                    mSculptDeferred = false;
+                    gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_VOLUME);
+                    mSculptChanged = true;
+                }
             }
 
             S32 texture_discard = mSculptTexture->getRawImageLevel(); //try to match the texture
@@ -1850,7 +1856,14 @@ void LLVOVolume::sculpt()
             // last resort, read back from GL
             // <FS> A read back waits for the render worker to replay everything queued before it: in a burst (a plaza of sculpts, a flood of texture uploads) that was 15 s of frozen main thread.
             // When the worker is far behind the sculpt is left as it is and tried again in a later frame (updateTextures sees mSculptDeferred).
-            if (!LLVkBridge::readbackAffordable())
+            // <FS> hitchless loading (doc/vulkan/PLAN-hitchless-loading.md): the sculpt asked for its decoded map to be kept (forceToSaveRawImage), so the map arrives by itself; until it does the sculpt
+            // keeps its shape (a frame never waits for the GPU: this read back was 72 to 130 ms of the main thread each in the Citadel login). Only a map that has not come for 3 s is read back.
+            const U32 frame = LLFrameTimer::getFrameCount();
+            if (!mSculptDeferStamp)
+            {
+                mSculptDeferStamp = frame;
+            }
+            if (frame - mSculptDeferStamp < 180 || !LLVkBridge::readbackAffordable())
             {
                 mSculptDeferred = true;
                 return;
@@ -1859,6 +1872,7 @@ void LLVOVolume::sculpt()
             raw_image = mSculptTexture->getRawImage();
             discard_level = mSculptTexture->getRawImageLevel();
         }
+        mSculptDeferStamp = 0;      // <FS> the map is here: the next wait (a new map, a new size) starts its own count
 
         S32 max_discard = mSculptTexture->getMaxDiscardLevel();
         if (discard_level > max_discard)

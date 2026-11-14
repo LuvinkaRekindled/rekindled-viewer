@@ -60,3 +60,38 @@ Login into the last location (London City, 05:48:31Z), a teleport to Citadel (al
 - The second and third teleports (away and back) cost the same 2.5 s each, so it is not a cold versus warm cache effect.
 
 Tools: `<work>\hitch-summary.py <log>` (stalls and the main thread's stacks), `<work>\run-viewer-hitch50.bat`.
+
+## Design for the big ticket: object geometry (volumes and group rebuilds), 2026-11-14
+
+Adam: "these little things are going to give it a better feel when people try the viewer for the first time. it's already a big improvement, but if we can get rid of the little hiccups too it would be near perfectly smooth." So the target is every stall above the watcher's floor in a first login and a first teleport, not only the big ones.
+
+### What the Citadel data says about this group (15 of 53 stalls, 1.3 s of 4.0 s)
+
+1. The stalls are **batches**, not single objects: `LLViewerRegion::idleUpdate` -> `addNewObject` -> `processUpdateMessage` -> `LLVOVolume::setVolume` -> `LLPrimitive::setVolume` -> `LLVolumeMgr::refVolume` -> `LLVolumeLODGroup::refLOD` -> `new LLVolume(params, detail)` -> `createVolumeFaces` (new objects from the region cache and from the sim), and `updateGeometry` -> `lodOrSculptChanged` -> `setVolume` (a LOD change). Each volume is cheap, a frame builds tens of them. The stock viewer budgets some of this by time already (the region's `idleUpdate`); the stalls show where the budget overshoots or does not exist. We do not want to tune budgets, we want the work off the main thread.
+2. **The volume cache is keyed by shape**: `LLVolumeMgr` keeps an `LLVolumeLODGroup` per set of volume parameters, with 4 LODs each created on first reference (`refLOD`: `mVolumeLODs[lod] = new LLVolume(...)`, under the manager's mutex). A plaza of identical prims builds each shape once. `LLVolume` is already built off the main thread elsewhere (the mesh repository's thread), so construction is thread safe in the cases that matter (to be confirmed for plain prims: static tables in `LLPath` / `LLProfile`).
+3. **The group rebuild fills already run on the pool** (`LL_VK_REBUILD_PARALLEL=2`, the default since 2026-10-31, PLAN-view-prep-rework.md 8.10 / 8.11). What stays on the main thread in the stalls: `genDrawInfo` and `LLVertexBuffer::createGLBuffer` (148 ms once), `updateTextureVirtualSize` -> `LLFace::calcPixelArea` and rigging info (92 and 101 ms), `LLFace::getGeometryVolume` / `fillBatch` when a fill is not offloaded (83 to 86 ms), `LLFace::init` for new faces.
+
+### A1. Progressive volumes (the volume builds)
+
+The viewer already has a mechanism for "this object now needs another level of detail": `mLODChanged` -> `updateGeometry` -> `lodOrSculptChanged` -> `setVolume(params, lod)` -> the drawable's volume is replaced and `REBUILD_VOLUME` marks the geometry for a rebuild. The design reuses it: **a first creation is a LOD upgrade from the cheapest LOD.**
+
+- `LLVolumeLODGroup::refLOD(lod)` returns the best LOD that exists (creating LOD 0, the cheapest, synchronously when none exists) and, when the wanted LOD does not exist, posts a job for it to the pool and records the object as a waiter. `LLVOVolume::mLOD` keeps the LOD in use, the wanted one is kept next to it.
+- The job builds `new LLVolume(params, detail)` off the main thread into a private pointer; when it is done a frame-boundary step (main thread, a cheap pointer store under the manager's mutex) fills `mVolumeLODs[lod]` and sets `mLODChanged` on the waiters, which the existing path then swaps in. **The visible effect: a prim first appears as its coarse shape and refines a few frames later** (placeholder rule 1 in its better form: geometry exists, so it is drawn; Adam's call: coarse shape or not drawn until ready).
+- Applies to plain prims. Not to: meshes (the repository thread already loads and builds them; the main thread's part is `notifyLoadedMeshes`), sculpts (need their map: the readback fix and the placeholder shape exist), flexi and other `isVolumeUnique` volumes (private, mutated per frame), rigged objects (their volume is the mesh).
+- Open questions: what `setVolume` does with the volume at once (`getVolume()->calcSurfaceArea()` "NaCl" protection, bounds, `updateSpatialExtents`): all must work on the coarse volume, which they do today for a low LOD object; the physics shape (`LLVolume` user in the sim, not the viewer); the ray traced scene and the shadow passes see the coarse volume until the swap (consistent); thread safety of `LLVolume` construction for plain prims.
+- **Measurement gate before any code:** counters for the volume builds: per LOD, the number built per frame, their time (`LL_VK_VOLSTATS`), at a login and at Citadel. If the time is mostly LOD 2 and 3 (the high detail volumes) progressive volumes remove it; if it is LOD 0 (many distinct shapes) the pool alone (build the LOD 0 volumes of a burst in parallel and wait for them at the frame boundary) is the only fix and the placeholder is not needed.
+
+### A2. Rebuild work that is left on the main thread
+
+- `calcPixelArea` / `updateTextureVirtualSize` for faces of a group being rebuilt: the value is recomputed every frame anyway by the texture priority pass, so a rebuild may use the last value (rule 4: use the last result) and only a face that never had one computes it.
+- `createGLBuffer` and `updateNumVerts` (vertex buffer allocation in `genDrawInfo`): a pool of released buffers by size class, or creation on the pool thread (the Vulkan mirror's buffer creation is a queued command: the main thread's part should be a name and a push, to be checked why it took 148 ms once).
+- The fills that are not offloaded (animated children, small groups): count them in the same stall census before deciding.
+- A rebuild that is late keeps the old geometry (rule 3): already the case for groups (the old buffers stay until `genDrawInfo` replaces them); to be confirmed for the first rebuild of a new group (nothing to keep: the group is not drawn, which is rule 1).
+
+### A3. The rest of the "small hiccups" (the other 38 stalls)
+
+The Citadel table above, by group, with the fix in the plan's mechanisms B and C: the object cache read off the main thread, the sculpt readback (done 2026-11-14, `mSculptDeferStamp`), the avatar bake's `readPixels` (one per avatar: the morph mask has to be read back; an asynchronous read with the mask applied a frame or two later), UI and inventory updates (`LLVisSet::update`, the folder view filter: budget them or move the inventory filter to idle time), texture bookkeeping (`isFullyBaked` / `isTextureDefined` per avatar per frame: cache the answer until a texture changes), and the 12 stalls filed under "other" (to be looked at one by one with a CPU zone run).
+
+### Order
+
+1. Volume stats counters (A1's gate) and one CPU zone run of a Citadel login, so "other" and the budgets are known. 2. A2's `calcPixelArea` reuse and the avatar texture bookkeeping cache (small, local). 3. A1, if the gate says LOD 2 and 3 dominate. 4. The rest as the new stall table says. Each step ends with the same Citadel login and teleport (`run-viewer-hitch50.bat`, `hitch-summary.py`), compared with this table.
