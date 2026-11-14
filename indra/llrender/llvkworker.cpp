@@ -29,6 +29,7 @@
 #include "llvkquery.h"
 #include "llvkformat.h"
 #include "llvkupscale.h"
+#include "llvkngx.h"
 #include "llvkdenoise.h"
 #include "llvkdlssnr.h"
 #include "llvkrt.h"
@@ -13021,10 +13022,10 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     p.mLocalStructure = a.mNrLocalStructure;
     p.mSkinStructure = a.mNrSkinStructure;
     std::vector<std::pair<Image*, VkImageLayout>> needs = {
-        { p.mColor, LLVkDlss::inputLayout(*p.mColor) },
-        { p.mDepth, LLVkDlss::inputLayout(*p.mDepth) },
-        { p.mMotion, LLVkDlss::inputLayout(*p.mMotion) },
-        { p.mOutput, LLVkDlss::outputLayout() },
+        { p.mColor, LLVkNgx::inputLayout(*p.mColor) },
+        { p.mDepth, LLVkNgx::inputLayout(*p.mDepth) },
+        { p.mMotion, LLVkNgx::inputLayout(*p.mMotion) },
+        { p.mOutput, LLVkNgx::outputLayout() },
     };
     bool done = false;
     Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlssNr::evaluate(cmd, p); });
@@ -13202,18 +13203,12 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
     Tex* depth = find(a.mDepth);
     Tex* motion = find(a.mMotion);
     Tex* output = find(a.mOutput);
-    Tex* diffuse = a.mRayReconstruction ? find(a.mDiffuseAlbedo) : nullptr;
-    Tex* specular = a.mRayReconstruction ? find(a.mSpecularAlbedo) : nullptr;
-    Tex* normals = a.mRayReconstruction ? find(a.mNormals) : nullptr;
-    Tex* exposure = a.mRayReconstruction && a.mExposure ? find(a.mExposure) : nullptr;
-    Tex* hit_distance = a.mRayReconstruction && a.mSpecularHitDistance ? find(a.mSpecularHitDistance) : nullptr;
-    Tex* refl_motion = a.mRayReconstruction && a.mReflectionMotion ? find(a.mReflectionMotion) : nullptr;
-    if (!color || !depth || !motion || !output || (a.mRayReconstruction && (!diffuse || !specular || !normals)))
+    if (!color || !depth || !motion || !output)
     {
         if (failures++ < 5)
         {
             LL_WARNS("VkDlss") << "upscale: a texture is missing (colour " << (color != nullptr) << ", depth " << (depth != nullptr) << ", motion " << (motion != nullptr)
-                               << ", output " << (output != nullptr) << ", guides " << (diffuse != nullptr) << (specular != nullptr) << (normals != nullptr) << ")" << LL_ENDL;
+                               << ", output " << (output != nullptr) << ")" << LL_ENDL;
         }
         return;
     }
@@ -13242,34 +13237,6 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
         { p.mMotion, LLVkUpscale::inputLayout(*p.mMotion) },
         { p.mOutput, LLVkUpscale::outputLayout() },
     };
-    if (a.mRayReconstruction)
-    {
-        p.mRayReconstruction = true;
-        p.mDiffuseAlbedo = &diffuse->mImage;
-        p.mSpecularAlbedo = &specular->mImage;
-        p.mNormals = &normals->mImage;
-        p.mPreset = a.mPreset;
-        needs.push_back({ p.mDiffuseAlbedo, LLVkUpscale::inputLayout(*p.mDiffuseAlbedo) });
-        needs.push_back({ p.mSpecularAlbedo, LLVkUpscale::inputLayout(*p.mSpecularAlbedo) });
-        needs.push_back({ p.mNormals, LLVkUpscale::inputLayout(*p.mNormals) });
-        if (refl_motion)
-        {
-            p.mReflectionMotion = &refl_motion->mImage;
-            needs.push_back({ p.mReflectionMotion, LLVkUpscale::inputLayout(*p.mReflectionMotion) });
-        }
-        if (hit_distance)
-        {
-            p.mHitDistance = &hit_distance->mImage;
-            memcpy(p.mWorldToView, a.mWorldToView, sizeof(p.mWorldToView));
-            memcpy(p.mViewToClip, a.mViewToClip, sizeof(p.mViewToClip));
-            needs.push_back({ p.mHitDistance, LLVkUpscale::inputLayout(*p.mHitDistance) });
-        }
-        if (exposure)
-        {
-            p.mExposure = &exposure->mImage;
-            needs.push_back({ p.mExposure, LLVkUpscale::inputLayout(*p.mExposure) });
-        }
-    }
     bool done = false;
     Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkUpscale::evaluate(cmd, p); });
     if (done)

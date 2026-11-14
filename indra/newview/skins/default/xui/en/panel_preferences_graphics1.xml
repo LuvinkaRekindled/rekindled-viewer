@@ -1915,11 +1915,11 @@ If you do not understand the distinction then leave this control alone."
        control_name="FSVkDLSS"
        height="16"
        initial_value="false"
-       label="Upscale with DLSS / FSR (experimental)"
+       label="Upscale with AMD FSR 3.1 (experimental)"
        layout="topleft"
        left="10"
        name="FSVkDLSS"
-       tool_tip="Draws the world with an upscaler: NVIDIA DLSS (RTX graphics cards) or AMD FSR 3.1 (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. DLAA / 100% draws at the full window size and only smooths edges: the sharpest picture, no speed gain. Needs the Vulkan renderer. If the viewer was started with this off, restart it after turning it on; once DLSS is running, switching it off and changing the mode apply at once."
+       tool_tip="Draws the world with the AMD FSR 3.1 upscaler (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. Native AA / 100% draws at the full window size and only smooths edges: the sharpest picture, for photos. Takes effect after a restart."
        top_pad="25"
        width="400"/>
       <text
@@ -1929,41 +1929,6 @@ If you do not understand the distinction then leave this control alone."
        height="14"
        layout="topleft"
        left_delta="18"
-       name="FSVkUpscalerText"
-       top_pad="8"
-       width="200">
-        Upscaler (restart to change):
-      </text>
-      <combo_box
-       control_name="FSVkUpscaler"
-       enabled_control="FSVkDLSS"
-       height="23"
-       layout="topleft"
-       left_delta="0"
-       name="FSVkUpscaler"
-       tool_tip="Automatic uses NVIDIA DLSS where the graphics card has it and AMD FSR 3.1 otherwise. FSR 3.1 works on any graphics card but has no ray reconstruction. Takes effect after a restart."
-       top_pad="3"
-       width="250">
-        <combo_box.item
-         label="Automatic (DLSS, else FSR)"
-         name="0"
-         value="0"/>
-        <combo_box.item
-         label="NVIDIA DLSS"
-         name="1"
-         value="1"/>
-        <combo_box.item
-         label="AMD FSR 3.1"
-         name="2"
-         value="2"/>
-      </combo_box>
-      <text
-       type="string"
-       length="1"
-       follows="left|top"
-       height="14"
-       layout="topleft"
-       left_delta="0"
        name="FSVkDLSSQualityText"
        top_pad="8"
        width="200">
@@ -1976,7 +1941,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left_delta="0"
        name="FSVkDLSSQuality"
-       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. DLAA draws every pixel and only anti-aliases (best for photos). Applies at once while DLSS is running."
+       tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. Native AA draws every pixel and only anti-aliases (best for photos). Applies at once while the upscaler is running."
        top_pad="3"
        width="250">
         <combo_box.item
@@ -1992,55 +1957,9 @@ If you do not understand the distinction then leave this control alone."
          name="2"
          value="2"/>
         <combo_box.item
-         label="DLAA (100%, anti-aliasing only)"
+         label="Native AA (100%, anti-aliasing only)"
          name="3"
          value="3"/>
-      </combo_box>
-      <check_box
-       control_name="FSVkRayReconstruction"
-       enabled_control="FSVkDLSS"
-       height="16"
-       initial_value="false"
-       label="Ray reconstruction (denoises ray traced reflections)"
-       layout="topleft"
-       left_delta="0"
-       name="FSVkRayReconstruction"
-       tool_tip="DLSS ray reconstruction replaces the plain DLSS upscaling: it removes the noise of ray traced reflections and shadows and keeps reflected moving objects steady. Needs DLSS on (and ray tracing to have anything to denoise). Depth of field is not applied while it is on. Applies at once."
-       top_pad="8"
-       width="400"/>
-      <text
-       type="string"
-       length="1"
-       follows="left|top"
-       height="14"
-       layout="topleft"
-       left_delta="0"
-       name="FSVkNeuralRenderModeText"
-       top_pad="8"
-       width="300">
-        Neural rendering (DLSS 5, experimental, local test):
-      </text>
-      <combo_box
-       control_name="FSVkNeuralRenderMode"
-       height="23"
-       layout="topleft"
-       left_delta="0"
-       name="FSVkNeuralRenderMode"
-       tool_tip="DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale: On costs about 7 ms a frame; Snapshots only leaves the live picture untouched and puts every snapshot through it. Enabled only when DLSS is on, the graphics card and driver support it (RTX 50, driver 615 or newer) and nvngx_dlssnr.dll is next to the viewer. Applies at once. The look controls live in D:/claude/nr-debug.txt."
-       top_pad="3"
-       width="250">
-        <combo_box.item
-         label="Off"
-         name="0"
-         value="0"/>
-        <combo_box.item
-         label="On"
-         name="1"
-         value="1"/>
-        <combo_box.item
-         label="Snapshots only"
-         name="2"
-         value="2"/>
       </combo_box>
       <check_box
        control_name="FSVkRayTracing"

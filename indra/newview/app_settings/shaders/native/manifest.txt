@@ -227,8 +227,6 @@ override | Legacy Gamma Correction Post Process | fullscreen.vert | gamma.frag |
 override | RLVa Sphere Post Processing Shader | fullscreen.vert | rlva_sphere.frag | post | default on
 # the neural renderer and denoiser passes (PLAN-native-only-end-state.md, step 2)
 override | DLSS-NR Rim Lift | fullscreen.vert | nr_rim_lift.frag | post | default on
-override | Ray Reconstruction Reflection Motion | fullscreen.vert | rr_refl_motion.frag | post | default on
-override | Ray Reconstruction Guides | fullscreen.vert | rr_guides.frag | post | default on
 override | Denoise Prep | fullscreen.vert | dnsr_prep.frag | post | default on
 override | Denoise Pack | fullscreen.vert | dnsr_pack.frag | post | default on
 override | Denoise Unpack | fullscreen.vert | dnsr_unpack.frag | post | default on

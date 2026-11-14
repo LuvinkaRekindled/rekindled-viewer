@@ -189,7 +189,6 @@ U32 LLPipeline::RenderResolutionDivisor;
 F32 LLPipeline::RenderResolutionMultiplier;
 // [/SL:KB]
 bool LLPipeline::sDLSS = false;
-bool LLPipeline::sRR = false;
 bool LLPipeline::RenderUIBuffer;
 S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
@@ -1171,33 +1170,6 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mNRLiftRender.release();
         }
 
-        if (sRR && LLVkBridge::rayReconstructionAvailable())
-        {
-            // <FS> ray reconstruction (the albedos are 16 bit: linear 8 bit bands in the darks): the guides at the render size, its output and the post chain that follows at the window size. The chain is 16 bit
-            // too: it used to run at the render size before the upscale, whose temporal averaging hid the 8 bit steps of dark gradients; after the upscale nothing hides them
-            if (!mRRGuides.allocate(resX, resY, TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RGBA16F) || !mRRGuides.addColorAttachment(TexelFormat::RG16F)
-                || !mRRReflMotion.allocate(resX, resY, TexelFormat::RG16F) || !mRRHdr.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPing.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F) || !mRRPong.allocate(window_res_x, window_res_y, TexelFormat::RGBA16F)
-                || !mRRDenoised.allocate(resX, resY, TexelFormat::RGBA16F))
-            {
-                LL_WARNS("VkDlss") << "the ray reconstruction targets could not be made: ray reconstruction stays off" << LL_ENDL;
-                mRRGuides.release();
-                mRRReflMotion.release();
-                mRRHdr.release();
-                mRRPing.release();
-                mRRPong.release();
-                mRRDenoised.release();
-            }
-        }
-        else
-        {
-            mRRGuides.release();
-            mRRReflMotion.release();
-            mRRHdr.release();
-            mRRPing.release();
-            mRRPong.release();
-            mRRDenoised.release();
-        }
-
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
         mPostPingMap.allocate(resX, resY, TexelFormat::RGBA8);
         mPostPongMap.allocate(resX, resY, TexelFormat::RGBA8);
@@ -1377,7 +1349,6 @@ void LLPipeline::refreshCachedSettings()
     // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; LL_VK_DLSS is set at start-up by FSVkDLSS)
     static const bool dlss_started = getenv("LL_VK_DLSS") != nullptr;
     sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS");
-    sRR = sDLSS && gSavedSettings.getBOOL("FSVkRayReconstruction");       // <FS> whether the device can do it is checked where the targets are made and where it runs
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
@@ -1585,7 +1556,6 @@ void LLPipeline::releaseScreenBuffers()
     mNROutputRender.release();
     mNRLift.release();
     mNRLiftRender.release();
-    mRRGuides.release();
     mRtReflMain.release();
     mRtReflSlots.clear();
     mDnsrPrep.release();
@@ -1594,11 +1564,6 @@ void LLPipeline::releaseScreenBuffers()
     mRtReflDenoised.release();
     mDnsrHit.release();
     mDnsrSunOut.release();
-    mRRReflMotion.release();
-    mRRHdr.release();
-    mRRPing.release();
-    mRRPong.release();
-    mRRDenoised.release();
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -21825,19 +21790,10 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.unbind();
 }
 
-// <FS> test switch, read from D:/claude/rr-debug.txt about once a second (one number): 0 normal, 1 no ray reconstruction (the picture is only stretched), 2 / 3 / 4 show the diffuse albedo /
-// specular albedo / normal guide, 5 plain DLSS super resolution instead, 6 ray reconstruction with our own ray shadow accumulation switched on as well,
-// 7 ray reconstruction without the traced reflection guides, 8 show the reflection motion vectors, 10 the hit distance + matrices guide instead of the motion vectors
+// <FS> test switches, read from D:/claude/rr-debug.txt about once a second (the file is a left over of the ray reconstruction days; the first number is not used any more, the next three are):
 static S32 sRrHairMode = 0;         // the second number of the file: how the traced mirror takes hair (rt_hair_soft in shadowUtil.glsl)
 static S32 sRrAlphaSunOld = 0;      // the third number: 1 = the alpha pass (hair) traces its one hard sun ray as it did before, 0 = the soft sun like the lightmap
 static S32 sRrBlurForce = 0;        // the fourth number: 1 = the lightmap blur runs although the upscaler is on (test of RenderShadowBlurWithDLSS)
-// <FS> the fifth number (PLAN-dlss-nr.md section 8): the order of ray reconstruction and the rest of the frame. 0 today's: RR denoises and upscales to the window size in one feature, the post chain
-// runs at the window size (and DLSS-NR takes the window-size position). 1 "denoise first": RR at a one-to-one ratio into mRRDenoised (render size), then the plain path: post chain at the render size,
-// NR at its render-size position, plain DLSS super resolution to the window with the jitter as today. 2: the same with the super resolution told a jitter of zero (its input is resolved).
-// 3 (and no fifth number): automatic, the default since 2026-10-29: order 2 when the neural render runs in the frame, today's order otherwise (measured at the hub, RT on: with NR 37.5 -> 48.8 fps;
-// RR alone 76.5 today's against 67 in order 2, where the second feature only buys the depth of field back)
-static S32 sRrOrder = 3;
-S32 rrOrder() { rrDebugMode(); return sRrOrder; }
 S32 rrAlphaSunOld() { rrDebugMode(); return sRrAlphaSunOld; }
 S32 rrBlurForce() { rrDebugMode(); return sRrBlurForce; }
 S32 rrDebugMode()
@@ -21852,46 +21808,13 @@ S32 rrDebugMode()
         sRrHairMode = 0;
         sRrAlphaSunOld = 0;
         sRrBlurForce = 0;
-        sRrOrder = 3;
         std::ifstream in("D:/claude/rr-debug.txt");
         if (in)
         {
             in >> mode >> sRrHairMode >> sRrAlphaSunOld >> sRrBlurForce;
-            S32 order = 3;
-            if (in >> order) sRrOrder = llclamp(order, 0, 3);     // an older four-field file keeps the automatic choice
         }
     }
     return mode;
-}
-
-void LLPipeline::generateRRReflectionMotion(LLRenderTarget* dst)
-{
-    LL_PROFILE_GPU_ZONE("rr reflection motion");
-    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
-    const glm::mat4 view_proj_cur = mViewProjCur;
-    const glm::mat4 view_proj_prev = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
-    const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
-    const glm::mat3 view_to_world = glm::mat3(view_inv);
-    const glm::mat4 inv_scene_f = glm::mat4(inv_scene);
-    static LLStaticHashedString inv_scene_s("inv_scene"), cur_s("view_proj_cur"), prev_s("view_proj_prev"), cam_s("cam_pos"), v2w_s("view_to_world"), res_s("render_res");
-
-    RenderPassScope pass(*dst);
-    bindDeferredShader(gRRReflMotionProgram);
-    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
-    gRRReflMotionProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRtReflMain, false, LLTexUnit::TFO_POINT, 1);        // (the hit distance: the second output of the RT Reflection pass)
-    gRRReflMotionProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
-    gRRReflMotionProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
-    gRRReflMotionProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
-    gRRReflMotionProgram.uniform3f(cam_s, view_inv[3][0], view_inv[3][1], view_inv[3][2]);
-    gRRReflMotionProgram.uniformMatrix3fv(v2w_s, 1, false, glm::value_ptr(view_to_world));
-    gRRReflMotionProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
-    {
-        LLRenderState::BlendScope blend(false);
-        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
-        mScreenTriangleVB->setBuffer();
-        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    }
-    unbindDeferredShader(gRRReflMotionProgram);
 }
 
 F32 LLPipeline::farDistanceScale()
@@ -21903,12 +21826,6 @@ F32 LLPipeline::farDistanceScale()
         return 1.f;
     }
     return llclamp(tanf(0.5f * camera->getView()) / tanf(0.5f * default_fov), 0.05f, 1.f);
-}
-
-bool LLPipeline::rayReconstructionActive()
-{
-    return rrDebugMode() != 5 && sRR && sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && mRRGuides.isComplete() && mRRHdr.isComplete() && mRRPing.isComplete() && mRRPong.isComplete()
-           && mRRGuides.getNumTextures() >= 4 && gRRGuidesProgram.isComplete() && LLVkBridge::rayReconstructionAvailable() && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
 // <FS> the target of the RT Reflection pass for a view: the main view's lives in mRtReflMain (render size), the others (cube faces, the planar mirror's view) in a slot each, made at the view's size
@@ -21938,47 +21855,13 @@ LLRenderTarget* LLPipeline::rtReflectionTarget(const LLRenderTarget* screen)
     return t;
 }
 
-// <FS> The guide buffers ray reconstruction wants, from the G-buffer (rrGuidesF.glsl)
-void LLPipeline::generateRRGuides(LLRenderTarget* dst)
-{
-    LL_PROFILE_GPU_ZONE("rr guides");
-    const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
-    const glm::mat3 view_to_world = glm::mat3(view_inv);
-    static LLStaticHashedString view_to_world_s("view_to_world");
-    // <FS> the fourth output of the pass is the reflection motion (what generateRRReflectionMotion made in a pass of its own: one full screen pass less)
-    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
-    const glm::mat4 inv_scene_f = glm::mat4(inv_scene);
-    const glm::mat4 view_proj_cur = mViewProjCur;
-    const glm::mat4 view_proj_prev = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
-    static LLStaticHashedString inv_scene_s("inv_scene"), cur_s("view_proj_cur"), prev_s("view_proj_prev"), cam_s("cam_pos"), res_s("render_res"), use_s("use_refl");
-
-    RenderPassScope pass(*dst);
-    bindDeferredShader(gRRGuidesProgram);
-    gRRGuidesProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
-    gRRGuidesProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mMotionMap, false, LLTexUnit::TFO_POINT, 0);
-    gRRGuidesProgram.bindTexture(LLShaderMgr::BUMP_MAP, &mRtReflMain, false, LLTexUnit::TFO_POINT, 1);        // (the hit distance: the second output of the RT Reflection pass)
-    gRRGuidesProgram.uniformMatrix4fv(inv_scene_s, 1, false, glm::value_ptr(inv_scene_f));
-    gRRGuidesProgram.uniformMatrix4fv(cur_s, 1, false, glm::value_ptr(view_proj_cur));
-    gRRGuidesProgram.uniformMatrix4fv(prev_s, 1, false, glm::value_ptr(view_proj_prev));
-    gRRGuidesProgram.uniform3f(cam_s, view_inv[3][0], view_inv[3][1], view_inv[3][2]);
-    gRRGuidesProgram.uniform2f(res_s, (F32)dst->getWidth(), (F32)dst->getHeight());
-    gRRGuidesProgram.uniform1f(use_s, mRRHitDistValid ? 1.f : 0.f);
-    {
-        LLRenderState::BlendScope blend(false);
-        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
-        mScreenTriangleVB->setBuffer();
-        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-    }
-    unbindDeferredShader(gRRGuidesProgram);
-}
-
 // <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): on with the setting FSVkAmdDenoise (or LL_VK_AMD_DENOISE=1) when an upscaler is in use without ray reconstruction (FSR on an
 // NVIDIA card, or any other card), the traced mirror is on and the denoiser's libraries are linked
 bool LLPipeline::amdDenoiserWanted()
 {
     static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoise", false);
     static const bool env = getenv("LL_VK_AMD_DENOISE") && atoi(getenv("LL_VK_AMD_DENOISE")) != 0;
-    return (setting || env) && sDLSS && !sRR && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
+    return (setting || env) && sDLSS && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
         && gDnsrPrepProgram.isComplete() && gDnsrPackProgram.isComplete() && gDnsrUnpackProgram.isComplete();
 }
 
@@ -22281,18 +22164,14 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
     return &mRtReflDenoised;
 }
 
-bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction, bool resolved_input)
+bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
 {
     if (!LLVkBridge::upscaleAvailable())
     {
         return false;
     }
-    // <FS> the reset bookkeeping is per kind: in the "denoise first" order ray reconstruction and the super resolution both run in one frame, each with a history of its own
-    const int kind = ray_reconstruction ? 1 : 0;
-    static U32 last_frames[2] = { ~0u, ~0u };
-    static U32 last_sizes[2][2] = {};
-    U32& last_frame = last_frames[kind];
-    U32* last_size = last_sizes[kind];
+    static U32 last_frame = ~0u;
+    static U32 last_size[2] = {};
     const U32 frame = LLFrameTimer::getFrameCount();
     LLVkBridge::UpscaleArgs a;
     a.mColor = src->getTexture(0);
@@ -22303,34 +22182,12 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     a.mRenderHeight = src->getHeight();
     a.mOutputWidth = dst->getWidth();
     a.mOutputHeight = dst->getHeight();
-    // <FS> a resolved input (ray reconstruction's one-to-one output): the G-buffer was rendered jittered for RR's sake, but what the super resolution sees is already resolved, so it is told zero
-    a.mJitterX = resolved_input ? 0.f : LLViewerCamera::sJitterPixels.x;
-    a.mJitterY = resolved_input ? 0.f : LLViewerCamera::sJitterPixels.y;
-    a.mCameraNear = LLViewerCamera::getInstance()->getNear();       // (the FSR backend wants the camera and the frame time; DLSS ignores them)
+    a.mJitterX = LLViewerCamera::sJitterPixels.x;
+    a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    a.mCameraNear = LLViewerCamera::getInstance()->getNear();
     a.mCameraFar = LLViewerCamera::getInstance()->getFar();
     a.mCameraFovY = LLViewerCamera::getInstance()->getView();
     a.mFrameTimeMs = llclamp(gFrameIntervalSeconds.value() * 1000.f, 1.f, 100.f);
-    if (ray_reconstruction)
-    {
-        a.mRayReconstruction = 1;
-        a.mHdr = 1;                     // the colour is the linear radiance before the tonemap
-        a.mDiffuseAlbedo = mRRGuides.getTexture(0);
-        a.mSpecularAlbedo = mRRGuides.getTexture(1);
-        a.mNormals = mRRGuides.getTexture(2);
-        a.mExposure = mExposureMap.getTexture(0);
-        if (mRRReflMotionValid && mRRGuides.getNumTextures() >= 4)
-        {
-            a.mReflectionMotion = mRRGuides.getTexture(3);      // what the traced reflections show, moved by the camera (the fourth output of the guides pass)
-        }
-        if (mRRHitDistValid && mRtReflMain.isComplete() && rrDebugMode() == 10)       // test: the hit distance guide with matrices instead of the motion vectors
-        {
-            // the specular hit distance of the traced reflections; with it the denoiser wants the camera matrices (no jitter in them): world (the region) to view, and view to clip
-            a.mSpecularHitDistance = mRtReflMain.getTexture(1);
-            memcpy(a.mWorldToView, glm::value_ptr(LLViewerCamera::sJitterModelview), sizeof(a.mWorldToView));
-            memcpy(a.mViewToClip, glm::value_ptr(LLViewerCamera::sUnjitteredProjection), sizeof(a.mViewToClip));
-        }
-        a.mPreset = gSavedSettings.getS32("FSVkRRPreset");
-    }
     // the history is useless after a pause in rendering or a resize
     // <FS> a snapshot renders several times within one frame number: those renders continue each other's history
     const bool continues = frame == last_frame + 1 || (gSnapshot && frame == last_frame);
@@ -22345,19 +22202,11 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray
     static U32 logged = 0;
     if (logged++ < 6)
     {
-        LL_INFOS("VkDlss") << "upscale call " << logged << (ray_reconstruction ? " (ray reconstruction)" : (resolved_input ? " (resolved input, zero jitter)" : "")) << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
-                           << ", jitter " << a.mJitterX << "," << a.mJitterY << ", reset " << a.mReset << LL_ENDL;
+        LL_INFOS("VkUpscale") << "upscale call " << logged << ": render " << a.mRenderWidth << "x" << a.mRenderHeight << " -> " << a.mOutputWidth << "x" << a.mOutputHeight
+                              << ", jitter " << a.mJitterX << "," << a.mJitterY << ", reset " << a.mReset << LL_ENDL;
     }
-    if (ray_reconstruction)
-    {
-        LL_PROFILE_GPU_ZONE("dlss rr");       // <FS> its own zone: in the "denoise first" order both features run in one frame
-        LLVkBridge::upscale(a);
-    }
-    else
-    {
-        LL_PROFILE_GPU_ZONE("dlss");
-        LLVkBridge::upscale(a);
-    }
+    LL_PROFILE_GPU_ZONE("upscale");
+    LLVkBridge::upscale(a);
     return true;
 }
 
@@ -23391,18 +23240,8 @@ void LLPipeline::renderFinalize()
         LLVkBridge::upscale(a);
     }
 
-    // <FS> ray reconstruction: upscale and denoise the HDR picture here, the post chain below then runs at the window size on mRRPing / mRRPong
     LLRenderTarget* post_ping = &mPostPingMap;
     LLRenderTarget* post_pong = &mPostPongMap;
-    bool rr_done = false;
-    // <FS> "denoise first" (PLAN-dlss-nr.md section 8; rr-debug.txt fifth number): ray reconstruction ran at a one-to-one ratio into mRRDenoised and the frame takes the plain path from there
-    // (post chain at the render size, NR at its render-size position, plain super resolution to the window); rr_done stays false in that order. Order 3 is the automatic choice: 2 with NR, 0 without
-    bool rr_denoised = false;
-    S32 rr_order = rrOrder();
-    if (rr_order == 3)
-    {
-        rr_order = nr_now ? 2 : 0;
-    }
 
     if (hdr)
     {
@@ -23412,61 +23251,14 @@ void LLPipeline::renderFinalize()
 
         generateExposure(&mLuminanceMap, &mExposureMap);
 
-        if (dlss && rayReconstructionActive())
-        {
-            generateRRGuides(&mRRGuides);
-            mRRReflMotionValid = mRRHitDistValid && rrDebugMode() != 7;        // (the reflection motion is the fourth output of the guides pass)
-            if (rrDebugMode() == 8 && mRRHitDistValid && mRRReflMotion.isComplete() && gRRReflMotionProgram.isComplete())
-            {
-                generateRRReflectionMotion(&mRRReflMotion);                    // the debug view of it (mode 8) reads the target of the old pass
-            }
-            const bool denoise_first = rr_order >= 1 && mRRDenoised.isComplete();
-            LLRenderTarget* rr_out = denoise_first ? &mRRDenoised : &mRRHdr;
-            if (rrDebugMode() == 1)
-            {
-                copyRenderTarget(&mRT->screen, rr_out);       // test: no ray reconstruction, the picture only stretched (or copied, denoise first)
-                rr_done = true;
-            }
-            else
-            {
-                rr_done = applyUpscale(&mRT->screen, rr_out, true);
-            }
-            if (rr_done)
-            {
-                // the alpha of the picture is the glow amount (read by the glow passes): ray reconstruction does not give it back, so the render size alpha is stretched over the output's
-                // (copied, denoise first: the same size)
-                LL_PROFILE_GPU_ZONE("rr alpha");
-                RenderPassScope pass_11736(*rr_out);
-                gRender.setColorMask(false, true);
-                gDeferredPostNoDoFProgram.bind();
-                gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->screen);
-                gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
-                mScreenTriangleVB->setBuffer();
-                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-                gDeferredPostNoDoFProgram.unbind();
-                pass_11736.end();
-                gRender.setColorMask(true, true);
-                if (denoise_first)
-                {
-                    rr_denoised = true;
-                    rr_done = false;        // the plain path from here, with mRRDenoised for mRT->screen
-                }
-                else
-                {
-                    post_ping = &mRRPing;
-                    post_pong = &mRRPong;
-                }
-            }
-        }
-
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         // <FS> the upscaler sharpens by itself and the sharpening here ran BEFORE it, at the render size: with it on the CAS pass is skipped (the user 2026-11-09; the tonemap then does the gamma itself)
         static LLCachedControl<bool> cas_with_dlss(gSavedSettings, "FSCASWithUpscaler", false);
         bool apply_cas = cas_sharpness != 0.0f && (!dlss || cas_with_dlss) && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        // the CAS pass needs a scratch target of the picture's size: the lighting's at the render size, mRRPong at the window size
-        LLRenderTarget* cas_scratch = rr_done ? post_pong : &mRT->deferredLight;
-        tonemap(rr_done ? &mRRHdr : (rr_denoised ? &mRRDenoised : &mRT->screen), apply_cas ? cas_scratch : post_ping, !apply_cas);
+        // the CAS pass needs a scratch target of the picture's size: the lighting's, at the render size
+        LLRenderTarget* cas_scratch = &mRT->deferredLight;
+        tonemap(&mRT->screen, apply_cas ? cas_scratch : post_ping, !apply_cas);
 
         if (apply_cas)
         {
@@ -23499,8 +23291,7 @@ void LLPipeline::renderFinalize()
 
     if((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
         RenderDepthOfField &&
-        !gCubeSnapshot &&
-        !rr_done)       // <FS> the depth of field works at the render size (its depth, its scratch targets): not yet with ray reconstruction
+        !gCubeSnapshot)
     {
         renderDoF(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
@@ -23524,7 +23315,7 @@ void LLPipeline::renderFinalize()
 
     // <FS:Beq> Restore shader post proc for Vignette
     LLRenderTarget* auxActiveBuffer = sourceBuffer;
-    LLRenderTarget* auxTargetBuffer = rr_done ? targetBuffer : (RenderFSAAType ? &mRT->screen : &mPostPingMap);
+    LLRenderTarget* auxTargetBuffer = RenderFSAAType ? &mRT->screen : &mPostPingMap;
 // [RLVa:KB] - @setsphere
     if (RlvActions::hasBehaviour(RLV_BHVR_SETSPHERE))
     {
@@ -23549,9 +23340,8 @@ void LLPipeline::renderFinalize()
 
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
-    const S32 rr_dbg = (rr_done || rr_denoised) ? rrDebugMode() : 0;
     // <FS> rt-debug.txt view=N shows the ray scene's debug view by itself (no RenderBufferVisualization 9 needed): a live switch while the viewer runs
-    const S32 visualization = (LLVkBridge::rtDebugView() > 0 && LLVkBridge::rtShadowMode()) ? 9 : ((rr_dbg >= 2 && rr_dbg <= 4) ? 10 + rr_dbg - 2 : (rr_dbg == 8 ? 13 : RenderBufferVisualization));
+    const S32 visualization = (LLVkBridge::rtDebugView() > 0 && LLVkBridge::rtShadowMode()) ? 9 : RenderBufferVisualization;
     if (visualization > -1)
     {
         switch (visualization)
@@ -23596,30 +23386,12 @@ void LLPipeline::renderFinalize()
         case 9:
             visualizeRtMaterials(sourceBuffer);
             break;
-        case 13:        // <FS> the reflection motion vectors
-            if (mRRReflMotion.isComplete())
-            {
-                visualizeMotion(&mRRReflMotion, sourceBuffer, false);
-            }
-            break;
-        case 10:        // <FS> the ray reconstruction guides: diffuse albedo, specular albedo, normal (+ roughness in alpha)
-        case 11:
-        case 12:
-            if (mRRGuides.isComplete())
-            {
-                visualizeBuffers(&mRRGuides, sourceBuffer, visualization - 10);
-            }
-            break;
         default:
             break;
         }
     }
 
-    if (rr_done)
-    {
-        // already at the window size
-    }
-    else if (dlss)
+    if (dlss)
     {
         // <FS> DLSS-NR before the upscale (nr-debug.txt pos 1): the render-size picture through the neural renderer, DLSS then upscales its output (the bundle's recommended placement:
         // 45 % of the pixels of the window-size position). The model sees the jittered, tonemapped render; depth and motion match it exactly
@@ -23628,8 +23400,7 @@ void LLPipeline::renderFinalize()
         {
             sourceBuffer = applyNeuralRenderRimLift(&mNROutputRender, sourceBuffer, &mNRLiftRender) ? &mNRLiftRender : &mNROutputRender;
         }
-        // <FS> denoise first, order 2: the super resolution's input is RR's resolved picture, so it is told a jitter of zero (order 1 keeps the jitter, the A/B of that one change)
-        if (applyUpscale(sourceBuffer, &mUpscaledMap, false, rr_denoised && rr_order >= 2))
+        if (applyUpscale(sourceBuffer, &mUpscaledMap))
         {
             sourceBuffer = &mUpscaledMap;
         }
@@ -23638,7 +23409,7 @@ void LLPipeline::renderFinalize()
     // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size picture through the neural renderer, before the present pass and the UI (nr-debug.txt pos 0).
     // LL_VK_DLSS_NR=2 evaluates and leaves the picture alone (gate G2), 3 shows the result (gate G3). Snapshots go through it too (the user 2026-10-28, to compare stills): the
     // snapshot's sizes each get a feature of their own, created on the first use and released once the frame that last used it has completed
-    if (dlss && nr_now && (nrDebug().mPosition != 1 || rr_done) && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
+    if (dlss && nr_now && nrDebug().mPosition != 1 && mNROutput.isComplete() && sourceBuffer->getWidth() == mNROutput.getWidth()
         && sourceBuffer->getHeight() == mNROutput.getHeight() && applyNeuralRender(sourceBuffer, &mNROutput) && nr_show)
     {
         sourceBuffer = applyNeuralRenderRimLift(&mNROutput, sourceBuffer, &mNRLift) ? &mNRLift : &mNROutput;
@@ -25290,7 +25061,6 @@ void LLPipeline::renderDeferredLighting()
                     rt_glossy_mode = 1;
                 }
         }
-        mRRHitDistValid = false;
         if (rt_glossy_mode != 0 && gDeferredRtReflectionProgram.isComplete())
         {
             rt_refl_target = rtReflectionTarget(screen_target);
@@ -25482,7 +25252,6 @@ void LLPipeline::renderDeferredLighting()
             }
             pass_rt_refl.end();
             unbindDeferredShader(rt_shader);
-            mRRHitDistValid = !gCubeSnapshot && rayReconstructionActive();
             rt_refl_target = denoiseReflections(rt_refl_target);        // (the AMD reflection denoiser when it is on: the lighting pass reads its result)
         }
 

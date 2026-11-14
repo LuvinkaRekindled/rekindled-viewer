@@ -9,7 +9,7 @@
 
 #include "llvkdlssnr.h"
 
-#if defined(LL_DLSS)
+#if defined(LL_NGX_NR)
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
@@ -38,7 +38,7 @@ int featureId()
     return 18;
 }
 
-#if !defined(LL_DLSS)
+#if !defined(LL_NGX_NR)
 
 void probe(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const NVSDK_NGX_FeatureDiscoveryInfo&)
 {
@@ -262,7 +262,7 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
         }
     }
 
-    // 3. the extensions 18 wants (addDeviceExtensions in llvkdlss.cpp enabled the device ones already when the flag was set; this is the list for the log)
+    // 3. the extensions 18 wants (addDeviceExtensions in llvkngx.cpp enabled the device ones already when the flag was set; this is the list for the log)
     {
         NVSDK_NGX_FeatureDiscoveryInfo info = base;
         info.FeatureID = (NVSDK_NGX_Feature)featureId();
@@ -472,7 +472,7 @@ void shutdown()
     gDevice = VK_NULL_HANDLE;
 }
 
-#endif // LL_DLSS
+#endif // LL_NGX_NR
 
 }
 

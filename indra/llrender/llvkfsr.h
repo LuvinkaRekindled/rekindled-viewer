@@ -1,7 +1,7 @@
 /**
  * @file llvkfsr.h
  * @brief AMD FSR 3.1 upscaler for the Vulkan mirror, from the FidelityFX SDK v1.1.4 source (MIT) built into static libraries, no DLL. The second backend of
- *        llvkupscale.h: it takes the same Params as DLSS and works on any GPU. Compiled in when the SDK headers were found at configure time (LL_FSR); stubs otherwise.
+ *        llvkupscale.h: the upscaler of the viewer (llvkupscale.h), it works on any GPU. Compiled in when the SDK headers were found at configure time (LL_FSR); stubs otherwise.
  *        doc/vulkan/PLAN-fsr-upscaler.md
  */
 
@@ -10,7 +10,7 @@
 
 #if defined(LL_VULKAN)
 
-#include "llvkdlss.h"       // Params
+#include "llvkupscale.h"    // Params
 
 namespace LLVkFsr
 {
@@ -24,7 +24,7 @@ namespace LLVkFsr
     void shutdown();
 
     // Records the upscale into 'cmd'. The images must be in the layouts inputLayout()/outputLayout() name. Makes the FSR context on first use and whenever the sizes change.
-    bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p);
+    bool evaluate(VkCommandBuffer cmd, const LLVkUpscale::Params& p);
 
     // FSR reads every input as a sampled image and writes the output as a storage image
     VkImageLayout inputLayout(const LLVk::Image& image);

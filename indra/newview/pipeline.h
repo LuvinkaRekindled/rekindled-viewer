@@ -173,31 +173,20 @@ public:
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
     // <FS> resolved_input: the source is ray reconstruction's one-to-one output (PLAN-dlss-nr.md section 8, "denoise first"): the super resolution call gets a jitter of zero
-    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction = false, bool resolved_input = false);
+    bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);
     bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done
     bool applyNeuralRenderRimLift(LLRenderTarget* nr, LLRenderTarget* src, LLRenderTarget* dst);
     // <FS> DLSS-NR: what the frame should do now: 0 nothing, 1 evaluate and show, 2 only while a snapshot renders, 3 evaluate but show the normal picture (the launcher's test flag)
     static S32 neuralRenderMode();
     S32 mNRReleaseFrames = 0;       // <FS> DLSS-NR: frames left to tell the worker to release the feature after the mode went off    // <FS> DLSS-NR: the rim lift (nrRimLiftF.glsl) of nr against its input src into dst; false: nothing was done    // upscales src (render size) into dst (window size) through the mirror; false: nothing was done
     static bool sDLSS;
-    // <FS> DLSS ray reconstruction (FSVkRayReconstruction, needs DLSS): the denoiser / upscaler takes the noisy linear HDR picture (mRT->screen) before the tonemap, with guide buffers made from the
-    // G-buffer, and gives back a window sized HDR picture; the tonemap, CAS, glow and the rest of the post chain then run at the window size on mRRPing / mRRPong.
-    static bool sRR;
     static F32 farDistanceScale();      // the factor the far avatar rules (tiers, impostor distance, fringe pass) apply to a distance: 1 at the normal field of view, less when the camera zooms in (a zoomed in avatar is looked at closely whatever its distance)
-    bool rayReconstructionActive();     // sRR and everything it needs exists (targets, program, device support, no zoomed snapshot)
-    void generateRRGuides(LLRenderTarget* dst);
-    void generateRRReflectionMotion(LLRenderTarget* dst);       // specular motion vectors from the hit distance: the reflected point projected with this frame's and last frame's camera
-    LLRenderTarget          mRRReflMotion;  // render size RG16F
-    bool                    mRRReflMotionValid = false;
     // <FS> the RT Reflection pass (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md): the traced glossy reflections of a view before its lighting pass. Output 0 RGBA16F: the reflection colour and how much of it
     // replaces the probe result (-1 traced and missed, 0 not traced); output 1 R16F: metres from a glossy pixel to what its ray hit (0: not traced), the specular hit distance guide of ray reconstruction.
     // mRtReflMain is the main view's (render size), the other views (cube faces, the planar mirror's view) have a target each, made at their size.
     LLRenderTarget          mRtReflMain;
     std::map<const LLRenderTarget*, std::unique_ptr<LLRenderTarget>> mRtReflSlots;
     LLRenderTarget*         rtReflectionTarget(const LLRenderTarget* screen);       // the pass's target for a view, made or remade at the view's size; null if it could not be made
-    bool                    mRRHitDistValid = false;        // mRtReflMain's second output holds this frame's distances
-    LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F), 3 the reflection motion (RG16F)
-    LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
     // <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): between the RT Reflection pass and the lighting pass, with FSR (no ray reconstruction)
     LLRenderTarget          mDnsrPrep;      // render size: 0 the world normal (RGBA16F), 1 the roughness (R16F), 2 the raw depth (R32F)
     LLRenderTarget          mDnsrIn;        // render size RGBA16F: the traced reflection (rgb) and the length of its ray (a)
@@ -211,9 +200,6 @@ public:
     bool                    prepareDenoiseInputs(U32 w, U32 h, bool& made);       // the world normal, roughness and raw depth for the denoisers, once a frame
     void                    denoiseSunShadow(LLRenderTarget* light);      // denoises the sun channel of the lightmap in place (before the penumbra filter)
     LLRenderTarget*         denoiseReflections(LLRenderTarget* refl);       // runs the passes and the denoiser; returns the target the lighting pass should read (refl itself when it did not run)
-    LLRenderTarget          mRRDenoised;    // <FS> render size RGBA16F: what ray reconstruction outputs at a one-to-one ratio ("denoise first", PLAN-dlss-nr.md section 8); the frame then takes the plain path
-    LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale
-    LLRenderTarget          mRRPong;
     static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
     // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the velocity pass after the G-buffer. begin: before the main view's renderGeomDeferred (sets the body recording
     // when the pass is wanted); render: after the G-buffer is flushed, before the lighting. mAvatarVelocityMap: RGBA16F at render size, rg = total screen motion in pixels, a = 1 where an avatar wrote.

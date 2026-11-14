@@ -67,7 +67,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
 }
 bool ready() { return false; }
 void shutdown() {}
-bool evaluate(VkCommandBuffer, const LLVkDlss::Params&) { return false; }
+bool evaluate(VkCommandBuffer, const LLVkUpscale::Params&) { return false; }
 
 #else
 
@@ -168,7 +168,7 @@ void reap()
 }
 
 // a context serves a request when it was made for at least these sizes and is not much bigger (within 1.6 times the pixels: a context made for a hi-res snapshot is not used for the window)
-bool fits(const Ctx& c, U32 flags, const LLVkDlss::Params& p)
+bool fits(const Ctx& c, U32 flags, const LLVkUpscale::Params& p)
 {
     if (c.mFlags != flags || p.mRenderWidth > c.mMaxRenderW || p.mRenderHeight > c.mMaxRenderH || p.mOutputWidth > c.mMaxOutW || p.mOutputHeight > c.mMaxOutH)
     {
@@ -180,7 +180,7 @@ bool fits(const Ctx& c, U32 flags, const LLVkDlss::Params& p)
 }
 
 // the context for this request: one that fits, or a new one (the oldest other context is pushed out when there are too many); null when it could not be made
-Ctx* context_for(U32 flags, const LLVkDlss::Params& p)
+Ctx* context_for(U32 flags, const LLVkUpscale::Params& p)
 {
     reap();
     for (size_t i = 0; i < gContexts.size(); ++i)
@@ -338,11 +338,11 @@ void shutdown()
     gReady = false;
 }
 
-bool evaluate(VkCommandBuffer cmd, const LLVkDlss::Params& p)
+bool evaluate(VkCommandBuffer cmd, const LLVkUpscale::Params& p)
 {
-    if (!gReady || !p.mColor || !p.mDepth || !p.mMotion || !p.mOutput || p.mRayReconstruction)
+    if (!gReady || !p.mColor || !p.mDepth || !p.mMotion || !p.mOutput)
     {
-        return false;           // (no ray reconstruction here: the caller does not ask for it when rayReconstructionAvailable() is false)
+        return false;
     }
     // the colour is display-referred (gamma encoded) unless the caller says it is linear HDR; the motion vectors are in render pixels, and carry no jitter
     U32 flags = 0;

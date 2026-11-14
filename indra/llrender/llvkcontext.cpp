@@ -1065,7 +1065,11 @@ bool Context::createDevice()
     // at the faulting address (an image freed lately, with its debug name "GL texture N"); shader debug info lets the decoder map the faulting instruction when it is given the SPIR-V. LL_VK_DIAG=0 turns it off.
     VkDeviceDiagnosticsConfigCreateInfoNV diag_config = { VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV };
     {
+#if defined(LL_LOCAL_NV_DIAG)
         static const bool diag_on = getenv("LL_VK_DIAG") == nullptr || atoi(getenv("LL_VK_DIAG")) != 0;
+#else
+        static const bool diag_on = false;      // a release build asks the driver for nothing NVIDIA specific (REKINDLED_LOCAL_NVIDIA turns it on for a local build)
+#endif
         U32 n = 0;
         vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
         std::vector<VkExtensionProperties> have_all(n);
