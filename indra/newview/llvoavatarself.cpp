@@ -30,6 +30,7 @@
 #include "llvoavatar.h"
 
 #include "pipeline.h"
+#include "llvkbridge.h"             // <FS> LLVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
 
 #include "llagent.h" //  Get state values from here
 #include "llattachmentsmgr.h"
@@ -2480,6 +2481,45 @@ void LLVOAvatarSelf::dumpLocalTextures() const
         {
             LL_INFOS() << "LocTex " << name << ": No LLViewerTexture" << LL_ENDL;
         }
+    }
+
+    // <FS> 2026-11-14 (Adam: the eyes bake slot shows a brown texture, the iris slot the right one, until a rebake; his ears go partly alpha): the bake slots as the viewer has them (the texture's id, its
+    // discard level, whether it is being fetched or marked missing) and, from the worker, what its handle shows (the VkTex log's "own avatar texture" lines). The avatar textures floater is drawn through
+    // the same handles as the avatar, so it cannot tell a bad bake from a handle that shows another texture's image: these lines can
+    {
+        std::vector<U32> names;
+        std::vector<std::string> labels;
+        for (const auto& entry : sAvatarDictionary->getBakedTextures())
+        {
+            const LLAvatarAppearanceDictionary::BakedEntry* baked = entry.second;
+            if (!baked)
+            {
+                continue;
+            }
+            LLViewerTexture* tex = getTEImage(baked->mTextureIndex);
+            std::string label = entry.second->mName;
+            U32 gl_name = 0;
+            if (tex)
+            {
+                if (LLImageTex* gl = tex->getImageTexture())
+                {
+                    gl_name = gl->getTexName();
+                }
+                LLViewerFetchedTexture* fetched = dynamic_cast<LLViewerFetchedTexture*>(tex);
+                if (fetched)
+                {
+                    label += " " + fetched->getID().asString() + ", discard " + std::to_string(fetched->getDiscardLevel()) + ", " + std::to_string(fetched->getWidth()) + "x" + std::to_string(fetched->getHeight())
+                        + (fetched->isFetching() ? ", fetching" : "") + (fetched->isMissingAsset() ? ", MARKED MISSING" : "") + (fetched == LLViewerFetchedTexture::sDefaultImagep.get() ? ", THE DEFAULT IMAGE" : "");
+                }
+            }
+            else
+            {
+                label += " (no texture)";
+            }
+            names.push_back(gl_name);
+            labels.push_back(label);
+        }
+        LLVkBridge::describeTextures(names, labels);
     }
 }
 
