@@ -5041,7 +5041,17 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
             if (mDeferredBlocks.empty() || start + expected > mDeferredBlocks.back().mSize)
             {
                 Buffer block;
-                if (!ctx.createBuffer(std::max<VkDeviceSize>(expected + align, 32ull * 1024 * 1024), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, block) || !block.mMapped)
+                for (size_t r = 0; r < mRetiredBlocks.size(); ++r)
+                {
+                    if (mRetiredBlocks[r].mBuffer.mSize >= expected + align && ctx.frameFinished(mRetiredBlocks[r].mFrame))
+                    {
+                        block = mRetiredBlocks[r].mBuffer;      // (a block the GPU is done with: its pages are already in memory)
+                        mRetiredBlocks.erase(mRetiredBlocks.begin() + r);
+                        break;
+                    }
+                }
+                if (block.mBuffer == VK_NULL_HANDLE
+                    && (!ctx.createBuffer(std::max<VkDeviceSize>(expected + align, 32ull * 1024 * 1024), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, block) || !block.mMapped))
                 {
                     block = Buffer();
                 }
@@ -5145,15 +5155,42 @@ old_path:
     return true;
 }
 
+// <FS> the staging blocks of a flush are kept (up to 6 of 40 MB or less) for the next uploads between frames; a block nobody asked for in 1800 frames is given back (freed once its frame has completed)
+void Renderer::retireDeferredBlocks()
+{
+    Context& ctx = Context::instance();
+    const U64 now = ctx.getFrameNumber();
+    for (size_t r = 0; r < mRetiredBlocks.size(); )
+    {
+        if (now > mRetiredBlocks[r].mFrame + 1800 && ctx.frameFinished(mRetiredBlocks[r].mFrame))
+        {
+            ctx.destroyBuffer(mRetiredBlocks[r].mBuffer);
+            mRetiredBlocks.erase(mRetiredBlocks.begin() + r);
+        }
+        else
+        {
+            ++r;
+        }
+    }
+    for (Buffer& b : mDeferredBlocks)
+    {
+        if (b.mSize <= 40ull * 1024 * 1024 && mRetiredBlocks.size() < 6)
+        {
+            mRetiredBlocks.push_back({ b, now });
+        }
+        else
+        {
+            ctx.destroyBuffer(b);       // (freed once the frame that copies from it has completed)
+        }
+    }
+}
+
 void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
 {
     std::lock_guard<std::mutex> lock(mDeferredMutex);
     if (mDeferredUploads.empty())
     {
-        for (Buffer& b : mDeferredBlocks)
-        {
-            Context::instance().destroyBuffer(b);
-        }
+        retireDeferredBlocks();
         mDeferredBlocks.clear();
         mDeferredBlockUsed = 0;
         mDeferredBytes = 0;
@@ -5206,10 +5243,7 @@ void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
         LL_INFOS("VkUpload") << "recorded " << mDeferredUploads.size() << " uploads kept from between frames: " << images << " images, " << copies << " copies, "
                              << (double)mDeferredBytes / (1024.0 * 1024.0) << " MB" << LL_ENDL;
     }
-    for (Buffer& b : mDeferredBlocks)
-    {
-        ctx.destroyBuffer(b);       // (freed once the frame that copies from it has completed)
-    }
+    retireDeferredBlocks();
     mDeferredBlocks.clear();
     mDeferredUploads.clear();
     mDeferredBlockUsed = 0;

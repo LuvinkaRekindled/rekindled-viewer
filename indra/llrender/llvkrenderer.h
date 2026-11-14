@@ -683,6 +683,9 @@ private:
     std::vector<Buffer> mDeferredBlocks;            // host visible staging blocks the deferred uploads were filled into
     VkDeviceSize mDeferredBlockUsed = 0;
     VkDeviceSize mDeferredBytes = 0;
+    struct RetiredBlock { Buffer mBuffer; U64 mFrame; };
+    std::vector<RetiredBlock> mRetiredBlocks;       // staging blocks of flushed uploads, kept for the next ones once the frame that copied from them has completed (a fresh block costs a page fault a page the first time it is written)
+    void retireDeferredBlocks();
     std::vector<DeferredUpload> mDeferredUploads;
     std::mutex mDeferredMutex;
     void flushDeferredUploads(VkCommandBuffer cmd);     // records them (outside a render pass); the staging blocks are given back (freed once the frame has completed)
