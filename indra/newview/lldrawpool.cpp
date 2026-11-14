@@ -640,12 +640,6 @@ static int palette_arena_mode()
     return mode;
 }
 
-static int palette_id_mode()
-{
-    static const int mode = getenv("LL_VK_PALID") ? atoi(getenv("LL_VK_PALID")) : 1;
-    return mode;
-}
-
 // <FS> avatar relative skinning: the anchor of a frame (see lldrawpool.h). Decided by the first caller of the frame (the palette job of the frame before, a pool thread, or the render), then read back from a ring
 namespace
 {
@@ -830,11 +824,6 @@ void ll_rig_census_log()
         << ", old path " << v[5] << " | cascade shadow records: entries " << v[6] << " in " << v[7] << " builds | transient rigged alpha entries " << v[8] << LL_ENDL;
 }
 
-bool ll_palette_ids_on()
-{
-    return palette_id_mode() != 0;
-}
-
 // the id of a palette entry (made on first use; two threads that race give one of the two back)
 static U32 palette_id_of(std::atomic<U32>& cell)
 {
@@ -874,13 +863,9 @@ static bool palette_pair_push(U32 id, U32 offset)
     return true;
 }
 
-// the float offset a palette id was logged with in this frame's list (the diagnostics read palettes by it); ~0u = not found. Offsets pass through when ids are off.
+// the float offset a palette id was logged with in this frame's list (the diagnostics read palettes by it); ~0u = not found.
 static U32 palette_real_offset(U32 value)
 {
-    if (!palette_id_mode())
-    {
-        return value;
-    }
     const U32 n = std::min<U32>(sFramePal.mPairCursor.load(std::memory_order_acquire), PALETTE_PAIR_CAP);
     for (U32 i = n; i-- > 0; )
     {
@@ -949,7 +934,6 @@ bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset
     }
     while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + count, std::memory_order_acq_rel));
     memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
-    if (palette_id_mode())
     {
         const U32 id = palette_id_of(id_cell);
         if (!id || !palette_pair_push(id, cur))
@@ -1013,10 +997,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
                 LL_INFOS("VkScene") << "[palette] list slots checked " << checked.load() << ", wrong " << wrong.load() << LL_ENDL;
             }
         }
-        if (palette_id_mode())
-        {
-            offset = mpc.mPaletteId.load(std::memory_order_acquire);        // (a stamped entry has an id: it was logged when it was stamped)
-        }
+        offset = mpc.mPaletteId.load(std::memory_order_acquire);        // (a stamped entry has an id: it was logged when it was stamped)
         return true;
     }
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
@@ -1038,7 +1019,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     const U64 again = mpc.mListSlot.load(std::memory_order_acquire);        // (another thread may have added it while this one waited)
     if ((U32)(again >> 32) == (U32)gFrameCount)
     {
-        offset = palette_id_mode() ? mpc.mPaletteId.load(std::memory_order_acquire) : (U32)again;
+        offset = mpc.mPaletteId.load(std::memory_order_acquire);
         return true;
     }
     const size_t need = (size_t)(joints + 1) * 12;
@@ -1070,17 +1051,13 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + need);
     }
     ++sFramePal.mAdded;
-    U32 id = 0;
-    if (palette_id_mode())
+    const U32 id = palette_id_of(mpc.mPaletteId);
+    if (!id || !palette_pair_push(id, at))
     {
-        id = palette_id_of(mpc.mPaletteId);
-        if (!id || !palette_pair_push(id, at))
-        {
-            return false;
-        }
+        return false;
     }
     mpc.mListSlot.store(((U64)(U32)gFrameCount << 32) | at, std::memory_order_release);
-    offset = palette_id_mode() ? id : at;
+    offset = id;
     return true;
 }
 

@@ -5579,30 +5579,19 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    // P3: mFragment == 1: the entries name their palettes by id (the frame's kind 40 pairs, this frame's table and last frame's), nothing is copied; else this frame's palettes and then last frame's follow the entries
-    const bool by_id = h.mFragment == 1;
-    if (h.mEntries == 0 || (h.mPaletteFloats == 0 && !by_id) || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
     {
         ++sStats.mNoProgram;
         return;
     }
     const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
-    const F32* palette_data = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(VelocityGpu) * (size_t)h.mEntries);
-    Renderer::ScratchAlloc palettes;
-    if (!by_id)
-    {
-        palettes = r.allocVertexScratch(8 * (size_t)h.mPaletteFloats);      // this frame's, then last frame's
-    }
-    if (!table.mPtr || !table.mAddress || (!by_id && (!palettes.mPtr || !palettes.mAddress)))
+    if (!table.mPtr || !table.mAddress)
     {
         return;
     }
-    const bool ids_this_frame = by_id && gFrameState.mPalFrame == h.mViewerFrame && gFrameState.mPalIdFrame == h.mViewerFrame;
-    if (!by_id)
-    {
-        memcpy(palettes.mPtr, palette_data, 8 * (size_t)h.mPaletteFloats);
-    }
+    // (the entries name their palettes by id: the frame's kind 40 pairs, this frame's table and last frame's)
+    const bool ids_this_frame = gFrameState.mPalFrame == h.mViewerFrame && gFrameState.mPalIdFrame == h.mViewerFrame;
     const U64 frame_now = Context::instance().getFrameNumber();
     counts.assign(h.mEntries, 0);
     velocity_index_buffers.assign(h.mEntries, nullptr);
@@ -5620,24 +5609,15 @@ static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         }
         const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
         const U64 wa = pa + e.mWeightOffset;
-        U64 pal, prev;
-        if (by_id)
+        const U64 pal = ids_this_frame ? palette_id_address(e.mPaletteOffset) : 0;
+        if (!pal)
         {
-            pal = ids_this_frame ? palette_id_address(e.mPaletteOffset) : 0;
-            if (!pal)
-            {
-                continue;       // no palette in this frame's table: the draw is skipped
-            }
-            prev = palette_id_address_prev(e.mPaletteOffset, h.mViewerFrame);
-            if (!prev)
-            {
-                prev = pal;     // no history (the palette was not in last frame's table): no motion, as an entry whose previous palette is its own
-            }
+            continue;       // no palette in this frame's table: the draw is skipped
         }
-        else
+        U64 prev = palette_id_address_prev(e.mPaletteOffset, h.mViewerFrame);
+        if (!prev)
         {
-            pal = (U64)palettes.mAddress + 4ull * e.mPaletteOffset;
-            prev = pal + 4ull * h.mPaletteFloats;
+            prev = pal;     // no history (the palette was not in last frame's table): no motion, as an entry whose previous palette is its own
         }
         g.mPositions[0] = (U32)pa;
         g.mPositions[1] = (U32)(pa >> 32);
