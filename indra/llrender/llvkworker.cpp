@@ -719,6 +719,24 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
         destroy_tex_images(t);
     }
 
+    // <FS> a swizzle that belongs to the old image's format (the user 2026-11-14: an avatar's ear face, set back from the transparent HUD texture to the skin, showed only part of the texture until a rebake): the
+    // viewer sets one when it uploads an alpha-only, luminance or luminance-alpha image (R8 / RG8 here: setManualImage) and never takes it back, and the swizzle of a texture was kept for every later image
+    // of it. A texture that comes back as a colour image kept (0,0,0,R) or (R,R,R,G): its colours read as alpha. A colour format (anything but R8 / RG8) drops those three, the only ones the viewer makes.
+    if (t.mSwizzleSet && fm.mVk != VK_FORMAT_R8_UNORM && fm.mVk != VK_FORMAT_R8G8_UNORM)
+    {
+        const auto is = [&](Swizzle a, Swizzle b, Swizzle c, Swizzle e) { return t.mSwizzle[0] == a && t.mSwizzle[1] == b && t.mSwizzle[2] == c && t.mSwizzle[3] == e; };
+        if (is(SW_ZERO, SW_ZERO, SW_ZERO, SW_R) || is(SW_R, SW_R, SW_R, SW_ONE) || is(SW_R, SW_R, SW_R, SW_G))
+        {
+            static U64 dropped = 0;
+            if (++dropped <= 20)
+            {
+                LL_INFOS("VkTex") << "texture " << (S32)t.mStore << " -> " << (S32)st << ": its alpha / luminance swizzle was left from the old image, reset for the colour format (" << dropped << " so far)" << LL_ENDL;
+            }
+            t.mSwizzle[0] = SW_R; t.mSwizzle[1] = SW_G; t.mSwizzle[2] = SW_B; t.mSwizzle[3] = SW_A;
+            t.mSwizzleSet = false;
+        }
+    }
+
     TextureDesc td;
     td.mType = type;
     td.mWidth = w;
