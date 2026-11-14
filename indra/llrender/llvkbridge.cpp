@@ -73,6 +73,7 @@ long long LLVkBridge::lastPresentTicks() { return 0; }
 void LLVkBridge::shutdown() {}
 void LLVkBridge::setBindlessPersistent(bool) {}
 void LLVkBridge::stopAsync() {}
+void LLVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&) {}
 
 #else // LL_VULKAN
 
@@ -418,6 +419,11 @@ bool LLVkBridge::ensureReady()
     LLVkWorker::gActive = true;
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
+}
+
+void LLVkBridge::describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels)
+{
+    LLVkAsync::postCall([names, labels]() { LLVkWorker::describe_textures(names, labels); });
 }
 
 void LLVkBridge::stopAsync()

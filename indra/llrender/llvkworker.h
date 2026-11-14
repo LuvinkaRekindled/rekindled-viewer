@@ -40,6 +40,9 @@ namespace LLVkWorker
     void on_denoise_reflections(const LLVkBridge::DenoiseArgs& args);
     // the GL texture whose image has this view id (device lost report)
     std::string describe_texture_of_view(U64 view_id);
+    // what the worker holds for each GL texture name (its image, its levels, its bindless handle and what that handle shows now, with the GL texture that owns the image the handle points at): logged
+    // as "own avatar texture <label>" lines (worker thread; the viewer's Show Textures command asks for it for the bake slots of the agent's avatar, see LLVkBridge::describeTextures)
+    void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels);
 }
 
 #endif // LL_VULKAN

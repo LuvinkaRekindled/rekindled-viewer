@@ -3804,6 +3804,39 @@ std::string describe_texture_of_view(U64 view_id)
     return "no GL texture has this view (the texture was deleted or its image replaced)";
 }
 
+// <FS> 2026-11-14 (the user: the eyes bake slot shows a brown texture while the iris slot has the right one, until a rebake; the floater is drawn through the same handles as the avatar, so it cannot say whether
+// the bake is brown or a handle shows another texture's image): per GL texture name, what the worker holds, and what the handle of the texture shows now: the image the handle points at belongs to the GL
+// texture that "handle shows" names; a handle whose image belongs to ANOTHER texture is the bug
+void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels)
+{
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        std::string text;
+        auto found = sGL.mTextures.find(names[i]);
+        if (names[i] == 0)
+        {
+            text = "no GL name (the texture has no image object)";
+        }
+        else if (found == sGL.mTextures.end())
+        {
+            text = "no GL texture of this name in the worker";
+        }
+        else
+        {
+            const Tex& t = found->second;
+            char buf[420];
+            snprintf(buf, sizeof(buf), "%ux%u, %u levels allocated, %u hold data, image %s, view id %llu, bindless handle %u, pin %u, swizzle %s, store %u", t.mWidth, t.mHeight, t.mLevels, t.mValidLevels,
+                     t.mImage.valid() ? "valid" : "NONE", (unsigned long long)t.mImage.mViewId, t.mHandle, t.mPinIndex, t.mSwizzleSet ? "set" : "default", (unsigned)t.mStore);
+            text = buf;
+            if (t.mHandle)
+            {
+                text += " | handle shows: " + Renderer::instance().describeSlot(t.mHandle);
+            }
+        }
+        LL_INFOS("VkTex") << "own avatar texture " << (i < labels.size() ? labels[i] : std::string("?")) << " (GL name " << names[i] << "): " << text << LL_ENDL;
+    }
+}
+
 
 //-----------------------------------------------------------------------------------------------------
 // Arena phase 3: BLAS probe (LL_VK_BLAS_PROBE=1, needs LL_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
