@@ -207,10 +207,15 @@ bool rtRayOk(vec3 o, vec3 d)
 bool rt_soft_masked = false;            // set by rtShadeSurfaceEx: the last surface looked at was a skinned masked draw taken softly
 // (the uniform rt_hit_shadow_samples is declared by the includer, see water.frag)      // shadow rays per local light at a traced hit: 1 (one ray at the light's centre), 2 or 4 (the light is a disc, soft shadows); 0 = not set (4)
 
-// <FS> the number of masked candidates the sun ray may test before it stops and calls the pixel lit (LL_VK_RT_CANDIDATES, default 96). Under a dense canopy a ray meets hundreds of leaf quads; at 96 whether it reaches
+// <FS> the number of masked candidates the sun ray may test before it stops and calls the pixel lit (LL_VK_RT_CANDIDATES, default 512). Under a dense canopy a ray meets hundreds of leaf quads; at 96 whether it reaches
 // an opaque hit or enough leaves depends on the ray's start and the traversal order, so the shadow flips with the view. LL_VK_RT_CAPDEBUG=1: a ray that stopped at the limit is drawn fully shadowed instead of lit.
+// 2026-11-14 (the user: the shadows of an avatar's umbrella canopy and wings, and holes in its ground shadow, came and went under a rain and cloud mesh of 20 stacked masked layers; the capdebug view showed a disc of capped
+// rays under it): 96 was used up inside those layers before the ray met the masked wings or the canopy, in an order that changes with the view. At 256 the disc was gone and nothing flickered, only the densest middle
+// of the cloud still ran out; at 1024 nothing did. 512 is chosen for the hundreds of quads of a dense canopy that this comment always named, not for that one cloud. The order candidates come in is arbitrary, so
+// there is no way around a limit for masked geometry behind masked geometry; a second query for solid casters only was tried and did not help the masked wings. With the vertex clamp of the records (rtClampVertex)
+// a longer walk no longer loses the device on a stale record. The cost of the longer walk has not been measured.
 #ifndef LL_RT_MAX_CANDIDATES
-#define LL_RT_MAX_CANDIDATES 96u
+#define LL_RT_MAX_CANDIDATES 512u
 #endif
 #ifdef LL_RT_CAP_DEBUG
 #define LL_RT_CAPPED_RESULT 0.0
