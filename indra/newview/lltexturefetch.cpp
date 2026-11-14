@@ -2593,25 +2593,6 @@ void LLTextureFetchWorker::callbackCacheWrite(bool success)
 //////////////////////////////////////////////////////////////////////////////
 
 // Threads:  Tid
-// <FS> 2026-11-14 (Adam: the eyes and ears bake slots show a body placeholder under the same id until a refresh): a sampled hash of a buffer (size, then up to 4096 evenly spaced 8 byte words)
-static U64 fs_sparse_hash(const U8* data, size_t size)
-{
-    U64 h = 1469598103934665603ull ^ (U64)size;
-    if (!data || size < 8)
-    {
-        return h;
-    }
-    const size_t words = size / 8;
-    const size_t step = std::max<size_t>(1, words / 4096);
-    for (size_t i = 0; i < words; i += step)
-    {
-        U64 w;
-        memcpy(&w, data + i * 8, 8);
-        h = (h ^ w) * 1099511628211ull;
-    }
-    return h;
-}
-
 void LLTextureFetchWorker::callbackDecoded(bool success, const std::string &error_message, LLImageRaw* raw, LLImageRaw* aux, S32 decode_id)
 {
     LLMutexLock lock(&mWorkMutex);                                      // +Mw
