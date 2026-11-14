@@ -1467,7 +1467,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     {
         uint i = g.first + prim * 3u + k;
         uint word = ib.w[i >> 1];
-        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+        ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
@@ -1546,7 +1546,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     {
         uint i = g.first + prim * 3u + k;
         uint word = ib.w[i >> 1];
-        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+        ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
@@ -1928,7 +1928,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     {
         uint i = g.first + prim * 3u + k;
         uint word = ib.w[i >> 1];
-        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+        ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
     LLRtPositions pb = LLRtPositions(g.positions);
     vec3 p0 = pb.v[ix[0]].xyz, p1 = pb.v[ix[1]].xyz, p2 = pb.v[ix[2]].xyz;

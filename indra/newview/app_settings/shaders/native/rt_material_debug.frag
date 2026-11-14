@@ -91,7 +91,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     {
         uint i = g.first + prim * 3u + k;
         uint word = ib.w[i >> 1];
-        ix[k] = ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu);
+        ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
     LLRtPositions pb = LLRtPositions(g.positions);
     vec3 p0 = pb.v[ix[0]].xyz, p1 = pb.v[ix[1]].xyz, p2 = pb.v[ix[2]].xyz;
