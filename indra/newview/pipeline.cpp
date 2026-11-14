@@ -143,6 +143,7 @@
 #include "rlvactions.h"
 #include "rlvlocks.h"
 #include "llforkjoinpool.h" // <FS> parallel shadow cascade preparation
+#include "llphasecheck.h"   // <FS> GPU-LIFETIMES.md step 4: thread phase checks of the shared writers
 #include <chrono>
 // [/RLVa:KB]
 
@@ -2144,6 +2145,7 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
 
     assertInitialized();
+    ll_phase_check("unlinkDrawable");
 
     LLPointer<LLDrawable> drawablep = drawable; // make sure this doesn't get deleted before we are done
 
@@ -4133,6 +4135,7 @@ void cull_split_report()
         << " us; " << s.mInline << " frames run inline) | check: " << s.mCheckRuns << " runs, " << s.mCheckBad << " differ (pool run: " << (double)s.mCkJobs / std::max<U64>(s.mCheckRuns, 1) << " jobs, sum " << s.mCkSumUs / std::max<U64>(s.mCheckRuns, 1) << " us, longest " << s.mCkLongestUs / std::max<U64>(s.mCheckRuns, 1) << " us, top levels " << s.mCkTopUs / std::max<U64>(s.mCheckRuns, 1) << " us in " << (double)s.mCkSegments / std::max<U64>(s.mCheckRuns, 1) << " segments) | " << list << LL_ENDL;
     LL_INFOS("CullSplit") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
         << LLForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << LLForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << LLForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
+    LLPhaseCheck::logSummary();
     s = CullSplitStats();
 }
 
@@ -5713,12 +5716,12 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
         if (drawablep->isSpatialBridge())
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep, nullptr, nullptr, 0 }); }
-            else { mMovedBridge.push_back(drawablep); }
+            else { ll_phase_check("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
         }
         else
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 }); }
-            else { mMovedList.push_back(drawablep); }
+            else { ll_phase_check("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
         }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }
@@ -5836,6 +5839,7 @@ void LLPipeline::markPartitionMove(LLDrawable* drawable)
     if (!drawable->isState(LLDrawable::PARTITION_MOVE) &&
         !drawable->getPositionGroup().equals3(LLVector4a::getZero()))
     {
+        ll_phase_check("markPartitionMove: mPartitionQ");
         drawable->setState(LLDrawable::PARTITION_MOVE);
         mPartitionQ.push_back(drawable);
     }
@@ -5864,6 +5868,7 @@ void LLPipeline::processPartitionQ()
 
 void LLPipeline::markMeshDirty(LLSpatialGroup* group)
 {
+    ll_phase_check("markMeshDirty: mMeshDirtyGroup");
     mMeshDirtyGroup.push_back(group);
 }
 
@@ -5885,6 +5890,7 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
         {
             llassert_always(!mGroupQ1Locked);
 
+            ll_phase_check("markRebuild: mGroupQ1");
             mGroupQ1.push_back(group);
             group->setState(LLSpatialGroup::IN_BUILD_Q1);
         }
