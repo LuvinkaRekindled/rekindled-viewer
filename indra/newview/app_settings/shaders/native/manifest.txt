@@ -232,6 +232,8 @@ override | Ray Reconstruction Guides | fullscreen.vert | rr_guides.frag | post |
 override | Denoise Prep | fullscreen.vert | dnsr_prep.frag | post | default on
 override | Denoise Pack | fullscreen.vert | dnsr_pack.frag | post | default on
 override | Denoise Unpack | fullscreen.vert | dnsr_unpack.frag | post | default on
+override | Denoise Sun Pack | fullscreen.vert | dnsr_sunpack.frag | post | default on
+override | Denoise Sun Unpack | fullscreen.vert | dnsr_sununpack.frag | post | default on
 # the interface and preview programs (PLAN-native-only-end-state.md, step 4): pathfinding, the mesh upload preview, the physics preview, the probe volume display
 override | Pathfinding Shader | pathfinding.vert | pathfinding.frag | post | default on
 override | PathfindingNoNormals Shader | pathfinding.vert | pathfinding.frag | post | define PF_NO_NORMAL=1 | default on

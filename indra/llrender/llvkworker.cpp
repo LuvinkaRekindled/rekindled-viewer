@@ -13038,11 +13038,82 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     }
 }
 
+// the sun shadow denoiser (the same command, mKind 2): the packed hit mask, the filtered visibility out
+static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
+{
+    static U32 failures = 0;
+    auto find = [](U32 name) -> Tex* {
+        auto it = sGL.mTextures.find(name);
+        return it != sGL.mTextures.end() && it->second.mImage.valid() ? &it->second : nullptr;
+    };
+    Tex* hit = find(a.mHitMask);
+    Tex* output = find(a.mOutput);
+    Tex* depth = find(a.mDepth);
+    Tex* normals = find(a.mNormals);
+    Tex* motion = find(a.mMotion);
+    if (!hit || !output || !depth || !normals || !motion)
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDenoise") << "denoise shadows: a texture is missing (hit mask " << (hit != nullptr) << ", output " << (output != nullptr) << ", depth " << (depth != nullptr)
+                                  << ", normals " << (normals != nullptr) << ", motion " << (motion != nullptr) << ")" << LL_ENDL;
+        }
+        return;
+    }
+    std::vector<Image*> own;
+    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | LLVkDenoise::KIND_SHADOWS, own))
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDenoise") << "denoise shadows: the denoiser could not be prepared for " << a.mWidth << "x" << a.mHeight << LL_ENDL;
+        }
+        return;
+    }
+    LLVkDenoise::ShadowParams p;
+    p.mHitSource = &hit->mImage;
+    p.mOutput = &output->mImage;
+    p.mDepth = &depth->mImage;
+    p.mNormals = &normals->mImage;
+    p.mMotion = &motion->mImage;
+    p.mWidth = a.mWidth;
+    p.mHeight = a.mHeight;
+    memcpy(p.mInvProjection, a.mInvProjection, sizeof(p.mInvProjection));
+    memcpy(p.mReprojection, a.mReprojection, sizeof(p.mReprojection));
+    memcpy(p.mViewProjInverse, a.mViewProjInverse, sizeof(p.mViewProjInverse));
+    memcpy(p.mEye, a.mEye, sizeof(p.mEye));
+    p.mDepthSigma = a.mDepthSigma;
+    p.mFrameIndex = a.mFrameIndex;
+    std::vector<std::pair<Image*, VkImageLayout>> needs;
+    for (Image* image : { p.mHitSource, p.mOutput, p.mDepth, p.mNormals, p.mMotion })
+    {
+        needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+    }
+    for (Image* image : own)
+    {
+        needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+    }
+    bool done = false;
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDenoise::shadows(cmd, p); });
+    if (done)
+    {
+        output->mValidLevels = 1;
+    }
+    else if (failures++ < 5)
+    {
+        LL_WARNS("VkDenoise") << "denoise shadows: the dispatch failed or was not recorded" << LL_ENDL;
+    }
+}
+
 void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
 {
     static U32 failures = 0;
     if (!gActive || !LLVkDenoise::ready())
     {
+        return;
+    }
+    if (a.mKind == LLVkDenoise::KIND_SHADOWS)
+    {
+        on_denoise_shadows(a);
         return;
     }
     auto find = [](U32 name) -> Tex* {
@@ -13065,7 +13136,7 @@ void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
         return;
     }
     std::vector<Image*> own;
-    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, own))
+    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | LLVkDenoise::KIND_REFLECTIONS, own))
     {
         if (failures++ < 5)
         {

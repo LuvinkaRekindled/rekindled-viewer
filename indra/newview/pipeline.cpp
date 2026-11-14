@@ -1592,6 +1592,8 @@ void LLPipeline::releaseScreenBuffers()
     mDnsrIn.release();
     mDnsrOut.release();
     mRtReflDenoised.release();
+    mDnsrHit.release();
+    mDnsrSunOut.release();
     mRRReflMotion.release();
     mRRHdr.release();
     mRRPing.release();
@@ -21980,6 +21982,167 @@ bool LLPipeline::amdDenoiserWanted()
         && gDnsrPrepProgram.isComplete() && gDnsrPackProgram.isComplete() && gDnsrUnpackProgram.isComplete();
 }
 
+bool LLPipeline::amdSunDenoiserWanted()
+{
+    static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoiseShadows", false);
+    static const bool env = getenv("LL_VK_AMD_DENOISE_SHADOWS") && atoi(getenv("LL_VK_AMD_DENOISE_SHADOWS")) != 0;
+    return (setting || env) && sDLSS && LLVkBridge::rtShadowMode() && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
+        && gDnsrPrepProgram.isComplete() && gDnsrSunPackProgram.isComplete() && gDnsrSunUnpackProgram.isComplete();
+}
+
+U32 LLPipeline::denoiseKinds()
+{
+    return (amdDenoiserWanted() ? 1u : 0u) | (amdSunDenoiserWanted() ? 2u : 0u);
+}
+
+// the world normal (RGBA16F), the roughness (R16F) and the raw depth (R32F) of the G-buffer, in the forms the denoisers read; once a frame whoever asks first makes them
+bool LLPipeline::prepareDenoiseInputs(U32 w, U32 h, bool& made)
+{
+    if (!mDnsrPrep.isComplete() || mDnsrPrep.getWidth() != w || mDnsrPrep.getHeight() != h || mDnsrPrep.getNumTextures() < 3)
+    {
+        mDnsrPrep.release();
+        made = true;
+        if (!mDnsrPrep.allocate(w, h, TexelFormat::RGBA16F) || !mDnsrPrep.addColorAttachment(TexelFormat::R16F) || !mDnsrPrep.addColorAttachment(TexelFormat::R32F))
+        {
+            mDnsrPrep.release();
+            return false;
+        }
+    }
+    static U32 prepared_frame = ~0u;
+    static U32 prepared_size[2] = {};
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (prepared_frame == frame && prepared_size[0] == w && prepared_size[1] == h && !made)
+    {
+        return true;
+    }
+    const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+    const glm::mat3 view_to_world = glm::mat3(view_inv);
+    static LLStaticHashedString view_to_world_s("view_to_world");
+    RenderPassScope pass(mDnsrPrep);
+    bindDeferredShader(gDnsrPrepProgram);
+    gDnsrPrepProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
+    {
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+    pass.end();
+    unbindDeferredShader(gDnsrPrepProgram);
+    prepared_frame = frame;
+    prepared_size[0] = w;
+    prepared_size[1] = h;
+    return true;
+}
+
+// <FS> the AMD shadow denoiser on the traced sun shadow (doc/vulkan/PLAN-amd-denoiser.md): the sun channel of the lightmap is the centre ray's answer (1 lit, 0 shadowed; partial values only for the avatar's
+// translucent hair and glass). Its binary pixels are packed into the denoiser's hit mask, denoised (temporal accumulation along the motion vectors, a variance guided filter), and written back into the
+// lightmap's sun channel; the penumbra filter then sizes the softness by the blocker distance as before. Run after the blocker distance was copied out of the lightmap and before the penumbra passes.
+void LLPipeline::denoiseSunShadow(LLRenderTarget* light)
+{
+    if (!light || !light->isComplete() || !mRtShadowTemp.isComplete() || !amdSunDenoiserWanted())
+    {
+        return;
+    }
+    LL_PROFILE_GPU_ZONE("amd sun shadow denoiser");
+    const U32 w = light->getWidth(), h = light->getHeight();
+    if (mRtShadowTemp.getWidth() != w || mRtShadowTemp.getHeight() != h)
+    {
+        return;
+    }
+    const U32 tiles_x = (w + 7) / 8, tiles_y = (h + 3) / 4;
+    bool made = false;
+    auto ensure = [&](LLRenderTarget& t, U32 tw, U32 th) -> bool
+    {
+        if (t.isComplete() && t.getWidth() == tw && t.getHeight() == th)
+        {
+            return true;
+        }
+        t.release();
+        made = true;
+        return t.allocate(tw, th, TexelFormat::RGBA8);
+    };
+    if (!ensure(mDnsrHit, tiles_x, tiles_y) || !ensure(mDnsrSunOut, w, h) || !prepareDenoiseInputs(w, h, made))
+    {
+        LL_WARNS("VkDenoise") << "the sun shadow denoiser's targets could not be made at " << w << "x" << h << LL_ENDL;
+        mDnsrHit.release();
+        mDnsrSunOut.release();
+        return;
+    }
+    // the hit mask: four bytes a tile
+    {
+        static LLStaticHashedString tile_count_s("tile_count");
+        RenderPassScope pass(mDnsrHit);
+        bindDeferredShader(gDnsrSunPackProgram);
+        gDnsrSunPackProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, light, false, LLTexUnit::TFO_POINT, 0);
+        gDnsrSunPackProgram.uniform2f(tile_count_s, (F32)tiles_x, (F32)tiles_y);
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        pass.end();
+        unbindDeferredShader(gDnsrSunPackProgram);
+    }
+
+    static U32 last_frame = ~0u;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    LLVkBridge::DenoiseArgs a;
+    a.mKind = 2;
+    a.mKinds = denoiseKinds();
+    a.mHitMask = mDnsrHit.getTexture(0);
+    a.mOutput = mDnsrSunOut.getTexture(0);
+    a.mNormals = mDnsrPrep.getTexture(0);
+    a.mDepth = mDnsrPrep.getTexture(2);
+    a.mMotion = mMotionMap.getTexture(0);
+    a.mWidth = w;
+    a.mHeight = h;
+    {
+        // (noteSceneMatrices runs at the end of the lighting: during it mViewProjCur is still the last frame's)
+        const glm::mat4 cur_view_proj = LLViewerCamera::sUnjitteredProjection * LLViewerCamera::sJitterModelview;
+        const glm::mat4 prev_view_proj = mViewProjPrevValid ? mViewProjCur : cur_view_proj;
+        const glm::mat4 inv_proj = glm::inverse(LLViewerCamera::sUnjitteredProjection);
+        const glm::mat4 inv_view_proj = glm::inverse(cur_view_proj);
+        const glm::mat4 reprojection = prev_view_proj * inv_view_proj;
+        const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+        memcpy(a.mInvProjection, glm::value_ptr(inv_proj), sizeof(a.mInvProjection));
+        memcpy(a.mReprojection, glm::value_ptr(reprojection), sizeof(a.mReprojection));
+        memcpy(a.mViewProjInverse, glm::value_ptr(inv_view_proj), sizeof(a.mViewProjInverse));
+        a.mEye[0] = view_inv[3][0];
+        a.mEye[1] = view_inv[3][1];
+        a.mEye[2] = view_inv[3][2];
+    }
+    a.mFrameIndex = frame;
+    last_frame = frame;
+    LLVkBridge::denoiseReflections(a);
+
+    // the lightmap with the denoised sun channel (into the penumbra filter's temporary target, then back into the lightmap's attachment 0)
+    {
+        RenderPassScope pass(mRtShadowTemp);
+        bindDeferredShader(gDnsrSunUnpackProgram);
+        gDnsrSunUnpackProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, light, false, LLTexUnit::TFO_POINT, 0);
+        gDnsrSunUnpackProgram.bindTexture(LLShaderMgr::BUMP_MAP, &mDnsrSunOut, false, LLTexUnit::TFO_POINT, 0);
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        pass.end();
+        unbindDeferredShader(gDnsrSunUnpackProgram);
+    }
+    {
+        RenderPassScope pass(*light);
+        LLRenderState::BlendScope blend(false);
+        LLRenderState::DepthScope depth(false, false);
+        gCopyProgram.bind();
+        gRender.getTexUnit(0)->bind(&mRtShadowTemp);
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+}
+
 LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
 {
     if (refl != &mRtReflMain || !refl->isComplete() || refl->getNumTextures() < 2 || !amdDenoiserWanted())
@@ -22003,7 +22166,7 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
         }
         return !extra || (t.addColorAttachment(TexelFormat::R16F) && t.addColorAttachment(TexelFormat::R32F));
     };
-    if (!ensure(mDnsrPrep, true) || !ensure(mDnsrIn, false) || !ensure(mDnsrOut, false) || !ensure(mRtReflDenoised, false))
+    if (!ensure(mDnsrIn, false) || !ensure(mDnsrOut, false) || !ensure(mRtReflDenoised, false) || !prepareDenoiseInputs(w, h, made))
     {
         LL_WARNS("VkDenoise") << "the denoiser's targets could not be made at " << w << "x" << h << LL_ENDL;
         mDnsrPrep.release();
@@ -22013,23 +22176,6 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
         return refl;
     }
 
-    // the world normal, the roughness and the raw depth (what the G-buffer holds, in the forms the denoiser reads)
-    {
-        const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
-        const glm::mat3 view_to_world = glm::mat3(view_inv);
-        static LLStaticHashedString view_to_world_s("view_to_world");
-        RenderPassScope pass(mDnsrPrep);
-        bindDeferredShader(gDnsrPrepProgram);
-        gDnsrPrepProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
-        {
-            LLRenderState::BlendScope blend(false);
-            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
-            mScreenTriangleVB->setBuffer();
-            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-        }
-        pass.end();
-        unbindDeferredShader(gDnsrPrepProgram);
-    }
     // the radiance: the traced colour with the length of the ray where the denoiser reads it
     {
         RenderPassScope pass(mDnsrIn);
@@ -22091,10 +22237,13 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
     a.mMotion = mMotionMap.getTexture(0);
     a.mWidth = w;
     a.mHeight = h;
+    a.mKinds = denoiseKinds();
     {
         const glm::mat4 inv_proj = glm::inverse(LLViewerCamera::sUnjitteredProjection);
         const glm::mat4 inv_view = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
-        const glm::mat4 prev_view_proj = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
+        // (noteSceneMatrices runs at the end of the lighting: during it mViewProjCur is still the last frame's)
+        const glm::mat4 cur_view_proj = LLViewerCamera::sUnjitteredProjection * LLViewerCamera::sJitterModelview;
+        const glm::mat4 prev_view_proj = mViewProjPrevValid ? mViewProjCur : cur_view_proj;
         memcpy(a.mInvProjection, glm::value_ptr(inv_proj), sizeof(a.mInvProjection));
         memcpy(a.mInvView, glm::value_ptr(inv_view), sizeof(a.mInvView));
         memcpy(a.mPrevViewProjection, glm::value_ptr(prev_view_proj), sizeof(a.mPrevViewProjection));
@@ -24907,6 +25056,7 @@ void LLPipeline::renderDeferredLighting()
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         }
 
+        denoiseSunShadow(deferred_light_target);        // <FS> the AMD shadow denoiser on the centre ray's sun channel (off unless FSVkAmdDenoiseShadows): before the penumbra filter
         LLRenderTarget* penumbra = nullptr;        // <FS> the lightmap with the penumbra filter applied to its sun channel (mRtShadowTemp)
         if (LLVkBridge::rtShadowMode() && !gCubeSnapshot && LLVkBridge::rtSunFilter() != 0 && mRtBlocker.isComplete() && mRtShadowTemp.isComplete()
             && mRtSunHard.isComplete() && gRtShadowFilterProgram.isComplete() && gRtShadowPrepProgram.isComplete() && RenderDeferredSSAO)

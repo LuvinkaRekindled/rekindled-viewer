@@ -241,6 +241,7 @@ LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra 
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
 LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
+LLShaderProgram            gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
 LLShaderProgram            gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
 LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
@@ -2358,6 +2359,22 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gDnsrPackProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the denoiser pack program did not compile: no AMD reflection denoiser" << LL_ENDL;
+        }
+        gDnsrSunPackProgram.mName = "Denoise Sun Pack";
+        gDnsrSunPackProgram.mFeatures.isDeferred = true;
+        gDnsrSunPackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gDnsrSunPackProgram);
+        if (!gDnsrSunPackProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the denoiser sun pack program did not compile: no AMD shadow denoiser" << LL_ENDL;
+        }
+        gDnsrSunUnpackProgram.mName = "Denoise Sun Unpack";
+        gDnsrSunUnpackProgram.mFeatures.isDeferred = true;
+        gDnsrSunUnpackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gDnsrSunUnpackProgram);
+        if (!gDnsrSunUnpackProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the denoiser sun unpack program did not compile: no AMD shadow denoiser" << LL_ENDL;
         }
         gDnsrUnpackProgram.mName = "Denoise Unpack";
         gDnsrUnpackProgram.mFeatures.isDeferred = true;
