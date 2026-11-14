@@ -203,7 +203,13 @@ public:
     LLRenderTarget          mDnsrIn;        // render size RGBA16F: the traced reflection (rgb) and the length of its ray (a)
     LLRenderTarget          mDnsrOut;       // render size RGBA16F: the denoised reflection (rgb)
     LLRenderTarget          mRtReflDenoised;    // render size RGBA16F: the denoised colour with the RT Reflection pass's alpha: what the lighting pass reads when the denoiser ran
+    LLRenderTarget          mDnsrHit;       // the sun shadow denoiser's hit mask: RGBA8, one texel a tile of 8 x 4 pixels of the lightmap (dnsr_sunpack.frag)
+    LLRenderTarget          mDnsrSunOut;    // its output: RGBA8 render size, r the filtered visibility
     bool                    amdDenoiserWanted();
+    bool                    amdSunDenoiserWanted();     // the AMD shadow denoiser on the traced sun shadow (setting FSVkAmdDenoiseShadows, LL_VK_AMD_DENOISE_SHADOWS=1)
+    U32                     denoiseKinds();             // the denoisers in use this frame (1 reflections, 2 shadows): the denoiser's context is made for all of them
+    bool                    prepareDenoiseInputs(U32 w, U32 h, bool& made);       // the world normal, roughness and raw depth for the denoisers, once a frame
+    void                    denoiseSunShadow(LLRenderTarget* light);      // denoises the sun channel of the lightmap in place (before the penumbra filter)
     LLRenderTarget*         denoiseReflections(LLRenderTarget* refl);       // runs the passes and the denoiser; returns the target the lighting pass should read (refl itself when it did not run)
     LLRenderTarget          mRRDenoised;    // <FS> render size RGBA16F: what ray reconstruction outputs at a one-to-one ratio ("denoise first", PLAN-dlss-nr.md section 8); the frame then takes the plain path
     LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale

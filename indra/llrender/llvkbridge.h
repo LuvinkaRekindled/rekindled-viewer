@@ -131,6 +131,12 @@ namespace LLVkBridge
         F32 mTemporalStability = 0.7f, mRoughnessThreshold = 0.5f;
         U32 mFrameIndex = 0;
         S32 mReset = 0;
+        // the sun shadow denoiser (mKind 2): mOutput is the filtered visibility (RGBA8, r), mHitMask the packed hit mask (RGBA8, one texel a tile of 8 x 4), mDepth / mNormals / mMotion / mInvProjection as above
+        U32 mKind = 1;                  // what this call runs: 1 the reflections, 2 the sun shadow (LLVkDenoise::Kind)
+        U32 mKinds = 1;                 // the kinds the pipeline uses this frame (the denoiser's context is made for all of them)
+        U32 mHitMask = 0;
+        F32 mReprojection[16] = {}, mViewProjInverse[16] = {}, mEye[3] = {};      // column major, OpenGL conventions
+        F32 mDepthSigma = 1.f;
     };
     // the denoiser's context can be made (the SDK libraries are linked and the backend started)
     bool denoiseAvailable();

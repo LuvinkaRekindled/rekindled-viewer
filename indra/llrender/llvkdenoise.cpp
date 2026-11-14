@@ -1,6 +1,6 @@
 /**
  * @file llvkdenoise.cpp
- * @brief The AMD FidelityFX Denoiser 1.3 for the traced reflections (see llvkdenoise.h, doc/vulkan/PLAN-amd-denoiser.md)
+ * @brief The AMD FidelityFX Denoiser 1.3 for the traced reflections and the traced sun shadow (see llvkdenoise.h, doc/vulkan/PLAN-amd-denoiser.md)
  */
 
 #include "linden_common.h"
@@ -36,9 +36,10 @@ void* gScratch = nullptr;
 
 bool gContextMade = false;
 FfxDenoiserContext gContext = {};
-U32 gWidth = 0, gHeight = 0;
-Image gRadianceB, gVarianceA, gVarianceB;       // the denoiser's own images of this size
+U32 gWidth = 0, gHeight = 0, gKinds = 0;
+Image gRadianceB, gVarianceA, gVarianceB;       // the reflection denoiser's own images of this size
 Buffer gTiles, gArgs;                           // the tile list (every 8x8 tile of the picture) and the indirect arguments of its three dispatches (one workgroup for a tile)
+Image gHitMask;                                 // the shadow denoiser's hit mask (R32_UINT, a texel a tile of 8 x 4 pixels)
 bool gFirst = true;                             // the first dispatch after the context was made: the history is empty
 
 bool ffx_ok(FfxErrorCode code, const char* what)
@@ -67,14 +68,16 @@ void release_context()
     ctx.destroyImage(gRadianceB);
     ctx.destroyImage(gVarianceA);
     ctx.destroyImage(gVarianceB);
+    ctx.destroyImage(gHitMask);
     ctx.destroyBuffer(gTiles);
     ctx.destroyBuffer(gArgs);
     gRadianceB = Image();
     gVarianceA = Image();
     gVarianceB = Image();
+    gHitMask = Image();
     gTiles = Buffer();
     gArgs = Buffer();
-    gWidth = gHeight = 0;
+    gWidth = gHeight = gKinds = 0;
 }
 
 // the FidelityFX resource of an image: the state it is in now (the caller leaves every image shader-read-only; the backend moves it where a pass needs it and back)
@@ -118,6 +121,46 @@ void multiply(const float* a, const float* b, float* out)
         }
     }
     memcpy(out, r, sizeof(r));
+}
+
+// the viewer's OpenGL conventions -> the denoiser's: it takes the projection of a texture coordinate and a depth buffer value as (2u - 1, 1 - 2v, depth); the viewer's are (2u - 1, 2v - 1, 2 depth - 1)
+//   S: the denoiser's (x, y, depth, 1) -> the viewer's clip input (x, -y, 2 depth - 1, 1): applied to the right of a matrix that takes the viewer's clip space
+//   T: the viewer's clip -> the denoiser's clip (x, -y, 0.5 z + 0.5 w, w): applied to the left of a matrix that ends in the viewer's clip space
+const float kS[16] = { 1, 0, 0, 0,   0, -1, 0, 0,   0, 0, 2, 0,   0, 0, -1, 1 };     // column major
+const float kT[16] = { 1, 0, 0, 0,   0, -1, 0, 0,   0, 0, 0.5f, 0,   0, 0, 0.5f, 1 };
+
+// copies the hit mask the pack pass wrote (RGBA8, one texel a tile) into the denoiser's R32_UINT image: the formats are copy compatible, the four bytes are the 32 bit value as they stand
+void copy_hit_mask(VkCommandBuffer cmd, Image& source, Image& dest, U32 tiles_x, U32 tiles_y)
+{
+    auto barrier = [&](Image& image, VkImageLayout from, VkImageLayout to, VkAccessFlags2 src_access, VkPipelineStageFlags2 src_stage, VkAccessFlags2 dst_access, VkPipelineStageFlags2 dst_stage)
+    {
+        VkImageMemoryBarrier2 b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+        b.srcStageMask = src_stage;
+        b.srcAccessMask = src_access;
+        b.dstStageMask = dst_stage;
+        b.dstAccessMask = dst_access;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = image.mImage;
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+    const VkPipelineStageFlags2 all = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    const VkAccessFlags2 any = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    barrier(source, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, any, all, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT);
+    barrier(dest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, any, all, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT);
+    VkImageCopy region = {};
+    region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.extent = { tiles_x, tiles_y, 1 };
+    vkCmdCopyImage(cmd, source.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dest.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    barrier(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, any, all);
+    barrier(dest, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, any, all);
 }
 }
 
@@ -172,50 +215,62 @@ void shutdown()
     gReady = false;
 }
 
-bool prepare(U32 width, U32 height, std::vector<Image*>& own)
+bool prepare(U32 width, U32 height, U32 kinds, std::vector<Image*>& own)
 {
-    if (!gReady || !width || !height)
+    if (!gReady || !width || !height || !kinds)
     {
         return false;
     }
-    if (width != gWidth || height != gHeight)
+    const U32 tiles8x4_x = (width + 7) / 8, tiles8x4_y = (height + 3) / 4;
+    if (width != gWidth || height != gHeight || kinds != gKinds)
     {
         release_context();
         Context& ctx = Context::instance();
-        const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        if (!ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT, usage, gRadianceB)
-            || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceA)
-            || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceB))
+        if (kinds & KIND_REFLECTIONS)
         {
-            release_context();
-            return false;
-        }
-        // every 8x8 tile of the picture is denoised: the tile list names them by the pixel of their corner (x in the low 16 bits, y in the high ones), the three dispatches read one workgroup for a tile
-        const U32 tiles_x = (width + 7) / 8, tiles_y = (height + 7) / 8;
-        const U32 tile_count = tiles_x * tiles_y;
-        if (!ctx.createBuffer((VkDeviceSize)tile_count * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gTiles)
-            || !ctx.createBuffer(12 * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gArgs)
-            || !gTiles.mMapped || !gArgs.mMapped)
-        {
-            release_context();
-            return false;
-        }
-        U32* tiles = (U32*)gTiles.mMapped;
-        for (U32 y = 0; y < tiles_y; ++y)
-        {
-            for (U32 x = 0; x < tiles_x; ++x)
+            const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            if (!ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16G16B16A16_SFLOAT, usage, gRadianceB)
+                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceA)
+                || !ctx.createImage2D(width, height, 1, 1, VK_FORMAT_R16_SFLOAT, usage, gVarianceB))
             {
-                tiles[y * tiles_x + x] = ((y * 8) << 16) | (x * 8);
+                release_context();
+                return false;
+            }
+            // every 8x8 tile of the picture is denoised: the tile list names them by the pixel of their corner (x in the low 16 bits, y in the high ones), the three dispatches read one workgroup for a tile
+            const U32 tiles_x = (width + 7) / 8, tiles_y = (height + 7) / 8;
+            const U32 tile_count = tiles_x * tiles_y;
+            if (!ctx.createBuffer((VkDeviceSize)tile_count * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gTiles)
+                || !ctx.createBuffer(12 * sizeof(U32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, Context::Memory::Upload, gArgs)
+                || !gTiles.mMapped || !gArgs.mMapped)
+            {
+                release_context();
+                return false;
+            }
+            U32* tiles = (U32*)gTiles.mMapped;
+            for (U32 y = 0; y < tiles_y; ++y)
+            {
+                for (U32 x = 0; x < tiles_x; ++x)
+                {
+                    tiles[y * tiles_x + x] = ((y * 8) << 16) | (x * 8);
+                }
+            }
+            U32* args = (U32*)gArgs.mMapped;
+            memset(args, 0, 12 * sizeof(U32));
+            args[3] = tile_count;       // (the three passes dispatch at byte offset 12)
+            args[4] = 1;
+            args[5] = 1;
+        }
+        if (kinds & KIND_SHADOWS)
+        {
+            if (!ctx.createImage2D(tiles8x4_x, tiles8x4_y, 1, 1, VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, gHitMask))
+            {
+                release_context();
+                return false;
             }
         }
-        U32* args = (U32*)gArgs.mMapped;
-        memset(args, 0, 12 * sizeof(U32));
-        args[3] = tile_count;       // (the three passes dispatch at byte offset 12)
-        args[4] = 1;
-        args[5] = 1;
 
         FfxDenoiserContextDescription desc = {};
-        desc.flags = FFX_DENOISER_REFLECTIONS;
+        desc.flags = ((kinds & KIND_REFLECTIONS) ? FFX_DENOISER_REFLECTIONS : 0u) | ((kinds & KIND_SHADOWS) ? FFX_DENOISER_SHADOWS : 0u);
         desc.windowSize.width = width;
         desc.windowSize.height = height;
         desc.normalsHistoryBufferFormat = FFX_SURFACE_FORMAT_R16G16B16A16_FLOAT;
@@ -228,18 +283,26 @@ bool prepare(U32 width, U32 height, std::vector<Image*>& own)
         gContextMade = true;
         gWidth = width;
         gHeight = height;
+        gKinds = kinds;
         gFirst = true;
-        LL_INFOS("VkDenoise") << "the reflection denoiser context was made for " << width << "x" << height << " (" << tile_count << " tiles)" << LL_ENDL;
+        LL_INFOS("VkDenoise") << "the denoiser context was made for " << width << "x" << height << (kinds & KIND_REFLECTIONS ? ", reflections" : "") << (kinds & KIND_SHADOWS ? ", shadows" : "") << LL_ENDL;
     }
-    own.push_back(&gRadianceB);
-    own.push_back(&gVarianceA);
-    own.push_back(&gVarianceB);
+    if (kinds & KIND_REFLECTIONS)
+    {
+        own.push_back(&gRadianceB);
+        own.push_back(&gVarianceA);
+        own.push_back(&gVarianceB);
+    }
+    if (kinds & KIND_SHADOWS)
+    {
+        own.push_back(&gHitMask);
+    }
     return true;
 }
 
 bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
 {
-    if (!gReady || !gContextMade || p.mWidth != gWidth || p.mHeight != gHeight
+    if (!gReady || !gContextMade || !(gKinds & KIND_REFLECTIONS) || p.mWidth != gWidth || p.mHeight != gHeight
         || !p.mRadiance || !p.mOutput || !p.mDepth || !p.mNormals || !p.mRoughness || !p.mMotion)
     {
         return false;
@@ -263,14 +326,10 @@ bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
     d.motionVectorScale.x = 1.f / (float)p.mWidth;
     d.motionVectorScale.y = 1.f / (float)p.mHeight;
 
-    // the viewer's OpenGL conventions -> the denoiser's: it takes the projection of a texture coordinate and a depth buffer value as (2u - 1, 1 - 2v, depth); the viewer's are (2u - 1, 2v - 1, 2 depth - 1)
-    //   inverse projection: view = invProj_gl * S * (x, y, depth, 1) with S = [1 0 0 0; 0 -1 0 0; 0 0 2 -1; 0 0 0 1]
-    //   previous view projection: the denoiser's clip = T * (gl clip) with T = [1 0 0 0; 0 -1 0 0; 0 0 .5 .5; 0 0 0 1]
-    const float S[16] = { 1, 0, 0, 0,   0, -1, 0, 0,   0, 0, 2, 0,   0, 0, -1, 1 };     // column major
-    const float T[16] = { 1, 0, 0, 0,   0, -1, 0, 0,   0, 0, 0.5f, 0,   0, 0, 0.5f, 1 };
-    multiply(p.mInvProjection, S, d.invProjection);
+    //   inverse projection: view = invProj_gl * S * (x, y, depth, 1); previous view projection: the denoiser's clip = T * (gl clip)
+    multiply(p.mInvProjection, kS, d.invProjection);
     memcpy(d.invView, p.mInvView, sizeof(d.invView));
-    multiply(T, p.mPrevViewProjection, d.prevViewProjection);
+    multiply(kT, p.mPrevViewProjection, d.prevViewProjection);
 
     d.normalsUnpackMul = 1.f;
     d.normalsUnpackAdd = 0.f;
@@ -284,13 +343,48 @@ bool reflections(VkCommandBuffer cmd, const ReflectionParams& p)
     return ffx_ok(ffxDenoiserContextDispatchReflections(&gContext, &d), "ffxDenoiserContextDispatchReflections");
 }
 
+bool shadows(VkCommandBuffer cmd, const ShadowParams& p)
+{
+    if (!gReady || !gContextMade || !(gKinds & KIND_SHADOWS) || p.mWidth != gWidth || p.mHeight != gHeight
+        || !p.mHitSource || !p.mOutput || !p.mDepth || !p.mNormals || !p.mMotion || !gHitMask.valid())
+    {
+        return false;
+    }
+    copy_hit_mask(cmd, *p.mHitSource, gHitMask, (p.mWidth + 7) / 8, (p.mHeight + 3) / 4);
+
+    FfxDenoiserShadowsDispatchDescription d = {};
+    d.commandList = ffxGetCommandListVK(cmd);
+    d.hitMaskResults = image_resource(gHitMask, false, L"dnsr_hit_mask");
+    d.depth = image_resource(*p.mDepth, false, L"dnsr_shadow_depth");
+    d.velocity = image_resource(*p.mMotion, false, L"dnsr_shadow_motion");
+    d.normal = image_resource(*p.mNormals, false, L"dnsr_shadow_normal");
+    d.shadowMaskOutput = image_resource(*p.mOutput, true, L"dnsr_shadow_output");
+    d.motionVectorScale[0] = 1.f / (float)p.mWidth;
+    d.motionVectorScale[1] = 1.f / (float)p.mHeight;
+    d.normalsUnpackMul = 1.f;
+    d.normalsUnpackAdd = 0.f;
+    d.eye[0] = p.mEye[0];
+    d.eye[1] = p.mEye[1];
+    d.eye[2] = p.mEye[2];
+    d.frameIndex = p.mFrameIndex;
+    // projection inverse: depth -> view space; reprojection: the denoiser's (ndc, depth) of a pixel -> the clip space of the last frame (only its depth is read); view projection inverse: -> world
+    multiply(p.mInvProjection, kS, d.projectionInverse);
+    float step[16];
+    multiply(p.mReprojection, kS, step);
+    multiply(kT, step, d.reprojectionMatrix);
+    multiply(p.mViewProjInverse, kS, d.viewProjectionInverse);
+    d.depthSimilaritySigma = p.mDepthSigma;
+    return ffx_ok(ffxDenoiserContextDispatchShadows(&gContext, &d), "ffxDenoiserContextDispatchShadows");
+}
+
 #else   // no FidelityFX denoiser libraries in this build
 
 bool init(VkInstance, VkPhysicalDevice, VkDevice) { return false; }
 bool ready() { return false; }
 void shutdown() {}
-bool prepare(U32, U32, std::vector<Image*>&) { return false; }
+bool prepare(U32, U32, U32, std::vector<Image*>&) { return false; }
 bool reflections(VkCommandBuffer, const ReflectionParams&) { return false; }
+bool shadows(VkCommandBuffer, const ShadowParams&) { return false; }
 
 #endif
 
