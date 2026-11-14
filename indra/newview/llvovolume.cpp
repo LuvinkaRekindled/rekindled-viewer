@@ -1373,6 +1373,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
             S32 current_discard = getVolume() ? getVolume()->getSculptLevel() : -2 ;
 
             if (texture_discard >= 0 && //texture has some data available
+                !mSculptDeferred &&     // <FS> a sculpt that waits for its decoded map is not rebuilt every frame to find out it still waits (the churn census saw 19 of them a frame, 11,400 rebuild asks per 600 frames)
                 (texture_discard < current_discard || //texture has more data than last rebuild
                 current_discard < 0)) //no previous rebuild
             {
