@@ -1264,7 +1264,7 @@ bool Renderer::createLayouts()
             b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
             b2[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             b2[t].descriptorCount = cap[t];
-            b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;       // (compute: the bindless probe, LLVkWorker::describe_textures)
             binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
             // Entries are written in the middle of recording a frame, while work recorded earlier may still be pending: without this bit that is undefined for EVERY entry of the set
             binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
@@ -1273,7 +1273,7 @@ bool Renderer::createLayouts()
             b2[BINDLESS_TABLES].binding = BINDLESS_TABLES;      // 4: the handle map (a storage buffer of uint, id -> descriptor index)
             b2[BINDLESS_TABLES].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             b2[BINDLESS_TABLES].descriptorCount = 1;
-            b2[BINDLESS_TABLES].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+            b2[BINDLESS_TABLES].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         }
         {
             b2[FB_BINDING].binding = FB_BINDING;                 // 5: what the draws measured of the textures' need (H6): a storage buffer of uint, by handle

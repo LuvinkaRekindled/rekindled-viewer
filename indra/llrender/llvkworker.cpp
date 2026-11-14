@@ -3805,6 +3805,234 @@ std::string describe_texture_of_view(U64 view_id)
     return "no GL texture has this view (the texture was deleted or its image replaced)";
 }
 
+// <FS> 2026-11-14 the bindless probe. A compute shader that reads a texture the way the draws do (the frame slot's handle map, then the descriptor it names in that slot's set 2 table) and, in the same
+// dispatch, through a descriptor of its own that names the texture's image directly, at 16 texel centres. Run once for every frame slot: a slot whose two readings differ shows another image through the handle
+// (a handle map entry or a descriptor that is stale, or written wrong). The set 2 bindings are visible to compute for this (the layout's stage flags).
+namespace
+{
+const char* kProbeShader = R"GLSL(#version 450
+#extension GL_EXT_nonuniform_qualifier : require
+layout(local_size_x = 16) in;
+layout(set = 0, binding = 0) uniform sampler2D tbl2d[];
+layout(std430, set = 0, binding = 4) readonly buffer HandleMap { uint map[]; };
+struct Out { uvec4 meta; uvec4 info; vec4 via[16]; vec4 direct[16]; };
+layout(std430, set = 1, binding = 0) buffer Probe { Out o[]; } probe;
+layout(set = 1, binding = 1) uniform sampler2D direct_tex;
+layout(push_constant) uniform PC { uint slot; } pc;
+void main()
+{
+    const uint i = gl_LocalInvocationID.x;
+    const uvec4 m = probe.o[pc.slot].meta;
+    const uint d = map[(m.y << 16) | m.x];
+    const uint tx = (i & 3u) * (m.z / 4u) + m.z / 8u;
+    const uint ty = (i >> 2) * (m.w / 4u) + m.w / 8u;
+    const vec2 uv = (vec2(float(tx), float(ty)) + 0.5) / vec2(float(m.z), float(m.w));
+    probe.o[pc.slot].via[i] = textureLod(tbl2d[nonuniformEXT(d)], uv, 0.0);
+    probe.o[pc.slot].direct[i] = textureLod(direct_tex, uv, 0.0);
+    if (i == 0u)
+    {
+        probe.o[pc.slot].info = uvec4(d, 1u, 0u, 0u);
+    }
+}
+)GLSL";
+constexpr size_t kProbeRegion = 16 + 16 + 256 + 256;
+struct BindlessProbeState
+{
+    VkShaderModule mModule = VK_NULL_HANDLE;
+    VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout mLayout = VK_NULL_HANDLE;
+    VkPipeline mPipe = VK_NULL_HANDLE;
+    VkDescriptorPool mPool = VK_NULL_HANDLE;
+    VkDescriptorSet mSet = VK_NULL_HANDLE;
+    Buffer mBuf;
+    bool mTried = false;
+} sBindlessProbe;
+
+bool bindless_probe_init()
+{
+    if (sBindlessProbe.mPipe != VK_NULL_HANDLE)
+    {
+        return true;
+    }
+    if (sBindlessProbe.mTried)
+    {
+        return false;
+    }
+    sBindlessProbe.mTried = true;
+    Renderer& r = Renderer::instance();
+    Context& ctx = Context::instance();
+    VkDevice dev = ctx.getDevice();
+    if (r.bindlessLayout() == VK_NULL_HANDLE)
+    {
+        return false;
+    }
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return false;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { kProbeShader };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("VkTex") << "bindless probe: compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("VkTex") << "bindless probe: link failed: " << program.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        return false;
+    }
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkDescriptorSetLayoutBinding b[2] = {};
+    b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    sl.bindingCount = 2;
+    sl.pBindings = b;
+    VkDescriptorSetLayout set_layouts[2] = { r.bindlessLayout(), VK_NULL_HANDLE };
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 };
+    VkDescriptorPoolSize ps[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 } };
+    VkDescriptorPoolCreateInfo pi = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+    pi.maxSets = 1;
+    pi.poolSizeCount = 2;
+    pi.pPoolSizes = ps;
+    if (vkCreateShaderModule(dev, &mi, nullptr, &sBindlessProbe.mModule) != VK_SUCCESS || vkCreateDescriptorSetLayout(dev, &sl, nullptr, &sBindlessProbe.mSetLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    set_layouts[1] = sBindlessProbe.mSetLayout;
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.setLayoutCount = 2;
+    li.pSetLayouts = set_layouts;
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(dev, &li, nullptr, &sBindlessProbe.mLayout) != VK_SUCCESS || vkCreateDescriptorPool(dev, &pi, nullptr, &sBindlessProbe.mPool) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkDescriptorSetAllocateInfo ai = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    ai.descriptorPool = sBindlessProbe.mPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &sBindlessProbe.mSetLayout;
+    if (vkAllocateDescriptorSets(dev, &ai, &sBindlessProbe.mSet) != VK_SUCCESS || !ctx.createBuffer((VkDeviceSize)kProbeRegion * Context::FRAMES_IN_FLIGHT, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Upload, sBindlessProbe.mBuf) || !sBindlessProbe.mBuf.mMapped)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo ci = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    ci.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    ci.stage.module = sBindlessProbe.mModule;
+    ci.stage.pName = "main";
+    ci.layout = sBindlessProbe.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, nullptr, &sBindlessProbe.mPipe) != VK_SUCCESS)
+    {
+        sBindlessProbe.mPipe = VK_NULL_HANDLE;
+        return false;
+    }
+    LL_INFOS("VkTex") << "bindless probe ready" << LL_ENDL;
+    return true;
+}
+
+// the probe of one texture, for every frame slot: the text for its log line; `wrong` is set when a slot's two readings differ
+std::string bindless_probe(Tex& t, bool& wrong)
+{
+    Renderer& r = Renderer::instance();
+    Context& ctx = Context::instance();
+    if (!t.mHandle || !t.mImage.valid() || t.mImage.mViewType != VK_IMAGE_VIEW_TYPE_2D || !t.mVkSampler || t.mImage.mLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || t.mImage.mExtent.width < 8 || t.mImage.mExtent.height < 8)
+    {
+        return " | probe skipped (no handle, sampler or 2D image in the shader read layout)";
+    }
+    if (!bindless_probe_init())
+    {
+        return " | probe unavailable";
+    }
+    if (LLVkBridge::inFrame() && !r.flushAndRestart(5))
+    {
+        return " | probe skipped (could not leave the frame)";
+    }
+    r.bindlessWritesNow();      // (the descriptors the handles name are written now, not at the next draw)
+    const U32 slots = std::min<U32>(Context::frameCount(), Context::FRAMES_IN_FLIGHT);
+    U8* base = (U8*)sBindlessProbe.mBuf.mMapped;
+    memset(base, 0, kProbeRegion * Context::FRAMES_IN_FLIGHT);
+    for (U32 s = 0; s < slots; ++s)
+    {
+        U32* meta = (U32*)(base + s * kProbeRegion);
+        meta[0] = t.mHandle; meta[1] = 0; meta[2] = t.mImage.mExtent.width; meta[3] = t.mImage.mExtent.height;
+    }
+    VkDescriptorBufferInfo bi = { sBindlessProbe.mBuf.mBuffer, 0, VK_WHOLE_SIZE };
+    VkDescriptorImageInfo ii = { t.mVkSampler, t.mImage.mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet w[2] = { { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }, { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET } };
+    w[0].dstSet = sBindlessProbe.mSet; w[0].dstBinding = 0; w[0].descriptorCount = 1; w[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[0].pBufferInfo = &bi;
+    w[1].dstSet = sBindlessProbe.mSet; w[1].dstBinding = 1; w[1].descriptorCount = 1; w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[1].pImageInfo = &ii;
+    vkUpdateDescriptorSets(ctx.getDevice(), 2, w, 0, nullptr);
+    const bool submitted = ctx.immediateSubmit([&](VkCommandBuffer cmd) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sBindlessProbe.mPipe);
+        for (U32 s = 0; s < slots; ++s)
+        {
+            VkDescriptorSet sets[2] = { r.bindlessSet(s), sBindlessProbe.mSet };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sBindlessProbe.mLayout, 0, 2, sets, 0, nullptr);
+            vkCmdPushConstants(cmd, sBindlessProbe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &s);
+            vkCmdDispatch(cmd, 1, 1, 1);
+        }
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        mb.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+        mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+    if (!submitted)
+    {
+        return " | probe: the submit failed";
+    }
+    std::string text = " | bindless probe (16 texels through the handle against the image direct):";
+    for (U32 s = 0; s < slots; ++s)
+    {
+        const U8* region = base + s * kProbeRegion;
+        const U32* info = (const U32*)(region + 16);
+        const float* via = (const float*)(region + 32);
+        const float* direct = (const float*)(region + 32 + 256);
+        float worst = 0.f;
+        for (int k = 0; k < 64; ++k)
+        {
+            worst = std::max(worst, std::fabs(via[k] - direct[k]));
+        }
+        char buf[260];
+        snprintf(buf, sizeof(buf), " slot%u descriptor %u max difference %.3f%s", s, info[0], worst, worst > 0.02f ? " MISMATCH" : "");
+        text += buf;
+        if (worst > 0.02f)
+        {
+            wrong = true;
+            snprintf(buf, sizeof(buf), " (texel 0: via the handle %.2f %.2f %.2f %.2f, direct %.2f %.2f %.2f %.2f)", via[0], via[1], via[2], via[3], direct[0], direct[1], direct[2], direct[3]);
+            text += buf;
+        }
+    }
+    return text;
+}
+} // namespace
+
 // <FS> 2026-11-14 (the user: the eyes bake slot shows a brown texture while the iris slot has the right one, until a rebake; the floater is drawn through the same handles as the avatar, so it cannot say whether
 // the bake is brown or a handle shows another texture's image): per GL texture name, what the worker holds, and what the handle of the texture shows now: the image the handle points at belongs to the GL
 // texture that "handle shows" names; a handle whose image belongs to ANOTHER texture is the bug
@@ -3858,6 +4086,11 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                 {
                     text += " | GPU level 0: readback failed";
                 }
+            }
+            // what the shaders see through the handle, in every frame slot, against the image read directly
+            if (t.mHandle && t.mImage.valid())
+            {
+                text += bindless_probe(t, wrong);
             }
         }
         if (quiet && !wrong)
