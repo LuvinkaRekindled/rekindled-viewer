@@ -45,6 +45,7 @@
 
 //#include "../tools/imdebug/imdebug.h"
 #include "llrendertarget.h"
+#include "llreadback.h"
 using namespace LLAvatarAppearanceDefines;
 
 // runway consolidate
@@ -956,8 +957,38 @@ LLTexLayer::LLTexLayer(const LLTexLayerTemplate &layer_template, LLLocalTextureO
 {
 }
 
+// <FS> hitchless loading (doc/vulkan/PLAN-hitchless-loading.md): a morph mask of another avatar is read back from the bake target without the main thread waiting for the worker and the GPU (that wait
+// was 60 to 120 ms each in a login). The read is queued behind the draws that made the mask (the target holds exactly that when the worker gets to it); the avatar's morphs get the mask a
+// frame or two later (updatePendingMorphMasks). The gather of the alpha for the avatar's own baked texture (addAlphaMask) still reads at once: it needs the mask now.
+namespace
+{
+struct PendingMask
+{
+    LLTexLayer* mLayer;
+    U32 mCacheIndex;
+    U8* mAlpha;                                     // the mask's buffer, filled when the read is done
+    std::shared_ptr<LLReadbackTicket> mTicket;
+    S32 mWidth, mHeight;
+    size_t mPixels;
+};
+std::vector<PendingMask> sPendingMasks;
+}
+
 LLTexLayer::~LLTexLayer()
 {
+    for (size_t i = 0; i < sPendingMasks.size(); )
+    {
+        if (sPendingMasks[i].mLayer == this)
+        {
+            ll_aligned_free_32(sPendingMasks[i].mAlpha);
+            sPendingMasks.erase(sPendingMasks.begin() + i);
+        }
+        else
+        {
+            ++i;
+        }
+    }
+
     // mParamAlphaList and mParamColorList are LLViewerVisualParam's and get
     // deleted with ~LLCharacter()
     //std::for_each(mParamAlphaList.begin(), mParamAlphaList.end(), DeletePointer());
@@ -1073,7 +1104,7 @@ bool LLTexLayer::render(S32 x, S32 y, S32 width, S32 height, LLRenderTarget* bou
         }//*/
 
         const bool force_render = true;
-        renderMorphMasks(x, y, width, height, net_color, bound_target, force_render);
+        renderMorphMasks(x, y, width, height, net_color, bound_target, force_render, true);       // <FS> the mask is for the avatar's morphs only here: its read is not waited for
         alpha_mask_specified = true;
         gRender.flush();
         gRender.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ONE_MINUS_DEST_ALPHA);
@@ -1288,7 +1319,7 @@ bool LLTexLayer::blendAlphaTexture(S32 x, S32 y, S32 width, S32 height)
     addAlphaMask(data, originX, originY, width, height, bound_target);
 }
 
-void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLColor4 &layer_color, LLRenderTarget* bound_target, bool force_render)
+void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLColor4 &layer_color, LLRenderTarget* bound_target, bool force_render, bool allow_async)
 {
     if (!force_render && !hasMorph())
     {
@@ -1528,6 +1559,24 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                 { // platforms with working drivers...
                     // We just want GL_ALPHA, but that isn't supported in OGL core profile 4.
                     static const size_t TEMP_BYTES_PER_PIXEL = 4;
+                    if (allow_async)
+                    {
+                        // <FS> queue the read and go on (see PendingMask): the mask is applied by updatePendingMorphMasks. A read of the same mask (same weights) that is still pending is enough.
+                        for (const PendingMask& pending : sPendingMasks)
+                        {
+                            if (pending.mLayer == this && pending.mCacheIndex == cache_index)
+                            {
+                                ll_aligned_free_32(alpha_data);
+                                return;
+                            }
+                        }
+                        std::shared_ptr<LLReadbackTicket> ticket = ll_read_pixels_async(x, y, width, height, PixelFormat::RGBA, ComponentType::U8, mem_size * TEMP_BYTES_PER_PIXEL);
+                        if (ticket)
+                        {
+                            sPendingMasks.push_back({ this, cache_index, alpha_data, ticket, width, height, pixels });
+                            return;
+                        }
+                    }
                     U8* temp_data = (U8*)ll_aligned_malloc_32(mem_size * TEMP_BYTES_PER_PIXEL);
                     if (!temp_data)
                     {
@@ -1555,6 +1604,46 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
 
         mMorphMasksValid = true;
         getTexLayerSet()->applyMorphMask(alpha_data, width, height, 1);
+    }
+}
+
+void LLTexLayer::finishMorphMask(U32 cache_index, U8* alpha_data, S32 width, S32 height)
+{
+    const S32 max_cache_entries = getTexLayerSet()->getAvatarAppearance()->isSelf() ? 4 : 1;
+    while ((S32)mAlphaCache.size() >= max_cache_entries)
+    {
+        alpha_cache_t::iterator iter = mAlphaCache.begin();
+        ll_aligned_free_32(iter->second);
+        mAlphaCache.erase(iter);
+    }
+    mAlphaCache[cache_index] = alpha_data;
+    getTexLayerSet()->getAvatarAppearance()->dirtyMesh();
+    mMorphMasksValid = true;
+    getTexLayerSet()->applyMorphMask(alpha_data, width, height, 1);
+}
+
+// static
+void LLTexLayer::updatePendingMorphMasks()
+{
+    for (size_t i = 0; i < sPendingMasks.size(); )
+    {
+        PendingMask& p = sPendingMasks[i];
+        if (!p.mTicket->mDone.load(std::memory_order_acquire))
+        {
+            ++i;
+            continue;
+        }
+        const U8* temp = p.mTicket->mData.data();
+        for (size_t pixel = 0; pixel < p.mPixels; pixel++)
+        {
+            p.mAlpha[pixel] = temp[(pixel * 4) + 3];
+        }
+        LLTexLayer* layer = p.mLayer;
+        const U32 cache_index = p.mCacheIndex;
+        U8* alpha = p.mAlpha;
+        const S32 width = p.mWidth, height = p.mHeight;
+        sPendingMasks.erase(sPendingMasks.begin() + i);     // (before the call: it may start new reads)
+        layer->finishMorphMask(cache_index, alpha, width, height);
     }
 }
 

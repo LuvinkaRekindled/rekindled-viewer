@@ -1170,6 +1170,24 @@ void syncCall(const std::function<void()>& fn)
     }
 }
 
+void postCall(std::function<void()> fn)
+{
+    // inline when this thread is the one that replays commands, or nothing is replaying them (the same rule as syncCall)
+    const bool replayer = gMode == 2 ? isMainThread() : (!gRunning.load() || __readgsdword(0x48) == gWorkerTid);
+    if (replayer)
+    {
+        fn();
+        return;
+    }
+    if (isMainThread())
+    {
+        stateEmit();        // (what fn reads of the render state, the pixel store alignment, is what the producer has now)
+    }
+    std::function<void()>* heap = new std::function<void()>(std::move(fn));
+    push(CMD_ASYNC_CALL, &heap, sizeof(heap));
+    wake();
+}
+
 unsigned long long backlogBytes()
 {
     const U64 tail = gTail.load(std::memory_order_acquire);
@@ -2122,6 +2140,26 @@ void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat for
     readPixels_impl(target, x, y, width, height, tr, dst);
 }
 
+std::shared_ptr<LLReadbackTicket> readPixelsAsync(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes, const char* file, int line)
+{
+    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
+    LLVkFormat::noteFormat("readPixelsAsync", file, line, 0, tr.mComps, tr.mType);
+    std::shared_ptr<LLReadbackTicket> ticket = std::make_shared<LLReadbackTicket>();
+    ticket->mData.assign(bytes, 0);
+    if (!LLVkAsync::gEnabled)
+    {
+        readPixels_impl(target, x, y, width, height, tr, ticket->mData.data());
+        ticket->mDone.store(1, std::memory_order_release);
+        return ticket;
+    }
+    LLVkAsync::postCall([ticket, target, x, y, width, height, tr]()
+    {
+        LLVkWorker::read_pixels(target, x, y, width, height, tr, ticket->mData.data());
+        ticket->mDone.store(1, std::memory_order_release);
+    });
+    return ticket;
+}
+
 }
 
 // ---- F1.6: queries by id (llvkquery.h) ----
@@ -2812,6 +2850,16 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             p->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mColumns, a.mRows, a.mCount);
             if (LLVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
+        }
+        break;
+    }
+    case CMD_ASYNC_CALL:
+    {
+        std::function<void()>* fn = r.get<std::function<void()>*>();
+        if (fn)
+        {
+            (*fn)();
+            delete fn;
         }
         break;
     }

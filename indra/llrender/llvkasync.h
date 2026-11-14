@@ -40,6 +40,8 @@ namespace LLVkAsync
     void pushData(unsigned short op, const void* args, unsigned size, const void* data, size_t data_size);
     // runs fn on the worker after everything queued before it, and waits for it to finish
     void syncCall(const std::function<void()>& fn);
+    // <FS> runs fn on the worker after everything queued before it, and does NOT wait (hitchless loading: a read of a render target for the avatar bake). fn must own what it touches.
+    void postCall(std::function<void()> fn);
     // <FS> LL_VK_SYNC_LOG (default on): the main thread's waits in syncCall are timed by the function that called it and reported every 10 s (VkSync); the symbolizer names an address
     void setSymbolizer(std::string (*fn)(const void*));
     // <FS> the calling thread's stack as text, one function a line (the symbolizer above; addresses without it)
@@ -229,7 +231,7 @@ namespace LLVkAsync
         CMD_BASE = 1000,
         CMD_FRAME_BEGIN, CMD_FRAME_END, CMD_PRESENT, CMD_HOLD, CMD_SNAPSHOT_BOUNDARY,
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
-        CMD_SYNC, CMD_STOP, CMD_WRAP,
+        CMD_SYNC, CMD_ASYNC_CALL, CMD_STOP, CMD_WRAP,
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkBridge::shadowPackets)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
