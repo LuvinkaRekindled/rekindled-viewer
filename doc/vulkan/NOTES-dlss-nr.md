@@ -114,3 +114,9 @@ Gates: G1 (RR at 1:1 creates and evaluates, the picture clean) passed from the l
 RR alone: the second feature costs about 1.8 ms (76.5 -> 67 fps) and only buys the depth of field back, so the automatic default keeps today's order without NR. Someone who wants DoF with RR and no NR can force 2 in the file; a preference for that is not planned until asked for.
 
 Not measured: RR at 1:1 at a hi-res snapshot size (4100x2178); the GPU zones `dlss rr` / `dlss` / `dlss nr` split (the fps lines were enough for the decision).
+
+## The scaling ratio again (2026-11-15, Adam, render-size position 1, FSR upscaling after NR, 1713x898 render, 2558x1341 window)
+
+Measured by Adam in the viewer (the 12th number of `nr-debug.txt`; the feature is made again when it changes): **at 1.0 about 85 fps (11.8 ms a frame); at any other value 55 to 57 fps (about 18 ms), the same for every value he tried; the picture looks better the higher the value, and it caps at 2.** Without NR the frame is about 5 ms, so NR costs about 6.8 ms at 1.0 and about 13 ms at any other ratio.
+
+This corrects the 2026-10-28 table above (ratio 0.67 / 0.5 / 1.0 all 47 fps at the window-size position, "the ratio does nothing"): at position 1 there is a step at exactly 1.0. Reading (not proven): a ratio other than 1.0 turns on the DLL's second path (the guided upsample with the original colour snapshot and the previous output, the strings of PLAN-dlss-nr.md section 1.2), which costs about 6 ms of its own and does not depend on the value; within that path a larger value is a better picture (up to 2) at no extra cost. So there are two useful settings: **1.0 for the cheap one, 2.0 for the best looking one**; nothing in between is worth using. The cost with the ratio above 1 is the full network plus the upsample pass, not a smaller network: the value does not make NR cheaper.
