@@ -17,6 +17,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <atomic>
+#include <thread>
 #include <cstdarg>
 #include "llvkplatform.h"
 #if LL_WINDOWS
@@ -36,6 +37,7 @@ namespace LLVk
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 const char* gDebugProgram = nullptr;
 bool gDeviceLost = false;
+static std::thread::id sFrameThread;        // the thread that last began a frame (GPU-LIFETIMES.md 5.8)
 
 namespace
 {
@@ -2225,6 +2227,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
         vkCmdWriteTimestamp2(f.mCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, f.mTsPool, 0);
     }
     mInFrame = true;
+    sFrameThread = std::this_thread::get_id();      // (GPU-LIFETIMES.md 5.8: the thread that records frames; destroyLater checks its callers against it)
     {
         static const U32 start_tag = stampTag("frame start");
         gpuStamp(start_tag);            // (the first stamp of the frame: a hang reported with no stamp reached is before this)
@@ -2540,6 +2543,16 @@ StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 // Now it waits for the next frame to be recorded and goes with that one.
 void Context::destroyLater(std::function<void()> fn)
 {
+    if (sFrameThread != std::thread::id() && std::this_thread::get_id() != sFrameThread)
+    {
+        // GPU-LIFETIMES.md finding 5.8: the in-frame list below has no lock, it is safe only for the thread that records the frame (healthy = 0)
+        static std::atomic<U64> off_thread{ 0 };
+        const U64 n = ++off_thread;
+        if (n <= 5 || n % 1000 == 0)
+        {
+            LL_WARNS("Vulkan") << "destroyLater called from a thread that is not the frame thread (" << n << " so far, in a frame: " << (mInFrame ? "yes" : "no") << ")" << LL_ENDL;
+        }
+    }
     if (mInFrame)
     {
         mFrames[mFrameSlot].mDeferred.push_back(std::move(fn));
