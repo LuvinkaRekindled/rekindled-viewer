@@ -84,6 +84,7 @@ void LLVkBridge::stopAsync() {}
 #include "llvkcontext.h"
 #include "llvknative.h"
 #include "llvkupscale.h"
+#include "llvkdenoise.h"
 #include "llvkdlssnr.h"
 #include "llvkrenderer.h"
 #include "llvkasync.h"
@@ -1233,6 +1234,27 @@ void LLVkBridge::setUpscaleLodBias(float bias)
 bool LLVkBridge::upscaleAvailable()
 {
     return sMirror.mReady && LLVkUpscale::ready();
+}
+
+bool LLVkBridge::denoiseAvailable()
+{
+    return sMirror.mReady && LLVkDenoise::ready();
+}
+
+void LLVkBridge::denoiseReflections(const DenoiseArgs& args)
+{
+    if (LLVkAsync::gEnabled)
+    {
+        LLVkAsync::push(LLVkAsync::CMD_DENOISE, &args, sizeof(args));
+        return;
+    }
+    denoiseImpl(args);
+}
+
+void LLVkBridge::denoiseImpl(const DenoiseArgs& args)
+{
+    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    LLVkWorker::on_denoise_reflections(args);
 }
 
 bool LLVkBridge::rayReconstructionAvailable()

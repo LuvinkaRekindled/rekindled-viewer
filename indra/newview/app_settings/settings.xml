@@ -2854,6 +2854,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>FSVkAmdDenoise</key>
+    <map>
+      <key>Comment</key>
+      <string>Experimental: denoise the traced glossy reflections with the AMD FidelityFX reflection denoiser (works on any graphics card). Needs the upscaler on and FSR as the upscaler (no ray reconstruction) and the traced mirror on. LL_VK_AMD_DENOISE=1 turns it on for a test. Takes effect at once.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>FSVkDLSSScale</key>
     <map>
       <key>Comment</key>

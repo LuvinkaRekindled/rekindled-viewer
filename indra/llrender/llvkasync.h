@@ -249,6 +249,7 @@ namespace LLVkAsync
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
         CMD_PASS,                                  // F3.5d: a render pass begins: target, colour attachment count and the load op (clear) in one record (passBegin)
         CMD_DRAW_SCRATCH,                          // F3.1: a non-indexed draw with its vertices inline (immediate mode: LLRender::flush); no vertex binding, the worker supplies the vertex scratch
+        CMD_DENOISE,                               // the AMD reflection denoiser runs on mirror-owned textures (LLVkBridge::denoiseReflections, PLAN-amd-denoiser.md)
         // program bind + vertex buffer unbind + attribute array enables (LLShaderProgram::bind)
     };
 

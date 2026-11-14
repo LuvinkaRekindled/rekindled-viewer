@@ -1,0 +1,30 @@
+# The AMD FidelityFX reflection denoiser in the viewer (first try, 2026-11-14)
+
+Goal (Adam, 2026-11-13): a free, tested replacement for DLSS ray reconstruction on the traced glossy mirror, before writing our own SVGF. See `PLAN-amd-fsr-sdk2.md` item E for the options, the licence notes and the tests that came first (the eight Vulkan passes compile; AMD's `FFX_HYBRIDSHADOWS_VK.exe` and `FFX_HYBRIDREFLECTIONS_VK.exe` run right on the RTX 5060).
+
+## State: built and run once, quality not judged
+
+The code builds and links (0 errors, exe 68.16 MB). Two laps ran on the RTX 5060 (2026-11-14, FSR forced, RT on, traced mirror quality 3): dn1 with `LL_VK_AMD_DENOISE=1`: "the AMD FidelityFX denoiser is ready", "the reflection denoiser context was made for 1713x898 (24295 tiles)", no error, no device lost, no `VkDenoise` warning, 203 programs compiled; dn0 without it: the same, no context. The two end frames show a different camera pose (the lap's pose is not fixed), so they are not an A/B of the reflections; nothing wrong was visible in the denoiser frame. NOT judged: how the reflections look against the undenoised ones (Adam to compare live with `FSVkAmdDenoise`). Default behaviour is unchanged (the setting is off); the one thing that runs at start-up is `LLVkDenoise::init` (it makes the SDK's Vulkan interface), logged as "the AMD FidelityFX denoiser is ready".
+
+## What was built
+
+- **The SDK libraries** (MIT, SDK v1.1.4, built from its own source, outside the repo): `cmake -S <work>\FidelityFX-SDK-1.1.4\sdk -B <work>\ffx-sdk-build -G "Visual Studio 17 2022" -A x64 -DFFX_API_BACKEND=VK_X64 -DFFX_ALL=OFF -DFFX_SSSR=ON -DFFX_DENOISER=ON -DFFX_AUTO_COMPILE_SHADERS=ON` with `VULKAN_SDK=<work>/vulkan-work/VulkanSDK`, then `cmake --build ... --config Release`. The libraries land in `sdk/bin/ffx_sdk` (`ffx_denoiser_x64.lib`, `ffx_backend_vk_x64.lib`). `indra/llrender/CMakeLists.txt` links them (and `vulkan-1.lib`, which the SDK backend calls directly) when they exist and defines `LL_FFX_DENOISER`. Re-run `<work>\cmake-regen.bat` after changing it.
+- **`llvkdenoise.h/.cpp`** (llrender): the wrapper. It keeps the SDK interface, the denoiser context (made per render size), the second radiance and the two variance images, the tile list (every 8x8 tile of the picture, written once) and the indirect arguments (`args[3..5]` = tile count, 1, 1: the three passes dispatch at byte offset 12).
+- **The command**: `LLVkBridge::DenoiseArgs` + `denoiseReflections` (CMD_DENOISE in the stream) + `LLVkWorker::on_denoise_reflections` (finds the textures by GL name, `Renderer::recordExternal` with every image shader-read-only, as the FSR path does).
+- **Three native programs** (family post, `dnsr_prep.frag`, `dnsr_pack.frag`, `dnsr_unpack.frag`): prep writes the world normal (RGBA16F), the roughness (R16F) and the raw depth (R32F, the denoiser cannot read the G-buffer's depth format); pack makes the denoiser's radiance (traced colour rgb, **ray length in alpha**: the denoiser reads the ray length from the radiance alpha, ours is the second attachment of the RT Reflection target); unpack puts the denoised colour back with the RT Reflection pass's alpha (the lighting pass blends by it).
+- **The pipeline hook** (`LLPipeline::denoiseReflections`, called right after the RT Reflection pass; `rt_refl_target` becomes `mRtReflDenoised` when it ran) and the setting `FSVkAmdDenoise` (default off; `LL_VK_AMD_DENOISE=1` forces it on). It runs only with an upscaler on, no ray reconstruction (FSR), the traced mirror on, the main view (not a cube face, not a snapshot).
+- Tunables by environment: `LL_VK_DNSR_STABILITY` (temporal stability factor, default 0.7), `LL_VK_DNSR_ROUGHNESS` (roughness threshold above which pixels are left alone, default 0.5).
+
+## Conventions that were derived, not tested (the first thing to check by eye)
+
+The denoiser takes Direct3D style projections: the texture coordinate and depth of a pixel are projected as `(2u - 1, 1 - 2v, depth)`; the viewer's are `(2u - 1, 2v - 1, 2 depth - 1)` (OpenGL clip space, depth buffer holds `(z + 1) / 2`, and the texture's v is the same direction as OpenGL's y). The wrapper converts: `invProjection_ffx = invProj_gl * S`, `S = [1 0 0 0; 0 -1 0 0; 0 0 2 -1; 0 0 0 1]`; `prevViewProjection_ffx = T * prevViewProj_gl`, `T = [1 0 0 0; 0 -1 0 0; 0 0 .5 .5; 0 0 0 1]`. The unjittered projection and the previous unjittered view projection (`mViewProjPrev`) are used. Motion: the surface motion map (pixels, previous minus current) with `motionVectorScale = 1 / size` (the denoiser adds `motion * scale` to the uv). If the picture shows smeared or doubled reflections that follow the camera the wrong way, the y sign of S and T is the first suspect.
+
+## How to test (Adam)
+
+1. `<work>\run-viewer-fsr.bat` (forces FSR; quality 2 = 67% is already saved), the traced mirror on (FSVkMirrorQuality > 0, RT on).
+2. Debug Settings: `FSVkAmdDenoise` true / false, live: the same scene A/B. Or start with `LL_VK_AMD_DENOISE=1`.
+3. Log lines: "the AMD FidelityFX denoiser is ready" (start-up), "the reflection denoiser context was made for WxH" (first frame), any `VkDenoise` warning.
+
+## Not done
+
+A comparison with ray reconstruction, the shadow denoiser (the same SDK has `ffxDenoiserContextDispatchShadows`), a preference checkbox, cube faces and the planar mirror's views, and the `.lib` build into the packaging story (the libraries are outside the repo, like the DLSS SDK).

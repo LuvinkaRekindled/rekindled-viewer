@@ -29,6 +29,7 @@
 #include "llvkquery.h"
 #include "llvkformat.h"
 #include "llvkupscale.h"
+#include "llvkdenoise.h"
 #include "llvkdlssnr.h"
 #include "llvkrt.h"
 #include "llvkpasscensus.h"
@@ -13034,6 +13035,79 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     else if (failures++ < 5)
     {
         LL_WARNS("VkDlssNr") << "the neural render did not run" << LL_ENDL;
+    }
+}
+
+void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
+{
+    static U32 failures = 0;
+    if (!gActive || !LLVkDenoise::ready())
+    {
+        return;
+    }
+    auto find = [](U32 name) -> Tex* {
+        auto it = sGL.mTextures.find(name);
+        return it != sGL.mTextures.end() && it->second.mImage.valid() ? &it->second : nullptr;
+    };
+    Tex* radiance = find(a.mRadiance);
+    Tex* output = find(a.mOutput);
+    Tex* depth = find(a.mDepth);
+    Tex* normals = find(a.mNormals);
+    Tex* roughness = find(a.mRoughness);
+    Tex* motion = find(a.mMotion);
+    if (!radiance || !output || !depth || !normals || !roughness || !motion)
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDenoise") << "denoise: a texture is missing (radiance " << (radiance != nullptr) << ", output " << (output != nullptr) << ", depth " << (depth != nullptr)
+                                  << ", normals " << (normals != nullptr) << ", roughness " << (roughness != nullptr) << ", motion " << (motion != nullptr) << ")" << LL_ENDL;
+        }
+        return;
+    }
+    std::vector<Image*> own;
+    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, own))
+    {
+        if (failures++ < 5)
+        {
+            LL_WARNS("VkDenoise") << "denoise: the denoiser could not be prepared for " << a.mWidth << "x" << a.mHeight << LL_ENDL;
+        }
+        return;
+    }
+    LLVkDenoise::ReflectionParams p;
+    p.mRadiance = &radiance->mImage;
+    p.mOutput = &output->mImage;
+    p.mDepth = &depth->mImage;
+    p.mNormals = &normals->mImage;
+    p.mRoughness = &roughness->mImage;
+    p.mMotion = &motion->mImage;
+    p.mWidth = a.mWidth;
+    p.mHeight = a.mHeight;
+    memcpy(p.mInvProjection, a.mInvProjection, sizeof(p.mInvProjection));
+    memcpy(p.mInvView, a.mInvView, sizeof(p.mInvView));
+    memcpy(p.mPrevViewProjection, a.mPrevViewProjection, sizeof(p.mPrevViewProjection));
+    p.mTemporalStability = a.mTemporalStability;
+    p.mRoughnessThreshold = a.mRoughnessThreshold;
+    p.mFrameIndex = a.mFrameIndex;
+    p.mReset = a.mReset != 0;
+    // every image is shader-read-only on both sides of the call: the denoiser's backend moves the ones a pass writes and puts them back
+    std::vector<std::pair<Image*, VkImageLayout>> needs;
+    for (Image* image : { p.mRadiance, p.mOutput, p.mDepth, p.mNormals, p.mRoughness, p.mMotion })
+    {
+        needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+    }
+    for (Image* image : own)
+    {
+        needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+    }
+    bool done = false;
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDenoise::reflections(cmd, p); });
+    if (done)
+    {
+        output->mValidLevels = 1;       // what was written counts as the texture's content
+    }
+    else if (failures++ < 5)
+    {
+        LL_WARNS("VkDenoise") << "denoise: the dispatch failed or was not recorded" << LL_ENDL;
     }
 }
 

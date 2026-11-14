@@ -310,6 +310,7 @@ extern LLShaderProgram         gObjectVelocityPullProgram;
 extern LLShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
 extern LLShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
 extern LLShaderProgram         gRRGuidesProgram;
+extern LLShaderProgram         gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
 extern LLShaderProgram         gNRRimLiftProgram;             // <FS> DLSS-NR: the rim lift after the neural renderer (nrRimLiftF.glsl)
 extern LLShaderProgram         gRRReflMotionProgram;
 extern LLShaderProgram         gAvatarVelocityDebugProgram;
