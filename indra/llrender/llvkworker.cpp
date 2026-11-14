@@ -5999,11 +5999,13 @@ static bool res_init()
 
 static void res_reclaim(U64 frame)
 {
-    const U64 lag = (U64)Context::frameCount() + 1;
+    // GPU-LIFETIMES.md 5.2: a slot given up in frame r comes back when frame r is finished (the one answer: Context::frameKnownFinished); `frame` is not needed
+    (void)frame;
+    Context& ctx = Context::instance();
     size_t keep = 0;
     for (size_t i = 0; i < sRes.mRetired.size(); ++i)
     {
-        if (frame >= sRes.mRetired[i].second + lag)
+        if (ctx.frameKnownFinished(sRes.mRetired[i].second))
         {
             sRes.mFree.push_back(sRes.mRetired[i].first);
         }
@@ -6687,12 +6689,12 @@ void alpha_res_reclaim(U64 frame)
             LL_INFOS("VkScene") << "resident alpha audit (frame " << frame << "): " << rows << " live rows, " << shown << " texture handles, " << released << " released, " << destroyed << " with a destroyed view" << LL_ENDL;
         }
     }
-    const U64 lag = (U64)Context::frameCount() + 1;
+    Context& ctx = Context::instance();       // (GPU-LIFETIMES.md 5.2: a range or slot given up in frame r comes back when frame r is finished)
     size_t keep = 0;
     for (size_t i = 0; i < sAR.mRetiredRanges.size(); ++i)
     {
         const AlphaResState::RetiredRange r = sAR.mRetiredRanges[i];
-        if (frame >= r.mFrame + lag)
+        if (ctx.frameKnownFinished(r.mFrame))
         {
             // back to the free map, merged with its neighbours
             auto next = sAR.mFreeRanges.lower_bound(r.mFirst);
@@ -6723,7 +6725,7 @@ void alpha_res_reclaim(U64 frame)
     keep = 0;
     for (size_t i = 0; i < sAR.mRetiredSlots.size(); ++i)
     {
-        if (frame >= sAR.mRetiredSlots[i].second + lag)
+        if (ctx.frameKnownFinished(sAR.mRetiredSlots[i].second))
         {
             sAR.mFreeSlots.push_back(sAR.mRetiredSlots[i].first);
         }
@@ -7933,11 +7935,13 @@ bool geo_init()
 
 void geo_reclaim(U64 frame)
 {
-    const U64 lag = (U64)Context::frameCount() + 1;
+    // GPU-LIFETIMES.md 5.2: a slot given up in frame r comes back when frame r is finished (Context::frameKnownFinished); `frame` is not needed
+    (void)frame;
+    Context& ctx = Context::instance();
     size_t keep = 0;
     for (size_t i = 0; i < sGeo.mRetired.size(); ++i)
     {
-        if (frame >= sGeo.mRetired[i].second + lag)
+        if (ctx.frameKnownFinished(sGeo.mRetired[i].second))
         {
             sGeo.mFree.push_back(sGeo.mRetired[i].first);
         }
@@ -7950,7 +7954,7 @@ void geo_reclaim(U64 frame)
     keep = 0;
     for (size_t i = 0; i < sGeo.mPbrRetired.size(); ++i)
     {
-        if (frame >= sGeo.mPbrRetired[i].second + lag)
+        if (ctx.frameKnownFinished(sGeo.mPbrRetired[i].second))
         {
             sGeo.mPbrFree.push_back(sGeo.mPbrRetired[i].first);
         }
@@ -8569,7 +8573,7 @@ bool geo_in_flight_impl(U32 name, U64 frame, U64 min_listed)
     {
         const GeoFrag* f = geo_find(m->second);
         // (min_listed: only a listing at or after the buffer's last rename counts: the new range has not been read by any frame before that)
-        if (f && f->mListedFrame != ~0ull && f->mListedFrame >= min_listed && frame < f->mListedFrame + Context::frameCount() + 1)
+        if (f && f->mListedFrame != ~0ull && f->mListedFrame >= min_listed && !Context::instance().frameKnownFinished(f->mListedFrame))
         {
             ++sGeo.mS.mInFlightYes;
             return true;
