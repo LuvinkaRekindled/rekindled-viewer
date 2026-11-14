@@ -3402,6 +3402,19 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     }
                 }
                 LL_INFOS("VkRt") << "own avatar in the ray scene: " << cur.size() << " draws in the structure, " << twice << " mesh ranges in it twice" << text << LL_ENDL;
+                // every 6th time (about 12 s) the whole list: k = kind (0 opaque, 1 masked), m = mode (0 rigged mesh, 1 and 2 the avatar's body meshes), s = skin id (a body mesh's number for mode 1 and 2),
+                // i = indices, v = vertices, n = slots since it was last named, p = slots since it was last skinned, F = inside the fresh window (skinned with a palette of this frame or the one before)
+                static U32 listing = 0;
+                if (listing++ % 6 == 0)
+                {
+                    std::string all;
+                    for (const SkinDraw* d : cur)
+                    {
+                        all += " k" + std::to_string(d->mKind) + "m" + std::to_string(d->mMode) + " s" + std::to_string(d->mSkinId) + " i" + std::to_string(d->mCount) + " v" + std::to_string(d->mVertexCount) + " n"
+                            + std::to_string((long long)(av_tag - d->mNotedTag)) + " p" + std::to_string((long long)(av_tag - d->mSkinnedTag)) + ((d->mNotedTag != 0 && d->mNotedTag + 2 >= av_tag) ? "F;" : ";");
+                    }
+                    LL_INFOS("VkRt") << "own avatar draw list (" << cur.size() << "):" << all << LL_ENDL;
+                }
             }
         }
         if (!a.mSelf && a.mHasPos && (sDbg.mFarTris[0] || sDbg.mFarTris[1] || sDbg.mFarTris[2]))
