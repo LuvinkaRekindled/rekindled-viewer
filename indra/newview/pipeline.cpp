@@ -22148,9 +22148,9 @@ void LLPipeline::denoiseSunShadow(LLRenderTarget* light)
     last_frame = frame;
     {
         // <FS> the shadow denoiser's temporal history (a patch of the SDK, doc/vulkan/ffx-sdk-patches): the weight of the new sample once the history has settled (0.05 in the SDK: a trail of
-        // about 20 frames behind a moving shadow) and the samples that take. The environment gives the start values (LL_VK_DNSR_SHADOW_BLEND, LL_VK_DNSR_SHADOW_SAMPLES); D:/claude/rt-debug.txt
+        // about 20 frames behind a moving shadow; the default here is 0.3) and the samples that take. The environment gives the start values (LL_VK_DNSR_SHADOW_BLEND, LL_VK_DNSR_SHADOW_SAMPLES); D:/claude/rt-debug.txt
         // dnsrshadowblend=<0.02..1> and dnsrshadowsamples=<1..32> change them live (read twice a second; a key taken out goes back to the start value); each change is logged
-        static const F32 blend_start = getenv("LL_VK_DNSR_SHADOW_BLEND") ? (F32)atof(getenv("LL_VK_DNSR_SHADOW_BLEND")) : 0.f;
+        static const F32 blend_start = getenv("LL_VK_DNSR_SHADOW_BLEND") ? (F32)atof(getenv("LL_VK_DNSR_SHADOW_BLEND")) : 0.3f;     // 0.3: the user's pick by eye 2026-11-15 (leaf edges steady, no trail; the SDK's 0.05 trails behind a moving shadow); 0 = the SDK's value
         static const F32 samples_start = getenv("LL_VK_DNSR_SHADOW_SAMPLES") ? (F32)atof(getenv("LL_VK_DNSR_SHADOW_SAMPLES")) : 0.f;
         static F32 blend = blend_start, samples = samples_start;
         static std::chrono::steady_clock::time_point last_poll;
