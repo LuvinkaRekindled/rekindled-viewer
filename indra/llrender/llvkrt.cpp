@@ -3364,6 +3364,46 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                 chunks_needed += (d.mVertexCount + kSkinChunkVerts - 1) / kSkinChunkVerts;
             }
         }
+        if (a.mSelf)
+        {
+            // <FS> the user 2026-11-14 (the extra shadow of the agent's own head, hair or body, keep=1 helps but does not cure it): the same mesh range in the structure twice. A draw is matched by vertex buffer, index buffer,
+            // ranges, skin id, KIND (0 opaque / material, 1 masked) and MODE, and the notes come from several paths (the shadow passes, the main view naming, the body entries); a mesh named by two paths with
+            // different kind, mode or skin id is two draws, each skinned with the palette of the frame it was last named in: two copies at different poses. Counted every 600 frame slots (about 2 s) for the agent's avatar
+            static U64 dup_last_tag = 0;
+            if (av_tag >= dup_last_tag + 600)
+            {
+                dup_last_tag = av_tag;
+                std::unordered_map<U64, std::vector<const SkinDraw*>> same;
+                for (const SkinDraw* d : cur)
+                {
+                    U64 h = 1469598103934665603ull;
+                    for (U64 v : { (U64)d->mVb, (U64)d->mIb, (U64)d->mFirst, (U64)d->mCount, (U64)d->mVertexFirst, (U64)d->mVertexCount })
+                    {
+                        h = (h ^ v) * 1099511628211ull;
+                    }
+                    same[h].push_back(d);
+                }
+                U32 twice = 0;
+                std::string text;
+                for (const auto& kv : same)
+                {
+                    if (kv.second.size() < 2)
+                    {
+                        continue;
+                    }
+                    if (++twice <= 8)
+                    {
+                        text += " [vb " + std::to_string(kv.second[0]->mVb) + " first " + std::to_string(kv.second[0]->mFirst) + " count " + std::to_string(kv.second[0]->mCount) + ":";
+                        for (const SkinDraw* d : kv.second)
+                        {
+                            text += " (kind " + std::to_string(d->mKind) + " mode " + std::to_string(d->mMode) + " skin " + std::to_string(d->mSkinId) + " named " + std::to_string((long long)(av_tag - d->mNotedTag)) + " slots ago)";
+                        }
+                        text += "]";
+                    }
+                }
+                LL_INFOS("VkRt") << "own avatar in the ray scene: " << cur.size() << " draws in the structure, " << twice << " mesh ranges in it twice" << text << LL_ENDL;
+            }
+        }
         if (!a.mSelf && a.mHasPos && (sDbg.mFarTris[0] || sDbg.mFarTris[1] || sDbg.mFarTris[2]))
         {
             // A far avatar's shadow is a few dozen pixels: its structure is made of at most a budget of triangles (whole draws, the largest that still fit first, so the body and the big clothes
