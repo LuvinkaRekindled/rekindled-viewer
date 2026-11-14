@@ -28,3 +28,9 @@ Adam, 2026-11-14: "let's get rid of nvidia, but leave NR only for local builds, 
 ## Not changing
 
 Hardware floor and everything GPU-vendor-neutral (Vulkan 1.3, bindless, MDI), the NVIDIA driver itself (the viewer runs on it), `nvoglv64.dll` showing in crash stacks.
+
+## Status (2026-11-14, end of day)
+
+Done and built (6e8a353faa; Adam ran FSR with RT on and off, "works", no DLL needed): steps 1 (FSR from source), 2 (one upscaler), 3 (ray reconstruction out), 4 (DLSS super resolution out), 5 (NR and the NVIDIA diagnostics behind `REKINDLED_LOCAL_NVIDIA`), 6 (licence text: the DLSS paragraph and terms are gone; the one NVIDIA word left is glslang's own copyright list, a third party licence text). The package script (`<work>uild-package.bat`, outside the repo) sets the option OFF, builds, fails the log (`NVIDIA_CHECK=FAILED`) if the exe still has NGX strings, and sets it ON again for local builds; NOT run yet (a full installer build). The installer's file list never named an NVIDIA or AMD DLL. NVAPI stays (stock Firestorm).
+
+Left over, optional: the DLSS-named internals (`FSVkDLSS` the upscaler switch, `FSVkDLSSQuality`, `FSVkDLSSScale`, `LL_VK_DLSS`, `LL_VK_DLSS_SCALE`, `LL_VK_DLSS_LODBIAS`, `sDLSS`, `getDLSSScale`, `RenderShadowBlurWithDLSS`, the `VkDlss` log tag; about 80 sites and 18 launcher batch files). They are names, not NVIDIA code; renaming them would reset Adam's saved settings and break the launchers, so it waits for a reason. Also: the AMD shadow denoiser needs the upscaler pipeline's motion vectors (it does not run with the upscaler off).
