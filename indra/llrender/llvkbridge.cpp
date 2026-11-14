@@ -1241,6 +1241,11 @@ bool LLVkBridge::denoiseAvailable()
     return sMirror.mReady && LLVkDenoise::ready();
 }
 
+bool LLVkBridge::upscalerIsFsr()
+{
+    return sMirror.mReady && LLVkUpscale::backendIsFsr();
+}
+
 void LLVkBridge::denoiseReflections(const DenoiseArgs& args)
 {
     if (LLVkAsync::gEnabled)

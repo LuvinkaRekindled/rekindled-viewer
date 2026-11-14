@@ -140,6 +140,8 @@ namespace LLVkBridge
     };
     // the denoiser's context can be made (the SDK libraries are linked and the backend started)
     bool denoiseAvailable();
+    // the upscaler in use is AMD FSR
+    bool upscalerIsFsr();
     // queues (async) or runs the reflection denoiser: mRadiance (rgb + the ray length in a) -> mOutput
     void denoiseReflections(const DenoiseArgs& args);
     // DLSS is initialised and usable (decided when the Vulkan device was created)
