@@ -1923,6 +1923,11 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         mImageTexp->setNeedsAlphaAndPickMask(false);
         mImageTexp->setIsMask(mRawImage->getAlphaIsMask() == 1);
     }
+    if (mFTType == FTT_SERVER_BAKE)
+    {
+        // <FS> what this server bake's texture object is about to upload (the same hash as the BakeTex log of the decode; printed with the bake slot by Show Textures)
+        mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize());
+    }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
 
