@@ -2593,6 +2593,25 @@ void LLTextureFetchWorker::callbackCacheWrite(bool success)
 //////////////////////////////////////////////////////////////////////////////
 
 // Threads:  Tid
+// <FS> 2026-11-14 (Adam: the eyes and ears bake slots show a body placeholder under the same id until a refresh): a sampled hash of a buffer (size, then up to 4096 evenly spaced 8 byte words)
+static U64 fs_sparse_hash(const U8* data, size_t size)
+{
+    U64 h = 1469598103934665603ull ^ (U64)size;
+    if (!data || size < 8)
+    {
+        return h;
+    }
+    const size_t words = size / 8;
+    const size_t step = std::max<size_t>(1, words / 4096);
+    for (size_t i = 0; i < words; i += step)
+    {
+        U64 w;
+        memcpy(&w, data + i * 8, 8);
+        h = (h ^ w) * 1099511628211ull;
+    }
+    return h;
+}
+
 void LLTextureFetchWorker::callbackDecoded(bool success, const std::string &error_message, LLImageRaw* raw, LLImageRaw* aux, S32 decode_id)
 {
     LLMutexLock lock(&mWorkMutex);                                      // +Mw
@@ -2623,6 +2642,14 @@ void LLTextureFetchWorker::callbackDecoded(bool success, const std::string &erro
         mRawImage = raw;
         mAuxImage = aux;
         mDecodedDiscard = mFormattedImage->getDiscardLevel();
+        if (mFTType == FTT_SERVER_BAKE)
+        {
+            // <FS> what a server bake is made of at the decode: the bytes the server (or the cache) gave (size, sampled hash), and what the decode made of them (size, components, BC7 or raw, sampled hash). A bake whose
+            // formatted hash equals that of one of the unused slots (leftarm, leftleg, aux2, aux3) is the placeholder the server sends for an empty bake
+            LL_INFOS("BakeTex") << "server bake decoded: " << mID << ", discard " << mDecodedDiscard << ", formatted " << mFormattedImage->getDataSize() << " bytes hash " << std::hex
+                                << fs_sparse_hash(mFormattedImage->getData(), mFormattedImage->getDataSize()) << std::dec << ", raw " << raw->getWidth() << "x" << raw->getHeight() << " x" << (S32)raw->getComponents()
+                                << (raw->getCompressedFormat() ? " BC7" : " raw") << " " << raw->getDataSize() << " bytes hash " << std::hex << fs_sparse_hash(raw->getData(), raw->getDataSize()) << std::dec << LL_ENDL;
+        }
         if (mDecodedDiscard < mDesiredDiscard)
         {
             LL_WARNS_ONCE(LOG_TXT) << "Decoded higher resolution than requested" << LL_ENDL;
