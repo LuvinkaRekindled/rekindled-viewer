@@ -3229,6 +3229,16 @@ void Renderer::handlesBeginFrame(U32 frame_slot)
     mHandles.retire([&ctx](U64 frame) { return ctx.frameFinished(frame); });
     if (frame_slot < Context::FRAMES_IN_FLIGHT && mHandleMap[frame_slot].valid() && mHandleMap[frame_slot].mMapped)
     {
+        if (ctx.frameSplit())
+        {
+            // (GPU-LIFETIMES.md step 5: the apply belongs to the start of a frame; a frame that is already split must not take the whole log into its map: refused and counted, healthy = 0)
+            static U64 refused = 0;
+            if (++refused <= 5 || refused % 1000 == 0)
+            {
+                LL_WARNS("VkTex") << "handle map: the apply of the log was asked in a split frame: refused (" << refused << " so far)" << LL_ENDL;
+            }
+            return;
+        }
         mHandles.applyTo(frame_slot, (U32*)mHandleMap[frame_slot].mMapped);
     }
 }
@@ -3271,11 +3281,6 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
         ++mStatBindlessRefused;
         return false;
     }
-    // <FS> split frames (E2): a handle that the frame's map shows as the placeholder (never set, or its image was cleared) can take its entry at once, see the long note below; every change of a
-    // handle that shows something waits for the next frame
-    const bool split_frame = mCmd != VK_NULL_HANDLE && Context::instance().frameSplit();
-    const bool first_set = split_frame && mSlot < Context::FRAMES_IN_FLIGHT && mHandleMap[mSlot].valid() && mHandleMap[mSlot].mMapped && ((const U32*)mHandleMap[mSlot].mMapped)[(table << 16) | handle] == 0;
-    static std::atomic<U64> sSplitMapSkips{0}; if (split_frame && !first_set) { const U64 skips = ++sSplitMapSkips; if (skips == 1 || skips % 1000 == 0) { LL_INFOS("VkTex") << "handle map: " << skips << " entries not written into the map of a split frame so far (the first part of the frame is on the GPU; the next frame takes them from the log)" << LL_ENDL; } }
     mPendingWrites.push_back({ table, d, { sampler, image->mView, layout } });
     if (mDescView[table].size() <= d)
     {
@@ -3302,16 +3307,7 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
     // for the rest of the frame (new glyph pages alone: 1 to 6 times in 1200 frames in a steady scene, the handle log of 2026-11-10). So its descriptor is written FIRST
     // (the index is free: no frame's map names it) and only then the map entry: the running part can reach the entry only through a row that still carries the number from the handle's previous
     // owner, and then finds a written descriptor, as the non-split path has it within one command buffer.)
-    if (mCmd != VK_NULL_HANDLE && mSlot < Context::FRAMES_IN_FLIGHT && mHandleMap[mSlot].valid() && mHandleMap[mSlot].mMapped && (!split_frame || first_set))
-    {
-        if (split_frame)
-        {
-            flushPendingWrites();
-        }
-        // the frame that is being recorded applied its map when it began: a handle first shown (or changed) in this frame reaches the frame's own copy now, so that its first draw is not the placeholder.
-        // Its descriptor is written (bindlessFlush) before this frame is submitted; the maps of the frames already submitted are not touched (the log gives the next ones the entry).
-        ((U32*)mHandleMap[mSlot].mMapped)[(table << 16) | handle] = d;
-    }
+    handleMapSet(table, handle, d);
     if (handle < mHandleInfo[table].size())
     {
         HandleInfo& hi = mHandleInfo[table][handle];
@@ -3324,6 +3320,37 @@ bool Renderer::handleSet(U32 table, U32 handle, Image* image, VkSampler sampler,
     }
     return true;
 }
+
+// GPU-LIFETIMES.md step 5: the one write into the map of the frame being recorded (set 2 binding 4) that is not the apply at the start of the frame (handlesBeginFrame).
+// Split frames (E2): the first part of the frame is already submitted and reads this very map while it runs, so a handle that shows something waits for the next frame, whose map takes the
+// entry from the log at its start (refused and counted below). A handle that the frame's map shows as the placeholder (never set, or its image was cleared) has no old content to keep and
+// takes its entry at once, descriptor first (see the note in handleSet). Outside a split frame the entry goes in as before.
+void Renderer::handleMapSet(U32 table, U32 handle, U32 d)
+{
+    if (mCmd == VK_NULL_HANDLE || mSlot >= Context::FRAMES_IN_FLIGHT || !mHandleMap[mSlot].valid() || !mHandleMap[mSlot].mMapped)
+    {
+        return;
+    }
+    U32& entry = ((U32*)mHandleMap[mSlot].mMapped)[(table << 16) | handle];
+    if (Context::instance().frameSplit())
+    {
+        if (entry != 0)
+        {
+            static std::atomic<U64> sSplitMapSkips{ 0 };
+            const U64 skips = ++sSplitMapSkips;
+            if (skips == 1 || skips % 1000 == 0)
+            {
+                LL_INFOS("VkTex") << "handle map: " << skips << " entries not written into the map of a split frame so far (the first part of the frame is on the GPU; the next frame takes them from the log)" << LL_ENDL;
+            }
+            return;
+        }
+        flushPendingWrites();
+    }
+    // the frame that is being recorded applied its map when it began: a handle first shown (or changed) in this frame reaches the frame's own copy now, so that its first draw is not the placeholder.
+    // Its descriptor is written (bindlessFlush) before this frame is submitted; the maps of the frames already submitted are not touched (the log gives the next ones the entry).
+    entry = d;
+}
+
 
 void Renderer::handleClear(U32 table, U32 handle)
 {

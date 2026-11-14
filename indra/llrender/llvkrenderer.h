@@ -577,6 +577,7 @@ private:
     U32 mHandleEpoch = 1;               // changes when a keyed handle goes: a cache of handles (mUnitSlot) starts over
     void handlesBeginFrame(U32 frame_slot);
     void flushPendingWrites();
+    void handleMapSet(U32 table, U32 handle, U32 d);     // GPU-LIFETIMES.md step 5: the one write into the current frame's handle map (refused in a split frame for a handle that shows something)
 public:
     // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkWorker::after_frame; reset by each read)
     struct TexStats
