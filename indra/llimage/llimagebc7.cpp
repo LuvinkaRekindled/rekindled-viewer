@@ -287,6 +287,10 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
     std::vector<std::vector<U8>> block_levels(levels.size());
     color_rgba pixels[16], decoded[16];
     U32 harmed = 0, blocks_finest = 0;
+    // <FS> 2026-11-14 (the user's ears bake, Aux 1: the same bytes of the server gave the wrong picture BC7 encoded at login and the right one uploaded raw after a rebake): how far the finest level's decoded blocks are from
+    // its source, counted over every block: the sum and the largest of the absolute differences per channel (0 red .. 3 alpha), and the number of blocks whose alpha moved by more than 64
+    U64 err_sum[4] = {};
+    U32 err_max[4] = {}, alpha_far_blocks = 0;
     for (size_t k = 0; k < levels.size(); ++k)
     {
         const U32 lw = levelWidth(width, (U32)k), lh = levelHeight(height, (U32)k);
@@ -304,6 +308,18 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
                 {
                     bc7decomp::unpack_bc7(block, reinterpret_cast<bc7decomp::color_rgba*>(decoded));
                     if (block_harmed(pixels, decoded, has_alpha)) ++harmed;
+                    U32 alpha_block_max = 0;
+                    for (U32 i = 0; i < 16; ++i)
+                    {
+                        for (U32 ch = 0; ch < 4; ++ch)
+                        {
+                            const U32 d = (U32)std::abs((int)pixels[i].m_c[ch] - (int)decoded[i].m_c[ch]);
+                            err_sum[ch] += d;
+                            err_max[ch] = llmax(err_max[ch], d);
+                            if (ch == 3) alpha_block_max = llmax(alpha_block_max, d);
+                        }
+                    }
+                    if (has_alpha && alpha_block_max > 64) ++alpha_far_blocks;
                 }
             }
         }
@@ -311,6 +327,22 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
         {
             blocks_finest = bw * bh;
             harmed_percent = 100.f * (F32)harmed / (F32)llmax(1u, blocks_finest);
+            {
+                // a finest level that came back far from its source (any channel's mean error above 3, or an alpha that moved by more than 64 in any block): logged with the source's hash (the BakeTex log's raw
+                // hash of the same texture decoded raw is the same number), so a bad encode of a known texture can be told from a bad upload
+                const double texels = 16.0 * (double)llmax(1u, blocks_finest);
+                const double mean_r = err_sum[0] / texels, mean_g = err_sum[1] / texels, mean_b = err_sum[2] / texels, mean_a = err_sum[3] / texels;
+                if (llmax(llmax(mean_r, mean_g), llmax(mean_b, mean_a)) > 3.0 || alpha_far_blocks > 0)
+                {
+                    static std::atomic<U32> logged { 0 };
+                    if (logged++ < 200)
+                    {
+                        LL_INFOS("BC7") << "BC7 encode off its source: " << width << "x" << height << " x" << components << ", source hash " << std::hex << fs_sparse_hash(levels[0].data(), levels[0].size()) << std::dec
+                                        << ", harmed blocks " << harmed_percent << "%, mean error r " << mean_r << " g " << mean_g << " b " << mean_b << " a " << mean_a << ", largest r " << err_max[0] << " g " << err_max[1]
+                                        << " b " << err_max[2] << " a " << err_max[3] << ", blocks with an alpha moved by more than 64: " << alpha_far_blocks << " of " << blocks_finest << LL_ENDL;
+                    }
+                }
+            }
             if (harmed_percent > max_harmed_percent)
             {
                 sEncodeUs += (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
