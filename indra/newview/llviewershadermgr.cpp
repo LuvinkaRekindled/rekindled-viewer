@@ -241,6 +241,7 @@ LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra 
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
 LLShaderProgram            gRRReflMotionProgram;           // <FS> DLSS ray reconstruction: motion vectors of what the traced reflections show
+LLShaderProgram            gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
 LLShaderProgram            gRRGuidesProgram;               // <FS> DLSS ray reconstruction: diffuse / specular albedo and normal + roughness from the G-buffer
 LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
 LLShaderProgram            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
@@ -2338,6 +2339,33 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (!gRRGuidesProgram.createShader())
         {
             LL_WARNS("VkMotion") << "the ray reconstruction guides program did not compile: no ray reconstruction" << LL_ENDL;
+        }
+
+        // <FS> the AMD FidelityFX reflection denoiser's helper passes (PLAN-amd-denoiser.md): native only programs (native/manifest.txt, family post)
+        gDnsrPrepProgram.mName = "Denoise Prep";
+        gDnsrPrepProgram.mFeatures.isDeferred = true;
+        gDnsrPrepProgram.mFeatures.hasFullGBuffer = true;
+        gDnsrPrepProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gDnsrPrepProgram);
+        if (!gDnsrPrepProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the denoiser prep program did not compile: no AMD reflection denoiser" << LL_ENDL;
+        }
+        gDnsrPackProgram.mName = "Denoise Pack";
+        gDnsrPackProgram.mFeatures.isDeferred = true;
+        gDnsrPackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gDnsrPackProgram);
+        if (!gDnsrPackProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the denoiser pack program did not compile: no AMD reflection denoiser" << LL_ENDL;
+        }
+        gDnsrUnpackProgram.mName = "Denoise Unpack";
+        gDnsrUnpackProgram.mFeatures.isDeferred = true;
+        gDnsrUnpackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gDnsrUnpackProgram);
+        if (!gDnsrUnpackProgram.createShader())
+        {
+            LL_WARNS("VkMotion") << "the denoiser unpack program did not compile: no AMD reflection denoiser" << LL_ENDL;
         }
 
         gRRReflMotionProgram.mName = "Ray Reconstruction Reflection Motion";

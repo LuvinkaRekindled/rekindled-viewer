@@ -2598,6 +2598,13 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         LLVkBridge::upscaleImpl(a);
         break;
     }
+    case CMD_DENOISE:
+    {
+        LLVkBridge::DenoiseArgs a;
+        memcpy(&a, payload, sizeof(a));
+        LLVkBridge::denoiseImpl(a);
+        break;
+    }
     case CMD_GPU_ZONE:
     {
         const U32 head[2] = { r.get<U32>(), r.get<U32>() };

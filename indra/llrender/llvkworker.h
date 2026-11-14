@@ -36,6 +36,8 @@ namespace LLVkWorker
     void refusals(unsigned long long out[6]);
     // DLSS: runs the upscaler on four mirror-owned textures (colour, depth, motion vectors -> output); the gMutex must be held
     void on_upscale(const LLVkBridge::UpscaleArgs& args);
+    // the AMD reflection denoiser on mirror-owned textures (the gMutex must be held)
+    void on_denoise_reflections(const LLVkBridge::DenoiseArgs& args);
     // the GL texture whose image has this view id (device lost report)
     std::string describe_texture_of_view(U64 view_id);
 }

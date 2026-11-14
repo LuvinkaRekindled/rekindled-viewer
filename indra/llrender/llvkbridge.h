@@ -122,6 +122,20 @@ namespace LLVkBridge
         F32 mNrScalingRatio = 0.f;          // > 0: the network's size as a fraction of the output (DLSSNR.ScalingRatio at creation)
         F32 mNrStyle = 0.f, mNrIntensity = 1.f, mNrGlobalTone = 0.5f, mNrLocalTone = 0.5f, mNrLocalStructure = 0.5f, mNrSkinStructure = 0.5f;
     };
+    // the AMD FidelityFX reflection denoiser (llvkdenoise.h): the GL names of the textures (render size) and the camera, in the viewer's OpenGL conventions
+    struct DenoiseArgs
+    {
+        U32 mRadiance = 0, mOutput = 0, mDepth = 0, mNormals = 0, mRoughness = 0, mMotion = 0;
+        U32 mWidth = 0, mHeight = 0;
+        F32 mInvProjection[16] = {}, mInvView[16] = {}, mPrevViewProjection[16] = {};     // column major
+        F32 mTemporalStability = 0.7f, mRoughnessThreshold = 0.5f;
+        U32 mFrameIndex = 0;
+        S32 mReset = 0;
+    };
+    // the denoiser's context can be made (the SDK libraries are linked and the backend started)
+    bool denoiseAvailable();
+    // queues (async) or runs the reflection denoiser: mRadiance (rgb + the ray length in a) -> mOutput
+    void denoiseReflections(const DenoiseArgs& args);
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
     // DLSS ray reconstruction can run here (DLSS is ready and NGX reports the feature)
@@ -420,6 +434,7 @@ namespace LLVkBridge
     void holdFrameImpl(bool hold);
     void snapshotBoundaryImpl(S32 mode);
     void upscaleImpl(const UpscaleArgs& args);
+    void denoiseImpl(const DenoiseArgs& args);
     void shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob);
     void rtSceneImpl(const RtSceneArgs& args);
     // the lock every mirror entry point takes (the viewer calls GL from more than one thread)

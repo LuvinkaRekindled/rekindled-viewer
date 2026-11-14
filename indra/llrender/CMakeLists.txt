@@ -36,6 +36,7 @@ set(llrender_SOURCE_FILES
     llvkcontext.cpp
     llvkdlss.cpp
     llvkdlssnr.cpp
+    llvkdenoise.cpp
     llvkfsr.cpp
     llvkupscale.cpp
     llvkasync.cpp
@@ -87,6 +88,7 @@ set(llrender_HEADER_FILES
     llvkcontext.h
     llvkdlss.h
     llvkdlssnr.h
+    llvkdenoise.h
     llvkfsr.h
     llvkupscale.h
     llvkfunctions.inl
@@ -183,6 +185,20 @@ if (USE_VULKAN)
     message(STATUS "FidelityFX SDK found at ${FFX_SDK_DIR}")
     target_include_directories(llrender SYSTEM PRIVATE "${FFX_SDK_DIR}/ffx-api/include")
     target_compile_definitions(llrender PRIVATE LL_FSR=1)
+  endif ()
+  # AMD FidelityFX Denoiser 1.3 (optional, MIT): the denoiser component and its Vulkan backend of the SDK v1.1.4, built to static libraries from the SDK's own source:
+  #   cmake -S <FFX_SDK_DIR>/sdk -B <build dir> -G "Visual Studio 17 2022" -A x64 -DFFX_API_BACKEND=VK_X64 -DFFX_ALL=OFF -DFFX_SSSR=ON -DFFX_DENOISER=ON -DFFX_AUTO_COMPILE_SHADERS=ON
+  #   (with VULKAN_SDK set), then cmake --build <build dir> --config Release. The libraries land in <FFX_SDK_DIR>/sdk/bin/ffx_sdk. doc/vulkan/PLAN-amd-denoiser.md
+  set(FFX_DENOISER_LIB_DIR "${FFX_SDK_DIR}/sdk/bin/ffx_sdk")
+  if (EXISTS "${FFX_DENOISER_LIB_DIR}/ffx_denoiser_x64.lib" AND EXISTS "${FFX_DENOISER_LIB_DIR}/ffx_backend_vk_x64.lib" AND EXISTS "${FFX_SDK_DIR}/sdk/include/FidelityFX/host/ffx_denoiser.h")
+    message(STATUS "FidelityFX Denoiser found at ${FFX_DENOISER_LIB_DIR}")
+    target_include_directories(llrender SYSTEM PRIVATE "${FFX_SDK_DIR}/sdk/include")
+    target_compile_definitions(llrender PRIVATE LL_FFX_DENOISER=1)
+    target_link_libraries(llrender "${FFX_DENOISER_LIB_DIR}/ffx_denoiser_x64.lib" "${FFX_DENOISER_LIB_DIR}/ffx_backend_vk_x64.lib")
+    # (the SDK's Vulkan backend calls the loader's functions directly: the import library of the Vulkan SDK; the viewer itself still loads the loader at run time)
+    if (EXISTS "${VULKAN_SDK_DIR}/Lib/vulkan-1.lib")
+      target_link_libraries(llrender "${VULKAN_SDK_DIR}/Lib/vulkan-1.lib")
+    endif ()
   endif ()
 endif ()
 

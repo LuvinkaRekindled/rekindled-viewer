@@ -7,6 +7,7 @@
 
 #include "llvkcontext.h"
 #include "llvkupscale.h"
+#include "llvkdenoise.h"
 
 #if defined(LL_VULKAN)
 
@@ -1140,6 +1141,7 @@ bool Context::createDevice()
     if (LLVkUpscale::requested())
     {
         LLVkUpscale::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
+        LLVkDenoise::init(mInstance, mPhysical, mDevice);      // not fatal either (the AMD reflection denoiser: PLAN-amd-denoiser.md)
     }
     return true;
 }
@@ -1292,6 +1294,7 @@ void Context::shutdown()
     if (mDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(mDevice);
+        LLVkDenoise::shutdown();
         LLVkUpscale::shutdown();
         {
             std::vector<std::function<void()>> leftovers;

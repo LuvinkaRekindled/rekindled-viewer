@@ -198,6 +198,13 @@ public:
     bool                    mRRHitDistValid = false;        // mRtReflMain's second output holds this frame's distances
     LLRenderTarget          mRRGuides;      // render size: 0 diffuse albedo, 1 specular albedo, 2 world normal + roughness (all RGBA16F), 3 the reflection motion (RG16F)
     LLRenderTarget          mRRHdr;         // window size RGBA16F: what ray reconstruction outputs
+    // <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): between the RT Reflection pass and the lighting pass, with FSR (no ray reconstruction)
+    LLRenderTarget          mDnsrPrep;      // render size: 0 the world normal (RGBA16F), 1 the roughness (R16F), 2 the raw depth (R32F)
+    LLRenderTarget          mDnsrIn;        // render size RGBA16F: the traced reflection (rgb) and the length of its ray (a)
+    LLRenderTarget          mDnsrOut;       // render size RGBA16F: the denoised reflection (rgb)
+    LLRenderTarget          mRtReflDenoised;    // render size RGBA16F: the denoised colour with the RT Reflection pass's alpha: what the lighting pass reads when the denoiser ran
+    bool                    amdDenoiserWanted();
+    LLRenderTarget*         denoiseReflections(LLRenderTarget* refl);       // runs the passes and the denoiser; returns the target the lighting pass should read (refl itself when it did not run)
     LLRenderTarget          mRRDenoised;    // <FS> render size RGBA16F: what ray reconstruction outputs at a one-to-one ratio ("denoise first", PLAN-dlss-nr.md section 8); the frame then takes the plain path
     LLRenderTarget          mRRPing;        // window size RGBA16F: the post chain after the upscale
     LLRenderTarget          mRRPong;

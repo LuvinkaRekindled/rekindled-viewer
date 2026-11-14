@@ -1588,6 +1588,10 @@ void LLPipeline::releaseScreenBuffers()
     mRRGuides.release();
     mRtReflMain.release();
     mRtReflSlots.clear();
+    mDnsrPrep.release();
+    mDnsrIn.release();
+    mDnsrOut.release();
+    mRtReflDenoised.release();
     mRRReflMotion.release();
     mRRHdr.release();
     mRRPing.release();
@@ -21966,6 +21970,129 @@ void LLPipeline::generateRRGuides(LLRenderTarget* dst)
     unbindDeferredShader(gRRGuidesProgram);
 }
 
+// <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): on with the setting FSVkAmdDenoise (or LL_VK_AMD_DENOISE=1) when an upscaler is in use without ray reconstruction (FSR on an
+// NVIDIA card, or any other card), the traced mirror is on and the denoiser's libraries are linked
+bool LLPipeline::amdDenoiserWanted()
+{
+    static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoise", false);
+    static const bool env = getenv("LL_VK_AMD_DENOISE") && atoi(getenv("LL_VK_AMD_DENOISE")) != 0;
+    return (setting || env) && sDLSS && !sRR && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && LLVkBridge::denoiseAvailable()
+        && gDnsrPrepProgram.isComplete() && gDnsrPackProgram.isComplete() && gDnsrUnpackProgram.isComplete();
+}
+
+LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
+{
+    if (refl != &mRtReflMain || !refl->isComplete() || refl->getNumTextures() < 2 || !amdDenoiserWanted())
+    {
+        return refl;
+    }
+    LL_PROFILE_GPU_ZONE("amd reflection denoiser");
+    const U32 w = refl->getWidth(), h = refl->getHeight();
+    bool made = false;
+    auto ensure = [&](LLRenderTarget& t, bool extra) -> bool
+    {
+        if (t.isComplete() && t.getWidth() == w && t.getHeight() == h && (!extra || t.getNumTextures() >= 3))
+        {
+            return true;
+        }
+        t.release();
+        made = true;
+        if (!t.allocate(w, h, TexelFormat::RGBA16F))
+        {
+            return false;
+        }
+        return !extra || (t.addColorAttachment(TexelFormat::R16F) && t.addColorAttachment(TexelFormat::R32F));
+    };
+    if (!ensure(mDnsrPrep, true) || !ensure(mDnsrIn, false) || !ensure(mDnsrOut, false) || !ensure(mRtReflDenoised, false))
+    {
+        LL_WARNS("VkDenoise") << "the denoiser's targets could not be made at " << w << "x" << h << LL_ENDL;
+        mDnsrPrep.release();
+        mDnsrIn.release();
+        mDnsrOut.release();
+        mRtReflDenoised.release();
+        return refl;
+    }
+
+    // the world normal, the roughness and the raw depth (what the G-buffer holds, in the forms the denoiser reads)
+    {
+        const glm::mat4 view_inv = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+        const glm::mat3 view_to_world = glm::mat3(view_inv);
+        static LLStaticHashedString view_to_world_s("view_to_world");
+        RenderPassScope pass(mDnsrPrep);
+        bindDeferredShader(gDnsrPrepProgram);
+        gDnsrPrepProgram.uniformMatrix3fv(view_to_world_s, 1, false, glm::value_ptr(view_to_world));
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        pass.end();
+        unbindDeferredShader(gDnsrPrepProgram);
+    }
+    // the radiance: the traced colour with the length of the ray where the denoiser reads it
+    {
+        RenderPassScope pass(mDnsrIn);
+        bindDeferredShader(gDnsrPackProgram);
+        gDnsrPackProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, refl, false, LLTexUnit::TFO_POINT, 0);
+        gDnsrPackProgram.bindTexture(LLShaderMgr::BUMP_MAP, refl, false, LLTexUnit::TFO_POINT, 1);
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        pass.end();
+        unbindDeferredShader(gDnsrPackProgram);
+    }
+
+    // the denoiser, on the worker thread
+    static const F32 stability = getenv("LL_VK_DNSR_STABILITY") ? (F32)atof(getenv("LL_VK_DNSR_STABILITY")) : 0.7f;
+    static const F32 roughness_threshold = getenv("LL_VK_DNSR_ROUGHNESS") ? (F32)atof(getenv("LL_VK_DNSR_ROUGHNESS")) : 0.5f;
+    static U32 last_frame = ~0u;
+    const U32 frame = LLFrameTimer::getFrameCount();
+    LLVkBridge::DenoiseArgs a;
+    a.mRadiance = mDnsrIn.getTexture(0);
+    a.mOutput = mDnsrOut.getTexture(0);
+    a.mNormals = mDnsrPrep.getTexture(0);
+    a.mRoughness = mDnsrPrep.getTexture(1);
+    a.mDepth = mDnsrPrep.getTexture(2);
+    a.mMotion = mMotionMap.getTexture(0);
+    a.mWidth = w;
+    a.mHeight = h;
+    {
+        const glm::mat4 inv_proj = glm::inverse(LLViewerCamera::sUnjitteredProjection);
+        const glm::mat4 inv_view = glm::inverse(glm::mat4(LLViewerCamera::sJitterModelview));
+        const glm::mat4 prev_view_proj = mViewProjPrevValid ? mViewProjPrev : mViewProjCur;
+        memcpy(a.mInvProjection, glm::value_ptr(inv_proj), sizeof(a.mInvProjection));
+        memcpy(a.mInvView, glm::value_ptr(inv_view), sizeof(a.mInvView));
+        memcpy(a.mPrevViewProjection, glm::value_ptr(prev_view_proj), sizeof(a.mPrevViewProjection));
+    }
+    a.mTemporalStability = stability;
+    a.mRoughnessThreshold = roughness_threshold;
+    a.mFrameIndex = frame;
+    a.mReset = (made || !mViewProjPrevValid || frame != last_frame + 1) ? 1 : 0;
+    last_frame = frame;
+    LLVkBridge::denoiseReflections(a);
+
+    // the denoised colour with the alpha of the RT Reflection pass
+    {
+        RenderPassScope pass(mRtReflDenoised);
+        bindDeferredShader(gDnsrUnpackProgram);
+        gDnsrUnpackProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mDnsrOut, false, LLTexUnit::TFO_POINT, 0);
+        gDnsrUnpackProgram.bindTexture(LLShaderMgr::BUMP_MAP, refl, false, LLTexUnit::TFO_POINT, 0);
+        {
+            LLRenderState::BlendScope blend(false);
+            LLRenderState::DepthScope depth(false, false, LLRenderState::CompareOp::Always);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        }
+        pass.end();
+        unbindDeferredShader(gDnsrUnpackProgram);
+    }
+    return &mRtReflDenoised;
+}
+
 bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst, bool ray_reconstruction, bool resolved_input)
 {
     if (!LLVkBridge::upscaleAvailable())
@@ -25167,6 +25294,7 @@ void LLPipeline::renderDeferredLighting()
             pass_rt_refl.end();
             unbindDeferredShader(rt_shader);
             mRRHitDistValid = !gCubeSnapshot && rayReconstructionActive();
+            rt_refl_target = denoiseReflections(rt_refl_target);        // (the AMD reflection denoiser when it is on: the lighting pass reads its result)
         }
 
         screen_pass.begin(*screen_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
