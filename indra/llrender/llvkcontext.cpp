@@ -2272,7 +2272,8 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
         waits[wait_count].stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
         ++wait_count;
     }
-    if (f.mWaitValue || f.mComputeDone)
+    static const int break_order_graphics = getenv("LL_VK_BREAK_ORDER") ? atoi(getenv("LL_VK_BREAK_ORDER")) : 0;      // <FS> =2: the frame's last submit does not wait for the compute work (see submitCompute)
+    if ((f.mWaitValue || f.mComputeDone) && break_order_graphics != 2)
     {
         // E2: the ray scene the compute queue builds for this frame (the lighting reads it); the last submit of the frame waits for the compute work even when the join was not reached
         waits[wait_count].semaphore = mAsyncSem;
@@ -2367,7 +2368,9 @@ bool Context::submitCompute(VkCommandBuffer cmd, U64 wait_value, U64& signal_val
     VkSemaphoreSubmitInfo wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     VkSemaphoreSubmitInfo sig = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-    if (wait_value)
+    // <FS> LL_VK_BREAK_ORDER=1 (a test of the test, doc/vulkan/GPU-LIFETIMES.md section 9): the compute work does not wait for the uploads of its own frame. Never for use: the stress lap must show it.
+    static const int break_order = getenv("LL_VK_BREAK_ORDER") ? atoi(getenv("LL_VK_BREAK_ORDER")) : 0;
+    if (wait_value && break_order != 1)
     {
         wait.semaphore = mAsyncSem;
         wait.value = wait_value;
