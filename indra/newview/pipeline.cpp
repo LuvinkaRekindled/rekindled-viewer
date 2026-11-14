@@ -22047,8 +22047,39 @@ LLRenderTarget* LLPipeline::denoiseReflections(LLRenderTarget* refl)
     }
 
     // the denoiser, on the worker thread
-    static const F32 stability = getenv("LL_VK_DNSR_STABILITY") ? (F32)atof(getenv("LL_VK_DNSR_STABILITY")) : 0.7f;
-    static const F32 roughness_threshold = getenv("LL_VK_DNSR_ROUGHNESS") ? (F32)atof(getenv("LL_VK_DNSR_ROUGHNESS")) : 0.5f;
+    // the two tunables: the environment gives the start values, <work>/rt-debug.txt dnsrstab=<0..1> and dnsrrough=<0..1> change them live (read twice a second, like dlssq=); a key taken out of the file goes
+    // back to the start value
+    static const F32 stability_start = getenv("LL_VK_DNSR_STABILITY") ? (F32)atof(getenv("LL_VK_DNSR_STABILITY")) : 0.7f;
+    static const F32 roughness_start = getenv("LL_VK_DNSR_ROUGHNESS") ? (F32)atof(getenv("LL_VK_DNSR_ROUGHNESS")) : 0.5f;
+    static F32 stability = stability_start, roughness_threshold = roughness_start;
+    {
+        static std::chrono::steady_clock::time_point last_poll;
+        const auto poll_now = std::chrono::steady_clock::now();
+        if (poll_now - last_poll >= std::chrono::milliseconds(500))
+        {
+            last_poll = poll_now;
+            F32 s = stability_start, r = roughness_start;
+            std::ifstream in("<work>/rt-debug.txt");
+            std::string line;
+            while (std::getline(in, line))
+            {
+                if (line.compare(0, 9, "dnsrstab=") == 0)
+                {
+                    s = llclamp((F32)atof(line.c_str() + 9), 0.f, 1.f);
+                }
+                else if (line.compare(0, 10, "dnsrrough=") == 0)
+                {
+                    r = llclamp((F32)atof(line.c_str() + 10), 0.f, 1.f);
+                }
+            }
+            if (s != stability || r != roughness_threshold)
+            {
+                LL_INFOS("VkDenoise") << "denoiser tunables: temporal stability " << s << ", roughness threshold " << r << LL_ENDL;
+            }
+            stability = s;
+            roughness_threshold = r;
+        }
+    }
     static U32 last_frame = ~0u;
     const U32 frame = LLFrameTimer::getFrameCount();
     LLVkBridge::DenoiseArgs a;
