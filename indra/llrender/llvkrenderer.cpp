@@ -5272,6 +5272,17 @@ void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
             transition(cmd, *image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             ++images;
         }
+        else
+        {
+            // uploads kept for an image that is not where they were queued (or is gone): they cannot be written. Counted and the first few logged (healthy: none)
+            static U64 lost = 0;
+            lost += j - i;
+            if (lost <= 20)
+            {
+                LL_WARNS("VkUpload") << "deferred uploads skipped at the flush: " << (j - i) << " for the image " << (unsigned long long)mDeferredUploads[i].mHandle << ", first mip " << mDeferredUploads[i].mMip
+                                     << (image ? (image->valid() ? ", the struct holds another image" : ", the struct holds no image") : ", no struct") << " (" << lost << " so far)" << LL_ENDL;
+            }
+        }
         i = j;
     }
     static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
@@ -5303,6 +5314,20 @@ void Renderer::flushDeferredUploadsNow()
         return;
     }
     Context::instance().immediateSubmit([&](VkCommandBuffer cmd) { flushDeferredUploads(cmd); });
+}
+
+void Renderer::retargetDeferredUploads(Image* from, Image* to)
+{
+    // (2026-11-14, the ears: an upload kept between frames named the Image struct of the staged texture record, which tex_commit_image resets and erases when it moves the image into the texture it replaces: at the next
+    // flush the pointer led to a reset or freed struct, the entry was skipped without a word, and levels 1 to 5 of the image stayed empty while level 0, flushed earlier, was there)
+    std::lock_guard<std::mutex> lock(mDeferredMutex);
+    for (DeferredUpload& u : mDeferredUploads)
+    {
+        if (u.mImage == from)
+        {
+            u.mImage = to;
+        }
+    }
 }
 
 void Renderer::dropDeferredUploads(VkImage handle)

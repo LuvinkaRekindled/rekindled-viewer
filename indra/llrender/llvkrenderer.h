@@ -527,6 +527,8 @@ public:
     VkDescriptorSetLayout bindlessLayout() const { return mSet2Layout; }
     VkDescriptorSet bindlessSet(U32 frame_slot) const { return frame_slot < Context::FRAMES_IN_FLIGHT ? mBindlessSet[frame_slot] : VK_NULL_HANDLE; }
     void bindlessWritesNow() { flushPendingWrites(); }
+    // <FS> the deferred uploads queued for the image at `from` follow it to `to` (the image struct moved to another texture record: a staged image committed into a texture, LLVkWorker::tex_commit_image)
+    void retargetDeferredUploads(Image* from, Image* to);
     std::string auditBindless() const;     // the slots that still point at an image destroyed lately (a draw sampling one reads memory that is not its own)
 private:      // the description of the draw about to be made (a stamp tag), see drawTag
 public:
