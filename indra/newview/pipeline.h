@@ -401,6 +401,7 @@ public:
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
     void stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed = false);
     void stateSort(LLDrawable* drawablep, LLCamera& camera);
+    void rebuildGeometry(LLCamera& camera);        // <FS> stage 1 of PLAN-change-driven-sort.md: the rebuilds postSort used to make
     void postSort(LLCamera& camera);
 
     // <FS> Parallel preparation of the sun shadow cascades. The cull and the render map of each cascade are built on worker
