@@ -11824,8 +11824,9 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     }
     LLVkBridge::CullParams P;
     memcpy(&P, view_blob, sizeof(P));
-    U32 own_flag;
+    U32 own_flag, lod_flag;
     memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
+    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
     std::vector<U32>* own_out = own_flag && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
     if (own_out)
     {
@@ -11951,6 +11952,51 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         LLVkBridge::lateListPublish(h.mPass, table, late_words.data());
         d.mLate += late_n;
+    }
+    if (lod_flag & 1u)
+    {
+        // stage 7 (a compare for now): the LOD numbers of every row. distance: LLSpatialPartition::calcDistance (the length from the camera to the object bounds centre, the squared ramp under 16 m); the bit: the slop test
+        // of LLSpatialGroup::changeLOD (the dirty bits and needsUpdate are the viewer's rows' flags, not looked at here). The rows of the groups of bridges hold the bridge's box, not the group's own bounds: no number for them.
+        static std::vector<F32> lod_dist;
+        static std::vector<U32> lod_bits, lod_change;
+        lod_dist.assign(table, 0.f);
+        lod_bits.assign((table + 31) / 32, 0);
+        lod_change.assign((table + 31) / 32, 0);
+        const U32 lod_frame = lod_flag >> 1;        // (the viewer's own frame counter, LLViewerOctreeEntryData::getCurrentFrame(): needsUpdate() reads it)
+        for (U32 slot = 0; slot < table; ++slot)
+        {
+            if (s.mTable[slot].mFlags & (32u | 64u))
+            {
+                continue;
+            }
+            const LLVkBridge::CullMapRow& m = s.mMap[slot];
+            const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
+            // the whole of changeLOD(): the dirty bits, the round robin of needsUpdate() (every period frames, staggered by the group's hash), the slop test below
+            bool change = (m.mLodFlags & 1u) != 0 || (period && lod_frame % period == hash);
+            const F32 dx = m.mObjCenter[0] - P.mOrigin[0], dy = m.mObjCenter[1] - P.mOrigin[1], dz = m.mObjCenter[2] - P.mOrigin[2];
+            F32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (dist < 16.f)
+            {
+                dist /= 16.f;
+                dist *= dist;
+                dist *= 16.f;
+            }
+            lod_dist[slot] = dist;
+            if (m.mSlop > 0.f)
+            {
+                const F32 ratio = (dist - m.mLastUpdateDistance) / (fmaxf(m.mLastUpdateDistance, m.mRadius));
+                if (fabsf(ratio) >= m.mSlop)
+                {
+                    lod_bits[slot >> 5] |= 1u << (slot & 31u);
+                    change = true;
+                }
+            }
+            if (change)
+            {
+                lod_change[slot >> 5] |= 1u << (slot & 31u);
+            }
+        }
+        LLVkBridge::lodListPublish(h.mPass, table, lod_dist.data(), lod_bits.data(), lod_change.data());
     }
     {
         // views that differ from the usual ones by many groups at once (a record that names far fewer groups than the table shows is another view's list, not a state difference)

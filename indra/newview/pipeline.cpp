@@ -5083,6 +5083,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
 }
 
+// stage 7 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_LOD=1, needs LL_VK_CULL_SHADOW=1): what the walk's LOD check saw of each group it kept in the main view (the walk is serial while the table is on): the distance
+// updateDistance just wrote, the numbers changeLOD() reads, the slop test's answer and changeLOD()'s whole answer. ll_scene_lod_compare puts them next to the worker's own.
+struct LodNote { LLSpatialGroup* mGroup; F32 mDistance, mLast, mRadius, mSlop; bool mSlopBit, mChange; };
+static std::vector<LodNote> sLodNotes;
+static const bool sLodCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_LOD") != nullptr;
+
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
     // <FS> C4.5 census (LL_VK_MAINCENSUS=1): the calls, what they push, and the time inside them (all threads)
@@ -5126,6 +5132,17 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         group->updateDistance(camera);
+        if (sLodCompare && group->mCullId && !LLPipeline::shadowRender() && !sParallelPrep && !sImpostorRender && !group->getSpatialPartition()->asBridge())
+        {
+            const F32 slop = group->getSpatialPartition()->mSlopRatio;
+            const F32 last = group->row().lastUpdateDistance, dist = group->row().distance, radius = group->row().radius;
+            const bool slop_bit = slop > 0.f && fabsf((dist - last) / llmax(last, radius)) >= slop;
+            if (sLodNotes.size() > 60000)
+            {
+                sLodNotes.clear();      // (nothing asked for them: the compare runs at the end of the sort)
+            }
+            sLodNotes.push_back({ group, dist, last, radius, slop, slop_bit, group->changeLOD() });
+        }
     }
 
     assertInitialized();
@@ -6267,7 +6284,7 @@ void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger
     }
     for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it)
     {
-        it->mGroup->row().lastUpdateDistance = it->mDistance;
+        { it->mGroup->row().lastUpdateDistance = it->mDistance; if (LLCullShadow::sOn) { LLCullShadow::touch(it->mGroup); } }
     }
 
     ledger_b.clear();
@@ -6556,14 +6573,14 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
                 if (last_group && last_group != group && last_group->changeLOD())
                 {
                     sort_journal_group(last_group);
-                    last_group->row().lastUpdateDistance = last_group->row().distance;
+                    last_group->row().lastUpdateDistance = last_group->row().distance; if (LLCullShadow::sOn) { LLCullShadow::touch(last_group); }
                 }
                 last_group = group;
             }
             if (last_group && last_group->changeLOD())
             {
                 sort_journal_group(last_group);
-                last_group->row().lastUpdateDistance = last_group->row().distance;
+                last_group->row().lastUpdateDistance = last_group->row().distance; if (LLCullShadow::sOn) { LLCullShadow::touch(last_group); }
             }
         }
         sSortJournal = saved_journal;
@@ -6746,7 +6763,7 @@ void LLPipeline::sortDryRun(const View& view, bool parallel, void* result_ptr)
         for (LLSpatialGroup* g : groups) out.mFinalGroups.push_back({ g, g->row().lastUpdateDistance });
     }
     for (auto it = journal.mVols.rbegin(); it != journal.mVols.rend(); ++it) it->mVol->restoreLODState(it->mState);
-    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it) it->mGroup->row().lastUpdateDistance = it->mDistance;
+    for (auto it = journal.mGroups.rbegin(); it != journal.mGroups.rend(); ++it) { it->mGroup->row().lastUpdateDistance = it->mDistance; if (LLCullShadow::sOn) { LLCullShadow::touch(it->mGroup); } }
 }
 
 // LL_VK_SORT_SPLIT=4: the compute on this thread against the compute on the pool, on the same input; then the sort runs as before (the frame is made by the old loops)
@@ -6926,7 +6943,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
                 last_group != group && last_group->changeLOD())
             {
-                sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance;
+                sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; if (LLCullShadow::sOn) { LLCullShadow::touch(last_group); }
             }
             if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
 
@@ -6936,7 +6953,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
             last_group && last_group->changeLOD())
         {
-            sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance;
+            sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; if (LLCullShadow::sOn) { LLCullShadow::touch(last_group); }
         }
     }
     {
@@ -7193,6 +7210,7 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
         { //avoid redundant stateSort calls
             sort_journal_group(group);
             group->row().lastUpdateDistance = group->row().distance;
+            if (LLCullShadow::sOn) { LLCullShadow::touch(group); }
         }
     }
 }
@@ -8191,6 +8209,8 @@ void LLPipeline::addBeacons()
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera);       // stage 6 (defined with the group table, below): the main view's alpha lists from the consumers' groups
+void ll_scene_lod_compare();                                            // stage 7 (below): the worker's LOD numbers against the walk's, once a frame
+bool ll_scene_lod_compare_on();
 
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
@@ -8556,6 +8576,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         if (view.isMainWorldSort() && !gCubeSnapshot)
         {
             ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
+            ll_scene_lod_compare();                     // stage 7 (LL_VK_CULL_LOD): the worker's distances and slop bits against the walk's
         }
         if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
@@ -12603,6 +12624,12 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
         }
         row.mFlags |= node->getChildCount() > 0 ? 16u : 0u;
     }
+    // stage 7: what changeLOD() reads besides the distance (the radius is made as LLSpatialGroup::updateDistance makes it, from the bounds, so a group that was not looked at yet has it)
+    row.mLastUpdateDistance = g->row().lastUpdateDistance;
+    row.mRadius = part && part->mRenderByGroup ? g->row().objectBounds[1].getLength3().getF32() : (node ? (F32)node->getSize().getLength3().getF32() : 0.f);
+    row.mSlop = part ? part->mSlopRatio : 0.f;
+    row.mLodFlags = (g->hasState(static_cast<U32>(LLSpatialGroup::ALPHA_DIRTY) | static_cast<U32>(LLSpatialGroup::OBJECT_DIRTY)) ? 1u : 0u)
+        | (llmin<U32>(part ? (U32)part->mLODPeriod : 0u, 255u) << 8) | (llmin<U32>((U32)g->row().lodHash, 255u) << 16);        // the round robin of needsUpdate(): frame % period == hash
 }
 
 // stage 3 diagnostic (LL_VK_CULL_DIAG=1): the groups with a handle that lie wholly inside the frustum by their own box, are not occluded and not auto-hidden, and that the render map did not name: what the CPU knows of
@@ -13739,6 +13766,126 @@ const std::vector<LLSpatialGroup*>* ll_scene_consumer_groups(LLCullResult* cull)
 // groups that just got a fragment, the marked bridges' groups) instead of from the visible groups of the walk. The membership is the render map's own: not dead, not occluded, not over the auto-hide limit, then the
 // group's alpha keys (the fragment's alpha bits for a group the table serves whole), alpha passes on; the distance update and the two sorts are the ones of buildRenderLists. Called at its end, after the CPU lists are
 // final: the compare says what differs (members, and the order of the members both lists have), and mode 2 puts the derived lists in their place, so every reader of the alpha lists is unchanged.
+bool ll_scene_lod_compare_on()
+{
+    return sLodCompare;
+}
+
+// stage 7 (LL_VK_CULL_LOD=1): the worker's distance and slop bit of every row (published by cull_derive_compare, about a frame old) against what the walk's LOD check saw of the group in this frame. Rows that changed in the last
+// 3 frames are counted apart (the worker's copy of them can be a frame behind, a camera that moved changes every distance, a turn does not).
+void ll_scene_lod_compare()
+{
+    if (!sLodCompare)
+    {
+        return;
+    }
+    // the walk's notes of the last frames: the worker's numbers are for the frame its record was made in (the round robin of needsUpdate() and the camera depend on the frame), so they are compared with the notes of that frame
+    static std::deque<std::pair<U32, std::vector<LodNote>>> history;
+    history.emplace_back((U32)gFrameCount, std::move(sLodNotes));
+    sLodNotes.clear();
+    while (history.size() > 8)
+    {
+        history.pop_front();
+    }
+    static std::vector<F32> wd;
+    static std::vector<U32> wb, wc;
+    static U32 w_frame = 0, w_table = 0;
+    bool fresh = false;
+    {
+        static std::vector<F32> bd(1u << 15);
+        static std::vector<U32> bb((1u << 15) / 32 + 1), bc((1u << 15) / 32 + 1);
+        U32 frame = 0;
+        if (const U32 t = LLVkBridge::lodListRead(w_frame, frame, bd.data(), bb.data(), bc.data(), (U32)bd.size()))
+        {
+            wd.assign(bd.begin(), bd.begin() + t);
+            wb.assign(bb.begin(), bb.begin() + (t + 31) / 32);
+            wc.assign(bc.begin(), bc.begin() + (t + 31) / 32);
+            w_frame = frame;
+            w_table = t;
+            fresh = true;
+        }
+    }
+    const std::vector<LodNote>* same_frame_notes = nullptr;
+    if (fresh)
+    {
+        for (const auto& entry : history)
+        {
+            if (entry.first == w_frame)
+            {
+                same_frame_notes = &entry.second;
+            }
+        }
+    }
+    if (!same_frame_notes)
+    {
+        return;
+    }
+    struct Acc
+    {
+        U64 mFrames = 0, mNotes = 0, mNoRow = 0, mRecent = 0, mCompared = 0, mDistOk = 0, mDistOff = 0, mBoth = 0, mCpuOnly = 0, mWorkerOnly = 0, mCpuChange = 0, mCpuSlop = 0, mLag = 0;
+        U64 mChBoth = 0, mChCpuOnly = 0, mChWorkerOnly = 0;
+        double mMaxRel = 0.0;
+    };
+    static Acc a;
+    ++a.mFrames;
+    a.mLag += w_table ? (U32)gFrameCount - w_frame : 0;
+    for (const LodNote& n : *same_frame_notes)
+    {
+        ++a.mNotes;
+        a.mCpuChange += n.mChange;
+        a.mCpuSlop += n.mSlopBit;
+        const U32 slot = n.mGroup->mCullId ? n.mGroup->mCullId - 1 : ~0u;
+        if (!w_table || slot >= w_table)
+        {
+            ++a.mNoRow;
+            continue;
+        }
+        if (sMapChangeFrame[slot] < w_frame && sMapChangeFrame[slot] + 3 >= w_frame)       // (the row changed in the 3 frames before the worker's frame: its copy of the row may be a frame behind. A change at or after it is this frame's own write-back, after the note was made)
+        {
+            ++a.mRecent;
+            continue;
+        }
+        ++a.mCompared;
+        const double rel = fabs((double)wd[slot] - (double)n.mDistance) / std::max(1.0, (double)n.mDistance);
+        a.mMaxRel = std::max(a.mMaxRel, rel);
+        (rel <= 1.0e-3 ? a.mDistOk : a.mDistOff) += 1;
+        const bool wbit = (wb[slot >> 5] >> (slot & 31)) & 1u;
+        if (n.mSlopBit && wbit)
+        {
+            ++a.mBoth;
+        }
+        else if (n.mSlopBit)
+        {
+            ++a.mCpuOnly;
+        }
+        else if (wbit)
+        {
+            ++a.mWorkerOnly;
+        }
+        const bool wchange = (wc[slot >> 5] >> (slot & 31)) & 1u;
+        if (n.mChange && wchange)
+        {
+            ++a.mChBoth;
+        }
+        else if (n.mChange)
+        {
+            ++a.mChCpuOnly;
+        }
+        else if (wchange)
+        {
+            ++a.mChWorkerOnly;
+        }
+    }
+    if (a.mFrames % 600 == 0)
+    {
+        const double n = (double)a.mFrames;
+        LL_INFOS("VkLod7") << "LOD numbers of the groups the walk kept, per frame over " << a.mFrames << " frames (the worker's are " << (double)a.mLag / n << " frames old): groups " << a.mNotes / n << ", with a row " << (a.mNotes - a.mNoRow) / n << ", rows changed in the last 3 frames "
+                           << a.mRecent / n << ", compared " << a.mCompared / n << "; distance equal within 0.1 % " << a.mDistOk / n << ", different " << a.mDistOff / n << " (the largest relative difference " << a.mMaxRel << ") | slop test: both true " << a.mBoth / n
+                           << ", the walk's only " << a.mCpuOnly / n << ", the worker's only " << a.mWorkerOnly / n << " | changeLOD() true for " << a.mCpuChange / n << " a frame (the slop test alone: " << a.mCpuSlop / n << ") | the whole answer of changeLOD() against the worker's: both true " << a.mChBoth / n << ", the walk's only " << a.mChCpuOnly / n
+                           << ", the worker's only " << a.mChWorkerOnly / n << LL_ENDL;
+    }
+}
+
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
 {
     static const int mode = (sCullOwn && getenv("LL_VK_CULL_ALPHA")) ? atoi(getenv("LL_VK_CULL_ALPHA")) : 0;
@@ -14811,7 +14958,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
     const bool cull_view = LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView;       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     LLVkBridge::CullParams view_params;
-    U32 view_extra[4] = { 0u, 0u, 0u, 0u };       // (after the params: [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive)
+    U32 view_extra[4] = { ll_scene_lod_compare_on() ? (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)) : 0u, 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
     static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
     marked_bridges.clear();
     static std::vector<U32> bridge_handles;       // the handles of those bridges' groups (see below)
