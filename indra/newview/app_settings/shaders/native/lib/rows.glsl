@@ -193,7 +193,7 @@ vec3 row_rig_anchor(Row row)
 }
 
 // the skin of one vertex out of a weights array and a palette named by address: a scene row (row_skin) and a shadow packet (shadow.vert) both come here
-void skin_vertex(uvec2 weights_address, uvec2 palette_address, uint joints, uint index, out mat3 rotation, out vec3 translation)
+void skin_vertex_at(uvec2 weights_address, uvec2 palette_address, uint joints, uint first_entry, uint index, out mat3 rotation, out vec3 translation)
 {
     const vec4 joint_and_weight = SkinVertexWeights(weights_address).w[index];
     vec4 weight = fract(joint_and_weight);
@@ -206,11 +206,27 @@ void skin_vertex(uvec2 weights_address, uvec2 palette_address, uint joints, uint
     {
         if (weight[k] > 0.0)        // (a joint with no weight is not read: most vertices have one to three, and a zero weight adds nothing)
         {
-            const Joint j = palette.j[int(joint[k])];
+            const Joint j = palette.j[int(first_entry) + int(joint[k])];
             rotation += mat3(j.c0.xyz, j.c1.xyz, j.c2.xyz) * weight[k];
             translation += vec3(j.c0.w, j.c1.w, j.c2.w) * weight[k];
         }
     }
+}
+
+void skin_vertex(uvec2 weights_address, uvec2 palette_address, uint joints, uint index, out mat3 rotation, out vec3 translation)
+{
+    skin_vertex_at(weights_address, palette_address, joints, 0u, index, rotation, translation);
+}
+
+// the palette of the frame before follows the current one in the frame's list (lldrawpool.cpp ll_frame_palette): joints + 1 entries later; its tail (the anchor) is the entry 2 * joints + 1
+void skin_vertex_prev(uvec2 weights_address, uvec2 palette_address, uint joints, uint index, out mat3 rotation, out vec3 translation)
+{
+    skin_vertex_at(weights_address, palette_address, joints, joints + 1u, index, rotation, translation);
+}
+
+vec3 skin_rig_anchor_prev(uvec2 palette_address, uint joints)
+{
+    return SkinJoints(palette_address).j[2u * joints + 1u].c0.xyz;
 }
 
 void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)

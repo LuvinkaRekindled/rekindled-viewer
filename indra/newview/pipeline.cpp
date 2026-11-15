@@ -21299,10 +21299,36 @@ struct ModelMatrixHistory
 };
 static std::unordered_map<const LLMatrix4*, ModelMatrixHistory> sModelMatrixHistory;
 
+// <FS> velocity fold (doc/vulkan/PLAN-velocity-fold-and-skin-once.md, step 2): RenderMotionFold 1 = the rigged draws of the G-buffer write their own motion into the world pass's motion target (attachment 4) and the
+// motion pass reads it there; the avatar velocity pass does not run. 0 = the avatar velocity pass as before (the motion target is written but not read). Needs the motion attachment (an upscaler on).
+static bool motion_fold_active()
+{
+    static LLCachedControl<S32> mode(gSavedSettings, "RenderMotionFold", 0);
+    return mode >= 1 && LLPipeline::sDLSS && LLPipeline::sRenderDeferred && !gCubeSnapshot && !gSnapshot && LLVkBridge::upscaleAvailable() && gPipeline.mRT && gPipeline.mRT->deferredScreen.getNumTextures() == 5
+           && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+}
+
+// the matrices a rigged G-buffer program needs to write motion (GB_MOTION in the native manifest: view_proj_cur, view_proj_prev, render_res in the loose block), set by LLRenderPass::pushGeometryPackets on the bound program
+// before the draw record of a rigged type. The same matrices as the avatar velocity pass: this frame's come from the camera (mViewProjCur is last frame's until the end of the lighting).
+bool ll_motion_fold_uniforms(LLShaderProgram* program)
+{
+    if (!program || !motion_fold_active())
+    {
+        return false;
+    }
+    static LLStaticHashedString view_proj_cur_s("view_proj_cur"), view_proj_prev_s("view_proj_prev"), render_res_s("render_res");
+    const glm::mat4 view_proj_cur = LLViewerCamera::sUnjitteredProjection * LLViewerCamera::sJitterModelview;
+    const glm::mat4 view_proj_prev = gPipeline.mViewProjPrevValid ? gPipeline.mViewProjCur : view_proj_cur;
+    program->uniformMatrix4fv(view_proj_cur_s, 1, false, glm::value_ptr(view_proj_cur));
+    program->uniformMatrix4fv(view_proj_prev_s, 1, false, glm::value_ptr(view_proj_prev));
+    program->uniform2f(render_res_s, (F32)gPipeline.mRT->deferredScreen.getWidth(), (F32)gPipeline.mRT->deferredScreen.getHeight());
+    return true;
+}
+
 bool LLPipeline::avatarVelocityWanted()
 {
     static LLCachedControl<bool> enabled(gSavedSettings, "RenderAvatarMotionVectors", false);
-    return enabled && sDLSS && sRenderDeferred && !gCubeSnapshot && !gSnapshot && LLVkBridge::upscaleAvailable() && mMotionMap.isComplete() && mUpscaledMap.isComplete()
+    return enabled && !motion_fold_active() && sDLSS && sRenderDeferred && !gCubeSnapshot && !gSnapshot && LLVkBridge::upscaleAvailable() && mMotionMap.isComplete() && mUpscaledMap.isComplete()
            && mAvatarVelocityMap.isComplete() && gAvatarVelocityPullProgram.isComplete() && gAvatarBodyVelocityProgram.isComplete()
            && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
@@ -21918,9 +21944,11 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     }
     RenderPassScope pass(*dst);
     gAvatarVelocityDebugProgram.bind();
-    gAvatarVelocityDebugProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT, 0);
+    // <FS> velocity fold: the world pass's own target (src is the deferred screen): its motion attachment, shown by the shader's mode 2
+    const bool fold_target = src == &mRT->deferredScreen && src->getNumTextures() == 5;
+    gAvatarVelocityDebugProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT, fold_target ? 4 : 0);
     static LLStaticHashedString show_flag_s("show_flag");
-    gAvatarVelocityDebugProgram.uniform1f(show_flag_s, show_flag ? 1.f : 0.f);
+    gAvatarVelocityDebugProgram.uniform1f(show_flag_s, fold_target ? 2.f : (show_flag ? 1.f : 0.f));
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gAvatarVelocityDebugProgram.unbind();
@@ -21975,13 +22003,18 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.bind();
     gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
     // <FS> avatar motion vectors: the avatar pixels take their own vector (the target is only valid when the pass ran this frame)
-    const bool use_avatar = mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
-    if (mAvatarVelocityMap.isComplete())
+    const bool fold = motion_fold_active();         // <FS> velocity fold: the world pass's motion target (attachment 4) replaces the avatar velocity map
+    const bool use_avatar = !fold && mAvatarVelocityDrawn && mAvatarVelocityMap.isComplete();
+    if (fold)
+    {
+        gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mRT->deferredScreen, false, LLTexUnit::TFO_POINT, 4);
+    }
+    else if (mAvatarVelocityMap.isComplete())
     {
         gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &mAvatarVelocityMap, false, LLTexUnit::TFO_POINT, 0);
     }
     static LLStaticHashedString use_avatar_s("use_avatar");
-    gMotionVectorProgram.uniform1f(use_avatar_s, use_avatar ? 1.f : 0.f);
+    gMotionVectorProgram.uniform1f(use_avatar_s, fold ? 2.f : (use_avatar ? 1.f : 0.f));
     mAvatarVelocityDrawn = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
     gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, false, glm::value_ptr(to_cur));
@@ -23623,6 +23656,13 @@ void LLPipeline::renderFinalize()
             break;
         case 9:
             visualizeRtMaterials(sourceBuffer);
+            break;
+        case 10:
+            // <FS> velocity fold: the world pass's motion attachment itself (blue = no motion of its own, red/green = a motion of its own)
+            if (dlss && mRT->deferredScreen.getNumTextures() == 5)
+            {
+                visualizeMotion(&mRT->deferredScreen, sourceBuffer, true);
+            }
             break;
         default:
             break;
