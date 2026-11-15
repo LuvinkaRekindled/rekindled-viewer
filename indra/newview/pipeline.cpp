@@ -12455,6 +12455,7 @@ struct CullStats
     U64 mBuilds = 0, mSends = 0, mRefreshed = 0, mTouches = 0, mAdded = 0, mFreed = 0, mRequeued = 0;
     // LL_VK_CULL_VERIFY: the kept table against a full walk (every 60 builds)
     U64 mVMap[7] = {}, mVMapRows = 0;
+    U64 mVBridge = 0, mVBridgeBounds = 0, mVBridgeExtents = 0, mVBridgeOther = 0, mVBridgeMap = 0, mVBridgeHandle = 0, mVBridgeSkipped = 0;
     U64 mVerifies = 0, mVWalked = 0, mVMissing = 0, mVBounds = 0, mVExtents = 0, mVParent = 0, mVOrphans = 0, mVFlag[6] = {};
 };
 // the kept table: one row per group of the covered partitions, at the group's slot (mCullId - 1)
@@ -12500,6 +12501,13 @@ bool cull_covered(LLSpatialGroup* sg)
     {
         return false;
     }
+    // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the groups of a bridge's own octree (an attachment, a moving object, an avatar's attachments: partition types BRIDGE, AVATAR, CONTROL_AV) are covered, with their world boxes
+    // (row flag 64); the bridges of HUD attachments are not. The region partitions of those three types hold the bridge drawables themselves (render by drawable, no fragments) and stay walked.
+    if (LLSpatialBridge* bridge = part->asBridge())
+    {
+        LLDrawable* root = bridge->mDrawable;
+        return root && root->getVObj() && !root->getVObj()->isHUDAttachment();
+    }
     const U32 pi = part->mPartitionType;
     return !(pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV ||
              pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
@@ -12522,6 +12530,23 @@ void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
         row.mCenter[k] = b[0][k]; row.mHalf[k] = b[1][k]; row.mExtMin[k] = e[0][k]; row.mExtMax[k] = e[1][k];
     }
     LLSpatialPartition* part = g->getSpatialPartition();
+    U32 bridge_flag = 0u;
+    if (LLSpatialBridge* bridge = part ? part->asBridge() : nullptr)
+    {
+        // a group of a bridge's octree: its own bounds are in the bridge's space. The row holds the bridge's world box instead: the extents LLSpatialBridge::updateSpatialExtents keeps (the box the walk culls the bridge
+        // by, the avatar's box for a conservative bridge), the same for every group of the bridge. It is a superset of the group's own box, and it is kept by one event (the bridge's extents), not by every change of the
+        // bridge object's matrix (the first version of this row made the world box from that matrix: 55 % of the rows were stale in a lap, the avatars' bridges move their matrix without making their extents again).
+        bridge_flag = 64u;
+        const LLVector4a* be = static_cast<LLDrawable*>(bridge)->getSpatialExtents();
+        for (int k = 0; k < 3; ++k)
+        {
+            const F32 lo = be[0][k], hi = be[1][k];
+            row.mCenter[k] = 0.5f * (lo + hi);
+            row.mHalf[k] = 0.5f * (hi - lo);
+            row.mExtMin[k] = lo;
+            row.mExtMax[k] = hi;
+        }
+    }
     const bool sphere = part && !(part->mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot));       // as LLSpatialPartition::cull picks its culler
     OctreeNode* parent = node->getOctParent();
     LLViewerOctreeGroup* pg = parent ? (LLViewerOctreeGroup*)parent->getListener(0) : nullptr;
@@ -12532,7 +12557,7 @@ void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
         const U32 drawable_type = part->mDrawableType;
         memcpy(&row.mPad0, &drawable_type, 4);        // the partition's drawable type: C2 skips the partitions whose render type is off, as the walk does
     }
-    row.mFlags = (has_parent ? 0u : 1u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
+    row.mFlags = (has_parent ? 0u : 1u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | bridge_flag | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
 }
 
 // the map row a group shows now (the same functions the render map calls: ll_group_has_alpha_key, ll_group_draw_tris, the group's own served fields)
@@ -12682,10 +12707,43 @@ void cull_verify()
             }
         }
     }
+    {
+        // stage 2: the rows of the groups of bridges against the groups: the world box made again from the bridge's matrix as it is now, and the map row
+        for (U32 slot = 0; slot < sMirror.size(); ++slot)
+        {
+            LLViewerOctreeGroup* og = sSlotGroup[slot];
+            if (!og || (sMirror[slot].mFlags & 64u) == 0)
+            {
+                continue;
+            }
+            LLSpatialGroup* bg = (LLSpatialGroup*)og;
+            if (bg->isDead() || bg->isDirty() || bg->mCullDirty)
+            {
+                ++s.mVBridgeSkipped;            // its row legitimately waits for the next processing
+                continue;
+            }
+            ++s.mVBridge;
+            LLVkBridge::CullRow want;
+            cull_fill_row(bg, want);
+            const LLVkBridge::CullRow& have = sMirror[slot];
+            if (memcmp(want.mCenter, have.mCenter, 12) || memcmp(want.mHalf, have.mHalf, 12)) ++s.mVBridgeBounds;
+            if (memcmp(want.mExtMin, have.mExtMin, 12) || memcmp(want.mExtMax, have.mExtMax, 12)) ++s.mVBridgeExtents;
+            if (want.mParent != have.mParent || want.mFlags != have.mFlags) ++s.mVBridgeOther;
+            CullMapRow want_map;
+            cull_fill_map_row(bg, want_map);
+            const CullMapRow& have_map = sMapMirror[slot];
+            if (want_map.mHandle != have_map.mHandle || want_map.mServedTris != have_map.mServedTris || want_map.mDrawTris != have_map.mDrawTris || want_map.mAlphaBits != have_map.mAlphaBits || want_map.mFlags != have_map.mFlags
+                || memcmp(&want_map.mSurfaceArea, &have_map.mSurfaceArea, 4) || memcmp(&want_map.mObjectBoxSize, &have_map.mObjectBoxSize, 4))
+            {
+                ++s.mVBridgeMap;
+            }
+            s.mVBridgeHandle += want_map.mHandle != 0;
+        }
+    }
     U64 live = 0;
     for (const LLVkBridge::CullRow& row : sMirror)
     {
-        live += (row.mFlags & 32u) == 0;
+        live += (row.mFlags & (32u | 64u)) == 0;       // (the groups of bridges are checked below)
     }
     s.mVWalked += walked;
     s.mVOrphans += live > walked ? live - walked : walked > live ? walked - live : 0;
@@ -12748,6 +12806,12 @@ void cull_report()
         const double v = (double)s.mVerifies;
         LL_INFOS("CullShadow") << "MAPROWS verify over " << s.mVerifies << " walks (" << (double)s.mVMapRows / v << " rows with a handle a walk): rows that differ from the group, a walk: handle " << s.mVMap[0] << ", served tris " << s.mVMap[1] << ", draw tris " << s.mVMap[2]
                                << ", alpha bits " << s.mVMap[3] << ", flags " << s.mVMap[4] << ", surface area " << s.mVMap[5] << ", object box size " << s.mVMap[6] << " (totals over all the walks)" << LL_ENDL;
+    }
+    if (s.mVerifies)
+    {
+        const double v = (double)s.mVerifies;
+        LL_INFOS("CullShadow") << "BRIDGEROWS verify over " << s.mVerifies << " walks: rows of bridge groups checked a walk " << (double)s.mVBridge / v << " (with a handle " << (double)s.mVBridgeHandle / v << ", skipped as waiting " << (double)s.mVBridgeSkipped / v
+                               << "); rows that differ from the group (totals over the walks): world bounds " << s.mVBridgeBounds << ", world extents " << s.mVBridgeExtents << ", parent or flags " << s.mVBridgeOther << ", map row " << s.mVBridgeMap << LL_ENDL;
     }
     if (s.mUseFrames || s.mUseMismatch)
     {
@@ -12823,6 +12887,10 @@ void cull_apply()
                 if (row.mFlags & 32u)
                 {
                     continue;               // a free slot at the record
+                }
+                if (row.mFlags & 64u)
+                {
+                    continue;               // a group of a bridge (stage 2): its row holds a world box, the CPU's numbers below are made in the bridge's space
                 }
                 if (i >= sSlotGroup.size() || !sSlotGroup[i] || sSlotGen[i] != rec.mGen[i])
                 {
@@ -13034,6 +13102,10 @@ static void cull_flat(LLCamera& camera, bool use)
             {
                 continue;
             }
+            if (row.mFlags & 64u)
+            {
+                continue;                       // a group of a bridge (stage 2): the walk culls it in the bridge's space, the flat cull does not make its lists
+            }
             if ((row.mFlags & (16u | 32u)) && st == CS_PASS)
             {
                 continue;                       // empty or dead: passes for its children, is not kept
@@ -13226,6 +13298,31 @@ void LLCullShadow::touch(LLViewerOctreeGroup* group)
         group->mCullDirty = true;
         sDirtySlots.push_back(group->mCullId - 1);
         ++sCullStats.mTouches;
+    }
+}
+
+void LLCullShadow::touchBridge(LLSpatialBridge* bridge)
+{
+    // stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the groups of a bridge's octree are a handful (the census: 3.4 a bridge); each shows a world box made with the bridge's matrix, so a move of the bridge refreshes all of them
+    if (!bridge || !bridge->mOctree)
+    {
+        return;
+    }
+    static thread_local std::vector<const OctreeNode*> stack;
+    stack.clear();
+    stack.push_back(bridge->mOctree);
+    while (!stack.empty())
+    {
+        const OctreeNode* node = stack.back();
+        stack.pop_back();
+        if (LLViewerOctreeGroup* g = (LLViewerOctreeGroup*)node->getListener(0))
+        {
+            touch(g);
+        }
+        for (U32 k = 0; k < node->getChildCount(); ++k)
+        {
+            stack.push_back(node->getChild(k));
+        }
     }
 }
 
