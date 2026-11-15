@@ -3145,6 +3145,11 @@ static bool feedbackFrameWorkOff()
     return off;
 }
 
+bool Renderer::feedbackWanted() const
+{
+    return mFb.valid() && !feedbackFrameWorkOff();
+}
+
 void Renderer::feedbackBeginFrame(U32 frame_slot)
 {
     if (!mFb.valid() || frame_slot >= Context::FRAMES_IN_FLIGHT || feedbackFrameWorkOff())
@@ -3190,7 +3195,7 @@ void Renderer::feedbackBeginFrame(U32 frame_slot)
     };
     barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);       // (the copy out of the last frame has read it)
     vkCmdFillBuffer(mCmd, mFb.mBuffer, 0, fb_bytes, 0xFFFFFFFFu);
-    barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 }
 
 void Renderer::feedbackEndFrame()
@@ -3209,7 +3214,7 @@ void Renderer::feedbackEndFrame()
         di.pMemoryBarriers = &mb;
         vkCmdPipelineBarrier2(mCmd, &di);
     };
-    barrier(VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    barrier(VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
     VkBufferCopy copy = { 0, 0, fb_bytes };
     vkCmdCopyBuffer(mCmd, mFb.mBuffer, mFbRead[mSlot].mBuffer, 1, &copy);
     barrier(VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);

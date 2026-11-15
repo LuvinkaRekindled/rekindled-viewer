@@ -101,6 +101,9 @@ struct RecVerify
     U64 mCompared = 0, mKept = 0;                                               // compared (of them the loop's answer was a kept one)
     U64 mSizeDiff = 0, mWorkerBigger = 0, mKeptDiff = 0, mOccDiff = 0;         // the sizes differ by more than a quarter (of them the worker's was the larger; of them the loop's was a kept result); "all faces occluded" differs
     U64 mUsed = 0, mFellBack = 0;               // LL_VK_TEXREC=2: textures sized from the worker's result / that kept the face loop (no result, stale, volatile faces, another number of faces)
+    // <FS> LL_VK_TEXREC_WHY=1 (diagnostic, 2026-11-15): why a visit kept the face loop in mode 2, and the visits split by whether the texture has an image of its own (idea 3, GPU texture need for loaded textures)
+    U64 mFbNone = 0, mFbStale = 0, mFbVolatile = 0, mFbCount = 0, mFbBig = 0;
+    U64 mVisLoaded = 0, mVisUnloaded = 0, mFacesLoaded = 0, mFacesUnloaded = 0, mUsedLoaded = 0, mUsedUnloaded = 0, mFbLoaded = 0, mFbUnloaded = 0;
 };
 RecVerify sRecV;
 }
@@ -1043,6 +1046,14 @@ void LLViewerTextureList::idxLog()
                              << (F64)(st.mGroupNs - ps.mGroupNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame (" << st.mGroupEvents - ps.mGroupEvents << " events), faceChanged calls "
                              << st.mFaceChangedCalls - ps.mFaceChangedCalls << ", records not sent " << st.mSkipped - ps.mSkipped
                              << " | sized from the worker's result " << sRecV.mUsed - pv.mUsed << ", kept the face loop " << sRecV.mFellBack - pv.mFellBack << LL_ENDL;
+        if (getenv("LL_VK_TEXREC_WHY"))
+        {
+            LL_INFOS("VkTexRecWhy") << "in 10 s, kept the face loop because: no result " << sRecV.mFbNone - pv.mFbNone << ", stale (another face set) " << sRecV.mFbStale - pv.mFbStale << ", volatile faces " << sRecV.mFbVolatile - pv.mFbVolatile
+                                    << ", another number of faces " << sRecV.mFbCount - pv.mFbCount << ", over the face limit " << sRecV.mFbBig - pv.mFbBig
+                                    << " | by whether the texture has an image of its own: LOADED visits " << sRecV.mVisLoaded - pv.mVisLoaded << " (faces in them " << sRecV.mFacesLoaded - pv.mFacesLoaded << ", from the worker "
+                                    << sRecV.mUsedLoaded - pv.mUsedLoaded << ", kept the loop " << sRecV.mFbLoaded - pv.mFbLoaded << "), UNLOADED visits " << sRecV.mVisUnloaded - pv.mVisUnloaded << " (faces in them "
+                                    << sRecV.mFacesUnloaded - pv.mFacesUnloaded << ", from the worker " << sRecV.mUsedUnloaded - pv.mUsedUnloaded << ", kept the loop " << sRecV.mFbUnloaded - pv.mFbUnloaded << ")" << LL_ENDL;
+        }
         pv = sRecV;
         ps = st;
     }
@@ -1685,7 +1696,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // number of faces is what the worker counted
         bool rec_use = false;
         LLTexRecs::Result rec_res;
-        if (LLTexRecs::sMode == 2 && LLTexRecs::result(imagep, rec_res) && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
+        const bool rec_have = LLTexRecs::sMode == 2 && LLTexRecs::result(imagep, rec_res);
+        if (rec_have && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
         {
             U32 fc = 0;
             for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
@@ -1703,6 +1715,31 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
         if (LLTexRecs::sMode == 2 && !rec_use) ++sRecV.mFellBack;
+        static const bool rec_why = getenv("LL_VK_TEXREC_WHY") != nullptr;
+        if (rec_why && LLTexRecs::sMode == 2)
+        {
+            const bool loaded = img && img->getTexName() != 0;        // (no image of its own yet: the records name the shared default image)
+            U32 fcnt = 0;
+            for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
+            {
+                fcnt += imagep->getNumFaces(i);
+            }
+            ++(loaded ? sRecV.mVisLoaded : sRecV.mVisUnloaded);
+            (loaded ? sRecV.mFacesLoaded : sRecV.mFacesUnloaded) += fcnt;
+            if (rec_use)
+            {
+                ++(loaded ? sRecV.mUsedLoaded : sRecV.mUsedUnloaded);
+            }
+            else
+            {
+                ++(loaded ? sRecV.mFbLoaded : sRecV.mFbUnloaded);
+                if (!rec_have) ++sRecV.mFbNone;
+                else if (rec_res.mStamp != imagep->mFaceStamp) ++sRecV.mFbStale;
+                else if (rec_res.mVolatile) ++sRecV.mFbVolatile;
+                else if (fcnt != rec_res.mFaces) ++sRecV.mFbCount;
+                else ++sRecV.mFbBig;
+            }
+        }
 
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
         if (rec_use)

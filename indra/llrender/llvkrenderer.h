@@ -609,6 +609,11 @@ public:
     struct FbBatch { U64 mFrame; std::vector<FbReading> mReadings; };
     void feedbackTake(std::vector<FbBatch>& out);
     void feedbackStats(U64& frames, U64& readings) const { frames = mFbFrames; readings = mFbReadings; }
+    // <FS> idea 3: the compute pass that fills the need buffer from the world pass's texture need attachment (worker kind 42): the buffer, whether the per frame work runs, the colour target of the pass in progress
+    VkBuffer feedbackBufferHandle() const { return mFb.mBuffer; }
+    VkDeviceSize feedbackBufferBytes() const { return (VkDeviceSize)FB_ENTRIES * sizeof(U32); }
+    bool feedbackWanted() const;
+    Image* currentColorTarget(U32 i) const { return i < mColorCount ? mColorTargets[i] : nullptr; }
 private:
     static constexpr U32 FB_BINDING = BINDLESS_TABLES + 1;           // set 2 binding 5
     static constexpr U32 FB_ENTRIES = HANDLE_MAP_STRIDE;             // the 2D table: a word per handle
