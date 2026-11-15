@@ -94,11 +94,19 @@ void main()
 #endif
 #if defined(GB_MOTION) && defined(HAS_SKIN)
     {
-        mat3 prev_rotation;
-        vec3 prev_translation;
-        skin_vertex_prev(row.weights, row.palette, row.joints, index, prev_rotation, prev_translation);
-        vary_cur = rig_transform(view_proj_cur, vertex, rig_anchor);
-        vary_prev = rig_transform(view_proj_prev, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row.palette, row.joints));
+        if (skin_palette_moving(row.palette, row.joints))
+        {
+            mat3 prev_rotation;
+            vec3 prev_translation;
+            skin_vertex_prev(row.weights, row.palette, row.joints, index, prev_rotation, prev_translation);
+            vary_cur = rig_transform(view_proj_cur, vertex, rig_anchor);
+            vary_prev = rig_transform(view_proj_prev, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row.palette, row.joints));
+        }
+        else
+        {
+            vary_cur = vec4(0.0);       // (w = 0: no motion of its own, the camera's motion stays)
+            vary_prev = vec4(0.0);
+        }
     }
 #endif
 

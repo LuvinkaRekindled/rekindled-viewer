@@ -920,7 +920,27 @@ void ll_frame_palette_prepare(U32 frame)
 // a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
 // <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md): every palette in the list is followed by the palette of the frame before (same size, same anchor: mPrevGLMp, equal to the current one when there is no history): the
 // rigged G-buffer vertex shaders read both and write the motion of the surface. prev_floats null: the current palette is written twice.
-bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
+F32 ll_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
+{
+    if (!LLPipeline::sDLSS || !prev || prev == cur || !gPipeline.mRT)
+    {
+        return 0.f;
+    }
+    const F32 distance = (avatar_position - LLViewerCamera::getInstance()->getOrigin()).length();
+    if (distance > 48.f)
+    {
+        return 0.f;
+    }
+    F32 biggest = 0.f;
+    for (U32 k = 0; k < floats; ++k)
+    {
+        biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
+    }
+    const F32 focal_px = 0.5f * (F32)gPipeline.mRT->deferredScreen.getHeight() * LLViewerCamera::sJitteredProjection[1][1];
+    return biggest * 1.5f * focal_px / llmax(distance, 0.5f) >= 0.3f ? 1.f : 0.f;
+}
+
+bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
 {
     if (!count || sFramePal.mPreparedFrame != frame || !sFramePal.mArenaOn)
     {
@@ -937,6 +957,7 @@ bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, U32 count
     while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + 2 * count, std::memory_order_acq_rel));
     memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
     memcpy(sFramePal.mArena.mPtr + cur + count, prev_floats ? prev_floats : floats, (size_t)count * sizeof(F32));
+    sFramePal.mArena.mPtr[cur + count - 8] = moving;        // (the tail entry's second row, x: see ll_palette_moving)
     {
         const U32 id = palette_id_of(id_cell);
         if (!id || !palette_pair_push(id, cur))
@@ -1027,6 +1048,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     }
     const size_t need = (size_t)(joints + 1) * 12;
     const F32* prev_data = mpc.mPrevGLMp.size() >= need ? mpc.mPrevGLMp.data() : mpc.mGLMp.data();       // (the previous palette follows the current one: see ll_frame_palette_write)
+    const F32 moving = ll_palette_moving(mpc.mGLMp.data(), prev_data, (U32)need, avatar->getRenderPosition());
     U32 at = 0;
     bool in_arena = false;
     if (sFramePal.mArenaOn)
@@ -1048,13 +1070,16 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         // palettes compared, 0 wrong)
         memcpy(sFramePal.mArena.mPtr + at, mpc.mGLMp.data(), need * sizeof(F32));
         memcpy(sFramePal.mArena.mPtr + at + need, prev_data, need * sizeof(F32));
+        sFramePal.mArena.mPtr[at + need - 8] = moving;
     }
     else
     {
         sFramePal.mArenaOverflows += sFramePal.mArenaOn;
         at = sFramePal.mDataBase + (U32)sFramePal.mData.size();
+        const size_t first = sFramePal.mData.size();
         sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + need);
         sFramePal.mData.insert(sFramePal.mData.end(), prev_data, prev_data + need);
+        sFramePal.mData[first + need - 8] = moving;
     }
     ++sFramePal.mAdded;
     const U32 id = palette_id_of(mpc.mPaletteId);

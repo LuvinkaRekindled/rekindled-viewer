@@ -233,6 +233,13 @@ vec3 skin_rig_anchor_prev(uvec2 palette_address, uint joints)
     return SkinJoints(palette_address).j[2u * joints + 1u].c0.xyz;
 }
 
+// velocity fold: the tail entry's second row, x, is 1.0 when the pose moved enough since the frame before to show on screen (lldrawpool.cpp ll_palette_moving), else 0: a palette that did not move skips its
+// previous pose, its pixels keep the camera's motion
+bool skin_palette_moving(uvec2 palette_address, uint joints)
+{
+    return SkinJoints(palette_address).j[joints].c1.x != 0.0;
+}
+
 void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
 {
     skin_vertex(row.weights, row.palette, row.joints, index, rotation, translation);
