@@ -12278,6 +12278,10 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
         LL_INFOS("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
             << LLSpatialGroup::sGuardFragmentOnly << " guard calls for a fragment alone, " << LLBuilderGuard::sQuiesces.load() << " quiesces of the async pool" << LL_ENDL;
     }
+    if (LLCullShadow::sOn)
+    {
+        LLCullShadow::touch(group);         // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the handle, the served and alpha bits, the walk summary are new
+    }
     return f;
 }
 
@@ -12450,10 +12454,22 @@ struct CullStats
     double mBuildMs = 0, mProcessMs = 0, mApplyMs = 0, mSendMs = 0, mBytes = 0, mTBound = 0, mABound = 0, mVerifyWalkMs = 0;
     U64 mBuilds = 0, mSends = 0, mRefreshed = 0, mTouches = 0, mAdded = 0, mFreed = 0, mRequeued = 0;
     // LL_VK_CULL_VERIFY: the kept table against a full walk (every 60 builds)
+    U64 mVMap[7] = {}, mVMapRows = 0;
     U64 mVerifies = 0, mVWalked = 0, mVMissing = 0, mVBounds = 0, mVExtents = 0, mVParent = 0, mVOrphans = 0, mVFlag[6] = {};
 };
 // the kept table: one row per group of the covered partitions, at the group's slot (mCullId - 1)
 std::vector<LLVkBridge::CullRow> sMirror;
+// <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, a second table next to the rows, one per slot, kept by the same touch events: what the render map reads of a group that the cull row does not
+// show (the fragment's handle and served bits, the alpha keys, the triangles, the auto-hide inputs). Viewer side only for now: LL_VK_CULL_VERIFY compares every row with the group; nothing reads them yet.
+struct CullMapRow
+{
+    U32 mHandle = 0, mServedTris = 0, mDrawTris = 0;
+    U8 mAlphaBits = 0;         // the group's mGeoAlphaBits (1 alpha, 2 rigged alpha, set with the served bits)
+    U8 mFlags = 0;             // 1 all served, 2 has alpha key, 4 has rigged alpha key, 8 render by group
+    U16 mPad = 0;
+    F32 mSurfaceArea = 0.f, mObjectBoxSize = 0.f;      // the inputs of the auto-hide test (RenderAutoHideSurfaceAreaLimit * max(objectBoxSize, 10))
+};
+std::vector<CullMapRow> sMapMirror;
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 std::vector<U32> sFreeSlots;
@@ -12519,6 +12535,24 @@ void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
     row.mFlags = (has_parent ? 0u : 1u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
 }
 
+// the map row a group shows now (the same functions the render map calls: ll_group_has_alpha_key, ll_group_draw_tris, the group's own served fields)
+void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
+{
+    row = CullMapRow();
+    if (g->isDead())
+    {
+        return;
+    }
+    LLSpatialPartition* part = g->getSpatialPartition();
+    row.mHandle = g->mGeoHandle;
+    row.mServedTris = g->mGeoServedTris;
+    row.mDrawTris = ll_group_draw_tris(g);
+    row.mAlphaBits = g->mGeoAlphaBits;
+    row.mFlags = (g->mGeoAllServed ? 1u : 0u) | (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u);
+    row.mSurfaceArea = g->mSurfaceArea;
+    row.mObjectBoxSize = g->row().objectBoxSize;
+}
+
 // the new groups get slots, the touched rows are made again (a row whose group still waits for its rebound stays on the list)
 void cull_process()
 {
@@ -12544,6 +12578,7 @@ void cull_process()
             memset(&dead, 0, sizeof(dead));
             dead.mFlags = 33u;
             sMirror.push_back(dead);
+            sMapMirror.push_back(CullMapRow());
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
         }
@@ -12573,6 +12608,7 @@ void cull_process()
         }
         g->mCullDirty = false;
         cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
+        cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
         sSendSlots.push_back(slot);
         ++s.mRefreshed;
     }
@@ -12621,6 +12657,19 @@ void cull_verify()
                     if (memcmp(want.mCenter, have.mCenter, 12) || memcmp(want.mHalf, have.mHalf, 12)) ++s.mVBounds;
                     if (memcmp(want.mExtMin, have.mExtMin, 12) || memcmp(want.mExtMax, have.mExtMax, 12)) ++s.mVExtents;
                     if (want.mParent != have.mParent) ++s.mVParent;
+                    {
+                        CullMapRow want_map;
+                        cull_fill_map_row(g, want_map);
+                        const CullMapRow& have_map = sMapMirror[g->mCullId - 1];
+                        s.mVMap[0] += want_map.mHandle != have_map.mHandle;
+                        s.mVMap[1] += want_map.mServedTris != have_map.mServedTris;
+                        s.mVMap[2] += want_map.mDrawTris != have_map.mDrawTris;
+                        s.mVMap[3] += want_map.mAlphaBits != have_map.mAlphaBits;
+                        s.mVMap[4] += want_map.mFlags != have_map.mFlags;
+                        s.mVMap[5] += memcmp(&want_map.mSurfaceArea, &have_map.mSurfaceArea, 4) != 0;
+                        s.mVMap[6] += memcmp(&want_map.mObjectBoxSize, &have_map.mObjectBoxSize, 4) != 0;
+                        s.mVMapRows += want_map.mHandle != 0;
+                    }
                     for (int bit = 0; bit < 5; ++bit)
                     {
                         s.mVFlag[bit] += ((want.mFlags ^ have.mFlags) >> bit) & 1u;
@@ -12693,6 +12742,12 @@ void cull_report()
         snprintf(buf, sizeof(buf), "VERIFY (kept table against a full walk, %.0f walks, %.3f ms each): groups walked %.0f, WITHOUT A ROW %.2f, bounds differ %.2f, extents differ %.2f, parent differs %.2f, flags differ: skip %.2f occluded %.2f sphere %.2f empty %.2f dead-or-root %.2f, live rows without a group in the walk (or the other way) %.2f (per walk)",
             v, s.mVerifyWalkMs / v, (double)s.mVWalked / v, (double)s.mVMissing / v, (double)s.mVBounds / v, (double)s.mVExtents / v, (double)s.mVParent / v, (double)s.mVFlag[1] / v, (double)s.mVFlag[2] / v, (double)s.mVFlag[3] / v, (double)s.mVFlag[4] / v, (double)s.mVFlag[0] / v, (double)s.mVOrphans / v);
         LL_INFOS("CullShadow") << buf << LL_ENDL;
+    }
+    if (s.mVerifies)
+    {
+        const double v = (double)s.mVerifies;
+        LL_INFOS("CullShadow") << "MAPROWS verify over " << s.mVerifies << " walks (" << (double)s.mVMapRows / v << " rows with a handle a walk): rows that differ from the group, a walk: handle " << s.mVMap[0] << ", served tris " << s.mVMap[1] << ", draw tris " << s.mVMap[2]
+                               << ", alpha bits " << s.mVMap[3] << ", flags " << s.mVMap[4] << ", surface area " << s.mVMap[5] << ", object box size " << s.mVMap[6] << " (totals over all the walks)" << LL_ENDL;
     }
     if (s.mUseFrames || s.mUseMismatch)
     {
@@ -13147,6 +13202,7 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
             sFreeSlots.push_back(slot);
             memset(&sMirror[slot], 0, sizeof(sMirror[slot]));
             sMirror[slot].mFlags = 33u;
+            sMapMirror[slot] = CullMapRow();
             sSendSlots.push_back(slot);
             ++sCullStats.mFreed;
         }
