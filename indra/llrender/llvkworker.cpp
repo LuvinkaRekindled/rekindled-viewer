@@ -11484,9 +11484,9 @@ void cull_poll()
 struct CullDeriveStats
 {
     U64 mCompares = 0, mRecord = 0, mDerived = 0, mBoth = 0, mMissing = 0, mExtra = 0, mNoTable = 0;
-    U64 mMissNoRow = 0, mMissDead = 0, mMissNoHandle = 0, mMissType = 0, mMissOcc = 0, mMissHide = 0, mMissFrustum = 0, mMissObjects = 0, mMissGate = 0, mMissArea = 0, mMissPasses = 0, mMissRecent = 0;
+    U64 mMissNoRow = 0, mMissDead = 0, mMissNoHandle = 0, mMissType = 0, mMissOcc = 0, mMissHide = 0, mMissFrustum = 0, mMissObjects = 0, mMissGate = 0, mMissPasses = 0, mMissRecent = 0;
     U64 mSampled[16] = {};      // log lines written by category (a budget each, so the loading phase does not use them all)
-    U64 mSkippedViews = 0;
+    U64 mSkippedViews = 0, mLate = 0;
     U64 mBigViews = 0, mBigViewExtra = 0, mBigViewEntries = 0, mBigViewDerived = 0;      // views with more than 40 extras
     U64 mExtraType[161] = {}, mExtraNoTris = 0, mExtraNoServed = 0, mExtraFull = 0, mExtraSkipFlag = 0, mExtraAlpha = 0, mExtraOwn[3] = {}, mExtraParentOut = 0, mExtraRoot = 0;      // what the extras have in common (their own frustum result, their parent's)
     U64 mExtraRegion = 0, mExtraBridge = 0, mExtraRecent = 0;
@@ -11495,7 +11495,7 @@ struct CullDeriveStats
 CullDeriveStats sCullDerive;
 
 // LLCamera::AABBInFrustumNoFarClip: 0 outside, 1 partly in, 2 fully in (the planes of the view, the far plane (5) left to the sphere test)
-int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h)
+int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F32 m = 0.f)
 {
     const U32 planes = P.mPlaneCount < 7u ? P.mPlaneCount : 7u;
     bool partly = false;
@@ -11507,7 +11507,7 @@ int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h)
         }
         const F32* pl = P.mPlanes[p];
         const F32 base = pl[0] * c[0] + pl[1] * c[1] + pl[2] * c[2] + pl[3];
-        const F32 ext = fabsf(pl[0]) * h[0] + fabsf(pl[1]) * h[1] + fabsf(pl[2]) * h[2];
+        const F32 ext = fabsf(pl[0]) * (h[0] + m) + fabsf(pl[1]) * (h[1] + m) + fabsf(pl[2]) * (h[2] + m);
         if (base - ext > 0.f)
         {
             return 0;
@@ -11518,13 +11518,13 @@ int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h)
 }
 
 // AABBSphereIntersect of the box min..max with the sphere of the far limit: 2 when both corners are inside (the stock quirk: a box with its two corners inside counts as wholly in), 0 outside, 1 else
-int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* mx)
+int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* mx, F32 m = 0.f)
 {
     const F32 r2 = P.mCornerDist * P.mCornerDist;
     F32 a = 0.f, b = 0.f, d = 0.f;
     for (int k = 0; k < 3; ++k)
     {
-        const F32 x = mn[k] - P.mOrigin[k], y = mx[k] - P.mOrigin[k];
+        const F32 x = mn[k] - m - P.mOrigin[k], y = mx[k] + m - P.mOrigin[k];
         a += x * x;
         b += y * y;
     }
@@ -11534,20 +11534,38 @@ int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* m
     }
     for (int k = 0; k < 3; ++k)
     {
-        const F32 t = fmaxf(fmaxf(mn[k] - P.mOrigin[k], P.mOrigin[k] - mx[k]), 0.f);
+        const F32 t = fmaxf(fmaxf(mn[k] - m - P.mOrigin[k], P.mOrigin[k] - (mx[k] + m)), 0.f);
         d += t * t;
     }
     return d > r2 ? 0 : 1;
 }
 
-// the culler's frustumCheck of the group's bounds (and, for the far limit, its extents) and its frustumCheckObjects of the object bounds
-int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r)
+// the margin of the late list (the GPU test's: the translation bound plus the distance times the rotation bound, times the variant's factor); 0 for the exact test
+F32 cull_margin(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, F32 factor)
 {
-    int res = cull_box_res(P, r.mCenter, r.mHalf);
+    if (factor <= 0.f)
+    {
+        return 0.f;
+    }
+    const F32 dx = r.mCenter[0] - P.mOrigin[0], dy = r.mCenter[1] - P.mOrigin[1], dz = r.mCenter[2] - P.mOrigin[2];
+    return (P.mMotion[0] + sqrtf(dx * dx + dy * dy + dz * dz) * P.mMotion[1]) * factor;
+}
+
+// the culler's frustumCheck of the group's bounds (and, for the far limit, its extents) and its frustumCheckObjects of the object bounds
+int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, F32 factor = 0.f)
+{
+    const F32 m = cull_margin(P, r, factor);
+    int res = cull_box_res(P, r.mCenter, r.mHalf, m);
     if (res && (r.mFlags & 8u))
     {
-        const int sp = cull_sphere_res(P, r.mExtMin, r.mExtMax);
+        const int sp = cull_sphere_res(P, r.mExtMin, r.mExtMax, m);
         res = sp < res ? sp : res;
+    }
+    if (m > 0.f && res < 2)
+    {
+        // the margin widens what is in, it must not take away what the exact test calls wholly in: the walk keeps every descendant of such a node untested (the far limit quirk), and a grown box that is only partly in would lose them
+        const int exact = cull_group_res(P, r, 0.f);
+        res = exact > res ? exact : res;
     }
     return res;
 }
@@ -11573,7 +11591,7 @@ int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow&
 // an ancestor fails (the subtree is never visited), ST_PART / ST_FULL the node is visited with mRes 1 / 2 (a node under a wholly-in ancestor, or a skip-frustum-check node under a partly-in one, takes its parent's mRes with no test)
 enum { ST_UNKNOWN = 0, ST_OCC, ST_OUT, ST_PART, ST_FULL };
 
-U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, U32 slot, std::vector<U8>& memo, int depth)
+U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, U32 slot, std::vector<U8>& memo, int depth, F32 factor = 0.f)
 {
     if (memo[slot])
     {
@@ -11603,7 +11621,7 @@ U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, b
             }
             else
             {
-                const U8 ps = cull_chain_state(s, P, occlusion, row.mParent, memo, depth + 1);
+                const U8 ps = cull_chain_state(s, P, occlusion, row.mParent, memo, depth + 1, factor);
                 if (ps == ST_OCC || ps == ST_OUT)
                 {
                     pruned = true;
@@ -11625,7 +11643,7 @@ U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, b
         }
         else
         {
-            const int res = cull_group_res(P, row);
+            const int res = cull_group_res(P, row, factor);
             st = res == 0 ? ST_OUT : res == 2 ? ST_FULL : ST_PART;
         }
     }
@@ -11633,9 +11651,9 @@ U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, b
     return st;
 }
 
-enum { CV_PASS = 0, CV_DEAD, CV_NOHANDLE, CV_TYPE, CV_OCC, CV_HIDE, CV_FRUSTUM, CV_OBJECTS, CV_GATE, CV_AREA };
+enum { CV_PASS = 0, CV_DEAD, CV_NOHANDLE, CV_TYPE, CV_OCC, CV_HIDE, CV_FRUSTUM, CV_OBJECTS, CV_GATE };
 
-int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, F32 pixel_angle)
+int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
 {
     const LLVkBridge::CullRow& row = s.mTable[slot];
     const LLVkBridge::CullMapRow& map = s.mMap[slot];
@@ -11656,33 +11674,21 @@ int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, 
     }
     if (flags & 64u)
     {
-        // a group of a bridge's octree: the walk is LLSpatialBridge::setVisible (the avatar gate, the bridge's box against the frustum and the far sphere, the pixel area of the box) and then every group of the octree is marked (no test
-        // of its own, no occlusion cut); the render map then drops it by its own occlusion state or the auto-hide limit. The row's box is the bridge's (the same for every group of it).
-        if (flags & 128u)
-        {
-            return CV_GATE;
-        }
+        // a group of a bridge's octree: whether the walk marked the bridge this frame (LLSpatialBridge::setVisible: the avatar gate, impostor and jelly doll rule, the bridge's box, its pixel area: CPU state of the moment) is the
+        // viewer's to say, the record names the roots of the bridges it marked; then every group of the octree is marked (no test of its own, no occlusion cut) and the render map drops it by its own occlusion state or
+        // the auto-hide limit
         if (flags & 16u)
         {
             return CV_NOHANDLE;         // (an empty group is not marked)
         }
-        if (cull_box_res(P, row.mCenter, row.mHalf) == 0 || cull_sphere_res(P, row.mExtMin, row.mExtMax) == 0)
+        U32 root = slot;
+        for (int depth = 0; depth < 40 && !(s.mTable[root].mFlags & 1u) && s.mTable[root].mParent < s.mTable.size(); ++depth)
         {
-            return CV_FRUSTUM;
+            root = s.mTable[root].mParent;
         }
+        if (!bridge_marked[root])
         {
-            F32 dist = sqrtf((row.mCenter[0] - P.mOrigin[0]) * (row.mCenter[0] - P.mOrigin[0]) + (row.mCenter[1] - P.mOrigin[1]) * (row.mCenter[1] - P.mOrigin[1]) + (row.mCenter[2] - P.mOrigin[2]) * (row.mCenter[2] - P.mOrigin[2]));
-            if (dist < 16.f)
-            {
-                dist /= 16.f;
-                dist *= dist;
-                dist *= 16.f;
-            }
-            const F32 radius = atanf(sqrtf(row.mHalf[0] * row.mHalf[0] + row.mHalf[1] * row.mHalf[1] + row.mHalf[2] * row.mHalf[2]) / dist) * pixel_angle;
-            if (radius * radius * 3.14159265f < 16.f)
-            {
-                return CV_AREA;
-            }
+            return CV_GATE;
         }
         if (occlusion && (flags & 4u))
         {
@@ -11719,6 +11725,41 @@ int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, 
     return CV_PASS;
 }
 
+// stage 4: the late list, a bit set by slot, of the groups whose fragments the CPU consumers of the visible set (matrices of moving fragments, bindings and palettes of rigged ones, textures) have to serve. It is the exact list's
+// filters of the render map without the occlusion cut (a group the Hi-Z hides can be uncovered by the time the list is read), with the planes grown by the motion margin and the chain rule of the walk (so the far limit quirk
+// is in it); the groups of the bridges the walk marked are exact (the viewer says which)
+bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, F32 factor, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
+{
+    const LLVkBridge::CullRow& row = s.mTable[slot];
+    const LLVkBridge::CullMapRow& map = s.mMap[slot];
+    const U32 flags = row.mFlags;
+    if ((flags & (32u | 16u)) || !map.mHandle)
+    {
+        return false;
+    }
+    U32 type;
+    memcpy(&type, &row.mPad0, 4);
+    if (type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
+    {
+        return false;
+    }
+    if (hide_limit > 0.f && map.mSurfaceArea > hide_limit * fmaxf(map.mObjectBoxSize, 10.f))
+    {
+        return false;
+    }
+    if (flags & 64u)
+    {
+        U32 root = slot;
+        for (int depth = 0; depth < 40 && !(s.mTable[root].mFlags & 1u) && s.mTable[root].mParent < s.mTable.size(); ++depth)
+        {
+            root = s.mTable[root].mParent;
+        }
+        return bridge_marked[root] != 0;
+    }
+    const U8 st = cull_chain_state(s, P, false, slot, memo, 0, factor);
+    return st == ST_PART || st == ST_FULL;
+}
+
 void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob)
 {
     CullShadowState& s = sCullShadow;
@@ -11735,8 +11776,9 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     F32 hide_limit;
     memcpy(&hide_limit, &P.mPad[1], 4);
     const U32* type_mask = &P.mPad[2];
-    F32 pixel_angle;
-    memcpy(&pixel_angle, view_blob + sizeof(LLVkBridge::CullParams), 4);
+    U32 marked_count;
+    memcpy(&marked_count, view_blob + sizeof(LLVkBridge::CullParams) + 4, 4);
+    const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
     U32 max_h = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -11758,12 +11800,23 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     const U32 table = (U32)s.mTable.size();
     static std::vector<U8> memo;
     memo.assign(table, 0);
+    static std::vector<U8> bridge_marked;
+    bridge_marked.assign(table, 0);
+    for (U32 i = 0; i < marked_count; ++i)
+    {
+        U32 root;
+        memcpy(&root, marked_slots + (size_t)i * 4, 4);
+        if (root < table)
+        {
+            bridge_marked[root] = 1;
+        }
+    }
     auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
     const U64 extra_before = d.mExtra, derived_before = d.mDerived;
     const CullDeriveStats before = d;
     for (U32 slot = 0; slot < table; ++slot)
     {
-        if (cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, pixel_angle) != CV_PASS)
+        if (cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked) != CV_PASS)
         {
             continue;
         }
@@ -11815,6 +11868,25 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         return;
     }
     {
+        // the late list of this view, published for the viewer's consumers (the variant 1 factor of the record, 1.5)
+        static std::vector<U8> memo_late;
+        memo_late.assign(table, 0);
+        static std::vector<U32> late_words;
+        late_words.assign((table + 31) / 32, 0);
+        const F32 factor = P.mFactors[1];
+        U64 late_n = 0;
+        for (U32 slot = 0; slot < table; ++slot)
+        {
+            if (cull_late_pass(s, P, slot, factor, hide_limit, type_mask, memo_late, bridge_marked))
+            {
+                late_words[slot >> 5] |= 1u << (slot & 31u);
+                ++late_n;
+            }
+        }
+        LLVkBridge::lateListPublish(h.mPass, table, late_words.data());
+        d.mLate += late_n;
+    }
+    {
         // views that differ from the usual ones by many groups at once (a record that names far fewer groups than the table shows is another view's list, not a state difference)
         const U64 ex_view = d.mExtra - extra_before;
         if (ex_view > 40)
@@ -11850,11 +11922,10 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
         d.mMissRecent += recent;
-        const int why = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, pixel_angle);
+        const int why = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
         switch (why)
         {
         case CV_GATE: ++d.mMissGate; break;
-        case CV_AREA: ++d.mMissArea; break;
         case CV_DEAD: ++d.mMissDead; break;
         case CV_NOHANDLE: ++d.mMissNoHandle; break;
         case CV_TYPE: ++d.mMissType; break;
@@ -11870,7 +11941,7 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             memcpy(&type, &s.mTable[slot].mPad0, 4);
             const LLVkBridge::CullRow& rr = s.mTable[slot];
             const LLVkBridge::CullMapRow& mm = s.mMap[slot];
-            LL_INFOS("VkCullDerive") << "missing: handle " << handle << " slot " << slot << " rejected by " << why << " (1 dead, 2 no handle, 3 render type off, 4 occluded, 5 auto-hide, 6 frustum, 7 object bounds, 8 avatar gate, 9 pixel area, 0 none) flags " << rr.mFlags << " map flags "
+            LL_INFOS("VkCullDerive") << "missing: handle " << handle << " slot " << slot << " rejected by " << why << " (1 dead, 2 no handle, 3 render type off, 4 occluded, 5 auto-hide, 6 frustum, 7 object bounds, 8 bridge not marked, 0 none) flags " << rr.mFlags << " map flags "
                                      << (U32)mm.mFlags << " render type " << type << (rr.mFlags & 64u ? " (a bridge group)" : "") << ", chain state " << (U32)cull_chain_state(s, P, occlusion, slot, memo, 0) << " (1 occluded, 2 out, 3 part, 4 full), box res "
                                      << cull_group_res(P, rr) << ", objects res " << cull_objects_res(P, rr, mm) << ", row changed " << (s.mRecords - s.mRowStamp[slot]) << " records ago" << LL_ENDL;
         }
@@ -11881,10 +11952,10 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         const double n = (double)d.mCompares;
         LL_INFOS("VkCullDerive") << "derived listed set against the record's handles, over " << d.mCompares << " views (" << d.mMs / n << " ms each): the record names " << d.mRecord / n << " a view, derived " << d.mDerived / n << ", both " << d.mBoth / n
                                  << " | missing (named, not derived) " << d.mMissing << ": no row " << d.mMissNoRow << ", dead " << d.mMissDead << ", no handle " << d.mMissNoHandle << ", render type off " << d.mMissType << ", occluded " << d.mMissOcc
-                                 << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", avatar gate " << d.mMissGate << ", pixel area " << d.mMissArea << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
+                                 << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", bridge not marked " << d.mMissGate << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
                                  << " | extra (derived, not named) " << d.mExtra << ": region groups " << d.mExtraRegion << ", bridge groups " << d.mExtraBridge << ", of them rows changed in the last 2 records " << d.mExtraRecent
                                  << " | no table " << d.mNoTable << " (totals over the views)" << LL_ENDL;
-        LL_INFOS("VkCullDerive") << "views not counted (the record names under half of what the table derives: not the main view's list): " << d.mSkippedViews << LL_ENDL;
+        LL_INFOS("VkCullDerive") << "views not counted (the record names under half of what the table derives: not the main view's list): " << d.mSkippedViews << "; the late list (planes grown by the motion margin, no occlusion cut) names " << d.mLate / n << " groups a view" << LL_ENDL;
         LL_INFOS("VkCullDerive") << "views with more than 40 extras: " << d.mBigViews << " of " << d.mCompares << ", they hold " << d.mBigViewExtra << " of the " << d.mExtra << " extras; there the record names " << (d.mBigViews ? (double)d.mBigViewEntries / d.mBigViews : 0.0)
                                  << " a view and the table derives " << (d.mBigViews ? (double)d.mBigViewDerived / d.mBigViews : 0.0) << LL_ENDL;
         std::string types;

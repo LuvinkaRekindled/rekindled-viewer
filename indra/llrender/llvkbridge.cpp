@@ -47,6 +47,8 @@ void LLVkBridge::textureNeedReading(U32, F32) {}
 void LLVkBridge::textureNeedForget(U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
 S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
+void LLVkBridge::lateListPublish(U32, U32, const U32*) {}
+U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
 void LLVkBridge::cullPublish(U32, U32) {}
@@ -1836,6 +1838,33 @@ S32 LLVkBridge::cullRead(U32 serial, U32 table_size, U32* out)
         return gCullPublished[slot].load(std::memory_order_relaxed) == serial ? 1 : -1;
     }
     return published > serial ? -1 : 0;
+}
+
+namespace
+{
+std::mutex gLateMutex;
+std::vector<U32> gLateWords;
+U32 gLateFrame = 0, gLateTable = 0;
+}
+
+void LLVkBridge::lateListPublish(U32 frame, U32 table_size, const U32* words)
+{
+    std::lock_guard<std::mutex> lock(gLateMutex);
+    gLateWords.assign(words, words + (table_size + 31) / 32);
+    gLateFrame = frame;
+    gLateTable = table_size;
+}
+
+U32 LLVkBridge::lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)
+{
+    std::lock_guard<std::mutex> lock(gLateMutex);
+    if (!gLateTable || gLateFrame <= newer_than || gLateWords.size() > capacity_words)
+    {
+        return 0;
+    }
+    memcpy(words, gLateWords.data(), gLateWords.size() * 4);
+    frame = gLateFrame;
+    return gLateTable;
 }
 
 void LLVkBridge::cullDone(U32 serial)
