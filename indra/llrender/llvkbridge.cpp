@@ -48,6 +48,8 @@ void LLVkBridge::textureNeedForget(U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
 S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::lateListPublish(U32, U32, const U32*) {}
+void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
+U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
 U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
@@ -1853,6 +1855,38 @@ void LLVkBridge::lateListPublish(U32 frame, U32 table_size, const U32* words)
     gLateWords.assign(words, words + (table_size + 31) / 32);
     gLateFrame = frame;
     gLateTable = table_size;
+}
+
+namespace
+{
+std::mutex gLodMutex;
+std::vector<F32> gLodDistance;
+std::vector<U32> gLodBits, gLodChange;
+U32 gLodFrame = 0, gLodTable = 0;
+}
+
+void LLVkBridge::lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits)
+{
+    std::lock_guard<std::mutex> lock(gLodMutex);
+    gLodDistance.assign(distance, distance + table_size);
+    gLodBits.assign(slop_bits, slop_bits + (table_size + 31) / 32);
+    gLodChange.assign(change_bits, change_bits + (table_size + 31) / 32);
+    gLodFrame = frame;
+    gLodTable = table_size;
+}
+
+U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows)
+{
+    std::lock_guard<std::mutex> lock(gLodMutex);
+    if (!gLodTable || gLodFrame <= newer_than || gLodTable > capacity_rows)
+    {
+        return 0;
+    }
+    memcpy(distance, gLodDistance.data(), (size_t)gLodTable * 4);
+    memcpy(slop_bits, gLodBits.data(), gLodBits.size() * 4);
+    memcpy(change_bits, gLodChange.data(), gLodChange.size() * 4);
+    frame = gLodFrame;
+    return gLodTable;
 }
 
 U32 LLVkBridge::lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)

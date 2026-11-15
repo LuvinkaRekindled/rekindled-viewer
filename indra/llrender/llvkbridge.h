@@ -365,7 +365,8 @@ namespace LLVkBridge
         U16 mPad = 0;
         F32 mSurfaceArea = 0.f, mObjectBoxSize = 0.f;     // the inputs of the auto-hide test
         F32 mObjCenter[3] = {}, mObjHalf[3] = {};          // the group's object bounds (LLViewerOctreeCull::checkObjects tests them for a node with children that is partly in); a bridge's group shows the bridge's world box
-        U32 mPad2[4] = {};
+        F32 mLastUpdateDistance = 0.f, mRadius = 0.f, mSlop = 0.f;       // stage 7 (the LOD of the groups): what changeLOD() reads besides the distance: the distance of the last LOD update, the radius, the partition's slop ratio
+        U32 mLodFlags = 0;                                 // 1: a state that makes changeLOD() true by itself (ALPHA_DIRTY or OBJECT_DIRTY)
     };
     static_assert(sizeof(CullMapRow) == 64, "cull map row layout");
     // C1c: the record carries delta rows: slots[n] (U32 each, padded to 16 bytes) then rows[n]; table_size = the rows of the whole table after the delta; reset = the worker's copy is replaced (first record, or after a record
@@ -374,6 +375,10 @@ namespace LLVkBridge
     U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset);
     // stage 4 of doc/vulkan/PLAN-visible-set-owner.md: the late list. The worker publishes the groups its derive of the main view's listed set names with the motion margin (and no occlusion cut) as a bit set by slot,
     // with the frame of the record it was made for; the viewer's consumers of the visible set read the newest one. lateListRead: 0 = nothing newer than newer_than, else the table size (words = ceil(size / 32) of them)
+    // stage 7 (LL_VK_CULL_LOD): the worker's own LOD numbers for every row of the table, from its rows and the camera of the main view's record: the distance (the calcDistance formula) and the bit of the slop test of changeLOD(),
+    // published like the late list; the viewer compares them with its own groups' (a compare for now)
+    void lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
+    U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
     void lateListPublish(U32 frame, U32 table_size, const U32* words);
     U32 lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);
     S32 cullRead(U32 serial, U32 table_size, U32* out);
