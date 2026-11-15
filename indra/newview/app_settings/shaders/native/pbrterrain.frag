@@ -75,6 +75,7 @@ layout(location = 3) out vec4 frag_emissive;
 #endif
 // the motion target (attachment 4 of the world pass, RG16 unorm, only when an upscaler is on; an output no attachment backs is dropped): this surface does not move by itself, so it writes the value the clear holds, 1.0 in x = "no motion of its own" (the motion pass then takes the camera motion)
 layout(location = 4) out vec2 frag_velocity;
+layout(location = 5) out vec2 frag_texneed;       // the texture need (lib/texneed.glsl): idea 3
 
 // A relatively aggressive threshold for terrain material mixing: only one or two materials are used in most places. Should be greater than 0.
 #define TERRAIN_RAMP_MIX_THRESHOLD 0.1
@@ -340,6 +341,7 @@ float terrain_mix(TerrainMix tm, vec4 tms4)
 void main()
 {
     frag_velocity = vec2(1.0, 0.0);
+    frag_texneed = vec2(0.0);
     mirror_clip(vary_position);
 
     // the derivatives of the object position, before any branch

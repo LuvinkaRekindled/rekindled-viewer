@@ -1038,6 +1038,17 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             return false;
         }
     }
+    // <FS> idea 3 (doc/vulkan/PLAN-velocity-fold-and-skin-once.md): the texture need, attachment 5 of the main view's world pass (RG16 unorm: handle and log2 of the texture coordinate area one pixel covers), read by a
+    // compute pass that fills the renderer's need buffer. Only with LL_VK_TEXFB set (the H6 measurement), next to the motion attachment.
+    static const bool texneed_on = getenv("LL_VK_TEXFB") && atoi(getenv("LL_VK_TEXFB")) != 0;
+    if (texneed_on && !gCubeSnapshot && mRT->deferredScreen.getNumTextures() == 5)
+    {
+        if (!mRT->deferredScreen.addColorAttachment(TexelFormat::RG16))
+        {
+            LL_WARNS("VkTexNeed") << "the texture need attachment of the world pass could not be added" << LL_ENDL;
+            return false;
+        }
+    }
 
     TexelFormat screenFormat = hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
 

@@ -14,10 +14,12 @@ layout(location = 3) out vec4 frag_emissive;
 #endif
 // the motion target (attachment 4 of the world pass, RG16 unorm, only when an upscaler is on; an output no attachment backs is dropped): this surface does not move by itself, so it writes the value the clear holds, 1.0 in x = "no motion of its own" (the motion pass then takes the camera motion)
 layout(location = 4) out vec2 frag_velocity;
+layout(location = 5) out vec2 frag_texneed;       // the texture need (lib/texneed.glsl): idea 3
 
 void main()
 {
     frag_velocity = vec2(1.0, 0.0);
+    frag_texneed = vec2(0.0);
     // Restore Pre-EEP alpha fade moon near horizon
     float fade = 1.0;
     if (moon_dir.z > 0)
