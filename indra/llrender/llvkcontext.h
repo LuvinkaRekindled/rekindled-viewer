@@ -281,6 +281,9 @@ public:
     std::function<void(VkImage)> mImageDestroyHook;
     std::mutex mDeferredNextMutex;
     std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
+    std::atomic<U64> mDeferredNextBytes{ 0 };              // <FS> the bytes of the buffers in mDeferredNext (a destroy of a buffer says its size): a loading screen shows no frame for seconds and this list only empties when one begins
+    std::atomic<bool> mDrainWanted{ false };               // <FS> mDeferredNext holds more than LL_VK_DEFER_DRAIN_MB (default 512): drained at the end of the next immediate submit (drainDeferredNext)
+    void drainDeferredNext();
     std::vector<DedicatedBuffer> mDedicated;
     std::string describeDedicated(unsigned long long at);
 
@@ -361,7 +364,7 @@ public:
     StagingAlloc allocStaging(VkDeviceSize size, VkDeviceSize alignment = 16);
 
     // Run f after the GPU has finished every frame submitted so far (safe place to destroy resources)
-    void destroyLater(std::function<void()> f);
+    void destroyLater(std::function<void()> f, U64 bytes = 0);       // bytes: what the object holds (a buffer), for the bound on the not-in-a-frame list
 
     // --- resources ----------------------------------------------------------------------------------
     // Upload and Readback buffers are persistently mapped (mMapped): Upload is write-combined host memory for
