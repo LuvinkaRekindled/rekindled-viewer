@@ -20,6 +20,8 @@ layout(location = 2) out vec4 frag_normal;
 #if defined(HAS_EMISSIVE)
 layout(location = 3) out vec4 frag_emissive;
 #endif
+// the motion target (attachment 4 of the world pass, RG16 unorm, only when an upscaler is on; an output no attachment backs is dropped): this surface does not move by itself, so it writes the value the clear holds, 1.0 in x = "no motion of its own" (the motion pass then takes the camera motion)
+layout(location = 4) out vec2 frag_velocity;
 
 vec4 cloudNoise(vec2 uv)
 {
@@ -31,6 +33,7 @@ vec4 cloudNoise(vec2 uv)
 
 void main()
 {
+    frag_velocity = vec2(1.0, 0.0);
     // Set variables
     vec2 uv1 = vary_texcoord0.xy;
     vec2 uv2 = vary_texcoord1.xy;

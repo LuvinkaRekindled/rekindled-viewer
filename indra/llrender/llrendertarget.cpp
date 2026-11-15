@@ -214,10 +214,11 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 
     U32 offset = static_cast<U32>(mTex.size());
 
-    if( offset >= 4 )
+    // <FS> 8, not 4: the Vulkan backend has eight colour slots (LLVkTarget::DEPTH_SLOT is 8). The fifth is the world pass's motion target (PLAN-velocity-fold-and-skin-once.md); the limit of 4 was the GL era's
+    if( offset >= 8 )
     {
         LL_WARNS() << "Too many color attachments" << LL_ENDL;
-        llassert( offset < 4 );
+        llassert( offset < 8 );
         return false;
     }
     if( offset > 0 && (mFBO == 0) )

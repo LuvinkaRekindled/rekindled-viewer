@@ -1027,6 +1027,17 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     //allocate deferred rendering color buffers
     if (!mRT->deferredScreen.allocate(resX, resY, TexelFormat::RGBA8, true)) return false;
     if (!addDeferredAttachments(mRT->deferredScreen)) return false;
+    // <FS> (idea 1 of doc/vulkan/PLAN-velocity-fold-and-skin-once.md, step 1) the motion target, attachment 4 of the main view's world pass: the screen motion of what moves by itself (avatars, moving objects),
+    // RG16 unorm, (motion in pixels / 1024 + 1) / 2 with x = 1.0 reserved for "no motion of its own", which is what the world pass's clear writes (1, 0, 1, 1) and what every surface that does not move writes
+    // (the G-buffer shaders' frag_velocity). Only while an upscaler is on, and only with the emissive attachment (the motion target must be attachment 4); nothing reads it yet (the avatar velocity pass still runs).
+    if (sDLSS && !gCubeSnapshot && mRT->deferredScreen.getNumTextures() == 4)
+    {
+        if (!mRT->deferredScreen.addColorAttachment(TexelFormat::RG16))
+        {
+            LL_WARNS("VkMotion") << "the motion attachment of the world pass could not be added" << LL_ENDL;
+            return false;
+        }
+    }
 
     TexelFormat screenFormat = hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
 
