@@ -7103,7 +7103,8 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     }
 
     { LL_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
-    { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
+    { LL_CPU_ZONE("stateSort: render lists"); buildRenderLists(camera); }
+    { LL_CPU_ZONE("stateSort: beacons"); addBeacons(); }
     mEarlySort = false;
     if (!defer_pools)
     {
@@ -8044,7 +8045,170 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     mMeshDirtyGroup.clear();
 }
 
-void LLPipeline::postSort(LLCamera &camera)
+// <FS> stage 3 of doc/vulkan/PLAN-change-driven-sort.md: the beacons are the beacon feature's, not the sort's. Called by stateSort where the end of postSort was (the main view and the other views that sort
+// with the world camera; the block itself skips shadow renders and cube snapshots).
+void LLPipeline::addBeacons()
+{
+    LL_PUSH_CALLSTACKS();
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("beacon rendering flags");
+    // only render if the flag is set. The flag is only set if we are in edit mode or the toggle is set in the menus
+    // <FS:Ansariel> Make beacons also show when beacons floater is closed.
+    if (/*LLFloaterReg::instanceVisible("beacons") &&*/ !LLPipeline::shadowRender() && !gCubeSnapshot)
+    {
+        if (sRenderScriptedTouchBeacons)
+        {
+            // Only show the beacon on the root object.
+            forAllVisibleDrawables(renderScriptedTouchBeacons);
+        }
+        else if (sRenderScriptedBeacons)
+        {
+            // Only show the beacon on the root object.
+            forAllVisibleDrawables(renderScriptedBeacons);
+        }
+
+        if (sRenderPhysicalBeacons)
+        {
+            // Only show the beacon on the root object.
+            forAllVisibleDrawables(renderPhysicalBeacons);
+        }
+
+        if (sRenderMOAPBeacons)
+        {
+            forAllVisibleDrawables(renderMOAPBeacons);
+        }
+
+        if (sRenderParticleBeacons)
+        {
+            forAllVisibleDrawables(renderParticleBeacons);
+        }
+
+        // If god mode, also show audio cues
+        if (sRenderSoundBeacons && gAudiop)
+        {
+            // Walk all sound sources and render out beacons for them. Note, this isn't done in the ForAllVisibleDrawables function, because
+            // some are not visible.
+            LLAudioEngine::source_map::iterator iter;
+            for (iter = gAudiop->mAllSources.begin(); iter != gAudiop->mAllSources.end(); ++iter)
+            {
+                LLAudioSource *sourcep = iter->second;
+
+                LLVector3d pos_global = sourcep->getPositionGlobal();
+                LLVector3  pos        = gAgent.getPosAgentFromGlobal(pos_global);
+                if (gPipeline.sRenderBeacons)
+                {
+                    // pos += LLVector3(0.f, 0.f, 0.2f);
+                    gObjectList.addDebugBeacon(pos, "", LLColor4(1.f, 1.f, 0.f, 0.5f), LLColor4(1.f, 1.f, 1.f, 0.5f), DebugBeaconLineWidth);
+                }
+            }
+            // now deal with highlights for all those seeable sound sources
+            forAllVisibleDrawables(renderSoundHighlights);
+        }
+
+        // <FS:PP> FIRE-33085 Region corner markers
+        if (sRenderRegionCornerBeacons)
+        {
+            LLViewerRegion* region = gAgent.getRegion();
+            if (region)
+            {
+                LLVector3 origin = region->getOriginAgent();
+                F32 width = region->getWidth();
+
+                LLVector3 corner1 = origin; // Southwest
+                LLVector3 corner2 = origin + LLVector3(width, 0, 0); // Southeast
+                LLVector3 corner3 = origin + LLVector3(0, width, 0); // Northwest
+                LLVector3 corner4 = origin + LLVector3(width, width, 0); // Northeast
+
+                corner1.mV[VZ] = region->getLandHeightRegion(LLVector3(0, 0, 0));
+                corner2.mV[VZ] = region->getLandHeightRegion(LLVector3(width, 0, 0));
+                corner3.mV[VZ] = region->getLandHeightRegion(LLVector3(0, width, 0));
+                corner4.mV[VZ] = region->getLandHeightRegion(LLVector3(width, width, 0));
+
+                LLColor4 corner_color(1.0f, 1.0f, 0.0f, 0.8f);
+                LLColor4 text_color(1.0f, 1.0f, 1.0f, 1.0f);
+
+                gObjectList.addDebugBeacon(corner1, "SW", corner_color, text_color, DebugBeaconLineWidth);
+                gObjectList.addDebugBeacon(corner2, "SE", corner_color, text_color, DebugBeaconLineWidth);
+                gObjectList.addDebugBeacon(corner3, "NW", corner_color, text_color, DebugBeaconLineWidth);
+                gObjectList.addDebugBeacon(corner4, "NE", corner_color, text_color, DebugBeaconLineWidth);
+            }
+        }
+        // </FS:PP>
+
+    }
+    }
+    LL_PUSH_CALLSTACKS();
+    // If managing your telehub, draw beacons at telehub and currently selected spawnpoint.
+    if (LLFloaterTelehub::renderBeacons() && !LLPipeline::shadowRender() && !gCubeSnapshot)
+    {
+        LLFloaterTelehub::addBeacons();
+    }
+
+    if (!LLPipeline::shadowRender() && !gCubeSnapshot)
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Render face highlights");
+        mSelectedFaces.clear();
+
+        bool tex_index_changed = false;
+        if (!gNonInteractive)
+        {
+            LLRender::eTexIndex tex_index = sRenderHighlightTextureChannel;
+            // <FS:Zi> switchable edit texture/materials panel
+            //setRenderHighlightTextureChannel(gFloaterTools->getPanelFace()->getTextureChannelToEdit());
+            setRenderHighlightTextureChannel(gFloaterTools->getTextureChannelToEdit());
+            // </FS:Zi>
+            tex_index_changed = sRenderHighlightTextureChannel != tex_index;
+        }
+
+        // Draw face highlights for selected faces.
+        if (LLSelectMgr::getInstance()->getTEMode())
+        {
+            struct f : public LLSelectedTEFunctor
+            {
+                virtual bool apply(LLViewerObject *object, S32 te)
+                {
+                    if (object->mDrawable)
+                    {
+                        LLFace *facep = object->mDrawable->getFace(te);
+                        if (facep)
+                        {
+                            gPipeline.mSelectedFaces.push_back(facep);
+                        }
+                    }
+                    return true;
+                }
+            } func;
+            LLSelectMgr::getInstance()->getSelection()->applyToTEs(&func);
+
+            if (tex_index_changed)
+            {
+                // Rebuild geometry for all selected faces with PBR textures
+                for (const LLFace* face : gPipeline.mSelectedFaces)
+                {
+                    if (const LLViewerObject* vobj = face->getViewerObject())
+                    {
+                        if (const LLTextureEntry* tep = vobj->getTE(face->getTEOffset()))
+                        {
+                            if (tep->getGLTFRenderMaterial())
+                            {
+                                gPipeline.markRebuild(face->getDrawable(), LLDrawable::REBUILD_VOLUME);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    LLVertexBuffer::flushBuffers();
+    // LLSpatialGroup::sNoDelete = false;
+    LL_PUSH_CALLSTACKS();
+}
+
+// <FS> stage 3 of doc/vulkan/PLAN-change-driven-sort.md: what postSort was, without the rebuilds (the geometry stage) and the beacons (addBeacons): the lists the renderer reads of a view, made from the cull result: the far
+// avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
+// alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
+void LLPipeline::buildRenderLists(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     const View view = currentView(camera, false);
@@ -8070,14 +8234,14 @@ void LLPipeline::postSort(LLCamera &camera)
     far_skip.clear();
     if (view.isMainWorldSort())
     {
-        LL_CPU_ZONE("postSort: far avatar tier");
+        LL_CPU_ZONE("render lists: far avatar tier");
         far_avatar_tier(sCull, far_skip);
     }
 
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
-        LL_CPU_ZONE("postSort: build render map");
+        LL_CPU_ZONE("render lists: build render map");
     const U64 vis_r0 = vis_post ? LLVisCensus::now() : 0;
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
@@ -8114,7 +8278,7 @@ void LLPipeline::postSort(LLCamera &camera)
             if (pool)
             {
                 parallel_map = true;
-                LL_CPU_ZONE("postSort: render map (chunks)");
+                LL_CPU_ZONE("render lists: render map (chunks)");
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
@@ -8183,9 +8347,9 @@ void LLPipeline::postSort(LLCamera &camera)
                         }
                     }
                 };
-                { LL_CPU_ZONE("postSort: render map job (wait for the pool)"); pool->runLabeled("postSort: render map (main view)", chunks.size(), map_job); }
+                { LL_CPU_ZONE("render lists: render map job (wait for the pool)"); pool->runLabeled("postSort: render map (main view)", chunks.size(), map_job); }
                 {
-                    LL_CPU_ZONE("postSort: render map join");
+                    LL_CPU_ZONE("render lists: render map join");
                     const bool alpha_pool = hasRenderType(LLDrawPool::POOL_ALPHA);
                     S32 indices = 0;
                     for (MapChunk& chunk : chunks)
@@ -8398,7 +8562,7 @@ void LLPipeline::postSort(LLCamera &camera)
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("sort alpha groups");
     if (!LLPipeline::shadowRender())
     {
-        LL_CPU_ZONE("postSort: sort alpha groups");
+        LL_CPU_ZONE("render lists: sort alpha groups");
         const U64 vis_a0 = vis_post ? LLVisCensus::now() : 0;
         // order alpha groups by distance
         std::sort(sCull->beginAlphaGroups(), sCull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
@@ -8409,160 +8573,6 @@ void LLPipeline::postSort(LLCamera &camera)
     }
     }
 
-    LL_PUSH_CALLSTACKS();
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("beacon rendering flags");
-    // only render if the flag is set. The flag is only set if we are in edit mode or the toggle is set in the menus
-    // <FS:Ansariel> Make beacons also show when beacons floater is closed.
-    if (/*LLFloaterReg::instanceVisible("beacons") &&*/ !LLPipeline::shadowRender() && !gCubeSnapshot)
-    {
-        if (sRenderScriptedTouchBeacons)
-        {
-            // Only show the beacon on the root object.
-            forAllVisibleDrawables(renderScriptedTouchBeacons);
-        }
-        else if (sRenderScriptedBeacons)
-        {
-            // Only show the beacon on the root object.
-            forAllVisibleDrawables(renderScriptedBeacons);
-        }
-
-        if (sRenderPhysicalBeacons)
-        {
-            // Only show the beacon on the root object.
-            forAllVisibleDrawables(renderPhysicalBeacons);
-        }
-
-        if (sRenderMOAPBeacons)
-        {
-            forAllVisibleDrawables(renderMOAPBeacons);
-        }
-
-        if (sRenderParticleBeacons)
-        {
-            forAllVisibleDrawables(renderParticleBeacons);
-        }
-
-        // If god mode, also show audio cues
-        if (sRenderSoundBeacons && gAudiop)
-        {
-            // Walk all sound sources and render out beacons for them. Note, this isn't done in the ForAllVisibleDrawables function, because
-            // some are not visible.
-            LLAudioEngine::source_map::iterator iter;
-            for (iter = gAudiop->mAllSources.begin(); iter != gAudiop->mAllSources.end(); ++iter)
-            {
-                LLAudioSource *sourcep = iter->second;
-
-                LLVector3d pos_global = sourcep->getPositionGlobal();
-                LLVector3  pos        = gAgent.getPosAgentFromGlobal(pos_global);
-                if (gPipeline.sRenderBeacons)
-                {
-                    // pos += LLVector3(0.f, 0.f, 0.2f);
-                    gObjectList.addDebugBeacon(pos, "", LLColor4(1.f, 1.f, 0.f, 0.5f), LLColor4(1.f, 1.f, 1.f, 0.5f), DebugBeaconLineWidth);
-                }
-            }
-            // now deal with highlights for all those seeable sound sources
-            forAllVisibleDrawables(renderSoundHighlights);
-        }
-
-        // <FS:PP> FIRE-33085 Region corner markers
-        if (sRenderRegionCornerBeacons)
-        {
-            LLViewerRegion* region = gAgent.getRegion();
-            if (region)
-            {
-                LLVector3 origin = region->getOriginAgent();
-                F32 width = region->getWidth();
-
-                LLVector3 corner1 = origin; // Southwest
-                LLVector3 corner2 = origin + LLVector3(width, 0, 0); // Southeast
-                LLVector3 corner3 = origin + LLVector3(0, width, 0); // Northwest
-                LLVector3 corner4 = origin + LLVector3(width, width, 0); // Northeast
-
-                corner1.mV[VZ] = region->getLandHeightRegion(LLVector3(0, 0, 0));
-                corner2.mV[VZ] = region->getLandHeightRegion(LLVector3(width, 0, 0));
-                corner3.mV[VZ] = region->getLandHeightRegion(LLVector3(0, width, 0));
-                corner4.mV[VZ] = region->getLandHeightRegion(LLVector3(width, width, 0));
-
-                LLColor4 corner_color(1.0f, 1.0f, 0.0f, 0.8f);
-                LLColor4 text_color(1.0f, 1.0f, 1.0f, 1.0f);
-
-                gObjectList.addDebugBeacon(corner1, "SW", corner_color, text_color, DebugBeaconLineWidth);
-                gObjectList.addDebugBeacon(corner2, "SE", corner_color, text_color, DebugBeaconLineWidth);
-                gObjectList.addDebugBeacon(corner3, "NW", corner_color, text_color, DebugBeaconLineWidth);
-                gObjectList.addDebugBeacon(corner4, "NE", corner_color, text_color, DebugBeaconLineWidth);
-            }
-        }
-        // </FS:PP>
-
-    }
-    }
-    LL_PUSH_CALLSTACKS();
-    // If managing your telehub, draw beacons at telehub and currently selected spawnpoint.
-    if (LLFloaterTelehub::renderBeacons() && !LLPipeline::shadowRender() && !gCubeSnapshot)
-    {
-        LLFloaterTelehub::addBeacons();
-    }
-
-    if (!LLPipeline::shadowRender() && !gCubeSnapshot)
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Render face highlights");
-        mSelectedFaces.clear();
-
-        bool tex_index_changed = false;
-        if (!gNonInteractive)
-        {
-            LLRender::eTexIndex tex_index = sRenderHighlightTextureChannel;
-            // <FS:Zi> switchable edit texture/materials panel
-            //setRenderHighlightTextureChannel(gFloaterTools->getPanelFace()->getTextureChannelToEdit());
-            setRenderHighlightTextureChannel(gFloaterTools->getTextureChannelToEdit());
-            // </FS:Zi>
-            tex_index_changed = sRenderHighlightTextureChannel != tex_index;
-        }
-
-        // Draw face highlights for selected faces.
-        if (LLSelectMgr::getInstance()->getTEMode())
-        {
-            struct f : public LLSelectedTEFunctor
-            {
-                virtual bool apply(LLViewerObject *object, S32 te)
-                {
-                    if (object->mDrawable)
-                    {
-                        LLFace *facep = object->mDrawable->getFace(te);
-                        if (facep)
-                        {
-                            gPipeline.mSelectedFaces.push_back(facep);
-                        }
-                    }
-                    return true;
-                }
-            } func;
-            LLSelectMgr::getInstance()->getSelection()->applyToTEs(&func);
-
-            if (tex_index_changed)
-            {
-                // Rebuild geometry for all selected faces with PBR textures
-                for (const LLFace* face : gPipeline.mSelectedFaces)
-                {
-                    if (const LLViewerObject* vobj = face->getViewerObject())
-                    {
-                        if (const LLTextureEntry* tep = vobj->getTE(face->getTEOffset()))
-                        {
-                            if (tep->getGLTFRenderMaterial())
-                            {
-                                gPipeline.markRebuild(face->getDrawable(), LLDrawable::REBUILD_VOLUME);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    LLVertexBuffer::flushBuffers();
-    // LLSpatialGroup::sNoDelete = false;
-    LL_PUSH_CALLSTACKS();
 }
 
 
