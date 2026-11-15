@@ -8190,6 +8190,8 @@ void LLPipeline::addBeacons()
 // <FS> stage 3 of doc/vulkan/PLAN-change-driven-sort.md: what postSort was, without the rebuilds (the geometry stage) and the beacons (addBeacons): the lists the renderer reads of a view, made from the cull result: the far
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
+void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera);       // stage 6 (defined with the group table, below): the main view's alpha lists from the consumers' groups
+
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8551,6 +8553,10 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
         // order rigged alpha groups by avatar attachment order
         std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
+        if (view.isMainWorldSort() && !gCubeSnapshot)
+        {
+            ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
+        }
         if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
     }
@@ -12469,6 +12475,7 @@ std::vector<LLVkBridge::CullRow> sMirror;
 typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the same layout: stage 3)
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
+std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 std::vector<U32> sFreeSlots;
@@ -12757,6 +12764,7 @@ void cull_process()
             sMirror.push_back(dead);
             sMapMirror.push_back(CullMapRow());
             sMapHandleFrame.push_back((U32)gFrameCount);
+            sMapChangeFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
         }
@@ -12788,10 +12796,15 @@ void cull_process()
         cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
         {
             const U32 old_handle = sMapMirror[slot].mHandle;
+            const CullMapRow old_row = sMapMirror[slot];
             cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
             if (sMapMirror[slot].mHandle != old_handle)
             {
                 sMapHandleFrame[slot] = (U32)gFrameCount;
+            }
+            if (memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)
+            {
+                sMapChangeFrame[slot] = (U32)gFrameCount;
             }
         }
         sSendSlots.push_back(slot);
@@ -13617,6 +13630,11 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
 // do not need this frame's exact list: they need a superset a frame old, the worker draws from its own derive. With LL_VK_CULL_OWN=1 they serve: the worker's late list (its derive with the motion margin, no occlusion cut,
 // about a frame old), the fragments whose handle appeared in the last three frames (a new fragment cannot be in a list made before its row: its own data is made at once), and the groups of the bridges the walk marked this frame
 // (exact: the CPU's own result). Without the switch, in a view that is not the main view, or while no late list has come, it is the render map's exact list.
+static std::vector<LLSpatialGroup*> sConsumerGroups;       // the groups of the list below, in the same order (stage 6: the alpha lists are made from them)
+static std::vector<LLSpatialGroup*> sConsumerNoHandle;     // the groups of the late list that have an alpha key and no fragment handle (they are in no handle list; the alpha lists want them)
+static LLCullResult* sConsumerGroupsCull = nullptr;
+static U32 sConsumerGroupsFrame = ~0u;
+
 const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
 {
     static const std::vector<U32> none;
@@ -13626,6 +13644,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     }
     if (!sCullOwn || cull != gPipeline.getCull() || !ll_scene_geo_main_view() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
     {
+        sConsumerGroupsFrame = ~0u;
         return cull->mGeoHandles;
     }
     static std::vector<U32> out;
@@ -13652,6 +13671,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     }
     if (!late_table || (U32)gFrameCount - late_frame > 30)
     {
+        sConsumerGroupsFrame = ~0u;
         return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
     }
     key_cull = cull;
@@ -13659,6 +13679,10 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     key_exact = cull->mGeoHandles.size();
     key_groups = (size_t)cull->getVisibleGroupsSize();
     out.clear();
+    sConsumerGroups.clear();
+    sConsumerNoHandle.clear();
+    sConsumerGroupsCull = cull;
+    sConsumerGroupsFrame = (U32)gFrameCount;
     seen.assign(sGeoFragByHandle.size() + 1, 0);
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
@@ -13666,6 +13690,11 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         for (U32 slot = 0; slot < table; ++slot)
         {
             const U32 h = sMapMirror[slot].mHandle;
+            if (!h && (sMapMirror[slot].mFlags & 6u) && ((slot < late_table && ((late_words[slot >> 5] >> (slot & 31)) & 1u)) || (U32)gFrameCount - sMapChangeFrame[slot] <= 3))
+            {
+                sConsumerNoHandle.push_back((LLSpatialGroup*)sSlotGroup[slot]);        // (an alpha key and no fragment: only the alpha lists of stage 6 want it)
+                continue;
+            }
             if (!h || h >= seen.size() || seen[h])
             {
                 continue;
@@ -13674,6 +13703,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
             {
                 seen[h] = 1;
                 out.push_back(h);
+                sConsumerGroups.push_back((LLSpatialGroup*)sSlotGroup[slot]);
             }
         }
     }
@@ -13681,13 +13711,184 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     {
         LLSpatialGroup* group = *i;
         const U32 h = group ? group->mGeoHandle : 0;
+        if (group && !h && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+        {
+            sConsumerNoHandle.push_back(group);         // (a bridge's group the walk marked that has no fragment: its alpha, if it has any, is the alpha lists' to list)
+            continue;
+        }
         if (h && h < seen.size() && !seen[h] && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
         {
             seen[h] = 1;
             out.push_back(h);
+            sConsumerGroups.push_back(group);
         }
     }
+    std::sort(sConsumerNoHandle.begin(), sConsumerNoHandle.end());
+    sConsumerNoHandle.erase(std::unique(sConsumerNoHandle.begin(), sConsumerNoHandle.end()), sConsumerNoHandle.end());
     return out;
+}
+
+// the groups behind the list ll_scene_consumer_handles made for this frame (null when it served the exact list)
+const std::vector<LLSpatialGroup*>* ll_scene_consumer_groups(LLCullResult* cull)
+{
+    ll_scene_consumer_handles(cull);
+    return sConsumerGroupsCull == cull && sConsumerGroupsFrame == (U32)gFrameCount ? &sConsumerGroups : nullptr;
+}
+
+// stage 6 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_ALPHA=1 compare, =2 compare and replace; needs LL_VK_CULL_OWN=1): the main view's alpha group lists made from the groups of the consumers' list (the late list, the
+// groups that just got a fragment, the marked bridges' groups) instead of from the visible groups of the walk. The membership is the render map's own: not dead, not occluded, not over the auto-hide limit, then the
+// group's alpha keys (the fragment's alpha bits for a group the table serves whole), alpha passes on; the distance update and the two sorts are the ones of buildRenderLists. Called at its end, after the CPU lists are
+// final: the compare says what differs (members, and the order of the members both lists have), and mode 2 puts the derived lists in their place, so every reader of the alpha lists is unchanged.
+void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
+{
+    static const int mode = (sCullOwn && getenv("LL_VK_CULL_ALPHA")) ? atoi(getenv("LL_VK_CULL_ALPHA")) : 0;
+    if (!mode || LLPipeline::shadowRender() || !cull)
+    {
+        return;
+    }
+    const std::vector<LLSpatialGroup*>* groups = ll_scene_consumer_groups(cull);
+    if (!groups)
+    {
+        return;
+    }
+    static std::vector<LLSpatialGroup*> alpha, rigged;
+    alpha.clear();
+    rigged.clear();
+    const bool alpha_type = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA);
+    const bool alpha_pool = gPipeline.hasRenderType(LLDrawPool::POOL_ALPHA);
+    const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
+    if (alpha_type && alpha_pool)
+    {
+        static std::vector<LLSpatialGroup*> candidates;
+        candidates.assign(groups->begin(), groups->end());
+        candidates.insert(candidates.end(), sConsumerNoHandle.begin(), sConsumerNoHandle.end());
+        for (LLSpatialGroup* g : candidates)
+        {
+            if (!g || g->isDead() || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED)) || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)))
+            {
+                continue;
+            }
+            bool a, r;
+            if (g->mGeoHandle && g->mGeoAllServed)
+            {
+                a = (g->mGeoAlphaBits & 1) != 0;       // (a group the table serves whole: only its alpha is left for the lists)
+                r = (g->mGeoAlphaBits & 2) != 0;
+            }
+            else
+            {
+                a = ll_group_has_alpha_key(g);
+                r = ll_group_has_rigged_alpha_key(g);
+            }
+            if (a)
+            {
+                alpha.push_back(g);
+            }
+            if (r)
+            {
+                rigged.push_back(g);
+            }
+        }
+    }
+    for (LLSpatialGroup* g : alpha)
+    {
+        LLSpatialBridge* bridge = g->getSpatialPartition()->asBridge();
+        if (bridge)
+        {
+            LLCamera trans_camera = bridge->transformCamera(camera);
+            g->updateDistance(trans_camera);
+        }
+        else
+        {
+            g->updateDistance(camera);
+        }
+    }
+    std::sort(alpha.begin(), alpha.end(), LLSpatialGroup::CompareDepthGreater());
+    std::sort(rigged.begin(), rigged.end(), LLSpatialGroup::CompareRenderOrder());
+    struct Acc
+    {
+        U64 mFrames = 0, mCpu[2] = {}, mDerived[2] = {}, mBoth[2] = {}, mMissed[2] = {}, mExtra[2] = {}, mOrder[2] = {}, mFramesWithDiff = 0;
+    };
+    static Acc a;
+    ++a.mFrames;
+    bool diff = false;
+    for (int which = 0; which < 2; ++which)
+    {
+        const std::vector<LLSpatialGroup*>& mine = which ? rigged : alpha;
+        LLCullResult::sg_iterator cb = which ? cull->beginRiggedAlphaGroups() : cull->beginAlphaGroups();
+        LLCullResult::sg_iterator ce = which ? cull->endRiggedAlphaGroups() : cull->endAlphaGroups();
+        static std::unordered_set<LLSpatialGroup*> cpu_set, my_set;
+        cpu_set.clear();
+        my_set.clear();
+        cpu_set.insert(cb, ce);
+        my_set.insert(mine.begin(), mine.end());
+        a.mCpu[which] += cpu_set.size();
+        a.mDerived[which] += my_set.size();
+        U64 both = 0;
+        for (LLSpatialGroup* g : cpu_set)
+        {
+            both += my_set.count(g);
+        }
+        a.mBoth[which] += both;
+        a.mMissed[which] += cpu_set.size() - both;
+        a.mExtra[which] += my_set.size() - both;
+        diff = diff || both != cpu_set.size() || both != my_set.size();
+        // the order of the members both lists have
+        static std::vector<LLSpatialGroup*> seq_cpu, seq_mine;
+        seq_cpu.clear();
+        seq_mine.clear();
+        for (LLCullResult::sg_iterator it = cb; it != ce; ++it)
+        {
+            if (my_set.count(*it))
+            {
+                seq_cpu.push_back(*it);
+            }
+        }
+        for (LLSpatialGroup* g : mine)
+        {
+            if (cpu_set.count(g))
+            {
+                seq_mine.push_back(g);
+            }
+        }
+        // (the keys of the two sequences, not the pointers: groups with an equal key (the same avatar and attachment order, or the same depth) stand in the order the sort found them, which depends on the order the groups came in)
+        bool same_order = seq_cpu.size() == seq_mine.size();
+        for (size_t k = 0; same_order && k < seq_cpu.size(); ++k)
+        {
+            if (which)
+            {
+                same_order = seq_cpu[k]->mAvatarp == seq_mine[k]->mAvatarp && seq_cpu[k]->mRenderOrder == seq_mine[k]->mRenderOrder;
+            }
+            else
+            {
+                same_order = seq_cpu[k]->row().depth == seq_mine[k]->row().depth;
+            }
+        }
+        if (!same_order)
+        {
+            ++a.mOrder[which];
+            diff = true;
+        }
+    }
+    a.mFramesWithDiff += diff;
+    if (mode >= 2)
+    {
+        cull->resetAlphaGroups();
+        for (LLSpatialGroup* g : alpha)
+        {
+            cull->pushAlphaGroup(g);
+        }
+        for (LLSpatialGroup* g : rigged)
+        {
+            cull->pushRiggedAlphaGroup(g);
+        }
+    }
+    if (a.mFrames % 600 == 0)
+    {
+        const double n = (double)a.mFrames;
+        LL_INFOS("VkAlpha6") << "alpha lists from the consumers' groups (mode " << mode << ") over " << a.mFrames << " frames: groups a frame, CPU/derived/both/missed/extra: alpha " << a.mCpu[0] / n << "/" << a.mDerived[0] / n << "/" << a.mBoth[0] / n << "/" << a.mMissed[0] / n << "/" << a.mExtra[0] / n
+                             << ", rigged alpha " << a.mCpu[1] / n << "/" << a.mDerived[1] / n << "/" << a.mBoth[1] / n << "/" << a.mMissed[1] / n << "/" << a.mExtra[1] / n << "; frames with a difference " << a.mFramesWithDiff << ", frames where the order of the common members differs: alpha " << a.mOrder[0]
+                             << ", rigged " << a.mOrder[1] << LL_ENDL;
+    }
 }
 
 void LLCullShadow::touch(LLViewerOctreeGroup* group)

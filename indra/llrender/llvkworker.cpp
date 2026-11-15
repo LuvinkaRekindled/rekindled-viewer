@@ -11785,7 +11785,7 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
     const LLVkBridge::CullRow& row = s.mTable[slot];
     const LLVkBridge::CullMapRow& map = s.mMap[slot];
     const U32 flags = row.mFlags;
-    if ((flags & (32u | 16u)) || !map.mHandle)
+    if ((flags & (32u | 16u)) || (!map.mHandle && !(map.mFlags & 6u)))       // (a group with an alpha key and no fragment is in the list too: the alpha lists of stage 6 are made from it)
     {
         return false;
     }
