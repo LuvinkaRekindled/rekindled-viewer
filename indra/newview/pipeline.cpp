@@ -4840,6 +4840,8 @@ static void main_vis_verify(LLCamera& camera)
     }
 }
 
+bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
@@ -4921,8 +4923,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
 
     // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
+    // (the table keeps the walk serial only while something of it needs that: its comparison with the walk's lists, the flat cull, the LOD compare's notes: with the table's compare off the pool walk runs, the row events go through a mutex)
+    const bool table_needs_serial = LLCullShadow::sOn && (LLCullShadow::sCompare || LLCullShadow::sUse != 0 || ll_scene_lod_compare_on());
     const bool main_cull = view.isMainWorld()
-        && !cull_use && !vis_cull && !LLOccCensus::sOn && !LLCullShadow::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
+        && !cull_use && !vis_cull && !LLOccCensus::sOn && !table_needs_serial && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
     // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
     static const int visset_mode = [] { const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 6; LLVisSetHooks::sOn = m >= 3; return m; }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
@@ -14090,7 +14094,7 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
     static Acc a;
     ++a.mFrames;
     bool diff = false;
-    for (int which = 0; which < 2; ++which)
+    for (int which = 0; which < 2 && mode != 3; ++which)         // (mode 3 replaces without comparing: the compare's sets cost 0.2 ms a frame)
     {
         const std::vector<LLSpatialGroup*>& mine = which ? rigged : alpha;
         LLCullResult::sg_iterator cb = which ? cull->beginRiggedAlphaGroups() : cull->beginAlphaGroups();
@@ -14161,7 +14165,7 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
             cull->pushRiggedAlphaGroup(g);
         }
     }
-    if (a.mFrames % 600 == 0)
+    if (a.mFrames % 600 == 0 && mode != 3)
     {
         const double n = (double)a.mFrames;
         LL_INFOS("VkAlpha6") << "alpha lists from the consumers' groups (mode " << mode << ") over " << a.mFrames << " frames: groups a frame, CPU/derived/both/missed/extra: alpha " << a.mCpu[0] / n << "/" << a.mDerived[0] / n << "/" << a.mBoth[0] / n << "/" << a.mMissed[0] / n << "/" << a.mExtra[0] / n
