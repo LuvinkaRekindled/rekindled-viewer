@@ -153,7 +153,11 @@ void ll_rig_census_log();
 U32 ll_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
 void ll_palette_id_free(U32 id);
 void ll_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread, before the palette jobs: the list of the coming frame begins and takes its palette arena
-bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
+// <FS> velocity fold: 1.0 when the pose of a palette differs from the frame before's enough to show on screen (the old avatar velocity pass's test: the biggest change of a palette float times a reach of 1.5 m,
+// as pixels at the avatar's distance, at least 0.3 px; not beyond 48 m), else 0.0. It goes into the tail entry of the palette in the frame's list (second row, x), where the rigged G-buffer vertex shaders read it:
+// a palette that did not move skips its previous pose and its pixels keep the camera's motion. 0 without an upscaler.
+F32 ll_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position);
+bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
 // DIAGNOSTIC (the ear blink hunt): the 12 floats of the first joint of the palette at a float offset of this frame's shared list (false when the offset is not in the list)
 bool ll_frame_palette_first_joint(U32 offset, F32* out12);
 // DIAGNOSTIC: the whole palette (12 floats a joint) at a float offset of this frame's shared list
