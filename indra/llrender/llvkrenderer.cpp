@@ -5215,6 +5215,10 @@ void Renderer::retireDeferredBlocks()
         {
             mRetiredBlocks.push_back({ b, now });
         }
+        else if (mFlushSync)
+        {
+            mDoomedBlocks.push_back(b);     // (destroyed by flushDeferredUploadsNow as soon as its submit has been waited for)
+        }
         else
         {
             ctx.destroyBuffer(b);       // (freed once the frame that copies from it has completed)
@@ -5313,7 +5317,21 @@ void Renderer::flushDeferredUploadsNow()
         flushDeferredUploads(mCmd);
         return;
     }
-    Context::instance().immediateSubmit([&](VkCommandBuffer cmd) { flushDeferredUploads(cmd); });
+    // <FS> (2026-11-14, Adam: system memory at 33 GB for a few seconds at the loading screen, shared GPU memory, the host heap of our own allocations in the log) a flush made here waits for the GPU, so the blocks
+    // it does not keep are destroyed at once. Their destroy used to be queued for a frame slot to come round, and at a loading screen no frame does: every flush added its staging memory to a queue that was
+    // only emptied when frames started again
+    mFlushSync = true;
+    const bool submitted = Context::instance().immediateSubmit([&](VkCommandBuffer cmd) { flushDeferredUploads(cmd); });
+    mFlushSync = false;
+    std::vector<Buffer> doomed;
+    {
+        std::lock_guard<std::mutex> lock(mDeferredMutex);
+        doomed.swap(mDoomedBlocks);
+    }
+    for (Buffer& b : doomed)
+    {
+        Context::instance().destroyBuffer(b, submitted);       // (a failed or timed out wait: the normal, deferred destroy)
+    }
 }
 
 void Renderer::retargetDeferredUploads(Image* from, Image* to)

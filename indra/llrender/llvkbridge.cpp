@@ -12,6 +12,7 @@
 bool LLVkBridge::isReady() { return false; }
 void LLVkBridge::setSymbolizer(std::string (*)(const void*)) {}
 bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
+bool LLVkBridge::hostMemory(U64&, U64&) { return false; }
 bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
 std::string LLVkBridge::accelCensus() { return std::string(); }
 bool LLVkBridge::readbackAffordable() { return true; }
@@ -244,6 +245,11 @@ bool LLVkBridge::readbackAffordable()
 bool LLVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
 {
     return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
+}
+
+bool LLVkBridge::hostMemory(U64& usage_bytes, U64& allocated_by_us)
+{
+    return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().hostMemory(usage_bytes, allocated_by_us);
 }
 
 std::string LLVkBridge::accelCensus()

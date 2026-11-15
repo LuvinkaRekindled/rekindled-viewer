@@ -477,6 +477,34 @@ bool Context::videoMemory(U64& usage_bytes, U64& budget_bytes)
     budget_bytes = budgets[best].budget;
     return true;
 }
+// <FS> diagnostic (ImgMem): the largest host (not device local) heap: what the OS counts for this process in it, and the bytes we allocated in it
+bool Context::hostMemory(U64& usage_bytes, U64& allocated_by_us)
+{
+    if (!mAllocator)
+    {
+        return false;
+    }
+    const VkPhysicalDeviceMemoryProperties* props = nullptr;
+    vmaGetMemoryProperties(mAllocator, &props);
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(mAllocator, budgets);
+    int best = -1;
+    for (U32 i = 0; props && i < props->memoryHeapCount; ++i)
+    {
+        if (!(props->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && (best < 0 || props->memoryHeaps[i].size > props->memoryHeaps[best].size))
+        {
+            best = (int)i;
+        }
+    }
+    if (best < 0)
+    {
+        return false;
+    }
+    usage_bytes = budgets[best].usage;
+    allocated_by_us = budgets[best].statistics.allocationBytes;
+    return true;
+}
+
 
 std::string Context::memoryBudgetText()
 {
@@ -2653,7 +2681,7 @@ bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory m
     return true;
 }
 
-void Context::destroyBuffer(Buffer& buffer)
+void Context::destroyBuffer(Buffer& buffer, bool immediate)
 {
     if (!buffer.valid())
     {
@@ -2693,7 +2721,14 @@ void Context::destroyBuffer(Buffer& buffer)
             }
         }
     }
-    destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); });
+    if (immediate)
+    {
+        vmaDestroyBuffer(alloc, b, a);
+    }
+    else
+    {
+        destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); });
+    }
     buffer = Buffer();
 }
 
