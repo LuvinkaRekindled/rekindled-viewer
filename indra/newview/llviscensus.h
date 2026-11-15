@@ -45,7 +45,6 @@ namespace LLVisCensus
     inline U64 sPassServedInfos[PASSES] = {}, sPassServedTris[PASSES] = {}, sPassListedInfos[PASSES] = {}, sPassListedTris[PASSES] = {};
     inline U64 sAlphaGroups = 0, sAlphaServedItems = 0, sAlphaItemsTotal = 0, sRiggedAlphaGroups = 0;
     // faces of drawables without a volume (terrain, water, trees, grass, sky, avatar bodies ...) enqueued, by pool type
-    inline U64 sPoolFaces[POOLS] = {}, sPoolDrawables = 0;
     // B0: the table items of the frame, by item type
     inline U64 sBFrames = 0, sBItems[ITEM_TYPES] = {}, sBTris[ITEM_TYPES] = {}, sBUnbounded[ITEM_TYPES] = {}, sBNoRoom = 0;
     inline U64 sBGroupsPartial = 0, sBGroupsFull = 0;

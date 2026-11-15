@@ -5946,7 +5946,6 @@ void LLPipeline::markRenderRebuild(LLRenderUpdate* glu)
 
 thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortSink = nullptr;
 thread_local std::vector<LLPipeline::SortDelta>* LLPipeline::sSortTee = nullptr;
-thread_local std::vector<LLDrawable*>* LLPipeline::sSortPoolSink = nullptr;
 bool LLPipeline::sSortJournalOn = false;
 
 void LLPipeline::markPartitionMove(LLDrawable* drawable)
@@ -6254,15 +6253,12 @@ void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger
     SortJournal journal;
     sSortJournal = &journal;
     LLPipeline::sSortJournalOn = true;
-    std::vector<LLDrawable*> pool_save;
-    pool_save.swap(mDeferredPoolFill);
     ledger_a.clear();
     LLPipeline::sSortSink = &ledger_a;
     sCull = &scratch;
     sortLoops(camera, scratch);
     sCull = &real;
     LLPipeline::sSortSink = nullptr;
-    mDeferredPoolFill.swap(pool_save);
     LLPipeline::sSortJournalOn = false;
     sSortJournal = nullptr;
     for (auto it = journal.mVols.rbegin(); it != journal.mVols.rend(); ++it)
@@ -6330,7 +6326,6 @@ struct SortChunk
     U8 mKind = 0;                       // 0 drawable groups, 1 visible groups, 2 bridges, 3 visible drawables
     U32 mBegin = 0, mEnd = 0;
     std::vector<LLPipeline::SortDelta> mLedger;
-    std::vector<LLDrawable*> mPool;
     LLCullResult* mLocal = nullptr;
     SortJournal mJournal;
 };
@@ -6340,7 +6335,6 @@ struct SortTaskScope
 {
     LLCullResult* mCull = sCull;
     std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
-    std::vector<LLDrawable*>* mPool = LLPipeline::sSortPoolSink;
     SortJournal* mJournal = sSortJournal;
     bool mParallel = LLPipeline::sParallelPrep;
     ViewScope mView;
@@ -6353,14 +6347,12 @@ struct SortTaskScope
             sCull = chunk.mLocal;
         }
         LLPipeline::sSortSink = &chunk.mLedger;
-        LLPipeline::sSortPoolSink = &chunk.mPool;
         sSortJournal = journaling ? &chunk.mJournal : nullptr;
     }
     ~SortTaskScope()
     {
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
-        LLPipeline::sSortPoolSink = mPool;
         sSortJournal = mJournal;
         LLPipeline::sParallelPrep = mParallel;
     }
@@ -6384,7 +6376,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
 {
     LLCamera& camera = *view.mCamera;
     LLForkJoinPool* pool = LLForkJoinPool::shared();
-    if (!pool || &read != sCull || !mDeferPoolFill || LLGpuZoneTimer::isActive())
+    if (!pool || &read != sCull || !mEarlySort || LLGpuZoneTimer::isActive())
     {
         return false;
     }
@@ -6629,20 +6621,16 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
 
     // ---- serial: the visible groups the bridges' culls added (the third loop of the serial sort goes over the whole list, these at its end)
     std::vector<SortDelta> ledger_y;
-    std::vector<LLDrawable*> pool_y;
     {
         LL_CPU_ZONE("stateSort: serial added groups (visible)");
         SortJournal* saved_journal = sSortJournal;
         std::vector<SortDelta>* saved_sink = sSortSink;
-        std::vector<LLDrawable*>* saved_pool = sSortPoolSink;
         sSortJournal = journal;
         sSortSink = &ledger_y;
-        sSortPoolSink = &pool_y;
         for (U32 k = n_vg; k < read.getVisibleGroupsSize(); ++k)
         {
             third_loop_body(read.beginVisibleGroups()[k]);
         }
-        sSortPoolSink = saved_pool;
         sSortSink = saved_sink;
         sSortJournal = saved_journal;
     }
@@ -6658,17 +6646,14 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             if (chunk.mKind == 1)
             {
                 ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
-                mDeferredPoolFill.insert(mDeferredPoolFill.end(), chunk.mPool.begin(), chunk.mPool.end());
             }
         }
         ledger.insert(ledger.end(), ledger_y.begin(), ledger_y.end());
-        mDeferredPoolFill.insert(mDeferredPoolFill.end(), pool_y.begin(), pool_y.end());
         for (SortChunk& chunk : second)
         {
             if (chunk.mKind == 3)
             {
                 ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
-                mDeferredPoolFill.insert(mDeferredPoolFill.end(), chunk.mPool.begin(), chunk.mPool.end());
             }
         }
         if (journaling)
@@ -6694,7 +6679,7 @@ namespace
 struct SortDryResult
 {
     std::vector<LLPipeline::SortDelta> mLedger;
-    std::vector<LLDrawable*> mPool, mVisible;
+    std::vector<LLDrawable*> mVisible;
     std::vector<LLSpatialBridge*> mBridges;
     std::vector<std::pair<LLVOVolume*, LLVOVolume::LODState>> mFinalVols;
     std::vector<std::pair<LLSpatialGroup*, F32>> mFinalGroups;
@@ -6727,22 +6712,17 @@ void LLPipeline::sortDryRun(const View& view, bool parallel, void* result_ptr)
     SortJournal journal;
     sSortJournal = &journal;
     sSortJournalOn = true;
-    std::vector<LLDrawable*> pool_save;
-    pool_save.swap(mDeferredPoolFill);
     out.mLedger.clear();
     sCull = &scratch;
     out.mParallel = parallel && sortLoopsParallel(view, scratch, out.mLedger, &journal);
     if (!out.mParallel)
     {
         out.mLedger.clear();
-        mDeferredPoolFill.clear();
         sSortSink = &out.mLedger;
         sortLoops(camera, scratch);
         sSortSink = nullptr;
     }
     sCull = &real;
-    out.mPool = mDeferredPoolFill;
-    mDeferredPoolFill.swap(pool_save);
     out.mBridges.assign(scratch.beginVisibleBridge(), scratch.endVisibleBridge());
     out.mVisibleGroups.assign(scratch.beginVisibleGroups(), scratch.endVisibleGroups());
     out.mDrawableGroups.assign(scratch.beginDrawableGroups(), scratch.endDrawableGroups());
@@ -6806,7 +6786,6 @@ void LLPipeline::sortParallelCheck(const View& view)
                     + ", object LOD " + std::to_string(count_a[3]) + "/" + std::to_string(count_b[3]) + ", rebuild mesh " + std::to_string(count_a[4]) + "/" + std::to_string(count_b[4]) + ", bridge dead " + std::to_string(count_a[5]) + "/" + std::to_string(count_b[5]);
             }
         }
-        if (why.empty() && a.mPool != b.mPool) why = "pool lists " + std::to_string(a.mPool.size()) + " / " + std::to_string(b.mPool.size());
         if (why.empty() && a.mBridges != b.mBridges) why = "visible bridges " + std::to_string(a.mBridges.size()) + " / " + std::to_string(b.mBridges.size());
         if (why.empty() && a.mVisible != b.mVisible) why = "visible drawables " + std::to_string(a.mVisible.size()) + " / " + std::to_string(b.mVisible.size());
         if (why.empty() && a.mFinalVols.size() != b.mFinalVols.size()) why = "volumes touched " + std::to_string(a.mFinalVols.size()) + " / " + std::to_string(b.mFinalVols.size());
@@ -7024,11 +7003,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         ~VisSortEnd() { if (sVisSortOn) { LLVisCensus::sSortTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sSortCalls; sVisSortOn = false; } }
     } vis_sort_end = { sVisSortOn ? LLVisCensus::now() : 0 };
 
-    mDeferPoolFill = defer_pools;
-    if (defer_pools)
-    {
-        mDeferredPoolFill.clear();
-    }
+    mEarlySort = defer_pools;
 
     if (!defer_pools && hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
                       LLPipeline::RENDER_TYPE_CONTROL_AV,
@@ -7129,89 +7104,11 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 
     { LL_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
-    mDeferPoolFill = false;
+    mEarlySort = false;
     if (!defer_pools)
     {
         LL_CPU_ZONE("stateSort: pool fill");
         fillPools(*sCull, nullptr);       // <FS> stage 2b: a view that is not the main view's deferred one fills the pools from its cull result
-    }
-}
-
-// <FS> LL_VK_POOLFILL (stage 2 of doc/vulkan/PLAN-change-driven-sort.md): who lists the drawables the face pools take (terrain, water, sky, trees, avatar bodies, particles of the old pools). 0 = the sort lists them
-// as it always did (mDeferredPoolFill, filled by stateSort(drawable)), 1 = refillPools takes them from the cull result's visible drawable list, 2 = both, the sort's list drives and the two are compared.
-static const U32 sPoolFillMode = []{ const char* e = getenv("LL_VK_POOLFILL"); return e ? (U32)atoi(e) : 1u; }();       // (default 1 since 2026-11-15: 4,200 refills, 0 faces differ)
-
-// <FS> stage 2b (LL_VK_POOLFILL=2): the drawables the sort enqueued for the pools of a view that is not the main view's deferred one, in the order of the enqueues (main thread only: those sorts are serial)
-static std::vector<LLDrawable*> sPoolFillLog;
-
-// the faces a list of drawables enqueues (the fill loop: a drawable's faces with geometry, up to the first one that has no pool), in order. A drawable that enqueues nothing (a particle group: its faces have no pool) does not count.
-static std::vector<LLFace*> pool_faces_of(const std::vector<LLDrawable*>& list)
-{
-    std::vector<LLFace*> out;
-    for (LLDrawable* d : list)
-    {
-        if (d->isDead())
-        {
-            continue;
-        }
-        for (S32 i = 0; i < d->getNumFaces(); ++i)       // (a free function cannot read mFaces: the same faces in the same order through the accessors)
-        {
-            LLFace* f = d->getFace(i);
-            if (f->hasGeometry())
-            {
-                if (f->getPool())
-                {
-                    out.push_back(f);
-                }
-                else
-                {
-                    break;
-                }
-            }
-        }
-    }
-    return out;
-}
-
-// the check of LL_VK_POOLFILL=2: the faces of the sort's list against the faces of the list taken from the cull result, per kind of fill (0 the main view's deferred refill, 1 the sort of another view, 2 the cascades' finish)
-static void pool_fill_compare(int kind, const std::vector<LLDrawable*>& old_list, const std::vector<LLDrawable*>& new_list)
-{
-    static const char* const names[3] = { "main view refill", "a view's sort", "cascade finish" };
-    static U64 fills[3] = {}, differ[3] = {}, only_old[3] = {}, only_new[3] = {}, order_only[3] = {}, total[3] = {}, drawables_differ[3] = {};
-    const std::vector<LLFace*> old_faces = pool_faces_of(old_list);
-    const std::vector<LLFace*> new_faces = pool_faces_of(new_list);
-    ++fills[kind];
-    total[kind] += old_faces.size();
-    {
-        size_t live_old = 0;
-        for (LLDrawable* d : old_list) { live_old += !d->isDead(); }
-        drawables_differ[kind] += live_old != new_list.size();
-    }
-    if (old_faces != new_faces)
-    {
-        ++differ[kind];
-        std::vector<LLFace*> a = old_faces, b = new_faces;
-        std::sort(a.begin(), a.end());
-        std::sort(b.begin(), b.end());
-        std::vector<LLFace*> o, n;
-        std::set_difference(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(o));
-        std::set_difference(b.begin(), b.end(), a.begin(), a.end(), std::back_inserter(n));
-        only_old[kind] += o.size();
-        only_new[kind] += n.size();
-        order_only[kind] += o.empty() && n.empty();
-        static U32 said = 0;
-        if (said++ < 30)
-        {
-            const LLFace* sample = !o.empty() ? o[0] : (!n.empty() ? n[0] : nullptr);
-            const LLDrawable* sd = sample ? sample->getDrawable() : nullptr;
-            LL_INFOS("PoolFill") << names[kind] << " differs: faces from the sort's list " << old_faces.size() << ", from the cull result's " << new_faces.size() << ", only in the first " << o.size() << ", only in the second " << n.size()
-                                 << (sd && sd->getVObj() ? llformat(", sample pcode %u avatar %d active %d pool %d camera %d", (U32)sd->getVObj()->getPCode(), (int)sd->isAvatar(), (int)sd->isActive(), (int)(sample->getPool() ? sample->getPool()->getType() : 0), (int)LLViewerCamera::sCurCameraID) : std::string(", order only")) << LL_ENDL;
-        }
-    }
-    if (fills[kind] % 600 == 0)
-    {
-        LL_INFOS("PoolFill") << "pool fill check, " << names[kind] << ", over " << fills[kind] << " fills (" << (double)total[kind] / (double)fills[kind] << " faces enqueued a fill): " << differ[kind] << " differ in the faces (only from the sort's list " << only_old[kind]
-                             << ", only from the cull result's " << only_new[kind] << ", same faces in another order " << order_only[kind] << "); the drawable lists differ in " << drawables_differ[kind] << " fills" << LL_ENDL;
     }
 }
 
@@ -7231,58 +7128,14 @@ void LLPipeline::refillPools(LLCullResult& result)
     {
         gPipeline.resetDrawOrders();
     }
-    // the drawables the pools take: the visible drawables that are not volumes (the table draws those) and that pass the sort's own question
-    std::vector<LLDrawable*> from_cull;
-    if (sPoolFillMode != 0)
-    {
-        for (LLCullResult::drawable_iterator d = result.beginVisibleList(); d != result.endVisibleList(); ++d)
-        {
-            LLDrawable* drawablep = *d;
-            if (drawablep && !drawablep->getVOVolume() && sortAccepts(drawablep))
-            {
-                from_cull.push_back(drawablep);
-            }
-        }
-    }
-    if (sPoolFillMode == 2)
-    {
-        pool_fill_compare(0, mDeferredPoolFill, from_cull);
-    }
-    const std::vector<LLDrawable*>& fill_list = sPoolFillMode == 1 ? from_cull : mDeferredPoolFill;
-    for (LLDrawable* drawablep : fill_list)
-    {
-        if (drawablep->isDead())
-        {
-            continue;
-        }
-        for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin(); iter != drawablep->mFaces.end(); iter++)
-        {
-            LLFace* facep = *iter;
-            if (facep->hasGeometry())
-            {
-                if (facep->getPool())
-                {
-                    facep->getPool()->enqueue(facep);
-                }
-                else
-                {
-                    break;
-                }
-            }
-        }
-    }
-    mDeferredPoolFill.clear();
+    fillPools(result, nullptr);
 }
 
-// <FS> stage 2b of doc/vulkan/PLAN-change-driven-sort.md: the pools' fill of every view that is not the main view's deferred one. The sort no longer enqueues the faces (LL_VK_POOLFILL=1, the default): the view takes the
-// drawables from its cull result, first the ones the cascade prep left for the main thread (`first`, may be null), then the visible drawable list, the ones that are not volumes and that pass sortAccepts(). 0 = the sort enqueues
-// as it always did (and nothing happens here), 2 = the sort enqueues, and the faces it enqueued are compared with the ones this would.
+// <FS> stages 2a-2c of doc/vulkan/PLAN-change-driven-sort.md: the fill of the face pools (terrain, water, sky, trees, avatar bodies) of a view, from the view's cull result: first the drawables the cascade prep left for the
+// main thread (`first`, may be null), then the visible drawable list, the ones that are not volumes (the table draws those) and that pass sortAccepts(). The sort does not list the pool drawables any more: refillPools (the main
+// view's early sort, after the shadow passes) and the end of every other view's sort and of the cascades' finish call this.
 void LLPipeline::fillPools(LLCullResult& result, const std::vector<LLDrawable*>* first)
 {
-    if (sPoolFillMode == 0)
-    {
-        return;
-    }
     std::vector<LLDrawable*> list;
     const auto take = [&](LLDrawable* d)
     {
@@ -7301,12 +7154,6 @@ void LLPipeline::fillPools(LLCullResult& result, const std::vector<LLDrawable*>*
     for (LLCullResult::drawable_iterator d = result.beginVisibleList(); d != result.endVisibleList(); ++d)
     {
         take(*d);
-    }
-    if (sPoolFillMode == 2)
-    {
-        pool_fill_compare(first ? 2 : 1, sPoolFillLog, list);
-        sPoolFillLog.clear();
-        return;
     }
     for (LLDrawable* drawablep : list)
     {
@@ -7457,62 +7304,6 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
             }
         }
         if (sVisSortOn) { LLVisCensus::sSortTicksDist += LLVisCensus::now() - vis_d0; ++LLVisCensus::sSortDistCalls; }
-    }
-
-    if (!drawablep->getVOVolume())
-    {
-        if (sVisSortOn)
-        {
-            // S7 C0: the drawables the pools take by face (terrain, water, trees, grass, sky, avatars, particles), the faces by the pool they go to
-            ++LLVisCensus::sPoolDrawables;
-            for (LLFace* facep : drawablep->mFaces)
-            {
-                if (facep->hasGeometry() && facep->getPool())
-                {
-                    const U32 pt = facep->getPool()->getType();
-                    ++LLVisCensus::sPoolFaces[pt < (U32)LLVisCensus::POOLS ? pt : LLVisCensus::POOLS - 1];
-                }
-            }
-        }
-        if (mDeferPoolFill)
-        {
-            if (sPoolFillMode == 1)
-            {
-                // <FS> LL_VK_POOLFILL=1: refillPools takes the drawables from the cull result
-            }
-            else if (sSortPoolSink)
-            {
-                sSortPoolSink->push_back(drawablep);        // <FS> a chunk of the parallel sort: merged into mDeferredPoolFill in chunk order
-            }
-            else
-            {
-                mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
-            }
-        }
-        else if (sPoolFillMode != 1)        // (mode 1: the view's fillPools takes the drawables from its cull result)
-        {
-            if (sPoolFillMode == 2)
-            {
-                sPoolFillLog.push_back(drawablep);
-            }
-            for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin();
-                    iter != drawablep->mFaces.end(); iter++)
-            {
-                LLFace* facep = *iter;
-
-                if (facep->hasGeometry())
-                {
-                    if (facep->getPool())
-                    {
-                        facep->getPool()->enqueue(facep);
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-        }
     }
 
     mNumVisibleFaces.fetch_add(drawablep->getNumFaces(), std::memory_order_relaxed);
@@ -12671,19 +12462,6 @@ void LLVisCensus::report()
                 LL_INFOS("VisCensus") << buf << LL_ENDL;
             }
         }
-        {
-            static const char* const pool_names[] = { "-", "SKY", "WATEREXCLUSION", "WL_SKY", "SIMPLE", "FULLBRIGHT", "BUMP", "MATERIALS", "GLTF_PBR", "TERRAIN", "GRASS", "GLTF_PBR_ALPHA_MASK", "TREE", "ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK", "AVATAR", "CONTROL_AV", "GLOW", "ALPHA_PRE_WATER", "VOIDWATER", "WATER", "ALPHA_POST_WATER", "ALPHA", "23" };
-            std::string pools;
-            for (int i = 1; i < POOLS; ++i)
-            {
-                if (sPoolFaces[i])
-                {
-                    snprintf(buf, sizeof(buf), " %s %.1f", pool_names[i], pf(sPoolFaces[i]));
-                    pools += buf;
-                }
-            }
-            LL_INFOS("VisCensus") << "non-volume drawables enqueued by stateSort: " << pf(sPoolDrawables) << " a frame; their faces by pool, per frame:" << pools << LL_ENDL;
-        }
         if (sBFrames)
         {
             const double F = (double)sBFrames;
@@ -12730,7 +12508,6 @@ void LLVisCensus::report()
     memset(sPartAllServed, 0, sizeof(sPartAllServed)); memset(sPartInfos, 0, sizeof(sPartInfos)); memset(sPartTris, 0, sizeof(sPartTris));
     memset(sPassServedInfos, 0, sizeof(sPassServedInfos)); memset(sPassServedTris, 0, sizeof(sPassServedTris)); memset(sPassListedInfos, 0, sizeof(sPassListedInfos)); memset(sPassListedTris, 0, sizeof(sPassListedTris));
     sAlphaGroups = sAlphaServedItems = sAlphaItemsTotal = sRiggedAlphaGroups = 0;
-    memset(sPoolFaces, 0, sizeof(sPoolFaces)); sPoolDrawables = 0;
     sBAvatars = sBAvatarTris = 0;
     sBFrames = sBNoRoom = sBGroupsPartial = sBGroupsFull = sBBatches = sBBatchesValidB = 0;
     memset(sBItems, 0, sizeof(sBItems)); memset(sBTris, 0, sizeof(sBTris)); memset(sBUnbounded, 0, sizeof(sBUnbounded));

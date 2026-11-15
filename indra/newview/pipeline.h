@@ -387,7 +387,6 @@ public:
     // writes are made, and the done handling of each entry, in list order afterwards. False when it did not run (too few entries, a census on, the setting off).
     bool updateMovedListParallel(LLDrawable::drawable_vector_t& moved_list);
     void updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list, size_t first);
-    static thread_local std::vector<LLDrawable*>* sSortPoolSink;     // set: the drawables the pools take by face are listed here, not in mDeferredPoolFill (a chunk of the parallel sort)
     static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
     static void sortJournalVolume(LLVOVolume* volume);
     void applySortDeltas(std::vector<SortDelta>& deltas);
@@ -462,8 +461,7 @@ public:
     static thread_local const LLDrawable* sPrepExclude; // J1 K3e: the drawable the pass being prepared on this thread leaves out (a spot light's own)
 
     void forAllVisibleDrawables(void (*func)(LLDrawable*));
-    std::vector<LLDrawable*> mDeferredPoolFill;      // <FS> see stateSort(..., defer_pools)
-    bool mDeferPoolFill = false;
+    bool mEarlySort = false;       // <FS> this stateSort is the main view's early one (its pools are filled later, by refillPools): only that sort runs its loops on the pool
     LLCullResult* getCull() const;        // <FS> the cull result this thread is working with (what beginRenderMap() reads)
 
     void renderFocusPoint(); // <FS:Beq/> FIRE-32023 Add focus point rendering
