@@ -3216,6 +3216,7 @@ struct AttStats
     U64 rigidSkipped = 0;      // rigid attachments whose drawable and bridge move were left out (FSSkipStaticRigidAttachmentUpdates)
     U64 rigidFirst = 0, rigidSame = 0, rigidMovedTiny = 0, rigidMoved1mm = 0;      // rigid attachments: the attachment point's world matrix against the one when the loop last saw it (unchanged / more than 0.1 mm / more than 1 mm)
     U64 nsPre = 0, nsLoop = 0, nsRigged = 0, nsRigid = 0, nsExtents = 0, nsOverride = 0, nsMove = 0, nsBridge = 0, nsText = 0;
+    U64 nsRows = 0, nsWalk = 0, rowEntries = 0;        // <FS> the rows loop and the walk after it, timed apart (2026-11-15: rows 0.24 ms for 311 rows, the walk 0.02 ms for 318 entries)
     U32 firstFrame = 0;
 };
 AttStats gAttStats;
@@ -4118,6 +4119,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         U32 rows_passed = 0;
         // (every avatar, the viewer's own included, with a selection anywhere or a diagnostic on: what is not plain is not in the rows - a selected attachment, a light, flexi, particles... - and the walk below moves it)
         const bool rows_run = rows_mode && cons_mode && mDrawable.notNull();
+        const auto rows_t0 = att_now();
         const bool rows_cons = getOverallAppearance() == AOA_NORMAL;        // (a jellydolled or otherwise reduced avatar keeps the exact boxes of its attachments' bridges)
         if (rows_run)
         {
@@ -4496,7 +4498,10 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             }
         }
 
+        gAttStats.nsRows += att_ns(rows_t0);
+        gAttStats.rowEntries += mAttRows.size();
         const size_t rowops1 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
+        const auto walk_t0 = att_now();
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             // <FS:Ansariel> Possible crash fix
@@ -4838,6 +4843,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 }
             }
         }
+        gAttStats.nsWalk += att_ns(walk_t0);
         if (rowops_on && LLPipeline::sAvSink)
         {
             // census (LL_VK_ROWOPS=1): per kind, the ops the rows wrote (index 0) and the ops the walk wrote (index 1); the rows' share of attachments is rows_passed
@@ -4889,6 +4895,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     F, (double)s.avatars / F, (double)s.skipFrames / F, (double)s.attachments / F, (double)s.rigged / F, (double)s.rigid / F, (double)s.noBridge / F, (double)s.skipped / F, (double)s.ovApplied / F, (double)s.ovSkipped / F,
                     (double)s.nsLoop / 1e6 / F, (double)s.nsPre / 1e6 / F, (double)s.nsRigged / 1e6 / F, (double)s.nsRigged / 1e3 / R, (double)s.nsRigid / 1e6 / F, (double)s.nsRigid / 1e3 / G,
                     (double)s.nsExtents / 1e6 / F, (double)s.nsOverride / 1e6 / F, (double)s.nsMove / 1e6 / F, (double)s.nsBridge / 1e6 / F, (double)s.nsText / 1e6 / F) << LL_ENDL;
+                LL_INFOS("AttLoop") << llformat("the loop in two parts, per frame: the rows %.3f ms (%.1f rows), the walk after them %.3f ms", (double)s.nsRows / 1e6 / F, (double)s.rowEntries / F, (double)s.nsWalk / 1e6 / F) << LL_ENDL;
                 LL_INFOS("AttLoop") << llformat("attachments with every face fully transparent (alpha 0, no glow, no glTF), per frame: rigid %.1f, rigged %.1f (%.1f faces in them), attachments with no face at all %.1f", (double)s.clearRigid / F, (double)s.clearRigged / F, (double)s.clearFaces / F, (double)s.noFaces / F) << LL_ENDL;
                 {
                     static const char* const names[5] = { "<8 m", "8-16 m", "16-32 m", "32-64 m", ">64 m" };
