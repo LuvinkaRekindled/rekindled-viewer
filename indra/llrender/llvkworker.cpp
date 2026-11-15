@@ -8152,6 +8152,10 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
+// <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the compare of the derived listed set with a kind 21 record's handles. Defined with the group table's worker code (kind 35) below, in this named namespace;
+// declared here, outside the anonymous namespace that holds geo_prepare, which calls it (a declaration inside that anonymous namespace would name another function).
+void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob);
+
 // <FS> S3 G2 / G3 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
 // from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). Nothing is looked at per entry per frame: a fragment is checked only when an EVENT says
 // so (a buffer it reads got other storage or went, one of its textures was named otherwise by the viewer (kind 24), a pin of its textures got another bindless slot) and its entries are then
@@ -9130,6 +9134,10 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
     struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)(matrices + h.mMatrices);       // S4 B: mPaletteFloats = how many
+    if (h.mCullView)
+    {
+        cull_derive_compare(h, handles, (const U8*)(bindings + h.mPaletteFloats));        // stage 3: the listed set from the worker's own rows, against the handles of this record (nothing changes: compare only)
+    }
     auto t0 = std::chrono::steady_clock::now();
     // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
     rtPinUpdate();
@@ -11397,6 +11405,9 @@ struct CullShadowState
     struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mWords; };
     std::deque<Pending> mPending;
     std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
+    std::vector<LLVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
+    std::vector<U64> mRowStamp;                     // the record (mRecords) that last changed each slot
+    std::vector<U32> mSlotOfHandle;                 // the slot of the group that has this scene fragment handle (~0u = none)
     U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
 };
 CullShadowState sCullShadow;
@@ -11467,6 +11478,429 @@ void cull_poll()
     }
 }
 
+// ---- <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the listed set the worker makes from its own rows and the view's planes, compared with the handles the viewer names (the render map's list). Compare only:
+// nothing draws from the derived set yet. The filters are the render map's: dead, no handle, the partition's render type off, occluded (the row's flag and its ancestors', as the cull test reads them), over the
+// auto-hide surface area, outside the frustum (the exact planes of the view, the far plane and the sphere test as the cull shader reads them, a skip-frustum group taken with a parent that passed).
+struct CullDeriveStats
+{
+    U64 mCompares = 0, mRecord = 0, mDerived = 0, mBoth = 0, mMissing = 0, mExtra = 0, mNoTable = 0;
+    U64 mMissNoRow = 0, mMissDead = 0, mMissNoHandle = 0, mMissType = 0, mMissOcc = 0, mMissHide = 0, mMissFrustum = 0, mMissObjects = 0, mMissGate = 0, mMissArea = 0, mMissPasses = 0, mMissRecent = 0;
+    U64 mSampled[16] = {};      // log lines written by category (a budget each, so the loading phase does not use them all)
+    U64 mSkippedViews = 0;
+    U64 mBigViews = 0, mBigViewExtra = 0, mBigViewEntries = 0, mBigViewDerived = 0;      // views with more than 40 extras
+    U64 mExtraType[161] = {}, mExtraNoTris = 0, mExtraNoServed = 0, mExtraFull = 0, mExtraSkipFlag = 0, mExtraAlpha = 0, mExtraOwn[3] = {}, mExtraParentOut = 0, mExtraRoot = 0;      // what the extras have in common (their own frustum result, their parent's)
+    U64 mExtraRegion = 0, mExtraBridge = 0, mExtraRecent = 0;
+    double mMs = 0.0;
+};
+CullDeriveStats sCullDerive;
+
+// LLCamera::AABBInFrustumNoFarClip: 0 outside, 1 partly in, 2 fully in (the planes of the view, the far plane (5) left to the sphere test)
+int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h)
+{
+    const U32 planes = P.mPlaneCount < 7u ? P.mPlaneCount : 7u;
+    bool partly = false;
+    for (U32 p = 0; p < planes; ++p)
+    {
+        if (p == 5u)
+        {
+            continue;
+        }
+        const F32* pl = P.mPlanes[p];
+        const F32 base = pl[0] * c[0] + pl[1] * c[1] + pl[2] * c[2] + pl[3];
+        const F32 ext = fabsf(pl[0]) * h[0] + fabsf(pl[1]) * h[1] + fabsf(pl[2]) * h[2];
+        if (base - ext > 0.f)
+        {
+            return 0;
+        }
+        partly = partly || (base + ext > 0.f);
+    }
+    return partly ? 1 : 2;
+}
+
+// AABBSphereIntersect of the box min..max with the sphere of the far limit: 2 when both corners are inside (the stock quirk: a box with its two corners inside counts as wholly in), 0 outside, 1 else
+int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* mx)
+{
+    const F32 r2 = P.mCornerDist * P.mCornerDist;
+    F32 a = 0.f, b = 0.f, d = 0.f;
+    for (int k = 0; k < 3; ++k)
+    {
+        const F32 x = mn[k] - P.mOrigin[k], y = mx[k] - P.mOrigin[k];
+        a += x * x;
+        b += y * y;
+    }
+    if (a < r2 && b < r2)
+    {
+        return 2;
+    }
+    for (int k = 0; k < 3; ++k)
+    {
+        const F32 t = fmaxf(fmaxf(mn[k] - P.mOrigin[k], P.mOrigin[k] - mx[k]), 0.f);
+        d += t * t;
+    }
+    return d > r2 ? 0 : 1;
+}
+
+// the culler's frustumCheck of the group's bounds (and, for the far limit, its extents) and its frustumCheckObjects of the object bounds
+int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r)
+{
+    int res = cull_box_res(P, r.mCenter, r.mHalf);
+    if (res && (r.mFlags & 8u))
+    {
+        const int sp = cull_sphere_res(P, r.mExtMin, r.mExtMax);
+        res = sp < res ? sp : res;
+    }
+    return res;
+}
+
+int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, const LLVkBridge::CullMapRow& m)
+{
+    int res = cull_box_res(P, m.mObjCenter, m.mObjHalf);
+    if (res && (r.mFlags & 8u))
+    {
+        F32 mn[3], mx[3];
+        for (int k = 0; k < 3; ++k)
+        {
+            mn[k] = m.mObjCenter[k] - m.mObjHalf[k];
+            mx[k] = m.mObjCenter[k] + m.mObjHalf[k];
+        }
+        const int sp = cull_sphere_res(P, mn, mx);
+        res = sp < res ? sp : res;
+    }
+    return res;
+}
+
+// what the walk does with a node on its way down (LLViewerOctreeCull::traverse), memoised for a view: ST_OCC the node or an ancestor is dropped by earlyFail (occluded), ST_OUT the frustum check of the node or
+// an ancestor fails (the subtree is never visited), ST_PART / ST_FULL the node is visited with mRes 1 / 2 (a node under a wholly-in ancestor, or a skip-frustum-check node under a partly-in one, takes its parent's mRes with no test)
+enum { ST_UNKNOWN = 0, ST_OCC, ST_OUT, ST_PART, ST_FULL };
+
+U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, U32 slot, std::vector<U8>& memo, int depth)
+{
+    if (memo[slot])
+    {
+        return memo[slot];
+    }
+    const LLVkBridge::CullRow& row = s.mTable[slot];
+    const U32 flags = row.mFlags;
+    U8 st;
+    if (flags & 32u)
+    {
+        st = ST_OUT;
+    }
+    else if (occlusion && (flags & 5u) == 4u)
+    {
+        st = ST_OCC;                // (never the root: flag 1)
+    }
+    else
+    {
+        U8 in = 0;                  // the parent's mRes as this node is entered (0 for a root)
+        bool pruned = false;
+        U8 reason = ST_OUT;
+        if (!(flags & 1u))
+        {
+            if (row.mParent >= s.mTable.size() || depth > 40)
+            {
+                pruned = true;
+            }
+            else
+            {
+                const U8 ps = cull_chain_state(s, P, occlusion, row.mParent, memo, depth + 1);
+                if (ps == ST_OCC || ps == ST_OUT)
+                {
+                    pruned = true;
+                    reason = ps;
+                }
+                else
+                {
+                    in = ps == ST_FULL ? 2 : 1;
+                }
+            }
+        }
+        if (pruned)
+        {
+            st = reason;
+        }
+        else if (in == 2 || (in && (flags & 2u)))
+        {
+            st = in == 2 ? ST_FULL : ST_PART;
+        }
+        else
+        {
+            const int res = cull_group_res(P, row);
+            st = res == 0 ? ST_OUT : res == 2 ? ST_FULL : ST_PART;
+        }
+    }
+    memo[slot] = st;
+    return st;
+}
+
+enum { CV_PASS = 0, CV_DEAD, CV_NOHANDLE, CV_TYPE, CV_OCC, CV_HIDE, CV_FRUSTUM, CV_OBJECTS, CV_GATE, CV_AREA };
+
+int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, F32 pixel_angle)
+{
+    const LLVkBridge::CullRow& row = s.mTable[slot];
+    const LLVkBridge::CullMapRow& map = s.mMap[slot];
+    const U32 flags = row.mFlags;
+    if (flags & 32u)
+    {
+        return CV_DEAD;
+    }
+    if (!map.mHandle)
+    {
+        return CV_NOHANDLE;
+    }
+    U32 type;
+    memcpy(&type, &row.mPad0, 4);
+    if (type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
+    {
+        return CV_TYPE;
+    }
+    if (flags & 64u)
+    {
+        // a group of a bridge's octree: the walk is LLSpatialBridge::setVisible (the avatar gate, the bridge's box against the frustum and the far sphere, the pixel area of the box) and then every group of the octree is marked (no test
+        // of its own, no occlusion cut); the render map then drops it by its own occlusion state or the auto-hide limit. The row's box is the bridge's (the same for every group of it).
+        if (flags & 128u)
+        {
+            return CV_GATE;
+        }
+        if (flags & 16u)
+        {
+            return CV_NOHANDLE;         // (an empty group is not marked)
+        }
+        if (cull_box_res(P, row.mCenter, row.mHalf) == 0 || cull_sphere_res(P, row.mExtMin, row.mExtMax) == 0)
+        {
+            return CV_FRUSTUM;
+        }
+        {
+            F32 dist = sqrtf((row.mCenter[0] - P.mOrigin[0]) * (row.mCenter[0] - P.mOrigin[0]) + (row.mCenter[1] - P.mOrigin[1]) * (row.mCenter[1] - P.mOrigin[1]) + (row.mCenter[2] - P.mOrigin[2]) * (row.mCenter[2] - P.mOrigin[2]));
+            if (dist < 16.f)
+            {
+                dist /= 16.f;
+                dist *= dist;
+                dist *= 16.f;
+            }
+            const F32 radius = atanf(sqrtf(row.mHalf[0] * row.mHalf[0] + row.mHalf[1] * row.mHalf[1] + row.mHalf[2] * row.mHalf[2]) / dist) * pixel_angle;
+            if (radius * radius * 3.14159265f < 16.f)
+            {
+                return CV_AREA;
+            }
+        }
+        if (occlusion && (flags & 4u))
+        {
+            return CV_OCC;
+        }
+        if (hide_limit > 0.f && map.mSurfaceArea > hide_limit * fmaxf(map.mObjectBoxSize, 10.f))
+        {
+            return CV_HIDE;
+        }
+        return CV_PASS;
+    }
+    const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
+    if (st == ST_OCC)
+    {
+        return CV_OCC;
+    }
+    if (hide_limit > 0.f && map.mSurfaceArea > hide_limit * fmaxf(map.mObjectBoxSize, 10.f))
+    {
+        return CV_HIDE;
+    }
+    if (st == ST_OUT)
+    {
+        return CV_FRUSTUM;
+    }
+    if (flags & 16u)
+    {
+        return CV_NOHANDLE;         // (an empty group is not processed)
+    }
+    // LLViewerOctreeCull::checkObjects: a node with children that is only partly in needs its object bounds in the frustum too
+    if ((map.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, map) == 0)
+    {
+        return CV_OBJECTS;
+    }
+    return CV_PASS;
+}
+
+void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob)
+{
+    CullShadowState& s = sCullShadow;
+    CullDeriveStats& d = sCullDerive;
+    const auto t0 = std::chrono::steady_clock::now();
+    if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
+    {
+        ++d.mNoTable;
+        return;
+    }
+    LLVkBridge::CullParams P;
+    memcpy(&P, view_blob, sizeof(P));
+    const bool occlusion = P.mPad[0] != 0;
+    F32 hide_limit;
+    memcpy(&hide_limit, &P.mPad[1], 4);
+    const U32* type_mask = &P.mPad[2];
+    F32 pixel_angle;
+    memcpy(&pixel_angle, view_blob + sizeof(LLVkBridge::CullParams), 4);
+    U32 max_h = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        max_h = std::max(max_h, handles[i]);
+    }
+    if (max_h > (1u << 20))
+    {
+        ++d.mNoTable;
+        return;
+    }
+    static std::vector<U8> mark;
+    mark.assign((size_t)max_h + 1, 0);
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        mark[handles[i]] = 1;
+    }
+    ++d.mCompares;
+    d.mRecord += h.mEntries;
+    const U32 table = (U32)s.mTable.size();
+    static std::vector<U8> memo;
+    memo.assign(table, 0);
+    auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
+    const U64 extra_before = d.mExtra, derived_before = d.mDerived;
+    const CullDeriveStats before = d;
+    for (U32 slot = 0; slot < table; ++slot)
+    {
+        if (cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, pixel_angle) != CV_PASS)
+        {
+            continue;
+        }
+        ++d.mDerived;
+        const U32 handle = s.mMap[slot].mHandle;
+        if (handle <= max_h && mark[handle])
+        {
+            ++d.mBoth;
+            mark[handle] = 2;
+            continue;
+        }
+        ++d.mExtra;
+        const bool bridge = (s.mTable[slot].mFlags & 64u) != 0;
+        (bridge ? d.mExtraBridge : d.mExtraRegion) += 1;
+        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
+        d.mExtraRecent += recent;
+        if (!bridge)
+        {
+            U32 xt;
+            memcpy(&xt, &s.mTable[slot].mPad0, 4);
+            ++d.mExtraType[xt < 160u ? xt : 160u];
+            d.mExtraNoTris += s.mMap[slot].mDrawTris == 0;
+            d.mExtraNoServed += s.mMap[slot].mServedTris == 0;
+            d.mExtraFull += memo[slot] == ST_FULL;
+            d.mExtraSkipFlag += (s.mTable[slot].mFlags & 2u) != 0;
+            d.mExtraAlpha += s.mMap[slot].mAlphaBits != 0;
+            const int own = cull_group_res(P, s.mTable[slot]);
+            ++d.mExtraOwn[own];
+            const bool parent_own_in = !(s.mTable[slot].mFlags & 1u) && s.mTable[slot].mParent < table && cull_group_res(P, s.mTable[s.mTable[slot].mParent]) != 0;
+            d.mExtraParentOut += !(s.mTable[slot].mFlags & 1u) && !parent_own_in;
+            d.mExtraRoot += (s.mTable[slot].mFlags & 1u) != 0;
+        }
+        if (may_say(bridge ? 1 : 0))
+        {
+            U32 type;
+            memcpy(&type, &s.mTable[slot].mPad0, 4);
+            LL_INFOS("VkCullDerive") << "extra: slot " << slot << " handle " << handle << " flags " << s.mTable[slot].mFlags << " render type " << type << (bridge ? " (a bridge group)" : "") << ", row changed " << (s.mRecords - s.mRowStamp[slot])
+                                     << " records ago, map flags " << (U32)s.mMap[slot].mFlags << ", chain state " << (U32)memo[slot] << " (3 part, 4 full), own result " << cull_group_res(P, s.mTable[slot]) << ", parent slot " << s.mTable[slot].mParent << " flags "
+                                     << (s.mTable[slot].mParent < table ? s.mTable[s.mTable[slot].mParent].mFlags : 0u) << " own result " << (s.mTable[slot].mParent < table ? cull_group_res(P, s.mTable[s.mTable[slot].mParent]) : -1)
+                                     << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
+        }
+    }
+    if (d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
+    {
+        // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
+        const U64 skipped = d.mSkippedViews + 1;
+        d = before;
+        d.mSkippedViews = skipped;
+        return;
+    }
+    {
+        // views that differ from the usual ones by many groups at once (a record that names far fewer groups than the table shows is another view's list, not a state difference)
+        const U64 ex_view = d.mExtra - extra_before;
+        if (ex_view > 40)
+        {
+            ++d.mBigViews;
+            d.mBigViewExtra += ex_view;
+            d.mBigViewEntries += h.mEntries;
+            d.mBigViewDerived += d.mDerived - derived_before;
+            if (d.mCompares >= 300 && d.mSampled[15]++ < 12)
+            {
+                LL_INFOS("VkCullDerive") << "big view " << d.mCompares << ": the record names " << h.mEntries << ", derived " << d.mDerived - derived_before << ", extra " << ex_view << LL_ENDL;
+            }
+        }
+    }
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const U32 handle = handles[i];
+        if (mark[handle] != 1)
+        {
+            continue;
+        }
+        mark[handle] = 3;           // (a handle that is listed twice counts once)
+        ++d.mMissing;
+        const U32 slot = handle < s.mSlotOfHandle.size() ? s.mSlotOfHandle[handle] : ~0u;
+        if (slot >= table)
+        {
+            ++d.mMissNoRow;
+            if (may_say(2))
+            {
+                LL_INFOS("VkCullDerive") << "missing: handle " << handle << " has no row" << LL_ENDL;
+            }
+            continue;
+        }
+        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
+        d.mMissRecent += recent;
+        const int why = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, pixel_angle);
+        switch (why)
+        {
+        case CV_GATE: ++d.mMissGate; break;
+        case CV_AREA: ++d.mMissArea; break;
+        case CV_DEAD: ++d.mMissDead; break;
+        case CV_NOHANDLE: ++d.mMissNoHandle; break;
+        case CV_TYPE: ++d.mMissType; break;
+        case CV_OCC: ++d.mMissOcc; break;
+        case CV_HIDE: ++d.mMissHide; break;
+        case CV_FRUSTUM: ++d.mMissFrustum; break;
+        case CV_OBJECTS: ++d.mMissObjects; break;
+        default: ++d.mMissPasses; break;
+        }
+        if (may_say(3 + why))
+        {
+            U32 type;
+            memcpy(&type, &s.mTable[slot].mPad0, 4);
+            const LLVkBridge::CullRow& rr = s.mTable[slot];
+            const LLVkBridge::CullMapRow& mm = s.mMap[slot];
+            LL_INFOS("VkCullDerive") << "missing: handle " << handle << " slot " << slot << " rejected by " << why << " (1 dead, 2 no handle, 3 render type off, 4 occluded, 5 auto-hide, 6 frustum, 7 object bounds, 8 avatar gate, 9 pixel area, 0 none) flags " << rr.mFlags << " map flags "
+                                     << (U32)mm.mFlags << " render type " << type << (rr.mFlags & 64u ? " (a bridge group)" : "") << ", chain state " << (U32)cull_chain_state(s, P, occlusion, slot, memo, 0) << " (1 occluded, 2 out, 3 part, 4 full), box res "
+                                     << cull_group_res(P, rr) << ", objects res " << cull_objects_res(P, rr, mm) << ", row changed " << (s.mRecords - s.mRowStamp[slot]) << " records ago" << LL_ENDL;
+        }
+    }
+    d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    if (d.mCompares % 600 == 0)
+    {
+        const double n = (double)d.mCompares;
+        LL_INFOS("VkCullDerive") << "derived listed set against the record's handles, over " << d.mCompares << " views (" << d.mMs / n << " ms each): the record names " << d.mRecord / n << " a view, derived " << d.mDerived / n << ", both " << d.mBoth / n
+                                 << " | missing (named, not derived) " << d.mMissing << ": no row " << d.mMissNoRow << ", dead " << d.mMissDead << ", no handle " << d.mMissNoHandle << ", render type off " << d.mMissType << ", occluded " << d.mMissOcc
+                                 << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", avatar gate " << d.mMissGate << ", pixel area " << d.mMissArea << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
+                                 << " | extra (derived, not named) " << d.mExtra << ": region groups " << d.mExtraRegion << ", bridge groups " << d.mExtraBridge << ", of them rows changed in the last 2 records " << d.mExtraRecent
+                                 << " | no table " << d.mNoTable << " (totals over the views)" << LL_ENDL;
+        LL_INFOS("VkCullDerive") << "views not counted (the record names under half of what the table derives: not the main view's list): " << d.mSkippedViews << LL_ENDL;
+        LL_INFOS("VkCullDerive") << "views with more than 40 extras: " << d.mBigViews << " of " << d.mCompares << ", they hold " << d.mBigViewExtra << " of the " << d.mExtra << " extras; there the record names " << (d.mBigViews ? (double)d.mBigViewEntries / d.mBigViews : 0.0)
+                                 << " a view and the table derives " << (d.mBigViews ? (double)d.mBigViewDerived / d.mBigViews : 0.0) << LL_ENDL;
+        std::string types;
+        for (U32 t = 0; t <= 160; ++t)
+        {
+            if (d.mExtraType[t])
+            {
+                types += " " + std::to_string(t) + ":" + std::to_string(d.mExtraType[t]);
+            }
+        }
+        LL_INFOS("VkCullDerive") << "region extras by render type (type:count)" << types << " | of them: nothing drawn (no triangles) " << d.mExtraNoTris << ", nothing served " << d.mExtraNoServed << ", under a wholly-in ancestor or own result 2 " << d.mExtraFull
+                                 << ", skip-frustum nodes " << d.mExtraSkipFlag << ", with alpha " << d.mExtraAlpha << ", own frustum result out/part/full " << d.mExtraOwn[0] << "/" << d.mExtraOwn[1] << "/" << d.mExtraOwn[2]
+                                 << ", parent outside by its own test " << d.mExtraParentOut << ", roots " << d.mExtraRoot << LL_ENDL;
+    }
+}
+
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
 void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -11486,19 +11920,26 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         LLVkBridge::CullRow dead;
         memset(&dead, 0, sizeof(dead));
         dead.mFlags = 33u;
+        const LLVkBridge::CullMapRow no_map;
         if (h.mPaletteFloats == 1)
         {
             s.mTable.assign(table, dead);
+            s.mMap.assign(table, no_map);
+            s.mRowStamp.assign(table, 0);
+            s.mSlotOfHandle.clear();
             ++s.mResets;
         }
         else
         {
             s.mTable.resize(table, dead);
+            s.mMap.resize(table, no_map);
+            s.mRowStamp.resize(table, 0);
         }
         const U8* p = blob + sizeof(LLVkBridge::CullParams);
         const U32* slots = (const U32*)p;
         const size_t slot_bytes = ((size_t)h.mEntries * 4 + 15) & ~(size_t)15;
         const U8* rows = p + slot_bytes;
+        const U8* map_rows = rows + (size_t)h.mEntries * sizeof(LLVkBridge::CullRow);        // stage 3: one map row after the rows for each of them
         for (U32 i = 0; i < h.mEntries; ++i)
         {
             U32 slot;
@@ -11509,6 +11950,25 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 continue;
             }
             memcpy(&s.mTable[slot], rows + (size_t)i * sizeof(LLVkBridge::CullRow), sizeof(LLVkBridge::CullRow));
+            {
+                LLVkBridge::CullMapRow incoming;
+                memcpy(&incoming, map_rows + (size_t)i * sizeof(LLVkBridge::CullMapRow), sizeof(LLVkBridge::CullMapRow));
+                const U32 old_handle = s.mMap[slot].mHandle;
+                if (old_handle && old_handle < s.mSlotOfHandle.size() && s.mSlotOfHandle[old_handle] == slot)
+                {
+                    s.mSlotOfHandle[old_handle] = ~0u;
+                }
+                s.mMap[slot] = incoming;
+                if (incoming.mHandle && incoming.mHandle < (1u << 20))
+                {
+                    if (s.mSlotOfHandle.size() <= incoming.mHandle)
+                    {
+                        s.mSlotOfHandle.resize((size_t)incoming.mHandle + 1, ~0u);
+                    }
+                    s.mSlotOfHandle[incoming.mHandle] = slot;
+                }
+                s.mRowStamp[slot] = s.mRecords;
+            }
         }
         s.mDeltaRows += h.mEntries;
         s.mRows += table;

@@ -45,7 +45,7 @@ bool LLVkBridge::textureNeed(U32, TextureNeed&) { return false; }
 void LLVkBridge::textureNeedStats(U64& t, U64& r) { t = r = 0; }
 void LLVkBridge::textureNeedReading(U32, F32) {}
 void LLVkBridge::textureNeedForget(U32) {}
-U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, U32, U32, bool) { return 0; }
+U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
 S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
@@ -1781,7 +1781,7 @@ std::atomic<U32> gCullDone{ 0 };
 U32 gCullSerial = 0;        // main thread only
 }
 
-U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullRow* rows, U32 count, U32 table_size, bool reset)
+U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset)
 {
     if (!table_size || !hizAvailable() || count > table_size)
     {
@@ -1806,12 +1806,13 @@ U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullR
     header.mPass = serial % 8;
     header.mFragment = serial;
     const size_t slot_bytes = ((size_t)count * 4 + 15) & ~(size_t)15;
-    std::vector<U8> blob(sizeof(CullParams) + slot_bytes + (size_t)count * sizeof(CullRow), 0);
+    std::vector<U8> blob(sizeof(CullParams) + slot_bytes + (size_t)count * sizeof(CullRow) + (size_t)count * sizeof(CullMapRow), 0);
     memcpy(blob.data(), &params, sizeof(CullParams));
     if (count)
     {
         memcpy(blob.data() + sizeof(CullParams), slots, (size_t)count * 4);
         memcpy(blob.data() + sizeof(CullParams) + slot_bytes, rows, (size_t)count * sizeof(CullRow));
+        memcpy(blob.data() + sizeof(CullParams) + slot_bytes + (size_t)count * sizeof(CullRow), map_rows, (size_t)count * sizeof(CullMapRow));
     }
     shadowPackets(header, blob.data(), blob.size());
     return serial;
