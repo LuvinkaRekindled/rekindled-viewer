@@ -47,6 +47,10 @@ struct ModelBlock
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer RowTable { Row r[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ModelTable { ModelBlock m[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer TexMatTable { mat4 t[]; };
+#ifdef GB_MOTION
+// the moving model matrices of the frame: slot s has this frame's at 2s and last frame's at 2s + 1 (its corner [3][3] is 1 for a slot that moved, the whole entry is zero for one that did not)
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer MotionTable { mat4 m[]; };
+#endif
 
 // the texture slot a vertex uses: one for the whole draw, or one of four picked by the low two bits of the batched texture index in the position's w
 uint row_texture_slot(Row row, float position_w)

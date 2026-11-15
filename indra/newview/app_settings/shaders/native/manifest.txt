@@ -27,31 +27,31 @@ override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | al
 override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 override | HUD PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr_hud.frag | alpha | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | default on
 # family 3: the G-buffer fill (doc/vulkan/SHADERS-F3-gbuffer.md). The glTF opaque and mask pass from the scene table: the same vertex program as the blend surfaces (PBR_OPAQUE adds the material's cutoff), a small fragment program that writes the three targets (the emissive one with RenderEnableEmissiveBuffer); static, rigged and the HUD's fullbright form
-override | Deferred PBR Opaque Pull Shader | alpha_pbr.vert | pbr_opaque.frag | gbuffer | define ALPHA_PBR=1 | define PBR_OPAQUE=1 | default on
+override | Deferred PBR Opaque Pull Shader | alpha_pbr.vert | pbr_opaque.frag | gbuffer | define ALPHA_PBR=1 | define PBR_OPAQUE=1 | define GB_MOTION=1 | default on
 override | Deferred PBR Opaque Pull Skin Shader | alpha_pbr.vert | pbr_opaque.frag | gbuffer | define ALPHA_PBR=1 | define PBR_OPAQUE=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | HUD PBR Opaque Pull Shader | alpha_pbr.vert | pbr_opaque_hud.frag | gbuffer | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define PBR_OPAQUE=1 | default on
 # the plain (legacy prim) draws of the G-buffer pass: opaque and alpha mask, static and rigged
-override | Deferred Diffuse Pull Shader | gbuffer.vert | gbuffer_diffuse.frag | gbuffer | default on
+override | Deferred Diffuse Pull Shader | gbuffer.vert | gbuffer_diffuse.frag | gbuffer | define GB_MOTION=1 | default on
 override | Deferred Diffuse Pull Skin Shader | gbuffer.vert | gbuffer_diffuse.frag | gbuffer | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
-override | Deferred Diffuse Alpha Mask Pull Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | default on
+override | Deferred Diffuse Alpha Mask Pull Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | define GB_MOTION=1 | default on
 override | Deferred Diffuse Alpha Mask Pull Skin Shader | gbuffer.vert | gbuffer_diffuse_mask.frag | gbuffer | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 # the legacy (texture) terrain of the G-buffer pass: the detail layers that show are fetched, the ramp coordinates are worked out in the fragment program
 override | Deferred Terrain Pull Shader | terrain.vert | terrain.frag | gbuffer | default on
 # the Linden trees of the G-buffer pass: one record of all the pool's faces (LLDrawPoolTree::renderDeferred), alpha tested diffuse, no vertex colour
 override | Deferred Tree Pull Shader | tree.vert | tree.frag | gbuffer | default on
 # the legacy material draws of the G-buffer pass (alpha mode in bits 0-1 of the program number: 0 none, 2 mask, 3 emissive; specular map bit 2, normal map bit 3), static and rigged (no `rt`: outside the blend mode the stock program calls no ray query); the blend ones (1, 5, 9, 13) are below
-override | Material Pull Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | default on
-override | Material Pull Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | default on
-override | Material Pull Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | default on
-override | Material Pull Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | default on
-override | Material Pull Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
-override | Material Pull Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | default on
+override | Material Pull Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define GB_MOTION=1 | default on
+override | Material Pull Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define GB_MOTION=1 | default on
+override | Material Pull Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define GB_MOTION=1 | default on
+override | Material Pull Shader 4 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 6 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 7 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 8 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 10 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 11 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 12 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
+override | Material Pull Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define GB_MOTION=1 | default on
 override | Material Pull Skin Shader 0 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=0 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Material Pull Skin Shader 2 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Material Pull Skin Shader 3 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
@@ -73,12 +73,12 @@ override | Material Pull Skin Shader 1 | alpha.vert | alpha_lit.frag | alpha | d
 override | Material Pull Skin Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 override | Material Pull Skin Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
 override | Material Pull Skin Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
-override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | default on
+override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define GB_MOTION=1 | default on
 override | Deferred Bump Pull Skin Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Deferred Emboss Pull Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | default on
 override | Deferred Emboss Pull Skin Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | Deferred Impostor Shader | impostor.vert | impostor.frag | gbuffer | default on
-override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | define AVATAR_CLOTH=1 | default on
+override | Deferred Avatar Shader pull | avatar.vert | avatar.frag | gbuffer | define AVATAR_PASS=1 | define AVATAR_CLOTH=1 | define GB_MOTION=1 | default on
 override | Deferred PBR Terrain Shader 0 heightmap-with-noise flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
 override | Deferred PBR Terrain Shader 0 heightmap-with-noise triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=0 | default on
 override | Deferred PBR Terrain Shader 0 paintmap flat pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
@@ -165,10 +165,7 @@ override | Exposure | fullscreen.vert | exposure.frag | post | define USE_LAST_E
 override | Exposure (no fade) | fullscreen.vert | exposure.frag | post | default on
 override | Deferred Post NoDoF Shader | fullscreen.vert | post_nodof.frag | post | default on
 override | Deferred Post NoDoF Noise Shader | fullscreen.vert | post_nodof.frag | post | define HAS_NOISE=1 | default on
-# the motion vector pass of the avatars and the moving objects (velocity_pass.inc): the rigged parts and the moving objects are native only; the body parts stand in for the body program's pull twin
-override | Avatar Velocity (rigged, packets) | velocity_skin.vert | velocity.frag | post | define VEL_SKIN=1 | define HAS_SKIN=1 | default on
-override | Object Velocity (packets) | velocity_object.vert | velocity.frag | post | define VEL_OBJECT=1 | default on
-override | Avatar Velocity (body) pull | velocity_body.vert | velocity.frag | post | define VEL_BODY=1 | default on
+# the debug view of the motion targets (RenderBufferVisualization 8 and 10); the motion itself is written by the G-buffer programs (GB_MOTION)
 # the draw color program's pull twin: the flat colour of the highlight pass with no skin; the avatar pool's alpha masked draw without vertex colour (a mesh drawn by range under the pass's loose matrices)
 override | Draw Color Shader pull | alpha.vert | highlight.frag | alpha | define HIGHLIGHT_PASS=1 | default on
 override | Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull | mask_nocolor.vert | mask_nocolor.frag | gbuffer | define AVATAR_PASS=1 | define MASK_NOCOLOR=1 | default on

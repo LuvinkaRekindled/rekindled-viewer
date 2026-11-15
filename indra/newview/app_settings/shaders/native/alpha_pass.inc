@@ -22,6 +22,9 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     mat4 view_proj_cur;
     mat4 view_proj_prev;
     vec2 render_res;
+#ifndef HAS_SKIN
+    uvec2 ll_packet_motion;     // a draw that is not rigged: the table of the frame's moving model matrices (this frame's and last frame's, rows.glsl MotionTable), set by the worker with the draw
+#endif
 #endif
 #ifdef PBR_PREVIEW
     // the material preview (alpha_pbr_preview.vert): the material of the draw as loose values (the row of the pull program): the texture transforms (scale and rotation, offset) and the factors

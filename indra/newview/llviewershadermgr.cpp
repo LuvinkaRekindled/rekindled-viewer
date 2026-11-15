@@ -234,9 +234,6 @@ LLShaderProgram            gExposureProgram;
 LLShaderProgram            gExposureProgramNoFade;
 LLShaderProgram            gLuminanceProgram;
 LLShaderProgram            gMotionVectorProgram;
-LLShaderProgram            gAvatarBodyVelocityProgram;     // <FS> avatar motion vectors: the avatar's own body meshes
-LLShaderProgram            gAvatarVelocityPullProgram;     // <FS> avatar motion vectors: rigged draws from render packets (kind 8)
-LLShaderProgram            gObjectVelocityPullProgram;     // <FS> avatar motion vectors: moving objects and rigid attachments from render packets (kind 9)
 LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
@@ -2275,42 +2272,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
-    // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6). Optional: a failure here must not stop the programs that follow (the pass checks isComplete()).
+    // <FS> (the avatar velocity programs were here until 2026-11-15: the G-buffer programs write the motion now) a failure here must not stop the programs that follow
     if (success)
     {
-        if (LLVkBridge::shadowPacketsAvailable())
-        {
-            gAvatarVelocityPullProgram.mName = "Avatar Velocity (rigged, packets)";
-            // <FS> a native only program (native/manifest.txt, family post): no stock files
-            gAvatarVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            if (!gAvatarVelocityPullProgram.createShader())
-            {
-                LL_WARNS("VkMotion") << "the avatar velocity pull program did not compile: the pass draws the rigged parts one by one" << LL_ENDL;
-                gAvatarVelocityPullProgram.unload();
-            }
-        }
-
-        if (LLVkBridge::shadowPacketsAvailable())
-        {
-            gObjectVelocityPullProgram.mName = "Object Velocity (packets)";
-            // <FS> a native only program (native/manifest.txt, family post): no stock files
-            gObjectVelocityPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-            if (!gObjectVelocityPullProgram.createShader())
-            {
-                LL_WARNS("VkMotion") << "the object velocity pull program did not compile: no motion vectors for moving objects" << LL_ENDL;
-                gObjectVelocityPullProgram.unload();
-            }
-        }
-
-        // <FS> a native only program (native/manifest.txt, family post: velocity_body.vert + velocity.frag): the system avatar's body parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
-        gAvatarBodyVelocityProgram.mName = "Avatar Velocity (body) pull";
-        gAvatarBodyVelocityProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
-        gAvatarBodyVelocityProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (!gAvatarBodyVelocityProgram.createShader())
-        {
-            LL_WARNS("VkMotion") << "the avatar velocity program (body) did not compile: no avatar motion vectors" << LL_ENDL;
-        }
-
         // <FS> the penumbra filter of the ray traced sun shadow (PLAN-rt-shadow-penumbra.md step 2b): two separable passes over the lightmap's sun channel, sized by the blocker distance map
         gRtShadowFilterProgram.mName = "RT Shadow Penumbra Filter";
         gRtShadowFilterProgram.mFeatures.isDeferred = true;

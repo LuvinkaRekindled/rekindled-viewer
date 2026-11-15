@@ -1107,13 +1107,6 @@ public:
         bool mComputed = false;     // mFrame is only meaningful after the first computation (the constructor sets it to "last frame")
         bool mBadBindNamed = false; // <FS> the wearer of a mesh whose inverse bind matrices the parse refused was logged once (MeshSkin)
 
-        // <FS> the avatar frame record (view prep rework): what the avatar velocity pass works out for this palette once a frame (the frame it was worked out in, and the answer), kept here instead of in
-        // maps made again every frame. Written by that pass only.
-        mutable U32 mMotionFrame = 0xFFFFFFFFu;
-        mutable bool mMotionStill = false;      // the palette moved less than the pass's threshold since the frame before
-        mutable U32 mOffsetFrame = 0xFFFFFFFFu;
-        mutable U32 mOffset = 0;                // where the palette is in the pass's palette record
-
         // <FS> stage B3a: the skin this entry was built from (kept so the avatar's job can rebuild it without a request), and the frame the avatar's job built it for (0xFFFFFFFF: not by a job)
         LLSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
         // <FS> stage B3b: where this palette sits in the frame's shared palette list (ll_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
@@ -1135,11 +1128,6 @@ public:
     // Will do a map lookup for the entry associated with the given MeshSkinInfo
     // Will update said entry if it hasn't been updated yet this frame
     const MatrixPaletteCache& updateSkinInfoMatrixPalette(const LLMeshSkinInfo* skinInfo);
-
-    // <FS> the avatar frame record: what the velocity pass decides about this avatar once a frame (the frame it did, whether the avatar is drawn into the velocity map, its distance from the camera)
-    U32 mVelocityFrame = 0xFFFFFFFFu;
-    bool mVelocityOk = false;
-    F32 mVelocityDistance = 0.f;
 
     // Map of LLMeshSkinInfo::mHash to MatrixPaletteCache
     typedef std::unordered_map<U64, MatrixPaletteCache> matrix_palette_cache_t;

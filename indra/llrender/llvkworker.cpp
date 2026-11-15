@@ -8266,17 +8266,39 @@ static struct GeoState
     static constexpr U32 kSlotLimit = 1u << 16;
     std::vector<F32> mRegionMv;
     std::vector<U8> mHaveMv;
+    // <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md, step 3): the matrix a slot had in the viewer frame before (equal to the current one without history: a slot not sent last frame, a second record of the frame keeps
+    // the first one's), and the viewer frame each slot was last set in
+    std::vector<F32> mPrevMv;
+    std::vector<U32> mMvStamp;
     bool have(U32 slot) const { return slot < mHaveMv.size() && mHaveMv[slot]; }
     const F32* region(U32 slot) const { return mRegionMv.data() + 16 * (size_t)slot; }
-    void setMatrix(U32 slot, const F32* m)
+    const F32* prevRegion(U32 slot) const { return mPrevMv.data() + 16 * (size_t)slot; }
+    void setMatrix(U32 slot, const F32* m, U32 viewer_frame)
     {
         if (slot >= mHaveMv.size())
         {
             const size_t n = ((size_t)slot + 256) / 256 * 256;
             mHaveMv.resize(n, 0);
             mRegionMv.resize(16 * n, 0.f);
+            mPrevMv.resize(16 * n, 0.f);
+            mMvStamp.resize(n, ~0u);
         }
-        memcpy(mRegionMv.data() + 16 * (size_t)slot, m, 64);
+        F32* cur = mRegionMv.data() + 16 * (size_t)slot;
+        F32* prev = mPrevMv.data() + 16 * (size_t)slot;
+        if (mMvStamp[slot] == viewer_frame)
+        {
+            // (a second record of this viewer frame: the history stays)
+        }
+        else if (mMvStamp[slot] != ~0u && mMvStamp[slot] + 1 == viewer_frame)
+        {
+            memcpy(prev, cur, 64);          // (cur still holds what the slot had last frame)
+        }
+        else
+        {
+            memcpy(prev, m, 64);            // no history: no motion
+        }
+        memcpy(cur, m, 64);
+        mMvStamp[slot] = viewer_frame;
         mHaveMv[slot] = 1;
     }
     U32 mMaxSlot = 0;
@@ -9121,7 +9143,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         const U32 slot = matrices[i].mSlot;
         if (slot < GeoState::kSlotLimit)
         {
-            sGeo.setMatrix(slot, matrices[i].mM);
+            sGeo.setMatrix(slot, matrices[i].mM, h.mPass);
             sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, slot);
         }
     }
@@ -9570,6 +9592,42 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         memcpy(shared.mVP, view, sizeof(shared.mVP));
         shared.mModels = models;
     }
+    // <FS> velocity fold step 3: the model matrices of the slots that moved since the viewer frame before (this frame's and last frame's, 64 bytes each; slot s at 2s and 2s + 1), all zero for the others: the G-buffer
+    // programs with GB_MOTION read it to write the motion of a moving object (a slot whose last matrix has no 1 in its corner did not move: those pixels keep the camera's motion)
+    Renderer::ScratchAlloc motion;
+    if (pu.mMotion != ~0u)
+    {
+        static struct SharedMotion { U64 mFrame = ~0ull, mPrepares = ~0ull; U32 mSlots = 0; Renderer::ScratchAlloc mTab; } sharedMotion;
+        if (sharedMotion.mFrame == frame_now && sharedMotion.mPrepares == s.mPrepares && sharedMotion.mSlots == slots && sharedMotion.mTab.mPtr && sharedMotion.mTab.mAddress)
+        {
+            motion = sharedMotion.mTab;
+        }
+        else
+        {
+            motion = r.allocVertexScratch(128 * (size_t)slots);
+            if (!motion.mPtr || !motion.mAddress)
+            {
+                ++s.mScratchFail;
+                return;
+            }
+            F32* tab = (F32*)motion.mPtr;
+            memset(tab, 0, 128 * (size_t)slots);
+            for (U32 slot = 1; slot < slots; ++slot)
+            {
+                if (sGeo.have(slot) && memcmp(sGeo.region(slot), sGeo.prevRegion(slot), 64) != 0)
+                {
+                    F32* entry = tab + 32 * (size_t)slot;
+                    memcpy(entry, sGeo.region(slot), 64);
+                    memcpy(entry + 16, sGeo.prevRegion(slot), 64);
+                    entry[16 + 15] = 1.f;       // (the flag: an affine matrix has a 1 there anyway)
+                }
+            }
+            sharedMotion.mFrame = frame_now;
+            sharedMotion.mPrepares = s.mPrepares;
+            sharedMotion.mSlots = slots;
+            sharedMotion.mTab = motion;
+        }
+    }
     // C5: the texture matrices of the slots (the raw matrices the viewer sent; a texture animation's slot holds its parameters, slot 0 the clock), once for the frame's records
     static struct SharedTexmats { U64 mFrame = ~0ull, mPrepares = ~0ull; U32 mSlots = 0; Renderer::ScratchAlloc mTex; } sharedTex;
     Renderer::ScratchAlloc texmats;
@@ -9632,6 +9690,12 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (pu.mModels != ~0u)
     {
         program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+    }
+    if (pu.mMotion != ~0u && motion.mAddress)
+    {   // velocity fold step 3: the motion table of the frame
+        const U64 motion_address = (U64)motion.mAddress;
+        const S32 motion_words[2] = { (S32)(U32)motion_address, (S32)(U32)(motion_address >> 32) };
+        program->setFloatsAt(pu.mMotion, reinterpret_cast<const F32*>(motion_words), 2, 1);
     }
     if (pu.mTexmats != ~0u && texmats.mAddress)
     {   // C5: the texture matrices of the slots (a row's pad.x names one; 0 = none)

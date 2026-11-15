@@ -208,6 +208,18 @@ void LLViewerJointMesh::uploadJointMatrices()
         if (LLShaderProgram::sCurBoundShaderPtr)
         {
             LLShaderProgram::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
+            // <FS> velocity fold: the body part writes its own motion: the world space palettes of this frame and of the last (the history follows the frames the main view draws the mesh:
+            // updatePaletteHistory) and the camera matrices of both frames. Not in the shadow, impostor and probe renders (their targets have no motion attachment).
+            if (mMesh && mMesh->hasWeights() && mPaletteComputed && mPaletteFrame == gFrameCount && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+            {
+                extern bool ll_motion_fold_uniforms(LLShaderProgram* program);
+                if (ll_motion_fold_uniforms(LLShaderProgram::sCurBoundShaderPtr))
+                {
+                    static LLStaticHashedString palette_world_s("matrixPaletteWorld"), palette_prev_s("matrixPalettePrev");
+                    LLShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_world_s, 45, mWorldPalette);
+                    LLShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_prev_s, 45, mPrevWorldPalette);
+                }
+            }
         }
 }
 
@@ -240,9 +252,6 @@ void LLViewerJointMesh::noteRecentBodyMeshes()
         ++it;
     }
 }
-
-bool LLViewerJointMesh::sRecordVelocity = false;
-std::vector<LLViewerJointMesh::VelocityDraw> LLViewerJointMesh::sVelocityDraws;
 
 // <FS> Motion vectors (doc/vulkan/PLAN-ray-tracing.md, "Design notes for item 6"): the body palette in world space, this frame and last frame
 void LLViewerJointMesh::updatePaletteHistory()
@@ -486,15 +495,6 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     if (mMesh->hasWeights() && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
     {
         updatePaletteHistory();
-        if (sRecordVelocity && mFace && mFace->getVertexBuffer())
-        {
-            LLDrawable* drawable = mFace->getDrawable();
-            LLVOAvatar* avatar = drawable ? dynamic_cast<LLVOAvatar*>(drawable->getVObj().get()) : nullptr;
-            if (avatar)
-            {
-                sVelocityDraws.push_back({ mFace->getVertexBuffer(), mMesh->mFaceVertexOffset, mMesh->mFaceVertexOffset + mMesh->mFaceVertexCount - 1, mMesh->mFaceIndexCount, mMesh->mFaceIndexOffset, this, avatar });
-            }
-        }
     }
 
     S32 diffuse_channel = LLDrawPoolAvatar::sDiffuseChannel;

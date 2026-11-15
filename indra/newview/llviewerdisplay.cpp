@@ -1378,7 +1378,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gRender.setColorMask(true, true);
             {
                 LL_CPU_ZONE("display: renderGeomDeferred");
-                gPipeline.beginAvatarVelocity();        // <FS> avatar motion vectors: starts recording the body meshes the G-buffer draws
                 gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
             }
             LLBuilderGuard::sMainMapLive = false;
@@ -1424,7 +1423,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         if (LLPipeline::sRenderDeferred)
         {
-            gPipeline.renderAvatarVelocity();       // <FS> avatar motion vectors: after the G-buffer, before the lighting (does nothing when it was not asked for)
             LL_CPU_ZONE("display: renderDeferredLighting (incl. post-deferred)");
             gPipeline.renderDeferredLighting();
         }
