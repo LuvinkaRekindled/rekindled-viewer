@@ -7127,6 +7127,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         LL_INFOS("SortSplit") << "stateSort loops (early sort, ms per sort):" << line << "; sorts the pool could not take " << fallbacks << LL_ENDL;
     }
 
+    { LL_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
     mDeferPoolFill = false;
 }
@@ -7999,6 +8000,83 @@ static bool render_map_inert_type(U32 type)
         || type == LLRenderPass::PASS_INVISI_SHINY || type == LLRenderPass::PASS_INVISI_SHINY_RIGGED;
 }
 
+// <FS> stage 1 of doc/vulkan/PLAN-change-driven-sort.md (every output of stateSort / postSort goes to its owner): the geometry stage. The rebuilds that postSort made (the drawable groups, the priority groups,
+// the visible groups that have no draw info yet, the delayed mesh packing) are this function's; stateSort runs it between its loops and postSort, the same place in the frame as before, and a later stage
+// calls it from display(). One change of order: the delayed meshes are packed before the render map is made, not after (the map reads fragments and draw counts, not packed vertex buffers).
+void LLPipeline::rebuildGeometry(LLCamera& camera)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+    const View view = currentView(camera, false);
+    const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
+    assertInitialized();
+    sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
+
+    if (!gCubeSnapshot)
+    {
+        {
+            LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of the drawable groups and of the priority groups, together
+            // rebuild drawable geometry
+            const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
+            {
+            LL_CPU_ZONE("geometry: drawable groups");
+            for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
+            {
+                LLSpatialGroup *group = *i;
+                if (group->isDead())
+                {
+                    continue;
+                }
+                if (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                {
+                    group->rebuildGeom();
+                }
+            }
+            }
+            if (vis_post) { LLVisCensus::sPostTicksRebuildGeom += LLVisCensus::now() - vis_g0; }
+            LL_PUSH_CALLSTACKS();
+            // rebuild groups
+
+            { LL_CPU_ZONE("geometry: priority groups"); rebuildPriorityGroups(); }
+            rebuild_batch.flush();
+        }
+
+        // the visible groups that are dirty and have no draw info yet (not drawable without a rebuild): the filters are the render map's, and the rebuilds are outside the batch as they were when the map made them
+        {
+            LL_CPU_ZONE("geometry: visible groups without draw info");
+            for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
+            {
+                LLSpatialGroup* group = *i;
+                if (group->isDead()
+                    || (LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                    || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
+                {
+                    continue;
+                }
+                if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
+                {  // no way this group is going to be drawable without a rebuild
+                    group->rebuildGeom();
+                }
+            }
+        }
+    }
+
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rebuild delayed upd groups");
+    // pack vertex buffers for groups that chose to delay their updates
+    {
+        LL_PROFILE_GPU_ZONE("rebuildMesh");
+        LL_CPU_ZONE("geometry: delayed rebuildMesh");
+        const U64 vis_m0 = vis_post ? LLVisCensus::now() : 0;
+        for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
+        {
+            (*iter)->rebuildMesh();
+        }
+        if (vis_post) { LLVisCensus::sPostTicksMesh += LLVisCensus::now() - vis_m0; }
+    }
+    }
+    mMeshDirtyGroup.clear();
+}
+
 void LLPipeline::postSort(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8015,37 +8093,8 @@ void LLPipeline::postSort(LLCamera &camera)
     } vis_post_end = { vis_post, vis_post ? LLVisCensus::now() : 0 };
 
     assertInitialized();
-    sVolumeSAFrame = 0.f; //ZK LBG
-
+    // <FS> the rebuilds (the drawable groups, the priority groups, the visible groups without draw info, the delayed meshes) are rebuildGeometry's: stateSort runs it before this
     LL_PUSH_CALLSTACKS();
-
-    if (!gCubeSnapshot)
-    {
-        LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of the drawable groups and of the priority groups, together
-        // rebuild drawable geometry
-        const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
-        {
-        LL_CPU_ZONE("postSort: rebuildGeom (drawable groups)");
-        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
-        {
-            LLSpatialGroup *group = *i;
-            if (group->isDead())
-            {
-                continue;
-            }
-            if (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-            {
-                group->rebuildGeom();
-            }
-        }
-        }
-        if (vis_post) { LLVisCensus::sPostTicksRebuildGeom += LLVisCensus::now() - vis_g0; }
-        LL_PUSH_CALLSTACKS();
-        // rebuild groups
-
-        { LL_CPU_ZONE("postSort: rebuildPriorityGroups"); rebuildPriorityGroups(); }
-        rebuild_batch.flush();
-    }
 
     LL_PUSH_CALLSTACKS();
 
@@ -8099,23 +8148,6 @@ void LLPipeline::postSort(LLCamera &camera)
             {
                 parallel_map = true;
                 LL_CPU_ZONE("postSort: render map (chunks)");
-                {
-                    LL_CPU_ZONE("postSort: render map (rebuilds)");
-                    for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
-                    {
-                        LLSpatialGroup* group = *i;
-                        if (group->isDead()
-                            || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
-                        {
-                            continue;
-                        }
-                        if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
-                        {
-                            group->rebuildGeom();
-                        }
-                    }
-                }
                 ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
                 struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
                 static std::vector<std::unique_ptr<LLCullResult>> locals;
@@ -8245,11 +8277,6 @@ void LLPipeline::postSort(LLCamera &camera)
              group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
         {
             continue;
-        }
-
-        if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY) && !gCubeSnapshot)
-        {  // no way this group is going to be drawable without a rebuild
-            group->rebuildGeom();
         }
 
         if (!far_skip.empty() && far_skip.count(group))
@@ -8389,26 +8416,10 @@ void LLPipeline::postSort(LLCamera &camera)
 
     }*/
 
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("rebuild delayed upd groups");
-    // pack vertex buffers for groups that chose to delay their updates
-    {
-        LL_PROFILE_GPU_ZONE("rebuildMesh");
-        LL_CPU_ZONE("postSort: delayed rebuildMesh");
-        const U64 vis_m0 = vis_post ? LLVisCensus::now() : 0;
-        for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
-        {
-            (*iter)->rebuildMesh();
-        }
-        if (vis_post) { LLVisCensus::sPostTicksMesh += LLVisCensus::now() - vis_m0; }
-    }
-    }
 
     /*if (use_transform_feedback)
     {
     }*/
-
-    mMeshDirtyGroup.clear();
 
 
     if (!LLPipeline::shadowRender() || sImpostorTableView)
