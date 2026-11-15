@@ -12466,6 +12466,7 @@ struct CullRec
     U32 mFrame = 0;                 // gFrameCount when sent
     U32 mCount = 0;                 // rows of the whole table at the record
     F32 mShape[4] = {};             // aspect, field of view, far clip, frustum corner distance of the camera when sent (C2 uses the verdict only for a camera of the same shape)
+    F32 mOrigin[3] = {}, mAt[3] = {}, mBoundT = 0.f, mBoundA = 0.f;      // the pose of the camera when sent and the motion bounds the record's margins were made for (C2 uses the verdict only while the camera stays inside them)
     std::vector<U32> mGen;          // slot -> generation when sent (a reused slot is not the same group)
     std::vector<LLVkBridge::CullRow> mRows;
 };
@@ -12497,6 +12498,7 @@ typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the 
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
+std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 std::vector<U32> sFreeSlots;
@@ -12792,6 +12794,7 @@ void cull_process()
             sMapMirror.push_back(CullMapRow());
             sMapHandleFrame.push_back((U32)gFrameCount);
             sMapChangeFrame.push_back((U32)gFrameCount);
+            sRowChangeFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
         }
@@ -12820,7 +12823,14 @@ void cull_process()
             continue;
         }
         g->mCullDirty = false;
-        cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
+        {
+            const LLVkBridge::CullRow old_cull = sMirror[slot];
+            cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
+            if (memcmp(&old_cull, &sMirror[slot], sizeof(old_cull)) != 0)
+            {
+                sRowChangeFrame[slot] = (U32)gFrameCount;
+            }
+        }
         {
             const U32 old_handle = sMapMirror[slot].mHandle;
             const CullMapRow old_row = sMapMirror[slot];
@@ -12957,8 +12967,10 @@ struct CullVerdict
     bool mValid = false;
     U32 mCount = 0, mSerial = 0, mFrame = 0;
     F32 mShape[4] = {};
+    F32 mOrigin[3] = {}, mAt[3] = {}, mBoundT = 0.f, mBoundA = 0.f, mFactor = 1.f;      // the camera pose of the record, the motion bounds its margins were made for, the margin factor of the variant kept
     std::vector<U32> mBits;
     std::vector<U32> mGen;
+    std::vector<U8> mDead;          // slot -> the row was a dead one (a placeholder: a slot not yet filled, or free) when the record was sent: its bit says nothing about the group the slot holds now
 };
 CullVerdict sVerdict;
 bool sUseSkipped = false;           // a covered partition was left to useVerdict this frame
@@ -13002,6 +13014,16 @@ void cull_store_verdict(const CullRec& rec, const std::vector<U32>& words)
     sVerdict.mSerial = rec.mSerial;
     sVerdict.mFrame = rec.mFrame;
     memcpy(sVerdict.mShape, rec.mShape, sizeof(sVerdict.mShape));
+    memcpy(sVerdict.mOrigin, rec.mOrigin, sizeof(sVerdict.mOrigin));
+    memcpy(sVerdict.mAt, rec.mAt, sizeof(sVerdict.mAt));
+    sVerdict.mBoundT = rec.mBoundT;
+    sVerdict.mBoundA = rec.mBoundA;
+    sVerdict.mDead.assign(rec.mCount, 0);
+    for (U32 i = 0; i < rec.mCount && i < rec.mRows.size(); ++i)
+    {
+        sVerdict.mDead[i] = (rec.mRows[i].mFlags & 32u) != 0;
+    }
+    sVerdict.mFactor = v ? sCullFactors[std::min<U32>(v, 3u) - 1] : 0.f;
     sVerdict.mValid = true;
 }
 
@@ -13389,13 +13411,18 @@ struct CullClassifier
     std::vector<U8>& mMemo;
     bool mUseOcc;
     U64 mUnknown = 0;
+    const std::vector<U8>* mRevive = nullptr;       // slots whose live occlusion check said "visible" after the row said occluded: they are visited, and so are their descendants (as the walk does when checkOcclusion() clears a node)
+    U64 mFailDead = 0, mFailParent = 0, mFailBit = 0, mDeepN = 0, mTopN = 0, mPassN = 0, mFailBitKnownInside = 0;       // why a row got its state (the short frame's detector prints them)
+    LLCamera* mCamera = nullptr;                    // (for the detector: the CPU's own frustum test of a row the verdict failed)
 
     bool bit(U32 s)
     {
-        if (s >= mV.mCount || s >= mV.mGen.size() || sSlotGen[s] != mV.mGen[s])
+        if (s >= mV.mCount || s >= mV.mGen.size() || sSlotGen[s] != mV.mGen[s]
+            || (s < mV.mDead.size() && mV.mDead[s])                                       // a placeholder when the record was sent (a new group's slot): the bit is false for any row, a subtree below would fail with it
+            || (s < sRowChangeFrame.size() && sRowChangeFrame[s] > mV.mFrame))            // its row changed after the record (new bounds, a new parent, a flag): the bit is for the old row
         {
             ++mUnknown;
-            return true;            // a group the record did not know (made since): not tested, passed
+            return true;            // a group the record did not know, or knew as another row (made or changed since): not tested, passed
         }
         return (mV.mBits[s >> 5] >> (s & 31)) & 1u;
     }
@@ -13414,6 +13441,7 @@ struct CullClassifier
         const LLVkBridge::CullRow& row = mRows[s];
         if (row.mFlags & 32u)
         {
+            ++mFailDead;
             return m = CS_FAIL;
         }
         U8 parent = CS_PASS;
@@ -13423,17 +13451,34 @@ struct CullClassifier
         }
         if (parent == CS_FAIL)
         {
+            ++mFailParent;
             return m = CS_FAIL;
         }
         if (parent == CS_TOP || parent == CS_DEEP)
         {
+            ++mDeepN;
             return m = CS_DEEP;
         }
-        if (mUseOcc && (row.mFlags & 5u) == 4u)
+        if (mUseOcc && (row.mFlags & 5u) == 4u && !(mRevive && s < mRevive->size() && (*mRevive)[s]))
         {
+            ++mTopN;
             return m = CS_TOP;
         }
-        return m = bit(s) ? CS_PASS : CS_FAIL;
+        const bool pass = bit(s);
+        if (pass)
+        {
+            ++mPassN;
+        }
+        else
+        {
+            ++mFailBit;
+            const bool known = s < mV.mCount && s < mV.mGen.size() && sSlotGen[s] == mV.mGen[s];
+            if (known && mCamera && mCamera->AABBInFrustumNoFarClip(LLVector4a(row.mCenter[0], row.mCenter[1], row.mCenter[2]), LLVector4a(row.mHalf[0], row.mHalf[1], row.mHalf[2])) != 0)
+            {
+                ++mFailBitKnownInside;      // the verdict says outside, the CPU's test of the same row says inside
+            }
+        }
+        return m = pass ? CS_PASS : CS_FAIL;
     }
 };
 }
@@ -13450,13 +13495,22 @@ static void cull_flat(LLCamera& camera, bool use)
     const auto t0 = CullClock::now();
     static std::vector<U8> memo;
     static std::vector<U32> kept, top;
+    static std::vector<U8> revive;
+    U64 why_fd = 0, why_fp = 0, why_fb = 0, why_deep = 0, why_top = 0, why_pass = 0, why_inside = 0;
+    U64 unknown = 0, revived = 0;
+    revive.assign(sMirror.size(), 0);
+    // up to four passes: a topmost occluded group whose live check (the walk's earlyFail calls it as it visits the node) says visible is revived and its subtree classified again (it can hold occluded groups of its own)
+    for (int pass = 0; pass < 4; ++pass)
+    {
     kept.clear();
     top.clear();
-    U64 unknown = 0;
+    unknown = 0;
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
         memo.assign(sMirror.size(), CS_UNSET);
         CullClassifier c{ sMirror, sVerdict, memo, LLPipeline::useOcclusion() != 0 };
+        c.mRevive = &revive;
+        c.mCamera = &camera;
         for (U32 slot = 0; slot < sMirror.size(); ++slot)
         {
             const U8 st = c.state(slot);
@@ -13482,11 +13536,74 @@ static void cull_flat(LLCamera& camera, bool use)
             (st == CS_PASS ? kept : top).push_back(slot);
         }
         unknown = c.mUnknown;
+        why_fd = c.mFailDead; why_fp = c.mFailParent; why_fb = c.mFailBit; why_deep = c.mDeepN; why_top = c.mTopN; why_pass = c.mPassN; why_inside = c.mFailBitKnownInside;
+    }
+    if (!use)
+    {
+        break;
+    }
+    bool changed = false;
+    for (U32 slot : top)
+    {
+        LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+        if (!g || g->isDead() || revive[slot])
+        {
+            continue;
+        }
+        g->checkOcclusion();
+        if (!(LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+        {
+            revive[slot] = 1;
+            ++revived;
+            changed = true;
+        }
+    }
+    if (!changed)
+    {
+        break;
+    }
     }
     s.mUseUnknown += unknown;
     ++s.mUseFrames;
     s.mUseKept += kept.size();
     s.mUseTop += top.size();
+    if (use)
+    {
+        // a frame whose kept groups are far under the average of the frames before (the geometry of a frame missing: a flash) names itself with what the classifier worked from
+        static double avg_kept = 0.0;
+        static U64 uses = 0, said = 0;
+        if (++uses > 60 && avg_kept > 200.0 && (double)kept.size() < avg_kept * 0.6 && said < 40)
+        {
+            ++said;
+            U64 occluded_rows = 0, rows_up = 0, roots = 0, roots_failed = 0, roots_unknown = 0, bits_set = 0, in_view_now = 0;
+            for (U32 w : sVerdict.mBits)
+            {
+                bits_set += (U64)__popcnt(w);
+            }
+            for (U32 i = 0; i < sMirror.size(); ++i)
+            {
+                rows_up += (sMirror[i].mFlags & 32u) == 0;
+                occluded_rows += (sMirror[i].mFlags & 4u) != 0 && (sMirror[i].mFlags & 32u) == 0;
+                if ((sMirror[i].mFlags & 1u) && !(sMirror[i].mFlags & 32u))
+                {
+                    ++roots;
+                    const bool known = i < sVerdict.mCount && i < sVerdict.mGen.size() && sSlotGen[i] == sVerdict.mGen[i];
+                    roots_unknown += !known;
+                    roots_failed += known && !((sVerdict.mBits[i >> 5] >> (i & 31)) & 1u);
+                    // the CPU's own frustum test of the root now, for a look at whether the verdict's bit is what the camera says
+                    in_view_now += camera.AABBInFrustumNoFarClip(LLVector4a(sMirror[i].mCenter[0], sMirror[i].mCenter[1], sMirror[i].mCenter[2]), LLVector4a(sMirror[i].mHalf[0], sMirror[i].mHalf[1], sMirror[i].mHalf[2])) != 0;
+                }
+            }
+            const LLVector3 co = camera.getOrigin(), cat = camera.getAtAxis();
+            LL_INFOS("VkFlashC2") << "frame " << gFrameCount << ": the classifier's states: passed " << why_pass << ", topmost occluded " << why_top << ", below an occluded one " << why_deep << ", failed: dead " << why_fd << ", parent failed " << why_fp << ", own verdict bit false " << why_fb
+                                  << " (of them the CPU's own test says inside " << why_inside << "), revived " << revived << LL_ENDL;
+            LL_INFOS("VkFlashC2") << "frame " << gFrameCount << ": the flat cull kept " << kept.size() << " groups, the average of the frames before is " << avg_kept << "; topmost occluded " << top.size() << "; rows without a verdict (passed) " << unknown << "; the verdict is " << ((U32)gFrameCount - sVerdict.mFrame)
+                                   << " frames old, " << sVerdict.mCount << " rows (the table has " << sMirror.size() << ", live rows " << rows_up << ", of them marked occluded " << occluded_rows << "); occlusion mode " << LLPipeline::useOcclusion() << ", depth dirty " << (gDepthDirty ? 1 : 0) << " | the verdict has " << bits_set << " bits set; partition roots " << roots << ", failed by the verdict " << roots_failed << ", not known to it " << roots_unknown
+                                   << ", inside the frustum by the CPU's test now " << in_view_now << " | the camera: origin now " << co.mV[0] << " " << co.mV[1] << " " << co.mV[2] << ", at the verdict " << sVerdict.mOrigin[0] << " " << sVerdict.mOrigin[1] << " " << sVerdict.mOrigin[2]
+                                   << "; view now " << cat.mV[0] << " " << cat.mV[1] << " " << cat.mV[2] << ", at the verdict " << sVerdict.mAt[0] << " " << sVerdict.mAt[1] << " " << sVerdict.mAt[2] << LL_ENDL;
+        }
+        avg_kept = avg_kept == 0.0 ? (double)kept.size() : avg_kept * 0.95 + (double)kept.size() * 0.05;
+    }
     if (!use)
     {
         // derive: stamp, compare with the walk (the groups with the CPU stamp of this frame)
@@ -13582,6 +13699,21 @@ bool LLCullShadow::useMatches(LLCamera& camera)
     for (int k = 0; k < 4; ++k)
     {
         if (fabsf(now[k] - sVerdict.mShape[k]) > 1.0e-4f * llmax(1.f, fabsf(now[k])))
+        {
+            ++sCullStats.mUseMismatch;
+            return false;
+        }
+    }
+    // the verdict's margins were made for the camera moving no more than the record's bounds (times the variant's factor) from the pose it was sent at: a jump (the login's camera settling on the avatar, a teleport, a snap of the
+    // view) leaves the verdict's frustum on the wrong place for the frames until the next verdict, and the flat cull would keep a handful of groups (a flash of sky and water, seen with LL_VK_CULL_USE=2 as the avatars load in): that
+    // frame is walked
+    {
+        const LLVector3 o = camera.getOrigin(), at = camera.getAtAxis();
+        const F32 dx = o.mV[0] - sVerdict.mOrigin[0], dy = o.mV[1] - sVerdict.mOrigin[1], dz = o.mV[2] - sVerdict.mOrigin[2];
+        const F32 trans = sqrtf(dx * dx + dy * dy + dz * dz);
+        const F32 cosang = llclamp(at.mV[0] * sVerdict.mAt[0] + at.mV[1] * sVerdict.mAt[1] + at.mV[2] * sVerdict.mAt[2], -1.f, 1.f);
+        const F32 ang = acosf(cosang);
+        if (trans > llmax(sVerdict.mFactor * sVerdict.mBoundT, 0.1f) || ang > llmax(sVerdict.mFactor * sVerdict.mBoundA, 0.01f))
         {
             ++sCullStats.mUseMismatch;
             return false;
@@ -14259,6 +14391,13 @@ void LLCullShadow::send(LLCamera& camera)
     {
         rec.mSerial = serial;
         cull_shape(camera, rec.mShape);
+        {
+            const LLVector3 o = camera.getOrigin(), at = camera.getAtAxis();
+            rec.mOrigin[0] = o.mV[0]; rec.mOrigin[1] = o.mV[1]; rec.mOrigin[2] = o.mV[2];
+            rec.mAt[0] = at.mV[0]; rec.mAt[1] = at.mV[1]; rec.mAt[2] = at.mV[2];
+            rec.mBoundT = sCullTBound;
+            rec.mBoundA = sCullABound;
+        }
         rec.mBuildSerial = sCullBuildSerial;
         rec.mFrame = (U32)gFrameCount;
         rec.mCount = table_size;
@@ -15057,6 +15196,16 @@ void ll_scene_geo_frame(LLCullResult* cull)
     {
         cull_extra_diag(*LLViewerCamera::getInstance(), handles);
         cull_stage4_compare(handles);
+        // a frame whose list is far from the average of the frames before it (a flash: the geometry of a frame missing or doubled) names itself, with the state of every switch (the first 40 frames after the start are not looked at)
+        static double avg = 0.0;
+        static U64 frames = 0, said = 0;
+        if (++frames > 40 && avg > 100.0 && (handles.size() < avg * 0.6 || handles.size() > avg * 1.6) && said < 60)
+        {
+            ++said;
+            LL_INFOS("VkFlash") << "frame " << gFrameCount << ": the main view names " << handles.size() << " fragments, the average of the frames before is " << avg << " (consumers " << consumers.size() << ", visible groups " << cull->getVisibleGroupsSize() << ", alpha groups " << cull->getAlphaGroupsSize()
+                                << ", rigged alpha " << cull->getRiggedAlphaGroupsSize() << ", C2 mode " << (U32)LLCullShadow::sUse.load() << ", own " << sCullOwnMode << ", the verdict is " << ((U32)gFrameCount - sVerdict.mFrame) << " frames old)" << LL_ENDL;
+        }
+        avg = avg == 0.0 ? (double)handles.size() : avg * 0.95 + (double)handles.size() * 0.05;
     }
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();
