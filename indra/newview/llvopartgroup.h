@@ -84,6 +84,8 @@ public:
     LLVOPartGroup(const LLUUID &id, const LLPCode pcode, LLViewerRegion *regionp);
 
     /*virtual*/ bool    isActive() const; // Whether this object needs to do an idleUpdate.
+    // <FS> LL_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
+    /*virtual*/ bool usesDistance() const { return false; }
     void idleUpdate(LLAgent &agent, const F64 &time);
 
     virtual F32 getBinRadius();
