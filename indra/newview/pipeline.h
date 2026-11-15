@@ -403,7 +403,8 @@ public:
     void fillPools(LLCullResult& result, const std::vector<LLDrawable*>* first);       // <FS> stage 2b of PLAN-change-driven-sort.md: the pool fill of a view, from its cull result
     bool sortAccepts(LLDrawable* drawablep);       // <FS> stage 2 of PLAN-change-driven-sort.md: does this drawable take part in the sort (and the pools' fill)
     void rebuildGeometry(LLCamera& camera);        // <FS> stage 1 of PLAN-change-driven-sort.md: the rebuilds postSort used to make
-    void postSort(LLCamera& camera);
+    void buildRenderLists(LLCamera& camera);        // <FS> stage 3 of PLAN-change-driven-sort.md: what postSort was, without the rebuilds and the beacons
+    void addBeacons();                              // <FS> stage 3: the beacon block that was the end of postSort
 
     // <FS> Parallel preparation of the sun shadow cascades. The cull and the render map of each cascade are built on worker
     // threads (each with its own camera id and cull result); everything that touches shared or GL state (geometry rebuilds,
