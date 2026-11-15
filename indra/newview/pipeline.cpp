@@ -15648,6 +15648,44 @@ static bool alpha_source_type(U32 type)
 
 static void shadow_caster_dropped(const char* kind, size_t count);
 
+// <FS> (2026-11-14, a cleanup of a diagnostic in the hottest loop) how the groups of the shadow render map job were served: counted per job in plain integers and added to the totals of the run ONCE when the job
+// ends. They used to be shared atomics updated for every group visited, from every thread of the pool (about 12 million visits in a session on the same few cache lines) for a log line every 20,000 groups.
+struct ShadowServedTotals
+{
+    std::atomic<U64> mWhy[4], mByType[128], mOrphans{ 0 }, mGroups{ 0 };
+};
+static ShadowServedTotals sShadowServed;
+
+struct ShadowServed
+{
+    U64 mWhy[4] = {}, mByType[128] = {}, mOrphans = 0, mGroups = 0;
+    ~ShadowServed()
+    {
+        if (!mGroups)
+        {
+            return;
+        }
+        for (U32 k = 0; k < 4; ++k)
+        {
+            if (mWhy[k]) { sShadowServed.mWhy[k].fetch_add(mWhy[k], std::memory_order_relaxed); }
+        }
+        for (U32 t = 0; t < 128; ++t)
+        {
+            if (mByType[t]) { sShadowServed.mByType[t].fetch_add(mByType[t], std::memory_order_relaxed); }
+        }
+        if (mOrphans) { sShadowServed.mOrphans.fetch_add(mOrphans, std::memory_order_relaxed); }
+        const U64 before = sShadowServed.mGroups.fetch_add(mGroups, std::memory_order_relaxed);
+        if (before / 20000 != (before + mGroups) / 20000)
+        {
+            // logged every 20000 groups (counted over all jobs): 0 from the fragment, 2 no current fragment (an empty draw map has none: ", with draws" counts the others), 3 a rendered pass type nothing names
+            std::string text;
+            for (U32 t = 0; t < 128; ++t) { const U64 n = sShadowServed.mByType[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
+            LL_INFOS("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << sShadowServed.mWhy[0].load() << ", no current fragment " << sShadowServed.mWhy[2].load() << " (with draws " << sShadowServed.mOrphans.load()
+                                   << "), unnamed rendered type " << sShadowServed.mWhy[3].load() << " (types:" << text << ")" << LL_ENDL;
+        }
+    }
+};
+
 void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end, LLCullResult& local)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -15663,6 +15701,7 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
     // job takes from each group's current fragment what the cascade needs and pushes no draw info. A group whose draw map holds a pass type nothing names (an item the table could not serve: a texture matrix
     // slot it could not get) or whose fragment is not current (the fragment is made at the end of every group rebuild: an invariant) is counted as a dropped caster, ShadowPackets, as the others are.
     U64 n_groups = 0, n_resident = 0, n_rigged = 0;
+    ShadowServed served;            // (merged into the run's totals when the job ends)
 
     LLCullResult::sg_iterator visible_groups = result.beginVisibleGroups();
     for (U32 gi = begin; gi < end; ++gi)
@@ -15692,27 +15731,20 @@ void LLPipeline::shadowPrepRenderMap(ShadowCascadePrep& prep, U32 begin, U32 end
             }
         }
         {
-            // how the groups were served (counted over all jobs, logged every 20000 groups): 0 from the fragment, 2 no current fragment (an empty draw map has none: ", with draws" counts the others), 3 a rendered pass type nothing names
-            static std::atomic<U64> why[4], by_type[128], orphans{ 0 }, groups{ 0 };
+            // how the groups were served: 0 from the fragment, 2 no current fragment (an empty draw map has none: "with draws" counts the others), 3 a rendered pass type nothing names
             U32 reason = 0;
             if (!current)
             {
                 reason = 2;
-                if (!group->mPendingDraws.empty()) { orphans.fetch_add(1, std::memory_order_relaxed); }
+                if (!group->mPendingDraws.empty()) { ++served.mOrphans; }
             }
             else if (has_unnamed)
             {
                 reason = 3;
-                for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed)) { if (hasRenderType(t)) { by_type[std::min<U32>(t, 127u)].fetch_add(1, std::memory_order_relaxed); } }
+                for (U32 t : (raster_rt ? walk_frag->mWalkUnnamedRaster : walk_frag->mWalkUnnamed)) { if (hasRenderType(t)) { ++served.mByType[std::min<U32>(t, 127u)]; } }
             }
-            why[reason].fetch_add(1, std::memory_order_relaxed);
-            if (groups.fetch_add(1, std::memory_order_relaxed) % 20000 == 19999)
-            {
-                std::string text;
-                for (U32 t = 0; t < 128; ++t) { const U64 n = by_type[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
-                LL_INFOS("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << why[0].load() << ", no current fragment " << why[2].load() << " (with draws " << orphans.load()
-                                       << "), unnamed rendered type " << why[3].load() << " (types:" << text << ")" << LL_ENDL;
-            }
+            ++served.mWhy[reason];
+            ++served.mGroups;
         }
         if (!current)
         {
@@ -16134,7 +16166,7 @@ static void report_pool_draws()
     {
         const LLGeometryPacketStats& g = gGeometryPacketStats;
         LL_INFOS("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
-            << " draws dropped (no old path), " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
+            << " draws a record cannot carry (not drawn), " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
     }
     gGeometryPacketStats = LLGeometryPacketStats();
     memset(sPoolDraws.mDraws, 0, sizeof(sPoolDraws.mDraws));
@@ -27976,19 +28008,19 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             if (st.mPacketRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
-                    << st.mPacketFallback / frames << " draws dropped (no old path)" << LL_ENDL;
+                    << st.mPacketFallback / frames << " draws a record cannot carry (not drawn)" << LL_ENDL;
             }
             if (st.mSkinRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
-                    << st.mSkinFallback / frames << " draws dropped (no old path), " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
+                    << st.mSkinFallback / frames << " draws a record cannot carry (not drawn), " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
             }
             LL_INFOS("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
             st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
                 LL_INFOS("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
-                    << st.mAlphaFallback / frames << " draws dropped (no old path), " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
+                    << st.mAlphaFallback / frames << " draws a record cannot carry (not drawn), " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
                     << st.mAlphaFragGroups / frames << " groups" << LL_ENDL;
             }
             LL_INFOS("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
