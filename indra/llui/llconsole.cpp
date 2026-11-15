@@ -780,10 +780,23 @@ void LLConsole::updateClass()
 static LLTrace::BlockTimerStatHandle FTM_CONSOLE_UPDATE_PARAGRAPHS("Update Console Paragraphs");
 void LLConsole::update()
 {
+    // <FS> (2026-11-14, a crash at login: a log line written while a glyph was uploaded for a console line went back into the console, whose lock this function was holding: boost::fibers::mutex::lock
+    // threw and the viewer died) the pending lines are taken out under the lock and the paragraphs are built after it is released: building one measures glyphs, which can upload a font texture, and anything
+    // logged on the way must be able to add a line to the console
+    std::deque<LLWString> pending_lines;
+    std::deque<LLColor4> pending_colors;
+    std::deque<LLFontGL::StyleFlags> pending_styles;
+    std::deque<LLUUID> pending_sessions;
     {
         LLCoros::LockType lock(mMutex);
+        pending_lines.swap(mLines);
+        pending_colors.swap(mLineColors);
+        pending_styles.swap(mLineStyle);
+        pending_sessions.swap(mSessionIDs);
+    }
+    {
 
-        while (!mLines.empty())
+        while (!pending_lines.empty())
         {
             // <FS:Ansariel> Chat console
             //mParagraphs.push_back(
@@ -795,22 +808,22 @@ void LLConsole::update()
             //mLines.pop_front();
 
             mParagraphs.push_back(
-                Paragraph(  mLines.front(),
-                            (!mLineColors.empty() ? mLineColors.front() : LLColor4::white),
+                Paragraph(  pending_lines.front(),
+                            (!pending_colors.empty() ? pending_colors.front() : LLColor4::white),
                             mTimer.getElapsedTimeF32(),
                             mFont,
                             (F32)getRect().getWidth(),
-                            (!mLineStyle.empty() ? mLineStyle.front() : LLFontGL::NORMAL),
-                            (!mSessionIDs.empty() ? mSessionIDs.front(): LLUUID::null),
+                            (!pending_styles.empty() ? pending_styles.front() : LLFontGL::NORMAL),
+                            (!pending_sessions.empty() ? pending_sessions.front(): LLUUID::null),
                             mParseUrls,
                             this));
-            mLines.pop_front();
-            if (!mLineColors.empty())
-                mLineColors.pop_front();
-            if (!mLineStyle.empty())
-                mLineStyle.pop_front();
-            if (!mSessionIDs.empty())
-                mSessionIDs.pop_front();
+            pending_lines.pop_front();
+            if (!pending_colors.empty())
+                pending_colors.pop_front();
+            if (!pending_styles.empty())
+                pending_styles.pop_front();
+            if (!pending_sessions.empty())
+                pending_sessions.pop_front();
             // </FS:Ansariel>
         }
     }
