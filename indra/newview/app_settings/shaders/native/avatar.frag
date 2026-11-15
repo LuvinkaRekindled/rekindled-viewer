@@ -8,6 +8,12 @@ layout(location = 0) in vec3 vary_position;
 layout(location = 1) in vec2 vary_texcoord0;
 layout(location = 2) in vec3 vary_normal;
 
+#ifdef GB_MOTION
+#include "lib/motion.glsl"
+layout(location = 14) in vec4 vary_cur;
+layout(location = 15) in vec4 vary_prev;
+#endif
+
 layout(location = 0) out vec4 frag_albedo;
 layout(location = 1) out vec4 frag_spec;
 layout(location = 2) out vec4 frag_normal;
@@ -19,7 +25,11 @@ layout(location = 4) out vec2 frag_velocity;
 
 void main()
 {
+#ifdef GB_MOTION
+    frag_velocity = ll_motion_encode(vary_cur, vary_prev, render_res);
+#else
     frag_velocity = vec2(1.0, 0.0);
+#endif
     mirror_clip(vary_position);
     const vec4 diff = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_diffuseMap))], vary_texcoord0);
     if (diff.a < minimum_alpha)

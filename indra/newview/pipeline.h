@@ -201,21 +201,13 @@ public:
     void                    denoiseSunShadow(LLRenderTarget* light);      // denoises the sun channel of the lightmap in place (before the penumbra filter)
     LLRenderTarget*         denoiseReflections(LLRenderTarget* refl);       // runs the passes and the denoiser; returns the target the lighting pass should read (refl itself when it did not run)
     static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
-    // <FS> avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the velocity pass after the G-buffer. begin: before the main view's renderGeomDeferred (sets the body recording
-    // when the pass is wanted); render: after the G-buffer is flushed, before the lighting. mAvatarVelocityMap: RGBA16F at render size, rg = total screen motion in pixels, a = 1 where an avatar wrote.
-    void beginAvatarVelocity();
-    void renderAvatarVelocity();
-    bool avatarVelocityWanted();
     void visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag);
     void visualizeRtMaterials(LLRenderTarget* dst);
-    LLRenderTarget          mAvatarVelocityMap;
     LLRenderTarget          mRtSunHard;                         // <FS> the centre ray's hard sun shadow alone, with a mip chain (R16F): the penumbra filter's taps read the level of their spacing
     LLRenderTarget          mRtShadowTemp;                      // <FS> PLAN-rt-shadow-penumbra.md step 2b: the penumbra filter's horizontal pass writes here, the vertical one reads it and writes the lightmap
     LLRenderTarget          mLightMapHalf2;                     // <FS> the second half resolution lightmap (the blur at half resolution ping-pongs between the two)
     LLRenderTarget          mLightMapHalf;                      // <FS> shaders from scratch (PLAN-shaders-rewrite.md): the sun lightmap at half resolution (native sun program, upsampled by the native upsample program), key lightmap_half
     LLRenderTarget          mRtBlocker;                         // <FS> PLAN-rt-shadow-penumbra.md step 1: the blocker distance of the sun lightmap's centre ray (R16F, copied from the lightmap's attachment 1 right after the sun pass)
-    bool                    mAvatarVelocityActive = false;      // begin said yes for this frame
-    bool                    mAvatarVelocityDrawn = false;       // the pass ran this frame: generateMotionVectors takes the target
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
     LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with LL_VK_DLSS_NR >= 2 (the position after the upscale)

@@ -66,17 +66,6 @@ public:
     const F32* getWorldPalette() const { return mWorldPalette; }
     const F32* getPreviousWorldPalette() const { return mPrevWorldPalette; }
     bool hasPreviousWorldPalette() const { return mPaletteHasPrev; }
-    // motion vectors: the body meshes the main view's G-buffer drew this frame (recorded in drawShape while sRecordVelocity is set), drawn again by the avatar velocity pass
-    struct VelocityDraw
-    {
-        class LLVertexBuffer* mBuffer;
-        U32 mStart, mEnd, mCount, mOffset;
-        const LLViewerJointMesh* mMesh;
-        class LLVOAvatar* mAvatar;
-    };
-    static bool sRecordVelocity;
-    static std::vector<VelocityDraw> sVelocityDraws;
-
     // overloaded from base class
     U32 drawShape( F32 pixelArea, bool first_pass, bool is_dummy ) override;
 

@@ -75,6 +75,23 @@ void main()
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+#if defined(GB_MOTION) && !defined(HAS_SKIN)
+    {
+        // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)
+        MotionTable motion_table = MotionTable(ll_packet_motion);
+        const mat4 prev_model = motion_table.m[2u * row.model + 1u];
+        if (prev_model[3][3] != 0.0)
+        {
+            vary_cur = view_proj_cur * (motion_table.m[2u * row.model] * vec4(vertex, 1.0));
+            vary_prev = view_proj_prev * (prev_model * vec4(vertex, 1.0));
+        }
+        else
+        {
+            vary_cur = vec4(0.0);
+            vary_prev = vec4(0.0);
+        }
+    }
+#endif
 #if defined(GB_MOTION) && defined(HAS_SKIN)
     {
         mat3 prev_rotation;

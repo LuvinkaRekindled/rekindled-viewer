@@ -10,6 +10,10 @@
 layout(std140, set = 0, binding = 8) uniform LLLooseSkin
 {
     vec4 matrixPalette[45];             // joint i: rows at i, i + 15 and i + 30
+#ifdef GB_MOTION
+    vec4 matrixPaletteWorld[45];        // velocity fold: the same palette in world space (this frame) and last frame's (the viewer sets both, LLViewerJointMesh::uploadJointMatrices)
+    vec4 matrixPalettePrev[45];
+#endif
 };
 
 #include "lib/avatarskin.glsl"
@@ -17,6 +21,11 @@ layout(std140, set = 0, binding = 8) uniform LLLooseSkin
 layout(location = 0) out vec3 vary_position;
 layout(location = 1) out vec2 vary_texcoord0;
 layout(location = 2) out vec3 vary_normal;
+#ifdef GB_MOTION
+// the clip position of the vertex under the unjittered camera of this frame and of the one before (the fragment shader writes the motion, lib/motion.glsl)
+layout(location = 14) out vec4 vary_cur;
+layout(location = 15) out vec4 vary_prev;
+#endif
 
 void main()
 {
@@ -100,4 +109,30 @@ void main()
     vary_position = pos.xyz;
     gl_Position = projection_matrix * pos;
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+#ifdef GB_MOTION
+    {
+        // the motion of the vertex: the world space palettes of this frame and of the last (the avatar velocity pass did the same in its own pass until 2026-11-15); the wind of the clothing is left out, as there
+        float wx = (row.weights.x != 0u || row.weights.y != 0u) ? RowFloats(row.weights).f[index] : 0.0;
+        if (!(wx >= 0.0 && wx <= 14.0))
+        {
+            wx = 0.0;
+        }
+        const int i = int(floor(wx));
+        const int n = min(i + 1, 14);
+        const float x = fract(wx);
+        vec4 c0 = matrixPaletteWorld[i], c1 = matrixPaletteWorld[i + 15], c2 = matrixPaletteWorld[i + 30];
+        vec4 p0 = matrixPalettePrev[i], p1 = matrixPalettePrev[i + 15], p2 = matrixPalettePrev[i + 30];
+        if (x > 0.0)
+        {
+            c0 = mix(c0, matrixPaletteWorld[n], x);
+            c1 = mix(c1, matrixPaletteWorld[n + 15], x);
+            c2 = mix(c2, matrixPaletteWorld[n + 30], x);
+            p0 = mix(p0, matrixPalettePrev[n], x);
+            p1 = mix(p1, matrixPalettePrev[n + 15], x);
+            p2 = mix(p2, matrixPalettePrev[n + 30], x);
+        }
+        vary_cur = view_proj_cur * vec4(dot(c0, pos_in), dot(c1, pos_in), dot(c2, pos_in), 1.0);
+        vary_prev = view_proj_prev * vec4(dot(p0, pos_in), dot(p1, pos_in), dot(p2, pos_in), 1.0);
+    }
+#endif
 }

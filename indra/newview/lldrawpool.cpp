@@ -1428,9 +1428,8 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
         return;
     }
     LL_CPU_ZONE("packets: scene table draw record");
-    if (rigged)
     {
-        // <FS> velocity fold (RenderMotionFold): the rigged programs that write motion take the camera matrices of this frame and the last from here (the bound program's loose block)
+        // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
         extern bool ll_motion_fold_uniforms(LLShaderProgram* program);
         ll_motion_fold_uniforms(LLShaderProgram::sCurBoundShaderPtr);
     }

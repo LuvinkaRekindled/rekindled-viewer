@@ -697,6 +697,7 @@ const Program::PacketUniforms& Program::packetUniforms()
         mPacketU.mPbr = find("ll_packet_pbr");
         mPacketU.mLights = find("ll_light_table");
         mPacketU.mImpostors = find("ll_impostor_table");
+        mPacketU.mMotion = find("ll_packet_motion");
         mPacketU.mResolved = true;
     }
     return mPacketU;

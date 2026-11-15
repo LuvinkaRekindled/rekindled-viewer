@@ -82,3 +82,12 @@ Still not read (idea 2 only; idea 1 does not need them):
 - The default and the saved values of `RenderAvatarMotionVectors*` (the settings file was not read for values, only the comments).
 - Real GPU cost of the current velocity pass in London (a Nsight or Tracy zone of "avatar velocity"), so the saving of idea 1 is a number and not a guess.
 - Cost of the skin compute at every-frame cadence for far avatars (idea 2, point 2).
+
+## Status 2026-11-15: idea 1 is done
+
+Built and run (lap fin1-rt1 on the final build: no device lost, normal picture, 0 palette arena overflows; GPU 10.8 ms a frame against 11.38 ms for the old pass in an earlier lap, three readings each, an indication only).
+- Step 1 (5ce69c7363): the fifth attachment and the sentinel writes. Step 2 (aaec9ef437): rigged draws write motion. Steps 3 to 5 (this commit): the worker keeps the previous matrix of every slot and a per frame table of the slots that moved (llvkworker.cpp, GeoState::setMatrix, motion table at geo_draw, `ll_packet_motion`); the 16 non-rigged G-buffer programs read it; the system avatar's body writes motion from the world palettes of this and the last frame (avatar.vert / avatar.frag, LLViewerJointMesh::uploadJointMatrices); the avatar velocity pass, its three programs, its CPU job, five settings, four native shaders and the per avatar bookkeeping are deleted (about 1,086 lines net).
+- Two GL era limits of four attachments were in the way and are raised to 8: LLRenderTarget::addColorAttachment and the worker's target_state (draw buffers).
+- Cost reading: the G-buffer zones went up (pool: simple +0.5 ms, rigged opaque +0.2 ms) and the render zone and the old pass went down; zones overlap, so only the total is a fair number (11.38 -> 10.8 ms). A real A/B needs several laps of each. If the static vertex work shows up as a cost, the first thing to try is one varying instead of two (the fragment shader knows the current position from the fragment coordinate: pass only the previous one).
+- Not done: a skip for still or far avatars (the old pass skipped them; the fold skins every rigged vertex twice); the worker's handlers of the old packet records (kinds 8 and 9) are unreachable and still there; llrendertarget.h still says "limit of 4".
+- Next: idea 2 (skin once) removes the second skinning in the vertex shader.
