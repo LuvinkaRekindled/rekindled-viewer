@@ -8008,24 +8008,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             rebuild_batch.flush();
         }
 
-        // the visible groups that are dirty and have no draw info yet (not drawable without a rebuild): the filters are the render map's, and the rebuilds are outside the batch as they were when the map made them
-        {
-            LL_CPU_ZONE("geometry: visible groups without draw info");
-            for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i)
-            {
-                LLSpatialGroup* group = *i;
-                if (group->isDead()
-                    || (LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                    || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
-                {
-                    continue;
-                }
-                if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
-                {  // no way this group is going to be drawable without a rebuild
-                    group->rebuildGeom();
-                }
-            }
-        }
     }
 
     {
@@ -9382,7 +9364,7 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
 }
 
 // C4.1: LL_VK_REBUILD_REG 1 (default) the rebuild loops of the shadow preparation ask the groups that have a dirty bit set (LLDirtyGroups) whether the cascade sees them, 0 reads the state of every visible group,
-// 2 does the old loops and compares what they would act on with what the registry gives
+// (2 was the check of the registry against the lists: finished and removed 2026-11-15, it runs as 0)
 static int rebuild_reg_mode()
 {
     static const int mode = getenv("LL_VK_REBUILD_REG") ? atoi(getenv("LL_VK_REBUILD_REG")) : 1;
@@ -9409,51 +9391,6 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
         const bool use_reg = reg_mode == 1 && !(prep.mHull.mValid && shadow_hull_mode() == 1);       // (the hull drops stamped groups from the lists: those cascades read the lists)
         const LLViewerCamera::eCameraID cascade_cam = LLViewerCamera::sCurCameraID;
-
-        if (reg_mode == 2 && !(prep.mHull.mValid && shadow_hull_mode() == 1))
-        {
-            // verify: what the loops below would act on, against the registry's answer
-            std::unordered_set<const LLSpatialGroup*> listed_mesh, listed_new, reg_mesh, reg_new;
-            for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
-            {
-                if (!(*iter)->isDead() && (*iter)->hasState(LLSpatialGroup::MESH_DIRTY)) { listed_mesh.insert(*iter); }
-            }
-            for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
-            {
-                LLSpatialGroup* g = *iter;
-                if (g->isDead()) { continue; }
-                if (g->hasState(LLSpatialGroup::MESH_DIRTY)) { listed_mesh.insert(g); }
-                if (!(RenderAutoHideSurfaceAreaLimit > 0.f && g->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(g->row().objectBoxSize, 10.f))
-                    && g->hasState(LLSpatialGroup::NEW_DRAWINFO) && g->hasState(LLSpatialGroup::GEOM_DIRTY))
-                {
-                    listed_new.insert(g);
-                }
-            }
-            for (LLSpatialGroup* g : LLDirtyGroups::snapshot())
-            {
-                if (g->isDead() || g->getVisible(cascade_cam) < census_frame) { continue; }
-                if (g->hasState(LLSpatialGroup::MESH_DIRTY)) { reg_mesh.insert(g); }
-                if (g->getSpatialPartition()->mRenderByGroup && !(RenderAutoHideSurfaceAreaLimit > 0.f && g->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(g->row().objectBoxSize, 10.f))
-                    && g->hasState(LLSpatialGroup::NEW_DRAWINFO) && g->hasState(LLSpatialGroup::GEOM_DIRTY))
-                {
-                    reg_new.insert(g);
-                }
-            }
-            static U64 checks = 0, bad = 0;
-            ++checks;
-            if (listed_mesh != reg_mesh || listed_new != reg_new)
-            {
-                ++bad;
-                if (bad <= 8)
-                {
-                    LL_WARNS("ShadowPrep") << "rebuild registry differs from the lists: cascade " << prep.mIndex << " mesh dirty " << listed_mesh.size() << " against " << reg_mesh.size() << ", new draw info " << listed_new.size() << " against " << reg_new.size() << " (" << bad << " of " << checks << ")" << LL_ENDL;
-                }
-            }
-            else if (checks % 3000 == 0)
-            {
-                LL_INFOS("ShadowPrep") << "rebuild registry check: " << bad << " of " << checks << " cascades differ from the lists" << LL_ENDL;
-            }
-        }
 
         if (use_reg)
         {
@@ -9509,53 +9446,9 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     rebuildPriorityGroups();
     lap.mark(PH_PRIORITY);
 
-    for (ShadowCascadePrep& prep : preps)
-    {
-        LLCullResult& result = *prep.mResult;
-        LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
-        const LLViewerCamera::eCameraID cascade_cam = LLViewerCamera::sCurCameraID;
-
-        if (reg_mode == 1 && !(prep.mHull.mValid && shadow_hull_mode() == 1))
-        {
-            for (LLSpatialGroup* group : LLDirtyGroups::snapshot())
-            {
-                if (group->isDead() || !group->getSpatialPartition()->mRenderByGroup || !group->hasState(LLSpatialGroup::NEW_DRAWINFO) || !group->hasState(LLSpatialGroup::GEOM_DIRTY) || group->getVisible(cascade_cam) < census_frame)
-                {
-                    continue;
-                }
-                if (RenderAutoHideSurfaceAreaLimit > 0.f &&
-                    group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f))
-                {
-                    continue;
-                }
-                if (census) { ++sCascadeCullCensus.mNewDrawInfo[world_sees(group)]; }
-                group->rebuildGeom();
-            }
-            continue;
-        }
-        for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
-        {
-            LLSpatialGroup* group = *iter;
-            if (group->isDead())
-            {
-                continue;
-            }
-            if (RenderAutoHideSurfaceAreaLimit > 0.f &&
-                group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f))
-            {
-                continue;
-            }
-            if (group->hasState(LLSpatialGroup::NEW_DRAWINFO) && group->hasState(LLSpatialGroup::GEOM_DIRTY))
-            {  // no way this group is going to be drawable without a rebuild
-                if (census) { ++sCascadeCullCensus.mNewDrawInfo[world_sees(group)]; }
-                group->rebuildGeom();
-            }
-        }
-    }
     LLDirtyGroups::prune();
 
     rebuild_batch.flush();
-    lap.mark(PH_NEW_DRAWINFO);
 
     // pack vertex buffers for groups that chose to delay their updates
     for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
