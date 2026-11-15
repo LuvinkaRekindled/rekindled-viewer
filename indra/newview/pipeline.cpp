@@ -12464,6 +12464,7 @@ std::vector<LLVkBridge::CullRow> sMirror;
 // show (the fragment's handle and served bits, the alpha keys, the triangles, the auto-hide inputs). Viewer side only for now: LL_VK_CULL_VERIFY compares every row with the group; nothing reads them yet.
 typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the same layout: stage 3)
 std::vector<CullMapRow> sMapMirror;
+std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 std::vector<U32> sFreeSlots;
@@ -12506,50 +12507,8 @@ bool cull_covered(LLSpatialGroup* sg)
              pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
 }
 
-// stage 3: does the avatar gate let this bridge's groups into the walk? As LLPipeline::markVisible (an attachment of an impostor or a jelly doll is not marked visible) and LLSpatialBridge::setVisible (the avatar must be
-// visible, have been seen within a frame, not be an impostor, be fully loaded) read it. The box and pixel-area tests of setVisible are the worker's (they need the camera).
-static bool cull_bridge_gate(LLSpatialBridge* bridge)
-{
-    LLDrawable* root = bridge->mDrawable;
-    LLViewerObject* vobj = root ? root->getVObj() : nullptr;
-    if (!vobj || !vobj->isAttachment())
-    {
-        return true;
-    }
-    LLDrawable* parent = root->getParent();
-    if (!parent)
-    {
-        return true;
-    }
-    LLViewerObject* objparent = parent->getVObj();
-    LLVOAvatar* avatarp = objparent ? objparent->asAvatar() : nullptr;
-    if (avatarp && ((!LLPipeline::sImpostorRender && avatarp->isImpostor()) || (LLVOAvatar::AOA_JELLYDOLL == avatarp->getOverallAppearance() && !avatarp->needsImpostorUpdate())))
-    {
-        return false;       // markVisible
-    }
-    if (vobj->isHUDAttachment())
-    {
-        return true;
-    }
-    LLDrawable* av = objparent ? objparent->mDrawable.get() : nullptr;
-    if (!av)
-    {
-        return false;
-    }
-    bool impostor = false, loaded = false;
-    if (objparent->isAvatar())
-    {
-        if (!avatarp->isVisible())
-        {
-            return false;
-        }
-        impostor = !LLPipeline::sImpostorRender && avatarp->isImpostor();
-        loaded = avatarp->isFullyLoaded();
-    }
-    return av->getSpatialGroup() && LLDrawable::getCurrentFrame() - av->getVisible() <= 1 && !impostor && loaded;
-}
-
-// the row a group shows now (flags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test, 16 empty, 32 dead, 64 a bridge's group, 128 a bridge's group the avatar gate keeps out of the walk)
+// the row a group shows now (flags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test, 16 empty, 32 dead, 64 a bridge's group). Whether a bridge's groups are listed this frame is the walk's own result for the bridge (avatar gate, impostor
+// and jelly doll rule, its box, its pixel area: all CPU state of the moment): the main view's record names the bridges the walk marked (ll_scene_geo_frame), not a row flag.
 void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
 {
     memset(&row, 0, sizeof(row));
@@ -12572,7 +12531,7 @@ void cull_fill_row(LLSpatialGroup* g, LLVkBridge::CullRow& row)
         // a group of a bridge's octree: its own bounds are in the bridge's space. The row holds the bridge's world box instead: the extents LLSpatialBridge::updateSpatialExtents keeps (the box the walk culls the bridge
         // by, the avatar's box for a conservative bridge), the same for every group of the bridge. It is a superset of the group's own box, and it is kept by one event (the bridge's extents), not by every change of the
         // bridge object's matrix (the first version of this row made the world box from that matrix: 55 % of the rows were stale in a lap, the avatars' bridges move their matrix without making their extents again).
-        bridge_flag = 64u | (cull_bridge_gate(bridge) ? 0u : 128u);
+        bridge_flag = 64u;
         const LLVector4a* be = static_cast<LLDrawable*>(bridge)->getSpatialExtents();
         for (int k = 0; k < 3; ++k)
         {
@@ -12793,6 +12752,7 @@ void cull_process()
             dead.mFlags = 33u;
             sMirror.push_back(dead);
             sMapMirror.push_back(CullMapRow());
+            sMapHandleFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
         }
@@ -12804,41 +12764,6 @@ void cull_process()
         ++s.mAdded;
     }
     sNewGroups.clear();
-    {
-        // stage 3: the avatar gate of the bridges' groups changes with the avatar's state (visible, impostor, loaded, seen within a frame), with no event of its own: once a frame each bridge's gate is asked and the rows
-        // that show another one are made again (the gate is read once for each bridge)
-        static std::unordered_map<const LLSpatialBridge*, bool> gates;
-        gates.clear();
-        for (U32 slot = 0; slot < (U32)sMirror.size(); ++slot)
-        {
-            if ((sMirror[slot].mFlags & (32u | 64u)) != 64u)
-            {
-                continue;
-            }
-            LLViewerOctreeGroup* og = sSlotGroup[slot];
-            if (!og || og->mCullDirty)
-            {
-                continue;
-            }
-            LLSpatialPartition* part = static_cast<LLSpatialGroup*>(og)->getSpatialPartition();
-            LLSpatialBridge* bridge = part ? part->asBridge() : nullptr;
-            if (!bridge)
-            {
-                continue;
-            }
-            auto it = gates.find(bridge);
-            if (it == gates.end())
-            {
-                it = gates.emplace(bridge, cull_bridge_gate(bridge)).first;
-            }
-            if (it->second != ((sMirror[slot].mFlags & 128u) == 0u))
-            {
-                og->mCullDirty = true;
-                sDirtySlots.push_back(slot);
-                ++s.mTouches;
-            }
-        }
-    }
     static std::vector<U32> work;
     work.clear();
     work.swap(sDirtySlots);
@@ -12857,7 +12782,14 @@ void cull_process()
         }
         g->mCullDirty = false;
         cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
-        cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
+        {
+            const U32 old_handle = sMapMirror[slot].mHandle;
+            cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
+            if (sMapMirror[slot].mHandle != old_handle)
+            {
+                sMapHandleFrame[slot] = (U32)gFrameCount;
+            }
+        }
         sSendSlots.push_back(slot);
         ++s.mRefreshed;
     }
@@ -12987,8 +12919,29 @@ struct CullVerdict
 CullVerdict sVerdict;
 bool sUseSkipped = false;           // a covered partition was left to useVerdict this frame
 
+// stage 4 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_STAGE4=1): the newest verdict with all its variants, as the CPU consumers of the visible set would read it, kept for the compare of the exact handle list against it
+const bool sStage4 = LLCullShadow::sOn && getenv("LL_VK_CULL_STAGE4") != nullptr;
+struct CullVerdictAll
+{
+    bool mValid = false;
+    U32 mCount = 0, mW = 0, mFrame = 0;
+    std::vector<U32> mWords;         // cullVariants * mW words
+    std::vector<U32> mGen;
+};
+CullVerdictAll sVerdictAll;
+
 void cull_store_verdict(const CullRec& rec, const std::vector<U32>& words)
 {
+    if (sStage4)
+    {
+        const U32 W = (rec.mCount + 31) / 32;
+        sVerdictAll.mWords.assign(words.begin(), words.begin() + (size_t)LLVkBridge::cullVariants * W);
+        sVerdictAll.mGen = rec.mGen;
+        sVerdictAll.mCount = rec.mCount;
+        sVerdictAll.mW = W;
+        sVerdictAll.mFrame = rec.mFrame;
+        sVerdictAll.mValid = true;
+    }
     if (!LLCullShadow::sUse)
     {
         return;
@@ -13002,6 +12955,143 @@ void cull_store_verdict(const CullRec& rec, const std::vector<U32>& words)
     sVerdict.mFrame = rec.mFrame;
     memcpy(sVerdict.mShape, rec.mShape, sizeof(sVerdict.mShape));
     sVerdict.mValid = true;
+}
+
+// stage 4: the exact handle list of this view against the newest verdict that has arrived, variant by variant: a fragment of the exact list that the verdict does not name is a miss (the consumers of section 3 of the plan
+// would not have had it): "new" if its group has no row in the verdict (the slot is newer than the record, or another group's then), "other" if the verdict knew the group and did not name it. Extras: groups with a
+// fragment that the verdict names and the exact list does not (what the margin and the filters of the render map cost).
+void cull_stage4_compare(const std::vector<U32>& handles)
+{
+    if (!sStage4 || !sVerdictAll.mValid || handles.empty())
+    {
+        return;
+    }
+    constexpr U32 kSets = LLVkBridge::cullVariants + 1;       // the GPU's variants, and the worker's late list as the last
+    struct Acc
+    {
+        U64 mViews = 0, mExact = 0, mNoRow = 0, mLag = 0, mLateLag = 0, mSamples = 0, mCauseFar = 0, mCausePlanes = 0, mCauseOther = 0, mCauseBridge = 0;
+        U64 mBoth[kSets] = {}, mNew[kSets] = {}, mOther[kSets] = {}, mExtra[kSets] = {}, mAnyMiss[kSets] = {}, mBridge[kSets] = {};
+    };
+    static Acc a;
+    const CullVerdictAll& v = sVerdictAll;
+    static std::vector<U32> late_words;
+    static U32 late_frame = 0, late_table = 0;
+    {
+        static std::vector<U32> buf(8192);
+        U32 frame = 0;
+        if (const U32 t = LLVkBridge::lateListRead(late_frame, frame, buf.data(), (U32)buf.size()))
+        {
+            late_words.assign(buf.begin(), buf.begin() + (t + 31) / 32);
+            late_frame = frame;
+            late_table = t;
+        }
+    }
+    U32 max_h = 0;
+    for (U32 h : handles)
+    {
+        max_h = std::max(max_h, h);
+    }
+    if (max_h > (1u << 20))
+    {
+        return;
+    }
+    static std::vector<U8> exact;
+    exact.assign((size_t)max_h + 1, 0);
+    for (U32 h : handles)
+    {
+        exact[h] = 1;
+    }
+    ++a.mViews;
+    a.mExact += handles.size();
+    a.mLag += (U32)gFrameCount - v.mFrame;
+    a.mLateLag += late_table ? (U32)gFrameCount - late_frame : 0;
+    U64 found = 0;
+    U32 missed_in_view[kSets] = {};
+    const U32 late_lag = late_table ? (U32)gFrameCount - late_frame : 0;
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 table = (U32)sMapMirror.size();
+        for (U32 slot = 0; slot < table; ++slot)
+        {
+            const U32 h = sMapMirror[slot].mHandle;
+            const bool is_exact = h && h <= max_h && exact[h];
+            found += is_exact;
+            if (!is_exact && (!h || (sMirror[slot].mFlags & (32u | 16u))))
+            {
+                continue;
+            }
+            const bool known = slot < v.mCount && slot < v.mGen.size() && sSlotGen[slot] == v.mGen[slot];
+            // (a fragment whose handle appeared after the late list was made, or about then, could not be in it: not a miss of the list's own)
+            const bool late_known = slot < late_table && (gFrameCount - sMapHandleFrame[slot]) > late_lag + 2;
+            for (U32 var = 0; var < kSets; ++var)
+            {
+                const bool is_late = var == LLVkBridge::cullVariants;
+                const bool kn = is_late ? late_known : known;
+                const bool bit = is_late ? (slot < late_table && ((late_words[slot >> 5] >> (slot & 31)) & 1u)) : (known && ((v.mWords[(size_t)var * v.mW + (slot >> 5)] >> (slot & 31)) & 1u));
+                if (is_exact)
+                {
+                    if (bit)
+                    {
+                        ++a.mBoth[var];
+                    }
+                    else if (sMirror[slot].mFlags & 64u)
+                    {
+                        ++a.mBridge[var];       // a bridge's group: the CPU says which bridges the walk marked (this frame's, exactly), a list of the frame before is not its source
+                    }
+                    else
+                    {
+                        ++(kn ? a.mOther[var] : a.mNew[var]);
+                        ++missed_in_view[var];
+                        if (kn && is_late)
+                        {
+                            // what the CPU's own tests say of the group now: past the far sphere (the stock quirk keeps it under a wholly-in ancestor), outside the side planes, or neither
+                            LLSpatialGroup* mg = (LLSpatialGroup*)sSlotGroup[slot];
+                            LLCamera* cam = LLViewerCamera::getInstance();
+                            const LLVector4a* mb = mg->getBounds();
+                            const LLVector4a* me = mg->getExtents();
+                            if (mg->getSpatialPartition() && !(sMirror[slot].mFlags & 64u))
+                            {
+                                const bool far_out = AABBSphereIntersect(me[0], me[1], cam->getOrigin(), cam->mFrustumCornerDist) == 0;
+                                const bool planes_out = cam->AABBInFrustumNoFarClip(mb[0], mb[1]) == 0;
+                                ++(far_out ? a.mCauseFar : planes_out ? a.mCausePlanes : a.mCauseOther);
+                            }
+                            else
+                            {
+                                ++a.mCauseBridge;
+                            }
+                        }
+                        if (kn && is_late && a.mSamples < 8 && a.mViews > 600)
+                        {
+                            ++a.mSamples;
+                            LL_INFOS("VkCullStage4") << "missed by the late list although it knew the group: slot " << slot << " handle " << h << " flags " << sMirror[slot].mFlags << " (row now), the list is " << late_lag << " frames old, handle changed " << (gFrameCount - sMapHandleFrame[slot]) << " frames ago" << LL_ENDL;
+                        }
+                    }
+                }
+                else if (bit)
+                {
+                    ++a.mExtra[var];
+                }
+            }
+        }
+    }
+    for (U32 var = 0; var < kSets; ++var)
+    {
+        a.mAnyMiss[var] += missed_in_view[var] != 0;
+    }
+    a.mNoRow += handles.size() - std::min<U64>(found, handles.size());
+    if (a.mViews % 600 == 0)
+    {
+        const double n = (double)a.mViews;
+        LL_INFOS("VkCullStage4") << "late list misses of groups it knew, a view, by what the CPU's tests say of the group now: beyond the far sphere " << (double)a.mCauseFar / n << ", outside the side planes " << (double)a.mCausePlanes / n << ", neither " << (double)a.mCauseOther / n
+                                 << ", a bridge's group " << (double)a.mCauseBridge / n << LL_ENDL;
+        for (U32 var = 0; var < kSets; ++var)
+        {
+            const bool is_late = var == LLVkBridge::cullVariants;
+            LL_INFOS("VkCullStage4") << "exact handle list against " << (is_late ? "the worker's late list" : "the newest GPU verdict, variant ") << (is_late ? 0 : var) << ", over " << a.mViews << " views (" << (is_late ? "the list" : "the verdict") << " is " << (double)(is_late ? a.mLateLag : a.mLag) / n
+                                     << " frames old): exact " << (double)a.mExact / n << " a view, in it " << (double)a.mBoth[var] / n << ", MISSED " << (double)(a.mNew[var] + a.mOther[var]) / n << " (fragment new since it was made " << (double)a.mNew[var] / n << ", other " << (double)a.mOther[var] / n
+                                     << "; views with a miss " << a.mAnyMiss[var] << "; bridge groups, which the CPU names itself, " << (double)a.mBridge[var] / n << "), extra " << (double)a.mExtra[var] / n << " a view, exact handles without a row " << a.mNoRow << LL_ENDL;
+        }
+    }
 }
 
 void cull_report()
@@ -14434,10 +14524,29 @@ void ll_scene_geo_frame(LLCullResult* cull)
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
     const bool cull_view = LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView;       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     LLVkBridge::CullParams view_params;
-    F32 view_extra[4] = { LLDrawable::sCurPixelAngle, 0.f, 0.f, 0.f };       // (after the params: the pixels a radian, which the bridges' area test reads)
+    U32 view_extra[4] = { 0u, 0u, 0u, 0u };       // (after the params: [1] = the number of bridge slots that follow it)
+    static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
+    marked_bridges.clear();
     if (cull_view)
     {
+        const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+        for (LLCullResult::bridge_iterator b = cull->beginVisibleBridge(); b != cull->endVisibleBridge(); ++b)
+        {
+            LLSpatialBridge* bridge = *b;
+            LLSpatialGroup* root = bridge && bridge->mOctree ? (LLSpatialGroup*)bridge->mOctree->getListener(0) : nullptr;
+            if (root && root->mCullId && root->row().visible[LLViewerCamera::CAMERA_WORLD] == frame)       // (LLOctreeMarkNotCulled stamps every node of the octree it marks)
+            {
+                marked_bridges.push_back(root->mCullId - 1);
+            }
+        }
+        view_extra[1] = (U32)marked_bridges.size();
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
+        view_params.mMotion[0] = sCullTBound;       // stage 4: the margins of the late list, as the table's record carries them
+        view_params.mMotion[1] = sCullABound;
+        for (int k = 0; k < 3; ++k)
+        {
+            view_params.mFactors[k] = sCullFactors[k];
+        }
         view_params.mPad[0] = (U32)LLPipeline::useOcclusion();
         const F32 hide_limit = LLPipeline::RenderAutoHideSurfaceAreaLimit;
         memcpy(&view_params.mPad[1], &hide_limit, 4);
@@ -14449,7 +14558,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
     }
-    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding) + (cull_view ? sizeof(view_params) + sizeof(view_extra) : 0));
+    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding) + (cull_view ? sizeof(view_params) + sizeof(view_extra) + marked_bridges.size() * sizeof(U32) : 0));
     if (!handles.empty()) { memcpy(blob.data(), handles.data(), handles.size() * sizeof(U32)); }
     if (!matrices.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32), matrices.data(), matrices.size() * sizeof(matrices[0])); }
     if (!sent_bindings.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]), sent_bindings.data(), sent_bindings.size() * sizeof(Binding)); }
@@ -14458,6 +14567,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         U8* at = blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding);
         memcpy(at, &view_params, sizeof(view_params));
         memcpy(at + sizeof(view_params), view_extra, sizeof(view_extra));
+        if (!marked_bridges.empty()) { memcpy(at + sizeof(view_params) + sizeof(view_extra), marked_bridges.data(), marked_bridges.size() * sizeof(U32)); }
     }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 21;
@@ -14470,6 +14580,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     if (cull_view)
     {
         cull_extra_diag(*LLViewerCamera::getInstance(), handles);
+        cull_stage4_compare(handles);
     }
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();

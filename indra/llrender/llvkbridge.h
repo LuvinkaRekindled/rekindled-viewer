@@ -372,6 +372,10 @@ namespace LLVkBridge
     // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
     // (stage 3: the record carries, after the rows, one CullMapRow for each of them)
     U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset);
+    // stage 4 of doc/vulkan/PLAN-visible-set-owner.md: the late list. The worker publishes the groups its derive of the main view's listed set names with the motion margin (and no occlusion cut) as a bit set by slot,
+    // with the frame of the record it was made for; the viewer's consumers of the visible set read the newest one. lateListRead: 0 = nothing newer than newer_than, else the table size (words = ceil(size / 32) of them)
+    void lateListPublish(U32 frame, U32 table_size, const U32* words);
+    U32 lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);
     S32 cullRead(U32 serial, U32 table_size, U32* out);
     void cullDone(U32 serial);
     void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
