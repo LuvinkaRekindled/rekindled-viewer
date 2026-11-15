@@ -368,7 +368,7 @@ public:
     // the CPU to fill, Readback is cached host memory for the CPU to read. Device buffers are device-local.
     enum class Memory { Device, Upload, UploadDevice, Readback };   // UploadDevice: CPU-written, GPU-read buffers (device-local host-visible memory when the GPU has it)
     bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory memory, Buffer& out);
-    void destroyBuffer(Buffer& buffer);     // deferred
+    void destroyBuffer(Buffer& buffer, bool immediate = false);       // immediate: only when the GPU is known to be done with it (a fence was waited on); the normal destroy waits for the frame slot to come round
     // --- buffer arena: vertex / index / acceleration-structure input data, suballocated from a few large device-local buffers ----
     // The range never moves. arenaFree is deferred like destroyBuffer (the range is reusable once the GPU has finished every frame submitted so far).
     bool arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind kind, ArenaRef& out);
@@ -385,6 +385,7 @@ public:
     std::string memoryBudgetText();
     // video memory as the OS sees this process: what it uses and what it may use before the driver starts moving allocations to system memory (VK_EXT_memory_budget); the largest device-local heap
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
+    bool hostMemory(U64& usage_bytes, U64& allocated_by_us);       // <FS> diagnostic (ImgMem): the host (system memory) heap as the OS counts it for this process, and what we allocated in it
     // size of the device-local memory heaps in bytes (the GPU's video memory)
     U64 deviceLocalBytes() const;
     size_t pendingDestroys() const;      // resources queued for destruction that no frame has released yet

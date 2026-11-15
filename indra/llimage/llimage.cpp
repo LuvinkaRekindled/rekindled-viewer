@@ -627,6 +627,7 @@ void (*LLImageBase::sPixelHoldWait)(const LLImageBase*) = nullptr;
 std::atomic<LLImageBase::allocation_failure_callback_t> LLImageBase::sAllocationFailureCallback{nullptr};
 thread_local bool LLImageBase::sForceAllocationFailureForTesting = false;
 std::atomic<U64> LLImageBase::sNonFatalAllocationFailureCount{0};
+std::atomic<S64> LLImageBase::sGlobalDataBytes{0};
 
 // static
 void LLImageBase::setAllocationFailureCallback(allocation_failure_callback_t callback)
@@ -643,6 +644,11 @@ void LLImageBase::forceNextAllocationFailureForTesting()
 U64 LLImageBase::getNonFatalAllocationFailureCount()
 {
     return sNonFatalAllocationFailureCount.load(std::memory_order_relaxed);
+}
+// static
+S64 LLImageBase::getGlobalDataBytes()
+{
+    return sGlobalDataBytes.load(std::memory_order_relaxed);
 }
 // </FS:Beq>
 
@@ -696,6 +702,10 @@ void LLImageBase::sanityCheck()
 // virtual
 void LLImageBase::deleteData()
 {
+    if (mData)
+    {
+        sGlobalDataBytes.fetch_sub(mDataSize, std::memory_order_relaxed);
+    }
     ll_aligned_free_16(mData);
     mDataSize = 0;
     mData = NULL;
@@ -791,6 +801,10 @@ U8* LLImageBase::allocateData(S32 size)
                 LL_ERRS() << "Failed to allocate image data size [" << size << "]" << LL_ENDL;
             }
         }
+        else
+        {
+            sGlobalDataBytes.fetch_add(size, std::memory_order_relaxed);
+        }
     }
 
     if (mBadBufferAllocation)
@@ -824,6 +838,7 @@ U8* LLImageBase::reallocateData(S32 size)
         LL_WARNS() << "Out of memory in LLImageBase::reallocateData, size: " << size << LL_ENDL;
         return 0;
     }
+    const S32 old_data_size = mData ? mDataSize : 0;
     if (mData)
     {
         S32 bytes = llmin(mDataSize, size);
@@ -832,6 +847,7 @@ U8* LLImageBase::reallocateData(S32 size)
     }
     mData = new_datap;
     mDataSize = size;
+    sGlobalDataBytes.fetch_add((S64)size - (S64)old_data_size, std::memory_order_relaxed);
     mBadBufferAllocation = false;
     return mData;
 }

@@ -692,6 +692,8 @@ private:
     // submit to the queue and a wait for the GPU, one for each upload, on the render worker. It is now kept (filled into a staging block at once) and recorded into the next frame before anything
     // draws, one barrier pair a texture. LL_VK_UPLOAD_BATCH=0 brings the old path back.
     struct DeferredUpload { Image* mImage; VkImage mHandle; U32 mMip, mLayer, mX, mY, mW, mH, mD; VkDeviceSize mOffset; U32 mBlock; };
+    bool mFlushSync = false;                        // <FS> a flush made with a submit and a wait (no frame active): its staging blocks are free the moment the wait ends
+    std::vector<Buffer> mDoomedBlocks;              // <FS> the blocks of that flush that are not kept: destroyed right after the wait, not when a frame slot comes round (during a loading screen no frame does)
     std::vector<Buffer> mDeferredBlocks;            // host visible staging blocks the deferred uploads were filled into
     VkDeviceSize mDeferredBlockUsed = 0;
     VkDeviceSize mDeferredBytes = 0;

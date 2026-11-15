@@ -1452,6 +1452,32 @@ void LLViewerTextureList::updateImages(F32 max_time)
     LLTexRetire::pump();        // <FS> C2.2: destroy the textures parked long enough
     expiryCount();
     {
+        // <FS> diagnostic (2026-11-14, the user: system memory bumps of several GB at a login and at a teleport while video memory had room; remove once the cause is known): where the image data sits. A line (tag
+        // ImgMem) when the image data changed by 50 MB or more since the last line, else every 10 s: all image data held by LLImageBase (compressed and raw), the compressed part, the decode queue, the decoded
+        // images waiting to become textures, the fetch requests, and the textures the viewer counts.
+        static LLTimer img_mem_timer;
+        static S64 img_mem_last = 0;
+        static U32 img_mem_quiet = 0;
+        if (img_mem_timer.getElapsedTimeF32() >= 1.f)
+        {
+            img_mem_timer.reset();
+            const S64 total = LLImageBase::getGlobalDataBytes();
+            if (llabs(total - img_mem_last) >= 50 * 1024 * 1024 || ++img_mem_quiet >= 10)
+            {
+                img_mem_quiet = 0;
+                img_mem_last = total;
+                const S64 mb = 1024 * 1024;
+                const S64 formatted = LLImageFormatted::sGlobalFormattedMemory;
+                LLImageDecodeThread* decode = LLAppViewer::getImageDecodeThread();
+                LLTextureFetch* fetch = LLAppViewer::getTextureFetch();
+                U64 host_used = 0, host_ours = 0;
+                LLVkBridge::hostMemory(host_used, host_ours);
+                LL_INFOS("ImgMem") << "Vulkan host heap " << host_used / (1024 * 1024) << " MB used by this process (ours " << host_ours / (1024 * 1024) << " MB) | image data " << total / mb << " MB (compressed " << formatted / mb << " MB, raw about " << (total - formatted) / mb << " MB), decode queue " << (decode ? decode->getPending() : 0)
+                    << ", decoded and waiting to become textures " << mCreateTextureList.size() << ", fetch requests " << (fetch ? fetch->getNumRequests() : 0) << ", textures counted " << LLImageTex::getTextureBytesAllocated() / mb << " MB" << LL_ENDL;
+            }
+        }
+    }
+    {
         static U32 calls = 0;
         if (++calls >= 1800)
         {

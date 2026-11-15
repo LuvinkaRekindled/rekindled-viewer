@@ -175,6 +175,7 @@ public:
     static void forceNextAllocationFailureForTesting();
     // Process-lifetime count of allocation failures strictly larger than 4 MiB.
     static U64 getNonFatalAllocationFailureCount();
+    static S64 getGlobalDataBytes();            // <FS> diagnostic (ImgMem): the bytes of image data held by every LLImageBase now
     // </FS:Beq>
 
     // Function for calculating the download priority for textures
@@ -202,6 +203,7 @@ private:
     static std::atomic<allocation_failure_callback_t> sAllocationFailureCallback;
     static thread_local bool sForceAllocationFailureForTesting;
     static std::atomic<U64> sNonFatalAllocationFailureCount;
+    static std::atomic<S64> sGlobalDataBytes;       // <FS> (2026-11-14, a diagnostic for the system memory spikes at a login and a teleport) the bytes of image data held by every LLImageBase right now (raw and formatted together)
     static constexpr S32 MAX_FATAL_ALLOCATION_SIZE = 4 * 1024 * 1024; // 4 MiB; shared by allocation and reallocation diagnostics.
     // </FS:Beq>
 private:

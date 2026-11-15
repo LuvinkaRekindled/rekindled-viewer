@@ -32,6 +32,7 @@ namespace LLVkBridge
     void setSymbolizer(std::string (*fn)(const void*));
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
+    bool hostMemory(U64& usage_bytes, U64& allocated_by_us);       // <FS> diagnostic (ImgMem): the host (system memory) heap: what the OS counts for this process, what we allocated
     // where the video memory goes besides the textures (doc/vulkan/EXPIRY-design.md): the arena blocks (geometry and other device blocks, host-written blocks, acceleration structure blocks: bytes alive and bytes in use),
     // the idle dedicated acceleration structure blocks the pool holds, and the bytes of the ray scene's structures; false until Vulkan is up
     struct MemoryByConsumer
