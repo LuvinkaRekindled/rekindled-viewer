@@ -7130,11 +7130,90 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     { LL_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
     { LL_CPU_ZONE("stateSort: postSort"); postSort(camera); }
     mDeferPoolFill = false;
+    if (!defer_pools)
+    {
+        LL_CPU_ZONE("stateSort: pool fill");
+        fillPools(*sCull, nullptr);       // <FS> stage 2b: a view that is not the main view's deferred one fills the pools from its cull result
+    }
 }
 
 // <FS> LL_VK_POOLFILL (stage 2 of doc/vulkan/PLAN-change-driven-sort.md): who lists the drawables the face pools take (terrain, water, sky, trees, avatar bodies, particles of the old pools). 0 = the sort lists them
 // as it always did (mDeferredPoolFill, filled by stateSort(drawable)), 1 = refillPools takes them from the cull result's visible drawable list, 2 = both, the sort's list drives and the two are compared.
 static const U32 sPoolFillMode = []{ const char* e = getenv("LL_VK_POOLFILL"); return e ? (U32)atoi(e) : 1u; }();       // (default 1 since 2026-11-15: 4,200 refills, 0 faces differ)
+
+// <FS> stage 2b (LL_VK_POOLFILL=2): the drawables the sort enqueued for the pools of a view that is not the main view's deferred one, in the order of the enqueues (main thread only: those sorts are serial)
+static std::vector<LLDrawable*> sPoolFillLog;
+
+// the faces a list of drawables enqueues (the fill loop: a drawable's faces with geometry, up to the first one that has no pool), in order. A drawable that enqueues nothing (a particle group: its faces have no pool) does not count.
+static std::vector<LLFace*> pool_faces_of(const std::vector<LLDrawable*>& list)
+{
+    std::vector<LLFace*> out;
+    for (LLDrawable* d : list)
+    {
+        if (d->isDead())
+        {
+            continue;
+        }
+        for (S32 i = 0; i < d->getNumFaces(); ++i)       // (a free function cannot read mFaces: the same faces in the same order through the accessors)
+        {
+            LLFace* f = d->getFace(i);
+            if (f->hasGeometry())
+            {
+                if (f->getPool())
+                {
+                    out.push_back(f);
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+    }
+    return out;
+}
+
+// the check of LL_VK_POOLFILL=2: the faces of the sort's list against the faces of the list taken from the cull result, per kind of fill (0 the main view's deferred refill, 1 the sort of another view, 2 the cascades' finish)
+static void pool_fill_compare(int kind, const std::vector<LLDrawable*>& old_list, const std::vector<LLDrawable*>& new_list)
+{
+    static const char* const names[3] = { "main view refill", "a view's sort", "cascade finish" };
+    static U64 fills[3] = {}, differ[3] = {}, only_old[3] = {}, only_new[3] = {}, order_only[3] = {}, total[3] = {}, drawables_differ[3] = {};
+    const std::vector<LLFace*> old_faces = pool_faces_of(old_list);
+    const std::vector<LLFace*> new_faces = pool_faces_of(new_list);
+    ++fills[kind];
+    total[kind] += old_faces.size();
+    {
+        size_t live_old = 0;
+        for (LLDrawable* d : old_list) { live_old += !d->isDead(); }
+        drawables_differ[kind] += live_old != new_list.size();
+    }
+    if (old_faces != new_faces)
+    {
+        ++differ[kind];
+        std::vector<LLFace*> a = old_faces, b = new_faces;
+        std::sort(a.begin(), a.end());
+        std::sort(b.begin(), b.end());
+        std::vector<LLFace*> o, n;
+        std::set_difference(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(o));
+        std::set_difference(b.begin(), b.end(), a.begin(), a.end(), std::back_inserter(n));
+        only_old[kind] += o.size();
+        only_new[kind] += n.size();
+        order_only[kind] += o.empty() && n.empty();
+        static U32 said = 0;
+        if (said++ < 30)
+        {
+            const LLFace* sample = !o.empty() ? o[0] : (!n.empty() ? n[0] : nullptr);
+            const LLDrawable* sd = sample ? sample->getDrawable() : nullptr;
+            LL_INFOS("PoolFill") << names[kind] << " differs: faces from the sort's list " << old_faces.size() << ", from the cull result's " << new_faces.size() << ", only in the first " << o.size() << ", only in the second " << n.size()
+                                 << (sd && sd->getVObj() ? llformat(", sample pcode %u avatar %d active %d pool %d camera %d", (U32)sd->getVObj()->getPCode(), (int)sd->isAvatar(), (int)sd->isActive(), (int)(sample->getPool() ? sample->getPool()->getType() : 0), (int)LLViewerCamera::sCurCameraID) : std::string(", order only")) << LL_ENDL;
+        }
+    }
+    if (fills[kind] % 600 == 0)
+    {
+        LL_INFOS("PoolFill") << "pool fill check, " << names[kind] << ", over " << fills[kind] << " fills (" << (double)total[kind] / (double)fills[kind] << " faces enqueued a fill): " << differ[kind] << " differ in the faces (only from the sort's list " << only_old[kind]
+                             << ", only from the cull result's " << only_new[kind] << ", same faces in another order " << order_only[kind] << "); the drawable lists differ in " << drawables_differ[kind] << " fills" << LL_ENDL;
+    }
+}
 
 // <FS> after the shadow passes (which reset the pool face lists and fill them with their own): the lists of the main view, as the sort that ran before them would have made them
 void LLPipeline::refillPools(LLCullResult& result)
@@ -7167,69 +7246,7 @@ void LLPipeline::refillPools(LLCullResult& result)
     }
     if (sPoolFillMode == 2)
     {
-        // the check: the faces the two lists would enqueue (the loop below: a drawable's faces with geometry, up to the first one with no pool), in order. A drawable that enqueues nothing (a particle group: its faces have no pool) does not count.
-        static U64 refills = 0, differ = 0, only_old = 0, only_new = 0, order_only = 0, total = 0, drawables_differ = 0;
-        const auto faces_of = [](const std::vector<LLDrawable*>& list)
-        {
-            std::vector<LLFace*> out;
-            for (LLDrawable* d : list)
-            {
-                if (d->isDead())
-                {
-                    continue;
-                }
-                for (LLDrawable::face_list_t::iterator iter = d->mFaces.begin(); iter != d->mFaces.end(); iter++)
-                {
-                    LLFace* f = *iter;
-                    if (f->hasGeometry())
-                    {
-                        if (f->getPool())
-                        {
-                            out.push_back(f);
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
-            }
-            return out;
-        };
-        const std::vector<LLFace*> old_faces = faces_of(mDeferredPoolFill);
-        const std::vector<LLFace*> new_faces = faces_of(from_cull);
-        ++refills;
-        total += old_faces.size();
-        {
-            size_t live_old = 0;
-            for (LLDrawable* d : mDeferredPoolFill) { live_old += !d->isDead(); }
-            drawables_differ += live_old != from_cull.size();
-        }
-        if (old_faces != new_faces)
-        {
-            ++differ;
-            std::vector<LLFace*> a = old_faces, b = new_faces;
-            std::sort(a.begin(), a.end());
-            std::sort(b.begin(), b.end());
-            std::vector<LLFace*> o, n;
-            std::set_difference(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(o));
-            std::set_difference(b.begin(), b.end(), a.begin(), a.end(), std::back_inserter(n));
-            only_old += o.size();
-            only_new += n.size();
-            order_only += o.empty() && n.empty();
-            static U32 said = 0;
-            if (said++ < 20)
-            {
-                const LLFace* sample = !o.empty() ? o[0] : (!n.empty() ? n[0] : nullptr);
-                const LLDrawable* sd = sample ? sample->getDrawable() : nullptr;
-                LL_INFOS("PoolFill") << "refill differs: faces from the sort's list " << old_faces.size() << ", from the cull result's " << new_faces.size() << ", only in the first " << o.size() << ", only in the second " << n.size()
-                                     << (sd && sd->getVObj() ? llformat(", sample pcode %u avatar %d active %d pool %d", (U32)sd->getVObj()->getPCode(), (int)sd->isAvatar(), (int)sd->isActive(), (int)(sample->getPool() ? sample->getPool()->getType() : 0)) : std::string(", order only")) << LL_ENDL;
-            }
-        }
-        if (refills % 600 == 0)
-        {
-            LL_INFOS("PoolFill") << "pool fill check over " << refills << " refills (" << (double)total / (double)refills << " faces enqueued a refill): " << differ << " differ in the faces (only from the sort's list " << only_old << ", only from the cull result's " << only_new << ", same faces in another order " << order_only << "); the drawable lists differ in " << drawables_differ << " refills" << LL_ENDL;
-        }
+        pool_fill_compare(0, mDeferredPoolFill, from_cull);
     }
     const std::vector<LLDrawable*>& fill_list = sPoolFillMode == 1 ? from_cull : mDeferredPoolFill;
     for (LLDrawable* drawablep : fill_list)
@@ -7255,6 +7272,60 @@ void LLPipeline::refillPools(LLCullResult& result)
         }
     }
     mDeferredPoolFill.clear();
+}
+
+// <FS> stage 2b of doc/vulkan/PLAN-change-driven-sort.md: the pools' fill of every view that is not the main view's deferred one. The sort no longer enqueues the faces (LL_VK_POOLFILL=1, the default): the view takes the
+// drawables from its cull result, first the ones the cascade prep left for the main thread (`first`, may be null), then the visible drawable list, the ones that are not volumes and that pass sortAccepts(). 0 = the sort enqueues
+// as it always did (and nothing happens here), 2 = the sort enqueues, and the faces it enqueued are compared with the ones this would.
+void LLPipeline::fillPools(LLCullResult& result, const std::vector<LLDrawable*>* first)
+{
+    if (sPoolFillMode == 0)
+    {
+        return;
+    }
+    std::vector<LLDrawable*> list;
+    const auto take = [&](LLDrawable* d)
+    {
+        if (d && !d->getVOVolume() && sortAccepts(d))
+        {
+            list.push_back(d);
+        }
+    };
+    if (first)
+    {
+        for (LLDrawable* d : *first)
+        {
+            take(d);
+        }
+    }
+    for (LLCullResult::drawable_iterator d = result.beginVisibleList(); d != result.endVisibleList(); ++d)
+    {
+        take(*d);
+    }
+    if (sPoolFillMode == 2)
+    {
+        pool_fill_compare(first ? 2 : 1, sPoolFillLog, list);
+        sPoolFillLog.clear();
+        return;
+    }
+    for (LLDrawable* drawablep : list)
+    {
+        for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin(); iter != drawablep->mFaces.end(); iter++)
+        {
+            LLFace* facep = *iter;
+            if (facep->hasGeometry())
+            {
+                if (facep->getPool())
+                {
+                    facep->getPool()->enqueue(facep);
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
@@ -7418,21 +7489,27 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
                 mDeferredPoolFill.push_back(drawablep);     // queued by refillPools(), after the shadow passes
             }
         }
-        else
-        for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin();
-                iter != drawablep->mFaces.end(); iter++)
+        else if (sPoolFillMode != 1)        // (mode 1: the view's fillPools takes the drawables from its cull result)
         {
-            LLFace* facep = *iter;
-
-            if (facep->hasGeometry())
+            if (sPoolFillMode == 2)
             {
-                if (facep->getPool())
+                sPoolFillLog.push_back(drawablep);
+            }
+            for (LLDrawable::face_list_t::iterator iter = drawablep->mFaces.begin();
+                    iter != drawablep->mFaces.end(); iter++)
+            {
+                LLFace* facep = *iter;
+
+                if (facep->hasGeometry())
                 {
-                    facep->getPool()->enqueue(facep);
-                }
-                else
-                {
-                    break;
+                    if (facep->getPool())
+                    {
+                        facep->getPool()->enqueue(facep);
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -16035,6 +16112,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
             stateSort(drawablep, camera);
         }
     }
+    fillPools(result, &prep.mDeferred);        // <FS> stage 2b: the sort calls above no longer enqueue (LL_VK_POOLFILL=1): the pools take the drawables the prep left for this thread and the visible drawables
     lap.mark(PH_FIN_POOLS);
 }
 
