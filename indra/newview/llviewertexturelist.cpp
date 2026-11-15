@@ -1600,6 +1600,9 @@ StampStats sStamp;
 // <FS> H6 (doc/vulkan/PLAN-texture-handles.md): LL_VK_TEXFB (default 1: measure and report, change nothing) compares what the draws measured of each texture's need (LLVkBridge::textureNeed: the whole texture
 // would cover 1 / area pixels) with the result of the face loop, per texture the loop looked at.
 const S32 sFbMode = []{ const char* e = getenv("LL_VK_TEXFB"); return e ? atoi(e) : 0; }();
+// <FS> LL_VK_TEXFB=4 (2026-11-15): measure only. The attachment, the reduce pass, the alpha stores and the harvest all run, the compare with the face loop (which walks up to 16 faces of every unmeasured
+// on-screen texture: about 130,000 face looks a second in London) does not: the cost of the measurement itself, without the diagnostic. 1 compares, 3 sizes by the measurement (the old proof of concept).
+const bool sFbCompare = sFbMode != 0 && sFbMode != 4;
 struct FbStats
 {
     U64 mLooked = 0;            // textures with faces the loop looked at
@@ -1959,7 +1962,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
 
-        if (sFbMode && face_count > 0 && face_count <= max_faces_to_check)
+        if (sFbCompare && face_count > 0 && face_count <= max_faces_to_check)
         {
             ++sFb.mLooked;
             S32 kind = 4;
@@ -2444,7 +2447,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     updateCameraEpoch();
     LLTexRecs::frame();         // <FS> H6: the records that changed go to the worker, the results it has finished come back
-    if (sFbMode)
+    if (sFbCompare)
     {
         static F32 last_fb_log = 0.f;
         if (gFrameTimeSeconds - last_fb_log >= 10.f)
