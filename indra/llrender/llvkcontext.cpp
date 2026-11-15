@@ -2230,6 +2230,8 @@ VkCommandBuffer Context::beginFrame(bool wait)
             f.mDeferred.push_back(std::move(fn));
         }
         mDeferredNext.clear();
+        mDeferredNextBytes.store(0, std::memory_order_relaxed);
+        mDrainWanted.store(false, std::memory_order_relaxed);
     }
 
     // keep the first staging block, free any extras that were needed
@@ -2579,7 +2581,7 @@ StagingAlloc Context::allocStaging(VkDeviceSize size, VkDeviceSize alignment)
 // also named by the commands the next frame will record (a pending copy from the range a rename left, the table rows of a buffer that went): it was attached to the frame that had just ended,
 // and was destroyed when that slot came round again, while the frame after it could still be on the GPU (a snapshot's frames follow each other without a pause, and the GPU runs two behind).
 // Now it waits for the next frame to be recorded and goes with that one.
-void Context::destroyLater(std::function<void()> fn)
+void Context::destroyLater(std::function<void()> fn, U64 bytes)
 {
     if (sFrameThread != std::thread::id() && std::this_thread::get_id() != sFrameThread)
     {
@@ -2598,6 +2600,14 @@ void Context::destroyLater(std::function<void()> fn)
     }
     std::lock_guard<std::mutex> lock(mDeferredNextMutex);
     mDeferredNext.push_back(std::move(fn));
+    if (bytes)
+    {
+        static const U64 limit = []() { char b[16] = {}; return (GetEnvironmentVariableA("LL_VK_DEFER_DRAIN_MB", b, sizeof(b)) > 0 ? (U64)std::max(atoi(b), 0) : 512ull) << 20; }();
+        if (mDeferredNextBytes.fetch_add(bytes, std::memory_order_relaxed) + bytes > limit)
+        {
+            mDrainWanted.store(true, std::memory_order_relaxed);
+        }
+    }
 }
 
 bool Context::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Memory memory, Buffer& out)
@@ -2690,6 +2700,7 @@ void Context::destroyBuffer(Buffer& buffer, bool immediate)
     VkBuffer b = buffer.mBuffer;
     VmaAllocation a = buffer.mAllocation;
     VmaAllocator alloc = mAllocator;
+    const VkDeviceSize size_bytes = buffer.mSize;
     if (buffer.mAddress)
     {
         flight(FL_BUF_DESTROY, (unsigned long long)buffer.mAddress, (unsigned long long)buffer.mSize);
@@ -2727,7 +2738,7 @@ void Context::destroyBuffer(Buffer& buffer, bool immediate)
     }
     else
     {
-        destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); });
+        destroyLater([=]() { vmaDestroyBuffer(alloc, b, a); }, (U64)size_bytes);
     }
     buffer = Buffer();
 }
@@ -3622,8 +3633,41 @@ bool Context::immediateSubmit(const std::function<void(VkCommandBuffer)>& record
     si.commandBufferCount = 1;
     si.pCommandBuffers = &mImmediateCmd;
     vkResetFences(mDevice, 1, &mImmediateFence);
-    return vk_ok(vkQueueSubmit(mQueue, 1, &si, mImmediateFence), "immediate submit")
+    const bool submitted = vk_ok(vkQueueSubmit(mQueue, 1, &si, mImmediateFence), "immediate submit")
         && vk_ok(vkWaitForFences(mDevice, 1, &mImmediateFence, VK_TRUE, 10ull * 1000 * 1000 * 1000), "immediate wait");
+    if (mDrainWanted.load(std::memory_order_relaxed))
+    {
+        drainDeferredNext();
+    }
+    return submitted;
+}
+
+// <FS> (2026-11-14, a loading screen that showed no frame for 12 s while about 33 GB of staging blocks queued up to be destroyed when a frame came; the same kind of pile as the minimised viewer of 2026-11-09)
+// the list of what was given up while no frame is being recorded only empties when a frame begins, so with no frames it had no limit. Over LL_VK_DEFER_DRAIN_MB (512) it is now emptied here, at the end of an
+// immediate submit: nothing is being recorded then (a destroy during a recording could free a block whose copy is in that very command buffer), the device is idle, and the frame thread owns the queue.
+void Context::drainDeferredNext()
+{
+    if (mInFrame || mDevice == VK_NULL_HANDLE || (sFrameThread != std::thread::id() && std::this_thread::get_id() != sFrameThread))
+    {
+        return;
+    }
+    vkDeviceWaitIdle(mDevice);
+    std::vector<std::function<void()>> due;
+    {
+        std::lock_guard<std::mutex> lock(mDeferredNextMutex);
+        due.swap(mDeferredNext);
+    }
+    const U64 mb = mDeferredNextBytes.exchange(0, std::memory_order_relaxed) >> 20;
+    mDrainWanted.store(false, std::memory_order_relaxed);
+    for (auto& fn : due)
+    {
+        fn();
+    }
+    static U32 said = 0;
+    if (said++ < 20)
+    {
+        LL_INFOS("Vulkan") << "no frame for a while: " << due.size() << " destroys (" << mb << " MB of buffers) given up since the last frame were run now, after an idle wait (frame " << mFrameNumber << ", " << said << " so far)" << LL_ENDL;
+    }
 }
 
 bool Context::selfTest()
