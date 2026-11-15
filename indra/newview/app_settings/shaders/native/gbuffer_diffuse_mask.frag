@@ -11,6 +11,12 @@ layout(location = 3) flat in uint vary_slot;
 layout(location = 4) in vec3 vary_normal;
 layout(location = 5) flat in float vary_cutoff;
 
+#ifdef GB_MOTION
+#include "lib/motion.glsl"
+layout(location = 14) in vec4 vary_cur;
+layout(location = 15) in vec4 vary_prev;
+#endif
+
 layout(location = 0) out vec4 frag_albedo;
 layout(location = 1) out vec4 frag_spec;
 layout(location = 2) out vec4 frag_normal;
@@ -22,7 +28,11 @@ layout(location = 4) out vec2 frag_velocity;
 
 void main()
 {
+#ifdef GB_MOTION
+    frag_velocity = ll_motion_encode(vary_cur, vary_prev, render_res);
+#else
     frag_velocity = vec2(1.0, 0.0);
+#endif
     mirror_clip(vary_position);
     const vec4 col = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0) * vertex_color;
     if (col.a < vary_cutoff)

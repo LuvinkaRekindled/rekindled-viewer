@@ -16,6 +16,13 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #ifdef ALPHA_PBR
     uvec2 ll_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
 #endif
+#ifdef GB_MOTION
+    // a rigged draw of the G-buffer that writes motion (the viewer sets these on the program before the draw record: LLRenderPass::pushGeometryPackets): the unjittered view projection of this frame and of the one
+    // before, and the render size in pixels
+    mat4 view_proj_cur;
+    mat4 view_proj_prev;
+    vec2 render_res;
+#endif
 #ifdef PBR_PREVIEW
     // the material preview (alpha_pbr_preview.vert): the material of the draw as loose values (the row of the pull program): the texture transforms (scale and rotation, offset) and the factors
     vec4 texture_base_color_transform[2];

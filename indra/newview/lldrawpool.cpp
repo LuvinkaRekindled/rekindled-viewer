@@ -918,7 +918,9 @@ void ll_frame_palette_prepare(U32 frame)
 }
 
 // a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
-bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
+// <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md): every palette in the list is followed by the palette of the frame before (same size, same anchor: mPrevGLMp, equal to the current one when there is no history): the
+// rigged G-buffer vertex shaders read both and write the motion of the surface. prev_floats null: the current palette is written twice.
+bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
 {
     if (!count || sFramePal.mPreparedFrame != frame || !sFramePal.mArenaOn)
     {
@@ -927,13 +929,14 @@ bool ll_frame_palette_write(const F32* floats, U32 count, U32 frame, U32& offset
     U32 cur = sFramePal.mArenaCursor.load(std::memory_order_relaxed);
     do
     {
-        if ((U64)cur + count > sFramePal.mArena.mFloats)
+        if ((U64)cur + 2 * (U64)count > sFramePal.mArena.mFloats)
         {
             return false;
         }
     }
-    while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + count, std::memory_order_acq_rel));
+    while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + 2 * count, std::memory_order_acq_rel));
     memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
+    memcpy(sFramePal.mArena.mPtr + cur + count, prev_floats ? prev_floats : floats, (size_t)count * sizeof(F32));
     {
         const U32 id = palette_id_of(id_cell);
         if (!id || !palette_pair_push(id, cur))
@@ -1023,14 +1026,15 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         return true;
     }
     const size_t need = (size_t)(joints + 1) * 12;
+    const F32* prev_data = mpc.mPrevGLMp.size() >= need ? mpc.mPrevGLMp.data() : mpc.mGLMp.data();       // (the previous palette follows the current one: see ll_frame_palette_write)
     U32 at = 0;
     bool in_arena = false;
     if (sFramePal.mArenaOn)
     {
         U32 cur = sFramePal.mArenaCursor.load(std::memory_order_relaxed);
-        while ((size_t)cur + need <= sFramePal.mArena.mFloats)
+        while ((size_t)cur + 2 * need <= sFramePal.mArena.mFloats)
         {
-            if (sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + (U32)need, std::memory_order_acq_rel))
+            if (sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + 2 * (U32)need, std::memory_order_acq_rel))
             {
                 at = cur;
                 in_arena = true;
@@ -1043,12 +1047,14 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         // (no read back of what was written: the arena is device visible upload memory, a CPU read of it is uncached and very slow. A first compare mode that did it cost a crowd 20 fps: the content was right, 287 k
         // palettes compared, 0 wrong)
         memcpy(sFramePal.mArena.mPtr + at, mpc.mGLMp.data(), need * sizeof(F32));
+        memcpy(sFramePal.mArena.mPtr + at + need, prev_data, need * sizeof(F32));
     }
     else
     {
         sFramePal.mArenaOverflows += sFramePal.mArenaOn;
         at = sFramePal.mDataBase + (U32)sFramePal.mData.size();
         sFramePal.mData.insert(sFramePal.mData.end(), mpc.mGLMp.begin(), mpc.mGLMp.begin() + need);
+        sFramePal.mData.insert(sFramePal.mData.end(), prev_data, prev_data + need);
     }
     ++sFramePal.mAdded;
     const U32 id = palette_id_of(mpc.mPaletteId);
@@ -1422,6 +1428,12 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
         return;
     }
     LL_CPU_ZONE("packets: scene table draw record");
+    if (rigged)
+    {
+        // <FS> velocity fold (RenderMotionFold): the rigged programs that write motion take the camera matrices of this frame and the last from here (the bound program's loose block)
+        extern bool ll_motion_fold_uniforms(LLShaderProgram* program);
+        ll_motion_fold_uniforms(LLShaderProgram::sCurBoundShaderPtr);
+    }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 22;
     header.mPass = (U32)tn;

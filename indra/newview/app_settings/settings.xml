@@ -11875,6 +11875,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
+  <key>RenderMotionFold</key>
+  <map>
+    <key>Comment</key>
+    <string>Velocity fold (doc/vulkan/PLAN-velocity-fold-and-skin-once.md): 1 = the rigged draws of the G-buffer write their own motion into the world pass's motion target and the motion pass reads it there; the avatar velocity pass does not run (the system avatar's body parts and moving objects get no motion of their own yet in this mode). 0 = the avatar velocity pass as before. Needs an upscaler.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
   <key>RenderAvatarMotionVectorsPackets</key>
   <map>
     <key>Comment</key>

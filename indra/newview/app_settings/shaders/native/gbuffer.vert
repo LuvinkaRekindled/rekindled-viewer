@@ -34,6 +34,12 @@ layout(location = 10) flat out uint vary_slot_normal;
 layout(location = 8) out vec2 vary_texcoord1;
 #endif
 
+#ifdef GB_MOTION
+// the clip position of the vertex under the unjittered camera of this frame and of the one before, with the pose of this frame and of the one before (the fragment shader writes the motion, lib/motion.glsl)
+layout(location = 14) out vec4 vary_cur;
+layout(location = 15) out vec4 vary_prev;
+#endif
+
 #if defined(HAS_SKIN) && !defined(HAS_INDEXED_DRAW)
 #error "a rigged draw of the G-buffer family is an indexed one"
 #endif
@@ -69,6 +75,15 @@ void main()
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+#if defined(GB_MOTION) && defined(HAS_SKIN)
+    {
+        mat3 prev_rotation;
+        vec3 prev_translation;
+        skin_vertex_prev(row.weights, row.palette, row.joints, index, prev_rotation, prev_translation);
+        vary_cur = rig_transform(view_proj_cur, vertex, rig_anchor);
+        vary_prev = rig_transform(view_proj_prev, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row.palette, row.joints));
+    }
+#endif
 
     const mat4 texmat = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
     vary_texcoord0 = (texmat * vec4(RowVec2(row.texcoords).t[index], 0.0, 1.0)).xy;

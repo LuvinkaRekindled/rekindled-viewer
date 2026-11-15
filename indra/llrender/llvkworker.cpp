@@ -2712,7 +2712,7 @@ void target_state(unsigned fbo_name, int draw_buffers)
     Fbo& fbo = sGL.mFbos[fbo_name];
     if (draw_buffers > 0)
     {
-        fbo.mDrawCount = (U32)std::min(draw_buffers, 4);
+        fbo.mDrawCount = (U32)std::min(draw_buffers, 8);        // <FS> 8, not 4 (the GL era's limit): the world pass has a fifth attachment, the motion target (PLAN-velocity-fold-and-skin-once.md); with 4 it was allocated but never attached to the pass
     }
     else if (draw_buffers == 0)
     {
