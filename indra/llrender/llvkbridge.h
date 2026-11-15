@@ -167,6 +167,7 @@ namespace LLVkBridge
         U32 mViewerFrame = 0;       // P3: the viewer's frame (gFrameCount) a record that names palettes by id is made in: the id table it is resolved in (kind 8: mFragment == 1)
         U32 mEntryBytes = 0;        // J1 K3b: kind 2: 0 = ShadowSkinEntry entries, sizeof(ShadowSkinSlim) = the slim ones (the fields the shadow skin pull program reads; palettes by id, no ray scene fields)
         U32 mDrawOnly = 0;          // J1 K6 step 3d: kind 1: 1 = drawn only, not named to the ray scene (the glTF and texture matrix casters of a raster pass in the ray tracing modes: the viewer names them from the fragments' items)
+        U32 mCullView = 0;          // stage 3 of PLAN-visible-set-owner.md: kind 21: 1 = a CullParams (the view's planes, mPad[0] = useOcclusion, mPad[1] = the auto-hide limit as float bits, mPad[2..6] = the enabled render types, a bit each) follows the bindings: the worker derives the listed set from its rows and compares it with the handles
     };
     // S1 retained fragments (doc/vulkan/S1-handoff.md): the untextured static casters of one spatial group, kept by the worker under an id until released.
     // kind 11 RETAIN: mFragment = id, mEntries ShadowPacketEntry in the blob; mMatrix of an entry is 0 (no matrix) or 1 + the fragment's own matrix number.
@@ -355,9 +356,22 @@ namespace LLVkBridge
     struct CullParams { F32 mPlanes[7][4]; F32 mOrigin[3]; F32 mCornerDist; F32 mMotion[4]; F32 mFactors[4]; U32 mPlaneCount; U32 mPad[7]; };     // 192 bytes; mMotion = translation bound, rotation bound
     struct CullRow { F32 mCenter[3]; U32 mParent; F32 mHalf[3]; U32 mFlags; F32 mExtMin[3]; F32 mPad0; F32 mExtMax[3]; F32 mPad1; };       // mFlags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test
     static_assert(sizeof(CullParams) == 192 && sizeof(CullRow) == 64, "cull record layout");
+    // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: what the render map reads of a group besides its cull row, one per slot, in the same delta record (after the rows)
+    struct CullMapRow
+    {
+        U32 mHandle = 0, mServedTris = 0, mDrawTris = 0;     // the group's scene fragment handle (0 = none), the served and the drawn triangles
+        U8 mAlphaBits = 0;      // the group's mGeoAlphaBits: 1 alpha, 2 rigged alpha
+        U8 mFlags = 0;          // 1 all served, 2 has an alpha key, 4 has a rigged alpha key, 8 render by group, 16 the node has children (the walk tests its object bounds too)
+        U16 mPad = 0;
+        F32 mSurfaceArea = 0.f, mObjectBoxSize = 0.f;     // the inputs of the auto-hide test
+        F32 mObjCenter[3] = {}, mObjHalf[3] = {};          // the group's object bounds (LLViewerOctreeCull::checkObjects tests them for a node with children that is partly in); a bridge's group shows the bridge's world box
+        U32 mPad2[4] = {};
+    };
+    static_assert(sizeof(CullMapRow) == 64, "cull map row layout");
     // C1c: the record carries delta rows: slots[n] (U32 each, padded to 16 bytes) then rows[n]; table_size = the rows of the whole table after the delta; reset = the worker's copy is replaced (first record, or after a record
     // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
-    U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, U32 count, U32 table_size, bool reset);
+    // (stage 3: the record carries, after the rows, one CullMapRow for each of them)
+    U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset);
     S32 cullRead(U32 serial, U32 table_size, U32* out);
     void cullDone(U32 serial);
     void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
