@@ -10721,6 +10721,9 @@ static bool scene_fragment_behind(const LLSceneFragment* f)
     return true;
 }
 
+// stage 5 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_OWN=1): the fragments the CPU's consumers of the main view's visible set serve; the render map's exact list for every other view and a run without the switch (defined with the group table, below)
+const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull);
+
 // J1 K2b: the served RIGGED items of the main view that postSort left out of the render map (the same set collect_main_view_draw_infos adds from the fragments), as their sources: the avatar and the skin, the
 // buffer and the range, with no draw info read. The pointers are into the fragments' own vectors (valid until the fragment is made again: the same life as the draw infos' pointers had).
 static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSource*>& out)
@@ -10741,17 +10744,18 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
     static U64 key_frame = ~0ull;
     static size_t key_handles = 0;
     static U64 key_epoch = ~0ull;
-    if (key_cull != cull || key_frame != gFrameCount || key_handles != cull->mGeoHandles.size() || key_epoch != sGeoItemsEpoch.load())
+    const std::vector<U32>& listed = ll_scene_consumer_handles(cull);
+    if (key_cull != cull || key_frame != gFrameCount || key_handles != listed.size() || key_epoch != sGeoItemsEpoch.load())
     {
         key_cull = cull;
         key_frame = gFrameCount;
         key_epoch = sGeoItemsEpoch.load();
-        key_handles = cull->mGeoHandles.size();
+        key_handles = listed.size();
         for (std::vector<const GeoRigSource*>& l : lists)
         {
             l.clear();
         }
-        for (U32 handle : cull->mGeoHandles)
+        for (U32 handle : listed)
         {
             const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
             if (!f)
@@ -12921,6 +12925,10 @@ bool sUseSkipped = false;           // a covered partition was left to useVerdic
 
 // stage 4 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_STAGE4=1): the newest verdict with all its variants, as the CPU consumers of the visible set would read it, kept for the compare of the exact handle list against it
 const bool sStage4 = LLCullShadow::sOn && getenv("LL_VK_CULL_STAGE4") != nullptr;
+// stage 5 (LL_VK_CULL_OWN=1, needs the table): the worker draws the main view from its own derive of the listed set and the CPU's consumers serve the late list (ll_scene_consumer_handles); the record still names the exact list, which the worker compares
+const int sCullOwnMode = LLCullShadow::sOn && getenv("LL_VK_CULL_OWN") ? atoi(getenv("LL_VK_CULL_OWN")) : 0;       // 1 both halves, 2 the worker's derive only (the consumers keep the exact list), 3 the consumers' late list only (the worker draws the record's list)
+const bool sCullOwn = sCullOwnMode == 1 || sCullOwnMode == 3;           // the consumers
+const bool sCullOwnWorker = sCullOwnMode == 1 || sCullOwnMode == 2;     // the worker
 struct CullVerdictAll
 {
     bool mValid = false;
@@ -13605,6 +13613,83 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
     }
 }
 
+// stage 5 of doc/vulkan/PLAN-visible-set-owner.md. The main view's consumers of the visible set on the CPU (bump images, moving matrices, the palettes of rigged items, the rigged sources, the ray scene's naming, the type test)
+// do not need this frame's exact list: they need a superset a frame old, the worker draws from its own derive. With LL_VK_CULL_OWN=1 they serve: the worker's late list (its derive with the motion margin, no occlusion cut,
+// about a frame old), the fragments whose handle appeared in the last three frames (a new fragment cannot be in a list made before its row: its own data is made at once), and the groups of the bridges the walk marked this frame
+// (exact: the CPU's own result). Without the switch, in a view that is not the main view, or while no late list has come, it is the render map's exact list.
+const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
+{
+    static const std::vector<U32> none;
+    if (!cull)
+    {
+        return none;
+    }
+    if (!sCullOwn || cull != gPipeline.getCull() || !ll_scene_geo_main_view() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
+    {
+        return cull->mGeoHandles;
+    }
+    static std::vector<U32> out;
+    static std::vector<U8> seen;
+    static LLCullResult* key_cull = nullptr;
+    static U32 key_frame = ~0u;
+    static size_t key_exact = 0, key_groups = 0;
+    static std::vector<U32> late_words;
+    static U32 late_frame = 0, late_table = 0;
+    // (the list is made again when the cull result grew: an early caller in the frame, before stateSort has added the bridges' groups and buildRenderLists has named the fragments, must not freeze a short one for the callers after it)
+    if (key_cull == cull && key_frame == (U32)gFrameCount && key_exact == cull->mGeoHandles.size() && key_groups == (size_t)cull->getVisibleGroupsSize())
+    {
+        return out;
+    }
+    {
+        static std::vector<U32> buf(8192);
+        U32 frame = 0;
+        if (const U32 t = LLVkBridge::lateListRead(late_frame, frame, buf.data(), (U32)buf.size()))
+        {
+            late_words.assign(buf.begin(), buf.begin() + (t + 31) / 32);
+            late_frame = frame;
+            late_table = t;
+        }
+    }
+    if (!late_table || (U32)gFrameCount - late_frame > 30)
+    {
+        return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
+    }
+    key_cull = cull;
+    key_frame = (U32)gFrameCount;
+    key_exact = cull->mGeoHandles.size();
+    key_groups = (size_t)cull->getVisibleGroupsSize();
+    out.clear();
+    seen.assign(sGeoFragByHandle.size() + 1, 0);
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 table = (U32)sMapMirror.size();
+        for (U32 slot = 0; slot < table; ++slot)
+        {
+            const U32 h = sMapMirror[slot].mHandle;
+            if (!h || h >= seen.size() || seen[h])
+            {
+                continue;
+            }
+            if ((slot < late_table && ((late_words[slot >> 5] >> (slot & 31)) & 1u)) || (U32)gFrameCount - sMapHandleFrame[slot] <= 3)
+            {
+                seen[h] = 1;
+                out.push_back(h);
+            }
+        }
+    }
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+    {
+        LLSpatialGroup* group = *i;
+        const U32 h = group ? group->mGeoHandle : 0;
+        if (h && h < seen.size() && !seen[h] && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+        {
+            seen[h] = 1;
+            out.push_back(h);
+        }
+    }
+    return out;
+}
+
 void LLCullShadow::touch(LLViewerOctreeGroup* group)
 {
     std::lock_guard<std::mutex> lock(sCullMutex);
@@ -14031,7 +14116,7 @@ bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
     {
         return false;
     }
-    for (U32 handle : cull->mGeoHandles)
+    for (U32 handle : ll_scene_consumer_handles(cull))
     {
         const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
         if (f && (f->mGeoTypeMask & (1ull << tn)))
@@ -14153,7 +14238,7 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
     std::shared_ptr<GeoBindJob> job = std::make_shared<GeoBindJob>();
     job->mCull = cull;
     job->mFrame = gFrameCount;
-    for (U32 handle : cull->mGeoHandles)
+    for (U32 handle : ll_scene_consumer_handles(cull))
     {
         const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
         if (!f || scene_fragment_behind(f))
@@ -14248,11 +14333,12 @@ void ll_scene_geo_frame(LLCullResult* cull)
             matrices.push_back(m);
         }
     }
-    const std::vector<U32>& handles = cull->mGeoHandles;
+    const std::vector<U32>& handles = cull->mGeoHandles;                              // the render map's exact list: what the record names (the worker compares its own derive with it)
+    const std::vector<U32>& consumers = ll_scene_consumer_handles(cull);             // stage 5: what the CPU's consumers serve (the exact list unless LL_VK_CULL_OWN=1 and this is the main view)
     {
         // J1 K4: the bump images of the listed fragments' bump items are made current here (a render pass inside, before the passes), as the old pass did for each draw it drew
         LL_CPU_ZONE("deferred: bump images");
-        for (U32 handle : handles)
+        for (U32 handle : consumers)
         {
             const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
             if (f && !f->mBump.empty())
@@ -14284,7 +14370,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                 }
             }
         };
-        for (U32 handle : handles)
+        for (U32 handle : consumers)
         {
             const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
             if (f)
@@ -14355,7 +14441,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
         sBindJob.reset();
         if (!from_job)       // (else they were made on the pool)
-        for (U32 handle : handles)
+        for (U32 handle : consumers)
         {
             LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
             if (!f || f->mGeoRigged.empty() || scene_fragment_behind(f))
@@ -14397,7 +14483,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         {
             static U64 asked = 0, chosen = 0, mismatch = 0, tris_all = 0, tris_lod = 0;
             size_t at = 0;
-            for (U32 handle : handles)
+            for (U32 handle : consumers)
             {
                 const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
                 if (!f)
@@ -14524,9 +14610,11 @@ void ll_scene_geo_frame(LLCullResult* cull)
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
     const bool cull_view = LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView;       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     LLVkBridge::CullParams view_params;
-    U32 view_extra[4] = { 0u, 0u, 0u, 0u };       // (after the params: [1] = the number of bridge slots that follow it)
+    U32 view_extra[4] = { 0u, 0u, 0u, 0u };       // (after the params: [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive)
     static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
     marked_bridges.clear();
+    static std::vector<U32> bridge_handles;       // the handles of those bridges' groups (see below)
+    bridge_handles.clear();
     if (cull_view)
     {
         const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
@@ -14540,6 +14628,45 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         view_extra[1] = (U32)marked_bridges.size();
+        // the handles of the marked bridges' groups that the render map names (a group the render map left out is not in the list: the same filters, exactly): the worker lists them as they are, not from its rows a frame old
+        {
+            static std::vector<U8> named;
+            named.assign(sGeoFragByHandle.size() + 1, 0);
+            for (U32 h : handles)
+            {
+                if (h < named.size())
+                {
+                    named[h] = 1;
+                }
+            }
+            for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+            {
+                LLSpatialGroup* group = *i;
+                const U32 h = group ? group->mGeoHandle : 0;
+                if (h && h < named.size() && named[h] && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+                {
+                    named[h] = 0;
+                    bridge_handles.push_back(h);
+                }
+            }
+            // and the groups whose fragment handle changed in the last 3 frames (a rebuilt group: a sign that fades, an object being edited, an avatar's attachment): the worker's row of such a slot is a frame behind and may name a
+            // fragment that is gone, the worker leaves those slots out of its derive for as long
+            for (U32 slot = 0; slot < (U32)sMapHandleFrame.size(); ++slot)
+            {
+                if ((U32)gFrameCount - sMapHandleFrame[slot] > 3)
+                {
+                    continue;
+                }
+                const U32 h = sMapMirror[slot].mHandle;
+                if (h && h < named.size() && named[h])
+                {
+                    named[h] = 0;
+                    bridge_handles.push_back(h);
+                }
+            }
+        }
+        view_extra[3] = (U32)bridge_handles.size();
+        view_extra[2] = sCullOwnWorker ? 1u : 0u;        // stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
         view_params.mMotion[0] = sCullTBound;       // stage 4: the margins of the late list, as the table's record carries them
         view_params.mMotion[1] = sCullABound;
@@ -14558,7 +14685,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
     }
-    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding) + (cull_view ? sizeof(view_params) + sizeof(view_extra) + marked_bridges.size() * sizeof(U32) : 0));
+    blob.resize(handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]) + sent_bindings.size() * sizeof(Binding) + (cull_view ? sizeof(view_params) + sizeof(view_extra) + marked_bridges.size() * sizeof(U32) + bridge_handles.size() * sizeof(U32) : 0));
     if (!handles.empty()) { memcpy(blob.data(), handles.data(), handles.size() * sizeof(U32)); }
     if (!matrices.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32), matrices.data(), matrices.size() * sizeof(matrices[0])); }
     if (!sent_bindings.empty()) { memcpy(blob.data() + handles.size() * sizeof(U32) + matrices.size() * sizeof(matrices[0]), sent_bindings.data(), sent_bindings.size() * sizeof(Binding)); }
@@ -14568,6 +14695,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         memcpy(at, &view_params, sizeof(view_params));
         memcpy(at + sizeof(view_params), view_extra, sizeof(view_extra));
         if (!marked_bridges.empty()) { memcpy(at + sizeof(view_params) + sizeof(view_extra), marked_bridges.data(), marked_bridges.size() * sizeof(U32)); }
+        if (!bridge_handles.empty()) { memcpy(at + sizeof(view_params) + sizeof(view_extra) + marked_bridges.size() * sizeof(U32), bridge_handles.data(), bridge_handles.size() * sizeof(U32)); }
     }
     LLVkBridge::ShadowPacketsHeader header;
     header.mKind = 21;
@@ -24416,7 +24544,7 @@ static void rt_name_rigged_main_view()
             // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
             if (LLCullResult* cull = gPipeline.getCull())
             {
-                for (U32 handle : cull->mGeoHandles)
+                for (U32 handle : ll_scene_consumer_handles(cull))
                 {
                     const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
                     if (!f)

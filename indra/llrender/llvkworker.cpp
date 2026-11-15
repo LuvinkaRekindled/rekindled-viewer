@@ -8154,7 +8154,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the compare of the derived listed set with a kind 21 record's handles. Defined with the group table's worker code (kind 35) below, in this named namespace;
 // declared here, outside the anonymous namespace that holds geo_prepare, which calls it (a declaration inside that anonymous namespace would name another function).
-void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob);
+bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own);
 
 // <FS> S3 G2 / G3 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
 // from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). Nothing is looked at per entry per frame: a fragment is checked only when an EVENT says
@@ -9134,9 +9134,50 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
     struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)(matrices + h.mMatrices);       // S4 B: mPaletteFloats = how many
+    U32 entries = h.mEntries;
+    static thread_local std::vector<U32> own_handles;
     if (h.mCullView)
     {
-        cull_derive_compare(h, handles, (const U8*)(bindings + h.mPaletteFloats));        // stage 3: the listed set from the worker's own rows, against the handles of this record (nothing changes: compare only)
+        // stage 3: the listed set from the worker's own rows, against the handles of this record. Stage 5 (the viewer's switch, LL_VK_CULL_OWN=1): when the record says so and the table is up to date, the main view is drawn
+        // from that derived list and the record's list is only compared (the matrices and bindings above were taken from the record's own blob positions, which do not move)
+        if (cull_derive_compare(h, handles, (const U8*)(bindings + h.mPaletteFloats), &own_handles))
+        {
+            // diagnostic (the rigged fragments of the record's list against the derived one: the whole-list compare is dominated by static groups)
+            static U64 rig_views = 0;
+            if (++rig_views % 300 == 0 && rig_views < 3000)
+            {
+                std::unordered_set<U32> derived_set(own_handles.begin(), own_handles.end());
+                std::unordered_set<U32> record_set(handles, handles + h.mEntries);
+                U32 rig_record = 0, rig_derived = 0, rig_lost = 0, rig_gained = 0, lost_unknown = 0;
+                std::string lost;
+                for (U32 i = 0; i < h.mEntries; ++i)
+                {
+                    GeoFrag* f = geo_find(handles[i]);
+                    const bool rigged = f && !f->mRItems.empty();
+                    rig_record += rigged;
+                    if (!derived_set.count(handles[i]))
+                    {
+                        rig_lost += rigged;
+                        lost_unknown += !f;
+                        if (rigged && lost.size() < 120)
+                        {
+                            lost += " " + std::to_string(handles[i]);
+                        }
+                    }
+                }
+                for (U32 hd : own_handles)
+                {
+                    GeoFrag* f = geo_find(hd);
+                    const bool rigged = f && !f->mRItems.empty();
+                    rig_derived += rigged;
+                    rig_gained += rigged && !record_set.count(hd);
+                }
+                LL_INFOS("VkCullOwn") << "view " << rig_views << ": record names " << h.mEntries << " fragments (" << rig_record << " with rigged items), derived " << own_handles.size() << " (" << rig_derived << " rigged); rigged in the record and not derived "
+                                      << rig_lost << " (handles" << lost << "), rigged derived and not in the record " << rig_gained << ", record handles not derived and unknown to the table " << lost_unknown << LL_ENDL;
+            }
+            handles = own_handles.data();
+            entries = (U32)own_handles.size();
+        }
     }
     auto t0 = std::chrono::steady_clock::now();
     // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
@@ -9173,18 +9214,10 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     // the listed fragments: rebuilt when something named them, their commands counted by type
     static thread_local std::vector<GeoFrag*> listed;
     listed.clear();
-    t0 = std::chrono::steady_clock::now();
-    U32 counts[kGeoTypes] = {}, counts_ds[kGeoTypes] = {};
-    U64 items_frame = 0;
-    for (U32 i = 0; i < h.mEntries; ++i)
+    // a fragment is built (its commands, its slots) when it is listed, and also when a binding names it: the viewer sends a persistent binding once and counts it bound, so a binding for a fragment that is not built yet (a new one, named
+    // by the rows' derive a frame after its binding, stage 5) must not be dropped here
+    auto ensure_built = [&](GeoFrag* f)
     {
-        ++s.mFragsListed;
-        GeoFrag* f = geo_find(handles[i]);
-        if (!f)
-        {
-            ++s.mFragsUnknown;
-            continue;
-        }
         const bool first = f->mPinEpochSeen == ~0ull;
         if (first || f->mDirtyPairs || f->mDirtyEntries || f->mPinEpochSeen != sGeoPinEpoch)
         {
@@ -9196,6 +9229,20 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             geo_rebuild(*f, frame_now, false);
         }
+    };
+    t0 = std::chrono::steady_clock::now();
+    U32 counts[kGeoTypes] = {}, counts_ds[kGeoTypes] = {};
+    U64 items_frame = 0;
+    for (U32 i = 0; i < entries; ++i)
+    {
+        ++s.mFragsListed;
+        GeoFrag* f = geo_find(handles[i]);
+        if (!f)
+        {
+            ++s.mFragsUnknown;
+            continue;
+        }
+        ensure_built(f);
         f->mListedFrame = frame_now;
         sGeo.mMaxSlot = std::max(sGeo.mMaxSlot, std::min<U32>(f->mMaxModel, GeoState::kSlotLimit - 1));
         // (S4 B: a rigged item draws only with a palette of THIS frame's table: every rigged command is set below, from the item's binding)
@@ -9232,6 +9279,10 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         const Binding& b = bindings[i];
         GeoFrag* f = geo_find(b.mHandle);
+        if (f)
+        {
+            ensure_built(f);
+        }
         ++sGeo.mRBindings;
         if (!f || b.mItem >= f->mItems.size() || b.mItem >= f->mRItemCmd.size() || f->mRItemCmd[b.mItem] == ~0u)
         {
@@ -9278,7 +9329,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
     }
     s.mItemsListed += items_frame;
-    s.mMaxFragsFrame = std::max<U64>(s.mMaxFragsFrame, h.mEntries);
+    s.mMaxFragsFrame = std::max<U64>(s.mMaxFragsFrame, entries);
     s.mMaxItemsFrame = std::max<U64>(s.mMaxItemsFrame, items_frame);
     if (geo_stale_check_on() && (s.mPrepares & 15u) == 0)
     {
@@ -11407,6 +11458,7 @@ struct CullShadowState
     std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
     std::vector<LLVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
     std::vector<U64> mRowStamp;                     // the record (mRecords) that last changed each slot
+    std::vector<U64> mHandleStamp;                  // the record that last changed the slot's fragment handle (stage 5: a handle that just changed is the viewer's to name, the row's may be a frame behind the group's fragments)
     std::vector<U32> mSlotOfHandle;                 // the slot of the group that has this scene fragment handle (~0u = none)
     U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
 };
@@ -11486,7 +11538,7 @@ struct CullDeriveStats
     U64 mCompares = 0, mRecord = 0, mDerived = 0, mBoth = 0, mMissing = 0, mExtra = 0, mNoTable = 0;
     U64 mMissNoRow = 0, mMissDead = 0, mMissNoHandle = 0, mMissType = 0, mMissOcc = 0, mMissHide = 0, mMissFrustum = 0, mMissObjects = 0, mMissGate = 0, mMissPasses = 0, mMissRecent = 0;
     U64 mSampled[16] = {};      // log lines written by category (a budget each, so the loading phase does not use them all)
-    U64 mSkippedViews = 0, mLate = 0;
+    U64 mSkippedViews = 0, mLate = 0, mOwnUsed = 0, mOwnFallback = 0;
     U64 mBigViews = 0, mBigViewExtra = 0, mBigViewEntries = 0, mBigViewDerived = 0;      // views with more than 40 extras
     U64 mExtraType[161] = {}, mExtraNoTris = 0, mExtraNoServed = 0, mExtraFull = 0, mExtraSkipFlag = 0, mExtraAlpha = 0, mExtraOwn[3] = {}, mExtraParentOut = 0, mExtraRoot = 0;      // what the extras have in common (their own frustum result, their parent's)
     U64 mExtraRegion = 0, mExtraBridge = 0, mExtraRecent = 0;
@@ -11760,7 +11812,7 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
     return st == ST_PART || st == ST_FULL;
 }
 
-void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob)
+bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
 {
     CullShadowState& s = sCullShadow;
     CullDeriveStats& d = sCullDerive;
@@ -11768,10 +11820,17 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
     {
         ++d.mNoTable;
-        return;
+        return false;
     }
     LLVkBridge::CullParams P;
     memcpy(&P, view_blob, sizeof(P));
+    U32 own_flag;
+    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
+    std::vector<U32>* own_out = own_flag && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
+    if (own_out)
+    {
+        own_out->clear();
+    }
     const bool occlusion = P.mPad[0] != 0;
     F32 hide_limit;
     memcpy(&hide_limit, &P.mPad[1], 4);
@@ -11779,6 +11838,9 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     U32 marked_count;
     memcpy(&marked_count, view_blob + sizeof(LLVkBridge::CullParams) + 4, 4);
     const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
+    U32 bridge_handle_count;
+    memcpy(&bridge_handle_count, view_blob + sizeof(LLVkBridge::CullParams) + 12, 4);
+    const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles of those bridges' groups that the render map names: exact, from the viewer)
     U32 max_h = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
@@ -11787,7 +11849,7 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     if (max_h > (1u << 20))
     {
         ++d.mNoTable;
-        return;
+        return false;
     }
     static std::vector<U8> mark;
     mark.assign((size_t)max_h + 1, 0);
@@ -11822,6 +11884,10 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         ++d.mDerived;
         const U32 handle = s.mMap[slot].mHandle;
+        if (own_out && !(s.mTable[slot].mFlags & 64u) && s.mRecords - s.mHandleStamp[slot] > 2)
+        {
+            own_out->push_back(handle);         // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
+        }
         if (handle <= max_h && mark[handle])
         {
             ++d.mBoth;
@@ -11865,7 +11931,7 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         const U64 skipped = d.mSkippedViews + 1;
         d = before;
         d.mSkippedViews = skipped;
-        return;
+        return false;
     }
     {
         // the late list of this view, published for the viewer's consumers (the variant 1 factor of the record, 1.5)
@@ -11969,7 +12035,32 @@ void cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         LL_INFOS("VkCullDerive") << "region extras by render type (type:count)" << types << " | of them: nothing drawn (no triangles) " << d.mExtraNoTris << ", nothing served " << d.mExtraNoServed << ", under a wholly-in ancestor or own result 2 " << d.mExtraFull
                                  << ", skip-frustum nodes " << d.mExtraSkipFlag << ", with alpha " << d.mExtraAlpha << ", own frustum result out/part/full " << d.mExtraOwn[0] << "/" << d.mExtraOwn[1] << "/" << d.mExtraOwn[2]
                                  << ", parent outside by its own test " << d.mExtraParentOut << ", roots " << d.mExtraRoot << LL_ENDL;
+        if (d.mOwnUsed || d.mOwnFallback)
+        {
+            LL_INFOS("VkCullDerive") << "stage 5: views drawn from the worker's own derive " << d.mOwnUsed << ", views that fell back to the record's list (the derive named under half of it) " << d.mOwnFallback << LL_ENDL;
+        }
     }
+    if (own_out)
+    {
+        // the groups of the bridges the walk marked come from the viewer, exactly: a bridge's groups get new fragments often (animesh, attachments), and a handle taken from rows a frame old would leave the new fragment out of the list
+        // for a frame (a flicker)
+        for (U32 i = 0; i < bridge_handle_count; ++i)
+        {
+            U32 hd;
+            memcpy(&hd, bridge_handles + (size_t)i * 4, 4);
+            own_out->push_back(hd);
+        }
+        if (own_out->size() * 2 < h.mEntries)
+        {
+            // the table is not up to date (rows lost, a reset in flight, the first frames): the record's list draws this view
+            ++d.mOwnFallback;
+            own_out->clear();
+            return false;
+        }
+        ++d.mOwnUsed;
+        return true;
+    }
+    return false;
 }
 
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
@@ -11997,6 +12088,7 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             s.mTable.assign(table, dead);
             s.mMap.assign(table, no_map);
             s.mRowStamp.assign(table, 0);
+            s.mHandleStamp.assign(table, 0);
             s.mSlotOfHandle.clear();
             ++s.mResets;
         }
@@ -12005,6 +12097,7 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             s.mTable.resize(table, dead);
             s.mMap.resize(table, no_map);
             s.mRowStamp.resize(table, 0);
+            s.mHandleStamp.resize(table, 0);
         }
         const U8* p = blob + sizeof(LLVkBridge::CullParams);
         const U32* slots = (const U32*)p;
@@ -12028,6 +12121,10 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 if (old_handle && old_handle < s.mSlotOfHandle.size() && s.mSlotOfHandle[old_handle] == slot)
                 {
                     s.mSlotOfHandle[old_handle] = ~0u;
+                }
+                if (incoming.mHandle != old_handle)
+                {
+                    s.mHandleStamp[slot] = s.mRecords;
                 }
                 s.mMap[slot] = incoming;
                 if (incoming.mHandle && incoming.mHandle < (1u << 20))
