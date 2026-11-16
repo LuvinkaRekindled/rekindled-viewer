@@ -6140,9 +6140,24 @@ int sort_split_setting()
 }
 }
 
+// <FS> stage 8 (loop c of sortLoops, owner 1 of 4): the mesh rebuild of the visible groups. LL_VK_MESH_REG: 0 the loops rebuild as before, 2 the loops rebuild as before and the geometry stage's registry pass counts what
+// it still finds to rebuild (it must be 0: the check), 1 the loops do not rebuild and the geometry stage does, from LLDirtyGroups (the registry the cascades' rebuild already uses, C4.1)
+static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_MESH_REG")) : 0;
+static std::mutex sMeshSeenMutex;
+static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the groups sort_rebuild_mesh saw dirty since the last geometry stage
+
 // <FS> a rebuildMesh of the loops: recorded in the ledger (and made at the apply pass) when a sink is set, made here and recorded when the check tees
 static void sort_rebuild_mesh(LLSpatialGroup* group)
 {
+    if (sMeshRegMode == 1)
+    {
+        return;         // (the geometry stage makes it, rebuildGeometry)
+    }
+    if (sMeshRegMode == 2 && group->hasState(LLSpatialGroup::MESH_DIRTY))
+    {
+        std::lock_guard<std::mutex> lock(sMeshSeenMutex);
+        sMeshSeen.insert(group);        // (the check: the groups the loops looked at dirty)
+    }
     if (!group->hasState(LLSpatialGroup::MESH_DIRTY))
     {
         return;         // (LLSpatialGroup::rebuildMesh does nothing for a group whose mesh is not dirty, and nothing the loops do before it makes one dirty: the 2,000 calls of a sort are not recorded)
@@ -8000,6 +8015,59 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
+
+    if (sMeshRegMode)
+    {
+        // the mesh rebuild of the groups this view's cull kept and the loops stamped: the drawable groups' first, then the visible groups' (the order of the lists), from the registry of the groups with a dirty bit
+        LL_CPU_ZONE("geometry: mesh rebuild (registry)");
+        const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
+        const LLViewerCamera::eCameraID cam = LLViewerCamera::sCurCameraID;
+        const bool occ = LLPipeline::useOcclusion() > 1;
+        static U64 sCalls = 0, sLeft = 0, sLeftSeen = 0, sLeftNew = 0, sLeftSeenOther = 0, sLeftNewOther = 0;
+        ++sCalls;
+        // one walk of the registry (a rebuild can add to it, so the walk is of one copy), the groups that qualify sorted into the two lists, rebuilt in the order of the lists
+        static std::vector<LLSpatialGroup*> by_drawable, by_group;
+        by_drawable.clear();
+        by_group.clear();
+        for (LLSpatialGroup* group : LLDirtyGroups::snapshot())
+        {
+            if (group->isDead() || !group->hasState(LLSpatialGroup::MESH_DIRTY) || group->getVisible(cam) < frame || (occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+            {
+                continue;
+            }
+            (group->getSpatialPartition()->mRenderByGroup ? by_group : by_drawable).push_back(group);
+        }
+        if (sMeshRegMode == 2)
+        {
+            // (a group the loops saw dirty and that is still dirty is one rebuildMesh leaves dirty (GEOM_DIRTY first): both paths ask it again each sort, no difference; one the loops never saw is the difference)
+            const bool main_view = cam == LLViewerCamera::CAMERA_WORLD;
+            std::lock_guard<std::mutex> lock(sMeshSeenMutex);
+            for (const std::vector<LLSpatialGroup*>* v : { &by_drawable, &by_group })
+            {
+                for (LLSpatialGroup* group : *v)
+                {
+                    const bool seen = sMeshSeen.count(group) != 0;
+                    ++(seen ? (main_view ? sLeftSeen : sLeftSeenOther) : (main_view ? sLeftNew : sLeftNewOther));
+                }
+            }
+            sMeshSeen.clear();
+            sLeft = sLeftSeen + sLeftNew;
+        }
+        for (LLSpatialGroup* group : by_drawable)
+        {
+            group->rebuildMesh();
+        }
+        for (LLSpatialGroup* group : by_group)
+        {
+            group->rebuildMesh();
+        }
+        if (sMeshRegMode == 2 && sCalls % 600 == 0)
+        {
+            const double n = (double)sCalls;
+            LL_INFOS("VkMeshReg") << "mesh rebuild by registry, check: over " << sCalls << " sorts, groups a sort that are dirty and visible after the loops: main view, seen by the loops " << sLeftSeen / n << " (left dirty by rebuildMesh), never seen " << sLeftNew / n
+                                  << "; other views, seen " << sLeftSeenOther / n << ", never seen " << sLeftNewOther / n << LL_ENDL;
+        }
+    }
 
     if (!gCubeSnapshot)
     {
