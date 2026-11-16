@@ -4842,6 +4842,8 @@ static void main_vis_verify(LLCamera& camera)
 
 bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
 
+static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
+
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
     vk_avatar_log();
@@ -4971,6 +4973,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLVisSet::update(camera, vs_parts, camera_changed, vs_replay && !vs_check);
     }
     sVisSetReplay = vs_replay;
+    if (view.isMainWorld() && !gCubeSnapshot)
+    {
+        sChkReplayFrame.store(vs_replay && !vs_check, std::memory_order_relaxed);
+    }
     const int cull_mode = main_cull ? (vs_check ? 4 : cull_split_setting()) : 0;
     int cull_done = 0;
     if (cull_mode >= 3)
@@ -6146,6 +6152,44 @@ static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_ME
 static std::mutex sMeshSeenMutex;
 static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the groups sort_rebuild_mesh saw dirty since the last geometry stage
 
+// <FS> stage 8 (loop c, owner 2 of 4): the occlusion discard rule of the loops. LL_VK_CHK_COUNT=1 counts what checkOcclusion does in the loops of the main view's sort: the calls, the ones that had an effect (the parent is
+// OCCLUDED: the group is occluded with it; or a verdict is awaited and the group asked to be discarded: its OCCLUDED state is cleared), by whether the walk replayed the retained sets in that frame (a replayed member never ran
+// earlyFail's checkOcclusion, the walk's own call), and the effects that came with the group itself OCCLUDED. Nothing changes: the call is made as before.
+static const bool sChkCount = getenv("LL_VK_CHK_COUNT") != nullptr;
+static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[2];       // [0] the walk ran, [1] the walk replayed (sChkReplayFrame, set by updateCull)
+
+// LL_VK_CHK_REG=1: the loops of the main view's sort do not call it (the discard is made where it already was: the walk's earlyFail for a group the walk visits, the retained set's own handling for a replayed
+// member, LLVisSetHooks::noteStale); with LL_VK_CHK_COUNT=1 too, the counters then say what the call would have cleared (it must stay 0)
+static const bool sChkSkip = getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1;
+
+static inline void sort_check_occlusion(LLSpatialGroup* group)
+{
+    const bool main_view = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && LLPipeline::useOcclusion() > 1;
+    if (sChkCount && main_view)
+    {
+        const int r = sChkReplayFrame.load(std::memory_order_relaxed) ? 1 : 0;
+        sChkCalls[r].fetch_add(1, std::memory_order_relaxed);
+        LLSpatialGroup* parent = (LLSpatialGroup*)group->getParent();
+        if (parent && parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            sChkParent[r].fetch_add(1, std::memory_order_relaxed);
+        }
+        else if (group->hizNeedsMainThread())
+        {
+            sChkStale[r].fetch_add(1, std::memory_order_relaxed);
+            if (group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            {
+                sChkStaleOcc[r].fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    if (sChkSkip && main_view)
+    {
+        return;
+    }
+    group->checkOcclusion();
+}
+
 // <FS> a rebuildMesh of the loops: recorded in the ledger (and made at the apply pass) when a sink is set, made here and recorded when the check tees
 static void sort_rebuild_mesh(LLSpatialGroup* group)
 {
@@ -6448,7 +6492,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         {
             return;
         }
-        group->checkOcclusion();
+        sort_check_occlusion(group);
         if (view.mUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
@@ -6469,7 +6513,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         {
             return;
         }
-        group->checkOcclusion();
+        sort_check_occlusion(group);
         if (view.mUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
@@ -6899,7 +6943,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         }
         {
             const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            group->checkOcclusion();
+            sort_check_occlusion(group);
             if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortDrawableGroups; }
         }
         if (LLOccCensus::sOn)
@@ -6987,7 +7031,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         }
         {
             const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            group->checkOcclusion();
+            sort_check_occlusion(group);
             if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortVisibleGroups; }
         }
         if (LLOccCensus::sOn)
@@ -8015,6 +8059,17 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
+
+    if (sChkCount && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+    {
+        static U64 sorts = 0;
+        if (++sorts % 600 == 0)
+        {
+            const double n = (double)sorts;
+            LL_INFOS("VkChk") << "checkOcclusion in the loops of the sort, per sort over " << sorts << " (replay off | replay on: the switch, not whether the frame replayed): calls " << sChkCalls[0] / n << " | " << sChkCalls[1] / n << ", parent occluded " << sChkParent[0] / n << " | " << sChkParent[1] / n
+                              << ", stale and awaited " << sChkStale[0] / n << " | " << sChkStale[1] / n << " (of those the group itself OCCLUDED " << sChkStaleOcc[0] / n << " | " << sChkStaleOcc[1] / n << ")" << LL_ENDL;
+        }
+    }
 
     if (sMeshRegMode)
     {
