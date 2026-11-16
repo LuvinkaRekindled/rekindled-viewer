@@ -395,12 +395,11 @@ namespace LLVkBridge
     // mAlphaBridge: the slots of the late set's bridge groups (the avatars' and the animated objects' attachments) with an alpha or a rigged alpha key: no depth (their rows hold the bridge's extents, their depth is in the bridge's own space),
     // the viewer judges and orders those itself with the bridge's transformed camera
     // mReleased (stage 8c): the slots of the rows of the exact derived set whose group is Released (the draw infos dropped for want of a camera: map row flag 32): the groups a camera accepts again, to be woken
-    // mHiz (stage 8d): the slots the walk names to the Hi-Z (markOccluder) for the main view, made from the rows (the occluded groups whose parent the walk reached, the groups it keeps whose round robin turn it is or that it did not
-    // keep the frame before, their parent not occluded): the groups whose boxes are tested this frame. Bridges' groups are not in it.
     // mAlphaDirty (stage 8e): the slots of the derived set's rows with an alpha key whose view direction (from the camera of the record to the row's object bounds centre) has moved more than 0.64 (the length of the difference of
     // the two unit vectors) since the worker last named them: LLSpatialGroup::updateDistance's alpha branch did this for every group the walk kept and set ALPHA_DIRTY and asked for a rebuild (the faces of an alpha group are sorted
     // for one view direction); the viewer sets the state for the slots named
-    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mReleased, mHiz, mAlphaDirty; std::vector<F32> mAlphaDepth; };
+    // mKept (stage 8f): a bit set by slot of the groups the walk keeps for the main view (markNotCulled is called for them): the walk's chain over the rows, not dead, not a bridge's, not empty; no fragment handle is needed (a group still to be built is kept too)
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mReleased, mAlphaDirty, mKept; std::vector<F32> mAlphaDepth; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
     // stage 8d (LL_VK_HIZROWS): the worker appends the box of every table row to the Hi-Z packet and publishes the verdicts of those boxes by slot, for the serial of the packet, when the frame has finished, as two bit sets by slot:
