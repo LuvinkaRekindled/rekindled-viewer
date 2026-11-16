@@ -321,7 +321,6 @@ namespace LLDirtyGroups
 {
     void add(LLSpatialGroup* group);
     void forget(LLSpatialGroup* group);                         // a group that is destroyed
-    extern std::atomic<U32> sMask;                              // the state bits that put a group in the registry: MESH_DIRTY, GEOM_DIRTY, NEW_DRAWINFO; the LOD candidates of the sort (LL_VK_LOD_CAND) add OBJECT_DIRTY and ALPHA_DIRTY
     std::vector<LLSpatialGroup*> snapshot();
     void prune();                                               // main thread: groups with none of the bits left leave
 }
@@ -428,7 +427,7 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       { row().state |= state; if (state & LLDirtyGroups::sMask.load(std::memory_order_relaxed)) { LLDirtyGroups::add(this); } }
+    void setState(U32 state)       { row().state |= state; if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO)) { LLDirtyGroups::add(this); } }
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 
