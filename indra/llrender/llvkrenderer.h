@@ -706,6 +706,10 @@ private:
     std::vector<RetiredBlock> mRetiredBlocks;       // staging blocks of flushed uploads, kept for the next ones once the frame that copied from them has completed (a fresh block costs a page fault a page the first time it is written)
     void retireDeferredBlocks();
     std::vector<DeferredUpload> mDeferredUploads;
+    // how many uploads are queued for each image handle / each Image struct (kept with the queue, emptied with it): dropDeferredUploads and retargetDeferredUploads, called for every image destroyed or moved,
+    // return at once for the many that have nothing queued (they used to walk the whole queue each time)
+    std::unordered_map<VkImage, U32> mDeferredByHandle;
+    std::unordered_map<Image*, U32> mDeferredByImage;
     std::mutex mDeferredMutex;
     void flushDeferredUploads(VkCommandBuffer cmd);     // records them (outside a render pass); the staging blocks are given back (freed once the frame has completed)
     void flushDeferredUploadsNow();                     // outside a frame: records and submits them (before anything else that submits on its own or reads an image back)

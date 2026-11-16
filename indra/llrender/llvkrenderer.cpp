@@ -5111,6 +5111,8 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
             mDeferredBlockUsed = start + expected;
             mDeferredBytes += expected;
             mDeferredUploads.push_back({ &image, image.mImage, mip, layer, x, y, width, height, std::max<U32>(depth, 1), start, (U32)(mDeferredBlocks.size() - 1) });
+            ++mDeferredByHandle[image.mImage];
+            ++mDeferredByImage[&image];
         }
         ++mUploadStats.mCount;
         mUploadStats.mBytes += expected;
@@ -5304,6 +5306,8 @@ void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
     retireDeferredBlocks();
     mDeferredBlocks.clear();
     mDeferredUploads.clear();
+    mDeferredByHandle.clear();
+    mDeferredByImage.clear();
     mDeferredBlockUsed = 0;
     mDeferredBytes = 0;
 }
@@ -5345,29 +5349,66 @@ void Renderer::retargetDeferredUploads(Image* from, Image* to)
     // (2026-11-14, the ears: an upload kept between frames named the Image struct of the staged texture record, which tex_commit_image resets and erases when it moves the image into the texture it replaces: at the next
     // flush the pointer led to a reset or freed struct, the entry was skipped without a word, and levels 1 to 5 of the image stayed empty while level 0, flushed earlier, was there)
     std::lock_guard<std::mutex> lock(mDeferredMutex);
-    for (DeferredUpload& u : mDeferredUploads)
+    static U64 asks = 0, hits = 0;      // (the proof line of the index: how many calls found something queued, how many the index let through at once)
+    ++asks;
+    const auto it = mDeferredByImage.find(from);
+    if (it != mDeferredByImage.end() && from != to)
     {
-        if (u.mImage == from)
+        ++hits;
+        const U32 n = it->second;
+        for (DeferredUpload& u : mDeferredUploads)
         {
-            u.mImage = to;
+            if (u.mImage == from)
+            {
+                u.mImage = to;
+            }
         }
+        mDeferredByImage.erase(it);
+        mDeferredByImage[to] += n;
+    }
+    if (asks % 2000 == 0)
+    {
+        LL_INFOS("VkUpload") << "deferred upload index: " << asks << " retargets (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
     }
 }
 
 void Renderer::dropDeferredUploads(VkImage handle)
 {
     std::lock_guard<std::mutex> lock(mDeferredMutex);
-    for (size_t i = 0; i < mDeferredUploads.size(); )
+    static U64 asks = 0, hits = 0;
+    ++asks;
+    const auto it = mDeferredByHandle.find(handle);
+    if (it == mDeferredByHandle.end())
     {
-        if (mDeferredUploads[i].mHandle == handle)
+        if (asks % 2000 == 0)
         {
-            mDeferredUploads.erase(mDeferredUploads.begin() + i);
+            LL_INFOS("VkUpload") << "deferred upload index: " << asks << " drops (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
+        }
+        return;         // nothing is queued for this image
+    }
+    ++hits;
+    mDeferredByHandle.erase(it);
+    size_t keep = 0;
+    for (size_t r = 0; r < mDeferredUploads.size(); ++r)
+    {
+        if (mDeferredUploads[r].mHandle == handle)
+        {
+            const auto bi = mDeferredByImage.find(mDeferredUploads[r].mImage);
+            if (bi != mDeferredByImage.end() && --bi->second == 0)
+            {
+                mDeferredByImage.erase(bi);
+            }
         }
         else
         {
-            ++i;
+            if (keep != r)
+            {
+                mDeferredUploads[keep] = mDeferredUploads[r];
+            }
+            ++keep;
         }
     }
+    mDeferredUploads.resize(keep);          // (one pass, the order of the rest kept: the flush's stable sort needs it)
 }
 
 bool Renderer::copyBaseLevel(Image& src, Image& dst)
