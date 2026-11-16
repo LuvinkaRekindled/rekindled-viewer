@@ -5098,6 +5098,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 struct LodNote { LLSpatialGroup* mGroup; F32 mDistance, mLast, mRadius, mSlop; bool mSlopBit, mChange; };
 static std::vector<LodNote> sLodNotes;
 static const bool sLodCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_LOD") != nullptr;
+// stage 8 (loop c, owner 3 of 4): LL_VK_LOD_CAND=1 (needs LL_VK_CULL_SHADOW=1) asks the worker for its LOD numbers and checks, in the sort's per-group LOD call, whether every group whose own changeLOD() says yes is in the
+// newest published change set (the worker's answer for a frame or two ago), and by what cause the ones that are not are yes (a dirty state, the slop test, the round robin of needsUpdate)
+static const bool sLodCand = LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") != nullptr;
+bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand; }
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
@@ -6155,6 +6159,9 @@ static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the
 // <FS> stage 8 (loop c, owner 2 of 4): the occlusion discard rule of the loops. LL_VK_CHK_COUNT=1 counts what checkOcclusion does in the loops of the main view's sort: the calls, the ones that had an effect (the parent is
 // OCCLUDED: the group is occluded with it; or a verdict is awaited and the group asked to be discarded: its OCCLUDED state is cleared), by whether the walk replayed the retained sets in that frame (a replayed member never ran
 // earlyFail's checkOcclusion, the walk's own call), and the effects that came with the group itself OCCLUDED. Nothing changes: the call is made as before.
+void ll_lod_cand_refresh();                                             // stage 8 (owner 3, defined with the stage 7 compare): the newest published LOD change set, once a sort
+void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // the sort's own changeLOD() answer for a group against the set
+void ll_lod_cand_report();
 static const bool sChkCount = getenv("LL_VK_CHK_COUNT") != nullptr;
 static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[2];       // [0] the walk ran, [1] the walk replayed (sChkReplayFrame, set by updateCull)
 
@@ -7110,6 +7117,10 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     const bool timed = split != 2 && split != 4 && defer_pools;
     const auto t_start = std::chrono::steady_clock::now();
     int path = 0;
+    if (view.isMainWorldSort())
+    {
+        ll_lod_cand_refresh();      // (stage 8, owner 3: LL_VK_LOD_CAND)
+    }
     if (split == 0)
     {
         sortLoops(camera, *sCull);
@@ -7260,6 +7271,7 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
     const U64 vis_l0 = sVisSortOn ? LLVisCensus::now() : 0;
     const bool vis_lod = group->changeLOD();
+    ll_lod_cand_note(group, vis_lod);
     if (sVisSortOn) { LLVisCensus::sSortTicksLod += LLVisCensus::now() - vis_l0; ++LLVisCensus::sSortLodCalls; LLVisCensus::sSortLodTrue += vis_lod; }
     if (vis_lod)
     {
@@ -8060,6 +8072,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
 
+    ll_lod_cand_report();
     if (sChkCount && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         static U64 sorts = 0;
@@ -8338,6 +8351,10 @@ void LLPipeline::addBeacons()
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera);       // stage 6 (defined with the group table, below): the main view's alpha lists from the consumers' groups
 void ll_scene_lod_compare();                                            // stage 7 (below): the worker's LOD numbers against the walk's, once a frame
 bool ll_scene_lod_compare_on();
+bool ll_scene_lod_publish_on();                                         // stage 8 (owner 3): the compare or the candidate check wants the worker's LOD numbers
+void ll_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
+void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
+void ll_lod_cand_report();
 void ll_scene_stamp_compare(LLCullResult* cull);                        // stage 8b (below): the walk's kept groups against the worker's derived set
 
 void LLPipeline::buildRenderLists(LLCamera &camera)
@@ -14136,6 +14153,87 @@ void ll_scene_stamp_compare(LLCullResult* cull)
     }
 }
 
+// stage 8, owner 3 (LL_VK_LOD_CAND=1): the worker's change set (the whole answer of changeLOD() per slot) against the sort's own answer for each group it looks at.
+static std::vector<U32> sCandBits;
+static U32 sCandFrame = 0, sCandTable = 0;
+static std::atomic<U64> sCandLooked[2], sCandLive[2], sCandHit[2], sCandNoRow[2], sCandMissDirty[2], sCandMissSlop[2], sCandMissRobin[2], sCandMissRecent[2], sCandExtra[2], sCandAge;       // [0] the group's row did not change lately, [1] it did (the worker's copy can be a frame behind)
+
+void ll_lod_cand_refresh()
+{
+    if (!sLodCand)
+    {
+        return;
+    }
+    static std::vector<F32> bd(1u << 15);
+    static std::vector<U32> bb((1u << 15) / 32 + 1), bc((1u << 15) / 32 + 1);
+    U32 frame = 0;
+    if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, bd.data(), bb.data(), bc.data(), (U32)bd.size()))
+    {
+        sCandBits.assign(bc.begin(), bc.begin() + (t + 31) / 32);
+        sCandFrame = frame;
+        sCandTable = t;
+    }
+}
+
+void ll_lod_cand_note(LLSpatialGroup* group, bool live)
+{
+    if (!sLodCand || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender() || LLPipeline::sImpostorRender || !group->mCullId
+        || !sCandTable || !group->getSpatialPartition() || group->getSpatialPartition()->asBridge())
+    {
+        return;
+    }
+    const U32 slot = group->mCullId - 1;
+    const int r = (sMapChangeFrame[slot < sMapChangeFrame.size() ? slot : 0] + 3 >= sCandFrame) ? 1 : 0;       // (a row that changed in the 3 frames before the set's frame: the worker may have had it a frame late)
+    sCandLooked[r].fetch_add(1, std::memory_order_relaxed);
+    if (slot >= sCandTable)
+    {
+        sCandNoRow[r].fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const bool cand = (sCandBits[slot >> 5] >> (slot & 31)) & 1u;
+    if (live)
+    {
+        sCandLive[r].fetch_add(1, std::memory_order_relaxed);
+        if (cand)
+        {
+            sCandHit[r].fetch_add(1, std::memory_order_relaxed);
+        }
+        else if (group->hasState(static_cast<U32>(LLSpatialGroup::ALPHA_DIRTY) | static_cast<U32>(LLSpatialGroup::OBJECT_DIRTY)))
+        {
+            sCandMissDirty[r].fetch_add(1, std::memory_order_relaxed);
+        }
+        else
+        {
+            const F32 slop = group->getSpatialPartition()->mSlopRatio;
+            const bool slop_bit = slop > 0.f && fabsf((group->row().distance - group->row().lastUpdateDistance) / llmax(group->row().lastUpdateDistance, group->row().radius)) >= slop;
+            (slop_bit ? sCandMissSlop[r] : sCandMissRobin[r]).fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    else if (cand)
+    {
+        sCandExtra[r].fetch_add(1, std::memory_order_relaxed);
+    }
+    sCandAge.fetch_add((U32)gFrameCount - sCandFrame, std::memory_order_relaxed);
+}
+
+void ll_lod_cand_report()
+{
+    if (!sLodCand || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot)
+    {
+        return;
+    }
+    static U64 sorts = 0;
+    if (++sorts % 600 != 0)
+    {
+        return;
+    }
+    const double n = (double)sorts;
+    LL_INFOS("VkLodCand") << "LOD candidates, per sort over " << sorts << " (rows quiet | rows changed lately): groups looked at " << sCandLooked[0] / n << " | " << sCandLooked[1] / n << ", no row " << sCandNoRow[0] / n << " | " << sCandNoRow[1] / n
+                          << ", the sort's changeLOD() true " << sCandLive[0] / n << " | " << sCandLive[1] / n << ", of those in the worker's set " << sCandHit[0] / n << " | " << sCandHit[1] / n
+                          << ", not in it: a dirty state " << sCandMissDirty[0] / n << " | " << sCandMissDirty[1] / n << ", the slop test " << sCandMissSlop[0] / n << " | " << sCandMissSlop[1] / n << ", the round robin " << sCandMissRobin[0] / n << " | " << sCandMissRobin[1] / n
+                          << "; in the set and not true " << sCandExtra[0] / n << " | " << sCandExtra[1] / n << "; the set is " << (double)sCandAge.load() / std::max<double>(1.0, (double)(sCandLooked[0] + sCandLooked[1])) << " frames old" << LL_ENDL;
+}
+
 // stage 7 (LL_VK_CULL_LOD=1): the worker's distance and slop bit of every row (published by cull_derive_compare, about a frame old) against what the walk's LOD check saw of the group in this frame. Rows that changed in the last
 // 3 frames are counted apart (the worker's copy of them can be a frame behind, a camera that moved changes every distance, a turn does not).
 void ll_scene_lod_compare()
@@ -15330,7 +15428,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
     const bool cull_view = LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView;       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     LLVkBridge::CullParams view_params;
-    U32 view_extra[4] = { ll_scene_lod_compare_on() ? (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)) : 0u, 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
+    U32 view_extra[4] = { ll_scene_lod_publish_on() ? (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)) : 0u, 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
     static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
     marked_bridges.clear();
     static std::vector<U32> bridge_handles;       // the handles of those bridges' groups (see below)
