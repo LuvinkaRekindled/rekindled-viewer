@@ -16455,9 +16455,13 @@ void ll_scene_geo_frame(LLCullResult* cull)
     }
     const std::vector<Binding>& sent_bindings = persist ? updates : bindings;
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
-    const bool cull_view = LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView;       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
+    // stage 10a (LL_VK_CUBE_DERIVE=1, needs LL_VK_CULL_SHADOW=1): a probe cube face's record carries the face's planes too; the worker derives the face's listed set and compares it with the face's handles (stats of their own, nothing published,
+    // nothing drawn from it: view_extra[2] = 2)
+    static const bool sCubeDerive = LLCullShadow::sOn && getenv("LL_VK_CUBE_DERIVE") != nullptr;
+    const bool cube_view = sCubeDerive && gCubeSnapshot && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !sImpostorTableView;
+    const bool cull_view = cube_view || (LLCullShadow::sOn && ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView);       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     LLVkBridge::CullParams view_params;
-    U32 view_extra[4] = { ll_scene_lod_publish_on() ? (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)) : 0u, 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
+    U32 view_extra[4] = { (ll_scene_lod_publish_on() && !cube_view) ? (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)) : 0u, 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
     static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
     marked_bridges.clear();
     static std::vector<U32> bridge_handles;       // the handles of those bridges' groups (see below)
@@ -16513,7 +16517,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         view_extra[3] = (U32)bridge_handles.size();
-        view_extra[2] = sCullOwnWorker ? 1u : 0u;        // stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
+        view_extra[2] = cube_view ? 2u : (sCullOwnWorker ? 1u : 0u);        // stage 10a: 2 = a probe cube face, compared only. Stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
         view_params.mMotion[0] = sCullTBound;       // stage 4: the margins of the late list, as the table's record carries them
         view_params.mMotion[1] = sCullABound;
@@ -16559,7 +16563,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     header.mFragment = persist ? 1u : 0u;       // P2: 1 = the bindings are updates of persistent ones (ids), mPass = the frame whose palette table they are resolved in
     header.mPass = (U32)gFrameCount;
     header.mCullView = cull_view ? 1u : 0u;
-    if (cull_view)
+    if (cull_view && !cube_view)
     {
         cull_extra_diag(*LLViewerCamera::getInstance(), handles);
         cull_stage4_compare(handles);
