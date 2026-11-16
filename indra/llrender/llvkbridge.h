@@ -402,6 +402,13 @@ namespace LLVkBridge
     struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mReleased, mAlphaDirty, mKept; std::vector<F32> mAlphaDepth; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
+    // stage 10a (LL_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner
+    // filters by its own render types) for the planes it names, under an id of its own; the worker answers when its rows are up to date (a few frames later); the owner reads the newest answer for its id and uses it only when the planes it
+    // has now are the planes it asked with (mParams) and the answer is not too old (mFrame is the viewer's frame of the request). viewRequest sends kind 43 and returns false when nothing can be sent.
+    struct ViewSet { U32 mId = 0, mFrame = 0, mTable = 0; CullParams mParams; std::vector<U32> mKept; };
+    bool viewRequest(U32 id, U32 frame, const CullParams& params);
+    std::shared_ptr<const ViewSet> viewSetRead(U32 id);
+    void viewSetPublish(std::shared_ptr<const ViewSet> set);        // (worker)
     // stage 8d (LL_VK_HIZROWS): the worker appends the box of every table row to the Hi-Z packet and publishes the verdicts of those boxes by slot, for the serial of the packet, when the frame has finished, as two bit sets by slot:
     // info = a row the Hi-Z tests (not the root, a bridge's group or one of a partition without occlusion) whose box is neither off the screen nor wholly behind the camera (those say "occluded" and mean no information),
     // occ = the box is occluded, only where there is information. hizRowsRead copies the serial's two sets (words = ceil(rows / 32)); it returns the number of rows, 0 = none for that serial.
