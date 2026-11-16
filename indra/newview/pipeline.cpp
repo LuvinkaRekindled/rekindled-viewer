@@ -4843,6 +4843,7 @@ static void main_vis_verify(LLCamera& camera)
 bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
+void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok)
 
 static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
@@ -4908,6 +4909,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         && LLCullShadow::useMatches(camera);        // (a frame whose frustum has another shape than the verdict's is walked: the exit snapshot has no UI, so another aspect)
     // stage 8f (LL_VK_KEPT=2): the covered partitions are not walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, each group goes through markNotCulled as the walk's own does
     const bool derived_use = !cull_use && view.isMainWorld() && !gCubeSnapshot && ll_cull_derived_on();
+    if (!derived_use && view.isMainWorld() && !gCubeSnapshot)
+    {
+        ll_cull_stamps_release();       // stage 8b: a frame the walk runs (or nothing is derived): the stamps of the last set are the groups' own again (nothing to do when none was applied)
+    }
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
@@ -5129,6 +5134,27 @@ static inline bool ll_dist_owned(LLSpatialGroup* group)
     return sDistOwner && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && !LLPipeline::shadowRender() && group->mCullId && group->getSpatialPartition()
         && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->mRenderByGroup;
 }
+// stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group of the kept set is derived from the set (LLKeptStamps, llvieweroctree.h), not written per group: markNotCulled does not call setVisible for a group the pass
+// that is running names; the pass applies the set after its jobs, and writes the stamp back for the groups of the previous set that are not in this one (ll_kept_stamps_apply); a frame the derived path does not run folds the whole set back
+static const bool sKeptStamp = LLCullShadow::sOn && getenv("LL_VK_KSTAMP") != nullptr && getenv("LL_VK_KEPT") && atoi(getenv("LL_VK_KEPT")) == 2;
+static const U32* sKeptPassBitsG = nullptr;                 // the bits of the set the pass is making (written by the main thread around the pass's jobs)
+static U32 sKeptPassWordsG = 0;
+static thread_local const U32* sKeptPassBits = nullptr;     // the same, for the thread that is running a part of the pass
+static thread_local U32 sKeptPassWords = 0;
+struct KeptPassScope
+{
+    KeptPassScope() { sKeptPassBits = sKeptPassBitsG; sKeptPassWords = sKeptPassWordsG; }
+    ~KeptPassScope() { sKeptPassBits = nullptr; sKeptPassWords = 0; }
+};
+static inline bool ll_kept_stamped(const LLSpatialGroup* g)
+{
+    if (!sKeptPassBits || !g->mCullId)
+    {
+        return false;
+    }
+    const U32 slot = g->mCullId - 1;
+    return (slot >> 5) < sKeptPassWords && ((sKeptPassBits[slot >> 5] >> (slot & 31u)) & 1u);
+}
 static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
 static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
@@ -5172,7 +5198,10 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
         }
     }
 
-    group->setVisible();
+    if (!ll_kept_stamped(group))        // <FS> stage 8b: the set the pass applies holds the stamp
+    {
+        group->setVisible();
+    }
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
@@ -12943,7 +12972,7 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
             continue;
         }
         ++cand;
-        if (g->row().visible[cam] == frame)
+        if (g->getVisible((LLViewerCamera::eCameraID)cam) == frame)
         {
             ++marked;
             if (said < 4)
@@ -12982,7 +13011,7 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
         for (int depth = 0; up && depth < 40; ++depth, up = up->getOctParent())
         {
             LLSpatialGroup* a = (LLSpatialGroup*)up->getListener(0);
-            if (a && !a->isEmpty() && a->row().visible[cam] != frame)
+            if (a && !a->isEmpty() && a->getVisible((LLViewerCamera::eCameraID)cam) != frame)
             {
                 cut = a;
                 break;
@@ -14704,14 +14733,100 @@ bool ll_cull_derived_skip(LLSpatialPartition* part)
     return true;
 }
 
+// stage 8b: the set the world stamps stand for (LLKeptStamps::sView): the views of the last three applied sets and the lists that hold their bits (the readers of one frame never see one older than the previous)
+static std::shared_ptr<const LLVkBridge::ConsumerList> sKeptHold[3];
+static LLKeptStamps::View sKeptViews[3];
+static unsigned sKeptRing = 0;
+
+// the groups of the previous set that the new bits do not name: their stamp is the frame of the previous set (what the per-group write left), written back as the retained sets' fold does (clear_member)
+static U64 sKeptFolded = 0, sKeptApplied = 0, sKeptReleased = 0;       // (counted for the report line of the apply)
+static void ll_kept_stamps_fold(const LLKeptStamps::View* prev, const U32* now_bits, U32 now_words)
+{
+    if (!prev)
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sCullMutex);
+    const U32 n = (U32)sSlotGroup.size();
+    for (U32 w = 0; w < prev->mWords; ++w)
+    {
+        const U32 bits = prev->mBits[w] & ~(w < now_words ? now_bits[w] : 0u);
+        for (U32 b = 0; bits && b < 32; ++b)
+        {
+            const U32 slot = (w << 5) + b;
+            if (((bits >> b) & 1u) && slot < n && sSlotGroup[slot])
+            {
+                LLGroupRows::Row& r = ((LLSpatialGroup*)sSlotGroup[slot])->row();
+                r.visible[LLViewerCamera::CAMERA_WORLD] = std::max(r.visible[LLViewerCamera::CAMERA_WORLD], prev->mFrame);
+                r.anyVisible = std::max(r.anyVisible, prev->mFrame);
+                ++sKeptFolded;
+            }
+        }
+    }
+}
+
+static void ll_kept_stamps_apply(const std::shared_ptr<const LLVkBridge::ConsumerList>& wl)
+{
+    const LLKeptStamps::View* prev = LLKeptStamps::sView.load(std::memory_order_relaxed);
+    ll_kept_stamps_fold(prev, wl->mKept.data(), (U32)wl->mKept.size());
+    const unsigned i = (sKeptRing + 1) % 3;
+    sKeptHold[i] = wl;
+    sKeptViews[i].mBits = wl->mKept.data();
+    sKeptViews[i].mWords = (U32)wl->mKept.size();
+    sKeptViews[i].mFrame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
+    sKeptRing = i;
+    LLKeptStamps::sView.store(&sKeptViews[i], std::memory_order_release);
+    if (++sKeptApplied % 3000 == 0)
+    {
+        U32 bits = 0;
+        for (const U32 w : wl->mKept) { bits += (U32)__popcnt(w); }
+        LL_INFOS("CullShadow") << "kept stamps (LL_VK_KSTAMP): " << sKeptApplied << " sets applied, the stamp of " << bits << " groups derived from the last one, " << sKeptFolded << " groups written back when they left a set ("
+                               << (double)sKeptFolded / (double)sKeptApplied << " a set), " << sKeptReleased << " frames the derived path was off after a set" << LL_ENDL;
+    }
+}
+
+// a frame the derived path does not run (the walk is back, a shift frame, a set too old): the stamps of the whole set are written back and the view is dropped
+void ll_cull_stamps_release()
+{
+    const LLKeptStamps::View* prev = LLKeptStamps::sView.load(std::memory_order_relaxed);
+    if (!prev)
+    {
+        return;
+    }
+    LLKeptStamps::sView.store(nullptr, std::memory_order_release);
+    ll_kept_stamps_fold(prev, nullptr, 0);
+    ++sKeptReleased;
+}
+
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them (as useVerdict does)
     const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
     if (!wl)
     {
+        if (sKeptStamp)
+        {
+            ll_cull_stamps_release();       // (no set: the stamps are the groups' own again)
+        }
         return;
     }
+    struct KeptApply
+    {
+        const std::shared_ptr<const LLVkBridge::ConsumerList>& mList;
+        KeptApply(const std::shared_ptr<const LLVkBridge::ConsumerList>& l) : mList(l)
+        {
+            if (sKeptStamp) { sKeptPassBitsG = mList->mKept.data(); sKeptPassWordsG = (U32)mList->mKept.size(); }
+        }
+        ~KeptApply()
+        {
+            if (sKeptStamp)
+            {
+                sKeptPassBitsG = nullptr;
+                sKeptPassWordsG = 0;
+                ll_kept_stamps_apply(mList);        // (after the jobs and the merge: the stamps the jobs read are the previous set's)
+            }
+        }
+    } kept_apply(wl);
     static std::vector<LLSpatialGroup*> groups;
     groups.clear();
     {
@@ -14740,6 +14855,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     LLForkJoinPool* pool = parallel_ok ? LLForkJoinPool::shared() : nullptr;
     if (!pool || groups.size() < 400)
     {
+        KeptPassScope kscope;
         for (LLSpatialGroup* g : groups)
         {
             if (keep(g))
@@ -14770,6 +14886,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     {
         CullChunk& chunk = chunks[w];
         CullTaskScope scope(chunk, view);
+        KeptPassScope kscope;
         for (size_t k = chunk.mBegin; k < chunk.mEnd; ++k)
         {
             if (keep(groups[k]))
@@ -16352,7 +16469,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         {
             LLSpatialBridge* bridge = *b;
             LLSpatialGroup* root = bridge && bridge->mOctree ? (LLSpatialGroup*)bridge->mOctree->getListener(0) : nullptr;
-            if (root && root->mCullId && root->row().visible[LLViewerCamera::CAMERA_WORLD] == frame)       // (LLOctreeMarkNotCulled stamps every node of the octree it marks)
+            if (root && root->mCullId && root->getVisible(LLViewerCamera::CAMERA_WORLD) == frame)       // (LLOctreeMarkNotCulled stamps every node of the octree it marks)
             {
                 marked_bridges.push_back(root->mCullId - 1);
             }
