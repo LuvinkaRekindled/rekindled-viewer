@@ -15097,7 +15097,15 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
     ++cnt_batches;
     // (a stale batch, the camera moved more than 0.5 m or turned more than 2 degrees since its boxes were sent, is applied as all visible: the rule of 2026-11-02, the own avatar vanished for 15 frames in a flight)
     cnt_stale += stale;
-    for (U32 w = 0; w < nw; ++w)
+    // <FS> 2026-11-16 (the user: Hi-Z has to work): a stale batch no longer clears every flagged row at once: the first LL_VK_HIZ_STALE_RUN (3) stale batches in a row are skipped (the state stays as the last good batch left it, nothing is
+    // set or cleared), after that the batch is applied as all visible as before (a flight: the own avatar vanished for 15 frames on 2026-11-02). With the limit at 2 degrees almost every batch of a turn is stale and one clears 2,400 rows,
+    // which the two agreeing verdicts needed to set a row again put back a frame or two later: the visible groups swung between 671 and 2,698 frame to frame (lap hz6, 60 VkFlash lines).
+    static U32 stale_run = 0, cnt_skipped = 0;
+    static const U32 stale_run_max = getenv("LL_VK_HIZ_STALE_RUN") ? (U32)atoi(getenv("LL_VK_HIZ_STALE_RUN")) : 3u;
+    stale_run = stale ? stale_run + 1 : 0;
+    const bool skip = stale && stale_run <= stale_run_max;
+    cnt_skipped += skip;
+    for (U32 w = 0; w < (skip ? 0u : nw); ++w)
     {
         const U32 i = info[w];
         cnt_info += (U64)__popcnt(i);
@@ -15129,9 +15137,10 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
     if (cnt_batches % 150 == 0)
     {
         const double n = 150.0;
-        LL_INFOS("VkHizRows") << "Hi-Z rows applied (LL_VK_HIZROWS=2), the last 150 batches: " << cnt_batches << " in all, stale " << cnt_stale << " of the last 150, rows with information " << (double)cnt_info / n << " a batch, the batch says occluded " << (double)cnt_occ_says / n
+        LL_INFOS("VkHizRows") << "Hi-Z rows applied (LL_VK_HIZROWS=2), the last 150 batches: " << cnt_batches << " in all, stale " << cnt_stale << " (skipped " << cnt_skipped << ") of the last 150, rows with information " << (double)cnt_info / n << " a batch, the batch says occluded " << (double)cnt_occ_says / n
                               << ", rows flagged occluded when it came " << (double)cnt_flagged / n << ", set " << (double)cnt_set / n << " and cleared " << (double)cnt_clr / n << " a batch" << LL_ENDL;
         cnt_stale = cnt_info = cnt_occ_says = cnt_flagged = cnt_set = cnt_clr = 0;
+        cnt_skipped = 0;
     }
     if (changes.empty())
     {
