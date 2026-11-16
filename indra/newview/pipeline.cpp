@@ -12850,6 +12850,12 @@ bool cull_covered(LLSpatialGroup* sg)
         return root && root->getVObj() && !root->getVObj()->isHUDAttachment();
     }
     const U32 pi = part->mPartitionType;
+    // <FS> stage 9a (LL_VK_COVER_AV=1): the region partitions of the avatars, the bridges and the animated objects get rows too (the groups that hold the drawables themselves, rendered by drawable); compare first (LL_VK_KEPT=1)
+    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    if (cover_av && (pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV))
+    {
+        return true;
+    }
     return !(pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV ||
              pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
 }
@@ -14738,6 +14744,13 @@ static bool ll_cull_derived_covers(LLSpatialPartition* part)
         return false;
     }
     const U32 pi = part->mPartitionType;
+    // <FS> stage 9b (LL_VK_COVER_AV=1, with LL_VK_KEPT=2): the region partitions of the avatars, the bridges and the animated objects are not walked either: their groups (rows since 9a, the kept compare of lap cav: 2.1 of 1,882 groups a
+    // frame differ, as without them) come from the worker's kept set and go through markNotCulled
+    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    if (cover_av && (pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV))
+    {
+        return true;
+    }
     return !(pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV
         || pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
 }
