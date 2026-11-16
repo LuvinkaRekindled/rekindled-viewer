@@ -26,6 +26,9 @@
 #include "linden_common.h"
 
 #include "llmutex.h"
+#include "lldiag.h"
+#include <chrono>
+#include <mutex>
 #include "llvolumemgr.h"
 #include "llvolume.h"
 
@@ -296,7 +299,34 @@ LLVolume* LLVolumeLODGroup::refLOD(const S32 lod)
     mRefs++;
     if (mVolumeLODs[lod].isNull())
     {
-        mVolumeLODs[lod] = new LLVolume(mVolumeParams, mDetailScales[lod]);
+        if (ll_diag_on())
+        {
+            // <FS> 2026-11-16 (PLAN-hitchless-loading.md, A1's measurement gate, LL_VK_DIAG=1): how many volumes are built a window, per LOD, and what they cost on the calling thread (the main thread for new objects and LOD changes):
+            // a line every 2 s with the builds of that window: count, total ms and the longest, per LOD.
+            static std::mutex stats_mutex;
+            static U64 builds[NUM_LODS] = {}, build_us[NUM_LODS] = {}, longest_us[NUM_LODS] = {};
+            static std::chrono::steady_clock::time_point window_start = std::chrono::steady_clock::now();
+            const auto t0 = std::chrono::steady_clock::now();
+            mVolumeLODs[lod] = new LLVolume(mVolumeParams, mDetailScales[lod]);
+            const auto t1 = std::chrono::steady_clock::now();
+            const U64 us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+            std::lock_guard<std::mutex> lock(stats_mutex);
+            ++builds[lod];
+            build_us[lod] += us;
+            longest_us[lod] = std::max(longest_us[lod], us);
+            if (t1 - window_start > std::chrono::seconds(2))
+            {
+                LL_INFOS("VolStats") << "volume builds in the last " << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - window_start).count() << " ms (count, total ms, longest ms): "
+                                     << "LOD0 " << builds[0] << " " << build_us[0] / 1000.0 << " " << longest_us[0] / 1000.0 << ", LOD1 " << builds[1] << " " << build_us[1] / 1000.0 << " " << longest_us[1] / 1000.0 << ", "
+                                     << "LOD2 " << builds[2] << " " << build_us[2] / 1000.0 << " " << longest_us[2] / 1000.0 << ", LOD3 " << builds[3] << " " << build_us[3] / 1000.0 << " " << longest_us[3] / 1000.0 << LL_ENDL;
+                for (S32 i = 0; i < NUM_LODS; ++i) { builds[i] = build_us[i] = longest_us[i] = 0; }
+                window_start = t1;
+            }
+        }
+        else
+        {
+            mVolumeLODs[lod] = new LLVolume(mVolumeParams, mDetailScales[lod]);
+        }
     }
     mLODRefs[lod]++;
     return mVolumeLODs[lod];
