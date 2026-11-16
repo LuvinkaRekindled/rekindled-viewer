@@ -14794,6 +14794,12 @@ static void ll_kept_stamps_apply(const std::shared_ptr<const LLVkBridge::Consume
     sKeptViews[i].mFrame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
     sKeptRing = i;
     LLKeptStamps::sView.store(&sKeptViews[i], std::memory_order_release);
+    if (sKeptApplied % 150 == 149)
+    {
+        U32 bits = 0;
+        for (const U32 w : wl->mKept) { bits += (U32)__popcnt(w); }
+        LL_INFOS("VkKeptSize") << "kept set size (a set every 150): " << bits << " groups" << LL_ENDL;
+    }
     if (++sKeptApplied % 3000 == 0)
     {
         U32 bits = 0;
@@ -15085,9 +15091,16 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
     if (sHizPrevOcc.size() < nw) { sHizPrevOcc.resize(nw, 0u); }
     static std::vector<std::pair<U32, bool>> changes;
     changes.clear();
+    // (the proof line of this switch and what a turn does to it: batches applied, stale ones, rows with information, rows the batch says are occluded, rows flagged occluded after it, the changes it made)
+    static U64 cnt_batches = 0, cnt_stale = 0, cnt_info = 0, cnt_occ_says = 0, cnt_flagged = 0, cnt_set = 0, cnt_clr = 0;
+    ++cnt_batches;
+    // (a stale batch, the camera moved more than 0.5 m or turned more than 2 degrees since its boxes were sent, is applied as all visible: the rule of 2026-11-02, the own avatar vanished for 15 frames in a flight)
+    cnt_stale += stale;
     for (U32 w = 0; w < nw; ++w)
     {
         const U32 i = info[w];
+        cnt_info += (U64)__popcnt(i);
+        cnt_occ_says += (U64)__popcnt(occ[w] & i);
         const U32 o = stale ? 0u : (occ[w] & i);
         U32 set_bits = o & sHizPrevOcc[w] & ~sHizState[w];            // two agreeing occluded verdicts, the state is not occluded yet
         U32 clr_bits = i & ~o & sHizState[w];                         // a verdict that says visible, the state is occluded
@@ -15103,6 +15116,21 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
                 }
             }
         }
+    }
+    for (const auto& c : changes)
+    {
+        (c.second ? cnt_set : cnt_clr) += 1;
+    }
+    for (U32 w = 0; w < nw; ++w)
+    {
+        cnt_flagged += (U64)__popcnt(sHizState[w]);       // (before this batch's changes are applied: the state the batch found)
+    }
+    if (cnt_batches % 150 == 0)
+    {
+        const double n = 150.0;
+        LL_INFOS("VkHizRows") << "Hi-Z rows applied (LL_VK_HIZROWS=2), the last 150 batches: " << cnt_batches << " in all, stale " << cnt_stale << " of the last 150, rows with information " << (double)cnt_info / n << " a batch, the batch says occluded " << (double)cnt_occ_says / n
+                              << ", rows flagged occluded when it came " << (double)cnt_flagged / n << ", set " << (double)cnt_set / n << " and cleared " << (double)cnt_clr / n << " a batch" << LL_ENDL;
+        cnt_stale = cnt_info = cnt_occ_says = cnt_flagged = cnt_set = cnt_clr = 0;
     }
     if (changes.empty())
     {
