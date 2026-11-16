@@ -4843,7 +4843,7 @@ static void main_vis_verify(LLCamera& camera)
 bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
-void ll_cull_derived_pass(LLCamera& camera);           // the groups of the kept set go through markNotCulled
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok)
 
 static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
 
@@ -5085,7 +5085,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     if (derived_use)
     {
         LL_CPU_ZONE("updateCull: kept groups");
-        ll_cull_derived_pass(camera);
+        ll_cull_derived_pass(camera, view, view.isMainWorld() && !vis_cull && !LLOccCensus::sOn && !LLGpuZoneTimer::isActive() && !LLCullShadow::sCompare && LLCullShadow::sUse == 0 && !ll_scene_lod_compare_on());
     }
 
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
@@ -14704,7 +14704,7 @@ bool ll_cull_derived_skip(LLSpatialPartition* part)
     return true;
 }
 
-void ll_cull_derived_pass(LLCamera& camera)
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them (as useVerdict does)
     const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
@@ -14730,14 +14730,72 @@ void ll_cull_derived_pass(LLCamera& camera)
             }
         }
     }
-    for (LLSpatialGroup* g : groups)
+    // the groups through markNotCulled, as the pool walk does it: chunks of about the same size, a result and a ledger (what the call defers: the wake) for each, the results merged in the order of the chunks and the ledgers
+    // applied in that order. A few groups are done here.
+    const auto keep = [](LLSpatialGroup* g)
     {
         LLSpatialPartition* part = g->getSpatialPartition();
-        if (!g->isDead() && !g->isEmpty() && part && !part->asBridge() && ll_cull_derived_covers(part))
+        return !g->isDead() && !g->isEmpty() && part && !part->asBridge() && ll_cull_derived_covers(part);
+    };
+    LLForkJoinPool* pool = parallel_ok ? LLForkJoinPool::shared() : nullptr;
+    if (!pool || groups.size() < 400)
+    {
+        for (LLSpatialGroup* g : groups)
         {
-            gPipeline.markNotCulled(g, camera);
+            if (keep(g))
+            {
+                gPipeline.markNotCulled(g, camera);
+            }
         }
+        return;
     }
+    const size_t tasks = (pool->workerCount() + 1) * 2;
+    const size_t per = std::max<size_t>(96, (groups.size() + tasks - 1) / tasks);
+    std::deque<CullChunk> chunks;
+    for (size_t b = 0; b < groups.size(); b += per)
+    {
+        chunks.emplace_back();
+        CullChunk& c = chunks.back();
+        const size_t idx = chunks.size() - 1;
+        if (sCullLocals.size() <= idx)
+        {
+            sCullLocals.push_back(std::make_unique<LLCullResult>());
+        }
+        sCullLocals[idx]->clear();
+        c.mLocal = sCullLocals[idx].get();
+        c.mBegin = b;
+        c.mEnd = std::min(groups.size(), b + per);
+    }
+    const std::function<void(size_t)> job = [&](size_t w)
+    {
+        CullChunk& chunk = chunks[w];
+        CullTaskScope scope(chunk, view);
+        for (size_t k = chunk.mBegin; k < chunk.mEnd; ++k)
+        {
+            if (keep(groups[k]))
+            {
+                gPipeline.markNotCulled(groups[k], camera);
+            }
+        }
+    };
+    {
+        LL_CPU_ZONE("updateCull: kept groups (wait for the pool)");
+        pool->runLabeled("updateCull: kept groups", chunks.size(), job);
+    }
+    std::vector<LLPipeline::SortDelta> ledger;
+    size_t pushed = 0;
+    for (CullChunk& chunk : chunks)
+    {
+        LLCullResult& l = *chunk.mLocal;
+        for (LLCullResult::drawable_iterator d = l.beginVisibleList(); d != l.endVisibleList(); ++d) sCull->pushDrawable(*d);
+        for (LLCullResult::bridge_iterator b = l.beginVisibleBridge(); b != l.endVisibleBridge(); ++b) sCull->pushBridge(*b);
+        for (LLCullResult::sg_iterator g = l.beginDrawableGroups(); g != l.endDrawableGroups(); ++g) { sCull->pushDrawableGroup(*g); ++pushed; }
+        for (LLCullResult::sg_iterator g = l.beginVisibleGroups(); g != l.endVisibleGroups(); ++g) { sCull->pushVisibleGroup(*g); ++pushed; }
+        for (LLCullResult::sg_iterator g = l.beginOcclusionGroups(); g != l.endOcclusionGroups(); ++g) sCull->pushOcclusionGroup(*g);
+        ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
+    }
+    gPipeline.applySortDeltas(ledger);
+    gPipeline.mNumVisibleNodes += (S32)pushed;
 }
 
 // stage 8c of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_WAKE=1, needs LL_VK_CULL_SHADOW=1): the groups a camera accepts again that are Released (the draw infos dropped by the expiry scan, map row flag 32, kept by the events that release
