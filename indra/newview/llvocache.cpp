@@ -486,21 +486,40 @@ void LLVOCacheEntry::updateDebugSettings()
     // <FS:Beq> FIRE-32688 Area search and other visibility issues
     // If this machine has limited RAM, then restore the LL defaults.
     // So long as we have at least 8GB of RAM, then we will use our values.
-    if( LLMemory::getAvailableMemKB() * KB_to_MB < 8096 )
+    // </FS:Beq>
+    // <FS> Rekindled 2026-11-16: that check read the AVAILABLE memory (capped by the heap headroom of the process: a viewer that holds a few GB trips it on any machine) and WROTE the low bounds into the saved settings for good: Adam's
+    // settings held 768 / 2048 and the adaptive factor below was 0 for every frame (the viewer holds 4 to 9 GB: above both bounds): the radius of objects kept loaded collapsed to 1 m, objects out of view were dropped after 10 frames and every
+    // turn created them again (a dip of about 10 s at 50 fps, laps zz and zt of 2026-11-16: with the bounds raised the turn has no dip at all and the still costs 0.2 ms more). The bounds now follow the PHYSICAL memory (a machine with less than
+    // 8 GB keeps the low bounds, a larger one at least a quarter and a half of its memory, the settings can raise them) and nothing is written to the settings.
+    const U32 physical_mb = (U32)(LLMemory::getMaxMemKB().value() / 1024u);
+    U32 low_mb = (U32)low_mem_bound_MB, high_mb = (U32)high_mem_bound_MB;
+    if (physical_mb < 8096)
     {
-        if( (U32)low_mem_bound_MB > 768 )
+        low_mb = llmin<U32>(low_mb, 768);
+        high_mb = llmin<U32>(high_mb, 2048);
+    }
+    else
+    {
+        low_mb = llmax<U32>(low_mb, physical_mb / 4);
+        high_mb = llmax<U32>(high_mb, physical_mb / 2);
+    }
+    if (high_mb <= low_mb)
+    {
+        high_mb = low_mb + 1;
+    }
+    {
+        static U32 said_low = 0, said_high = 0;
+        if (said_low != low_mb || said_high != high_mb)
         {
-            gSavedSettings.setU32("SceneLoadLowMemoryBound", 768);
-        }
-        if( (U32)high_mem_bound_MB > 2048 )
-        {
-            gSavedSettings.setU32("SceneLoadHighMemoryBound", 2048);
+            said_low = low_mb;
+            said_high = high_mb;
+            LL_INFOS("SceneLoad") << "scene loading memory bounds: " << physical_mb << " MB of physical memory, the settings hold " << (U32)low_mem_bound_MB << " / " << (U32)high_mem_bound_MB << ", in use " << low_mb << " / " << high_mb
+                                  << " MB (the process holds " << (U32)(allocated_mem * KB_to_MB) << " MB)" << LL_ENDL;
         }
     }
-    // </FS:Beq>
-    U32 clamped_memory = (U32)llclamp(allocated_mem * KB_to_MB, (F32) low_mem_bound_MB, (F32) high_mem_bound_MB);
-    const F32 adjust_range = (F32)(high_mem_bound_MB - low_mem_bound_MB);
-    const F32 adjust_factor = (high_mem_bound_MB - clamped_memory) / adjust_range; // [0, 1]
+    U32 clamped_memory = (U32)llclamp(allocated_mem * KB_to_MB, (F32) low_mb, (F32) high_mb);
+    const F32 adjust_range = (F32)(high_mb - low_mb);
+    const F32 adjust_factor = (high_mb - clamped_memory) / adjust_range; // [0, 1]
 
     //min radius: all objects within this radius remain loaded in memory
     static LLCachedControl<F32> min_radius(gSavedSettings,"SceneLoadMinRadius");
