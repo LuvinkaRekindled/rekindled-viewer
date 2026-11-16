@@ -695,6 +695,29 @@ void destroy_tex_images(Tex& t)
 }
 
 // (re)creates the Vulkan image for a texture whose level 0 was just specified
+// <FS> the GL name of a texture entry: kept in the entry when it is made (mName); the three callers below used to walk the whole of sGL.mTextures to find it (tens of thousands of entries a call: the render worker spent its
+// late presents in that loop in the first seconds of a turn, when hundreds of images are made: 10 of the 11 captures of the worker in the stalls of lap zx), the walk is the fallback for an entry without one
+static U32 tex_gl_name(Tex& t)
+{
+    if (t.mName)
+    {
+        return t.mName;
+    }
+    static U64 scans = 0;
+    if (++scans % 1000 == 1)
+    {
+        LL_INFOS("VkTex") << "a texture entry without its GL name: found by a walk of the table (" << scans << " so far)" << LL_ENDL;
+    }
+    for (auto& kv : sGL.mTextures)
+    {
+        if (&kv.second == &t)
+        {
+            return kv.first;
+        }
+    }
+    return 0;
+}
+
 bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U32 h, U32 depth)
 {
     using namespace LLVkFormat;
@@ -724,6 +747,25 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
         return true;        // same specification again: keep the image and just upload into it
     }
     ++gPassState.mTargetEpoch;
+    // (the proof line of the GL name change above: the images made (a new image or a re-specification), the time ensure_image takes for one, its worst, a line every 1000)
+    struct CreateTimer
+    {
+        std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now();
+        ~CreateTimer()
+        {
+            static U64 n = 0;
+            static double total_ms = 0.0, worst_ms = 0.0, window_ms = 0.0;
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mT0).count();
+            total_ms += ms;
+            window_ms += ms;
+            worst_ms = std::max(worst_ms, ms);
+            if (++n % 1000 == 0)
+            {
+                LL_INFOS("VkTexCreate") << "ensure_image creates: " << n << " in all, the last 1000 took " << window_ms << " ms (" << window_ms / 1000.0 << " ms each), the worst of all " << worst_ms << " ms" << LL_ENDL;
+                window_ms = 0.0;
+            }
+        }
+    } create_timer;
     if (t.mImage.valid())
     {
         ++sRespecs;
@@ -779,14 +821,10 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     {
         return false;
     }
-    for (auto& kv : sGL.mTextures)
+    if (const U32 gl_name = tex_gl_name(t))
     {
-        if (&kv.second == &t)
-        {
-            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
-            pin_wake_name(kv.first);        // a pin that has been waiting for this texture's image is looked at now, not when its backoff runs out
-            break;
-        }
+        Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(gl_name));
+        pin_wake_name(gl_name);        // a pin that has been waiting for this texture's image is looked at now, not when its backoff runs out
     }
     t.mDim = tg.mDim;
     t.mWidth = w;
@@ -847,13 +885,9 @@ bool grow_levels(Tex& t)
     t.mLevels = full;
     t.note(3, (S32)full, 0);
     pin_touch(t);
-    for (auto& kv : sGL.mTextures)
+    if (const U32 gl_name = tex_gl_name(t))
     {
-        if (&kv.second == &t)
-        {
-            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
-            break;
-        }
+        Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(gl_name));
     }
     return true;
 }
@@ -935,13 +969,9 @@ bool drop_levels(Tex& t, U32 k)
     t.mLevels = td.mMips;
     t.note(7, (S32)k, 0);
     pin_touch(t);
-    for (auto& kv : sGL.mTextures)
+    if (const U32 gl_name = tex_gl_name(t))
     {
-        if (&kv.second == &t)
-        {
-            Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(kv.first));
-            break;
-        }
+        Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(gl_name));
     }
     return true;
 }
