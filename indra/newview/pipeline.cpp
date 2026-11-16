@@ -15097,23 +15097,31 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
     ++cnt_batches;
     // (a stale batch, the camera moved more than 0.5 m or turned more than 2 degrees since its boxes were sent, is applied as all visible: the rule of 2026-11-02, the own avatar vanished for 15 frames in a flight)
     cnt_stale += stale;
-    // <FS> 2026-11-16 (Adam: Hi-Z has to work): a stale batch no longer clears every flagged row at once: the first LL_VK_HIZ_STALE_RUN (3) stale batches in a row are skipped (the state stays as the last good batch left it, nothing is
-    // set or cleared), after that the batch is applied as all visible as before (a flight: the own avatar vanished for 15 frames on 2026-11-02). With the limit at 2 degrees almost every batch of a turn is stale and one clears 2,400 rows,
-    // which the two agreeing verdicts needed to set a row again put back a frame or two later: the visible groups swung between 671 and 2,698 frame to frame (lap hz6, 60 VkFlash lines).
+    // <FS> 2026-11-16 (Adam: Hi-Z has to work): a stale batch no longer clears every flagged row. Lap hz6b (big batch lines against the VkFlash frames): with the old rule, and with the first three stale batches skipped, the fourth
+    // stale batch in a row cleared 2,000 to 4,600 rows at once and the two agreeing verdicts put them back three frames later: every 60 frames the visible groups jumped from 1,650 to 2,900 for three frames. A batch whose camera has moved
+    // beyond the limit is now only good for what it says is VISIBLE (a visible verdict is safe for any camera): those rows are cleared, and its occluded verdicts are not used (they set nothing, they count for nothing, they clear nothing).
+    // After LL_VK_HIZ_STALE_RUN (8) stale batches in a row the camera is taken to be really moving (a flight, a zoom: the own avatar vanished for 15 frames on 2026-11-02 with the stale verdicts applied) and the batch is applied as a fresh one.
     static U32 stale_run = 0, cnt_skipped = 0;
-    static const U32 stale_run_max = getenv("LL_VK_HIZ_STALE_RUN") ? (U32)atoi(getenv("LL_VK_HIZ_STALE_RUN")) : 3u;
+    static const U32 stale_run_max = getenv("LL_VK_HIZ_STALE_RUN") ? (U32)atoi(getenv("LL_VK_HIZ_STALE_RUN")) : 8u;
     stale_run = stale ? stale_run + 1 : 0;
-    const bool skip = stale && stale_run <= stale_run_max;
+    const bool skip = stale && stale_run <= stale_run_max;       // (the name stays: a batch applied for its visible verdicts only)
     cnt_skipped += skip;
-    for (U32 w = 0; w < (skip ? 0u : nw); ++w)
+    for (U32 w = 0; w < nw; ++w)
     {
         const U32 i = info[w];
         cnt_info += (U64)__popcnt(i);
         cnt_occ_says += (U64)__popcnt(occ[w] & i);
-        const U32 o = stale ? 0u : (occ[w] & i);
-        U32 set_bits = o & sHizPrevOcc[w] & ~sHizState[w];            // two agreeing occluded verdicts, the state is not occluded yet
-        U32 clr_bits = i & ~o & sHizState[w];                         // a verdict that says visible, the state is occluded
-        sHizPrevOcc[w] = (sHizPrevOcc[w] & ~i) | o;
+        const U32 o = occ[w] & i;
+        U32 set_bits = skip ? 0u : (o & sHizPrevOcc[w] & ~sHizState[w]);       // two agreeing occluded verdicts, the state is not occluded yet
+        U32 clr_bits = i & ~o & sHizState[w];                                  // a verdict that says visible, the state is occluded
+        if (skip)
+        {
+            sHizPrevOcc[w] &= ~(i & ~o);       // (a visible verdict ends the agreement; an occluded one of a stale batch neither adds to it nor ends it)
+        }
+        else
+        {
+            sHizPrevOcc[w] = (sHizPrevOcc[w] & ~i) | o;
+        }
         for (int phase = 0; phase < 2; ++phase)
         {
             U32 bits = phase ? clr_bits : set_bits;
@@ -15124,6 +15132,27 @@ void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool
                     changes.emplace_back((w << 5) + b, phase == 0);
                 }
             }
+        }
+    }
+    {
+        // (a batch that changes more than 300 rows at once, the frames the detector of the main view calls flashes: what the batch was; a budget of 80 lines)
+        U32 big_set = 0, big_clr = 0;
+        for (const auto& c : changes)
+        {
+            (c.second ? big_set : big_clr) += 1;
+        }
+        static U32 big_lines = 0;
+        if ((big_set > 300 || big_clr > 300) && big_lines < 80)
+        {
+            ++big_lines;
+            U64 says = 0, inf = 0;
+            for (U32 w = 0; w < nw; ++w)
+            {
+                says += (U64)__popcnt(occ[w] & info[w]);
+                inf += (U64)__popcnt(info[w]);
+            }
+            LL_INFOS("VkHizRows") << "big Hi-Z batch: frame " << gFrameCount << ", set " << big_set << ", cleared " << big_clr << ", stale " << stale << ", skipped " << skip << ", stale run " << stale_run << ", rows with information " << inf
+                                  << ", the batch says occluded " << says << LL_ENDL;
         }
     }
     for (const auto& c : changes)
