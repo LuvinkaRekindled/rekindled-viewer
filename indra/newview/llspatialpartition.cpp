@@ -127,6 +127,7 @@ S32 LLSphereAABB(const LLVector3& center, const LLVector3& size, const LLVector3
 
 namespace LLDirtyGroups
 {
+std::atomic<U32> sMask{ (U32)LLSpatialGroup::MESH_DIRTY | (U32)LLSpatialGroup::GEOM_DIRTY | (U32)LLSpatialGroup::NEW_DRAWINFO };
 static std::mutex sMutex;
 static std::vector<LLSpatialGroup*> sList;
 
@@ -170,7 +171,7 @@ void prune()
     for (size_t k = 0; k < sList.size();)
     {
         LLSpatialGroup* g = sList[k];
-        if (g->isDead() || !g->hasState(LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::NEW_DRAWINFO))
+        if (g->isDead() || !g->hasState(sMask.load(std::memory_order_relaxed)))
         {
             g->mInDirtyReg.store(false, std::memory_order_release);
             LLSpatialGroup* last = sList.back();
@@ -723,7 +724,7 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
     else
     {
         row().state |= state;
-        if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO))
+        if (state & LLDirtyGroups::sMask.load(std::memory_order_relaxed))
         {
             LLDirtyGroups::add(this);
         }
