@@ -17,6 +17,7 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#include <memory>
 #include "llvkplatform.h"
 namespace LLVk { struct Image; }
 #endif
@@ -385,6 +386,17 @@ namespace LLVkBridge
     U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
     void lateListPublish(U32 frame, U32 table_size, const U32* words);
     U32 lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);
+    // stage 8 (the viewer's consumers, LL_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
+    // of the late set's rows (one each, in slot order) with their slots, and the slots of the rows with an alpha key and no fragment. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
+    // The list is immutable once published: the reader holds the pointer, nothing is copied.
+    // Also the alpha groups of the late set (the viewer's alpha lists, LL_VK_CULL_ALPHA=4): the slots of the rows with an alpha key, not occluded, not over the auto-hide limit, not a bridge's, with the depth of each as
+    // LLSpatialPartition::calcDistance makes it (from the row's object bounds and the camera of the record: its origin and its at axis, which the scene record carries in mMotion[2], mMotion[3] and mFactors[3]), in the order of the
+    // sort (the deepest first, the order CompareDepthGreater gives), and the slots with a rigged alpha key (the viewer puts those in the order of the avatars and attachments, which only it knows)
+    // mAlphaBridge: the slots of the late set's bridge groups (the avatars' and the animated objects' attachments) with an alpha or a rigged alpha key: no depth (their rows hold the bridge's extents, their depth is in the bridge's own space),
+    // the viewer judges and orders those itself with the bridge's transformed camera
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge; std::vector<F32> mAlphaDepth; };
+    void consumerListPublish(std::shared_ptr<const ConsumerList> list);
+    std::shared_ptr<const ConsumerList> consumerListRead();
     S32 cullRead(U32 serial, U32 table_size, U32* out);
     void cullDone(U32 serial);
     void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot

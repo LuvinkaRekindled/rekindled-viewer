@@ -53,6 +53,8 @@ U32 LLVkBridge::visibleListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
 U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
 U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
+void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
+std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() { return nullptr; }
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
 void LLVkBridge::cullPublish(U32, U32) {}
@@ -1916,6 +1918,24 @@ U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop
     memcpy(change_bits, gLodChange.data(), gLodChange.size() * 4);
     frame = gLodFrame;
     return gLodTable;
+}
+
+namespace
+{
+std::mutex gConsMutex;
+std::shared_ptr<const LLVkBridge::ConsumerList> gCons;
+}
+
+void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList> list)
+{
+    std::lock_guard<std::mutex> lock(gConsMutex);
+    gCons = std::move(list);
+}
+
+std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead()
+{
+    std::lock_guard<std::mutex> lock(gConsMutex);
+    return gCons;
 }
 
 U32 LLVkBridge::lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)

@@ -12724,6 +12724,7 @@ typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the 
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
+std::deque<std::pair<U32, U32>> sRecentSlots;          // (frame, slot): the slots whose map row or handle changed, kept for 3 frames: the consumers' list adds them to the worker's (LL_VK_CONSUMERS) instead of walking the table
 std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
@@ -13063,15 +13064,19 @@ void cull_process()
             cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
             if (sMapMirror[slot].mHandle != old_handle)
             {
-                sMapHandleFrame[slot] = (U32)gFrameCount;
+                sMapHandleFrame[slot] = (U32)gFrameCount; sRecentSlots.emplace_back((U32)gFrameCount, slot);
             }
             if (memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)
             {
-                sMapChangeFrame[slot] = (U32)gFrameCount;
+                sMapChangeFrame[slot] = (U32)gFrameCount; sRecentSlots.emplace_back((U32)gFrameCount, slot);
             }
         }
         sSendSlots.push_back(slot);
         ++s.mRefreshed;
+    }
+    while (!sRecentSlots.empty() && (U32)gFrameCount - sRecentSlots.front().first > 6)
+    {
+        sRecentSlots.pop_front();
     }
 }
 
@@ -14017,6 +14022,7 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
 // (exact: the CPU's own result). Without the switch, in a view that is not the main view, or while no late list has come, it is the render map's exact list.
 static std::vector<LLSpatialGroup*> sConsumerGroups;       // the groups of the list below, in the same order (stage 6: the alpha lists are made from them)
 static std::vector<LLSpatialGroup*> sConsumerNoHandle;     // the groups of the late list that have an alpha key and no fragment handle (they are in no handle list; the alpha lists want them)
+static std::vector<LLSpatialGroup*> sConsumerExtras;       // (LL_VK_CONSUMERS=1) the groups the viewer added to the worker's list: the recent changes and the bridges' groups: the alpha lists evaluate those with the group's own state
 static LLCullResult* sConsumerGroupsCull = nullptr;
 static U32 sConsumerGroupsFrame = ~0u;
 
@@ -14033,7 +14039,9 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         return cull->mGeoHandles;
     }
     static std::vector<U32> out;
-    static std::vector<U8> seen;
+    static std::vector<U32> seen_stamp;      // by fragment handle: the stamp of the frame that named it (nothing is cleared a frame)
+    static U32 cur_stamp = 0;
+    static const int cons_mode = getenv("LL_VK_CONSUMERS") ? atoi(getenv("LL_VK_CONSUMERS")) : 0;       // stage 8: 0 the viewer walks the table, 1 the worker's list (consumerListRead) and the viewer adds the recent changes and the bridges' groups, 2 both and a compare
     static LLCullResult* key_cull = nullptr;
     static U32 key_frame = ~0u;
     static size_t key_exact = 0, key_groups = 0;
@@ -14044,6 +14052,21 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     {
         return out;
     }
+    // the worker's list (LL_VK_CONSUMERS=1 or 2): the late set's rows with a fragment, one each, and the rows with an alpha key and no fragment; the viewer adds what changed in the last 3 frames and the bridges' groups
+    std::shared_ptr<const LLVkBridge::ConsumerList> wlist;
+    if (cons_mode)
+    {
+        wlist = LLVkBridge::consumerListRead();
+    }
+    if (cons_mode == 1)
+    {
+        if (!wlist || (U32)gFrameCount - wlist->mFrame > 30)
+        {
+            sConsumerGroupsFrame = ~0u;
+            return cull->mGeoHandles;
+        }
+    }
+    else
     {
         static std::vector<U32> buf(8192);
         U32 frame = 0;
@@ -14053,11 +14076,11 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
             late_frame = frame;
             late_table = t;
         }
-    }
-    if (!late_table || (U32)gFrameCount - late_frame > 30)
-    {
-        sConsumerGroupsFrame = ~0u;
-        return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
+        if (!late_table || (U32)gFrameCount - late_frame > 30)
+        {
+            sConsumerGroupsFrame = ~0u;
+            return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
+        }
     }
     key_cull = cull;
     key_frame = (U32)gFrameCount;
@@ -14066,9 +14089,74 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     out.clear();
     sConsumerGroups.clear();
     sConsumerNoHandle.clear();
+    sConsumerExtras.clear();
     sConsumerGroupsCull = cull;
     sConsumerGroupsFrame = (U32)gFrameCount;
-    seen.assign(sGeoFragByHandle.size() + 1, 0);
+    if (seen_stamp.size() < sGeoFragByHandle.size() + 1)
+    {
+        seen_stamp.resize(sGeoFragByHandle.size() + 1, 0u);
+    }
+    ++cur_stamp;
+    const U32 out_stamp = cur_stamp;
+    const auto is_seen = [&](U32 h) { return h >= seen_stamp.size() || seen_stamp[h] == out_stamp; };
+    // what the worker's list gives, and the recent changes (the slots the table's rows changed in the last 3 frames, kept as they change: no walk), into the given vectors
+    const auto from_worker = [&](std::vector<U32>& oh, std::vector<LLSpatialGroup*>& og, std::vector<LLSpatialGroup*>& onh, std::vector<U8>* local_seen)
+    {
+        const auto seen_h = [&](U32 h) { return local_seen ? (h >= local_seen->size() || (*local_seen)[h] != 0) : is_seen(h); };
+        const auto mark_h = [&](U32 h) { if (local_seen) { (*local_seen)[h] = 1; } else { seen_stamp[h] = out_stamp; } };
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 table = (U32)sMapMirror.size();
+        const U32 now = (U32)gFrameCount;
+        for (size_t i = 0; i < wlist->mHandles.size(); ++i)
+        {
+            const U32 slot = wlist->mSlots[i], h = wlist->mHandles[i];
+            if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot] || sMapMirror[slot].mHandle != h || seen_h(h))
+            {
+                continue;       // (a row whose handle the viewer has changed since the record: the recent changes below name its current one)
+            }
+            mark_h(h);
+            oh.push_back(h);
+            og.push_back((LLSpatialGroup*)sSlotGroup[slot]);
+        }
+        for (U32 slot : wlist->mNoHandle)
+        {
+            if (slot < table && slot < sSlotGroup.size() && sSlotGroup[slot] && !sMapMirror[slot].mHandle && (sMapMirror[slot].mFlags & 6u))
+            {
+                onh.push_back((LLSpatialGroup*)sSlotGroup[slot]);
+            }
+        }
+        while (!sRecentSlots.empty() && now - sRecentSlots.front().first > 6)
+        {
+            sRecentSlots.pop_front();
+        }
+        for (const auto& e : sRecentSlots)
+        {
+            const U32 slot = e.second;
+            if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot])
+            {
+                continue;
+            }
+            const U32 h = sMapMirror[slot].mHandle;
+            if (!h)
+            {
+                if ((sMapMirror[slot].mFlags & 6u) && now - sMapChangeFrame[slot] <= 3)
+                {
+                    onh.push_back((LLSpatialGroup*)sSlotGroup[slot]); if (!local_seen) { sConsumerExtras.push_back((LLSpatialGroup*)sSlotGroup[slot]); }
+                }
+            }
+            else if (!seen_h(h) && now - sMapHandleFrame[slot] <= 5)       // (5: the worker leaves a row out for 2 records after it receives the change, 1 to 2 frames after the viewer made it)
+            {
+                mark_h(h);
+                oh.push_back(h);
+                og.push_back((LLSpatialGroup*)sSlotGroup[slot]); if (!local_seen) { sConsumerExtras.push_back((LLSpatialGroup*)sSlotGroup[slot]); }
+            }
+        }
+    };
+    if (cons_mode == 1)
+    {
+        from_worker(out, sConsumerGroups, sConsumerNoHandle, nullptr);
+    }
+    else
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 table = (U32)sMapMirror.size();
@@ -14080,16 +14168,69 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
                 sConsumerNoHandle.push_back((LLSpatialGroup*)sSlotGroup[slot]);        // (an alpha key and no fragment: only the alpha lists of stage 6 want it)
                 continue;
             }
-            if (!h || h >= seen.size() || seen[h])
+            if (!h || is_seen(h))
             {
                 continue;
             }
             if ((slot < late_table && ((late_words[slot >> 5] >> (slot & 31)) & 1u)) || (U32)gFrameCount - sMapHandleFrame[slot] <= 3)
             {
-                seen[h] = 1;
+                seen_stamp[h] = out_stamp;
                 out.push_back(h);
                 sConsumerGroups.push_back((LLSpatialGroup*)sSlotGroup[slot]);
             }
+        }
+    }
+    if (cons_mode == 2 && wlist)
+    {
+        // the compare: the worker's list against the table walk's, before the bridges' groups (a set each: the order of the slots is the same, the handles are the compared thing)
+        static std::vector<U32> wh;
+        static std::vector<LLSpatialGroup*> wg, wnh;
+        static std::vector<U8> local;
+        wh.clear();
+        wg.clear();
+        wnh.clear();
+        local.assign(sGeoFragByHandle.size() + 1, 0);
+        from_worker(wh, wg, wnh, &local);
+        static U64 frames = 0, same = 0, mine_only = 0, walk_only = 0, nh_same = 0, nh_mine = 0, nh_walk = 0;
+        ++frames;
+        std::unordered_set<U32> a(out.begin(), out.end()), b(wh.begin(), wh.end());
+        U64 both = 0;
+        for (U32 h : a) { both += b.count(h); }
+        same += both;
+        walk_only += a.size() - both;
+        mine_only += b.size() - both;
+        // what the handles the walk has and the worker's list lacks are (they decide whether a rigged fragment, whose palette the bind job refreshes only for the listed ones, can be left out): rigged, a bridge's, newer than the worker's table, and how long ago the handle changed
+        static U64 wo_rigged = 0, wo_bridge = 0, wo_newer = 0, wo_recent = 0, wo_mid = 0, wo_old = 0;
+        for (size_t i = 0; i < out.size() && i < sConsumerGroups.size(); ++i)
+        {
+            if (b.count(out[i]))
+            {
+                continue;
+            }
+            LLSpatialGroup* g = sConsumerGroups[i];
+            const LLSceneFragment* f = out[i] < sGeoFragByHandle.size() ? sGeoFragByHandle[out[i]] : nullptr;
+            wo_rigged += f && !f->mGeoRigged.empty();
+            if (g)
+            {
+                wo_bridge += g->getSpatialPartition() && g->getSpatialPartition()->asBridge();
+                const U32 slot = g->mCullId ? g->mCullId - 1 : ~0u;
+                wo_newer += slot != ~0u && slot >= wlist->mTable;
+                const U32 age = slot < sMapHandleFrame.size() ? (U32)gFrameCount - sMapHandleFrame[slot] : 9999u;
+                (age <= 5 ? wo_recent : (age <= 30 ? wo_mid : wo_old)) += 1;
+            }
+        }
+        std::unordered_set<LLSpatialGroup*> na(sConsumerNoHandle.begin(), sConsumerNoHandle.end()), nb(wnh.begin(), wnh.end());
+        U64 nboth = 0;
+        for (LLSpatialGroup* g : na) { nboth += nb.count(g); }
+        nh_same += nboth;
+        nh_walk += na.size() - nboth;
+        nh_mine += nb.size() - nboth;
+        if (frames % 600 == 0)
+        {
+            const double n = (double)frames;
+            LL_INFOS("VkConsumers") << "consumer list, the table walk against the worker's list (the worker's is " << (U32)gFrameCount - wlist->mFrame << " frames old), per frame over " << frames << ": handles in both " << same / n << ", the walk only " << walk_only / n << ", the worker's only " << mine_only / n
+                                    << "; no-fragment groups in both " << nh_same / n << ", the walk only " << nh_walk / n << ", the worker's only " << nh_mine / n
+                                    << "; of the walk's only handles, per frame: rigged " << wo_rigged / n << ", a bridge's " << wo_bridge / n << ", newer than the worker's table " << wo_newer / n << ", handle changed within 5 frames " << wo_recent / n << ", 6 to 30 " << wo_mid / n << ", older " << wo_old / n << LL_ENDL;
         }
     }
     for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
@@ -14098,14 +14239,14 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         const U32 h = group ? group->mGeoHandle : 0;
         if (group && !h && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
         {
-            sConsumerNoHandle.push_back(group);         // (a bridge's group the walk marked that has no fragment: its alpha, if it has any, is the alpha lists' to list)
+            sConsumerNoHandle.push_back(group); sConsumerExtras.push_back(group);         // (a bridge's group the walk marked that has no fragment: its alpha, if it has any, is the alpha lists' to list)
             continue;
         }
-        if (h && h < seen.size() && !seen[h] && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+        if (h && !is_seen(h) && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
         {
-            seen[h] = 1;
+            seen_stamp[h] = out_stamp;
             out.push_back(h);
-            sConsumerGroups.push_back(group);
+            sConsumerGroups.push_back(group); sConsumerExtras.push_back(group);
         }
     }
     std::sort(sConsumerNoHandle.begin(), sConsumerNoHandle.end());
@@ -14496,7 +14637,125 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
     const bool alpha_type = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA);
     const bool alpha_pool = gPipeline.hasRenderType(LLDrawPool::POOL_ALPHA);
     const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
-    if (alpha_type && alpha_pool)
+    // LL_VK_CULL_ALPHA=4 (needs LL_VK_CONSUMERS=1): the worker's alpha groups (ConsumerList::mAlpha: made from its rows, already in depth order) with the few the viewer added (the recent changes, the bridges' groups: judged by the group's
+    // own state, with the distance update, as below) merged in by depth; 5: both are made and compared, the stage 6 lists serve
+    static std::vector<LLSpatialGroup*> walpha, wrigged;
+    static U64 sDepthN = 0, sDepthOver1 = 0, sDepthOver2 = 0, sDepthStamped = 0;       // (mode 5) the worker's depth against the group's own
+    static double sDepthSum = 0.0, sDepthMax = 0.0;
+    walpha.clear();
+    wrigged.clear();
+    bool have_worker = false;
+    if (mode >= 4 && alpha_type && alpha_pool)
+    {
+        const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+        if (wl && (U32)gFrameCount - wl->mFrame <= 30)
+        {
+            have_worker = true;
+            static std::unordered_set<LLSpatialGroup*> extra_set;
+            static std::vector<std::pair<F32, LLSpatialGroup*>> w_items, e_items, merged;
+            extra_set.clear();
+            extra_set.insert(sConsumerExtras.begin(), sConsumerExtras.end());
+            {
+                std::lock_guard<std::mutex> lock(sCullMutex);
+                for (U32 slot : wl->mAlphaBridge)        // (the bridge groups of the late set with an alpha key: judged here with the bridge's own camera, like the extras)
+                {
+                    if (slot < sSlotGroup.size() && sSlotGroup[slot])
+                    {
+                        extra_set.insert((LLSpatialGroup*)sSlotGroup[slot]);
+                    }
+                }
+            }
+            w_items.clear();
+            e_items.clear();
+            merged.clear();
+            {
+                std::lock_guard<std::mutex> lock(sCullMutex);
+                for (size_t i = 0; i < wl->mAlpha.size(); ++i)
+                {
+                    const U32 slot = wl->mAlpha[i];
+                    LLSpatialGroup* g = slot < sSlotGroup.size() ? (LLSpatialGroup*)sSlotGroup[slot] : nullptr;
+                    if (g && !g->isDead() && !extra_set.count(g))
+                    {
+                        w_items.emplace_back(wl->mAlphaDepth[i], g);
+                    }
+                }
+                for (U32 slot : wl->mRigged)
+                {
+                    LLSpatialGroup* g = slot < sSlotGroup.size() ? (LLSpatialGroup*)sSlotGroup[slot] : nullptr;
+                    if (g && !g->isDead() && !extra_set.count(g))
+                    {
+                        wrigged.push_back(g);
+                    }
+                }
+            }
+            for (LLSpatialGroup* g : extra_set)
+            {
+                if (!g || g->isDead() || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED)) || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)))
+                {
+                    continue;
+                }
+                bool a, r;
+                if (g->mGeoHandle && g->mGeoAllServed)
+                {
+                    a = (g->mGeoAlphaBits & 1) != 0;
+                    r = (g->mGeoAlphaBits & 2) != 0;
+                }
+                else
+                {
+                    a = ll_group_has_alpha_key(g);
+                    r = ll_group_has_rigged_alpha_key(g);
+                }
+                if (a)
+                {
+                    LLSpatialBridge* bridge = g->getSpatialPartition()->asBridge();
+                    if (bridge)
+                    {
+                        LLCamera trans_camera = bridge->transformCamera(camera);
+                        g->updateDistance(trans_camera);
+                    }
+                    else
+                    {
+                        g->updateDistance(camera);
+                    }
+                    e_items.emplace_back(g->row().depth, g);
+                }
+                if (r)
+                {
+                    wrigged.push_back(g);
+                }
+            }
+            if (mode == 5)
+            {
+                // how far the worker's depth is from the group's own (the walk's updateDistance of this frame for a group it kept, an older one for the rest)
+                for (const auto& e : w_items)
+                {
+                    const double d = fabs((double)e.first - (double)e.second->row().depth);
+                    ++sDepthN;
+                    sDepthSum += d;
+                    sDepthMax = std::max(sDepthMax, d);
+                    sDepthOver1 += d > 0.1;
+                    sDepthOver2 += d > 1.0;
+                    sDepthStamped += e.second->getVisible(LLViewerCamera::CAMERA_WORLD) >= (S32)LLViewerOctreeEntryData::getCurrentFrame();
+                }
+            }
+            const auto deeper = [](const std::pair<F32, LLSpatialGroup*>& x, const std::pair<F32, LLSpatialGroup*>& y) { return x.first > y.first; };
+            std::sort(e_items.begin(), e_items.end(), deeper);
+            merged.resize(w_items.size() + e_items.size());
+            std::merge(w_items.begin(), w_items.end(), e_items.begin(), e_items.end(), merged.begin(), deeper);
+            for (const auto& e : merged)
+            {
+                walpha.push_back(e.second);
+            }
+            std::sort(wrigged.begin(), wrigged.end(), LLSpatialGroup::CompareRenderOrder());
+        }
+    }
+    const bool use_worker = mode == 4 && have_worker;
+    if (use_worker)
+    {
+        alpha = walpha;
+        rigged = wrigged;
+    }
+    if (alpha_type && alpha_pool && !use_worker)
     {
         static std::vector<LLSpatialGroup*> candidates;
         candidates.assign(groups->begin(), groups->end());
@@ -14528,21 +14787,57 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
             }
         }
     }
-    for (LLSpatialGroup* g : alpha)
+    if (!use_worker)
     {
-        LLSpatialBridge* bridge = g->getSpatialPartition()->asBridge();
-        if (bridge)
+        for (LLSpatialGroup* g : alpha)
         {
-            LLCamera trans_camera = bridge->transformCamera(camera);
-            g->updateDistance(trans_camera);
+            LLSpatialBridge* bridge = g->getSpatialPartition()->asBridge();
+            if (bridge)
+            {
+                LLCamera trans_camera = bridge->transformCamera(camera);
+                g->updateDistance(trans_camera);
+            }
+            else
+            {
+                g->updateDistance(camera);
+            }
         }
-        else
+        std::sort(alpha.begin(), alpha.end(), LLSpatialGroup::CompareDepthGreater());
+        std::sort(rigged.begin(), rigged.end(), LLSpatialGroup::CompareRenderOrder());
+    }
+    if (mode == 5 && have_worker)
+    {
+        // the compare: the worker's lists against the stage 6 lists (the CPU's own were compared with the walk's in modes 1 and 2): members, and the order by the CPU's depth (adjacent pairs out of order beyond 0.001)
+        static U64 frames = 0, both[2] = {}, six_only[2] = {}, worker_only[2] = {}, inversions = 0, pairs = 0;
+        ++frames;
+        for (int which = 0; which < 2; ++which)
         {
-            g->updateDistance(camera);
+            const std::vector<LLSpatialGroup*>& six = which ? rigged : alpha;
+            const std::vector<LLSpatialGroup*>& wk = which ? wrigged : walpha;
+            static std::unordered_set<LLSpatialGroup*> sa, sb;
+            sa.clear();
+            sb.clear();
+            sa.insert(six.begin(), six.end());
+            sb.insert(wk.begin(), wk.end());
+            U64 n = 0;
+            for (LLSpatialGroup* g : sa) { n += sb.count(g); }
+            both[which] += n;
+            six_only[which] += sa.size() - n;
+            worker_only[which] += sb.size() - n;
+        }
+        for (size_t k = 1; k < walpha.size(); ++k)
+        {
+            ++pairs;
+            inversions += walpha[k - 1]->row().depth < walpha[k]->row().depth - 0.001f;
+        }
+        if (frames % 600 == 0)
+        {
+            const double n = (double)frames;
+            LL_INFOS("VkAlpha") << "alpha lists, stage 6 against the worker's, per frame over " << frames << ": alpha in both " << both[0] / n << ", stage 6 only " << six_only[0] / n << ", the worker's only " << worker_only[0] / n << "; rigged in both " << both[1] / n << ", stage 6 only " << six_only[1] / n
+                                << ", the worker's only " << worker_only[1] / n << "; the worker's order: " << inversions << " of " << pairs << " adjacent pairs out of order by the CPU's depth; the worker's depth against the group's own, over " << sDepthN << " groups: mean difference " << sDepthSum / std::max<U64>(1, sDepthN)
+                                << " m, worst " << sDepthMax << ", over 0.1 m " << (double)sDepthOver1 / std::max<U64>(1, sDepthN) << ", over 1 m " << (double)sDepthOver2 / std::max<U64>(1, sDepthN) << ", of them stamped visible by the walk this frame " << (double)sDepthStamped / std::max<U64>(1, sDepthN) << LL_ENDL;
         }
     }
-    std::sort(alpha.begin(), alpha.end(), LLSpatialGroup::CompareDepthGreater());
-    std::sort(rigged.begin(), rigged.end(), LLSpatialGroup::CompareRenderOrder());
     struct Acc
     {
         U64 mFrames = 0, mCpu[2] = {}, mDerived[2] = {}, mBoth[2] = {}, mMissed[2] = {}, mExtra[2] = {}, mOrder[2] = {}, mFramesWithDiff = 0;
@@ -14550,7 +14845,7 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
     static Acc a;
     ++a.mFrames;
     bool diff = false;
-    for (int which = 0; which < 2 && mode != 3; ++which)         // (mode 3 replaces without comparing: the compare's sets cost 0.2 ms a frame)
+    for (int which = 0; which < 2 && mode < 3; ++which)         // (mode 3 replaces without comparing: the compare's sets cost 0.2 ms a frame)
     {
         const std::vector<LLSpatialGroup*>& mine = which ? rigged : alpha;
         LLCullResult::sg_iterator cb = which ? cull->beginRiggedAlphaGroups() : cull->beginAlphaGroups();
@@ -14621,7 +14916,7 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
             cull->pushRiggedAlphaGroup(g);
         }
     }
-    if (a.mFrames % 600 == 0 && mode != 3)
+    if (a.mFrames % 600 == 0 && mode < 3)
     {
         const double n = (double)a.mFrames;
         LL_INFOS("VkAlpha6") << "alpha lists from the consumers' groups (mode " << mode << ") over " << a.mFrames << " frames: groups a frame, CPU/derived/both/missed/extra: alpha " << a.mCpu[0] / n << "/" << a.mDerived[0] / n << "/" << a.mBoth[0] / n << "/" << a.mMissed[0] / n << "/" << a.mExtra[0] / n
@@ -15620,6 +15915,13 @@ void ll_scene_geo_frame(LLCullResult* cull)
         for (int k = 0; k < 3; ++k)
         {
             view_params.mFactors[k] = sCullFactors[k];
+        }
+        {
+            // the camera's at axis, for the depth of the alpha groups the worker orders (ConsumerList::mAlpha): three floats the scene record does not use otherwise
+            const LLVector3 at = LLViewerCamera::getInstance()->getAtAxis();
+            view_params.mMotion[2] = at.mV[0];
+            view_params.mMotion[3] = at.mV[1];
+            view_params.mFactors[3] = at.mV[2];
         }
         view_params.mPad[0] = (U32)LLPipeline::useOcclusion();
         const F32 hide_limit = LLPipeline::RenderAutoHideSurfaceAreaLimit;
