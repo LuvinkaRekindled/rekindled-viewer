@@ -4848,6 +4848,13 @@ void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the wo
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* bits = nullptr);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
 // stage 10a (LL_VK_CUBE_KEPT): a probe cube face's kept set comes from the view request service (the face's id is gCubeViewId, set by the reflection map around its snapshot)
 extern U32 gCubeViewId;
+int ll_cascade_kept_mode();                                                                 // <FS> stage 10d (LL_VK_CASC_KEPT): 1 compare, 2 compare with the margin, 3 the cascades take their groups from the worker's set
+std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra);        // sun cascade `index`: the worker's answer if it is usable (null if not), and in `extra` the groups changed in the last frames that the cascade's frustum holds (not in the answer)
+bool ll_cascade_covers_type(LLSpatialPartition* part);
+U8 ll_cull_slot_part_type(U32 slot);
+LLViewerOctreeGroup* ll_cull_slot_group(U32 slot);      // the group of a table slot (null if none), and the number of slots: read by the cascades' cull jobs while the main thread waits for them
+U32 ll_cull_slot_count();
+static bool ll_cull_derived_covers(LLSpatialPartition* part);
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera);          // the newest answer for this face if its planes are this face's planes and it is not too old
 void ll_cube_view_finish(LLCamera& camera, const std::shared_ptr<const LLVkBridge::ViewSet>& set, bool derived);       // the compare (mode 1) and the request for the next time
 
@@ -9455,7 +9462,13 @@ struct ScChunk
     bool mReplay = false;               // the retained set of the cascade replays this piece of the partition's list
     size_t mBegin = 0, mEnd = 0;
     int mSet = 0;
+    bool mSetUse = false;               // <FS> stage 10d (LL_VK_CASC_KEPT=3): this piece is the cascade's recent groups (sCascSetGroups[mSet])
+    bool mSetBits = false;              // ... or a range of words [mBegin, mEnd) of the worker's answer (mBits): the slot to group step is the job's
+    const U32* mBits = nullptr;
+    U32 mTypeMask = 0;                  // the partition types the cascade takes from the set (a bit each)
+    U8 mKind[32] = {};                  // by partition type: 2 = rendered by group (the visible groups), 1 = by drawable (the drawable groups), as the replay of a retained set names them
 };
+std::vector<LLSpatialGroup*> sCascSetGroups[4];      // the groups of the covered partitions each sun cascade takes from the worker's set this frame (made on the main thread, read by the cull jobs)
 }
 
 void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, LLForkJoinPool* pool)
@@ -9464,6 +9477,8 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     static const double split_cost = getenv("LL_VK_SC_SPLIT_US") ? atof(getenv("LL_VK_SC_SPLIT_US")) : 60.0;
     static const double node_split = getenv("LL_VK_SC_NODE_US") ? atof(getenv("LL_VK_SC_NODE_US")) : 40.0;
     std::deque<ScChunk> chunks;
+    std::vector<std::shared_ptr<const LLVkBridge::ViewSet>> answers;       // <FS> stage 10d: the worker's answers the jobs read (LL_VK_CASC_KEPT=3)
+    const U32 slot_count = ll_cull_slot_count();
     std::unordered_map<U64, float> now_us;
     auto new_chunk = [&](size_t p, LLSpatialPartition* part, bool segment, bool task, const LLViewerOctreeCull::SplitTask& split) -> ScChunk&
     {
@@ -9483,10 +9498,23 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         ShadowCascadePrep& prep = pending[p];
         prep.mResult->clear();
         prep.mDeferred.clear();
+        // <FS> stage 10d (LL_VK_CASC_KEPT=3): a sun cascade with a usable answer from the worker takes the groups of the covered partitions from it (the partitions are then neither replayed nor walked); the others, and a cascade
+        // without an answer (the first frames, a request that did not come back), are walked as the shadow culler does: the retained sets of the cascades are not kept in this mode
+        std::shared_ptr<const LLVkBridge::ViewSet> answer = prep.mIndex < 4 ? ll_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex & 3]) : nullptr;
+        const bool from_worker = answer != nullptr;
+        const bool sets_off = ll_cascade_kept_mode() >= 3;
+        U32 type_mask = 0;
+        U8 kind_of[32] = {};
         for (LLSpatialPartition* part : partitions)
         {
+            if (from_worker && ll_cascade_covers_type(part))
+            {
+                type_mask |= 1u << (part->mPartitionType & 31u);
+                kind_of[part->mPartitionType & 31u] = part->mRenderByGroup ? 2 : 1;
+                continue;
+            }
             const int vs_set = 1 + (int)(prep.mIndex & 3);
-            if (cascade_sets_mode() && prep.mIndex < 4 && LLVisSet::replayable(part, vs_set))
+            if (cascade_sets_mode() && !sets_off && prep.mIndex < 4 && LLVisSet::replayable(part, vs_set))
             {
                 const size_t n = LLVisSet::replayCount(part, vs_set);
                 for (size_t b = 0; b < n; b += 1536)
@@ -9528,6 +9556,39 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                 new_chunk(p, part, false, false, { nullptr, 0 });
             }
         }
+        if (from_worker)
+        {
+            // the groups of the covered partitions from the worker's set: what the replay does to a group of a retained set (replayMemberShadow), in pieces of words of the answer's bits on the pool (the slot to group step is the
+            // job's); the recent list is one more piece. The answer is kept alive until the jobs are done.
+            answers.push_back(answer);
+            const size_t words = answer->mKept.size();
+            // (pieces of about 1,536 groups, as the replay's: the words are cut where that many bits are set, so a cascade of 43 groups is one task and one of 3,300 is two or three)
+            size_t begin = 0, set_bits = 0;
+            for (size_t w = 0; w < words; ++w)
+            {
+                set_bits += (size_t)__popcnt(answer->mKept[w]);
+                if (set_bits >= 1536 || w + 1 == words)
+                {
+                    ScChunk& piece = new_chunk(p, nullptr, false, false, { nullptr, 0 });
+                    piece.mSetBits = true;
+                    piece.mBits = answer->mKept.data();
+                    piece.mBegin = begin;
+                    piece.mEnd = w + 1;
+                    piece.mTypeMask = type_mask;
+                    memcpy(piece.mKind, kind_of, sizeof(kind_of));
+                    begin = w + 1;
+                    set_bits = 0;
+                }
+            }
+            if (!sCascSetGroups[prep.mIndex & 3].empty())
+            {
+                ScChunk& piece = new_chunk(p, nullptr, false, false, { nullptr, 0 });
+                piece.mSetUse = true;
+                piece.mBegin = 0;
+                piece.mEnd = sCascSetGroups[prep.mIndex & 3].size();
+                piece.mSet = (int)(prep.mIndex & 3);
+            }
+        }
     }
     }
     std::vector<size_t> work;
@@ -9544,7 +9605,50 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         ShadowCascadePrep& prep = pending[chunk.mPrep];
         ShadowPrepScope scope(prep, chunk.mLocal, ShadowPrepScope::Cull());
         const auto t0 = std::chrono::steady_clock::now();
-        if (chunk.mReplay)
+        if (chunk.mSetBits)
+        {
+            for (size_t w = chunk.mBegin; w < chunk.mEnd; ++w)
+            {
+                const U32 bits = chunk.mBits[w];
+                for (U32 b = 0; bits && b < 32; ++b)
+                {
+                    if (!((bits >> b) & 1u))
+                    {
+                        continue;
+                    }
+                    const U32 slot = ((U32)w << 5) + b;
+                    if (slot >= slot_count)
+                    {
+                        continue;
+                    }
+                    // (what the worker's bits already say: not dead (flag 32), not empty (16), not a bridge's group (64); the type byte of the slot drops the partitions of bridges, avatars and the rest without touching the group)
+                    const U8 pt = ll_cull_slot_part_type(slot);
+                    if (pt >= 32 || !((chunk.mTypeMask >> pt) & 1u))
+                    {
+                        continue;
+                    }
+                    LLSpatialGroup* g = (LLSpatialGroup*)ll_cull_slot_group(slot);
+                    if (!g || g->isDead())
+                    {
+                        continue;
+                    }
+                    gPipeline.replayMemberShadow(g, chunk.mKind[pt]);
+                }
+            }
+        }
+        else if (chunk.mSetUse)
+        {
+            const std::vector<LLSpatialGroup*>& v = sCascSetGroups[chunk.mSet];
+            for (size_t k = chunk.mBegin; k < chunk.mEnd && k < v.size(); ++k)
+            {
+                LLSpatialGroup* g = v[k];
+                if (!g->isDead())
+                {
+                    gPipeline.replayMemberShadow(g, g->getSpatialPartition()->mRenderByGroup ? 2 : 1);
+                }
+            }
+        }
+        else if (chunk.mReplay)
         {
             LLVisSet::replay(chunk.mPart, prep.mCamera, chunk.mBegin, chunk.mEnd, chunk.mSet);
         }
@@ -9577,7 +9681,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         for (LLCullResult::sg_iterator g = l.beginAlphaGroups(); g != l.endAlphaGroups(); ++g) into.pushAlphaGroup(*g);
         for (LLCullResult::sg_iterator g = l.beginRiggedAlphaGroups(); g != l.endRiggedAlphaGroups(); ++g) into.pushRiggedAlphaGroup(*g);
         into.mLodGroups.insert(into.mLodGroups.end(), l.mLodGroups.begin(), l.mLodGroups.end());       // <FS> C4.4
-        if (!chunk.mSegment && !chunk.mReplay)
+        if (!chunk.mSegment && !chunk.mReplay && !chunk.mSetUse && !chunk.mSetBits)
         {
             const U64 key = ((U64)(uintptr_t)chunk.mPart << 3) | (U64)(pending[chunk.mPrep].mIndex & 7);
             now_us[key] += chunk.mUs;
@@ -12810,6 +12914,7 @@ typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the 
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
+std::deque<std::pair<U32, U32>> sCoveredRecentSlots;   // <FS> stage 10d (LL_VK_CASC_KEPT=3): (frame, slot) of every covered group whose row was made or changed, kept for 6 frames: a cascade that takes its groups from the worker's set adds these (the set is made from rows 1 to 2 frames old)
 std::deque<std::pair<U32, U32>> sAvRecentSlots;        // <FS> stage 9b (LL_VK_COVER_AV): (frame, slot) of the groups of the avatar, bridge and animated object region partitions whose row was made or changed, kept for 6 frames: the kept pass adds them to the worker's set (LL_VK_COVER_AV_RECENT)
 static bool cull_av_region(LLSpatialGroup* g)
 {
@@ -12824,6 +12929,7 @@ static bool cull_av_region(LLSpatialGroup* g)
 std::deque<std::pair<U32, U32>> sRecentSlots;          // (frame, slot): the slots whose map row or handle changed, kept for 3 frames: the consumers' list adds them to the worker's (LL_VK_CONSUMERS) instead of walking the table
 std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
+std::vector<U8> sSlotPartType;                      // <FS> stage 10d: slot -> the group's partition type (255: free); the cascades' cull jobs filter by it without touching the group
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 std::vector<U32> sFreeSlots;
 std::vector<LLViewerOctreeGroup*> sNewGroups;       // constructed, not yet given a slot
@@ -13132,6 +13238,11 @@ void cull_process()
         g->mCullFirstSerial = sCullBuildSerial;
         g->mCullDirty = true;
         sSlotGroup[slot] = g;
+        if (sSlotPartType.size() <= slot)
+        {
+            sSlotPartType.resize(sSlotGroup.size() + 64, 255);
+        }
+        sSlotPartType[slot] = (sg->getSpatialPartition() && sg->getSpatialPartition()->mPartitionType < 32) ? (U8)sg->getSpatialPartition()->mPartitionType : (U8)255;
         if (LLVisSetHooks::sHizRows)
         {
             // stage 8d: a new group starts with the state it inherited from its parent; no verdict history
@@ -13169,6 +13280,11 @@ void cull_process()
                 {
                     sAvRecentSlots.emplace_back((U32)gFrameCount, slot);
                 }
+                // (only a row that is new, or whose box or kind of group changed: an occlusion flag the Hi-Z verdicts change every frame does not make a group missing from a set that asks for no occlusion)
+                if (((old_cull.mFlags ^ sMirror[slot].mFlags) & (16u | 32u | 64u)) || memcmp(old_cull.mCenter, sMirror[slot].mCenter, 12) || memcmp(old_cull.mHalf, sMirror[slot].mHalf, 12))
+                {
+                    sCoveredRecentSlots.emplace_back((U32)gFrameCount, slot);
+                }
             }
         }
         {
@@ -13194,6 +13310,10 @@ void cull_process()
     while (!sAvRecentSlots.empty() && (U32)gFrameCount - sAvRecentSlots.front().first > 6)
     {
         sAvRecentSlots.pop_front();
+    }
+    while (!sCoveredRecentSlots.empty() && (U32)gFrameCount - sCoveredRecentSlots.front().first > 6)
+    {
+        sCoveredRecentSlots.pop_front();
     }
 }
 
@@ -15936,12 +16056,164 @@ bool cube_params_match(const LLVkBridge::CullParams& a, const LLVkBridge::CullPa
 // the shadow culler's model (bit 8 of mPad[0]: LLCamera::AABBInFrustum, the far plane is in; mCornerDist 0: no sphere test), and the answer to the request of a frame is put side by side with the cascade's own cull result of that frame (the
 // visible and the drawable groups of the covered partitions: what shadowPrepCull, with the retained sets and the hull filter, found). The gate to the next step: the set holds everything the cascade's cull found (the walk's only = 0 but
 // for the frames the rows were behind), and its extras are what the hull filter and the slice drop. The pad of 2 m the culler gives the avatar partitions' object bounds is not modelled (those partitions are not covered).
+int ll_cascade_kept_mode()
+{
+    // 1: the same-frame compare; 2: the request asks for the late list's margin, and the newest answer is also compared with the cull of the frame it is read in; 3: the cascades take their groups from the answer (the compare is off)
+    static const int mode = (LLCullShadow::sOn && getenv("LL_VK_CASC_KEPT")) ? atoi(getenv("LL_VK_CASC_KEPT")) : 0;
+    // LL_VK_CASC_AB=<frames> (a test, with LL_VK_CASC_KEPT=3): the use step is on for that many frames, off for that many, and so on, in ONE lap, so that the two are measured in the same scene (the crowd and the load differ by a
+    // millisecond between laps: pc0 against pd3 and pe3); each switch is logged (CascAB)
+    static const S32 ab = getenv("LL_VK_CASC_AB") ? atoi(getenv("LL_VK_CASC_AB")) : 0;
+    if (ab <= 0 || mode < 3)
+    {
+        return mode;
+    }
+    static S32 last_phase = -1;
+    const S32 phase = ((S32)gFrameCount / ab) & 1;
+    if (phase != last_phase)
+    {
+        last_phase = phase;
+        LL_INFOS("CascAB") << "frame " << (S32)gFrameCount << ": the use step is " << (phase == 0 ? "on" : "off") << LL_ENDL;
+    }
+    return phase == 0 ? mode : 0;
+}
+
+// the request of a sun cascade: its shadow camera's planes with the shadow culler's model, and from mode 2 the late list's margin. The margin is the translation bound plus the distance from the view's origin times the rotation bound:
+// a sun cascade's origin is far from the scene, so the rotation part is scaled down (lap ck2, both parts: cascade 0 kept 630 groups for the 45 the cull finds; lap ck3, translation only: the far cascades lacked 13 of 3,600).
+// LL_VK_CASC_MARGIN=<translation scale>,<rotation scale> sets both for all cascades; without it the rotation scale is 0 for cascades 0 and 1 and 0.1 for cascades 2 and 3.
+static U64 ll_cascade_request(S32 index, LLCamera& camera, int mode)
+{
+    LLVkBridge::CullParams now;
+    cull_fill_params(camera, now);
+    now.mPad[0] = mode >= 2 ? 0x300u : 0x100u;
+    now.mCornerDist = 0.f;
+    if (mode >= 2)
+    {
+        static float t_scale = 1.f, a_env = -1.f;
+        static const bool scaled = [&]() { if (const char* e = getenv("LL_VK_CASC_MARGIN")) { sscanf(e, "%f,%f", &t_scale, &a_env); } return true; }();
+        (void)scaled;
+        const float a_scale = a_env >= 0.f ? a_env : (index >= 2 ? 0.1f : 0.f);
+        now.mMotion[0] = sCullTBound * t_scale;
+        now.mMotion[1] = sCullABound * a_scale;
+        now.mFactors[1] = 1.5f;
+    }
+    return LLVkBridge::viewRequest(0x5C00u + (U32)index, (U32)gFrameCount, now);
+}
+
+// the partitions whose groups a sun cascade takes from the worker's set: the covered ones, never the avatar, bridge, animated object, HUD, HUD particle and object cache partitions (the shadow culler pads the avatar partitions'
+// object bounds by 2 m, which the worker's model does not: those are walked, whatever LL_VK_COVER_AV says)
+bool ll_cascade_covers_type(LLSpatialPartition* part)
+{
+    if (!part || !part->mOctree)
+    {
+        return false;
+    }
+    const U32 pi = part->mPartitionType;
+    return !(pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV
+        || pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
+}
+
+LLViewerOctreeGroup* ll_cull_slot_group(U32 slot)
+{
+    return slot < sSlotGroup.size() ? sSlotGroup[slot] : nullptr;
+}
+
+U32 ll_cull_slot_count()
+{
+    return (U32)sSlotGroup.size();
+}
+
+U8 ll_cull_slot_part_type(U32 slot)
+{
+    return slot < sSlotPartType.size() ? sSlotPartType[slot] : (U8)255;
+}
+
+// The answer's bits go to the cull jobs of shadowPrepCullSplit as ranges of words (the slot to group step is the jobs', on the pool: made on the main thread in lap pc3 it cost 0.10 to 0.28 ms and the use step was
+// slower than the retained sets); what is made here is the recent list, a few groups.
+std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra)
+{
+    extra.clear();
+    if (ll_cascade_kept_mode() < 3 || index < 0 || index > 3 || gCubeSnapshot)       // (a probe face's cascades are another view: its planes are not the main view's under the same id)
+    {
+        return nullptr;
+    }
+    struct Stats { U64 mUsed = 0, mNone = 0, mOld = 0, mRecent = 0; };
+    static Stats st[4];
+    Stats& s = st[index];
+    std::shared_ptr<const LLVkBridge::ViewSet> a = LLVkBridge::viewSetRead(0x5C00u + (U32)index);
+    if (!a)
+    {
+        ++s.mNone;
+        return nullptr;
+    }
+    const U32 now = (U32)gFrameCount;
+    if (now - a->mFrame > 5)
+    {
+        ++s.mOld;
+        return nullptr;
+    }
+    // the groups whose row was made or changed in the last 3 frames are not in a set made from older rows: the ones the cascade's frustum holds are added (the cascade's own box test, the shadow culler's frustumCheck)
+    // (the list of the frame is made once, for all the cascades: the groups of the covered partitions, once each; a cascade then only tests the set's bit and its own frustum)
+    static U32 cache_frame = ~0u;
+    static std::vector<std::pair<U32, LLSpatialGroup*>> recent;
+    if (cache_frame != now)
+    {
+        cache_frame = now;
+        recent.clear();
+        if (!sCoveredRecentSlots.empty())
+        {
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            const U32 n = (U32)sSlotGroup.size();
+            static std::unordered_set<U32> added;
+            added.clear();
+            for (const auto& e : sCoveredRecentSlots)
+            {
+                const U32 slot = e.second;
+                if (now - e.first > 3 || slot >= n || !sSlotGroup[slot] || !added.insert(slot).second)
+                {
+                    continue;
+                }
+                LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                LLSpatialPartition* part = g->getSpatialPartition();
+                if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !ll_cascade_covers_type(part))
+                {
+                    continue;
+                }
+                recent.emplace_back(slot, g);
+            }
+        }
+    }
+    for (const auto& e : recent)
+    {
+        const U32 slot = e.first;
+        if ((slot >> 5) < a->mKept.size() && ((a->mKept[slot >> 5] >> (slot & 31u)) & 1u))
+        {
+            continue;
+        }
+        const LLVector4a* bb = e.second->getBounds();
+        if (camera.AABBInFrustum(bb[0], bb[1]) != 0)
+        {
+            extra.push_back(e.second);
+            ++s.mRecent;
+        }
+    }
+    ++s.mUsed;
+    if (s.mUsed % 600 == 0 && ll_diag_on())
+    {
+        LL_INFOS("VkCascKept") << "cascade " << index << " from the worker's set (LL_VK_CASC_KEPT=3): used " << s.mUsed << " times (no answer " << s.mNone << ", too old " << s.mOld << "), " << (double)s.mRecent / (double)s.mUsed << " groups a time from the recent list" << LL_ENDL;
+    }
+    return a;
+}
+
 void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
 {
-    static const int mode = getenv("LL_VK_CASC_KEPT") ? atoi(getenv("LL_VK_CASC_KEPT")) : 0;       // 1: the same-frame compare; 2: the request asks for the late list's margin, and the newest answer is also compared with the cull of the frame it is read in
-    static const bool on = LLCullShadow::sOn && mode > 0;
-    if (!on || index < 0 || index > 3)
+    const int mode = ll_cascade_kept_mode();
+    if (mode <= 0 || index < 0 || index > 3 || gCubeSnapshot)
     {
+        return;
+    }
+    if (mode >= 3)
+    {
+        ll_cascade_request(index, camera, mode);        // (the cascades take their groups from the answers: nothing to compare with)
         return;
     }
     struct Lag { U64 mN = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAge = 0, mAgeMax = 0, mMissing[4] = {}; };
@@ -16077,23 +16349,8 @@ void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
                                    << ", in both " << l.mBoth / f << ", the cull's only (MISSING) " << l.mWalkOnly / f << " (by the answer's age 0 | 1 | 2 | 3+: " << l.mMissing[0] << " " << l.mMissing[1] << " " << l.mMissing[2] << " " << l.mMissing[3] << "), the set's only (extras) " << l.mKeptOnly / f << LL_ENDL;
         }
     }
-    LLVkBridge::CullParams now;
-    cull_fill_params(camera, now);
-    now.mPad[0] = mode >= 2 ? 0x300u : 0x100u;
-    now.mCornerDist = 0.f;
-    if (mode >= 2)
-    {
-        // (the late list's margin is the translation bound plus the distance from the view's origin times the rotation bound: a sun cascade's origin is far from the scene, lap ck2 with both: cascade 0 kept 630 groups for the 45 the
-        // cull finds. LL_VK_CASC_MARGIN=<translation scale>,<rotation scale> scales the two parts of the request's margin, 1,1 as the late list has it)
-        static float t_scale = 1.f, a_scale = 1.f;
-        static const bool scaled = [&]() { if (const char* e = getenv("LL_VK_CASC_MARGIN")) { sscanf(e, "%f,%f", &t_scale, &a_scale); } return true; }();
-        (void)scaled;
-        now.mMotion[0] = sCullTBound * t_scale;
-        now.mMotion[1] = sCullABound * a_scale;
-        now.mFactors[1] = 1.5f;
-    }
     slot->mFrame = (U32)gFrameCount;
-    s.mAsked += LLVkBridge::viewRequest(id, (U32)gFrameCount, now);
+    s.mAsked += ll_cascade_request(index, camera, mode);
 }
 
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera)
@@ -31516,7 +31773,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
         if (sc_split != 0)
         {
-            if (cascade_sets_mode())
+            if (cascade_sets_mode() && ll_cascade_kept_mode() < 3)       // (LL_VK_CASC_KEPT=3: the cascades' retained sets are not kept: they go dormant, the worker's set stands in)
             {
                 LL_CPU_ZONE("shadow prep: cascade sets update");
                 // the partitions the sets follow (the ones the main view's set follows), and per cascade the camera signature the verdicts were made for
