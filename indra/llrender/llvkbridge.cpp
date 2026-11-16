@@ -48,6 +48,8 @@ void LLVkBridge::textureNeedForget(U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
 S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::lateListPublish(U32, U32, const U32*) {}
+void LLVkBridge::visibleListPublish(U32, U32, const U32*) {}
+U32 LLVkBridge::visibleListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
 U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
 U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
@@ -1855,6 +1857,33 @@ void LLVkBridge::lateListPublish(U32 frame, U32 table_size, const U32* words)
     gLateWords.assign(words, words + (table_size + 31) / 32);
     gLateFrame = frame;
     gLateTable = table_size;
+}
+
+namespace
+{
+std::mutex gVisMutex;
+std::vector<U32> gVisWords;
+U32 gVisFrame = 0, gVisTable = 0;
+}
+
+void LLVkBridge::visibleListPublish(U32 frame, U32 table_size, const U32* words)
+{
+    std::lock_guard<std::mutex> lock(gVisMutex);
+    gVisWords.assign(words, words + (table_size + 31) / 32);
+    gVisFrame = frame;
+    gVisTable = table_size;
+}
+
+U32 LLVkBridge::visibleListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)
+{
+    std::lock_guard<std::mutex> lock(gVisMutex);
+    if (!gVisTable || gVisFrame <= newer_than || gVisWords.size() > capacity_words)
+    {
+        return 0;
+    }
+    memcpy(words, gVisWords.data(), gVisWords.size() * 4);
+    frame = gVisFrame;
+    return gVisTable;
 }
 
 namespace
