@@ -67,7 +67,11 @@ void LLReflectionMap::update(U32 resolution, U32 face, bool force_dynamic, F32 n
     F32 clip = (near_clip > 0) ? near_clip : getNearClip();
     bool dynamic = force_dynamic || getIsDynamic();
 
+    // stage 10a (LL_VK_CUBE_KEPT, pipeline.cpp): the face's id for the view request service: the probe and the face (the radiance pass repeats the faces of the irradiance pass with the same camera)
+    extern U32 gCubeViewId;
+    gCubeViewId = ((U32)((uintptr_t)this >> 4) * 8u + (face & 7u)) | 0x40000000u;
     gViewerWindow->cubeSnapshot(LLVector3(mOrigin), mCubeArray, mCubeIndex, face, clip, dynamic, useClipPlane, clipPlane);
+    gCubeViewId = 0;
 }
 
 void LLReflectionMap::autoAdjustOrigin()

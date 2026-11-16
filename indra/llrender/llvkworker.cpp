@@ -11639,6 +11639,10 @@ int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F3
 // AABBSphereIntersect of the box min..max with the sphere of the far limit: 2 when both corners are inside (the stock quirk: a box with its two corners inside counts as wholly in), 0 outside, 1 else
 int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* mx, F32 m = 0.f)
 {
+    if (P.mCornerDist <= 0.f)
+    {
+        return 2;       // stage 10a: a view that says it has no far limit (a probe cube face asked for in the test LL_VK_CUBE_NOSPHERE): the sphere test passes everything
+    }
     const F32 r2 = P.mCornerDist * P.mCornerDist;
     F32 a = 0.f, b = 0.f, d = 0.f;
     for (int k = 0; k < 3; ++k)
@@ -11877,6 +11881,35 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
     }
     const U8 st = cull_chain_state(s, P, false, slot, memo, 0, factor);
     return st == ST_PART || st == ST_FULL;
+}
+
+// stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
+// quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
+// (memo: the chain states of this view, zeroed by the caller for a view of its own; stage 10a uses it for the views that ask by id)
+void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out)
+{
+    const U32 table = (U32)s.mTable.size();
+    out.assign((table + 31) / 32, 0u);
+    for (U32 slot = 0; slot < table; ++slot)
+    {
+        const LLVkBridge::CullRow& row = s.mTable[slot];
+        const U32 flags = row.mFlags;
+        if ((flags & (32u | 64u | 16u)) || (!(flags & 1u) && row.mParent >= table))
+        {
+            continue;
+        }
+        const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
+        if (st == ST_OCC || st == ST_OUT)
+        {
+            continue;
+        }
+        const LLVkBridge::CullMapRow& m = s.mMap[slot];
+        if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m) == 0)
+        {
+            continue;
+        }
+        out[slot >> 5] |= 1u << (slot & 31u);
+    }
 }
 
 bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
@@ -12135,27 +12168,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             {
                 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
                 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
-                list->mKept.assign((table + 31) / 32, 0u);
-                for (U32 slot = 0; slot < table; ++slot)
-                {
-                    const LLVkBridge::CullRow& row = s.mTable[slot];
-                    const U32 flags = row.mFlags;
-                    if ((flags & (32u | 64u | 16u)) || (!(flags & 1u) && row.mParent >= table))
-                    {
-                        continue;
-                    }
-                    const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
-                    if (st == ST_OCC || st == ST_OUT)
-                    {
-                        continue;
-                    }
-                    const LLVkBridge::CullMapRow& m = s.mMap[slot];
-                    if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m) == 0)
-                    {
-                        continue;
-                    }
-                    list->mKept[slot >> 5] |= 1u << (slot & 31u);
-                }
+                cull_kept_bits(s, P, occlusion, memo, list->mKept);
             }
             std::sort(alpha_rows.begin(), alpha_rows.end(), [](const std::pair<F32, U32>& x, const std::pair<F32, U32>& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
             list->mAlpha.reserve(alpha_rows.size());
@@ -12335,6 +12348,31 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         return true;
     }
     return false;
+}
+
+// kind 43 (stage 10a): a view asks for its kept set by id (blob: a CullParams; mFragment = the id, mPass = the viewer's frame). The kept set of the planes, no occlusion, answered under the id for the owner view to read.
+void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    CullShadowState& s = sCullShadow;
+    static U64 asked = 0, answered = 0;
+    ++asked;
+    if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
+    {
+        return;
+    }
+    auto set = std::make_shared<LLVkBridge::ViewSet>();
+    set->mId = h.mFragment;
+    set->mFrame = h.mPass;
+    set->mTable = (U32)s.mTable.size();
+    memcpy(&set->mParams, blob, sizeof(LLVkBridge::CullParams));
+    static std::vector<U8> memo;
+    memo.assign(s.mTable.size(), 0);
+    cull_kept_bits(s, set->mParams, false, memo, set->mKept);
+    LLVkBridge::viewSetPublish(std::move(set));
+    if (++answered % 600 == 1)
+    {
+        LL_INFOS("VkCullDerive") << "view requests (stage 10a): " << asked << " asked, " << answered << " answered" << LL_ENDL;
+    }
 }
 
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
@@ -13129,6 +13167,11 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     if (h.mKind == 35)
     {
         on_cull_rows(h, blob);       // <FS> S7 C1
+        return;
+    }
+    if (h.mKind == 43)
+    {
+        on_view_request(h, blob);    // <FS> stage 10a: a view asks for its kept set
         return;
     }
     if (h.mKind == 36)

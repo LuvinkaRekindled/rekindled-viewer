@@ -57,6 +57,9 @@ void LLVkBridge::hizRowsPublish(U32, U32, const U32*, const U32*) {}
 U32 LLVkBridge::hizRowsRead(U32, U32*, U32*, U32) { return 0; }
 void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
 std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() { return nullptr; }
+bool LLVkBridge::viewRequest(U32, U32, const CullParams&) { return false; }
+std::shared_ptr<const LLVkBridge::ViewSet> LLVkBridge::viewSetRead(U32) { return nullptr; }
+void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet>) {}
 void LLVkBridge::cullDone(U32) {}
 void LLVkBridge::cullSetResults(const U32*, U32) {}
 void LLVkBridge::cullPublish(U32, U32) {}
@@ -1979,6 +1982,43 @@ std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead()
 {
     std::lock_guard<std::mutex> lock(gConsMutex);
     return gCons;
+}
+
+namespace
+{
+std::mutex gViewSetMutex;
+std::unordered_map<U32, std::shared_ptr<const LLVkBridge::ViewSet>> gViewSets;       // the newest answer for each id (a few dozen ids at most: the probe faces)
+}
+
+bool LLVkBridge::viewRequest(U32 id, U32 frame, const CullParams& params)
+{
+    if (!id || !hizAvailable())
+    {
+        return false;
+    }
+    ShadowPacketsHeader header;
+    header.mKind = 43;
+    header.mFragment = id;
+    header.mPass = frame;
+    shadowPackets(header, &params, sizeof(params));
+    return true;
+}
+
+std::shared_ptr<const LLVkBridge::ViewSet> LLVkBridge::viewSetRead(U32 id)
+{
+    std::lock_guard<std::mutex> lock(gViewSetMutex);
+    const auto it = gViewSets.find(id);
+    return it == gViewSets.end() ? nullptr : it->second;
+}
+
+void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet> set)
+{
+    std::lock_guard<std::mutex> lock(gViewSetMutex);
+    if (gViewSets.size() > 256)
+    {
+        gViewSets.clear();      // (ids that are no longer asked for: the probes come and go)
+    }
+    gViewSets[set->mId] = std::move(set);
 }
 
 U32 LLVkBridge::lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)

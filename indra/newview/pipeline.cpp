@@ -4844,7 +4844,11 @@ bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): t
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok)
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* bits = nullptr);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
+// stage 10a (LL_VK_CUBE_KEPT): a probe cube face's kept set comes from the view request service (the face's id is gCubeViewId, set by the reflection map around its snapshot)
+extern U32 gCubeViewId;
+std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera);          // the newest answer for this face if its planes are this face's planes and it is not too old
+void ll_cube_view_finish(LLCamera& camera, const std::shared_ptr<const LLVkBridge::ViewSet>& set, bool derived);       // the compare (mode 1) and the request for the next time
 
 static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
 
@@ -4909,6 +4913,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         && LLCullShadow::useMatches(camera);        // (a frame whose frustum has another shape than the verdict's is walked: the exit snapshot has no UI, so another aspect)
     // stage 8f (LL_VK_KEPT=2): the covered partitions are not walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, each group goes through markNotCulled as the walk's own does
     const bool derived_use = !cull_use && view.isMainWorld() && !gCubeSnapshot && ll_cull_derived_on();
+    // stage 10a: a probe cube face with an id (LL_VK_CUBE_KEPT: 1 compare, 2 the face's walk replaced by the set of the request service when the answer is usable)
+    static const int cube_kept_mode = LLCullShadow::sOn && getenv("LL_VK_CUBE_KEPT") ? atoi(getenv("LL_VK_CUBE_KEPT")) : 0;
+    const bool cube_id = cube_kept_mode && gCubeSnapshot && gCubeViewId && !hud_attachments;
+    const std::shared_ptr<const LLVkBridge::ViewSet> cube_set = cube_id ? ll_cube_view_set(camera) : nullptr;
+    const bool cube_derived = cube_kept_mode == 2 && cube_set;
     if (!derived_use && view.isMainWorld() && !gCubeSnapshot)
     {
         ll_cull_stamps_release();       // stage 8b: a frame the walk runs (or nothing is derived): the stamps of the last set are the groups' own again (nothing to do when none was applied)
@@ -5019,7 +5028,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
                     {
                         continue;
                     }
-                    if (derived_use && ll_cull_derived_skip(part))
+                    if ((derived_use || cube_derived) && ll_cull_derived_skip(part))
                     {
                         continue;       // (stage 8f: the worker's kept set stands in for this partition's walk, below)
                     }
@@ -5091,6 +5100,15 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     {
         LL_CPU_ZONE("updateCull: kept groups");
         ll_cull_derived_pass(camera, view, view.isMainWorld() && !vis_cull && !LLOccCensus::sOn && !LLGpuZoneTimer::isActive() && !LLCullShadow::sCompare && LLCullShadow::sUse == 0 && !ll_scene_lod_compare_on());
+    }
+    if (cube_derived)
+    {
+        LL_CPU_ZONE("updateCull: cube face kept groups");
+        ll_cull_derived_pass(camera, view, false, &cube_set->mKept);
+    }
+    if (cube_id)
+    {
+        ll_cube_view_finish(camera, cube_set, cube_derived);
     }
 
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
@@ -14798,11 +14816,12 @@ void ll_cull_stamps_release()
     ++sKeptReleased;
 }
 
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* own_bits)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them (as useVerdict does)
-    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
-    if (!wl)
+    // (own_bits: the set of a view that is not the main view (a probe cube face, stage 10a): no stamps are derived for it, the pass is the main thread's)
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = own_bits ? nullptr : LLVkBridge::consumerListRead();
+    if (!own_bits && !wl)
     {
         if (sKeptStamp)
         {
@@ -14810,16 +14829,17 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         }
         return;
     }
+    const std::vector<U32>& kept_bits = own_bits ? *own_bits : wl->mKept;
     struct KeptApply
     {
         const std::shared_ptr<const LLVkBridge::ConsumerList>& mList;
         KeptApply(const std::shared_ptr<const LLVkBridge::ConsumerList>& l) : mList(l)
         {
-            if (sKeptStamp) { sKeptPassBitsG = mList->mKept.data(); sKeptPassWordsG = (U32)mList->mKept.size(); }
+            if (sKeptStamp && mList) { sKeptPassBitsG = mList->mKept.data(); sKeptPassWordsG = (U32)mList->mKept.size(); }
         }
         ~KeptApply()
         {
-            if (sKeptStamp)
+            if (sKeptStamp && mList)
             {
                 sKeptPassBitsG = nullptr;
                 sKeptPassWordsG = 0;
@@ -14832,9 +14852,9 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 n = (U32)sSlotGroup.size();
-        for (U32 w = 0; w < (U32)wl->mKept.size(); ++w)
+        for (U32 w = 0; w < (U32)kept_bits.size(); ++w)
         {
-            const U32 bits = wl->mKept[w];
+            const U32 bits = kept_bits[w];
             for (U32 b = 0; bits && b < 32; ++b)
             {
                 const U32 slot = (w << 5) + b;
@@ -15683,6 +15703,293 @@ static void cull_fill_params(LLCamera& camera, LLVkBridge::CullParams& params)
     const LLVector3 origin = camera.getOrigin();
     params.mOrigin[0] = origin.mV[0]; params.mOrigin[1] = origin.mV[1]; params.mOrigin[2] = origin.mV[2];
     params.mCornerDist = camera.mFrustumCornerDist;
+}
+
+// stage 10a (LL_VK_CUBE_KEPT=1 compare, 2 the face's walk replaced when the answer is usable; needs LL_VK_CULL_SHADOW=1): a probe cube face asks the worker for its kept set under the id gCubeViewId (the reflection map sets it around
+// its snapshot: the probe and the face), and the next time the same face is made (the radiance pass of a probe repeats the six faces of its irradiance pass: the same camera, about 6 frames later; a realtime probe's faces every frame)
+// reads the answer. The answer is used only when the planes of the face now are the planes it was asked with and it is not older than 60 frames; the render types are the face's own at use time (the worker applies none).
+U32 gCubeViewId = 0;
+namespace
+{
+struct CubeKeptStats
+{
+    U64 mFaces = 0, mHit = 0, mNone = 0, mOld = 0, mPlanes = 0, mAgeSum = 0, mDerived = 0;
+    U64 mCompared = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mRequests = 0;
+    U64 mSameCompared = 0, mSameWalk = 0, mSameKept = 0, mSameBoth = 0, mSameWalkOnly = 0, mSameKeptOnly = 0;       // the answer to the request of the same frame as the walk
+    U64 mWalkOnlyType[16] = {}, mWalkOnlyFar = 0, mWalkOnlyRoot = 0, mWalkOnlyParentIn = 0, mSamples = 0;       // what the walk's only groups are
+};
+CubeKeptStats sCubeKept;
+bool cube_params_match(const LLVkBridge::CullParams& a, const LLVkBridge::CullParams& b)
+{
+    if (a.mPlaneCount != b.mPlaneCount)
+    {
+        return false;
+    }
+    for (U32 p = 0; p < a.mPlaneCount && p < 7; ++p)
+    {
+        for (int k = 0; k < 4; ++k)
+        {
+            if (fabsf(a.mPlanes[p][k] - b.mPlanes[p][k]) > 1.0e-3f * fmaxf(1.f, fabsf(a.mPlanes[p][k])))
+            {
+                return false;
+            }
+        }
+    }
+    for (int k = 0; k < 3; ++k)
+    {
+        if (fabsf(a.mOrigin[k] - b.mOrigin[k]) > 1.0e-3f)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera)
+{
+    CubeKeptStats& c = sCubeKept;
+    ++c.mFaces;
+    if (c.mFaces > 300 && c.mFaces <= 306)
+    {
+        // (what the walk is about to use: the far limit of the sphere test and the shape of the view)
+        LL_INFOS("VkCubeKept") << "camera before the walk: far " << camera.getFar() << ", corner distance " << camera.mFrustumCornerDist << ", near " << camera.getNear() << ", view " << camera.getView() << ", aspect " << camera.getAspect()
+                               << ", planes " << camera.getPlaneCount() << ", origin " << camera.getOrigin().mV[0] << " " << camera.getOrigin().mV[1] << " " << camera.getOrigin().mV[2] << ", sUseFarClip " << LLPipeline::sUseFarClip << LL_ENDL;
+    }
+    std::shared_ptr<const LLVkBridge::ViewSet> set = LLVkBridge::viewSetRead(gCubeViewId);
+    if (!set)
+    {
+        ++c.mNone;
+        return nullptr;
+    }
+    const U32 age = (U32)gFrameCount - set->mFrame;
+    if (age > 60)
+    {
+        ++c.mOld;
+        return nullptr;
+    }
+    LLVkBridge::CullParams now;
+    cull_fill_params(camera, now);
+    if (!cube_params_match(set->mParams, now))
+    {
+        ++c.mPlanes;
+        return nullptr;
+    }
+    ++c.mHit;
+    c.mAgeSum += age;
+    return set;
+}
+
+void ll_cube_view_finish(LLCamera& camera, const std::shared_ptr<const LLVkBridge::ViewSet>& set, bool derived)
+{
+    CubeKeptStats& c = sCubeKept;
+    c.mDerived += derived;
+    // the same-frame compare: the walk of this face is kept (its groups, by slot) until the answer to this face's request arrives; then the walk's groups and the answer's groups of the partitions this face draws are put side by side: what
+    // the age of an answer is not to blame for
+    struct CubePending { U32 mFrame = 0; std::vector<U32> mWalk; };
+    static std::unordered_map<U32, CubePending> pending;
+    {
+        for (auto it = pending.begin(); it != pending.end();)
+        {
+            const std::shared_ptr<const LLVkBridge::ViewSet> a = LLVkBridge::viewSetRead(it->first);
+            if (a && a->mFrame == it->second.mFrame)
+            {
+                ++c.mSameCompared;
+                std::lock_guard<std::mutex> lock(sCullMutex);
+                std::unordered_set<U32> walk(it->second.mWalk.begin(), it->second.mWalk.end());
+                const U32 n = (U32)sSlotGroup.size();
+                U64 kept = 0, both = 0, kept_only = 0;
+                for (U32 w = 0; w < (U32)a->mKept.size(); ++w)
+                {
+                    for (U32 b = 0; a->mKept[w] && b < 32; ++b)
+                    {
+                        const U32 slot = (w << 5) + b;
+                        if (!((a->mKept[w] >> b) & 1u) || slot >= n || !sSlotGroup[slot])
+                        {
+                            continue;
+                        }
+                        LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                        LLSpatialPartition* part = g->getSpatialPartition();
+                        if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !ll_cull_derived_covers(part))
+                        {
+                            continue;
+                        }
+                        ++kept;
+                        if (walk.count(slot)) { ++both; } else { ++kept_only; }
+                    }
+                }
+                c.mSameWalk += walk.size();
+                c.mSameKept += kept;
+                c.mSameBoth += both;
+                c.mSameKeptOnly += kept_only;
+                c.mSameWalkOnly += walk.size() - both;
+                // what the walk's only groups are: by partition type, beyond the answer's far limit or not, root or not, whether the parent is in the answer; a few of them named
+                for (U32 slot : it->second.mWalk)
+                {
+                    if (slot < n && sSlotGroup[slot] && !(slot >> 5 < a->mKept.size() && ((a->mKept[slot >> 5] >> (slot & 31u)) & 1u)))
+                    {
+                        LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                        LLSpatialPartition* part = g->getSpatialPartition();
+                        const U32 pt = part ? llmin<U32>(part->mPartitionType, 15u) : 15u;
+                        ++c.mWalkOnlyType[pt];
+                        const LLVector4a* bb = g->getBounds();
+                        const F32 dx = bb[0][0] - a->mParams.mOrigin[0], dy = bb[0][1] - a->mParams.mOrigin[1], dz = bb[0][2] - a->mParams.mOrigin[2];
+                        const F32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
+                        const bool beyond = dist > a->mParams.mCornerDist;
+                        c.mWalkOnlyFar += beyond;
+                        LLSpatialGroup* parent = g->getParent();
+                        const bool root = !parent;
+                        c.mWalkOnlyRoot += root;
+                        const bool parent_in = parent && parent->mCullId && (parent->mCullId - 1) >> 5 < a->mKept.size() && ((a->mKept[(parent->mCullId - 1) >> 5] >> ((parent->mCullId - 1) & 31u)) & 1u);
+                        c.mWalkOnlyParentIn += parent_in;
+                        if (c.mSamples < 24 && c.mSameCompared > 200)
+                        {
+                            ++c.mSamples;
+                            LL_INFOS("VkCubeKept") << "walk-only group: slot " << slot << " partition type " << part->mPartitionType << ", centre distance " << dist << " of the far limit " << a->mParams.mCornerDist << ", root " << root << ", parent in the answer " << parent_in
+                                                   << ", elements " << g->getElementCount() << ", children " << g->getOctreeNode()->getChildCount() << ", row flags " << (slot < sMirror.size() ? (S32)sMirror[slot].mFlags : -1) << ", box half " << bb[1][0] << " " << bb[1][1] << " " << bb[1][2] << LL_ENDL;
+                        }
+                    }
+                }
+                it = pending.erase(it);
+            }
+            else if ((a && a->mFrame > it->second.mFrame) || (U32)gFrameCount - it->second.mFrame > 120)
+            {
+                it = pending.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+    }
+    if (!derived && sCull)
+    {
+        CubePending& p = pending[gCubeViewId];
+        p.mFrame = (U32)gFrameCount;
+        p.mWalk.clear();
+        const auto note = [&](LLSpatialGroup* g)
+        {
+            if (g && !g->isDead() && g->mCullId && !g->isEmpty() && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
+            {
+                p.mWalk.push_back(g->mCullId - 1);
+            }
+        };
+        for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) note(*i);
+        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) note(*i);
+        if (pending.size() > 128)
+        {
+            pending.clear();
+        }
+        // (a diagnostic: the groups the walk kept that lie beyond the camera's far limit, tested here with the walk's own tests against the camera of the walk, with every ancestor's result: which node made the subtree "wholly in")
+        static U32 diag_faces = 0;
+        if (c.mFaces > 300 && diag_faces < 6)
+        {
+            U32 beyond = 0, said = 0;
+            std::string text;
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            for (U32 slot : p.mWalk)
+            {
+                if (slot >= sSlotGroup.size() || !sSlotGroup[slot])
+                {
+                    continue;
+                }
+                LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                const LLVector4a* bb = g->getBounds();
+                const LLVector3 o = camera.getOrigin();
+                const F32 dx = bb[0][0] - o.mV[0], dy = bb[0][1] - o.mV[1], dz = bb[0][2] - o.mV[2];
+                if (sqrtf(dx * dx + dy * dy + dz * dz) <= camera.mFrustumCornerDist + 2.f)
+                {
+                    continue;
+                }
+                ++beyond;
+                if (said < 3)
+                {
+                    ++said;
+                    text += " [slot " + std::to_string(slot) + " chain (frustum,sphere):";
+                    int depth = 0;
+                    for (LLSpatialGroup* a = g; a && depth < 12; a = a->getParent(), ++depth)
+                    {
+                        const LLVector4a* ab = a->getBounds();
+                        const LLVector4a* ex = a->getExtents();
+                        const S32 fr = camera.AABBInFrustumNoFarClip(ab[0], ab[1]);
+                        const S32 sp = AABBSphereIntersect(ex[0], ex[1], o, camera.mFrustumCornerDist);
+                        text += " (" + std::to_string(fr) + "," + std::to_string(sp) + (a->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? ",skip" : "") + ")";
+                    }
+                    text += "]";
+                }
+            }
+            if (beyond)
+            {
+                ++diag_faces;
+                LL_INFOS("VkCubeKept") << "walk groups beyond the far limit " << camera.mFrustumCornerDist << " of " << p.mWalk.size() << " in this face: " << beyond << text << LL_ENDL;
+            }
+        }
+    }
+    if (set && !derived && sCull)
+    {
+        // the compare: the groups of the covered partitions the walk of this face pushed against the set
+        ++c.mCompared;
+        static std::unordered_set<U32> seen;
+        seen.clear();
+        const auto note = [&](LLSpatialGroup* g)
+        {
+            if (g && !g->isDead() && g->mCullId && !g->isEmpty() && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
+            {
+                const U32 slot = g->mCullId - 1;
+                if (seen.insert(slot).second)
+                {
+                    ++c.mWalk;
+                    const bool in = (slot >> 5) < set->mKept.size() && ((set->mKept[slot >> 5] >> (slot & 31u)) & 1u);
+                    c.mBoth += in;
+                    c.mWalkOnly += !in;
+                }
+            }
+        };
+        for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) note(*i);
+        for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) note(*i);
+        for (U32 w = 0; w < (U32)set->mKept.size(); ++w)
+        {
+            for (U32 b = 0; set->mKept[w] && b < 32; ++b)
+            {
+                if ((set->mKept[w] >> b) & 1u)
+                {
+                    ++c.mKept;
+                    c.mKeptOnly += !seen.count((w << 5) + b);
+                }
+            }
+        }
+    }
+    LLVkBridge::CullParams now;
+    cull_fill_params(camera, now);
+    if (c.mFaces > 300 && c.mFaces <= 306)
+    {
+        LL_INFOS("VkCubeKept") << "camera after the walk: far " << camera.getFar() << ", corner distance " << camera.mFrustumCornerDist << ", near " << camera.getNear() << ", view " << camera.getView() << ", planes " << camera.getPlaneCount() << ", the request's corner distance " << now.mCornerDist << LL_ENDL;
+    }
+    static const bool no_sphere = getenv("LL_VK_CUBE_NOSPHERE") != nullptr;      // (a test: the request carries no far limit: the worker's sphere test passes everything)
+    if (no_sphere)
+    {
+        now.mCornerDist = 0.f;
+    }
+    c.mRequests += LLVkBridge::viewRequest(gCubeViewId, (U32)gFrameCount, now);
+    if (c.mFaces == 1 || c.mFaces == 10 || c.mFaces % 100 == 0)
+    {
+        const double f = (double)c.mFaces, n = (double)std::max<U64>(c.mCompared, 1), h = (double)std::max<U64>(c.mHit, 1);
+        LL_INFOS("VkCubeKept") << "probe cube faces with an id (LL_VK_CUBE_KEPT): " << c.mFaces << " faces, a usable answer " << c.mHit << " (" << (double)c.mAgeSum / h << " frames old), none yet " << c.mNone << ", too old " << c.mOld << ", planes differ "
+                               << c.mPlanes << ", drawn from the answer " << c.mDerived << ", requests sent " << c.mRequests << " | compare over " << c.mCompared << " faces: the walk pushed " << (double)c.mWalk / n << " a face, the set keeps "
+                               << (double)c.mKept / n << ", in both " << (double)c.mBoth / n << ", the walk's only " << (double)c.mWalkOnly / n << ", the set's only " << (double)c.mKeptOnly / n << " (" << f << " faces seen)" << LL_ENDL;
+        const double sn = (double)std::max<U64>(c.mSameCompared, 1);
+        LL_INFOS("VkCubeKept") << "same-frame compare (the answer to the request made in the walk's own frame, its groups of the partitions the face draws) over " << c.mSameCompared << " faces: the walk pushed " << (double)c.mSameWalk / sn << " a face, the answer keeps "
+                               << (double)c.mSameKept / sn << ", in both " << (double)c.mSameBoth / sn << ", the walk's only " << (double)c.mSameWalkOnly / sn << ", the answer's only " << (double)c.mSameKeptOnly / sn << LL_ENDL;
+        std::string types;
+        for (U32 t = 0; t < 16; ++t)
+        {
+            if (c.mWalkOnlyType[t])
+            {
+                types += " " + std::to_string(t) + ":" + std::to_string(c.mWalkOnlyType[t]);
+            }
+        }
+        LL_INFOS("VkCubeKept") << "the walk's only groups (totals over the same-frame faces) by partition type (type:count)" << types << " | beyond the far limit " << c.mWalkOnlyFar << ", roots " << c.mWalkOnlyRoot << ", with the parent in the answer " << c.mWalkOnlyParentIn << LL_ENDL;
+    }
 }
 
 void LLCullShadow::send(LLCamera& camera)
