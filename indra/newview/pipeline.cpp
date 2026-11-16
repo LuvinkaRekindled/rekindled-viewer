@@ -5109,7 +5109,8 @@ static const bool sLodSwitch = sLodCandMode == 2;
 static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
 static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
-bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand; }
+static const bool sHizListCompare = LLCullShadow::sOn && getenv("LL_VK_HIZLIST") != nullptr;        // stage 8d: the worker's list of the groups to test (ConsumerList::mHiz) against the walk's (markOccluder); needs the worker's LOD request flag (the round robin's frame)
+bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand || sHizListCompare; }
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
@@ -5245,6 +5246,11 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
+    if (LLVisSetHooks::sHizRows && LLCullShadow::sOn && group && group->mCullId && group->getSpatialPartition() && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->isOcclusionEnabled()
+        && group->getOctreeNode() && group->getOctreeNode()->getParent())
+    {
+        return;         // stage 8d (LL_VK_HIZROWS=2): the worker tests this group's row every frame; nothing is named, no box collected, no verdict awaited
+    }
     if (LLPipeline::useOcclusion() > 1 && group && !group->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION))
     {
         LLSpatialGroup* parent = group->getParent();
@@ -5265,6 +5271,8 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
         }
     }
 }
+
+void ll_scene_hiz_compare(LLCullResult* cull);       // stage 8d (defined with the other compares, below)
 
 // <FS> S7 H3 (doc/vulkan/S7-design.md): the occlusion pass of the world camera. The boxes of the occlusion groups, the reflection and hero probes and the object cache's groups go to the worker as one record at
 // this point of the G-buffer pass (after the big occluders were drawn); the worker's Hi-Z test answers one to four frames later (LLHiz::apply). No cube is drawn and no query is issued.
@@ -5312,6 +5320,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     } occ_end = { occ_t0 };
 
     LLHiz::begin();
+    ll_scene_hiz_compare(sCull);        // stage 8d (LL_VK_HIZLIST): the walk's list of this frame is noted, the worker's of the frames before compared
 
     if (sReflectionProbesEnabled)
     {
@@ -8436,6 +8445,7 @@ void ll_lod_cand_refresh();                                             // stage
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
 void ll_scene_stamp_compare(LLCullResult* cull);                        // stage 8b (below): the walk's kept groups against the worker's derived set
+void ll_scene_wake_compare(LLCullResult* cull);                         // stage 8c (below): the Released groups the walk keeps against the ones the worker's derived set names
 
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
@@ -8802,7 +8812,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         {
             ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
             ll_scene_lod_compare();                     // stage 7 (LL_VK_CULL_LOD): the worker's distances and slop bits against the walk's
-            ll_scene_stamp_compare(sCull);              // stage 8b (LL_VK_CULL_STAMPS): the walk's kept groups against the worker's exact derived set
+            ll_scene_stamp_compare(sCull); ll_scene_wake_compare(sCull);              // stage 8b (LL_VK_CULL_STAMPS): the walk's kept groups against the worker's exact derived set
         }
         if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
@@ -12829,7 +12839,7 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
     row.mServedTris = g->mGeoServedTris;
     row.mDrawTris = ll_group_draw_tris(g);
     row.mAlphaBits = g->mGeoAlphaBits;
-    row.mFlags = (g->mGeoAllServed ? 1u : 0u) | (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u);
+    row.mFlags = (g->mGeoAllServed ? 1u : 0u) | (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u) | (g->hasState(LLSpatialGroup::FS_RELEASED) ? 32u : 0u) | (part && part->isOcclusionEnabled() ? 64u : 0u) | (part && (part->mDrawableType == LLPipeline::RENDER_TYPE_WATER || part->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER) ? 128u : 0u);       // 64: the partition is occlusion tested, 128: a water partition (the Hi-Z box is depth clamped); stage 8d       // 32: Released (stage 8c: kept by the events that release and rebuild a group, the worker names the released rows of its derived set)
     row.mSurfaceArea = g->mSurfaceArea;
     row.mObjectBoxSize = g->row().objectBoxSize;
     // stage 3: the object bounds the walk tests for a node that has children (a bridge's group: the bridge's world box, as the cull row; such a group counts as a leaf)
@@ -13029,6 +13039,12 @@ void cull_process()
         g->mCullFirstSerial = sCullBuildSerial;
         g->mCullDirty = true;
         sSlotGroup[slot] = g;
+        if (LLVisSetHooks::sHizRows)
+        {
+            // stage 8d: a new group starts with the state it inherited from its parent; no verdict history
+            LLVisSetHooks::hizRowsState(g, (g->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED) != 0);
+            LLVisSetHooks::hizRowsReset(g);
+        }
         sDirtySlots.push_back(slot);
         ++s.mAdded;
     }
@@ -13995,6 +14011,11 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
         const U32 slot = group->mCullId - 1;
         if (slot < sSlotGroup.size() && sSlotGroup[slot] == group)
         {
+            if (LLVisSetHooks::sHizRows)
+            {
+                LLVisSetHooks::hizRowsState(group, false);       // stage 8d
+                LLVisSetHooks::hizRowsReset(group);
+            }
             sSlotGroup[slot] = nullptr;
             ++sSlotGen[slot];
             sFreeSlots.push_back(slot);
@@ -14501,6 +14522,290 @@ void ll_lod_cand_report()
                           << ", the sort's changeLOD() true " << sCandLive[0] / n << " | " << sCandLive[1] / n << ", of those in the candidate set (slop bits, dirty registry, wheel) " << sCandHit[0] / n << " | " << sCandHit[1] / n
                           << ", not in it: a dirty state " << sCandMissDirty[0] / n << " | " << sCandMissDirty[1] / n << ", the slop test " << sCandMissSlop[0] / n << " | " << sCandMissSlop[1] / n << ", the round robin " << sCandMissRobin[0] / n << " | " << sCandMissRobin[1] / n
                           << "; candidates the live changeLOD() drops " << sCandExtra[0] / n << " | " << sCandExtra[1] / n << "; the set is " << (double)sCandAge.load() / std::max<double>(1.0, (double)(sCandLooked[0] + sCandLooked[1])) << " frames old" << LL_ENDL;
+}
+
+// stage 8d of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_HIZLIST=1, needs LL_VK_CULL_SHADOW=1): which groups go to the Hi-Z. Today the walk names them (markOccluder in earlyFail and markNotCulled: the occluded nodes it reaches and
+// the nodes it keeps whose round robin turn is due or that it did not keep the frame before, topmost only) and doOcclusion sends their boxes. The worker has the rows, the chain (what an ancestor drops) and the round robin, and names
+// the same groups (ConsumerList::mHiz). A compare first: the walk's list of a frame (called at the occlusion point, before the boxes are collected) against the worker's of the same frame.
+void ll_scene_hiz_compare(LLCullResult* cull)
+{
+    if (!sHizListCompare || !cull || LLPipeline::shadowRender() || gCubeSnapshot || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
+    {
+        return;
+    }
+    struct Entry { U32 mSlot; bool mAwaiting, mOccluded; };
+    static std::deque<std::pair<U32, std::vector<Entry>>> history;
+    {
+        std::vector<Entry> mine;
+        for (LLCullResult::sg_iterator i = cull->beginOcclusionGroups(); i != cull->endOcclusionGroups(); ++i)
+        {
+            LLSpatialGroup* g = *i;
+            if (g && !g->isDead() && g->mCullId && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
+            {
+                mine.push_back({ g->mCullId - 1, g->isHizAwaiting(), g->isOcclusionState(LLSpatialGroup::OCCLUDED) });
+            }
+        }
+        history.emplace_back((U32)gFrameCount, std::move(mine));
+        while (history.size() > 8)
+        {
+            history.pop_front();
+        }
+    }
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    static U32 last = 0;
+    if (!wl || wl->mFrame <= last)
+    {
+        return;
+    }
+    last = wl->mFrame;
+    const std::vector<Entry>* walk = nullptr;
+    for (const auto& h : history)
+    {
+        if (h.first == wl->mFrame)
+        {
+            walk = &h.second;
+        }
+    }
+    if (!walk)
+    {
+        return;
+    }
+    static std::unordered_set<U32> w, v;
+    w.clear();
+    v.clear();
+    w.insert(wl->mHiz.begin(), wl->mHiz.end());
+    static U64 n = 0, n_walk = 0, n_walk_occ = 0, n_walk_await = 0, n_work = 0, n_both = 0, v_only = 0, v_only_occ = 0, v_only_await = 0, w_only = 0, w_only_occ = 0;
+    ++n;
+    for (const Entry& e : *walk)
+    {
+        v.insert(e.mSlot);
+        ++n_walk;
+        n_walk_occ += e.mOccluded;
+        n_walk_await += e.mAwaiting;
+        if (w.count(e.mSlot))
+        {
+            ++n_both;
+        }
+        else
+        {
+            ++v_only;
+            v_only_occ += e.mOccluded;
+            v_only_await += e.mAwaiting;
+        }
+    }
+    n_work += w.size();
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        for (U32 slot : w)
+        {
+            if (!v.count(slot))
+            {
+                ++w_only;
+                LLSpatialGroup* g = slot < sSlotGroup.size() ? (LLSpatialGroup*)sSlotGroup[slot] : nullptr;
+                w_only_occ += g && g->isOcclusionState(LLSpatialGroup::OCCLUDED);
+            }
+        }
+    }
+    if (n % 300 == 0)
+    {
+        const double f = (double)n;
+        LL_INFOS("VkHizList") << "Hi-Z list, the walk's against the worker's, per frame over " << n << " compared: the walk names " << n_walk / f << " (occluded ones " << n_walk_occ / f << ", with a verdict awaited " << n_walk_await / f << "), the worker names " << n_work / f << ", in both " << n_both / f
+                              << "; the walk's only " << v_only / f << " (occluded " << v_only_occ / f << ", awaited " << v_only_await / f << "), the worker's only " << w_only / f << " (occluded " << w_only_occ / f << ")" << LL_ENDL;
+    }
+}
+
+// stage 8c of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_WAKE=1, needs LL_VK_CULL_SHADOW=1): the groups a camera accepts again that are Released (the draw infos dropped by the expiry scan, map row flag 32, kept by the events that release
+// and rebuild a group). The walk wakes a Released group it keeps (markNotCulled); the worker names the Released rows of its exact derived set (ConsumerList::mReleased). A compare first: the two sets, per frame.
+void ll_scene_wake_compare(LLCullResult* cull)
+{
+    static const bool on = LLCullShadow::sOn && getenv("LL_VK_WAKE") != nullptr;
+    if (!on || !cull || LLPipeline::shadowRender() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
+    {
+        return;
+    }
+    static const int test = atoi(getenv("LL_VK_WAKE"));
+    if (test == 2 && gFrameCount % 30 == 0)
+    {
+        // a test (nothing goes cold in a lap: the shadow cascades and the probes see what is behind the camera): four visible groups are released as the expiry scan releases them, the walk wakes them when it keeps them again and the compare below
+        // shows whether the worker names them. They draw nothing until the wake rebuilds them: not for a picture check.
+        const U32 n_vg = cull->getVisibleGroupsSize();
+        int released = 0;
+        for (U32 k = 0; k < n_vg && released < 4; ++k)
+        {
+            LLSpatialGroup* g = cull->beginVisibleGroups()[(k + (U32)gFrameCount * 7u) % n_vg];
+            if (g && !g->isDead() && !g->isEmpty() && !g->isHUDGroup() && g->mBridgeList.empty() && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge()
+                && !g->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::FS_RELEASED | LLSpatialGroup::FS_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
+            {
+                U64 infos = 0, tris = 0;
+                ll_group_draw_counts(g, infos, tris);
+                if (infos)
+                {
+                    g->clearDrawMap();
+                    g->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::FS_RELEASED);
+                    ++released;
+                }
+            }
+        }
+    }
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    if (!wl || (U32)gFrameCount - wl->mFrame > 30)
+    {
+        return;
+    }
+    // A Released group is woken within a frame or two (the paced wake queue, then the rebuild clears FS_RELEASED), and the worker learns the row's bit a frame or two after the viewer sets it: so the question is not whether the two
+    // sets are equal in one frame but whether the worker names each group the walk kept as Released, in how many frames. One entry a group the walk kept Released: the frame it was first seen, and the frame the worker named it.
+    struct Seen { U32 mFrame; U32 mNamed; };       // mNamed 0 = not yet
+    static std::unordered_map<LLSpatialGroup*, Seen> pending;
+    static U64 frames = 0, nonzero = 0, groups = 0, named = 0, never = 0, lag_sum = 0, lag_max = 0, worker_only = 0, still_released_when_named = 0;
+    const U32 now = (U32)gFrameCount;
+    ++frames;
+    bool any = false;
+    const auto note = [&](LLSpatialGroup* g)
+    {
+        if (g && !g->isDead() && !g->isEmpty() && g->hasState(LLSpatialGroup::FS_RELEASED))
+        {
+            any = true;
+            if (pending.emplace(g, Seen{ now, 0 }).second)
+            {
+                ++groups;
+            }
+        }
+    };
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i) note(*i);
+    for (LLCullResult::sg_iterator i = cull->beginDrawableGroups(); i != cull->endDrawableGroups(); ++i) note(*i);
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        for (U32 slot : wl->mReleased)
+        {
+            LLSpatialGroup* g = slot < sSlotGroup.size() ? (LLSpatialGroup*)sSlotGroup[slot] : nullptr;
+            if (!g || g->isDead())
+            {
+                continue;
+            }
+            any = true;
+            auto it = pending.find(g);
+            if (it == pending.end())
+            {
+                ++worker_only;
+            }
+            else if (!it->second.mNamed)
+            {
+                it->second.mNamed = now;
+                ++named;
+                const U64 lag = now - it->second.mFrame;
+                lag_sum += lag;
+                lag_max = std::max(lag_max, lag);
+                still_released_when_named += g->hasState(LLSpatialGroup::FS_RELEASED);
+            }
+        }
+    }
+    for (auto it = pending.begin(); it != pending.end();)
+    {
+        if (now - it->second.mFrame > 12)
+        {
+            never += it->second.mNamed == 0;
+            it = pending.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    nonzero += any;
+    if (frames % 600 == 0)
+    {
+        LL_INFOS("VkWake") << "Released groups a camera accepts, over " << frames << " frames (" << nonzero << " with any): the walk kept " << groups << " groups Released, the worker's derived set named " << named << " of them (after " << (named ? (double)lag_sum / named : 0.0)
+                           << " frames on average, at most " << lag_max << "; " << still_released_when_named << " still Released when named), " << never << " not named within 12 frames; names of groups the walk had not kept Released: " << worker_only << LL_ENDL;
+    }
+}
+
+// stage 8d of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_HIZROWS=2, with LL_VK_CULL_SHADOW=1): the OCCLUDED state of the table's groups follows the worker's verdicts of their rows. The worker tests the box of every row in the packet
+// of the occlusion point and publishes two bit sets by slot (LLVkBridge::hizRowsPublish): which rows have a verdict that says something about occlusion, and which of those are occluded. Here, per batch, only word operations:
+// occluded on two agreeing verdicts (the old rule, mHizOccludedOnce), visible on one, a batch the camera has left behind counts as visible (the old stale rule); only the groups whose state changes are touched. Two bit sets by slot
+// keep the state: what is applied (every setter of OCCLUDED reports it: hizRowsState) and the occluded verdicts of the batch before. markOccluder no longer names these groups, so no box is collected, no verdict awaited.
+static std::vector<U32> sHizState, sHizPrevOcc;
+
+static inline void hiz_bit(std::vector<U32>& v, U32 slot, bool on)
+{
+    if (v.size() <= (slot >> 5))
+    {
+        v.resize((slot >> 5) + 64, 0u);
+    }
+    if (on) { v[slot >> 5] |= 1u << (slot & 31u); } else { v[slot >> 5] &= ~(1u << (slot & 31u)); }
+}
+
+void LLVisSetHooks::hizRowsState(LLViewerOctreeGroup* group, bool occluded)
+{
+    hiz_bit(sHizState, group->mCullId - 1, occluded);
+}
+
+void LLVisSetHooks::hizRowsReset(LLViewerOctreeGroup* group)
+{
+    hiz_bit(sHizPrevOcc, group->mCullId - 1, false);
+}
+
+void LLVisSetHooks::hizRowsInvalidate(LLViewerOctreeGroup* group)
+{
+    // an object was added to the group: it is visible at once (what the discard of an awaited verdict did, made by the event) and two new agreeing verdicts are needed to occlude it again
+    hizRowsReset(group);
+    if (LLOcclusionCullingGroup* o = dynamic_cast<LLOcclusionCullingGroup*>(group))
+    {
+        if (o->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED)
+        {
+            o->hizRowSet(false);
+        }
+    }
+}
+
+void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool stale)
+{
+    const U32 nw = (rows + 31) / 32;
+    if (sHizState.size() < nw) { sHizState.resize(nw, 0u); }
+    if (sHizPrevOcc.size() < nw) { sHizPrevOcc.resize(nw, 0u); }
+    static std::vector<std::pair<U32, bool>> changes;
+    changes.clear();
+    for (U32 w = 0; w < nw; ++w)
+    {
+        const U32 i = info[w];
+        const U32 o = stale ? 0u : (occ[w] & i);
+        U32 set_bits = o & sHizPrevOcc[w] & ~sHizState[w];            // two agreeing occluded verdicts, the state is not occluded yet
+        U32 clr_bits = i & ~o & sHizState[w];                         // a verdict that says visible, the state is occluded
+        sHizPrevOcc[w] = (sHizPrevOcc[w] & ~i) | o;
+        for (int phase = 0; phase < 2; ++phase)
+        {
+            U32 bits = phase ? clr_bits : set_bits;
+            for (U32 b = 0; bits && b < 32; ++b)
+            {
+                if ((bits >> b) & 1u)
+                {
+                    changes.emplace_back((w << 5) + b, phase == 0);
+                }
+            }
+        }
+    }
+    if (changes.empty())
+    {
+        return;
+    }
+    static std::vector<std::pair<LLOcclusionCullingGroup*, bool>> targets;
+    targets.clear();
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        for (const auto& c : changes)
+        {
+            if (c.first < sSlotGroup.size() && sSlotGroup[c.first])
+            {
+                if (LLOcclusionCullingGroup* g = dynamic_cast<LLOcclusionCullingGroup*>(sSlotGroup[c.first]))
+                {
+                    targets.emplace_back(g, c.second);
+                }
+            }
+        }
+    }
+    for (const auto& t : targets)
+    {
+        t.first->hizRowSet(t.second);
+    }
 }
 
 // stage 7 (LL_VK_CULL_LOD=1): the worker's distance and slop bit of every row (published by cull_derive_compare, about a frame old) against what the walk's LOD check saw of the group in this frame. Rows that changed in the last

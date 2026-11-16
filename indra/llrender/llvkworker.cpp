@@ -10657,6 +10657,10 @@ void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 // goes to a slot of a ring of host-visible cached memory: bit 0 = occluded, bits 8-15 = the pyramid level used, bit 16 = cut by the near plane (visible), bit 17 = rectangle off the screen
 // (occluded: no sample of it is drawn), bit 18 = beyond the far plane (visible), bit 19 = wholly behind the camera (occluded). The viewer reads the slot when the frame's fence has signalled (hiz_poll publishes the serial); nothing ever blocks.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+U32 hiz_row_count();                                        // stage 8d (defined after the table's state, in this namespace): LL_VK_HIZROWS: how many rows' boxes the Hi-Z packet gets appended
+void hiz_fill_row_boxes(LLVkBridge::HizBox* out, U32 rows);
+bool hiz_row_eligible(U32 slot);                            // the row is one the Hi-Z tests: not dead, not a root, not a bridge's group, in a partition with occlusion (map flag 64)
+
 namespace
 {
 const char* kHizDownShader = R"GLSL(#version 450
@@ -10762,7 +10766,7 @@ struct HizState
     std::vector<VkImageView> mMipViews;
     bool mPyramidInit = false;
     U32 mDepthW = 0, mDepthH = 0;
-    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mCount; bool mCensus; };
+    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mCount; bool mCensus; U32 mRowFirst = 0, mRows = 0; };       // (stage 8d: the boxes of the table's rows are mRows of the mCount, from mRowFirst)
     std::deque<Pending> mPending;
     // counters (reported every 600 records)
     U64 mRecords = 0, mBoxes = 0, mNoDepth = 0, mNoPipeline = 0, mPyramidBuilds = 0, mTooMany = 0, mPublished = 0, mDispatches = 0, mLast = 0;
@@ -10921,6 +10925,29 @@ void hiz_poll()
         if (p.mCensus)
         {
             vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, ((VkDeviceSize)kHizSlots + p.mSlot) * kHizCapacity * 12, (VkDeviceSize)p.mCount * 12);       // (S7 B0: the census half)
+        }
+        if (p.mRows)
+        {
+            // stage 8d (LL_VK_HIZROWS): the verdicts of the table rows' boxes, by slot, as two bit sets: info (a row the Hi-Z tests, whose box is neither off the screen (bit 17) nor wholly behind the camera (bit 19): those words say "occluded"
+            // and mean nothing about occlusion) and occ (occluded, where there is info)
+            const U32* res = (const U32*)s.mResults.mMapped + (size_t)p.mSlot * kHizCapacity * 3;
+            static std::vector<U32> occ, info;
+            const U32 words = (p.mRows + 31) / 32;
+            occ.assign(words, 0u);
+            info.assign(words, 0u);
+            for (U32 r = 0; r < p.mRows; ++r)
+            {
+                const U32 w = res[3 * (size_t)(p.mRowFirst + r)];
+                if (hiz_row_eligible(r) && !(w & ((1u << 17) | (1u << 19))))
+                {
+                    info[r >> 5] |= 1u << (r & 31u);
+                    if (w & 1u)
+                    {
+                        occ[r >> 5] |= 1u << (r & 31u);
+                    }
+                }
+            }
+            LLVkBridge::hizRowsPublish(p.mSerial, p.mRows, occ.data(), info.data());
         }
         LLVkBridge::hizPublish(p.mSlot, p.mSerial);
         ++s.mPublished;
@@ -11209,7 +11236,7 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     Context& ctx = Context::instance();
     hiz_poll();
     Image* depth = r.currentDepthTarget();
-    if (!hiz_init() || !h.mEntries)
+    if (!hiz_init() || (!h.mEntries && !hiz_row_count()))
     {
         ++s.mNoPipeline;
         return;
@@ -11231,13 +11258,19 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         ++s.mNoPipeline;
         return;
     }
-    Renderer::ScratchAlloc boxes = r.allocVertexScratch(32ull * h.mEntries);
+    const U32 rows = h.mEntries + hiz_row_count() <= kHizCapacity ? hiz_row_count() : 0u;       // (stage 8d: the table's rows follow the viewer's boxes)
+    const U32 total = h.mEntries + rows;
+    Renderer::ScratchAlloc boxes = r.allocVertexScratch(32ull * total);
     if (!boxes.mPtr || !boxes.mAddress)
     {
         ++s.mNoPipeline;
         return;
     }
     memcpy(boxes.mPtr, blob, 32ull * h.mEntries);
+    if (rows)
+    {
+        hiz_fill_row_boxes((LLVkBridge::HizBox*)((U8*)boxes.mPtr + 32ull * h.mEntries), rows);
+    }
     const U32 slot = h.mPass % kHizSlots;
     const U64 out_address = (U64)s.mResults.mAddress + (U64)slot * kHizCapacity * 12;
     const U32 levels = s.mPyramid.mMipLevels;
@@ -11246,7 +11279,7 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     memcpy(tpc.mVp, h.mViewProj, sizeof(tpc.mVp));
     tpc.mBoxes[0] = (U32)boxes.mAddress; tpc.mBoxes[1] = (U32)((U64)boxes.mAddress >> 32);
     tpc.mOut[0] = (U32)out_address; tpc.mOut[1] = (U32)(out_address >> 32);
-    tpc.mCount = h.mEntries;
+    tpc.mCount = total;
     tpc.mLevels = levels;
     tpc.mDepth[0] = (F32)w; tpc.mDepth[1] = (F32)hgt;
     static const U32 fine = []() { const char* e = getenv("LL_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
@@ -11356,7 +11389,7 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     s.mPyramidInit = true;
     s.mDispatches += dispatches;
-    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), h.mEntries, census_prev });
+    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), total, census_prev, h.mEntries, rows });
     if (s.mRecords - s.mLast >= 600)
     {
         s.mLast = s.mRecords;
@@ -11463,6 +11496,39 @@ struct CullShadowState
     U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
 };
 CullShadowState sCullShadow;
+
+// stage 8d of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_HIZROWS=1, with LL_VK_CULL_SHADOW=1): the Hi-Z test is the worker's, and so are the rows: it tests every row's box (the group's bounds grown by the fudge the viewer's hizCollect adds:
+// 0.25 m, 1 m in z for a water partition, whose box is depth clamped) in the packet of the occlusion point, the viewer's own boxes first, and publishes the verdicts by slot. Rows that are dead, a bridge's or in a partition the
+// Hi-Z does not test (map flag 64) get a box too (a test costs nothing) and are not looked at.
+U32 hiz_row_count()
+{
+    static const bool on = getenv("LL_VK_HIZROWS") != nullptr;
+    return on ? (U32)sCullShadow.mTable.size() : 0u;
+}
+
+bool hiz_row_eligible(U32 slot)
+{
+    const CullShadowState& s = sCullShadow;
+    return slot < (U32)s.mTable.size() && slot < (U32)s.mMap.size() && !(s.mTable[slot].mFlags & (1u | 32u | 64u)) && (s.mMap[slot].mFlags & 64u);
+}
+
+void hiz_fill_row_boxes(LLVkBridge::HizBox* out, U32 rows)
+{
+    const CullShadowState& s = sCullShadow;
+    for (U32 slot = 0; slot < rows && slot < (U32)s.mTable.size(); ++slot)
+    {
+        const LLVkBridge::CullRow& row = s.mTable[slot];
+        const bool water = slot < s.mMap.size() && (s.mMap[slot].mFlags & 128u);
+        LLVkBridge::HizBox& b = out[slot];
+        for (int k = 0; k < 3; ++k)
+        {
+            b.mCenter[k] = row.mCenter[k];
+            b.mHalf[k] = row.mHalf[k] + (k == 2 && water ? 1.0f : 0.25f);
+        }
+        b.mFlags = water ? 1u : 0u;
+        b.mPad = 0.f;
+    }
+}
 
 bool cull_init()
 {
@@ -11971,6 +12037,14 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             ++stamp;
             static std::vector<std::pair<F32, U32>> alpha_rows;       // (depth, slot)
             alpha_rows.clear();
+            for (U32 slot = 0; slot < table; ++slot)
+            {
+                // the Released rows the derive names (map flag 32): the exact set, not the late one: a group a camera does not accept now is not woken
+                if (((vis_words[slot >> 5] >> (slot & 31u)) & 1u) && (s.mMap[slot].mFlags & 32u))
+                {
+                    list->mReleased.push_back(slot);
+                }
+            }
             const F32 at_x = P.mMotion[2], at_y = P.mMotion[3], at_z = P.mFactors[3];
             for (U32 slot = 0; slot < table; ++slot)
             {
@@ -12027,6 +12101,59 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                 seen_stamp[m.mHandle] = stamp;
                 list->mHandles.push_back(m.mHandle);
                 list->mSlots.push_back(slot);
+            }
+            if ((lod_flag & 1u) && occlusion)
+            {
+                // the groups the walk names to the Hi-Z, from the rows (LLOctreeCull::earlyFail names an occluded node it reaches, LLPipeline::markNotCulled a node it keeps when its round robin turn is due or it was not kept the frame
+                // before; markOccluder takes only a topmost one: no occluded parent). The viewer's frame counter is the one the round robin reads (the record carries it with the LOD request).
+                static std::vector<U8> kept_prev;
+                static U32 kept_prev_table = 0;
+                std::vector<U8> kept(table, 0);
+                const U32 lod_frame = lod_flag >> 1;
+                for (U32 slot = 0; slot < table; ++slot)
+                {
+                    const LLVkBridge::CullRow& row = s.mTable[slot];
+                    const U32 flags = row.mFlags;
+                    if (flags & (32u | 64u))
+                    {
+                        continue;
+                    }
+                    const bool root = (flags & 1u) != 0;
+                    if (!root && (row.mParent >= table))
+                    {
+                        continue;
+                    }
+                    const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
+                    if ((flags & 5u) == 4u)
+                    {
+                        // an occluded node: named when the walk reaches it, which needs its parent reached (neither occluded nor out)
+                        const U8 ps = cull_chain_state(s, P, occlusion, row.mParent, memo, 0);
+                        if (ps != ST_OCC && ps != ST_OUT)
+                        {
+                            list->mHiz.push_back(slot);
+                        }
+                        continue;
+                    }
+                    if (st == ST_OCC || st == ST_OUT || (flags & 16u))
+                    {
+                        continue;
+                    }
+                    const LLVkBridge::CullMapRow& m = s.mMap[slot];
+                    if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m) == 0)
+                    {
+                        continue;       // (a node with children that is only partly in: its object bounds are tested too)
+                    }
+                    kept[slot] = 1;
+                    const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
+                    const bool turn = period && (lod_frame % period) == hash;
+                    const bool fresh = slot >= kept_prev_table || !kept_prev[slot];
+                    if ((turn || fresh) && (root || !(s.mTable[row.mParent].mFlags & 4u)))
+                    {
+                        list->mHiz.push_back(slot);
+                    }
+                }
+                kept_prev.swap(kept);
+                kept_prev_table = table;
             }
             std::sort(alpha_rows.begin(), alpha_rows.end(), [](const std::pair<F32, U32>& x, const std::pair<F32, U32>& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
             list->mAlpha.reserve(alpha_rows.size());
