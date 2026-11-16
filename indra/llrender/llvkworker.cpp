@@ -12129,58 +12129,30 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                 list->mHandles.push_back(m.mHandle);
                 list->mSlots.push_back(slot);
             }
-            if ((lod_flag & 1u) && occlusion)
             {
-                // the groups the walk names to the Hi-Z, from the rows (LLOctreeCull::earlyFail names an occluded node it reaches, LLPipeline::markNotCulled a node it keeps when its round robin turn is due or it was not kept the frame
-                // before; markOccluder takes only a topmost one: no occluded parent). The viewer's frame counter is the one the round robin reads (the record carries it with the LOD request).
-                static std::vector<U8> kept_prev;
-                static U32 kept_prev_table = 0;
-                std::vector<U8> kept(table, 0);
-                const U32 lod_frame = lod_flag >> 1;
+                // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
+                // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
+                list->mKept.assign((table + 31) / 32, 0u);
                 for (U32 slot = 0; slot < table; ++slot)
                 {
                     const LLVkBridge::CullRow& row = s.mTable[slot];
                     const U32 flags = row.mFlags;
-                    if (flags & (32u | 64u))
-                    {
-                        continue;
-                    }
-                    const bool root = (flags & 1u) != 0;
-                    if (!root && (row.mParent >= table))
+                    if ((flags & (32u | 64u | 16u)) || (!(flags & 1u) && row.mParent >= table))
                     {
                         continue;
                     }
                     const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
-                    if ((flags & 5u) == 4u)
-                    {
-                        // an occluded node: named when the walk reaches it, which needs its parent reached (neither occluded nor out)
-                        const U8 ps = cull_chain_state(s, P, occlusion, row.mParent, memo, 0);
-                        if (ps != ST_OCC && ps != ST_OUT)
-                        {
-                            list->mHiz.push_back(slot);
-                        }
-                        continue;
-                    }
-                    if (st == ST_OCC || st == ST_OUT || (flags & 16u))
+                    if (st == ST_OCC || st == ST_OUT)
                     {
                         continue;
                     }
                     const LLVkBridge::CullMapRow& m = s.mMap[slot];
                     if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m) == 0)
                     {
-                        continue;       // (a node with children that is only partly in: its object bounds are tested too)
+                        continue;
                     }
-                    kept[slot] = 1;
-                    const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
-                    const bool turn = period && (lod_frame % period) == hash;
-                    const bool fresh = slot >= kept_prev_table || !kept_prev[slot];
-                    if ((turn || fresh) && (root || !(s.mTable[row.mParent].mFlags & 4u)))
-                    {
-                        list->mHiz.push_back(slot);
-                    }
+                    list->mKept[slot >> 5] |= 1u << (slot & 31u);
                 }
-                kept_prev.swap(kept);
-                kept_prev_table = table;
             }
             std::sort(alpha_rows.begin(), alpha_rows.end(), [](const std::pair<F32, U32>& x, const std::pair<F32, U32>& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
             list->mAlpha.reserve(alpha_rows.size());

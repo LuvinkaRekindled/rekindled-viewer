@@ -4841,6 +4841,9 @@ static void main_vis_verify(LLCamera& camera)
 }
 
 bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
+bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
+bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
+void ll_cull_derived_pass(LLCamera& camera);           // the groups of the kept set go through markNotCulled
 
 static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
 
@@ -4903,6 +4906,8 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
     const bool cull_use = LLCullShadow::sUse == 2 && view.isWorld()
         && LLCullShadow::useMatches(camera);        // (a frame whose frustum has another shape than the verdict's is walked: the exit snapshot has no UI, so another aspect)
+    // stage 8f (LL_VK_KEPT=2): the covered partitions are not walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, each group goes through markNotCulled as the walk's own does
+    const bool derived_use = !cull_use && view.isMainWorld() && !gCubeSnapshot && ll_cull_derived_on();
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
@@ -4928,7 +4933,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     // (the table keeps the walk serial only while something of it needs that: its comparison with the walk's lists, the flat cull, the LOD compare's notes: with the table's compare off the pool walk runs, the row events go through a mutex)
     const bool table_needs_serial = LLCullShadow::sOn && (LLCullShadow::sCompare || LLCullShadow::sUse != 0 || ll_scene_lod_compare_on());
     const bool main_cull = view.isMainWorld()
-        && !cull_use && !vis_cull && !LLOccCensus::sOn && !table_needs_serial && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
+        && !cull_use && !derived_use && !vis_cull && !LLOccCensus::sOn && !table_needs_serial && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
     // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
     static const int visset_mode = [] { const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 6; LLVisSetHooks::sOn = m >= 3; return m; }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
@@ -5009,6 +5014,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
                     {
                         continue;
                     }
+                    if (derived_use && ll_cull_derived_skip(part))
+                    {
+                        continue;       // (stage 8f: the worker's kept set stands in for this partition's walk, below)
+                    }
                     { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
                 }
             }
@@ -5073,6 +5082,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LL_CPU_ZONE("updateCull: C2 flat cull");
         LLCullShadow::useVerdict(camera);
     }
+    if (derived_use)
+    {
+        LL_CPU_ZONE("updateCull: kept groups");
+        ll_cull_derived_pass(camera);
+    }
 
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -5118,8 +5132,7 @@ static inline bool ll_dist_owned(LLSpatialGroup* group)
 static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
 static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
-static const bool sHizListCompare = LLCullShadow::sOn && getenv("LL_VK_HIZLIST") != nullptr;        // stage 8d: the worker's list of the groups to test (ConsumerList::mHiz) against the walk's (markOccluder); needs the worker's LOD request flag (the round robin's frame)
-bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand || sHizListCompare; }
+bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand; }
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
@@ -5281,7 +5294,7 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
     }
 }
 
-void ll_scene_hiz_compare(LLCullResult* cull);       // stage 8d (defined with the other compares, below)
+void ll_scene_kept_compare(LLCullResult* cull);       // stage 8f (defined with the other compares, below)
 
 // <FS> S7 H3 (doc/vulkan/S7-design.md): the occlusion pass of the world camera. The boxes of the occlusion groups, the reflection and hero probes and the object cache's groups go to the worker as one record at
 // this point of the G-buffer pass (after the big occluders were drawn); the worker's Hi-Z test answers one to four frames later (LLHiz::apply). No cube is drawn and no query is issued.
@@ -5329,7 +5342,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     } occ_end = { occ_t0 };
 
     LLHiz::begin();
-    ll_scene_hiz_compare(sCull);        // stage 8d (LL_VK_HIZLIST): the walk's list of this frame is noted, the worker's of the frames before compared
+    ll_scene_kept_compare(sCull);       // stage 8f (LL_VK_KEPT): the groups the walk kept this frame are noted, the worker's kept set of the frame compared
 
     if (sReflectionProbesEnabled)
     {
@@ -14574,27 +14587,28 @@ void ll_lod_cand_report()
                           << "; candidates the live changeLOD() drops " << sCandExtra[0] / n << " | " << sCandExtra[1] / n << "; the set is " << (double)sCandAge.load() / std::max<double>(1.0, (double)(sCandLooked[0] + sCandLooked[1])) << " frames old" << LL_ENDL;
 }
 
-// stage 8d of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_HIZLIST=1, needs LL_VK_CULL_SHADOW=1): which groups go to the Hi-Z. Today the walk names them (markOccluder in earlyFail and markNotCulled: the occluded nodes it reaches and
-// the nodes it keeps whose round robin turn is due or that it did not keep the frame before, topmost only) and doOcclusion sends their boxes. The worker has the rows, the chain (what an ancestor drops) and the round robin, and names
-// the same groups (ConsumerList::mHiz). A compare first: the walk's list of a frame (called at the occlusion point, before the boxes are collected) against the worker's of the same frame.
-void ll_scene_hiz_compare(LLCullResult* cull)
+// stage 8f of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_KEPT=1, needs LL_VK_CULL_SHADOW=1): the groups the walk keeps. The worker makes the same set from its rows (the chain of the walk: what a node or an ancestor drops as
+// occluded or out of the frustum, the empty and the object-bounds rules; ConsumerList::mKept, by slot). A compare first: the groups of the covered partitions the walk pushed this frame (called at the occlusion point, after the
+// sort) against the worker's set for the same frame; what the walk keeps and the worker does not, and the other way round.
+void ll_scene_kept_compare(LLCullResult* cull)
 {
-    if (!sHizListCompare || !cull || LLPipeline::shadowRender() || gCubeSnapshot || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
+    static const bool on = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr;
+    if (!on || !cull || LLPipeline::shadowRender() || gCubeSnapshot || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
     {
         return;
     }
-    struct Entry { U32 mSlot; bool mAwaiting, mOccluded; };
-    static std::deque<std::pair<U32, std::vector<Entry>>> history;
+    static std::deque<std::pair<U32, std::vector<U32>>> history;
     {
-        std::vector<Entry> mine;
-        for (LLCullResult::sg_iterator i = cull->beginOcclusionGroups(); i != cull->endOcclusionGroups(); ++i)
+        std::vector<U32> mine;
+        const auto note = [&](LLSpatialGroup* g)
         {
-            LLSpatialGroup* g = *i;
-            if (g && !g->isDead() && g->mCullId && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
+            if (g && !g->isDead() && g->mCullId && !g->isEmpty() && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
             {
-                mine.push_back({ g->mCullId - 1, g->isHizAwaiting(), g->isOcclusionState(LLSpatialGroup::OCCLUDED) });
+                mine.push_back(g->mCullId - 1);
             }
-        }
+        };
+        for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i) note(*i);
+        for (LLCullResult::sg_iterator i = cull->beginDrawableGroups(); i != cull->endDrawableGroups(); ++i) note(*i);
         history.emplace_back((U32)gFrameCount, std::move(mine));
         while (history.size() > 8)
         {
@@ -14608,7 +14622,7 @@ void ll_scene_hiz_compare(LLCullResult* cull)
         return;
     }
     last = wl->mFrame;
-    const std::vector<Entry>* walk = nullptr;
+    const std::vector<U32>* walk = nullptr;
     for (const auto& h : history)
     {
         if (h.first == wl->mFrame)
@@ -14620,47 +14634,109 @@ void ll_scene_hiz_compare(LLCullResult* cull)
     {
         return;
     }
-    static std::unordered_set<U32> w, v;
-    w.clear();
-    v.clear();
-    w.insert(wl->mHiz.begin(), wl->mHiz.end());
-    static U64 n = 0, n_walk = 0, n_walk_occ = 0, n_walk_await = 0, n_work = 0, n_both = 0, v_only = 0, v_only_occ = 0, v_only_await = 0, w_only = 0, w_only_occ = 0;
+    static U64 n = 0, n_walk = 0, n_kept = 0, n_both = 0, walk_only = 0, kept_only = 0;
+    static std::unordered_set<U32> seen;
+    seen.clear();
     ++n;
-    for (const Entry& e : *walk)
+    for (U32 slot : *walk)
     {
-        v.insert(e.mSlot);
         ++n_walk;
-        n_walk_occ += e.mOccluded;
-        n_walk_await += e.mAwaiting;
-        if (w.count(e.mSlot))
-        {
-            ++n_both;
-        }
-        else
-        {
-            ++v_only;
-            v_only_occ += e.mOccluded;
-            v_only_await += e.mAwaiting;
-        }
+        const bool in = (slot >> 5) < wl->mKept.size() && ((wl->mKept[slot >> 5] >> (slot & 31u)) & 1u);
+        n_both += in;
+        walk_only += !in;
+        seen.insert(slot);
     }
-    n_work += w.size();
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
-        for (U32 slot : w)
+        for (U32 w = 0; w < (U32)wl->mKept.size(); ++w)
         {
-            if (!v.count(slot))
+            for (U32 b = 0; wl->mKept[w] && b < 32; ++b)
             {
-                ++w_only;
-                LLSpatialGroup* g = slot < sSlotGroup.size() ? (LLSpatialGroup*)sSlotGroup[slot] : nullptr;
-                w_only_occ += g && g->isOcclusionState(LLSpatialGroup::OCCLUDED);
+                if ((wl->mKept[w] >> b) & 1u)
+                {
+                    ++n_kept;
+                    const U32 slot = (w << 5) + b;
+                    // (a bridge's group has no bit; a group of the table the walk does not reach, a partition left to another path, is not in the walk's list: counted apart below)
+                    kept_only += !seen.count(slot);
+                }
             }
         }
     }
     if (n % 300 == 0)
     {
         const double f = (double)n;
-        LL_INFOS("VkHizList") << "Hi-Z list, the walk's against the worker's, per frame over " << n << " compared: the walk names " << n_walk / f << " (occluded ones " << n_walk_occ / f << ", with a verdict awaited " << n_walk_await / f << "), the worker names " << n_work / f << ", in both " << n_both / f
-                              << "; the walk's only " << v_only / f << " (occluded " << v_only_occ / f << ", awaited " << v_only_await / f << "), the worker's only " << w_only / f << " (occluded " << w_only_occ / f << ")" << LL_ENDL;
+        LL_INFOS("VkKept") << "groups the walk keeps, the walk's against the worker's, per frame over " << n << " compared: the walk pushed " << n_walk / f << ", the worker keeps " << n_kept / f << ", in both " << n_both / f << ", the walk's only " << walk_only / f << ", the worker's only " << kept_only / f << LL_ENDL;
+    }
+}
+
+// stage 8f (LL_VK_KEPT=2): the walk of the covered partitions is replaced by the worker's set of the groups the walk keeps. Only while the worker draws the main view from its own derive (LL_VK_CULL_OWN: the render map's lists are
+// consumers' then, a frame late is what they accept) and the set is at most 3 frames old; otherwise the walk runs as before. The covered partitions are the ones C2's flat cull covered (not the HUD's, the bridges', the avatars',
+// the animated objects', the HUD particles', the object cache's).
+bool ll_cull_derived_on()
+{
+    static const bool env = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr && atoi(getenv("LL_VK_KEPT")) == 2;
+    if (!env || !sCullOwnWorker || gShiftFrame)
+    {
+        return false;
+    }
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    return wl && !wl->mKept.empty() && (U32)gFrameCount - wl->mFrame <= 3;
+}
+
+static bool ll_cull_derived_covers(LLSpatialPartition* part)
+{
+    if (!part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
+    {
+        return false;
+    }
+    const U32 pi = part->mPartitionType;
+    return !(pi == LLViewerRegion::PARTITION_HUD || pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV
+        || pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
+}
+
+bool ll_cull_derived_skip(LLSpatialPartition* part)
+{
+    if (!ll_cull_derived_covers(part))
+    {
+        return false;
+    }
+    ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();        // what LLSpatialPartition::cull does before its walk
+    return true;
+}
+
+void ll_cull_derived_pass(LLCamera& camera)
+{
+    cull_process();                     // the rows the rebounds touched, before the pass reads them (as useVerdict does)
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    if (!wl)
+    {
+        return;
+    }
+    static std::vector<LLSpatialGroup*> groups;
+    groups.clear();
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 n = (U32)sSlotGroup.size();
+        for (U32 w = 0; w < (U32)wl->mKept.size(); ++w)
+        {
+            const U32 bits = wl->mKept[w];
+            for (U32 b = 0; bits && b < 32; ++b)
+            {
+                const U32 slot = (w << 5) + b;
+                if (((bits >> b) & 1u) && slot < n && sSlotGroup[slot])
+                {
+                    groups.push_back((LLSpatialGroup*)sSlotGroup[slot]);
+                }
+            }
+        }
+    }
+    for (LLSpatialGroup* g : groups)
+    {
+        LLSpatialPartition* part = g->getSpatialPartition();
+        if (!g->isDead() && !g->isEmpty() && part && !part->asBridge() && ll_cull_derived_covers(part))
+        {
+            gPipeline.markNotCulled(g, camera);
+        }
     }
 }
 
