@@ -11728,9 +11728,9 @@ int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r
     return res;
 }
 
-int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, const LLVkBridge::CullMapRow& m)
+int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, const LLVkBridge::CullMapRow& m, F32 factor = 0.f)
 {
-    int res = cull_box_res(P, m.mObjCenter, m.mObjHalf);
+    int res = cull_box_res(P, m.mObjCenter, m.mObjHalf, cull_margin(P, r, factor));      // (stage 10d: the margin of a view request that asks for it; 0 for the exact test)
     if (res && (r.mFlags & 8u))
     {
         F32 mn[3], mx[3];
@@ -11921,7 +11921,7 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
 // (memo: the chain states of this view, zeroed by the caller for a view of its own; stage 10a uses it for the views that ask by id)
-void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out)
+void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out, F32 factor = 0.f)
 {
     const U32 table = (U32)s.mTable.size();
     out.assign((table + 31) / 32, 0u);
@@ -11933,13 +11933,13 @@ void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, b
         {
             continue;
         }
-        const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0);
+        const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0, factor);
         if (st == ST_OCC || st == ST_OUT)
         {
             continue;
         }
         const LLVkBridge::CullMapRow& m = s.mMap[slot];
-        if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m) == 0)
+        if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m, factor) == 0)
         {
             continue;
         }
@@ -12402,7 +12402,9 @@ void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     memcpy(&set->mParams, blob, sizeof(LLVkBridge::CullParams));
     static std::vector<U8> memo;
     memo.assign(s.mTable.size(), 0);
-    cull_kept_bits(s, set->mParams, false, memo, set->mKept);
+    // (stage 10d: bit 9 of mPad[0] = the request asks for the late list's margin: the motion bounds of the request, times the factor in mFactors[1])
+    const F32 factor = (set->mParams.mPad[0] & 0x200u) ? set->mParams.mFactors[1] : 0.f;
+    cull_kept_bits(s, set->mParams, false, memo, set->mKept, factor);
     LLVkBridge::viewSetPublish(std::move(set));
     if (++answered % 600 == 1)
     {

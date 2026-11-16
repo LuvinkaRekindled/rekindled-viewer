@@ -15938,11 +15938,14 @@ bool cube_params_match(const LLVkBridge::CullParams& a, const LLVkBridge::CullPa
 // for the frames the rows were behind), and its extras are what the hull filter and the slice drop. The pad of 2 m the culler gives the avatar partitions' object bounds is not modelled (those partitions are not covered).
 void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
 {
-    static const bool on = LLCullShadow::sOn && getenv("LL_VK_CASC_KEPT") != nullptr;
+    static const int mode = getenv("LL_VK_CASC_KEPT") ? atoi(getenv("LL_VK_CASC_KEPT")) : 0;       // 1: the same-frame compare; 2: the request asks for the late list's margin, and the newest answer is also compared with the cull of the frame it is read in
+    static const bool on = LLCullShadow::sOn && mode > 0;
     if (!on || index < 0 || index > 3)
     {
         return;
     }
+    struct Lag { U64 mN = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAge = 0, mAgeMax = 0, mMissing[4] = {}; };
+    static Lag lag[4];
     struct Pending { U32 mFrame = 0; std::vector<U32> mSlots; };
     struct Stats { U64 mCompared = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAsked = 0, mUnanswered = 0; U32 mLastFrame = 0; };
     static Pending ring[4][6];
@@ -16028,10 +16031,67 @@ void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
     };
     for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i) note(*i);
     for (LLCullResult::sg_iterator i = result.beginDrawableGroups(); i != result.endDrawableGroups(); ++i) note(*i);
+    if (mode >= 2 && a && (U32)gFrameCount - a->mFrame <= 8)
+    {
+        // the newest answer (asked with the margin, 1 to 2 frames ago) against the cull of THIS frame: what the cull finds now that the set does not hold is a group the cascade would lose (missing), what the set holds that the cull does not is the cost
+        Lag& l = lag[index];
+        const std::unordered_set<U32> walk(slot->mSlots.begin(), slot->mSlots.end());
+        U64 kept = 0, both = 0;
+        {
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            const U32 n = (U32)sSlotGroup.size();
+            for (U32 w = 0; w < (U32)a->mKept.size(); ++w)
+            {
+                for (U32 b = 0; a->mKept[w] && b < 32; ++b)
+                {
+                    const U32 sl = (w << 5) + b;
+                    if (!((a->mKept[w] >> b) & 1u) || sl >= n || !sSlotGroup[sl])
+                    {
+                        continue;
+                    }
+                    LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[sl];
+                    LLSpatialPartition* part = g->getSpatialPartition();
+                    if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !ll_cull_derived_covers(part))
+                    {
+                        continue;
+                    }
+                    ++kept;
+                    both += walk.count(sl) ? 1 : 0;
+                }
+            }
+        }
+        const U64 age = (U64)((U32)gFrameCount - a->mFrame);
+        ++l.mN;
+        l.mWalk += walk.size();
+        l.mKept += kept;
+        l.mBoth += both;
+        l.mWalkOnly += walk.size() - both;
+        l.mKeptOnly += kept - both;
+        l.mAge += age;
+        l.mAgeMax = std::max(l.mAgeMax, age);
+        l.mMissing[std::min<U64>(age, 3)] += walk.size() - both;      // (by the age of the answer: 0 1 2 3 or more frames)
+        if (l.mN % 300 == 0)
+        {
+            const double f = (double)l.mN;
+            LL_INFOS("VkCascKept") << "cascade " << index << " with the margin, the newest answer against this frame's cull, over " << l.mN << " (answer " << (double)l.mAge / f << " frames old, the oldest " << l.mAgeMax << "): the cull finds " << l.mWalk / f << ", the set keeps " << l.mKept / f
+                                   << ", in both " << l.mBoth / f << ", the cull's only (MISSING) " << l.mWalkOnly / f << " (by the answer's age 0 | 1 | 2 | 3+: " << l.mMissing[0] << " " << l.mMissing[1] << " " << l.mMissing[2] << " " << l.mMissing[3] << "), the set's only (extras) " << l.mKeptOnly / f << LL_ENDL;
+        }
+    }
     LLVkBridge::CullParams now;
     cull_fill_params(camera, now);
-    now.mPad[0] = 0x100u;
+    now.mPad[0] = mode >= 2 ? 0x300u : 0x100u;
     now.mCornerDist = 0.f;
+    if (mode >= 2)
+    {
+        // (the late list's margin is the translation bound plus the distance from the view's origin times the rotation bound: a sun cascade's origin is far from the scene, lap ck2 with both: cascade 0 kept 630 groups for the 45 the
+        // cull finds. LL_VK_CASC_MARGIN=<translation scale>,<rotation scale> scales the two parts of the request's margin, 1,1 as the late list has it)
+        static float t_scale = 1.f, a_scale = 1.f;
+        static const bool scaled = [&]() { if (const char* e = getenv("LL_VK_CASC_MARGIN")) { sscanf(e, "%f,%f", &t_scale, &a_scale); } return true; }();
+        (void)scaled;
+        now.mMotion[0] = sCullTBound * t_scale;
+        now.mMotion[1] = sCullABound * a_scale;
+        now.mFactors[1] = 1.5f;
+    }
     slot->mFrame = (U32)gFrameCount;
     s.mAsked += LLVkBridge::viewRequest(id, (U32)gFrameCount, now);
 }
