@@ -11611,6 +11611,7 @@ struct CullDeriveStats
     double mMs = 0.0;
 };
 CullDeriveStats sCullDerive;
+CullDeriveStats sCullDeriveCube;       // stage 10a (LL_VK_CUBE_DERIVE): the probe cube faces, compared only
 
 // LLCamera::AABBInFrustumNoFarClip: 0 outside, 1 partly in, 2 fully in (the planes of the view, the far plane (5) left to the sphere test)
 int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F32 m = 0.f)
@@ -11881,7 +11882,11 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
 bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
 {
     CullShadowState& s = sCullShadow;
-    CullDeriveStats& d = sCullDerive;
+    U32 own_flag, lod_flag;
+    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
+    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
+    const bool cube = own_flag == 2;        // stage 10a: a probe cube face: its own stats, no guard, nothing published, nothing drawn from the derive
+    CullDeriveStats& d = cube ? sCullDeriveCube : sCullDerive;
     const auto t0 = std::chrono::steady_clock::now();
     if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
     {
@@ -11890,10 +11895,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     }
     LLVkBridge::CullParams P;
     memcpy(&P, view_blob, sizeof(P));
-    U32 own_flag, lod_flag;
-    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
-    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
-    std::vector<U32>* own_out = own_flag && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
+    std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
     if (own_out)
     {
         own_out->clear();
@@ -12000,7 +12002,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                                      << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
         }
     }
-    if (d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
+    if (!cube && d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
     {
         // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
         const U64 skipped = d.mSkippedViews + 1;
@@ -12008,6 +12010,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         d.mSkippedViews = skipped;
         return false;
     }
+    if (!cube)
     {
         // the late list of this view, published for the viewer's consumers (the variant 1 factor of the record, 1.5)
         static std::vector<U8> memo_late;
@@ -12166,7 +12169,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         d.mLate += late_n;
     }
-    if (lod_flag & 1u)
+    if (!cube && (lod_flag & 1u))
     {
         // stage 7 (a compare for now): the LOD numbers of every row. distance: LLSpatialPartition::calcDistance (the length from the camera to the object bounds centre, the squared ramp under 16 m); the bit: the slop test
         // of LLSpatialGroup::changeLOD (the dirty bits and needsUpdate are the viewer's rows' flags, not looked at here). The rows of the groups of bridges hold the bridge's box, not the group's own bounds: no number for them.
@@ -12273,7 +12276,18 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
     }
     d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    if (d.mCompares % 600 == 0)
+    if (cube)
+    {
+        if (d.mCompares % 100 == 0 || d.mCompares == 1 || d.mCompares == 10)
+        {
+            const double n = (double)d.mCompares;
+            LL_INFOS("VkCullDerive") << "CUBE FACES (LL_VK_CUBE_DERIVE) derived listed set against the face's handles, over " << d.mCompares << " faces (" << d.mMs / n << " ms each): the face names " << d.mRecord / n << " a face, derived " << d.mDerived / n << ", both " << d.mBoth / n
+                                     << " | missing (named, not derived) " << d.mMissing << ": no row " << d.mMissNoRow << ", dead " << d.mMissDead << ", no handle " << d.mMissNoHandle << ", render type off " << d.mMissType << ", occluded " << d.mMissOcc
+                                     << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", bridge not marked " << d.mMissGate << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
+                                     << " | extra (derived, not named) " << d.mExtra << ": region groups " << d.mExtraRegion << ", bridge groups " << d.mExtraBridge << ", of them rows changed in the last 2 records " << d.mExtraRecent << " | no table " << d.mNoTable << LL_ENDL;
+        }
+    }
+    else if (d.mCompares % 600 == 0)
     {
         const double n = (double)d.mCompares;
         LL_INFOS("VkCullDerive") << "derived listed set against the record's handles, over " << d.mCompares << " views (" << d.mMs / n << " ms each): the record names " << d.mRecord / n << " a view, derived " << d.mDerived / n << ", both " << d.mBoth / n
