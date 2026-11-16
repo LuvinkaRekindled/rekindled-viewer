@@ -53,6 +53,8 @@ U32 LLVkBridge::visibleListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
 U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
 U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
+void LLVkBridge::hizRowsPublish(U32, U32, const U32*, const U32*) {}
+U32 LLVkBridge::hizRowsRead(U32, U32*, U32*, U32) { return 0; }
 void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
 std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() { return nullptr; }
 void LLVkBridge::cullDone(U32) {}
@@ -1637,9 +1639,41 @@ bool LLVkBridge::hizAvailable()
     return LLVkBridge::sceneGeoAvailable();
 }
 
+namespace
+{
+std::mutex gHizRowsMutex;
+struct HizRowsEntry { U32 mSerial = 0, mRows = 0; std::vector<U32> mOcc, mInfo; };
+HizRowsEntry gHizRows[8];
+}
+
+void LLVkBridge::hizRowsPublish(U32 serial, U32 rows, const U32* occ_words, const U32* info_words)
+{
+    std::lock_guard<std::mutex> lock(gHizRowsMutex);
+    HizRowsEntry& e = gHizRows[serial % 8];
+    const U32 words = (rows + 31) / 32;
+    e.mSerial = serial;
+    e.mRows = rows;
+    e.mOcc.assign(occ_words, occ_words + words);
+    e.mInfo.assign(info_words, info_words + words);
+}
+
+U32 LLVkBridge::hizRowsRead(U32 serial, U32* occ_out, U32* info_out, U32 capacity_words)
+{
+    std::lock_guard<std::mutex> lock(gHizRowsMutex);
+    const HizRowsEntry& e = gHizRows[serial % 8];
+    if (e.mSerial != serial || !e.mRows || e.mOcc.size() > capacity_words)
+    {
+        return 0;
+    }
+    memcpy(occ_out, e.mOcc.data(), e.mOcc.size() * 4);
+    memcpy(info_out, e.mInfo.data(), e.mInfo.size() * 4);
+    return e.mRows;
+}
+
 U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj, const F32* prev_view_proj, U32 census_first)
 {
-    if (!count || count > 32768 || !hizAvailable())
+    static const bool rows_apply = getenv("LL_VK_HIZROWS") != nullptr && atoi(getenv("LL_VK_HIZROWS")) == 2;       // (stage 8d: the table's rows are the boxes: a packet with none of the viewer's is a packet)
+    if ((!count && !rows_apply) || count > 32768 || !hizAvailable())
     {
         return 0;
     }

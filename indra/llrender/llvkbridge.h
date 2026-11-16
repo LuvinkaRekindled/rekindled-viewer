@@ -394,9 +394,17 @@ namespace LLVkBridge
     // sort (the deepest first, the order CompareDepthGreater gives), and the slots with a rigged alpha key (the viewer puts those in the order of the avatars and attachments, which only it knows)
     // mAlphaBridge: the slots of the late set's bridge groups (the avatars' and the animated objects' attachments) with an alpha or a rigged alpha key: no depth (their rows hold the bridge's extents, their depth is in the bridge's own space),
     // the viewer judges and orders those itself with the bridge's transformed camera
-    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge; std::vector<F32> mAlphaDepth; };
+    // mReleased (stage 8c): the slots of the rows of the exact derived set whose group is Released (the draw infos dropped for want of a camera: map row flag 32): the groups a camera accepts again, to be woken
+    // mHiz (stage 8d): the slots the walk names to the Hi-Z (markOccluder) for the main view, made from the rows (the occluded groups whose parent the walk reached, the groups it keeps whose round robin turn it is or that it did not
+    // keep the frame before, their parent not occluded): the groups whose boxes are tested this frame. Bridges' groups are not in it.
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mReleased, mHiz; std::vector<F32> mAlphaDepth; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
+    // stage 8d (LL_VK_HIZROWS): the worker appends the box of every table row to the Hi-Z packet and publishes the verdicts of those boxes by slot, for the serial of the packet, when the frame has finished, as two bit sets by slot:
+    // info = a row the Hi-Z tests (not the root, a bridge's group or one of a partition without occlusion) whose box is neither off the screen nor wholly behind the camera (those say "occluded" and mean no information),
+    // occ = the box is occluded, only where there is information. hizRowsRead copies the serial's two sets (words = ceil(rows / 32)); it returns the number of rows, 0 = none for that serial.
+    void hizRowsPublish(U32 serial, U32 rows, const U32* occ_words, const U32* info_words);
+    U32 hizRowsRead(U32 serial, U32* occ_out, U32* info_out, U32 capacity_words);
     S32 cullRead(U32 serial, U32 table_size, U32* out);
     void cullDone(U32 serial);
     void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
