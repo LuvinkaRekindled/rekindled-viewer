@@ -1603,18 +1603,18 @@ void display_cube_face()
     static LLCullResult result;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
     LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
-    gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
+    { LL_CPU_ZONE("probe face: updateCull"); gPipeline.updateCull(*LLViewerCamera::getInstance(), result); }       // <FS> zones (2026-11-16): where the 0.36 to 0.62 ms of 'probes + snapshots' goes
 
     gRender.setColorMask(true, true);
 
     gRender.setClearColor(0.f, 0.f, 0.f, 0.f);
-    gPipeline.generateSunShadow(*LLViewerCamera::getInstance());
+    { LL_CPU_ZONE("probe face: generateSunShadow"); gPipeline.generateSunShadow(*LLViewerCamera::getInstance()); }
 
     gRender.clearBuffers(ClearBits::Depth); // | ClearBits::Stencil);
 
     {
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-        gPipeline.stateSort(*LLViewerCamera::getInstance(), result);
+        { LL_CPU_ZONE("probe face: stateSort"); gPipeline.stateSort(*LLViewerCamera::getInstance(), result); }
 
         if (rebuild)
         {
