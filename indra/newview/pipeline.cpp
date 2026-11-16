@@ -8215,6 +8215,7 @@ void LLPipeline::addBeacons()
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera);       // stage 6 (defined with the group table, below): the main view's alpha lists from the consumers' groups
 void ll_scene_lod_compare();                                            // stage 7 (below): the worker's LOD numbers against the walk's, once a frame
 bool ll_scene_lod_compare_on();
+void ll_scene_stamp_compare(LLCullResult* cull);                        // stage 8b (below): the walk's kept groups against the worker's derived set
 
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
@@ -8581,6 +8582,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         {
             ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
             ll_scene_lod_compare();                     // stage 7 (LL_VK_CULL_LOD): the worker's distances and slop bits against the walk's
+            ll_scene_stamp_compare(sCull);              // stage 8b (LL_VK_CULL_STAMPS): the walk's kept groups against the worker's exact derived set
         }
         if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
@@ -13905,6 +13907,110 @@ const std::vector<LLSpatialGroup*>* ll_scene_consumer_groups(LLCullResult* cull)
 bool ll_scene_lod_compare_on()
 {
     return sLodCompare;
+}
+
+// stage 8b of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_STAMPS=1, needs LL_VK_CULL_SHADOW=1): the visible stamps from the worker's exact derived set. A compare first: the groups the walk kept in a frame (covered partitions,
+// not the bridges' groups, not empty) against the derived set of the same frame (the worker's publication is for the frame of its record, so it is matched with the walk's groups of that frame). The late list has no occlusion
+// cut and would count occluded groups visible (their textures would keep their priority): the stamps follow the exact set.
+static const bool sStampCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_STAMPS") != nullptr;
+
+void ll_scene_stamp_compare(LLCullResult* cull)
+{
+    if (!sStampCompare || !cull || LLPipeline::shadowRender() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
+    {
+        return;
+    }
+    static std::deque<std::pair<U32, std::vector<LLSpatialGroup*>>> history;
+    std::vector<LLSpatialGroup*> mine;
+    auto note = [&](LLSpatialGroup* g)
+    {
+        if (g && g->mCullId && !g->isDead() && !g->isEmpty() && g->getSpatialPartition() && !g->getSpatialPartition()->asBridge())
+        {
+            mine.push_back(g);
+        }
+    };
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i) note(*i);
+    for (LLCullResult::sg_iterator i = cull->beginDrawableGroups(); i != cull->endDrawableGroups(); ++i) note(*i);
+    history.emplace_back((U32)gFrameCount, std::move(mine));
+    while (history.size() > 8)
+    {
+        history.pop_front();
+    }
+    static std::vector<U32> words;
+    static U32 v_frame = 0, v_table = 0;
+    bool fresh = false;
+    {
+        static std::vector<U32> buf(2048);
+        U32 frame = 0;
+        if (const U32 t = LLVkBridge::visibleListRead(v_frame, frame, buf.data(), (U32)buf.size()))
+        {
+            words.assign(buf.begin(), buf.begin() + (t + 31) / 32);
+            v_frame = frame;
+            v_table = t;
+            fresh = true;
+        }
+    }
+    if (!fresh)
+    {
+        return;
+    }
+    const std::vector<LLSpatialGroup*>* walk = nullptr;
+    for (const auto& entry : history)
+    {
+        if (entry.first == v_frame)
+        {
+            walk = &entry.second;
+        }
+    }
+    if (!walk)
+    {
+        return;
+    }
+    struct Acc { U64 mCompares = 0, mWalk = 0, mBoth = 0, mMissed = 0, mRecent = 0, mNoRow = 0, mDerived = 0, mLag = 0; };
+    static Acc a;
+    ++a.mCompares;
+    a.mLag += (U32)gFrameCount - v_frame;
+    U64 both = 0;
+    for (LLSpatialGroup* g : *walk)
+    {
+        ++a.mWalk;
+        const U32 slot = g->mCullId - 1;
+        if (slot >= v_table)
+        {
+            ++a.mNoRow;
+            continue;
+        }
+        if ((words[slot >> 5] >> (slot & 31)) & 1u)
+        {
+            ++both;
+        }
+        else if (sRowChangeFrame[slot] < v_frame && sRowChangeFrame[slot] + 3 >= v_frame)
+        {
+            ++a.mRecent;
+        }
+        else
+        {
+            ++a.mMissed;
+        }
+    }
+    a.mBoth += both;
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 table = std::min<U32>(v_table, (U32)sMirror.size());
+        for (U32 slot = 0; slot < table; ++slot)
+        {
+            if (((words[slot >> 5] >> (slot & 31)) & 1u) && !(sMirror[slot].mFlags & (16u | 32u | 64u)))
+            {
+                ++a.mDerived;
+            }
+        }
+    }
+    if (a.mCompares % 600 == 0)
+    {
+        const double n = (double)a.mCompares;
+        LL_INFOS("VkStamp8") << "visible stamps: the walk's groups against the worker's exact derived set, per frame over " << a.mCompares << " compares (the set is " << (double)a.mLag / n << " frames old): the walk kept " << a.mWalk / n << ", in the derived set " << a.mBoth / n
+                             << ", missed " << a.mMissed / n << " (rows changed in the 3 frames before: " << a.mRecent / n << ", no row " << a.mNoRow / n << "); the derived set has " << a.mDerived / n << " groups of the same kind, extra " << (a.mDerived - a.mBoth) / n << LL_ENDL;
+    }
 }
 
 // stage 7 (LL_VK_CULL_LOD=1): the worker's distance and slop bit of every row (published by cull_derive_compare, about a frame old) against what the walk's LOD check saw of the group in this frame. Rows that changed in the last

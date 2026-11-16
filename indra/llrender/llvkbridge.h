@@ -377,6 +377,10 @@ namespace LLVkBridge
     // with the frame of the record it was made for; the viewer's consumers of the visible set read the newest one. lateListRead: 0 = nothing newer than newer_than, else the table size (words = ceil(size / 32) of them)
     // stage 7 (LL_VK_CULL_LOD): the worker's own LOD numbers for every row of the table, from its rows and the camera of the main view's record: the distance (the calcDistance formula) and the bit of the slop test of changeLOD(),
     // published like the late list; the viewer compares them with its own groups' (a compare for now)
+    // stage 8b: the exact derived set of the main view (the slots whose groups the worker's derive lists, occlusion included, the bridges' groups by the marked list) as a bit set by slot, with the frame of its record: the
+    // visible stamps follow it (a compare first)
+    void visibleListPublish(U32 frame, U32 table_size, const U32* words);
+    U32 visibleListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);        // 0 = nothing newer, else the table size
     void lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
     U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
     void lateListPublish(U32 frame, U32 table_size, const U32* words);

@@ -11705,7 +11705,7 @@ U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, b
 
 enum { CV_PASS = 0, CV_DEAD, CV_NOHANDLE, CV_TYPE, CV_OCC, CV_HIDE, CV_FRUSTUM, CV_OBJECTS, CV_GATE };
 
-int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
+int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, bool need_handle = true)
 {
     const LLVkBridge::CullRow& row = s.mTable[slot];
     const LLVkBridge::CullMapRow& map = s.mMap[slot];
@@ -11714,7 +11714,7 @@ int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, 
     {
         return CV_DEAD;
     }
-    if (!map.mHandle)
+    if (!map.mHandle && need_handle)
     {
         return CV_NOHANDLE;
     }
@@ -11877,12 +11877,20 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
     const U64 extra_before = d.mExtra, derived_before = d.mDerived;
     const CullDeriveStats before = d;
+    static std::vector<U32> vis_words;
+    vis_words.assign((table + 31) / 32, 0);
     for (U32 slot = 0; slot < table; ++slot)
     {
-        if (cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked) != CV_PASS)
+        const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
+        if (v == CV_NOHANDLE && !(s.mTable[slot].mFlags & (16u | 32u)) && !(s.mTable[slot].mFlags & 64u) && cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked, false) == CV_PASS)
+        {
+            vis_words[slot >> 5] |= 1u << (slot & 31u);     // (a group with no fragment, an alpha-only group: not in the handle list, in the visible set: it has a stamp too)
+        }
+        if (v != CV_PASS)
         {
             continue;
         }
+        vis_words[slot >> 5] |= 1u << (slot & 31u);         // (the exact derived set by slot, published below: the visible stamps follow it, stage 8b)
         ++d.mDerived;
         const U32 handle = s.mMap[slot].mHandle;
         if (own_out && !(s.mTable[slot].mFlags & 64u) && s.mRecords - s.mHandleStamp[slot] > 2)
@@ -11951,6 +11959,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             }
         }
         LLVkBridge::lateListPublish(h.mPass, table, late_words.data());
+        LLVkBridge::visibleListPublish(h.mPass, table, vis_words.data());
         d.mLate += late_n;
     }
     if (lod_flag & 1u)
