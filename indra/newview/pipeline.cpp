@@ -12914,8 +12914,16 @@ typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the 
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
-std::deque<std::pair<U32, U32>> sCoveredRecentSlots;   // <FS> stage 10d (LL_VK_CASC_KEPT=3): (frame, slot) of every covered group whose row was made or changed, kept for 6 frames: a cascade that takes its groups from the worker's set adds these (the set is made from rows 1 to 2 frames old)
-std::deque<std::pair<U32, U32>> sAvRecentSlots;        // <FS> stage 9b (LL_VK_COVER_AV): (frame, slot) of the groups of the avatar, bridge and animated object region partitions whose row was made or changed, kept for 6 frames: the kept pass adds them to the worker's set (LL_VK_COVER_AV_RECENT)
+// <FS> ONE list of "this group's row changed in the last frames" (2026-11-16: three lists said it with three lifetimes, sRecentSlots for the consumers' list, sAvRecentSlots for the avatar, bridge and animated object region
+// partitions and sCoveredRecentSlots for the cascades): every reader of a set made from rows 1 to 2 frames old asks it, by age and by what changed. mWhat: RECENT_BOX = the group is new or its box or kind of group (empty, dead,
+// a bridge's) changed (an occlusion flag the Hi-Z verdicts change every frame is not one: no set asks for occlusion); RECENT_MAP = its map row or handle changed. Pruned once, at 6 frames, in cull_process.
+struct RecentSlot { U32 mFrame; U32 mSlot; U8 mWhat; };
+enum : U8 { RECENT_BOX = 1, RECENT_MAP = 2 };
+std::deque<RecentSlot> sRecent;
+static void recent_note(U32 slot, U8 what)
+{
+    sRecent.push_back({ (U32)gFrameCount, slot, what });
+}
 static bool cull_av_region(LLSpatialGroup* g)
 {
     LLSpatialPartition* part = g ? g->getSpatialPartition() : nullptr;
@@ -12926,7 +12934,6 @@ static bool cull_av_region(LLSpatialGroup* g)
     const U32 pi = part->mPartitionType;
     return pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV;
 }
-std::deque<std::pair<U32, U32>> sRecentSlots;          // (frame, slot): the slots whose map row or handle changed, kept for 3 frames: the consumers' list adds them to the worker's (LL_VK_CONSUMERS) instead of walking the table
 std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U8> sSlotPartType;                      // <FS> stage 10d: slot -> the group's partition type (255: free); the cascades' cull jobs filter by it without touching the group
@@ -13276,14 +13283,10 @@ void cull_process()
             if (memcmp(&old_cull, &sMirror[slot], sizeof(old_cull)) != 0)
             {
                 sRowChangeFrame[slot] = (U32)gFrameCount;
-                if (cull_av_region((LLSpatialGroup*)g))
-                {
-                    sAvRecentSlots.emplace_back((U32)gFrameCount, slot);
-                }
                 // (only a row that is new, or whose box or kind of group changed: an occlusion flag the Hi-Z verdicts change every frame does not make a group missing from a set that asks for no occlusion)
                 if (((old_cull.mFlags ^ sMirror[slot].mFlags) & (16u | 32u | 64u)) || memcmp(old_cull.mCenter, sMirror[slot].mCenter, 12) || memcmp(old_cull.mHalf, sMirror[slot].mHalf, 12))
                 {
-                    sCoveredRecentSlots.emplace_back((U32)gFrameCount, slot);
+                    recent_note(slot, RECENT_BOX);
                 }
             }
         }
@@ -13293,27 +13296,19 @@ void cull_process()
             cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
             if (sMapMirror[slot].mHandle != old_handle)
             {
-                sMapHandleFrame[slot] = (U32)gFrameCount; sRecentSlots.emplace_back((U32)gFrameCount, slot);
+                sMapHandleFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
             }
             if (memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)
             {
-                sMapChangeFrame[slot] = (U32)gFrameCount; sRecentSlots.emplace_back((U32)gFrameCount, slot);
+                sMapChangeFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
             }
         }
         sSendSlots.push_back(slot);
         ++s.mRefreshed;
     }
-    while (!sRecentSlots.empty() && (U32)gFrameCount - sRecentSlots.front().first > 6)
+    while (!sRecent.empty() && (U32)gFrameCount - sRecent.front().mFrame > 6)
     {
-        sRecentSlots.pop_front();
-    }
-    while (!sAvRecentSlots.empty() && (U32)gFrameCount - sAvRecentSlots.front().first > 6)
-    {
-        sAvRecentSlots.pop_front();
-    }
-    while (!sCoveredRecentSlots.empty() && (U32)gFrameCount - sCoveredRecentSlots.front().first > 6)
-    {
-        sCoveredRecentSlots.pop_front();
+        sRecent.pop_front();
     }
 }
 
@@ -14367,13 +14362,13 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
                 onh.push_back((LLSpatialGroup*)sSlotGroup[slot]);
             }
         }
-        while (!sRecentSlots.empty() && now - sRecentSlots.front().first > 6)
+        for (const auto& e : sRecent)
         {
-            sRecentSlots.pop_front();
-        }
-        for (const auto& e : sRecentSlots)
-        {
-            const U32 slot = e.second;
+            if (!(e.mWhat & RECENT_MAP))
+            {
+                continue;
+            }
+            const U32 slot = e.mSlot;
             if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot])
             {
                 continue;
@@ -15063,10 +15058,10 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             added.clear();
             if (recent_on)
             {
-                for (const auto& e : sAvRecentSlots)
+                for (const auto& e : sRecent)
                 {
-                    const U32 slot = e.second;
-                    if (now - e.first <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
+                    const U32 slot = e.mSlot;
+                    if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && cull_av_region((LLSpatialGroup*)sSlotGroup[slot]) && !in_set(slot) && !added.count(slot))
                     {
                         LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
                         const LLVector4a* bb = g->getBounds();
@@ -16171,16 +16166,16 @@ std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
     {
         cache_frame = now;
         recent.clear();
-        if (!sCoveredRecentSlots.empty())
+        if (!sRecent.empty())
         {
             std::lock_guard<std::mutex> lock(sCullMutex);
             const U32 n = (U32)sSlotGroup.size();
             static std::unordered_set<U32> added;
             added.clear();
-            for (const auto& e : sCoveredRecentSlots)
+            for (const auto& e : sRecent)
             {
-                const U32 slot = e.second;
-                if (now - e.first > 3 || slot >= n || !sSlotGroup[slot] || !added.insert(slot).second)
+                const U32 slot = e.mSlot;
+                if (!(e.mWhat & RECENT_BOX) || now - e.mFrame > 3 || slot >= n || !sSlotGroup[slot] || !added.insert(slot).second)
                 {
                     continue;
                 }
