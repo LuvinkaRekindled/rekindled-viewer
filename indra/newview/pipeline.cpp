@@ -2643,7 +2643,7 @@ void LLPipeline::wakeGroups()
         }
         static const size_t per_frame = getenv("LL_VK_WAKE_PER_FRAME") ? (size_t)atoi(getenv("LL_VK_WAKE_PER_FRAME")) : 48;
         const size_t n = std::min(per_frame, mWakeQ.size());
-        std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->row().distance < b->row().distance; });
+        std::partial_sort(mWakeQ.begin(), mWakeQ.begin() + n, mWakeQ.end(), [](const LLSpatialGroup* a, const LLSpatialGroup* b) { return a->distanceNow() < b->distanceNow(); });
         now.assign(mWakeQ.begin(), mWakeQ.begin() + n);
         mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
     }
@@ -5106,6 +5106,15 @@ static const bool sLodCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_LOD") !=
 static const int sLodCandMode = LLCullShadow::sOn && getenv("LL_VK_LOOPC") ? 2 : (LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") ? atoi(getenv("LL_VK_LOD_CAND")) : 0);
 static const bool sLodCand = sLodCandMode >= 1;
 static const bool sLodSwitch = sLodCandMode == 2;
+// stage 8e (LL_VK_DIST=1, needs LL_VK_LOOPC=1): the walk no longer calls updateDistance for the groups of the table (render by group, not a bridge's): the LOD candidates make their own distance (stateSort(group)), the urgency and the wake
+// queue ask distanceNow(), and the worker names the alpha groups whose view direction moved (ConsumerList::mAlphaDirty), which is what updateDistance's alpha branch did for every group the walk kept
+static const bool sDistOwner = LLCullShadow::sOn && getenv("LL_VK_DIST") != nullptr && getenv("LL_VK_LOOPC") != nullptr;
+static const bool sDistOwnedInit = (LLSpatialGroup::sDistOwned = sDistOwner, true);
+static inline bool ll_dist_owned(LLSpatialGroup* group)
+{
+    return sDistOwner && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && !LLPipeline::shadowRender() && group->mCullId && group->getSpatialPartition()
+        && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->mRenderByGroup;
+}
 static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
 static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
@@ -5154,7 +5163,7 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
-        group->updateDistance(camera);
+        if (!ll_dist_owned(group)) { group->updateDistance(camera); }       // <FS> stage 8e: the worker owns the alpha dirtiness and the LOD candidates make their own distance
         if (sLodCompare && group->mCullId && !LLPipeline::shadowRender() && !sParallelPrep && !sImpostorRender && !group->getSpatialPartition()->asBridge())
         {
             const F32 slop = group->getSpatialPartition()->mSlopRatio;
@@ -5224,7 +5233,7 @@ void LLPipeline::replayAdopted(LLSpatialGroup* group, LLCamera& camera, bool wor
     }
     if (world && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
-        group->updateDistance(camera);
+        if (!ll_dist_owned(group)) { group->updateDistance(camera); }
     }
 }
 
@@ -6179,6 +6188,7 @@ static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the
 void ll_lod_cand_refresh();                                             // stage 8 (owner 3, defined with the stage 7 compare): the newest published LOD change set, once a sort
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
+void ll_scene_alpha_dirty_apply();                                      // stage 8e: the alpha groups the worker names (view direction moved) get ALPHA_DIRTY and a rebuild
 bool ll_lod_cand_covers(LLSpatialGroup* group);                         // the main view's group the candidate pass owns (it has a table row, is not a bridge's)
 void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out);            // the candidates of this sort that the loop would have looked at: visible, not occluded, render by group
 static const bool sChkCount = getenv("LL_VK_CHK_COUNT") != nullptr;
@@ -7185,6 +7195,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     if (view.isMainWorldSort())
     {
         ll_lod_cand_refresh();      // (stage 8, owner 3: LL_VK_LOD_CAND)
+        ll_scene_alpha_dirty_apply();       // (stage 8e: LL_VK_DIST)
     }
     if (sLodSwitch && !sLodSampling && view.isMainWorldSort() && split != 2 && split != 4)
     {
@@ -7358,6 +7369,10 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
     if (sLodSwitch && !sLodCandRunning && !sLodSampling && ll_lod_cand_covers(group))
     {
         return;         // (stage 8, owner 3: the candidate pass of the sort makes this call for the groups whose turn it is, see ll_lod_cand_collect)
+    }
+    if (ll_dist_owned(group))
+    {
+        group->updateDistance(camera);      // stage 8e: the walk did not: the groups whose turn it is make their own distance and radius, for the check below
     }
     const bool vis_lod = group->changeLOD();
     if (!sLodCandRunning) { ll_lod_cand_note(group, vis_lod); }
@@ -14418,6 +14433,41 @@ void ll_lod_cand_refresh()
     // turn for a whole period), and every 60th sort
     const U32 age = (U32)gFrameCount - sCandFrame;      // (the publication is stamped with gFrameCount, not with the octree's frame counter)
     sLodSampling = !sLodSwitch || !sCandTable || age > 3u || (++sCandSorts % 60 == 0);
+}
+
+void ll_scene_alpha_dirty_apply()
+{
+    if (!sDistOwner)
+    {
+        return;
+    }
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    static U32 last = 0;
+    if (!wl || wl->mFrame <= last)
+    {
+        return;
+    }
+    last = wl->mFrame;
+    static std::vector<LLSpatialGroup*> groups;
+    groups.clear();
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        for (U32 slot : wl->mAlphaDirty)
+        {
+            if (slot < sSlotGroup.size() && sSlotGroup[slot] && !sSlotGroup[slot]->isDead())
+            {
+                groups.push_back((LLSpatialGroup*)sSlotGroup[slot]);
+            }
+        }
+    }
+    for (LLSpatialGroup* g : groups)
+    {
+        if (!g->hasState(LLSpatialGroup::ALPHA_DIRTY))
+        {
+            g->setState(LLSpatialGroup::ALPHA_DIRTY);       // (what updateDistance's alpha branch did when the view direction had moved)
+            gPipeline.markRebuild(g);
+        }
+    }
 }
 
 bool ll_lod_cand_covers(LLSpatialGroup* group)

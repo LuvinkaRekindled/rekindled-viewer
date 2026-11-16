@@ -423,6 +423,8 @@ public:
 
     void updateDistance(LLCamera& camera);
     F32 getUpdateUrgency() const;
+    F32 distanceNow() const;                    // <FS> stage 8e (LL_VK_DIST): the group's distance to the camera as updateDistance would make it now: the walk no longer writes row().distance for the groups the table owns
+    static inline bool sDistOwned = false;       // (set by pipeline.cpp with LL_VK_DIST)
     bool changeLOD();
     void rebuildGeom();
     void rebuildMesh();

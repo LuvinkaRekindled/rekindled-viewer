@@ -937,8 +937,29 @@ F32 LLSpatialGroup::getUpdateUrgency() const
     else
     {
         F32 time = gFrameTimeSeconds-row().lastUpdateTime+4.f;
-        return time + (row().objectBounds[1].dot3(row().objectBounds[1]).getF32()+1.f)/row().distance;
+        return time + (row().objectBounds[1].dot3(row().objectBounds[1]).getF32()+1.f)/distanceNow();
     }
+}
+
+// <FS> stage 8e (LL_VK_DIST): the distance of the group's object bounds centre to the camera, with the ramp calcDistance puts under 16 m (the alpha branch of calcDistance does not change it: only the depth and the dirty state
+// are made there). Without the switch it is the row's, as before.
+F32 LLSpatialGroup::distanceNow() const
+{
+    if (!sDistOwned)
+    {
+        return row().distance;
+    }
+    const LLVector3 o = LLViewerCamera::getInstance()->getOrigin();
+    const LLVector4a& c = row().objectBounds[0];
+    const F32 dx = c[0] - o.mV[0], dy = c[1] - o.mV[1], dz = c[2] - o.mV[2];
+    F32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (dist < 16.f)
+    {
+        dist /= 16.f;
+        dist *= dist;
+        dist *= 16.f;
+    }
+    return llmax(dist, 0.001f);        // (the urgency divides by it)
 }
 
 bool LLSpatialGroup::changeLOD()

@@ -12037,6 +12037,33 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             ++stamp;
             static std::vector<std::pair<F32, U32>> alpha_rows;       // (depth, slot)
             alpha_rows.clear();
+            {
+                // stage 8e: the alpha groups whose view direction moved (see ConsumerList::mAlphaDirty). The reference is the direction at the last time a row was named: -1 in all three components at first, as the group's row started
+                static std::vector<F32> last_view;
+                last_view.resize((size_t)table * 3, -1.f);
+                for (U32 slot = 0; slot < table; ++slot)
+                {
+                    if (!((vis_words[slot >> 5] >> (slot & 31u)) & 1u) || (s.mTable[slot].mFlags & (32u | 64u)) || !(s.mMap[slot].mFlags & 2u))
+                    {
+                        continue;
+                    }
+                    const LLVkBridge::CullMapRow& m = s.mMap[slot];
+                    const F32 ex = m.mObjCenter[0] - P.mOrigin[0], ey = m.mObjCenter[1] - P.mOrigin[1], ez = m.mObjCenter[2] - P.mOrigin[2];
+                    const F32 len = sqrtf(ex * ex + ey * ey + ez * ez);
+                    if (len < 1.0e-6f)
+                    {
+                        continue;
+                    }
+                    const F32 nx = ex / len, ny = ey / len, nz = ez / len;
+                    F32* lv = &last_view[(size_t)slot * 3];
+                    const F32 dx = nx - lv[0], dy = ny - lv[1], dz = nz - lv[2];
+                    if (dx * dx + dy * dy + dz * dz > 0.64f * 0.64f)
+                    {
+                        lv[0] = nx; lv[1] = ny; lv[2] = nz;
+                        list->mAlphaDirty.push_back(slot);
+                    }
+                }
+            }
             for (U32 slot = 0; slot < table; ++slot)
             {
                 // the Released rows the derive names (map flag 32): the exact set, not the late one: a group a camera does not accept now is not woken
