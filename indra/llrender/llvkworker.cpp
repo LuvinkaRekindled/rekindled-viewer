@@ -11981,7 +11981,8 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             const LLVkBridge::CullMapRow& m = s.mMap[slot];
             const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
             // the whole of changeLOD(): the dirty bits, the round robin of needsUpdate() (every period frames, staggered by the group's hash), the slop test below
-            bool change = (m.mLodFlags & 1u) != 0 || (period && lod_frame % period == hash);
+            // (the viewer reads this set one to three frames after the record's own: the turns of the three frames after it are in the set, its own live changeLOD() drops the ones that are not due yet; stage 8's LOD switch, LL_VK_LOD_CAND)
+            bool change = (m.mLodFlags & 1u) != 0 || (period && ((lod_frame + 1) % period == hash || (lod_frame + 2) % period == hash || (lod_frame + 3) % period == hash));
             const F32 dx = m.mObjCenter[0] - P.mOrigin[0], dy = m.mObjCenter[1] - P.mOrigin[1], dz = m.mObjCenter[2] - P.mOrigin[2];
             F32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
             if (dist < 16.f)

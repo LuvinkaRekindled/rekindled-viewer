@@ -5102,18 +5102,12 @@ static const bool sLodCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_LOD") !=
 // newest published change set (the worker's answer for a frame or two ago), and by what cause the ones that are not are yes (a dirty state, the slop test, the round robin of needsUpdate)
 // (2: the switch: in the main view's sort the per-group LOD call returns at once for a group that has a table row, and a pass over the candidates makes it, each live-checked with changeLOD(); every 60th sort of the main view
 // the loop makes the call as before, and the check's counters are those of that sort)
-static const int sLodCandMode = LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") ? atoi(getenv("LL_VK_LOD_CAND")) : 0;
+// LL_VK_LOOPC=1 (needs LL_VK_CULL_SHADOW=1) is all of owners 1 to 3 at once (LL_VK_MESH_REG=1, LL_VK_CHK_REG=1, LL_VK_LOD_CAND=2) and the removal of loop (c) of the sort for the groups they cover (sLoopCSkip below)
+static const int sLodCandMode = LLCullShadow::sOn && getenv("LL_VK_LOOPC") ? 2 : (LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") ? atoi(getenv("LL_VK_LOD_CAND")) : 0);
 static const bool sLodCand = sLodCandMode >= 1;
 static const bool sLodSwitch = sLodCandMode == 2;
-static const bool sLodCandMask = []
-{
-    if (sLodCandMode >= 1)
-    {
-        LLDirtyGroups::sMask.fetch_or((U32)LLSpatialGroup::OBJECT_DIRTY | (U32)LLSpatialGroup::ALPHA_DIRTY);       // (the registry holds the groups with these two as well: the candidates' dirty part)
-    }
-    return sLodCandMode >= 1;
-}();
-static bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group): main thread
+static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
+static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
 bool ll_scene_lod_publish_on() { return sLodCompare || sLodCand; }
 
@@ -6166,7 +6160,7 @@ int sort_split_setting()
 
 // <FS> stage 8 (loop c of sortLoops, owner 1 of 4): the mesh rebuild of the visible groups. LL_VK_MESH_REG: 0 the loops rebuild as before, 2 the loops rebuild as before and the geometry stage's registry pass counts what
 // it still finds to rebuild (it must be 0: the check), 1 the loops do not rebuild and the geometry stage does, from LLDirtyGroups (the registry the cascades' rebuild already uses, C4.1)
-static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_MESH_REG")) : 0;
+static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_MESH_REG")) : (LLCullShadow::sOn && getenv("LL_VK_LOOPC") ? 1 : 0);
 static std::mutex sMeshSeenMutex;
 static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the groups sort_rebuild_mesh saw dirty since the last geometry stage
 
@@ -6179,11 +6173,19 @@ void ll_lod_cand_report();
 bool ll_lod_cand_covers(LLSpatialGroup* group);                         // the main view's group the candidate pass owns (it has a table row, is not a bridge's)
 void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out);            // the candidates of this sort that the loop would have looked at: visible, not occluded, render by group
 static const bool sChkCount = getenv("LL_VK_CHK_COUNT") != nullptr;
+static std::atomic<U64> sChkNotStamped[2], sChkOccluded[2];       // the loop's groups that the walk did not stamp visible this frame, and the ones that are OCCLUDED (what is left of loop c once its four owners exist)
 static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[2];       // [0] the walk ran, [1] the walk replayed (sChkReplayFrame, set by updateCull)
 
 // LL_VK_CHK_REG=1: the loops of the main view's sort do not call it (the discard is made where it already was: the walk's earlyFail for a group the walk visits, the retained set's own handling for a replayed
 // member, LLVisSetHooks::noteStale); with LL_VK_CHK_COUNT=1 too, the counters then say what the call would have cleared (it must stay 0)
-static const bool sChkSkip = getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1;
+static const bool sChkSkip = (getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1) || (LLCullShadow::sOn && getenv("LL_VK_LOOPC") != nullptr);
+// stage 8, loop (c) removed: with the three owners on, the loop does nothing for a group they cover (lap lp1-def1, 57,600 sorts, about 1,120 groups a sort: not stamped visible by the walk 0, OCCLUDED 0), so it skips
+// those groups, except on every 60th sort of the main view (sLodSampling), where the whole loop runs as the check
+static const bool sLoopCSkip = LLCullShadow::sOn && getenv("LL_VK_LOOPC") != nullptr && sLodSwitch && sMeshRegMode == 1 && sChkSkip;
+static inline bool sort_loopc_skips(LLSpatialGroup* group)
+{
+    return sLoopCSkip && !sLodSampling && ll_lod_cand_covers(group);
+}
 
 static inline void sort_check_occlusion(LLSpatialGroup* group)
 {
@@ -6192,6 +6194,14 @@ static inline void sort_check_occlusion(LLSpatialGroup* group)
     {
         const int r = sChkReplayFrame.load(std::memory_order_relaxed) ? 1 : 0;
         sChkCalls[r].fetch_add(1, std::memory_order_relaxed);
+        if (group->getVisible(LLViewerCamera::CAMERA_WORLD) < LLViewerOctreeEntryData::getCurrentFrame())
+        {
+            sChkNotStamped[r].fetch_add(1, std::memory_order_relaxed);
+        }
+        if (group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            sChkOccluded[r].fetch_add(1, std::memory_order_relaxed);
+        }
         LLSpatialGroup* parent = (LLSpatialGroup*)group->getParent();
         if (parent && parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
@@ -6502,7 +6512,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         for (LLCullResult::sg_iterator i = read.beginVisibleGroups(); i != read.endVisibleGroups(); ++i)
         {
             LLSpatialGroup* g = *i;
-            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
+            if (!g->isDead() && !sort_loopc_skips(g) && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;       // (a group loop (c) is removed for is not asked: the counters say it has nothing to clear)
         }
     }
     const bool journaling = journal != nullptr;
@@ -6532,7 +6542,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     };
     auto third_loop_body = [&](LLSpatialGroup* group)
     {
-        if (group->isDead())
+        if (group->isDead() || sort_loopc_skips(group))
         {
             return;
         }
@@ -6551,8 +6561,24 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
 
     // ---- fork-join 1: the drawable groups and the visible groups the cull found
     std::vector<SortChunk> first;
+    // (loop (c) removed, sLoopCSkip: the groups the three owners cover need nothing here, so the pool is not woken for them: the visible groups the cull found are read once, the ones that are not covered go through the serial pass below)
+    static std::vector<LLSpatialGroup*> loopc_rest;
+    loopc_rest.clear();
+    const bool loopc_off = sLoopCSkip && !sLodSampling;
+    const U32 n_vg_chunks = loopc_off ? (U32)sLodCandList.size() : n_vg;       // (the chunks of kind 1 are over the candidates then: the real LOD work of the groups whose turn it is, on the pool with the ledger as loop (c) had it)
+    if (loopc_off)
     {
-        const U32 cs0 = sort_chunk_size(n_dg, workers), cs1 = sort_chunk_size(n_vg, workers);
+        LLCullResult::sg_iterator vg = read.beginVisibleGroups();
+        for (U32 k = 0; k < n_vg; ++k)
+        {
+            if (!sort_loopc_skips(vg[k]))
+            {
+                loopc_rest.push_back(vg[k]);
+            }
+        }
+    }
+    {
+        const U32 cs0 = sort_chunk_size(n_dg, workers), cs1 = sort_chunk_size(n_vg_chunks, workers);
         for (U32 b = 0; b < n_dg; b += cs0)
         {
             first.emplace_back();
@@ -6561,12 +6587,12 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             first.back().mEnd = std::min(n_dg, b + cs0);
         }
         const size_t n_first_dg = first.size();
-        for (U32 b = 0; b < n_vg; b += cs1)
+        for (U32 b = 0; b < n_vg_chunks; b += cs1)
         {
             first.emplace_back();
             first.back().mKind = 1;
             first.back().mBegin = b;
-            first.back().mEnd = std::min(n_vg, b + cs1);
+            first.back().mEnd = std::min(n_vg_chunks, b + cs1);
         }
         for (size_t c = 0; c < n_first_dg; ++c)
         {
@@ -6589,6 +6615,16 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             if (chunk.mKind == 0)
             {
                 first_loop_body(drawable_groups[k]);
+            }
+            else if (loopc_off)
+            {
+                LLSpatialGroup* candidate = sLodCandList[k];
+                if (!candidate->isDead())
+                {
+                    sLodCandRunning = true;
+                    stateSort(candidate, camera);
+                    sLodCandRunning = false;
+                }
             }
             else
             {
@@ -6730,6 +6766,10 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         std::vector<SortDelta>* saved_sink = sSortSink;
         sSortJournal = journal;
         sSortSink = &ledger_y;
+        for (LLSpatialGroup* group : loopc_rest)
+        {
+            third_loop_body(group);     // (the groups of the cull's list the owners do not cover, in list order, before the ones the bridges added)
+        }
         for (U32 k = n_vg; k < read.getVisibleGroupsSize(); ++k)
         {
             third_loop_body(read.beginVisibleGroups()[k]);
@@ -7048,7 +7088,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     for (LLCullResult::sg_iterator iter = read.beginVisibleGroups(); iter != read.endVisibleGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
-        if (group->isDead())
+        if (group->isDead() || sort_loopc_skips(group))
         {
             continue;
         }
@@ -7137,6 +7177,14 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     {
         ll_lod_cand_refresh();      // (stage 8, owner 3: LL_VK_LOD_CAND)
     }
+    if (sLodSwitch && !sLodSampling && view.isMainWorldSort() && split != 2 && split != 4)
+    {
+        ll_lod_cand_collect(sLodCandList);      // (the groups whose turn it is, see ll_lod_cand_collect: made by the pool's chunks when sortLoopsParallel takes the sort and the loop (c) is removed, else by the serial pass below)
+    }
+    else
+    {
+        sLodCandList.clear();
+    }
     if (split == 0)
     {
         sortLoops(camera, *sCull);
@@ -7209,14 +7257,13 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         LL_INFOS("SortSplit") << "stateSort loops (early sort, ms per sort):" << line << "; sorts the pool could not take " << fallbacks << LL_ENDL;
     }
 
-    if (sLodSwitch && !sLodSampling && view.isMainWorldSort() && split != 2 && split != 4)
+    if (!sLodCandList.empty() && !(path == 2 && sLoopCSkip))
     {
-        // stage 8, owner 3 of 4: the groups whose turn it is (the candidates: the worker's slop bits, the dirty registry, the round robin wheel), each live-checked by stateSort(group): the per-group LOD call the loop skipped
+        // stage 8, owner 3 of 4: the groups whose turn it is (the candidates: the worker's slop bits, the dirty registry, the round robin wheel), each live-checked by stateSort(group): the per-group LOD call the loop skipped.
+        // Serial, on this thread, for the sorts the pool did not take or that kept loop (c) in the pool's chunks (LL_VK_LOD_CAND=2 alone)
         LL_CPU_ZONE("stateSort: LOD candidates");
-        static std::vector<LLSpatialGroup*> candidates;
-        ll_lod_cand_collect(candidates);
         sLodCandRunning = true;
-        for (LLSpatialGroup* group : candidates)
+        for (LLSpatialGroup* group : sLodCandList)
         {
             stateSort(group, camera);
         }
@@ -8113,7 +8160,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
         {
             const double n = (double)sorts;
             LL_INFOS("VkChk") << "checkOcclusion in the loops of the sort, per sort over " << sorts << " (replay off | replay on: the switch, not whether the frame replayed): calls " << sChkCalls[0] / n << " | " << sChkCalls[1] / n << ", parent occluded " << sChkParent[0] / n << " | " << sChkParent[1] / n
-                              << ", stale and awaited " << sChkStale[0] / n << " | " << sChkStale[1] / n << " (of those the group itself OCCLUDED " << sChkStaleOcc[0] / n << " | " << sChkStaleOcc[1] / n << ")" << LL_ENDL;
+                              << ", stale and awaited " << sChkStale[0] / n << " | " << sChkStale[1] / n << " (of those the group itself OCCLUDED " << sChkStaleOcc[0] / n << " | " << sChkStaleOcc[1] / n << ")" << "; the loop's groups not stamped visible by the walk this frame " << sChkNotStamped[0] / n << " | " << sChkNotStamped[1] / n << ", OCCLUDED " << sChkOccluded[0] / n << " | " << sChkOccluded[1] / n << LL_ENDL;
         }
     }
 
@@ -12945,42 +12992,6 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
                            << anc_occluded << ", outside the frustum " << anc_out << ", dead " << anc_dead << ", looks fine " << anc_ok << "; every non-empty ancestor marked " << anc_none << " (of them with children " << own_children_objects << ")" << LL_ENDL;
 }
 
-// stage 8, owner 3 of 4: the wheel of the round robin of needsUpdate() (frame % period == hash). The period is the partition's and the hash is fixed when the group is made, both are in the map row (mLodFlags bits 8 to 23):
-// the slots are kept in a bucket by key (mLodFlags >> 8: period | hash << 8), so the groups whose turn a frame is are the buckets with frame % period == hash, not a question to every visible group. Under sCullMutex, like the rows.
-std::unordered_map<U32, std::vector<U32>> sLodWheel;
-std::vector<U32> sLodWheelKey, sLodWheelPos;       // slot -> its key (0 = none: a period is never 0 in a row) and its place in the bucket
-
-void lod_wheel_set(U32 slot, U32 key)
-{
-    if (sLodWheelKey.size() <= slot)
-    {
-        sLodWheelKey.resize(slot + 1, 0u);
-        sLodWheelPos.resize(slot + 1, 0u);
-    }
-    if (sLodWheelKey[slot] == key)
-    {
-        return;
-    }
-    if (sLodWheelKey[slot])
-    {
-        std::vector<U32>& old_bucket = sLodWheel[sLodWheelKey[slot]];
-        const U32 pos = sLodWheelPos[slot];
-        if (pos < old_bucket.size() && old_bucket[pos] == slot)
-        {
-            old_bucket[pos] = old_bucket.back();
-            sLodWheelPos[old_bucket[pos]] = pos;
-            old_bucket.pop_back();
-        }
-    }
-    sLodWheelKey[slot] = key;
-    if (key)
-    {
-        std::vector<U32>& bucket = sLodWheel[key];
-        sLodWheelPos[slot] = (U32)bucket.size();
-        bucket.push_back(slot);
-    }
-}
-
 // the new groups get slots, the touched rows are made again (a row whose group still waits for its rebound stays on the list)
 void cull_process()
 {
@@ -13058,7 +13069,6 @@ void cull_process()
             {
                 sMapChangeFrame[slot] = (U32)gFrameCount;
             }
-            lod_wheel_set(slot, (sMapMirror[slot].mLodFlags >> 8) & 0xFFFFu);
         }
         sSendSlots.push_back(slot);
         ++s.mRefreshed;
@@ -13986,7 +13996,6 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
             memset(&sMirror[slot], 0, sizeof(sMirror[slot]));
             sMirror[slot].mFlags = 33u;
             sMapMirror[slot] = CullMapRow();
-            lod_wheel_set(slot, 0u);
             sSendSlots.push_back(slot);
             ++sCullStats.mFreed;
         }
@@ -14225,8 +14234,7 @@ void ll_scene_stamp_compare(LLCullResult* cull)
 }
 
 // stage 8, owner 3 (LL_VK_LOD_CAND=1): the worker's change set (the whole answer of changeLOD() per slot) against the sort's own answer for each group it looks at.
-static std::vector<U32> sCandBits;          // the worker's slop bits of the newest publication (a frame or two old)
-static std::vector<U8> sCandMark;           // the candidate set of this sort: by slot, the three parts below
+static std::vector<U32> sCandBits;          // the candidate set: the worker's change bits of the newest publication by slot (the dirty states, the slop test, the round robin of the next three frames after its own)
 static U32 sCandFrame = 0, sCandTable = 0, sCandSorts = 0;
 static std::atomic<U64> sCandLooked[2], sCandLive[2], sCandHit[2], sCandNoRow[2], sCandMissDirty[2], sCandMissSlop[2], sCandMissRobin[2], sCandMissRecent[2], sCandExtra[2], sCandAge;       // [0] the group's row did not change lately, [1] it did (the worker's copy can be a frame behind)
 
@@ -14241,48 +14249,14 @@ void ll_lod_cand_refresh()
     U32 frame = 0;
     if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, bd.data(), bb.data(), bc.data(), (U32)bd.size()))
     {
-        sCandBits.assign(bb.begin(), bb.begin() + (t + 31) / 32);
+        sCandBits.assign(bc.begin(), bc.begin() + (t + 31) / 32);
         sCandFrame = frame;
         sCandTable = t;
     }
-    // the candidate set of this sort: (1) the worker's slop bits, (2) the groups with ALPHA_DIRTY or OBJECT_DIRTY (the registry, kept as they are set), (3) the round robin of this frame (the wheel of the table rows)
-    LLDirtyGroups::prune();
-    std::lock_guard<std::mutex> lock(sCullMutex);
-    sCandMark.assign(sMirror.size(), 0u);
-    for (U32 slot = 0; slot < sCandTable && slot < (U32)sCandMark.size(); ++slot)
-    {
-        if ((sCandBits[slot >> 5] >> (slot & 31)) & 1u)
-        {
-            sCandMark[slot] |= 1u;
-        }
-    }
-    for (LLSpatialGroup* g : LLDirtyGroups::snapshot())
-    {
-        if (!g->isDead() && g->mCullId && g->mCullId <= sCandMark.size() && g->hasState(static_cast<U32>(LLSpatialGroup::ALPHA_DIRTY) | static_cast<U32>(LLSpatialGroup::OBJECT_DIRTY)))
-        {
-            sCandMark[g->mCullId - 1] |= 2u;
-        }
-    }
-    for (U32 slot = sCandTable; slot < (U32)sCandMark.size(); ++slot)
-    {
-        sCandMark[slot] |= 8u;      // (a group newer than the publication: its slop bit is not known yet: a candidate until the set has it)
-    }
-    sLodSampling = !sLodSwitch || !sCandTable || (++sCandSorts % 60 == 0);
-    const U32 f = (U32)LLViewerOctreeEntryData::getCurrentFrame();
-    for (const auto& kv : sLodWheel)
-    {
-        const U32 period = kv.first & 255u, hash = kv.first >> 8;        // (the key is mLodFlags >> 8: the period in the low byte, the hash above it)
-        if (period && f % period == hash)
-        {
-            for (U32 slot : kv.second)
-            {
-                if (slot < sCandMark.size())
-                {
-                    sCandMark[slot] |= 4u;
-                }
-            }
-        }
-    }
+    // the loop makes the whole call itself (the check) when there is no set yet, when the set is more than 3 frames old (the worker's round robin turns cover the 3 frames after its own: a stalled frame would lose a group's
+    // turn for a whole period), and every 60th sort
+    const U32 age = (U32)gFrameCount - sCandFrame;      // (the publication is stamped with gFrameCount, not with the octree's frame counter)
+    sLodSampling = !sLodSwitch || !sCandTable || age > 3u || (++sCandSorts % 60 == 0);
 }
 
 bool ll_lod_cand_covers(LLSpatialGroup* group)
@@ -14296,9 +14270,22 @@ void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
     out.clear();
     {
         std::lock_guard<std::mutex> lock(sCullMutex);
-        for (U32 slot = 0; slot < (U32)sCandMark.size() && slot < (U32)sSlotGroup.size(); ++slot)
+        const U32 n = (U32)sSlotGroup.size();
+        for (U32 w = 0; w < (U32)sCandBits.size(); ++w)
         {
-            if (sCandMark[slot] && sSlotGroup[slot])
+            const U32 bits = sCandBits[w];
+            for (U32 b = 0; bits && b < 32; ++b)
+            {
+                const U32 slot = (w << 5) + b;
+                if (((bits >> b) & 1u) && slot < n && sSlotGroup[slot])
+                {
+                    out.push_back((LLSpatialGroup*)sSlotGroup[slot]);
+                }
+            }
+        }
+        for (U32 slot = sCandTable; slot < n; ++slot)      // (a group newer than the publication has no bit yet: it is a candidate until the set has it)
+        {
+            if (sSlotGroup[slot])
             {
                 out.push_back((LLSpatialGroup*)sSlotGroup[slot]);
             }
@@ -14332,7 +14319,7 @@ void ll_lod_cand_note(LLSpatialGroup* group, bool live)
         sCandNoRow[r].fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    const bool cand = slot < sCandMark.size() && sCandMark[slot] != 0;
+    const bool cand = (sCandBits[slot >> 5] >> (slot & 31)) & 1u;
     if (live)
     {
         sCandLive[r].fetch_add(1, std::memory_order_relaxed);
