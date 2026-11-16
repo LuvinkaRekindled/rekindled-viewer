@@ -11960,6 +11960,84 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         LLVkBridge::lateListPublish(h.mPass, table, late_words.data());
         LLVkBridge::visibleListPublish(h.mPass, table, vis_words.data());
+        {
+            // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each, and the rows with an alpha key and no fragment.
+            // (a handle here may be a frame or two behind the group's fragments: the viewer checks each against the group's current handle)
+            auto list = std::make_shared<LLVkBridge::ConsumerList>();
+            list->mFrame = h.mPass;
+            list->mTable = table;
+            static std::vector<U32> seen_stamp;
+            static U32 stamp = 0;
+            ++stamp;
+            static std::vector<std::pair<F32, U32>> alpha_rows;       // (depth, slot)
+            alpha_rows.clear();
+            const F32 at_x = P.mMotion[2], at_y = P.mMotion[3], at_z = P.mFactors[3];
+            for (U32 slot = 0; slot < table; ++slot)
+            {
+                if (!((late_words[slot >> 5] >> (slot & 31u)) & 1u))
+                {
+                    continue;
+                }
+                const LLVkBridge::CullMapRow& m = s.mMap[slot];
+                if ((s.mTable[slot].mFlags & (32u | 64u)) == 64u)
+                {
+                    // a bridge group: named for the viewer to judge (see ConsumerList::mAlphaBridge)
+                    const bool whole = m.mHandle && (m.mFlags & 1u);
+                    if (whole ? (m.mAlphaBits & 3u) != 0 : (m.mFlags & 6u) != 0)
+                    {
+                        list->mAlphaBridge.push_back(slot);
+                    }
+                }
+                if (!(s.mTable[slot].mFlags & (32u | 64u)) && !(occlusion && (s.mTable[slot].mFlags & 4u)) && !(hide_limit > 0.f && m.mSurfaceArea > hide_limit * fmaxf(m.mObjectBoxSize, 10.f)))
+                {
+                    // the alpha lists' membership, as the viewer's stage 6 has it: a group the table serves whole has its alpha in the fragment's bits, any other in the group's alpha keys
+                    const bool whole = m.mHandle && (m.mFlags & 1u);
+                    const bool a = whole ? (m.mAlphaBits & 1u) != 0 : (m.mFlags & 2u) != 0;
+                    const bool r = whole ? (m.mAlphaBits & 2u) != 0 : (m.mFlags & 4u) != 0;
+                    if (a)
+                    {
+                        // calcDistance's depth: v = centre - origin, minus the at axis times 0.25 times the half size (componentwise), dotted with the at axis
+                        const F32 vx = (m.mObjCenter[0] - P.mOrigin[0]) - at_x * 0.25f * m.mObjHalf[0];
+                        const F32 vy = (m.mObjCenter[1] - P.mOrigin[1]) - at_y * 0.25f * m.mObjHalf[1];
+                        const F32 vz = (m.mObjCenter[2] - P.mOrigin[2]) - at_z * 0.25f * m.mObjHalf[2];
+                        alpha_rows.emplace_back(vx * at_x + vy * at_y + vz * at_z, slot);
+                    }
+                    if (r)
+                    {
+                        list->mRigged.push_back(slot);
+                    }
+                }
+                if (!m.mHandle)
+                {
+                    if (m.mFlags & 6u)
+                    {
+                        list->mNoHandle.push_back(slot);
+                    }
+                    continue;
+                }
+                // (a row whose handle changed lately is not left out here: the viewer names a handle only if it is still the group's current one, and adds the changes of the last frames itself)
+                if (seen_stamp.size() <= m.mHandle)
+                {
+                    seen_stamp.resize((size_t)m.mHandle + 1024, 0u);
+                }
+                if (seen_stamp[m.mHandle] == stamp)
+                {
+                    continue;       // (one slot a handle, the first)
+                }
+                seen_stamp[m.mHandle] = stamp;
+                list->mHandles.push_back(m.mHandle);
+                list->mSlots.push_back(slot);
+            }
+            std::sort(alpha_rows.begin(), alpha_rows.end(), [](const std::pair<F32, U32>& x, const std::pair<F32, U32>& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
+            list->mAlpha.reserve(alpha_rows.size());
+            list->mAlphaDepth.reserve(alpha_rows.size());
+            for (const auto& e : alpha_rows)
+            {
+                list->mAlpha.push_back(e.second);
+                list->mAlphaDepth.push_back(e.first);
+            }
+            LLVkBridge::consumerListPublish(std::move(list));
+        }
         d.mLate += late_n;
     }
     if (lod_flag & 1u)
