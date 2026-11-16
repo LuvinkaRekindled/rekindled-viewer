@@ -12810,6 +12810,17 @@ typedef LLVkBridge::CullMapRow CullMapRow;        // (the worker's copy has the 
 std::vector<CullMapRow> sMapMirror;
 std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map row's fragment handle last changed (stage 4: a fragment that appeared after a list was made is not a miss of that list)
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (stage 6: a group with an alpha key and no fragment has no handle to change)
+std::deque<std::pair<U32, U32>> sAvRecentSlots;        // <FS> stage 9b (LL_VK_COVER_AV): (frame, slot) of the groups of the avatar, bridge and animated object region partitions whose row was made or changed, kept for 6 frames: the kept pass adds them to the worker's set (LL_VK_COVER_AV_RECENT)
+static bool cull_av_region(LLSpatialGroup* g)
+{
+    LLSpatialPartition* part = g ? g->getSpatialPartition() : nullptr;
+    if (!part || part->asBridge())
+    {
+        return false;
+    }
+    const U32 pi = part->mPartitionType;
+    return pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV;
+}
 std::deque<std::pair<U32, U32>> sRecentSlots;          // (frame, slot): the slots whose map row or handle changed, kept for 3 frames: the consumers' list adds them to the worker's (LL_VK_CONSUMERS) instead of walking the table
 std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
@@ -13154,6 +13165,10 @@ void cull_process()
             if (memcmp(&old_cull, &sMirror[slot], sizeof(old_cull)) != 0)
             {
                 sRowChangeFrame[slot] = (U32)gFrameCount;
+                if (cull_av_region((LLSpatialGroup*)g))
+                {
+                    sAvRecentSlots.emplace_back((U32)gFrameCount, slot);
+                }
             }
         }
         {
@@ -13175,6 +13190,10 @@ void cull_process()
     while (!sRecentSlots.empty() && (U32)gFrameCount - sRecentSlots.front().first > 6)
     {
         sRecentSlots.pop_front();
+    }
+    while (!sAvRecentSlots.empty() && (U32)gFrameCount - sAvRecentSlots.front().first > 6)
+    {
+        sAvRecentSlots.pop_front();
     }
 }
 
@@ -14836,6 +14855,27 @@ void ll_cull_stamps_release()
     ++sKeptReleased;
 }
 
+// <FS> stage 9b: a group of the avatar, bridge and animated object region partitions goes through what the walk's earlyFail does first (LLOctreeCull::earlyFail): the pending Hi-Z verdict is applied and a group the viewer holds
+// occluded is an occluder, not a visible group. Without it the pass marked 18 groups a frame that the viewer held occluded (lap vca against vcb: "occluded 18" against 0 in the sort census): the sort's pre-scan sees an occluded
+// drawable group and drops the whole sort to the serial path (stateSort: drawable groups 0.26 ms against 0.03). The other covered groups are rows the worker drops when occluded, and the pre-scan does not ask the visible groups.
+static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
+{
+    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    if (cover_av && cull_av_region(g) && !LLPipeline::reflectionRender())
+    {
+        if (LLPipeline::useOcclusion() >= 2)
+        {
+            g->checkOcclusion();
+        }
+        if (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED) && g->getOctreeNode() && g->getOctreeNode()->getParent())
+        {
+            gPipeline.markOccluder(g);
+            return;
+        }
+    }
+    gPipeline.markNotCulled(g, camera);
+}
+
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* own_bits)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them (as useVerdict does)
@@ -14885,6 +14925,72 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             }
         }
     }
+    // <FS> stage 9b (LL_VK_COVER_AV): the groups of the avatar, bridge and animated object region partitions move all the time (an avatar, an attachment or an animated object that crosses a node's edge makes a new group, a
+    // group that gains or loses a drawable changes its box), and the worker's set is up to 3 frames old and made from rows the viewer sent 1 to 2 frames before: a group made or changed in the last frames is not in it, its drawables
+    // are not marked and the avatar, the attachment or the animesh blinks for those frames. LL_VK_COVER_AV_RECENT=1 adds the groups whose row was made or changed in the last 3 frames (no frustum test: a few too many for 3 frames);
+    // the counters (a line every 300 passes, tag VkAvCover) count, per partition, the non-empty groups inside the frustum that the pass will not mark.
+    {
+        static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+        static const bool recent_on = cover_av && !(getenv("LL_VK_COVER_AV_RECENT") && atoi(getenv("LL_VK_COVER_AV_RECENT")) == 0);       // (on with the switch: 0 turns it off, for the counters' before)
+        if (cover_av && !own_bits)
+        {
+            static U64 passes = 0, in_frustum[3] = {}, missing[3] = {}, missing_recent[3] = {}, supplemented = 0;
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            const U32 now = (U32)gFrameCount;
+            const U32 n = (U32)sSlotGroup.size();
+            const auto in_set = [&](U32 slot) { return (slot >> 5) < kept_bits.size() && ((kept_bits[slot >> 5] >> (slot & 31u)) & 1u); };
+            static std::unordered_set<U32> added;
+            added.clear();
+            if (recent_on)
+            {
+                for (const auto& e : sAvRecentSlots)
+                {
+                    const U32 slot = e.second;
+                    if (now - e.first <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
+                    {
+                        LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                        const LLVector4a* bb = g->getBounds();
+                        if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+                        {
+                            continue;       // (the row is the group's of this frame: the walk's own box test, so a group outside the frustum is not marked: 144 a pass without the test, about 19 with it)
+                        }
+                        added.insert(slot);
+                        groups.push_back(g);
+                        ++supplemented;
+                    }
+                }
+            }
+            ++passes;
+            for (U32 slot = 0; ll_diag_on() && slot < n; ++slot)       // (the counters walk every slot: 0.3 ms a frame, LL_VK_DIAG=1 only)
+            {
+                LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                if (!g || g->isDead() || g->isEmpty() || !cull_av_region(g))
+                {
+                    continue;
+                }
+                const U32 pi = g->getSpatialPartition()->mPartitionType;
+                const U32 t = pi == LLViewerRegion::PARTITION_AVATAR ? 0u : (pi == LLViewerRegion::PARTITION_BRIDGE ? 1u : 2u);
+                const LLVector4a* bb = g->getBounds();
+                if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+                {
+                    continue;
+                }
+                ++in_frustum[t];
+                if (!in_set(slot) && !added.count(slot))
+                {
+                    ++missing[t];
+                    missing_recent[t] += (now - sRowChangeFrame[slot] <= 3);
+                }
+            }
+            if (passes % 300 == 0 && ll_diag_on())
+            {
+                const double f = (double)passes;
+                LL_INFOS("VkAvCover") << "avatar, bridge and animated object region groups, per pass over " << passes << " (avatar | bridge | animated object): non-empty groups in the frustum " << in_frustum[0] / f << " | " << in_frustum[1] / f << " | " << in_frustum[2] / f
+                                      << ", not marked by the pass " << missing[0] / f << " | " << missing[1] / f << " | " << missing[2] / f << ", of those with a row made or changed in the last 3 frames " << missing_recent[0] / f << " | " << missing_recent[1] / f << " | " << missing_recent[2] / f
+                                      << "; added from the recent list " << supplemented / f << " a pass (LL_VK_COVER_AV_RECENT " << (recent_on ? 1 : 0) << ")" << LL_ENDL;
+            }
+        }
+    }
     // the groups through markNotCulled, as the pool walk does it: chunks of about the same size, a result and a ledger (what the call defers: the wake) for each, the results merged in the order of the chunks and the ledgers
     // applied in that order. A few groups are done here.
     const auto keep = [](LLSpatialGroup* g)
@@ -14900,7 +15006,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         {
             if (keep(g))
             {
-                gPipeline.markNotCulled(g, camera);
+                ll_kept_mark(g, camera);
             }
         }
         return;
@@ -14931,7 +15037,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         {
             if (keep(groups[k]))
             {
-                gPipeline.markNotCulled(groups[k], camera);
+                ll_kept_mark(groups[k], camera);
             }
         }
     };
