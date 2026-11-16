@@ -11655,7 +11655,7 @@ int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F3
     bool partly = false;
     for (U32 p = 0; p < planes; ++p)
     {
-        if (p == 5u)
+        if (p == 5u && !(P.mPad[0] & 0x100u))       // (stage 10d: bit 8 of mPad[0] = the shadow culler's model, LLCamera::AABBInFrustum: the far plane is in)
         {
             continue;
         }

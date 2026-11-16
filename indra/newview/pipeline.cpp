@@ -15932,6 +15932,110 @@ bool cube_params_match(const LLVkBridge::CullParams& a, const LLVkBridge::CullPa
 }
 }
 
+// <FS> stage 10d (LL_VK_CASC_KEPT=1, needs LL_VK_CULL_SHADOW=1; compare only, nothing is drawn from it): each sun cascade asks the worker for its kept set under the id 0x5C00 + the cascade's number, with the planes of its shadow camera and
+// the shadow culler's model (bit 8 of mPad[0]: LLCamera::AABBInFrustum, the far plane is in; mCornerDist 0: no sphere test), and the answer to the request of a frame is put side by side with the cascade's own cull result of that frame (the
+// visible and the drawable groups of the covered partitions: what shadowPrepCull, with the retained sets and the hull filter, found). The gate to the next step: the set holds everything the cascade's cull found (the walk's only = 0 but
+// for the frames the rows were behind), and its extras are what the hull filter and the slice drop. The pad of 2 m the culler gives the avatar partitions' object bounds is not modelled (those partitions are not covered).
+void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
+{
+    static const bool on = LLCullShadow::sOn && getenv("LL_VK_CASC_KEPT") != nullptr;
+    if (!on || index < 0 || index > 3)
+    {
+        return;
+    }
+    struct Pending { U32 mFrame = 0; std::vector<U32> mSlots; };
+    struct Stats { U64 mCompared = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAsked = 0, mUnanswered = 0; U32 mLastFrame = 0; };
+    static Pending ring[4][6];
+    static Stats stats[4];
+    const U32 id = 0x5C00u + (U32)index;
+    Stats& s = stats[index];
+    const std::shared_ptr<const LLVkBridge::ViewSet> a = LLVkBridge::viewSetRead(id);
+    if (a && a->mFrame != s.mLastFrame)
+    {
+        s.mLastFrame = a->mFrame;
+        for (Pending& p : ring[index])
+        {
+            if (p.mFrame && p.mFrame == a->mFrame)
+            {
+                const std::unordered_set<U32> walk(p.mSlots.begin(), p.mSlots.end());
+                U64 kept = 0, both = 0;
+                {
+                    std::lock_guard<std::mutex> lock(sCullMutex);
+                    const U32 n = (U32)sSlotGroup.size();
+                    for (U32 w = 0; w < (U32)a->mKept.size(); ++w)
+                    {
+                        for (U32 b = 0; a->mKept[w] && b < 32; ++b)
+                        {
+                            const U32 slot = (w << 5) + b;
+                            if (!((a->mKept[w] >> b) & 1u) || slot >= n || !sSlotGroup[slot])
+                            {
+                                continue;
+                            }
+                            LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                            LLSpatialPartition* part = g->getSpatialPartition();
+                            if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !ll_cull_derived_covers(part))
+                            {
+                                continue;
+                            }
+                            ++kept;
+                            both += walk.count(slot) ? 1 : 0;
+                        }
+                    }
+                }
+                ++s.mCompared;
+                s.mWalk += walk.size();
+                s.mKept += kept;
+                s.mBoth += both;
+                s.mWalkOnly += walk.size() - both;
+                s.mKeptOnly += kept - both;
+                p.mFrame = 0;
+                if (s.mCompared % 300 == 0)
+                {
+                    const double f = (double)s.mCompared;
+                    LL_INFOS("VkCascKept") << "cascade " << index << " (LL_VK_CASC_KEPT), over " << s.mCompared << " compared (asked " << s.mAsked << ", never answered " << s.mUnanswered << "): the cull found " << s.mWalk / f << " groups of the covered partitions, the worker's set keeps "
+                                           << s.mKept / f << ", in both " << s.mBoth / f << ", the cull's only " << s.mWalkOnly / f << ", the set's only " << s.mKeptOnly / f << LL_ENDL;
+                }
+                break;
+            }
+        }
+    }
+    // this frame's cull result of the cascade, kept until the answer of the same frame arrives, and the request
+    Pending* slot = nullptr;
+    for (Pending& p : ring[index])
+    {
+        if (p.mFrame && (U32)gFrameCount - p.mFrame > 12)
+        {
+            p.mFrame = 0;
+            ++s.mUnanswered;
+        }
+        if (!p.mFrame && !slot)
+        {
+            slot = &p;
+        }
+    }
+    if (!slot)
+    {
+        return;
+    }
+    slot->mSlots.clear();
+    const auto note = [&](LLSpatialGroup* g)
+    {
+        LLSpatialPartition* part = g ? g->getSpatialPartition() : nullptr;
+        if (g && !g->isDead() && g->mCullId && !g->isEmpty() && part && !part->asBridge() && ll_cull_derived_covers(part))
+        {
+            slot->mSlots.push_back(g->mCullId - 1);
+        }
+    };
+    for (LLCullResult::sg_iterator i = result.beginVisibleGroups(); i != result.endVisibleGroups(); ++i) note(*i);
+    for (LLCullResult::sg_iterator i = result.beginDrawableGroups(); i != result.endDrawableGroups(); ++i) note(*i);
+    LLVkBridge::CullParams now;
+    cull_fill_params(camera, now);
+    now.mPad[0] = 0x100u;
+    now.mCornerDist = 0.f;
+    slot->mFrame = (U32)gFrameCount;
+    s.mAsked += LLVkBridge::viewRequest(id, (U32)gFrameCount, now);
+}
+
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera)
 {
     CubeKeptStats& c = sCubeKept;
@@ -18744,6 +18848,8 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LLCamera& camera = prep.mCamera;
     LLCullResult& result = *prep.mResult;
+
+    ll_cascade_view_compare(prep.mIndex, camera, result);       // <FS> stage 10d (LL_VK_CASC_KEPT, compare only)
 
     if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
                       LLPipeline::RENDER_TYPE_CONTROL_AV,
