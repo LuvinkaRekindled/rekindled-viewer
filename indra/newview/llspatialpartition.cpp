@@ -2742,7 +2742,7 @@ U32 checkStamps(S32 frame, int set)
         for (size_t k = 0; k < st.mFlat.size(); ++k)
         {
             LLSpatialGroup* g = st.mFlat[k];
-            if (g && st.mFlatKind[k] && g->row().visible[st.mCam] != frame)
+            if (g && st.mFlatKind[k] && g->getVisible((LLViewerCamera::eCameraID)st.mCam) != frame)
             {
                 if (++bad <= 4)
                 {

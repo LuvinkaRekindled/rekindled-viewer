@@ -189,6 +189,20 @@ struct LLRetainedStamps
     static inline std::atomic<S32> sFrame[256][9];       // [partition slot][camera]: the frame the replay of the set of that partition for that camera last ran
 };
 
+// stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group in the worker's kept set is the frame the set was applied, derived from the set's bits by the group's slot (mCullId - 1), not written per group; a group that leaves
+// the set has its stamp written back by the pass that applies the next set (the same fold as a group leaving a retained set)
+struct LLKeptStamps
+{
+    struct View
+    {
+        const U32* mBits = nullptr;     // one bit a slot (ConsumerList::mKept)
+        U32 mWords = 0;
+        S32 mFrame = 0;
+        bool has(U32 slot) const { return (slot >> 5) < mWords && ((mBits[slot >> 5] >> (slot & 31u)) & 1u); }
+    };
+    static inline std::atomic<const View*> sView{ nullptr };       // the applied set (null: none), read by every thread
+};
+
 class LLViewerOctreeGroup
 :   public OctreeListener
 {
@@ -229,10 +243,17 @@ public:
     virtual bool isRecentlyVisible() const;
     // (retainedSlot: bits 0-7 the slot of the group's partition, bit 8 + c set when the group is a member of the replayed set for camera c: the stamp for that camera is the set's frame, not written per group)
     S32  retainedFrame(LLViewerCamera::eCameraID id) const { const U32 r = row().retainedSlot; return (r & (0x100u << id)) ? LLRetainedStamps::sFrame[r & 255u][id].load(std::memory_order_relaxed) : 0; }
-    S32  getVisible(LLViewerCamera::eCameraID id) const { const S32 v = row().visible[id]; return row().retainedSlot ? std::max(v, retainedFrame(id)) : v; }
+    S32  keptFrame() const { const LLKeptStamps::View* k = LLKeptStamps::sView.load(std::memory_order_relaxed); return (k && mCullId && k->has(mCullId - 1)) ? k->mFrame : 0; }
+    S32  getVisible(LLViewerCamera::eCameraID id) const
+    {
+        S32 v = row().visible[id];
+        if (row().retainedSlot) { v = std::max(v, retainedFrame(id)); }
+        if (id == LLViewerCamera::CAMERA_WORLD) { v = std::max(v, keptFrame()); }
+        return v;
+    }
     S32  getAnyVisible() const
     {
-        S32 v = row().anyVisible;
+        S32 v = std::max(row().anyVisible, keptFrame());
         const U32 r = row().retainedSlot;
         if (r)
         {
