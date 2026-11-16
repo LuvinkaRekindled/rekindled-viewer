@@ -148,6 +148,7 @@
 // [/RLVa:KB]
 
 #include "llenvironment.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 #include "llenvironment.h"
 #include "llsettingsvo.h"
@@ -2420,7 +2421,7 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     total_ops += (U64)(end - begin);
     if (++calls % 6000 == 0)
     {
-        LL_INFOS("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
+        LL_DIAG("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
                              << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", bridge moves " << by_kind[AvOp::BRIDGE_MOVE] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
     }
 }
@@ -4120,10 +4121,10 @@ void cull_split_report()
             list += b;
         }
     }
-    LL_INFOS("CullSplit") << "main cull, partition stage (ms per frame): serial loop " << s.mMs[0] / ser_n << " over " << s.mCalls[0] << " frames | pool " << s.mMs[1] / pool_n << " over " << s.mCalls[1]
+    LL_DIAG("CullSplit") << "main cull, partition stage (ms per frame): serial loop " << s.mMs[0] / ser_n << " over " << s.mCalls[0] << " frames | pool " << s.mMs[1] / pool_n << " over " << s.mCalls[1]
         << " frames (of it the apply pass " << s.mApplyMs / pool_n << "; " << (double)s.mChunks / pool_n << " jobs a frame, sum of the jobs " << s.mSumUs / pool_n << " us, the longest " << s.mLongestUs / pool_n << " us, the top levels of the split partitions " << s.mTopUs / pool_n << " us in " << (double)s.mSegments / pool_n << " segments"
         << " us; " << s.mInline << " frames run inline) | check: " << s.mCheckRuns << " runs, " << s.mCheckBad << " differ (pool run: " << (double)s.mCkJobs / std::max<U64>(s.mCheckRuns, 1) << " jobs, sum " << s.mCkSumUs / std::max<U64>(s.mCheckRuns, 1) << " us, longest " << s.mCkLongestUs / std::max<U64>(s.mCheckRuns, 1) << " us, top levels " << s.mCkTopUs / std::max<U64>(s.mCheckRuns, 1) << " us in " << (double)s.mCkSegments / std::max<U64>(s.mCheckRuns, 1) << " segments) | " << list << LL_ENDL;
-    LL_INFOS("CullSplit") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
+    LL_DIAG("CullSplit") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
         << LLForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << LLForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << LLForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
     LLPhaseCheck::logSummary();
     s = CullSplitStats();
@@ -8569,7 +8570,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         static U64 cube_sorts = 0;
         if (++cube_sorts % 600 == 1)
         {
-            LL_INFOS("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << ll_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << ll_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
+            LL_DIAG("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << ll_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << ll_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
                 << ", geo_list " << geo_list << ", geo_elide " << geo_elide << ", visible groups " << sCull->getVisibleGroupsSize() << ", shadow render " << LLPipeline::shadowRender() << ", camera id " << (S32)LLViewerCamera::sCurCameraID << LL_ENDL;
         }
     }
@@ -9072,7 +9073,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
     t.mCascades += cascades;
     if (t.mFrames >= 300)
     {
-        LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
+        LL_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
             << llformat("%.3f ms/frame on the main thread, %.1f cascades/frame", (double)t.mNs / 1.0e6 / t.mFrames, (double)t.mCascades / t.mFrames)
             << " (" << t.mFrames << " frames)" << LL_ENDL;
         std::string phases;
@@ -9085,7 +9086,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                 ns = 0;
             }
         }
-        LL_INFOS("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
+        LL_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
         std::string per_cascade;
         for (int c = 0; c < 4; ++c)
         {
@@ -9093,7 +9094,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             sCascadeRenderNs[c] = 0;
             sCascadeRenders[c] = 0;
         }
-        LL_INFOS("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
+        LL_DIAG("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
         if (shadow_census_on() && t.mFrames > 0)
         {
             const double f = (double)t.mFrames;
@@ -9130,7 +9131,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             if (jobs)
             {
                 const double n = (double)jobs;
-                LL_INFOS("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment, %.1f rigged sources named",
+                LL_DIAG("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment, %.1f rigged sources named",
                     (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mRiggedStatic.exchange(0) / n) << LL_ENDL;
             }
         }
@@ -11192,7 +11193,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                             }
                             if (!row.empty()) text += " | type " + std::to_string(k) + ":" + row;
                         }
-                        LL_INFOS("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
+                        LL_DIAG("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
                     }
                 }
                 ++f.mGeoFallbackCount;
@@ -11309,7 +11310,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
     sGeoFillNonRegion += f.mGeoRegion ? 0 : 1;
     if (sGeoFillCalls % 4000 == 0)
     {
-        LL_INFOS("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
+        LL_DIAG("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
             << sGeoFillFallback << " fallback draws, " << sGeoTexmatRows << " rows with a texture matrix slot, " << sGeoFillNonRegion << " fragments not region-only, region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
         std::string by_type;
         for (size_t t = 0; t < 2 * kGeoTypeCount; ++t)
@@ -11319,7 +11320,7 @@ static void scene_geo_fill(LLSpatialGroup* group, LLSceneFragment& f)
                 by_type += " " + std::to_string(t < kGeoTypeCount ? kGeoTypes[t].mType : kGeoTypes[t - kGeoTypeCount].mType + 1) + (t >= kGeoTypeCount ? "r" : "") + ":" + std::to_string(type_served[t]);
             }
         }
-        LL_INFOS("VkScene") << "items made by pass type number (r = the rigged variant; PASS_GRASS is " << (U32)LLRenderPass::PASS_GRASS << "):" << by_type << LL_ENDL;
+        LL_DIAG("VkScene") << "items made by pass type number (r = the rigged variant; PASS_GRASS is " << (U32)LLRenderPass::PASS_GRASS << "):" << by_type << LL_ENDL;
     }
 }
 
@@ -11898,7 +11899,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
     sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     if (sAlphaPlanBuilds % 4000 == 0)
     {
-        LL_INFOS("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
+        LL_DIAG("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
             << (double)sAlphaPlanOld / sAlphaPlanBuilds << " old draws, " << (double)sAlphaPlanSegs / sAlphaPlanBuilds << " segments each; texture matrices " << sAlphaPlanTexMatrix << ", draws left old for want of a matrix slot " << sAlphaPlanNoSlot << LL_ENDL;
         {
             std::string why_text;
@@ -11909,7 +11910,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                     why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhyTr[w]);
                 }
             }
-            LL_INFOS("VkScene") << "alpha transient draws by reason (S5f F3, all passes so far):" << why_text << LL_ENDL;
+            LL_DIAG("VkScene") << "alpha transient draws by reason (S5f F3, all passes so far):" << why_text << LL_ENDL;
         }
         for (int rig = 0; rig < 2; ++rig)
         {   // S5f F2: draws of the plan builds by reason (all builds so far)
@@ -11921,7 +11922,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, LLSceneFragment& f,
                     why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhy[rig][w]);
                 }
             }
-            LL_INFOS("VkScene") << "alpha plan draws by reason (" << (rig ? "rigged" : "static") << "):" << why_text << LL_ENDL;
+            LL_DIAG("VkScene") << "alpha plan draws by reason (" << (rig ? "rigged" : "static") << "):" << why_text << LL_ENDL;
         }
     }
 }
@@ -12081,7 +12082,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, LLSceneFragment& 
             {
                 std::string text;
                 for (U32 t = 0; t < 128; ++t) { if (by_type[t]) { text += " " + std::to_string(t) + ":" + std::to_string(by_type[t]); } }
-                LL_INFOS("ShadowPrep") << "fragment walk summary: pass types with draws no fragment names (type: fragments made), PASS_SHINY_RIGGED is " << (U32)LLRenderPass::PASS_SHINY_RIGGED << ":" << text << LL_ENDL;
+                LL_DIAG("ShadowPrep") << "fragment walk summary: pass types with draws no fragment names (type: fragments made), PASS_SHINY_RIGGED is " << (U32)LLRenderPass::PASS_SHINY_RIGGED << ":" << text << LL_ENDL;
             }
         }
     }
@@ -12617,7 +12618,7 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     group->mPendingDraws.clear();
     if (sFragStats.mBuilt % 20000 == 0)
     {
-        LL_INFOS("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
+        LL_DIAG("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
             << LLSpatialGroup::sGuardFragmentOnly << " guard calls for a fragment alone, " << LLBuilderGuard::sQuiesces.load() << " quiesces of the async pool" << LL_ENDL;
     }
     if (LLCullShadow::sOn)
@@ -16214,7 +16215,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
         {
             causes += std::string(c ? ", " : "") + kFragmentCauseNames[c] + " " + std::to_string(s.mMismatch[c]);
         }
-        LL_INFOS("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
+        LL_DIAG("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
             << " rebuilt because a buffer id changed under the same serial), " << s.mRetains << " retained, " << s.mReleases << " released, " << s.mEntries << " entries and " << s.mFallback
             << " fallback draws served | verify: " << s.mChecked << " fragments checked, mismatches by cause (" << causes << "); " << s.mViewsChecked
             << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws"
@@ -16266,7 +16267,7 @@ bool ll_scene_geo_serving()
             if ((int)phase != last)
             {
                 last = (int)phase;
-                LL_INFOS("VkScene") << "[phase] scene geometry table now " << (phase ? "ON" : "off") << LL_ENDL;
+                LL_DIAG("VkScene") << "[phase] scene geometry table now " << (phase ? "ON" : "off") << LL_ENDL;
             }
             on = on && phase;
         }
@@ -16780,7 +16781,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
             if (asked >= 20000)
             {
-                LL_INFOS("ShadowLod") << "opaque rigged LOD: " << asked << " items asked, " << chosen << " got a simplified list, triangles " << tris_all << " -> " << tris_lod << ", binding order mismatches " << mismatch << LL_ENDL;
+                LL_DIAG("ShadowLod") << "opaque rigged LOD: " << asked << " items asked, " << chosen << " got a simplified list, triangles " << tris_all << " -> " << tris_lod << ", binding order mismatches " << mismatch << LL_ENDL;
                 asked = chosen = mismatch = tris_all = tris_lod = 0;
             }
         }
@@ -16932,7 +16933,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             geo_users += kv.second.mGeoUsers.size();
         }
         const GeoRegStats& r = sGeoReg;
-        LL_INFOS("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
+        LL_DIAG("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
             << (double)s.mMatrices / n << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n
             << ", builds made again for want of a prepare " << sGeoCounts[2] << " | postSort left out (per frame) " << (double)sGeoElideGroups / n << " groups, " << (double)sGeoElideTypes / n
             << " type lists (" << (double)sGeoElideWhole / n << " whole groups not walked), " << (double)sGeoElideTris / n / 3.0 << " triangles; passes elided but not prepared " << sGeoCounts[3] << " | pools: rigged material passes skipped " << (double)sGeoCounts[4] / n
@@ -17160,7 +17161,7 @@ static void scene_alpha_frame(U64 frame)
         // registry textures lose their name or readiness at once would take their shadows away together. Logged when 8 or more do in one frame (the time says which blink it was)
         if (lost_now >= 8)
         {
-            LL_INFOS("VkScene") << "alpha textures that lost their picture or readiness in one frame: " << lost_now << " of " << ids.size() << " name events (frame " << frame << ", " << changed.size() << " changed in all)" << LL_ENDL;
+            LL_DIAG("VkScene") << "alpha textures that lost their picture or readiness in one frame: " << lost_now << " of " << ids.size() << " name events (frame " << frame << ", " << changed.size() << " changed in all)" << LL_ENDL;
         }
     }
     // the safety net: every 256th frame every registry entry is compared with its texture as it is now; a difference is an event that did not reach us (counted)
@@ -17224,7 +17225,7 @@ static void scene_alpha_frame(U64 frame)
                 }
                 small32 += (info.mTex->getFullWidth() <= 32) ? 1 : 0;
             }
-            LL_INFOS("VkScene") << "alpha texture registry: " << sAlphaTex.size() << " textures (" << users_all << " users): GL texture " << real << ", on the default image " << on_default << " with " << users_default
+            LL_DIAG("VkScene") << "alpha texture registry: " << sAlphaTex.size() << " textures (" << users_all << " users): GL texture " << real << ", on the default image " << on_default << " with " << users_default
                                 << " users (data already decoded " << has_data << ", being fetched " << fetching << ", refused by the server " << missing << ", full size 32 or less " << small32 << ", highest discard " << worst_discard
                                 << "), no image object " << no_gl << ", not ready for the ray tests " << not_ready << LL_ENDL;
             // the textures with the most users, named: what they are, so a 32 x 32 one with hundreds of users can be told from the default image
@@ -17258,7 +17259,7 @@ static void scene_alpha_frame(U64 frame)
                     }
                     text += "]";
                 }
-                LL_INFOS("VkScene") << "alpha texture registry, most used:" << text << LL_ENDL;
+                LL_DIAG("VkScene") << "alpha texture registry, most used:" << text << LL_ENDL;
             }
             // animated objects (control avatars) go through the avatar path of the ray scene, with its loading gate and its distance throttles: how many there are and what state they are in, and
             // the ones near the agent (within 15 m, nearest first, 12 at most) with where they stand in the region and the textures of their faces (root and linked prims)
@@ -17287,7 +17288,7 @@ static void scene_alpha_frame(U64 frame)
                         }
                     }
                 }
-                LL_INFOS("VkScene") << "animated objects (control avatars): " << total << ", fully loaded " << loaded << ", impostors " << impostors << ", too slow " << slow << ", invisible " << invisible
+                LL_DIAG("VkScene") << "animated objects (control avatars): " << total << ", fully loaded " << loaded << ", impostors " << impostors << ", too slow " << slow << ", invisible " << invisible
                                     << ", within 15 m of the agent " << near_ones.size() << LL_ENDL;
                 std::sort(near_ones.begin(), near_ones.end(), [](const std::pair<F32, LLControlAvatar*>& x, const std::pair<F32, LLControlAvatar*>& y) { return x.first < y.first; });
                 for (size_t n = 0; n < near_ones.size() && n < 12; ++n)
@@ -17314,7 +17315,7 @@ static void scene_alpha_frame(U64 frame)
                     {
                         text += " " + id;
                     }
-                    LL_INFOS("VkScene") << "animated object " << (n + 1) << " (" << (S32)near_ones[n].first << " m from the agent) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
+                    LL_DIAG("VkScene") << "animated object " << (n + 1) << " (" << (S32)near_ones[n].first << " m from the agent) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
                                         << ", loaded " << ctrl->isFullyLoaded() << ", impostor " << ctrl->isImpostor() << ", textures:" << text << LL_ENDL;
                 }
             }
@@ -17336,7 +17337,7 @@ static void scene_alpha_frame(U64 frame)
                     }
                 }
                 std::sort(near_prims.begin(), near_prims.end(), [](const std::pair<F32, LLVOVolume*>& x, const std::pair<F32, LLVOVolume*>& y) { return x.first < y.first; });
-                LL_INFOS("VkScene") << "prims within 10 m of the agent: " << near_prims.size() << " (the nearest 12 follow)" << LL_ENDL;
+                LL_DIAG("VkScene") << "prims within 10 m of the agent: " << near_prims.size() << " (the nearest 12 follow)" << LL_ENDL;
                 for (size_t n = 0; n < near_prims.size() && n < 12; ++n)
                 {
                     LLVOVolume* vol = near_prims[n].second;
@@ -17355,7 +17356,7 @@ static void scene_alpha_frame(U64 frame)
                         text += " [" + std::to_string(te) + ": " + entry->getID().asString().substr(0, 8) + ", GL " + std::to_string(gl ? gl->getTexName() : 0) + ", " + std::to_string(tex->getComponents()) + " ch"
                             + (vol->mTextureAnimp ? ", texture animation" : "") + (reg != sAlphaTex.end() ? ", registry users " + std::to_string(reg->second.mUsers.size() + reg->second.mGeoUsers.size()) : std::string(", not in the registry")) + "]";
                     }
-                    LL_INFOS("VkScene") << "prim " << (n + 1) << " (" << (S32)near_prims[n].first << " m) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
+                    LL_DIAG("VkScene") << "prim " << (n + 1) << " (" << (S32)near_prims[n].first << " m) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
                                         << (vol->isRoot() ? ", root" : ", linked") << (vol->isAttachment() ? ", attachment" : "") << ", faces:" << text << LL_ENDL;
                 }
             }
@@ -17372,12 +17373,12 @@ static void scene_alpha_frame(U64 frame)
                     }
                     ++found;
                     LLImageTex* gl = ft->getImageTexture();
-                    LL_INFOS("VkScene") << "leaf texture fa39d3ce: GL " << (gl ? gl->getTexName() : 0) << ", " << ft->getFullWidth() << "x" << ft->getFullHeight() << ", discard " << ft->getDiscardLevel()
+                    LL_DIAG("VkScene") << "leaf texture fa39d3ce: GL " << (gl ? gl->getTexName() : 0) << ", " << ft->getFullWidth() << "x" << ft->getFullHeight() << ", discard " << ft->getDiscardLevel()
                                         << (ft->isFetching() ? ", fetching" : "") << ", registry users " << kv.second.mUsers.size() + kv.second.mGeoUsers.size() << ", ready " << (kv.second.mReady ? 1 : 0) << ", registry name " << kv.second.mName << LL_ENDL;
                 }
                 if (!found)
                 {
-                    LL_INFOS("VkScene") << "leaf texture fa39d3ce: not in the alpha registry" << LL_ENDL;
+                    LL_DIAG("VkScene") << "leaf texture fa39d3ce: not in the alpha registry" << LL_ENDL;
                 }
             }
             // the objects the user has selected (a prim of a tree, say): the name the simulator sent, where it stands and the textures of its faces, as the prims above are described. The way to ask
@@ -17414,14 +17415,14 @@ static void scene_alpha_frame(U64 frame)
                                 + ((dynamic_cast<LLVOVolume*>(obj) && dynamic_cast<LLVOVolume*>(obj)->mTextureAnimp) ? ", texture animation" : "")
                                 + (reg != sAlphaTex.end() ? ", registry users " + std::to_string(reg->second.mUsers.size() + reg->second.mGeoUsers.size()) : std::string(", not in the registry")) + "]";
                         }
-                        LL_INFOS("VkScene") << "selected object \"" << node->mName << "\" at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2] << " ("
+                        LL_DIAG("VkScene") << "selected object \"" << node->mName << "\" at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2] << " ("
                                             << (S32)(obj->getPositionAgent() - gAgent.getPositionAgent()).length() << " m), " << (obj->isRoot() ? "root" : "linked") << ", animated object " << (obj->isAnimatedObject() ? 1 : 0)
                                             << ", faces:" << text << LL_ENDL;
                     }
                 }
                 if (!listed)
                 {
-                    LL_INFOS("VkScene") << "selected objects: none" << LL_ENDL;
+                    LL_DIAG("VkScene") << "selected objects: none" << LL_ENDL;
                 }
             }
         }
@@ -18111,7 +18112,7 @@ static void shadow_lod_pump()
             static U32 sweeps = 0;
             if (++sweeps % 10 == 1 || gone_last_holder + gone_unused > 500)
             {
-                LL_INFOS("ShadowLod") << "shadow caster LOD cache sweep: " << gone_unused << " entries unused for 20 s and " << gone_last_holder << " whose buffer only the cache still held went (about " << (freed_bytes >> 20)
+                LL_DIAG("ShadowLod") << "shadow caster LOD cache sweep: " << gone_unused << " entries unused for 20 s and " << gone_last_holder << " whose buffer only the cache still held went (about " << (freed_bytes >> 20)
                                       << " MB of buffers released), " << sSlCache.size() << " entries stay" << LL_ENDL;
             }
         }
@@ -18297,7 +18298,7 @@ bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& cou
     }
     if (asked % 20000 == 0)
     {
-        LL_INFOS("ShadowLod") << "main view rigged LOD: " << asked << " lookups (error levels mm 2/4/8/16/32/64/128: " << levels[1] << "/" << levels[2] << "/" << levels[3] << "/" << levels[4] << "/" << levels[5] << "/" << levels[6]
+        LL_DIAG("ShadowLod") << "main view rigged LOD: " << asked << " lookups (error levels mm 2/4/8/16/32/64/128: " << levels[1] << "/" << levels[2] << "/" << levels[3] << "/" << levels[4] << "/" << levels[5] << "/" << levels[6]
             << "/" << levels[7] << "), " << ready << " ready; triangles asked " << tris_asked << ", of the ready ones " << tris_before << " -> " << tris_after << LL_ENDL;
         asked = ready = tris_asked = tris_before = tris_after = 0;
         for (U64& l : levels) l = 0;
@@ -18352,7 +18353,7 @@ static bool shadow_lod_patches(U32 pass, const std::vector<GeoRange>& draws, siz
     if (++calls % 2400 == 0)
     {
         // (the cache's sweep is in shadow_lod_pump now: it has to run with ray traced shadows too, which never come here)
-        LL_INFOS("ShadowLod") << "shadow caster LOD: " << calls << " cascade passes, entries patched " << patched << " (triangles " << tris_before << " -> " << tris_after << "), queued " << sSlQueued
+        LL_DIAG("ShadowLod") << "shadow caster LOD: " << calls << " cascade passes, entries patched " << patched << " (triangles " << tris_before << " -> " << tris_after << "), queued " << sSlQueued
             << ", waiting for a snapshot slot " << sSlUnready << ", not worth it " << sSlNotWorth << ", cache " << sSlCache.size() << ", pending buffers " << sSlPending.size() << LL_ENDL;
         patched = tris_before = tris_after = 0;
         sSlQueued = sSlUnready = sSlNotWorth = 0;
@@ -18406,7 +18407,7 @@ struct ShadowServed
     U64 mWhy[4] = {}, mByType[128] = {}, mOrphans = 0, mGroups = 0;
     ~ShadowServed()
     {
-        if (!mGroups)
+        if (!mGroups || !ll_diag_on())      // (the counts are for the report below only)
         {
             return;
         }
@@ -18425,7 +18426,7 @@ struct ShadowServed
             // logged every 20000 groups (counted over all jobs): 0 from the fragment, 2 no current fragment (an empty draw map has none: ", with draws" counts the others), 3 a rendered pass type nothing names
             std::string text;
             for (U32 t = 0; t < 128; ++t) { const U64 n = sShadowServed.mByType[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
-            LL_INFOS("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << sShadowServed.mWhy[0].load() << ", no current fragment " << sShadowServed.mWhy[2].load() << " (with draws " << sShadowServed.mOrphans.load()
+            LL_DIAG("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << sShadowServed.mWhy[0].load() << ", no current fragment " << sShadowServed.mWhy[2].load() << " (with draws " << sShadowServed.mOrphans.load()
                                    << "), unnamed rendered type " << sShadowServed.mWhy[3].load() << " (types:" << text << ")" << LL_ENDL;
         }
     }
@@ -18702,7 +18703,7 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     }
     if (sChecks % 1200 == 0)
     {
-        LL_INFOS("ShadowPrep") << "check: " << sMismatches << " of " << sChecks << " cascades lacked entries of the serial result; "
+        LL_DIAG("ShadowPrep") << "check: " << sMismatches << " of " << sChecks << " cascades lacked entries of the serial result; "
             << sExtras << " extra entries in total (marks made by the workers)" << LL_ENDL;
     }
 }
@@ -18904,14 +18905,14 @@ static void report_pool_draws()
             }
             if (total > 0.0)
             {
-                LL_INFOS("DeferredDraws") << (cube ? "probe " : "main view ") << (post ? "post-deferred" : "deferred") << " draws per frame " << total << ":" << text << LL_ENDL;
+                LL_DIAG("DeferredDraws") << (cube ? "probe " : "main view ") << (post ? "post-deferred" : "deferred") << " draws per frame " << total << ":" << text << LL_ENDL;
             }
         }
     }
     if (gGeometryPacketStats.mRecords)
     {
         const LLGeometryPacketStats& g = gGeometryPacketStats;
-        LL_INFOS("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
+        LL_DIAG("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
             << " draws a record cannot carry (not drawn), " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
     }
     gGeometryPacketStats = LLGeometryPacketStats();
@@ -18974,7 +18975,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 handles[kind] += getCull() ? getCull()->mGeoHandles.size() : 0;
                 if (++prepares[kind] % 3000 == 0)
                 {
-                    LL_INFOS("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << "; fragments listed per prepare: main " << (double)handles[0] / std::max<U64>(prepares[0], 1)
+                    LL_DIAG("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << "; fragments listed per prepare: main " << (double)handles[0] / std::max<U64>(prepares[0], 1)
                         << ", probe " << (double)handles[1] / std::max<U64>(prepares[1], 1) << ", impostor " << (double)handles[2] / std::max<U64>(prepares[2], 1) << LL_ENDL;
                 }
             }
@@ -22341,7 +22342,7 @@ static void rt_uv_transform(const LLMatrix4* anim_in, const LLGLTFMaterial::Text
         if (seen++ < 8 || seen % 20000 == 0)
         {
             const F32* r = (const F32*)anim_in->mMatrix;
-            LL_INFOS("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
+            LL_DIAG("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
                                 << r[4] << "," << r[5] << "); " << (fix ? "the matrix of this moment is used: scale " : "kept as is: scale ") << anim->mMatrix[0][0] << "," << anim->mMatrix[1][1] << " offset " << anim->mMatrix[3][0] << ","
                                 << anim->mMatrix[3][1] << " (" << seen << " uses)" << LL_ENDL;
         }
@@ -22412,7 +22413,7 @@ static void shadow_alpha_push_windows(std::vector<LLVkBridge::ShadowAlphaEntry>&
     sWindowEntries += windows;
     if (++sWindowBatches % 2000 == 1)
     {
-        LL_INFOS("ShadowDraws") << "texture windows: batches of more than " << width << " textures made as one entry for each window, so far " << sWindowBatches.load() << " batches, " << sWindowEntries.load() << " entries" << LL_ENDL;
+        LL_DIAG("ShadowDraws") << "texture windows: batches of more than " << width << " textures made as one entry for each window, so far " << sWindowBatches.load() << " batches, " << sWindowEntries.load() << " entries" << LL_ENDL;
     }
 }
 
@@ -22592,7 +22593,7 @@ static LLViewerTexture* shadow_gltf_entry_parts(const LLVertexBuffer* vb, const 
     e.mFlags = flags;
     if (++sGltfCalls % 200000 == 0)
     {
-        LL_INFOS("ShadowDraws") << "glTF casters made as alpha entries, so far: opaque " << sGltfOpaque.load() << ", mask " << sGltfMask.load() << ", blend " << sGltfBlend.load() << " (double sided " << sGltfDouble.load()
+        LL_DIAG("ShadowDraws") << "glTF casters made as alpha entries, so far: opaque " << sGltfOpaque.load() << ", mask " << sGltfMask.load() << ", blend " << sGltfBlend.load() << " (double sided " << sGltfDouble.load()
             << ", with a base colour transform " << sGltfTexmat.load() << ")" << LL_ENDL;
     }
     return tex;
@@ -25920,7 +25921,7 @@ bool pass_uni_enabled()
             if ((int)phase != last)
             {
                 last = (int)phase;
-                LL_INFOS("VkScene") << "[phase] pass uniform skip now " << (phase ? "ON" : "off") << LL_ENDL;
+                LL_DIAG("VkScene") << "[phase] pass uniform skip now " << (phase ? "ON" : "off") << LL_ENDL;
             }
             on = on && phase;
         }
@@ -26227,7 +26228,7 @@ void ll_pass_uni_log()
     {
         if (sPU.mVerBy[i]) by_ver += std::string(i < 16 ? " id" : " val") + std::to_string(i % 16) + " " + std::to_string(sPU.mVerBy[i]);
     }
-    LL_INFOS("VkScene") << "[PassUni] per frame over " << (U32)frames << " frames: Fast calls " << sPU.mCalls / frames << ", skipped " << sPU.mHits / frames << " (of which " << sPU.mPartial / frames << " rebind " << sPU.mUnitsRebound / frames << " units)" << ", filled " << sPU.mFull / frames
+    LL_DIAG("VkScene") << "[PassUni] per frame over " << (U32)frames << " frames: Fast calls " << sPU.mCalls / frames << ", skipped " << sPU.mHits / frames << " (of which " << sPU.mPartial / frames << " rebind " << sPU.mUnitsRebound / frames << " units)" << ", filled " << sPU.mFull / frames
         << " (cold " << sPU.mMissCold / frames << ", state changed " << sPU.mMissVer / frames << "), skip off " << sPU.mMissOff / frames
         << "; units rebound by sampler:" << by_unit << "; state changes by field:" << by_ver << "; verified " << sPU.mVerified << " mismatches " << sPU.mMismatch
         << "; alpha pool material setters (spec / env / brightness per draw): made " << gPassUniAlphaMade / frames << " skipped " << gPassUniAlphaSkipped / frames << " per frame, verify mismatches " << gPassUniAlphaMismatch << LL_ENDL;
@@ -29999,9 +30000,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LLVkBridge::shadowPackets(res_header, res_planes, sizeof(res_planes));
             if (++sAlphaResCalls % 2400 == 0)
             {
-                LL_INFOS("VkScene") << "resident alpha casters, viewer: per cascade pass " << (double)sAlphaResKept[2] / 2400.0 << " builder entries left to the worker, " << (double)sAlphaResKept[0] / 2400.0
+                LL_DIAG("VkScene") << "resident alpha casters, viewer: per cascade pass " << (double)sAlphaResKept[2] / 2400.0 << " builder entries left to the worker, " << (double)sAlphaResKept[0] / 2400.0
                     << " kept (no resident fragment has the entry), " << (double)sAlphaResKept[1] / 2400.0 << " kept (its fragment has no rows yet)" << LL_ENDL;
-                LL_INFOS("VkScene") << "resident alpha casters, why not resident (a pass): unknown (no fragment has the vertex buffer) " << (double)sAlphaResWhy[0] / 2400.0 << ", fragment has a fallback draw " << (double)sAlphaResWhy[1] / 2400.0
+                LL_DIAG("VkScene") << "resident alpha casters, why not resident (a pass): unknown (no fragment has the vertex buffer) " << (double)sAlphaResWhy[0] / 2400.0 << ", fragment has a fallback draw " << (double)sAlphaResWhy[1] / 2400.0
                     << ", matrix is not a region's " << (double)sAlphaResWhy[2] / 2400.0 << ", bounds " << (double)sAlphaResWhy[3] / 2400.0 << ", other " << (double)sAlphaResWhy[4] / 2400.0 << LL_ENDL;
                 for (U64& w : sAlphaResWhy) w = 0;
                 sAlphaResKept[0] = sAlphaResKept[1] = sAlphaResKept[2] = 0;
@@ -30124,37 +30125,37 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             const double frames = (double)(frame - st.mLastReport);
             const U64 classified = st.mStaticUntex + st.mRiggedUntex + st.mTextured + st.mGLTF;
-            LL_INFOS("ShadowDraws") << "per frame over " << (U32)frames << " frames: " << st.mPasses / frames << " shadow passes, " << st.mTotalDraws / frames << " draws; static untextured "
+            LL_DIAG("ShadowDraws") << "per frame over " << (U32)frames << " frames: " << st.mPasses / frames << " shadow passes, " << st.mTotalDraws / frames << " draws; static untextured "
                 << st.mStaticUntex / frames << " (vertex buffer changes " << st.mStaticVBChanges / frames << ", distinct vertex buffers summed over passes " << st.mStaticDistinctVB / frames
                 << ", model matrix changes " << st.mStaticMatrixChanges / frames << "), rigged untextured " << st.mRiggedUntex / frames << ", textured " << st.mTextured / frames
                 << ", glTF " << st.mGLTF / frames << ", other " << ((double)st.mTotalDraws - (double)classified) / frames << LL_ENDL;
-            LL_INFOS("ShadowDraws") << "packet table check per frame: " << st.mTablePasses / frames << " static passes, " << st.mTableEntries / frames << " entries (largest pass "
+            LL_DIAG("ShadowDraws") << "packet table check per frame: " << st.mTablePasses / frames << " static passes, " << st.mTableEntries / frames << " entries (largest pass "
                 << st.mTableMax << ", " << (st.mTableMax * 32) / 1024 << " KB at 32 bytes each), distinct buffer pairs " << st.mDistinctPairs / frames << "; entries with: unnamed buffer "
                 << st.mBadNames / frames << ", 32-bit indices " << st.mWideIndices / frames << ", no position " << st.mNoPosition / frames << ", position not first " << st.mPositionNotFirst / frames
                 << ", index range outside the index buffer " << st.mBadRange / frames << ", vertex range outside the vertex buffer " << st.mBadIndexRange / frames
                 << ", no model matrix " << st.mNullMatrix / frames << LL_ENDL;
             if (st.mPacketRecords)
             {
-                LL_INFOS("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
+                LL_DIAG("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
                     << st.mPacketFallback / frames << " draws a record cannot carry (not drawn)" << LL_ENDL;
             }
             if (st.mSkinRecords)
             {
-                LL_INFOS("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
+                LL_DIAG("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
                     << st.mSkinFallback / frames << " draws a record cannot carry (not drawn), " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
             }
-            LL_INFOS("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
+            LL_DIAG("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
             st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
-                LL_INFOS("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
+                LL_DIAG("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
                     << st.mAlphaFallback / frames << " draws a record cannot carry (not drawn), " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
                     << st.mAlphaFragGroups / frames << " groups" << LL_ENDL;
             }
-            LL_INFOS("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
+            LL_DIAG("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
                 << st.mFbRigged / frames << ", more than 4 textures " << st.mFbManyTextures / frames << ", texture matrix " << st.mFbTextureMatrix / frames << "; named to the ray scene instead: glTF opaque "
                 << st.mRtOpaque / frames << ", glTF mask " << st.mRtMask / frames << ", glTF blend " << st.mRtBlend / frames << ", texture matrix " << st.mRtTextureMatrix / frames << " (" << st.mRtRecords / frames << " records)" << LL_ENDL;
-            LL_INFOS("ShadowDraws") << "rigged glTF casters made as record entries per frame: opaque " << (double)sRigGltfEntries[0].exchange(0) / frames << ", mask " << (double)sRigGltfEntries[1].exchange(0) / frames
+            LL_DIAG("ShadowDraws") << "rigged glTF casters made as record entries per frame: opaque " << (double)sRigGltfEntries[0].exchange(0) / frames << ", mask " << (double)sRigGltfEntries[1].exchange(0) / frames
                 << ", blend " << (double)sRigGltfEntries[2].exchange(0) / frames << LL_ENDL;
             st.mFbGLTF = st.mFbLayout = st.mFbRigged = st.mFbManyTextures = st.mFbTextureMatrix = st.mRtOpaque = st.mRtMask = st.mRtBlend = st.mRtTextureMatrix = st.mRtRecords = 0;
             st.mPacketEntries = st.mPacketFallback = st.mPacketRecords = 0;
@@ -30777,7 +30778,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         static U32 reuse_log_frames = 0;
         if (++reuse_log_frames >= 300)
         {
-            LL_INFOS("ShadowReuse") << "far sun shadow cascades: " << sShadowPassesReused << " shadow-map reuses in the last 300 frames" << LL_ENDL;
+            LL_DIAG("ShadowReuse") << "far sun shadow cascades: " << sShadowPassesReused << " shadow-map reuses in the last 300 frames" << LL_ENDL;
             sShadowPassesReused = 0;
             reuse_log_frames = 0;
         }
@@ -30889,7 +30890,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         if (!logged_fit && !gCubeSnapshot && fit_proj != saved_proj)
         {
             logged_fit = true;
-            LL_INFOS("ShadowPrep") << "sun shadow cascades: fitted to the unjittered camera projection (the scene's projection carries the upscaler's jitter)" << LL_ENDL;
+            LL_DIAG("ShadowPrep") << "sun shadow cascades: fitted to the unjittered camera projection (the scene's projection carries the upscaler's jitter)" << LL_ENDL;
         }
     }
 
@@ -30963,7 +30964,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sum += d;
                 if (++checks % 600 == 0)
                 {
-                    LL_INFOS("ShadowPrep") << "shadow fit check: the box from the cull differs from the walk's by " << sum / 600.f << " m on average, " << worst << " m at most (over 600 frames); walk box " << wmin << " .. " << wmax
+                    LL_DIAG("ShadowPrep") << "shadow fit check: the box from the cull differs from the walk's by " << sum / 600.f << " m on average, " << worst << " m at most (over 600 frames); walk box " << wmin << " .. " << wmax
                         << ", cull box " << min << " .. " << max << LL_ENDL;
                     worst = sum = 0.f;
                 }
@@ -31269,7 +31270,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     differs += same ? 0 : 1;
                     if (!same || checks % 1800 == 0)
                     {
-                        LL_INFOS("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
+                        LL_DIAG("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
                             << (same ? "" : " (this one: cascade " + std::to_string(prep.mIndex) + ", visible groups " + std::to_string(vg.size()) + " against " + std::to_string((size_t)(s.endVisibleGroups() - s.beginVisibleGroups()))
                                 + ", drawable groups " + std::to_string(dg.size()) + " against " + std::to_string((size_t)(s.endDrawableGroups() - s.beginDrawableGroups())) + ")") << LL_ENDL;
                     }
@@ -31885,7 +31886,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         wrong += same ? 0 : 1;
                         if (!same || checks % 1800 == 0)
                         {
-                            LL_INFOS("ShadowPrep") << "point cloud check: " << wrong << " of " << checks << " cascades differ from the serial walk" << (same ? "" : " (this one: cascade " + std::to_string(j) + ")") << LL_ENDL;
+                            LL_DIAG("ShadowPrep") << "point cloud check: " << wrong << " of " << checks << " cascades differ from the serial walk" << (same ? "" : " (this one: cascade " + std::to_string(j) + ")") << LL_ENDL;
                         }
                     }
                 }

@@ -82,6 +82,7 @@
 // </FS:Ansariel> [Legacy Bake]
 
 #include <boost/lexical_cast.hpp>
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 LLPointer<LLVOAvatarSelf> gAgentAvatarp = NULL;
 
@@ -1043,13 +1044,16 @@ void LLVOAvatarSelf::idleUpdate(LLAgent &agent, const F64 &time)
         LLVOAvatar::idleUpdate(agent, time);
         idleUpdateTractorBeam();
 
-        monitorBakeSlots();
+        if (ll_diag_on())       // <FS> the bake slot monitor and the periodic GPU readback below are the ears bug hunt (2026-11-14): a texture lookup a frame and a mid-frame GPU flush every 10 s: off unless LL_VK_DIAG
+        {
+            monitorBakeSlots();
+        }
         {
             // <FS> 2026-11-14 (the bake slots that show another texture's image): every 10 s, once the avatar has been in the world for 20 s, the periodic check of the bake slots and the attachment faces that use them,
             // quiet: a line only when a GPU image differs from what was uploaded, a handle map differs or a face holds another texture object. The time of the first such line says when it went wrong
             static F64 next_check = 0.0;
             const F64 now = LLTimer::getElapsedSeconds();
-            if (now >= next_check)
+            if (ll_diag_on() && now >= next_check)
             {
                 next_check = now + 10.0;
                 static const F64 first_check = now + 20.0;
@@ -2550,7 +2554,7 @@ void LLVOAvatarSelf::monitorBakeSlots()
         {
             if (logged++ < 600)
             {
-                LL_INFOS("VkTex") << "bake slot " << baked->mName << " changed: TE id " << (p.mSeen ? p.mTeId.asString().substr(0, 8) : "-") << " -> " << now.mTeId.asString().substr(0, 8)
+                LL_DIAG("VkTex") << "bake slot " << baked->mName << " changed: TE id " << (p.mSeen ? p.mTeId.asString().substr(0, 8) : "-") << " -> " << now.mTeId.asString().substr(0, 8)
                                   << "; the avatar's texture " << (p.mSeen ? p.mTexId.asString().substr(0, 8) : "-") << " GL " << p.mGl << " discard " << p.mDiscard << (p.mMissing ? " MISSING" : "") << " -> "
                                   << now.mTexId.asString().substr(0, 8) << " GL " << now.mGl << " discard " << now.mDiscard << (now.mMissing ? " MISSING" : "")
                                   << "; the floater's lookup by the TE id: " << (now.mTile ? (now.mTile == fetched ? "the same object" : "ANOTHER object") : "none") << " GL " << now.mTileGl << " discard " << now.mTileDiscard
@@ -2681,7 +2685,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
         }
         if (!quiet || differs)
         {
-            LL_INFOS("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold or draw another texture object than the avatar's slot (" << face_differs << " DRAW another one: the face's own texture)" << examples << LL_ENDL;
+            LL_DIAG("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold or draw another texture object than the avatar's slot (" << face_differs << " DRAW another one: the face's own texture)" << examples << LL_ENDL;
         }
     }
 }

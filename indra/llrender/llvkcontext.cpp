@@ -35,6 +35,7 @@ namespace LLVk
 #define LL_VK_INSTANCE_FN(name) PFN_##name name = nullptr;
 #define LL_VK_DEVICE_FN(name) PFN_##name name = nullptr;
 #include "llvkfunctions.inl"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 const char* gDebugProgram = nullptr;
 bool gDeviceLost = false;
@@ -2142,7 +2143,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
                 ++bands[band];
                 if (++seen == 600)
                 {
-                    LL_INFOS("VkPhases") << "GPU time of 600 presented frames: up to 12 ms " << bands[0] << ", to 16.7 " << bands[1] << ", to 25 " << bands[2] << ", to 40 " << bands[3]
+                    LL_DIAG("VkPhases") << "GPU time of 600 presented frames: up to 12 ms " << bands[0] << ", to 16.7 " << bands[1] << ", to 25 " << bands[2] << ", to 40 " << bands[3]
                         << ", to 75 " << bands[4] << ", to 150 " << bands[5] << ", over 150 " << bands[6] << LL_ENDL;
                     memset(bands, 0, sizeof(bands));
                     seen = 0;

@@ -49,6 +49,7 @@
 #include "llvertexbuffer.h"
 #include "llrendertarget.h"
 #include <unordered_set>
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern LL_COMMON_API bool on_main_thread();
 
@@ -2169,13 +2170,13 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
             ++flips;
             if (flips_seen++ < 30)
             {
-                LL_INFOS("VkAlpha") << "alpha mask flag of texture " << mTexId << " changed " << was_mask << " -> " << mIsMask << " at " << w << "x" << h << " (mid-range " << midrangetotal << " of " << length << ")" << LL_ENDL;
+                LL_DIAG("VkAlpha") << "alpha mask flag of texture " << mTexId << " changed " << was_mask << " -> " << mIsMask << " at " << w << "x" << h << " (mid-range " << midrangetotal << " of " << length << ")" << LL_ENDL;
             }
         }
         if (log_timer.getElapsedTimeF32() >= 10.f)
         {
             log_timer.reset();
-            LL_INFOS("VkAlpha") << "alpha analyses " << analyses << ", mask flag changes " << flips << " (totals so far); first analyses " << first_total << " (" << first_mask << " masks), flips after the first analysis " << real_flips << LL_ENDL;
+            LL_DIAG("VkAlpha") << "alpha analyses " << analyses << ", mask flag changes " << flips << " (totals so far); first analyses " << first_total << " (" << first_mask << " masks), flips after the first analysis " << real_flips << LL_ENDL;
         }
     }
 }

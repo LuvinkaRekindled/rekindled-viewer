@@ -111,6 +111,7 @@
 #include "fsareasearch.h" // <FS:Cron> Added to provide the ability to update the impact costs in area search. </FS:Cron>
 #include "llavataractions.h"
 #include "llitemcensus.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern F32 gMinObjectDistance;
 extern bool gAnimateTextures;
@@ -1263,7 +1264,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             batch_total += batch.size();
             if (++runs % 6000 == 0)
             {
-                LL_INFOS("AvLedger") << "attachment loops as pool jobs: " << (double)job_total / runs << " avatars a batch run as jobs (of " << (double)batch_total / runs << " in the batch)" << LL_ENDL;
+                LL_DIAG("AvLedger") << "attachment loops as pool jobs: " << (double)job_total / runs << " avatars a batch run as jobs (of " << (double)batch_total / runs << " in the batch)" << LL_ENDL;
             }
         }
     }
