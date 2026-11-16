@@ -14385,10 +14385,9 @@ void ll_lod_cand_refresh()
     {
         return;
     }
-    static std::vector<F32> bd(1u << 15);
-    static std::vector<U32> bb((1u << 15) / 32 + 1), bc((1u << 15) / 32 + 1);
+    static std::vector<U32> bc((1u << 15) / 32 + 1);
     U32 frame = 0;
-    if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, bd.data(), bb.data(), bc.data(), (U32)bd.size()))
+    if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, nullptr, nullptr, bc.data(), 1u << 15))       // (the change bits only: the distances and the slop bits are the stage 7 compare's)
     {
         sCandBits.assign(bc.begin(), bc.begin() + (t + 31) / 32);
         sCandFrame = frame;

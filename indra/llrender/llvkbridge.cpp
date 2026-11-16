@@ -1913,9 +1913,18 @@ U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop
     {
         return 0;
     }
-    memcpy(distance, gLodDistance.data(), (size_t)gLodTable * 4);
-    memcpy(slop_bits, gLodBits.data(), gLodBits.size() * 4);
-    memcpy(change_bits, gLodChange.data(), gLodChange.size() * 4);
+    if (distance)       // (a reader that wants only some of the three passes null for the rest: the LOD candidates read the change bits alone)
+    {
+        memcpy(distance, gLodDistance.data(), (size_t)gLodTable * 4);
+    }
+    if (slop_bits)
+    {
+        memcpy(slop_bits, gLodBits.data(), gLodBits.size() * 4);
+    }
+    if (change_bits)
+    {
+        memcpy(change_bits, gLodChange.data(), gLodChange.size() * 4);
+    }
     frame = gLodFrame;
     return gLodTable;
 }
