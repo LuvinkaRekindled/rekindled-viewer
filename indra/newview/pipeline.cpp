@@ -9468,7 +9468,7 @@ struct ScChunk
     U32 mTypeMask = 0;                  // the partition types the cascade takes from the set (a bit each)
     U8 mKind[32] = {};                  // by partition type: 2 = rendered by group (the visible groups), 1 = by drawable (the drawable groups), as the replay of a retained set names them
 };
-std::vector<LLSpatialGroup*> sCascSetGroups[4];      // the groups of the covered partitions each sun cascade takes from the worker's set this frame (made on the main thread, read by the cull jobs)
+std::vector<LLSpatialGroup*> sCascSetGroups[6];      // (0 to 3 the sun cascades, 4 and 5 the spot and projector passes) the groups of the covered partitions each sun cascade takes from the worker's set this frame (made on the main thread, read by the cull jobs)
 }
 
 void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, LLForkJoinPool* pool)
@@ -9500,7 +9500,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         prep.mDeferred.clear();
         // <FS> stage 10d (LL_VK_CASC_KEPT=3): a sun cascade with a usable answer from the worker takes the groups of the covered partitions from it (the partitions are then neither replayed nor walked); the others, and a cascade
         // without an answer (the first frames, a request that did not come back), are walked as the shadow culler does: the retained sets of the cascades are not kept in this mode
-        std::shared_ptr<const LLVkBridge::ViewSet> answer = prep.mIndex < 4 ? ll_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex & 3]) : nullptr;
+        std::shared_ptr<const LLVkBridge::ViewSet> answer = prep.mIndex < 6 ? ll_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex]) : nullptr;       // (the spot and projector passes, 4 and 5, take theirs from the set too)
         const bool from_worker = answer != nullptr;
         const bool sets_off = ll_cascade_kept_mode() >= 3;
         U32 type_mask = 0;
@@ -9580,13 +9580,13 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                     set_bits = 0;
                 }
             }
-            if (!sCascSetGroups[prep.mIndex & 3].empty())
+            if (!sCascSetGroups[prep.mIndex].empty())
             {
                 ScChunk& piece = new_chunk(p, nullptr, false, false, { nullptr, 0 });
                 piece.mSetUse = true;
                 piece.mBegin = 0;
-                piece.mEnd = sCascSetGroups[prep.mIndex & 3].size();
-                piece.mSet = (int)(prep.mIndex & 3);
+                piece.mEnd = sCascSetGroups[prep.mIndex].size();
+                piece.mSet = (int)prep.mIndex;
             }
         }
     }
@@ -16084,9 +16084,10 @@ static U64 ll_cascade_request(S32 index, LLCamera& camera, int mode)
 {
     LLVkBridge::CullParams now;
     cull_fill_params(camera, now);
-    now.mPad[0] = mode >= 2 ? 0x300u : 0x100u;
+    const bool spot = index >= 4;       // (a spot or projector pass: no margin, its planes are the light's)
+    now.mPad[0] = (mode >= 2 && !spot) ? 0x300u : 0x100u;
     now.mCornerDist = 0.f;
-    if (mode >= 2)
+    if (mode >= 2 && !spot)
     {
         static float t_scale = 1.f, a_env = -1.f;
         static const bool scaled = [&]() { if (const char* e = getenv("LL_VK_CASC_MARGIN")) { sscanf(e, "%f,%f", &t_scale, &a_env); } return true; }();
@@ -16132,12 +16133,12 @@ U8 ll_cull_slot_part_type(U32 slot)
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra)
 {
     extra.clear();
-    if (ll_cascade_kept_mode() < 3 || index < 0 || index > 3 || gCubeSnapshot)       // (a probe face's cascades are another view: its planes are not the main view's under the same id)
+    if (ll_cascade_kept_mode() < 3 || index < 0 || index > 5 || gCubeSnapshot)       // (a probe face's cascades are another view: its planes are not the main view's under the same id)
     {
         return nullptr;
     }
-    struct Stats { U64 mUsed = 0, mNone = 0, mOld = 0, mRecent = 0; };
-    static Stats st[4];
+    struct Stats { U64 mUsed = 0, mNone = 0, mOld = 0, mPlanes = 0, mRecent = 0; };
+    static Stats st[6];
     Stats& s = st[index];
     std::shared_ptr<const LLVkBridge::ViewSet> a = LLVkBridge::viewSetRead(0x5C00u + (U32)index);
     if (!a)
@@ -16150,6 +16151,17 @@ std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
     {
         ++s.mOld;
         return nullptr;
+    }
+    if (index >= 4)
+    {
+        // a spot or projector pass asks without a margin: its planes only change when the light does, and the answer is used only while the planes are the ones it was asked with (else the pass is walked this frame)
+        LLVkBridge::CullParams planes_now;
+        cull_fill_params(camera, planes_now);
+        if (!cube_params_match(a->mParams, planes_now))
+        {
+            ++s.mPlanes;
+            return nullptr;
+        }
     }
     // the groups whose row was made or changed in the last 3 frames are not in a set made from older rows: the ones the cascade's frustum holds are added (the cascade's own box test, the shadow culler's frustumCheck)
     // (the list of the frame is made once, for all the cascades: the groups of the covered partitions, once each; a cascade then only tests the set's bit and its own frustum)
@@ -16199,7 +16211,7 @@ std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
     ++s.mUsed;
     if (s.mUsed % 600 == 0 && ll_diag_on())
     {
-        LL_INFOS("VkCascKept") << "cascade " << index << " from the worker's set (LL_VK_CASC_KEPT=3): used " << s.mUsed << " times (no answer " << s.mNone << ", too old " << s.mOld << "), " << (double)s.mRecent / (double)s.mUsed << " groups a time from the recent list" << LL_ENDL;
+        LL_INFOS("VkCascKept") << (index < 4 ? "cascade " : "spot or projector pass ") << index << " from the worker's set (LL_VK_CASC_KEPT=3): used " << s.mUsed << " times (no answer " << s.mNone << ", too old " << s.mOld << ", planes differ " << s.mPlanes << "), " << (double)s.mRecent / (double)s.mUsed << " groups a time from the recent list" << LL_ENDL;
     }
     return a;
 }
@@ -16207,7 +16219,7 @@ std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
 void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
 {
     const int mode = ll_cascade_kept_mode();
-    if (mode <= 0 || index < 0 || index > 3 || gCubeSnapshot)
+    if (mode <= 0 || index < 0 || index > 5 || gCubeSnapshot)
     {
         return;
     }
@@ -16217,11 +16229,11 @@ void ll_cascade_view_compare(S32 index, LLCamera& camera, LLCullResult& result)
         return;
     }
     struct Lag { U64 mN = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAge = 0, mAgeMax = 0, mMissing[4] = {}; };
-    static Lag lag[4];
+    static Lag lag[6];
     struct Pending { U32 mFrame = 0; std::vector<U32> mSlots; };
     struct Stats { U64 mCompared = 0, mWalk = 0, mKept = 0, mBoth = 0, mWalkOnly = 0, mKeptOnly = 0, mAsked = 0, mUnanswered = 0; U32 mLastFrame = 0; };
-    static Pending ring[4][6];
-    static Stats stats[4];
+    static Pending ring[6][6];
+    static Stats stats[6];
     const U32 id = 0x5C00u + (U32)index;
     Stats& s = stats[index];
     const std::shared_ptr<const LLVkBridge::ViewSet> a = LLVkBridge::viewSetRead(id);
