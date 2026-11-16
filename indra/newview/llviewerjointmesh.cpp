@@ -63,6 +63,7 @@
 #include <array>
 #include <atomic>
 #include "llappviewer.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern bool gCubeSnapshot;
 
@@ -279,7 +280,7 @@ void LLViewerJointMesh::updatePaletteHistory()
     const U32 total = with_history + without_history;
     if (total % 20000 == 0)
     {
-        LL_INFOS("VkMotion") << "body palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame)" << LL_ENDL;
+        LL_DIAG("VkMotion") << "body palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame)" << LL_ENDL;
     }
 }
 

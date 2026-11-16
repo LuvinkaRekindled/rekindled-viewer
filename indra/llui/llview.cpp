@@ -56,6 +56,7 @@
 #include "lllineeditor.h"
 #include "lltexteditor.h"
 #include "lltextbox.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 static const S32 LINE_HEIGHT = 15;
 
@@ -1562,7 +1563,7 @@ void ui_cache_report(const UiCacheCfg& cfg)
             top += " [verified " + std::to_string(u.mChecked) + " mismatched " + std::to_string(u.mMismatch) + "]";
         }
     }
-    LL_INFOS("UiCache") << "mode " << cfg.mMode << " hz " << cfg.mHz << " (N " << sUiFrame.mN << ", frame " << sUiFrame.mFrameMs << " ms) over " << sUiFrame.mFrames << " frames: units " << sUiUnits.size()
+    LL_DIAG("UiCache") << "mode " << cfg.mMode << " hz " << cfg.mHz << " (N " << sUiFrame.mN << ", frame " << sUiFrame.mFrameMs << " ms) over " << sUiFrame.mFrames << " frames: units " << sUiUnits.size()
                         << ", with a saved segment " << valid << " (" << sUiCacheBytes / 1024 << " KB), not cacheable " << uncacheable << "; per frame: live draws " << sUiFrame.mLiveN / frames << " (" << sUiFrame.mLiveUs / 1000.0 / frames
                         << " ms, recording overhead " << sUiFrame.mRecordOverheadUs / 1000.0 / frames << " ms), replays " << sUiFrame.mReplayN / frames << " (" << sUiFrame.mReplayUs / 1000.0 / frames
                         << " ms), estimated saving " << sUiFrame.mSavedUs / 1000.0 / frames << " ms, verify draws " << sUiFrame.mVerifyUs / 1000.0 / frames << " ms, evictions " << sUiFrame.mEvicted << top << LL_ENDL;
@@ -1729,7 +1730,7 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
                 if (said < 24 && (u.mMismatch <= 2))
                 {
                     ++said;
-                    LL_INFOS("UiCache") << "verify: " << u.mName << " live " << fresh.size() << " bytes against the saved " << u.mBytes.size() << ": "
+                    LL_DIAG("UiCache") << "verify: " << u.mName << " live " << fresh.size() << " bytes against the saved " << u.mBytes.size() << ": "
                                         << LLVkSubStream::describeDifference(u.mBytes.data(), u.mBytes.size(), fresh.data(), fresh.size()) << LL_ENDL;
                 }
             }

@@ -78,6 +78,7 @@
 #include "llwindow.h"
 #include "llvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 #include "fstexturearrivaltrace.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics
@@ -1927,12 +1928,12 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     // <FS> the sampled hash of every level of a BC7 upload, finest first: entered in the registry of recent BC7 levels (so that a level found in a GPU image that was not uploaded to it can be named: id, level,
     // size, discard), and kept by the texture object of a server bake for Show Textures and the periodic check
     std::vector<U64> bc7_level_hashes;
-    if (mRawImage->isCompressed())
+    if (mRawImage->isCompressed() && ll_diag_on())        // (the hashes are the ears bug hunt of 2026-11-14: Show Textures, the periodic check and the BakeTex log: off unless LL_VK_DIAG)
     {
         LLImageBC7::levelHashes(mRawImage, bc7_level_hashes);
         LLImageBC7::registerLevels(bc7_level_hashes, mID.asString().substr(0, 8), mRawDiscardLevel, (U32)mRawImage->getWidth(), (U32)mRawImage->getHeight());
     }
-    if (mFTType == FTT_SERVER_BAKE)
+    if (mFTType == FTT_SERVER_BAKE && ll_diag_on())
     {
         // <FS> what this server bake's texture object is about to upload (the same hash as the BakeTex log of the decode; printed with the bake slot by Show Textures)
         U64 finest = 0;
@@ -1948,7 +1949,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     if (mFTType == FTT_SERVER_BAKE)
     {
         // <FS> a server bake's image was created: the id with the GL name its texture object has now (a loader thread's new image takes the name over a moment later), so a GL name seen in a failing check can be tied to an id
-        LL_INFOS("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
+        LL_DIAG("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
                           << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
     }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);

@@ -148,6 +148,7 @@
 #include "llhudeffectresetskeleton.h"
 #include "llnetmap.h"
 #include "llsidepanelappearance.h"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include "llviewermenufile.h"
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
 
@@ -7612,7 +7613,7 @@ void LLAvatarTable::noteCheck(int which, bool same)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_INFOS("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
+        LL_DIAG("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
             << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << "), overall appearance " << reads[3] / frames << " (" << different[3]
             << "), voice enabled " << reads[4] / frames << " (" << different[4] << "), speaking " << reads[5] / frames << " (" << different[5] << ")" << LL_ENDL;
         for (int k = 0; k < 6; ++k) { reads[k] = different[k] = 0; }
@@ -7738,7 +7739,7 @@ bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_INFOS("AvTable") << "attachment loop gate from the row per frame over " << (U32)frames << " frames: " << reads / frames << " avatars, different from updateCharacter's result " << different / frames << " (" << different << " in this window)" << LL_ENDL;
+        LL_DIAG("AvTable") << "attachment loop gate from the row per frame over " << (U32)frames << " frames: " << reads / frames << " avatars, different from updateCharacter's result " << different / frames << " (" << different << " in this window)" << LL_ENDL;
         reads = different = 0;
     }
     return bit;
@@ -7759,7 +7760,7 @@ bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_INFOS("AvTable") << "name tags per frame over " << (U32)frames << " frames: updated " << ran / frames << ", left out (not in the camera's frustum, no chat) " << skipped / frames << LL_ENDL;
+        LL_DIAG("AvTable") << "name tags per frame over " << (U32)frames << " frames: updated " << ran / frames << ", left out (not in the camera's frustum, no chat) " << skipped / frames << LL_ENDL;
         ran = skipped = 0;
     }
     return open;
@@ -7799,7 +7800,7 @@ void LLAvatarTable::noteActual(const LLVOAvatar* av, U8 actual)
                 }
             }
         }
-        LL_INFOS("AvTable") << "avatar table check, per frame over " << (U32)frames << " frames: " << total / frames << " avatars compared, agree " << sAvTableAgree / frames << ", no row " << sAvTableNoRow / frames << text << LL_ENDL;
+        LL_DIAG("AvTable") << "avatar table check, per frame over " << (U32)frames << " frames: " << total / frames << " avatars compared, agree " << sAvTableAgree / frames << ", no row " << sAvTableNoRow / frames << text << LL_ENDL;
         sAvTableAgree = sAvTableNoRow = 0;
         memset(sAvTableMatrix, 0, sizeof(sAvTableMatrix));
     }
@@ -15089,7 +15090,7 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
             const U32 total = with_history + without_history;
             if (total % 20000 == 0)
             {
-                LL_INFOS("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame); flagged by the palette catcher " << (U32)palette_flagged << LL_ENDL;
+                LL_DIAG("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame); flagged by the palette catcher " << (U32)palette_flagged << LL_ENDL;
             }
         }
     }

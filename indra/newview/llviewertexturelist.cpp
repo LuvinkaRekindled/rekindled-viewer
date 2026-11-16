@@ -80,6 +80,7 @@
 #include "llspatialpartition.h"
 #include "llviewertexturerecs.h"
 #include <algorithm>
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 namespace
 {
@@ -1091,7 +1092,7 @@ void LLViewerTextureList::logSummary()
             }
         }
     }
-    LL_INFOS("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
+    LL_DIAG("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
         << " refused by the server (missing), " << mCreateTextureList.size() << " decoded and waiting to become GL textures, " << mDownScaleQueue.size() << " to downscale; discard bias "
         << LLViewerTexture::sDesiredDiscardBias << "; the viewer counts " << LLImageTex::getTextureBytesAllocated() / (1024 * 1024) << " MB of textures and "
         << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB";
@@ -1171,7 +1172,7 @@ void LLViewerTextureList::logSummary()
         {
             text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
         }
-        LL_INFOS("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
+        LL_DIAG("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
         {
             U64 vk_used2 = 0, vk_budget2 = 0;
             U64 texture_total = 0;
@@ -1179,9 +1180,9 @@ void LLViewerTextureList::logSummary()
             if (LLVkBridge::videoMemory(vk_used2, vk_budget2))
             {
                 const std::string by_consumer = memory_by_consumer_text(texture_total, vk_used2);
-                if (!by_consumer.empty()) LL_INFOS("VkTex") << by_consumer << LL_ENDL;
+                if (!by_consumer.empty()) LL_DIAG("VkTex") << by_consumer << LL_ENDL;
                 const std::string census = LLVkBridge::accelCensus();
-                if (!census.empty()) LL_INFOS("VkTex") << census << LL_ENDL;
+                if (!census.empty()) LL_DIAG("VkTex") << census << LL_ENDL;
             }
         }
     }
@@ -1233,11 +1234,11 @@ void LLViewerTextureList::logSummary()
         std::string boost_text, ft_text;
         for (const auto& kv : by_boost) boost_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
         for (const auto& kv : by_ft) ft_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
-        LL_INFOS("VkTex") << "images with no data and not fetching: " << listed << " (virtual size 0: " << vsize_zero << ", above 0: " << vsize_pos << "; with faces on a diffuse map: " << with_faces << "; a desired discard level set: "
+        LL_DIAG("VkTex") << "images with no data and not fetching: " << listed << " (virtual size 0: " << vsize_zero << ", above 0: " << vsize_pos << "; with faces on a diffuse map: " << with_faces << "; a desired discard level set: "
             << wants_data << "; deleted: " << deleted << "); by boost level" << boost_text << "; by fetched texture type" << ft_text << "; first ones:" << samples << LL_ENDL;
     }
     extern U32 gEarlySortResorts;
-    LL_INFOS("VkTex") << "the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
+    LL_DIAG("VkTex") << "the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }
 
 // <FS> doc/vulkan/EXPIRY-design.md: where the video memory the OS reports goes. Textures are the per-texture sums of the images with a GL texture; the rest are the arena blocks (bytes alive, bytes in use), the
@@ -1483,7 +1484,7 @@ void LLViewerTextureList::updateImages(F32 max_time)
                 LLTextureFetch* fetch = LLAppViewer::getTextureFetch();
                 U64 host_used = 0, host_ours = 0;
                 LLVkBridge::hostMemory(host_used, host_ours);
-                LL_INFOS("ImgMem") << "Vulkan host heap " << host_used / (1024 * 1024) << " MB used by this process (ours " << host_ours / (1024 * 1024) << " MB) | image data " << total / mb << " MB (compressed " << formatted / mb << " MB, raw about " << (total - formatted) / mb << " MB), decode queue " << (decode ? decode->getPending() : 0)
+                LL_DIAG("ImgMem") << "Vulkan host heap " << host_used / (1024 * 1024) << " MB used by this process (ours " << host_ours / (1024 * 1024) << " MB) | image data " << total / mb << " MB (compressed " << formatted / mb << " MB, raw about " << (total - formatted) / mb << " MB), decode queue " << (decode ? decode->getPending() : 0)
                     << ", decoded and waiting to become textures " << mCreateTextureList.size() << ", fetch requests " << (fetch ? fetch->getNumRequests() : 0) << ", textures counted " << LLImageTex::getTextureBytesAllocated() / mb << " MB" << LL_ENDL;
             }
         }

@@ -62,6 +62,7 @@
 
 #include "llenvironment.h"
 #include "glm/gtc/type_ptr.hpp"
+#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
@@ -1169,7 +1170,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 for (size_t k = 0; k < topk.size() && k < 8; ++k) text += " [" + name(topk[k].second) + " " + std::to_string(topk[k].first) + "]";
                 text += "; top transitions:";
                 for (size_t k = 0; k < topt.size() && k < 10; ++k) text += " [" + name(topt[k].second.first) + " > " + name(topt[k].second.second) + " " + std::to_string(topt[k].first) + "]";
-                LL_INFOS("VkScene") << text << LL_ENDL;
+                LL_DIAG("VkScene") << text << LL_ENDL;
             }
         }
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_BEGIN);
@@ -1585,7 +1586,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     {
         const double frames = (double)std::max<U32>(1, gFrameCount - sAlphaScene.mLast);
         sAlphaScene.mLast = gFrameCount;
-        LL_INFOS("VkScene") << "alpha from the scene table, viewer side per frame (main view's passes): " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
+        LL_DIAG("VkScene") << "alpha from the scene table, viewer side per frame (main view's passes): " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served from fragments, " << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served "
             << (double)sAlphaScene.mGlowServed / frames << ", transient " << (double)sAlphaScene.mTrEntries / frames << " draws in " << (double)sAlphaScene.mTrRecords / frames << " records, plan mismatches "
             << sAlphaScene.mMismatch << ", draws not drawn (neither fragment nor transient) " << (double)sAlphaScene.mDropped / frames << "; transient entries made from draw infos (not particle runs) " << (double)sAlphaScene.mTrFromInfo / frames << LL_ENDL;
