@@ -966,6 +966,18 @@ void LLDrawable::movePartition()
     {
         return;     // stage 9 (3.3): a bridge is not in a region partition
     }
+    if (isAvatar())
+    {
+        // stage 9 (avatars): an avatar's drawable is not an entry of a region partition any more (the views list it by the registry, the pick tests it by the registry); what put and updateInGroup did for it
+        // was its extents
+        if (LLPipeline::sAvSink)
+        {
+            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this, nullptr, nullptr, 0 });
+            return;
+        }
+        updateSpatialExtents();
+        return;
+    }
 
     if (LLPipeline::sAvSink)
     {
@@ -1832,7 +1844,7 @@ bool LLSpatialBridge::avatarGateOpen() const
         {
             LLViewerObject* objparent = parent->getVObj();
             av = objparent->mDrawable;
-            LLSpatialGroup* group = av->getSpatialGroup();
+            (void)av;
 
             bool impostor = false;
             bool loaded = false;
@@ -1850,9 +1862,9 @@ bool LLSpatialBridge::avatarGateOpen() const
                 }
             }
 
-            if (!group ||
-                LLDrawable::getCurrentFrame() - av->getVisible() > 1 ||
-                impostor ||
+            // (stage 9, avatars: the avatar's drawable has no region group any more, and its visible stamp counts twice a frame: the gate had asked for a group and for a stamp at most 1 old. The avatar's own listing by the owners'
+            // pass is what LLVOAvatar::isVisible asked above)
+            if (impostor ||
                 !loaded)
             {
                 return false;

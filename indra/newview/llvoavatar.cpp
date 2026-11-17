@@ -8457,7 +8457,7 @@ void LLVOAvatar::updateVisibility()
     }
     else
     {
-        if (!mDrawable->getSpatialGroup() || mDrawable->getSpatialGroup()->isVisible())
+        if (mDrawable->isRecentlyVisible() || ownerListedRecently())      // (stage 9, avatars: marked visible by the last cull, as the avatar's own group was stamped; the idle update runs after LLWorld has counted the frame on, so the stamp of the last cull is one behind: isVisible() would never hold here)
         {
             visible = true;
         }
@@ -11938,12 +11938,17 @@ bool LLVOAvatar::shouldRenderRigged() const
 // related to whether the actual avatar mesh is shown, and isVisible()
 // to whether anything about the avatar is displayed in the scene.
 // Maybe better naming could make this clearer?
+bool LLVOAvatar::ownerListedRecently() const
+{
+    return (U32)LLFrameTimer::getFrameCount() - mOwnerListedFrame <= 1u;
+}
+
 bool LLVOAvatar::isVisible() const
 {
     static LLCachedControl<bool> friends_only(gSavedSettings, "RenderAvatarFriendsOnly", false);
     return mDrawable.notNull()
         && (!mOrphaned || isSelf())
-        && (mDrawable->isVisible() || mIsDummy)
+        && (mDrawable->isVisible() || ownerListedRecently() || mIsDummy)
         && (!friends_only() || isUIAvatar() || isSelf() || isControlAvatar() || isBuddy());
 }
 

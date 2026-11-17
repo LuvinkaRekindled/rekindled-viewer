@@ -5847,6 +5847,7 @@ void LLPipeline::ownersCollect(LLCamera& camera)
             if (!h.hides())
             {
                 o.mFirst.push_back(d);
+                av->mOwnerListedFrame = (U32)LLFrameTimer::getFrameCount();
             }
         }
         if (sAvHiz.size() > alive.size())
@@ -7627,11 +7628,15 @@ bool LLPipeline::sortAccepts(LLDrawable* drawablep)
     }
 
     if (drawablep->isAvatar())
-    { //don't draw avatars beyond render distance or if we don't have a spatial group.
-        if ((drawablep->getSpatialGroup() == NULL) ||
-            (drawablep->getSpatialGroup()->row().distance > LLVOAvatar::sRenderDistance))
+    { //don't draw avatars beyond render distance (stage 9, avatars: the distance of the avatar's own extents' centre to the world camera, not its region group's)
         {
-            return false;
+            const LLVector4a* ex = drawablep->getSpatialExtents();
+            const LLVector3 co = LLViewerCamera::getInstance()->getOrigin();
+            const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
+            if (sqrtf(dx * dx + dy * dy + dz * dz) > LLVOAvatar::sRenderDistance)
+            {
+                return false;
+            }
         }
 
         LLVOAvatar* avatarp = (LLVOAvatar*) drawablep->getVObj().get();

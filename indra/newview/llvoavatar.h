@@ -1211,6 +1211,10 @@ private:
     //--------------------------------------------------------------------
 public:
     bool            isVisible() const;
+    // stage 9 (avatars): the owners' pass (ownersCollect) listed this avatar in the frame it ran or the one before: what the avatar's region group's visible stamp was for isVisible and updateVisibility. The frame counter of
+    // LLFrameTimer (once a frame) is used, not the drawable's visible stamp, which counts twice a frame (the idle update and the display) and is one behind at the cull
+    U32             mOwnerListedFrame = 0;
+    bool            ownerListedRecently() const;
     virtual bool    shouldRenderRigged() const;
     void            setVisibilityRank(U32 rank);
     U32             getVisibilityRank() const { return mVisibilityRank; }
