@@ -1869,6 +1869,43 @@ bool LLSpatialBridge::avatarGateOpen() const
     return true;
 }
 
+void LLSpatialBridge::hizResult(bool occluded)
+{
+    if (occluded)
+    {
+        if (mHizOccludedOnce)
+        {
+            mHizOccluded = true;
+        }
+        mHizOccludedOnce = true;
+        memcpy(mHizVerdictBox, mHizSentBox, sizeof(mHizVerdictBox));
+    }
+    else
+    {
+        mHizOccludedOnce = false;
+        mHizOccluded = false;
+    }
+    mHizVerdictFrame = (U32)LLFrameTimer::getFrameCount();
+}
+
+bool LLSpatialBridge::hizHides() const
+{
+    if (!mHizOccluded || (U32)LLFrameTimer::getFrameCount() - mHizVerdictFrame > 8u)
+    {
+        return false;
+    }
+    const LLVector4a* exts = const_cast<LLSpatialBridge*>(this)->getSpatialExtents();
+    for (int k = 0; k < 3; ++k)
+    {
+        const F32 c = 0.5f * (exts[0][k] + exts[1][k]), h = 0.5f * (exts[1][k] - exts[0][k]);
+        if (fabsf(c - mHizVerdictBox[k]) + h > mHizVerdictBox[3 + k])
+        {
+            return false;       // the bridge has moved out of the box the verdict was made for
+        }
+    }
+    return true;
+}
+
 bool LLSpatialBridge::inViewFor(LLCamera& camera_in)
 {
     if (!gPipeline.hasRenderType(mDrawableType) || !avatarGateOpen())
