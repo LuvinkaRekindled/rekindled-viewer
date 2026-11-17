@@ -1,0 +1,84 @@
+# Thread organization: who owns what (plan, 2026-11-17)
+
+Status: proposal for Adam. Written while the visible-set-owner plan is being finished in another session (stage 11a/9/11b). This plan starts where that one ends and says what the threads look like afterwards, so that each step of the visible-set plan and each later main-thread strip moves work to the right place instead of to "wherever has room".
+Builds on `PLAN-visible-set-owner.md`, `PLAN-statesort-offmain.md`, `PLAN-render-threads.md` (R1-R4), `PLAN-ui-record-cache.md`, `PLAN-avatar-frame-record.md`.
+
+## 1. What the laps say today (no-zones laps, crowd printed, 2026-11-17)
+
+| Thread | Busy | What it does now |
+|---|---|---|
+| Main | 100-101% in every phase (the cap in the turn and the recovery) | the whole viewer: network, object and avatar update, UI, stateSort, shadow prep, lighting, probes, UI draw, and the producer side of the render queue |
+| Render worker | 87 / 73 / 77% (still 1 / turn / still 2; defaults ran 86 / 83 / 86) | records the frame, and still: the table copy and the main view's derive (kind 21, 0.66 ms a submit), the alpha runs (kind 29, 0.62), the resident draw (kind 16, 0.27-0.42) |
+| Derive thread | small | the view requests (cascades, spots, probe faces) and the main derive's publications, on its own table copy |
+| Fork-join pool (7 workers) | about 30% each | motion blend, palette jobs, cull split, shadow prep marks |
+| Streaming (texture decode, mesh, fetch, disk, shader compile), window, audio | background | off the frame path, fine |
+
+GPU use (nvidia-smi, st4-def1): first still 88-93%, turn 65-73%, second still 78-81%. **The first still is already close to the GPU wall; the turn and the recovery are CPU bound.** That is where the 16-25 fps still missing against defaults live, and where this plan pays. A thread plan judged by first stills alone would show nothing (the GPU is the limit there). The gates below use the CPU-bound phases.
+
+The main thread's time (zone lap st1, ms a frame; zones add about 1.2-2.4 ms, so scale by about 0.7): display() 5.9 (stateSort early 1.4, generateSunShadow 1.45, renderDeferredLighting 0.8, render_ui 0.67, renderGeomDeferred 0.55, updateCull 0.4), idle() 2.6 (gObjectList.update 1.27 of which avatar motion 0.74, updateUI 0.34, apparent angles 0.26, regions 0.19, texture fetch dispatch 0.22), probes + snapshots 0.66, geometry stage (rebuildGeom, updateGeom, priority groups, octree moves) about 0.6. The **producer side of the render queue costs only 0.17 ms a frame** (2,300 calls, 70 ns each): the main thread is not limited by talking to the renderer, it is limited by the viewer's own scene work.
+
+## 2. The rule
+
+Every piece of state has exactly one owner thread. Owners talk through immutable, versioned messages in bounded rings (delta rows, view parameters, frame packets, UI records). A thread never reads another thread's live state, and never waits for another thread except at one named join per frame. Work that is needed this frame runs as fork-join on the pool under its owner; work that can be one frame late is a pipeline stage. A stage is done when its work is on a thread with idle time and the lap shows it (thread busy % next to fps, CPU-bound phases).
+
+## 3. The target set of threads
+
+1. **Sim thread (the main thread).** Owns the viewer's live object, drawable, avatar and UI state, the network, input and the window. Per frame it processes messages, updates objects, marks drawables changed, runs UI logic, and ends by publishing: delta rows (exists), the camera and view parameters (early, right after the agent update, so the scene thread can start), the avatar frame records, the light list, the UI records. It never culls, sorts, derives, builds a draw list or a shadow packet. Target about 2-3 ms a frame.
+2. **Scene thread (the derive thread, grown).** Owns the ONE copy of the table, the kept sets, and every derivation from it: the main view, cascades, spots, probe faces, LOD, the sort and batches that stateSort / sortLoops / buildRenderLists make today, the alpha order, the shadow packets, the alpha runs. Fork-joins per view on the pool. Output is an immutable frame packet. It runs overlapped with the rest of the main thread's frame (camera and deltas arrive early; the main thread's UI and lighting setup run while the scene thread derives), so the latency stays at today's one frame. Target about 3 ms.
+3. **Render thread (the worker).** Owns Vulkan: queues, command buffer recording, the bindless slots, the uniform ring, resource lifetimes, submit and present. It takes a finished frame packet and records it. No table, no derive, no culling, no sorting, no alpha ordering. Target 3-4 ms, below the frame time with room, so the GPU is what is waited for. Recording itself can later be split over secondary command buffers on the pool (R3 in PLAN-render-threads).
+4. **The pool (7 workers, unchanged).** Short fork-join kernels called by an owner: motion blend, palette jobs, per-view derive, geometry building chunks. Bigger pools were slower (2026-11-16); do not grow it.
+5. **Streaming and background threads** keep their jobs and stay below the frame threads in priority.
+
+OS settings, once the layout is right: frame threads (sim, scene, render) above normal priority and on their own physical cores (`LL_VK_PIN_MAIN` / `LL_VK_PIN_WORKER` exist and are local only), pool at normal, streaming below normal. Not before: pinning a layout that is wrong only hides it.
+
+## 4. Where each piece goes (the ms are zone-lap numbers, upper bounds)
+
+| Now on | Piece | Goes to | How |
+|---|---|---|---|
+| main | stateSort early, render lists, geometry stage sort part (about 1.4-1.8) | scene thread | visible-set plan stages 9, 11 and PLAN-statesort-offmain: the thread takes the sort and the lists, main only applies deltas |
+| main | generateSunShadow: cascade setup, rebuild, mark job waits, cull split, spot (about 1.45) | scene thread | cascade requests are already on the derive thread; the packets build (shadow static/alpha, about 0.4) moves with them |
+| main | renderDeferredLighting prep: local lights, post-deferred geometry (about 0.8) | scene thread (lists), render (recording) | the light list and the post-deferred list are part of the frame packet |
+| main | probes + snapshots (0.66) | scene (which faces, which probes), render (recording) | probe face requests are on the derive thread already |
+| main | avatar motion batch, completions, blend join, palette jobs (about 1.4 together) | pool, one frame late | launch at the end of frame N, take the result at the start of N+1; pose and attachments move together from one record (PLAN-avatar-frame-record). Needs Adam's eye on avatars, attachments, animesh |
+| main | render_ui + widget draw (about 1.0) | UI logic stays on main; drawing goes to a record cache the render thread replays | PLAN-ui-record-cache |
+| main | geometry build: rebuildGeom, updateGeom, priority groups, the dirty-group scan (0.5-0.8) | pool, by group | one job per group builds its vertex data into staging; main only marks dirty. After the above (the scan is the suspect for the second-still growth) |
+| main | object update, network, UI update, apparent angles, regions | stays | this is what the sim thread is |
+| render | table copy and the main view's derive (kind 21, 0.66 per submit, 2 submits a frame) | scene thread | needs the scene thread's result in the same frame: the render thread waits at one join; measure how often it actually waits |
+| render | alpha runs (kind 29, 0.62 per submit) | scene thread | the order is derived data, not recording |
+| render | resident draw (kind 16) | stays, after checking what part of it is not recording | |
+| derive thread | its own table copy | merged into the scene thread's | one copy, one delta application; the render thread's copy goes with kind 21 |
+
+## 5. Steps, with their gates
+
+- **T0, name the threads and count them.** `SetThreadDescription` on every thread we create; the lap's `.threads.csv` gets the name next to the tid; a per-thread busy summary line per phase. No behaviour change. Without names the thread table is guessing (today it is tids only). Gate: the census prints.
+- **T1, render thread diet.** Kind 21 and kind 29 leave the render thread (the derive and the alpha order to the scene thread); kind 16 is audited. Depends on the visible-set plan being finished (it removes the code paths that still call these). Gate: render thread busy at most 70% in the turn and the second still with the same or better fps; census kinds 21 and 29 gone from the worker.
+- **T2, one table.** The scene thread owns the only table copy; the worker copy and the second delta application go. Gate: memory and delta time down, kept sets equal (the existing compare, run once).
+- **T3, strip the main thread by owner**, in this order: stateSort and shadow prep to the scene thread; lighting lists and probes; the UI record cache; avatars one frame late (stop for Adam's eye); the geometry build to the pool. After each: main busy %, the loop interval, and the GPU use of the turn and second still (CPU-bound phases). Gate per step: the loop interval falls by about the zone ms moved, scaled by 0.7, or the step is wrong.
+- **T4, overlap.** Publish the camera and deltas early; the scene thread derives while main finishes its UI. Measure the join wait (render waits for scene, scene waits for main) and keep it under 0.2 ms a frame, or deepen the ring by one frame for that stage only.
+- **T5, priorities and cores.** Only after T1-T4: frame threads up, streaming down, pinning as a test, never as a default without a lap.
+
+## 6. What to expect, honestly
+
+- The first still will not move much: it is already at 88-93% GPU use. The gain is in the turn and the recovery (65-81% GPU use today, the 16-25 fps gap), in headroom (more avatars, ray tracing on without the CPU becoming the limit), and in the 1% lows.
+- If main falls from about 6 ms to about 3 ms and the render thread from 5 to 3.5, the CPU stops being the limit in every phase and the GPU is. After that the GPU passes are the topic (PLAN-async-compute).
+- Latency stays at one frame if the scene thread is overlapped (T4); it grows by one frame only for avatars (T3, deliberately).
+
+## 7. Risks and what I do not know
+
+- The same-frame join between the render thread and the scene thread for the main view's draw list is the hard edge. If the scene thread is late, the render thread waits and the gain shrinks. Measure the wait before moving kind 21; the fallback is the recent list (one frame old) with a conservative margin, which Adam must judge by eye.
+- One frame late avatars: pose and attachment must come from one record or attachments swim.
+- Geometry build on the pool needs per-group double buffering of staging; drawables are main-thread objects, so a group must not be touched by main while its job runs. The dirty bit protocol is not designed yet.
+- `idle()` also hides costs I have not split (texture bookkeeping, regions, the UI update). T0's names plus a zone lap after T3 will show what is left; this plan does not claim the main thread reaches 3 ms, only that nothing on the list above has to stay there.
+- The zone numbers are from zone laps (timers cost 1.2-2.4 ms a frame); the busy percentages and the GPU use are from no-zones laps.
+
+## 8. The frame join: options (2026-11-17, discussed with Adam)
+
+The join is the render thread needing the main view's draw list for frame N from the scene thread before it can record frame N. In the order to try them:
+
+1. **Ask early, wait late.** The main view's derive request goes out at the start of `display()`, before shadows and probes, and the render thread only waits when it reaches the G-buffer pass. The shadow work (1.5 to 2 ms of render-thread time) covers the derive. No visual change. Measure the actual wait first (T0 counts it).
+2. **Make the synchronous part cheaper.** The verdict pass fork-joined on the pool or run on the scene thread instead of serially on the render thread; a hierarchical or incremental visible set makes the cost follow what changed, not the table size. Combines with every other option.
+3. **Conservative list from the earlier camera, exact cut on the GPU.** The scene thread derives from the previous frame's camera widened by predicted camera motion; deltas stay current, so new objects are never missed; the GPU trims with the current camera. Nothing waits. The turn is the hard case (fast rotation needs a big margin and a bigger list). Not checked: whether the main view's G-buffer draws have a GPU frustum cull today (Hi-Z rows are off), so this may mean building one.
+4. **Late latching.** With 3, the render thread patches the newest camera matrices into the frame uniforms just before submit: the list is a frame old, the picture uses the latest camera, input latency does not grow.
+5. **Stream the list in chunks** (per partition, the render thread starts on the first while the rest derive). Removes most of the wait, most complex; only if 1 to 4 are not enough.
+
+Decision: do 1 and 2 first and read the measured wait. Only if it stays above about 0.2 ms a frame go to 3 and 4; those need Adam's eye in the turn (pop-in at the screen edges).
