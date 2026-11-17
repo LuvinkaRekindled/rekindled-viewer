@@ -11136,6 +11136,15 @@ static bool scene_fragment_behind(const LLSceneFragment* f)
 // stage 5 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_OWN=1): the fragments the CPU's consumers of the main view's visible set serve; the render map's exact list for every other view and a run without the switch (defined with the group table, below)
 const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull);
 
+// T7 of doc/vulkan/PLAN-visible-set-owner.md: the consumers' list by kind. The bump images, the moving matrices and the rigged bindings each walked every handle of the list to find the few fragments that have that work (12 to 13 percent
+// of the handles carry any). The list is classified once, when it is made (the fragments' own vectors say which kind), and the consumers walk the kind they serve. The order of the list is kept in each kind.
+struct LLConsumerKinds
+{
+    std::vector<U32> mBump, mMoving, mRigged;
+};
+static const LLConsumerKinds& ll_scene_consumer_kinds(LLCullResult* cull);
+static U32 sConsumerListGen = 0;        // counts the times the main view's consumers' list was made again
+
 // J1 K2b: the served RIGGED items of the main view that postSort left out of the render map (the same set collect_main_view_draw_infos adds from the fragments), as their sources: the avatar and the skin, the
 // buffer and the range, with no draw info read. The pointers are into the fragments' own vectors (valid until the fragment is made again: the same life as the draw infos' pointers had).
 static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSource*>& out)
@@ -11167,13 +11176,9 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
         {
             l.clear();
         }
-        for (U32 handle : listed)
+        for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
         {
-            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f)
-            {
-                continue;
-            }
+            const LLSceneFragment* f = sGeoFragByHandle[handle];
             // every served item (2026-11-12: not only those of a group whose draws of the type are all served: the render map list that named the others is gone)
             for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
             {
@@ -13345,6 +13350,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     key_frame = (U32)gFrameCount;
     key_serial = cull->mListSerial;
     key_bridges = sMainListedBridgeGroups.size();
+    ++sConsumerListGen;
     out.clear();
     if (seen_stamp.size() < sGeoFragByHandle.size() + 1)
     {
@@ -13377,6 +13383,52 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         }
     }
     return out;
+}
+
+static const LLConsumerKinds& ll_scene_consumer_kinds(LLCullResult* cull)
+{
+    static LLConsumerKinds kinds;
+    static LLCullResult* key_cull = nullptr;
+    static U64 key_frame = ~0ull, key_epoch = ~0ull;
+    static const U32* key_data = nullptr;
+    static size_t key_size = ~(size_t)0;
+    static U32 key_serial = 0, key_gen = 0;
+    const std::vector<U32>& list = ll_scene_consumer_handles(cull);
+    if (cull && key_cull == cull && key_frame == gFrameCount && key_epoch == sGeoItemsEpoch.load() && key_data == list.data() && key_size == list.size() && key_serial == cull->mListSerial && key_gen == sConsumerListGen)
+    {
+        return kinds;
+    }
+    key_cull = cull;
+    key_frame = gFrameCount;
+    key_epoch = sGeoItemsEpoch.load();
+    key_data = list.data();
+    key_size = list.size();
+    key_serial = cull ? cull->mListSerial : 0;
+    key_gen = sConsumerListGen;
+    kinds.mBump.clear();
+    kinds.mMoving.clear();
+    kinds.mRigged.clear();
+    for (U32 handle : list)
+    {
+        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
+        if (!f)
+        {
+            continue;
+        }
+        if (!f->mBump.empty())
+        {
+            kinds.mBump.push_back(handle);
+        }
+        if (!f->mGeoMoving.empty())
+        {
+            kinds.mMoving.push_back(handle);
+        }
+        if (!f->mGeoRigged.empty())
+        {
+            kinds.mRigged.push_back(handle);
+        }
+    }
+    return kinds;
 }
 
 // stage 8, owner 3 (LL_VK_LOD_CAND=1): the worker's change set (the whole answer of changeLOD() per slot) against the sort's own answer for each group it looks at.
@@ -14715,10 +14767,10 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
     std::shared_ptr<GeoBindJob> job = std::make_shared<GeoBindJob>();
     job->mCull = cull;
     job->mFrame = gFrameCount;
-    for (U32 handle : ll_scene_consumer_handles(cull))
+    for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
     {
-        const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-        if (!f || scene_fragment_behind(f))
+        const LLSceneFragment* f = sGeoFragByHandle[handle];
+        if (scene_fragment_behind(f))
         {
             continue;
         }
@@ -14856,19 +14908,15 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
     }
     const std::vector<U32>& handles = cull->mGeoHandles;                              // the render map's exact list: what the record names (the worker compares its own derive with it)
-    const std::vector<U32>& consumers = ll_scene_consumer_handles(cull);             // stage 5: what the CPU's consumers serve (the exact list unless LL_VK_CULL_OWN=1 and this is the main view)
+    const LLConsumerKinds& kinds = ll_scene_consumer_kinds(cull);             // T7: what the CPU's consumers serve, by kind (the late list classified once; the exact list in a view that is not the main view)
     {
         // J1 K4: the bump images of the listed fragments' bump items are made current here (a render pass inside, before the passes), as the old pass did for each draw it drew
         LL_CPU_ZONE("deferred: bump images");
-        for (U32 handle : consumers)
+        for (U32 handle : kinds.mBump)
         {
-            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (f && !f->mBump.empty())
+            for (const LLSceneFragment::BumpSource& b : sGeoFragByHandle[handle]->mBump)
             {
-                for (const LLSceneFragment::BumpSource& b : f->mBump)
-                {
-                    LLDrawPoolBump::refreshBumpImage(b.mCode, b.mTexture.get());
-                }
+                LLDrawPoolBump::refreshBumpImage(b.mCode, b.mTexture.get());
             }
         }
     }
@@ -14892,13 +14940,9 @@ void ll_scene_geo_frame(LLCullResult* cull)
                 }
             }
         };
-        for (U32 handle : consumers)
+        for (U32 handle : kinds.mMoving)
         {
-            const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (f)
-            {
-                send_moving(f);
-            }
+            send_moving(sGeoFragByHandle[handle]);
         }
         // S5g (blink hunt 2026-10-22): the alpha pass draws groups that have no deferred draw (fire prims, foliage: alpha only), which the G-buffer list above does not name: their moving matrices (texture
         // animation, moving objects) are sent too, else the alpha runs use the values some earlier occupant of the slot left
@@ -14963,10 +15007,10 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
         sBindJob.reset();
         if (!from_job)       // (else they were made on the pool)
-        for (U32 handle : consumers)
+        for (U32 handle : kinds.mRigged)
         {
-            LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-            if (!f || f->mGeoRigged.empty() || scene_fragment_behind(f))
+            LLSceneFragment* f = sGeoFragByHandle[handle];
+            if (scene_fragment_behind(f))
             {
                 continue;
             }
@@ -15005,13 +15049,9 @@ void ll_scene_geo_frame(LLCullResult* cull)
         {
             static U64 asked = 0, chosen = 0, mismatch = 0, tris_all = 0, tris_lod = 0;
             size_t at = 0;
-            for (U32 handle : consumers)
+            for (U32 handle : kinds.mRigged)
             {
-                const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-                if (!f)
-                {
-                    continue;
-                }
+                const LLSceneFragment* f = sGeoFragByHandle[handle];
                 for (size_t rk = 0; rk < f->mGeoRigged.size(); ++rk)
                 {
                     const U32 index = f->mGeoRigged[rk];
@@ -25050,13 +25090,9 @@ static void rt_name_rigged_main_view()
             // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
             if (LLCullResult* cull = gPipeline.getCull())
             {
-                for (U32 handle : ll_scene_consumer_handles(cull))
+                for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
                 {
-                    const LLSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-                    if (!f)
-                    {
-                        continue;
-                    }
+                    const LLSceneFragment* f = sGeoFragByHandle[handle];
                     for (const GeoRigSource& rig : f->mGeoRiggedSrc)
                     {
                         // (J1 K6 R1: the served rigged items are named from their sources, no draw info read)
