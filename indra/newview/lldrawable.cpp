@@ -1128,10 +1128,6 @@ bool LLDrawable::updateMoveDamped()
     return done_moving;
 }
 
-// <FS> LL_VK_SORT_CHANGE (doc/vulkan/PLAN-change-driven-sort.md): bit 1 = T1, no distance for the objects that nothing reads it for. Default off.
-static const U32 sSortChange = []{ const char* e = getenv("LL_VK_SORT_CHANGE"); return e ? (U32)atoi(e) : 0u; }();
-static std::atomic<U64> sSortChangeSkipped{ 0 };
-
 void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
@@ -1213,14 +1209,10 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
         }
         else
         {
-            // <FS> LL_VK_SORT_CHANGE bit 1 (T1): an object nothing reads the distance of gets neither the distance nor the OBJECT_LOD delta nor updateLOD (the classes that say so: usesDistance)
-            if ((sSortChange & 1u) && mVObjp && !mVObjp->usesDistance())
+            // <FS> T6 of doc/vulkan/PLAN-visible-set-owner.md (the old T1 of PLAN-change-driven-sort.md, no longer behind LL_VK_SORT_CHANGE): an object nothing reads the distance of gets neither the distance nor the OBJECT_LOD effect nor
+            // updateLOD: the classes that say so (usesDistance: the particle groups, the sky, the surface patches, the water, the WL sky). They were 247 of the 266 object LOD effects a sort (lap ef2-def1, 93 percent; the particle groups 214).
+            if (mVObjp && !mVObjp->usesDistance())
             {
-                const U64 n = sSortChangeSkipped.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (n % 150000 == 0)
-                {
-                    LL_INFOS("SortChange") << "T1: " << n << " distance updates of drawables nobody reads skipped so far" << LL_ENDL;
-                }
                 return;
             }
             pos = LLVector3(getPositionGroup().getF32ptr());
