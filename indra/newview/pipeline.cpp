@@ -5878,6 +5878,31 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         }
     }
     std::stable_sort(ready.begin(), ready.end(), [](LLSpatialBridge* a, LLSpatialBridge* b) { return a->getSpatialGroup() < b->getSpatialGroup(); });
+    // stage 9, 3.1: the bridge's LOD decision is its own (it was its region group's changeLOD()): the distance of its extents' centre to the camera (the ramp under 16 m as calcDistance has it), the slop test against the distance of
+    // its last update (the partition's ratio 0.25 over the larger of that and its radius), the round robin of the partition's period 16 (the bridge's own turn: the groups' hashes were independent of it, the rate is the same: the compare
+    // over 33,000 sorts had the group saying yes for 13.1 and this rule for 13.0 of 208 listed bridges a sort, the overlap the chance of two round robins), and a changed field of view; a first sort always updates
+    {
+        const bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+        const U32 frame_now = (U32)LLViewerOctreeEntryData::getCurrentFrame();
+        const LLVector3 co = camera.getOrigin();
+        for (LLSpatialBridge* b : ready)
+        {
+            const LLVector4a* ex = b->getSpatialExtents();
+            const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
+            F32 d = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (d < 16.f)
+            {
+                d = d / 16.f * d / 16.f * 16.f;
+            }
+            const F32 last = b->mLodDistance;
+            const bool yes = last == 0.f || fov_changed || fabsf(d - last) / llmax(last, b->getRadius()) >= 0.25f || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
+            b->mLodUpdate = yes;
+            if (yes)
+            {
+                b->mLodDistance = d;
+            }
+        }
+    }
     for (LLSpatialBridge* b : ready)
     {
         o.mFirst.push_back(b);
@@ -6802,9 +6827,16 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         if (view.mWorldCameraID && !view.mCubeSnapshot)
         {
             LLCullResult::bridge_iterator bridges = read.beginVisibleBridge();
+            if (sOwnerA)
+            {
+                for (U32 k = 0; k < n_br; ++k)
+                {
+                    do_distance[k] = !bridges[k]->isDead() && bridges[k]->mLodUpdate;        // (stage 9, 3.1: decided in ownersCollect by the bridge's own rule)
+                }
+            }
             LLSpatialGroup* last_group = NULL;
             const bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
-            for (U32 k = 0; k < n_br; ++k)
+            for (U32 k = 0; !sOwnerA && k < n_br; ++k)
             {
                 LLSpatialBridge* bridge = bridges[k];
                 LLSpatialGroup* group = bridge->getSpatialGroup();
@@ -6823,7 +6855,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
                 }
                 last_group = group;
             }
-            if (last_group && last_group->changeLOD())
+            if (!sOwnerA && last_group && last_group->changeLOD())
             {
                 sort_journal_group(last_group);
                 last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
@@ -7172,39 +7204,56 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("WorldCamera");
         LL_CPU_ZONE("stateSort: visible bridges");
-        LLSpatialGroup* last_group = NULL;
-        bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
-        for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
+        if (sOwnerA)
         {
-            LLCullResult::bridge_iterator cur_iter = i;
-            LLSpatialBridge* bridge = *cur_iter;
-            LLSpatialGroup* group = bridge->getSpatialGroup();
-
-            if (last_group == NULL)
+            // stage 9 (3.1): the main view's bridges decided their LOD in ownersCollect (the bridge's own rule)
+            for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
             {
+                LLSpatialBridge* bridge = *i;
+                if (!bridge->isDead() && bridge->mLodUpdate)
+                {
+                    bool force_update = false;
+                    bridge->updateDistance(camera, force_update);
+                }
+            }
+        }
+        else
+        {
+            LLSpatialGroup* last_group = NULL;
+            bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+            for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
+            {
+                LLCullResult::bridge_iterator cur_iter = i;
+                LLSpatialBridge* bridge = *cur_iter;
+                LLSpatialGroup* group = bridge->getSpatialGroup();
+
+                if (last_group == NULL)
+                {
+                    last_group = group;
+                }
+
+                const U64 vis_b0 = sVisSortOn ? LLVisCensus::now() : 0;
+                if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                {
+                    stateSort(bridge, camera, fov_changed);
+                }
+
+                if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
+                    last_group != group && last_group->changeLOD())
+                {
+                    sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
+                }
+                if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
+
                 last_group = group;
             }
 
-            const U64 vis_b0 = sVisSortOn ? LLVisCensus::now() : 0;
-            if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-            {
-                stateSort(bridge, camera, fov_changed);
-            }
-
             if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
-                last_group != group && last_group->changeLOD())
+                last_group && last_group->changeLOD())
             {
                 sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
             }
-            if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
-
-            last_group = group;
-        }
-
-        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
-            last_group && last_group->changeLOD())
-        {
-            sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
+    
         }
     }
     {

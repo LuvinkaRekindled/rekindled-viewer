@@ -624,6 +624,8 @@ public:
     F32 mHizSentBox[6] = {};        // centre and half size of the box added to the pass (agent space), with the fudge the groups' boxes have
     F32 mHizVerdictBox[6] = {};     // the box the last occluded verdict was made for
     bool mHizOccluded = false;
+    F32 mLodDistance = 0.f;         // stage 9 (3.1): the distance at which the bridge's own LOD rule last said yes (the bridge's own state: its region group no longer decides it)
+    bool mLodUpdate = false;        // the rule's answer of this sort: the bridge's distance and its contents' LOD are updated (ownersCollect makes it; loop (b) reads it)
     U32 mHizVerdictFrame = 0;
     // stage 9: every live bridge (made by the constructor, dropped by the destructor; the main thread makes and destroys them): the bridge owner's list
     static const std::vector<LLSpatialBridge*>& allBridges() { return sAll; }
