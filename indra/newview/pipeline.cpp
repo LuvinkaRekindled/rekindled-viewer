@@ -8048,14 +8048,6 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     }
 }
 
-// <FS> the render map loop of postSort for the main view in chunks over the pool (the cascades' render map job does the same, shadowPrepRenderMap): LL_VK_MAIN_MAP_CHUNK = visible groups a chunk
-// (default 192, 0 = the serial loop).
-static U32 main_map_chunk()
-{
-    static const U32 env_chunk = getenv("LL_VK_MAIN_MAP_CHUNK") ? (U32)atoi(getenv("LL_VK_MAIN_MAP_CHUNK")) : 192;
-    return env_chunk;
-}
-
 // <FS> LL_VK_BLINK=1 (diagnostic, off by default): an avatar that was in the main view's visible list, is missing from it for 1 to 12 frames while its sphere is inside the camera's frustum on every one of those
 // frames, and is back: one line (tag AvBlink) with the avatar, the frame, the gap, how many gap frames its group carried an occluded verdict, its impostor state, the distance and how far the camera moved and
 // turned on the frame it went (the Hi-Z verdict latency blink needs motion; a blink in a still camera is something else). Once a frame on the main thread, a few dozen avatars: no per-frame reads of upload memory.
@@ -8617,6 +8609,7 @@ void LLPipeline::addBeacons()
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
 void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
+static S32 ll_main_listed_tris(LLCullResult* cull);       // T4b-2 (defined with the listing's note, below): the triangles statistic of the main view's list
 static std::unordered_set<const LLSpatialGroup*> sMainFarSkip;       // T4a: the groups of the far avatars' attachments over their budget in the main view (far_avatar_tier), as of the main view's last render map
 void ll_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
@@ -8682,94 +8675,13 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     {
         sCull->mGeoElided = true;
     }
-    // <FS> the main view's map in chunks over the pool: the groups are filtered and rebuilt here first (the rebuilds are GL work), the chunks then only read them and push into results of their
-    // own, which are appended in chunk order (the same lists, the same order). Left serial when a census wants its counters in the loop.
-    bool parallel_map = false;
+    // T4b-2 of doc/vulkan/PLAN-visible-set-owner.md: the main world view makes no render map. Its handles are the worker's derive and the extras the record names (ll_record_extra_handles), its alpha lists come from the alpha set (ll_alpha_set_lists),
+    // its triangles statistic is summed when the main view lists a group (ll_main_listed_note), and its flag that the table serves the draws is set above. The loop below is for the other views (probes, impostors, the HUD, mirrors).
+    if (view.isMainWorldSort())
     {
-        static const U32 min_groups = 256;
-        const U32 chunk_size = main_map_chunk();
-        const U32 n_groups = sCull->getVisibleGroupsSize();
-        if (chunk_size && n_groups >= min_groups && !vis_post && !cascade_cull_active && !LLGpuZoneTimer::isActive()
-            && view.isMainWorldSort())
-        {
-            LLForkJoinPool* pool = LLForkJoinPool::shared();
-            if (pool)
-            {
-                parallel_map = true;
-                LL_CPU_ZONE("render lists: render map (chunks)");
-                ll_scene_geo_type_number(0);        // (makes the lookup table once, on this thread)
-                struct MapChunk { U32 mBegin, mEnd; LLCullResult* mLocal; U64 mElideGroups = 0, mElideTypes = 0, mElideWhole = 0, mElideTris = 0; S32 mIndices = 0; };
-                static std::vector<std::unique_ptr<LLCullResult>> locals;
-                std::vector<MapChunk> chunks;
-                for (U32 b = 0; b < n_groups; b += chunk_size)
-                {
-                    const size_t c = chunks.size();
-                    if (locals.size() <= c)
-                    {
-                        locals.push_back(std::make_unique<LLCullResult>());
-                    }
-                    locals[c]->clear();
-                    chunks.push_back({ b, std::min(n_groups, b + chunk_size), locals[c].get() });
-                }
-                LLCullResult::sg_iterator visible_groups = sCull->beginVisibleGroups();
-                const bool no_far_skip = far_skip.empty();
-                const std::function<void(size_t)> map_job = [&](size_t c)
-                {
-                    ViewScope view_scope(view);
-                    MapChunk& chunk = chunks[c];
-                    LLCullResult& local = *chunk.mLocal;
-                    for (U32 gi = chunk.mBegin; gi < chunk.mEnd; ++gi)
-                    {
-                        LLSpatialGroup* group = visible_groups[gi];
-                        if (group->isDead()
-                            || (view.mUseOcclusion && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                            || (RenderAutoHideSurfaceAreaLimit > 0.f && group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
-                        {
-                            continue;
-                        }
-                        if (!no_far_skip && far_skip.count(group))
-                        {
-                            continue;
-                        }
-                        chunk.mIndices += (S32)(ll_group_draw_tris(group) * 3);        // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
-                        if (geo_list && group->mGeoHandle)
-                        {
-                            local.mGeoHandles.push_back(group->mGeoHandle);
-                            if (geo_elide && group->mGeoServedTris)
-                            {
-                                ++chunk.mElideGroups;
-                                chunk.mElideTris += group->mGeoServedTris;
-                            }
-                            if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
-                            {
-                                ++chunk.mElideWhole;
-                                continue;
-                            }
-                        }
-                        // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the table draws every type, the statistic below comes from the fragment. The main view's alpha lists are not made here: ll_alpha_set_lists)
-                    }
-                };
-                { LL_CPU_ZONE("render lists: render map job (wait for the pool)"); pool->runLabeled("postSort: render map (main view)", chunks.size(), map_job); }
-                {
-                    LL_CPU_ZONE("render lists: render map join");
-                    S32 indices = 0;
-                    for (MapChunk& chunk : chunks)
-                    {
-                        LLCullResult& from = *chunk.mLocal;
-                        sCull->mGeoHandles.insert(sCull->mGeoHandles.end(), from.mGeoHandles.begin(), from.mGeoHandles.end());
-                        sGeoElideGroups += chunk.mElideGroups;
-                        sGeoElideTypes += chunk.mElideTypes;
-                        sGeoElideWhole += chunk.mElideWhole;
-                        sGeoElideTris += chunk.mElideTris;
-                        indices += chunk.mIndices;
-                    }
-                    addTrianglesDrawn(indices);
-                }
-            }
-        }
+        addTrianglesDrawn(ll_main_listed_tris(sCull));
     }
-    // (the serial loop below does nothing when the chunks made the map: its range is empty)
-    const LLCullResult::sg_iterator serial_end = parallel_map ? sCull->beginVisibleGroups() : sCull->endVisibleGroups();
+    const LLCullResult::sg_iterator serial_end = view.isMainWorldSort() ? sCull->beginVisibleGroups() : sCull->endVisibleGroups();
     for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != serial_end; ++i)
     {
         LLSpatialGroup *group = *i;
@@ -12946,6 +12858,8 @@ std::vector<U32> sAlphaSlots;
 std::vector<U32> sAlphaPos;                         // slot -> its index in sAlphaSlots (~0u: not a member)
 std::vector<LLSpatialGroup*> sMainListedBridgeGroups;      // the groups of the bridges' octrees the main view's visible list of build sMainListedBridgeSerial listed (a by-product of the listing: ll_main_listed_note)
 U32 sMainListedBridgeSerial = 0;
+S32 sMainTris = 0;                                  // the triangles statistic of the main view's visible list of build sMainTrisSerial (the indices of every draw of each group the render map would have kept), summed as the groups are listed
+U32 sMainTrisSerial = 0;
 std::vector<U32> sMainListed;                       // slot -> the build (LLCullResult::mListSerial) of the main view's visible group list that listed the group: asked before the group is touched (the impostor, shadow and probe passes stamp row().visible without listing a group in the main view's list)
 static void alpha_index_set(U32 slot, bool member)
 {
@@ -13382,6 +13296,8 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
 // do not need this frame's exact list: they need a superset a frame old, the worker draws from its own derive. With LL_VK_CULL_OWN=1 they serve: the worker's late list (its derive with the motion margin, no occlusion cut,
 // about a frame old), the fragments whose handle appeared in the last three frames (a new fragment cannot be in a list made before its row: its own data is made at once), and the groups of the bridges the walk marked this frame
 // (exact: the CPU's own result). Without the switch, in a view that is not the main view, or while no late list has come, it is the render map's exact list.
+static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window);       // (below, with the record's preparation)
+
 const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
 {
     static const std::vector<U32> none;
@@ -13394,52 +13310,30 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         return cull->mGeoHandles;
     }
     static std::vector<U32> out;
+    static std::vector<U32> extras;
     static std::vector<U32> seen_stamp;      // by fragment handle: the stamp of the frame that named it (nothing is cleared a frame)
     static U32 cur_stamp = 0;
     static LLCullResult* key_cull = nullptr;
-    static U32 key_frame = ~0u;
-    static size_t key_exact = 0, key_groups = 0;
-    // (the list is made again when the cull result grew: an early caller in the frame, before stateSort has added the bridges' groups and buildRenderLists has named the fragments, must not freeze a short one for the callers after it)
-    if (key_cull == cull && key_frame == (U32)gFrameCount && key_exact == cull->mGeoHandles.size() && key_groups == (size_t)cull->getVisibleGroupsSize())
+    static U32 key_frame = ~0u, key_serial = 0;
+    static size_t key_bridges = 0;
+    // (the list is made again when the main view's list grew since: the listed bridge groups are part of it)
+    if (key_cull == cull && key_frame == (U32)gFrameCount && key_serial == cull->mListSerial && key_bridges == sMainListedBridgeGroups.size())
     {
         return out;
     }
-    // the worker's list: the late set's rows with a fragment, one each; the viewer adds what changed in the last frames and the bridges' groups
+    // T4b-1 of doc/vulkan/PLAN-visible-set-owner.md: the consumers' list is the worker's late list (the late set's rows with a fragment, one each: a superset of what the worker draws, a frame or more old) and the same extras the record's
+    // preparation uses (the bridge groups the main view listed and the handles changed in the last 5 frames, with the render map's filters). 5 frames: the worker leaves a row out for 2 records after it receives the change, 1 to 2 frames
+    // after the viewer made it. There is no list of the viewer's own to stand in: the late list was fresh on 37,198 of 37,200 frames (the 2 were before frame 600, a login); those frames serve nothing. The compare against the list made
+    // by the visible groups' walk and the mirror's recent changes (lap ch1-def1, 40,800 lists): the new one lacks what the main view does not list, what is occluded and the stale handles, 13 listed groups in all, and names the current handle of a group the mirror lags.
     const std::shared_ptr<const LLVkBridge::ConsumerList> wlist = LLVkBridge::consumerListRead();
-    // T4 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_DIAG=1 only): how often the exact list serves for want of a fresh late list, and why. The consumers need a superset of what the worker draws (its derive differs from the
-    // exact list by about 4 groups a view each way), which only the late list gives: the exact list is their cover for the frames without one. Per 600 counted frames: served by the late list / no list / list older than 30 frames
-    // (its age), and the fallbacks after the first 1,800 frames (the load) with the last one's frame: login only, or during loads and sweeps.
-    if (ll_diag_on())
-    {
-        struct GapStats { U64 mServed = 0, mNoList = 0, mStale = 0, mLate = 0, mCounted = 0; U32 mFrame = ~0u, mLastLate = 0, mMaxAge = 0; };
-        static GapStats gap;
-        if (gap.mFrame != (U32)gFrameCount)
-        {
-            gap.mFrame = (U32)gFrameCount;
-            const U32 age = wlist ? (U32)gFrameCount - wlist->mFrame : 0u;
-            if (!wlist) { ++gap.mNoList; }
-            else if (age > 30) { ++gap.mStale; gap.mMaxAge = std::max(gap.mMaxAge, age); }
-            else { ++gap.mServed; }
-            if ((!wlist || age > 30) && (U32)gFrameCount > 1800)
-            {
-                ++gap.mLate;
-                gap.mLastLate = (U32)gFrameCount;
-            }
-            if (++gap.mCounted % 600 == 0)
-            {
-                LL_INFOS("VkConsumers") << "consumers' handle list over " << gap.mCounted << " main view frames: the late list served " << gap.mServed << ", the exact list stood in for want of a list " << gap.mNoList << ", for a list older than 30 frames " << gap.mStale
-                                        << " (oldest " << gap.mMaxAge << " frames) | after frame 1800: " << gap.mLate << " such frames, the last in frame " << gap.mLastLate << " (now " << gFrameCount << ")" << LL_ENDL;
-            }
-        }
-    }
     if (!wlist || (U32)gFrameCount - wlist->mFrame > 30)
     {
-        return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
+        return none;
     }
     key_cull = cull;
     key_frame = (U32)gFrameCount;
-    key_exact = cull->mGeoHandles.size();
-    key_groups = (size_t)cull->getVisibleGroupsSize();
+    key_serial = cull->mListSerial;
+    key_bridges = sMainListedBridgeGroups.size();
     out.clear();
     if (seen_stamp.size() < sGeoFragByHandle.size() + 1)
     {
@@ -13447,53 +13341,28 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     }
     ++cur_stamp;
     const U32 out_stamp = cur_stamp;
-    const auto is_seen = [&](U32 h) { return h >= seen_stamp.size() || seen_stamp[h] == out_stamp; };
-    // what the worker's list gives, and the recent changes (the slots the table's rows changed in the last frames, kept as they change: no walk), into the given vector
-    const auto from_worker = [&](std::vector<U32>& oh, std::vector<U8>* local_seen)
     {
-        const auto seen_h = [&](U32 h) { return local_seen ? (h >= local_seen->size() || (*local_seen)[h] != 0) : is_seen(h); };
-        const auto mark_h = [&](U32 h) { if (local_seen) { (*local_seen)[h] = 1; } else { seen_stamp[h] = out_stamp; } };
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 table = (U32)sMapMirror.size();
-        const U32 now = (U32)gFrameCount;
         for (size_t i = 0; i < wlist->mHandles.size(); ++i)
         {
             const U32 slot = wlist->mSlots[i], h = wlist->mHandles[i];
-            if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot] || sMapMirror[slot].mHandle != h || seen_h(h))
+            if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot] || sMapMirror[slot].mHandle != h || h >= seen_stamp.size() || seen_stamp[h] == out_stamp)
             {
-                continue;       // (a row whose handle the viewer has changed since the record: the recent changes below name its current one)
+                continue;       // (a row whose handle the viewer has changed since the record: the extras below name its current one)
             }
-            mark_h(h);
-            oh.push_back(h);
+            seen_stamp[h] = out_stamp;
+            out.push_back(h);
         }
-        for (const auto& e : sRecent)
-        {
-            if (!(e.mWhat & RECENT_MAP))
-            {
-                continue;
-            }
-            const U32 slot = e.mSlot;
-            if (slot >= table || slot >= sSlotGroup.size() || !sSlotGroup[slot])
-            {
-                continue;
-            }
-            const U32 h = sMapMirror[slot].mHandle;
-            if (h && !seen_h(h) && now - sMapHandleFrame[slot] <= 5)       // (5: the worker leaves a row out for 2 records after it receives the change, 1 to 2 frames after the viewer made it)
-            {
-                mark_h(h);
-                oh.push_back(h);
-            }
-        }
-    };
-    from_worker(out, nullptr);
-    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+    }
+    extras.clear();
+    ll_record_extra_handles(cull, extras, 5);
+    for (U32 h : extras)
     {
-        LLSpatialGroup* group = *i;
-        const U32 h = group ? group->mGeoHandle : 0;
-        if (h && !is_seen(h) && !group->isDead() && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+        if (h < seen_stamp.size() && seen_stamp[h] != out_stamp)
         {
             seen_stamp[h] = out_stamp;
-            out.push_back(h);       // (a bridge's group the walk marked: exact, the CPU's own result)
+            out.push_back(h);
         }
     }
     return out;
@@ -14069,6 +13938,19 @@ void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
     {
         sMainListed[cull_id - 1] = serial;
     }
+    {
+        // the triangles statistic (what the render map's loop summed): groups not dead, not occluded, under the auto-hide limit; the far avatars' skipped attachments (rare) are not left out
+        if (sMainTrisSerial != serial)
+        {
+            sMainTris = 0;
+            sMainTrisSerial = serial;
+        }
+        const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
+        if (!group->isDead() && !(LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) && !(hide > 0.f && group->mSurfaceArea > hide * llmax(group->row().objectBoxSize, 10.f)))
+        {
+            sMainTris += (S32)(ll_group_draw_tris(group) * 3);
+        }
+    }
     if (group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
     {
         if (sMainListedBridgeSerial != serial)
@@ -14078,6 +13960,11 @@ void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
         }
         sMainListedBridgeGroups.push_back(group);
     }
+}
+
+static S32 ll_main_listed_tris(LLCullResult* cull)
+{
+    return sMainTrisSerial == cull->mListSerial ? sMainTris : 0;
 }
 
 // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha and rigged alpha group lists, made from the alpha set. The set (sAlphaSlots: the slots whose map row shows an alpha or rigged alpha key, kept by the touch events in
@@ -14869,7 +14756,7 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
 // T4a of doc/vulkan/PLAN-visible-set-owner.md: the handles the record names besides the worker's derive, from the main view's own listing and the events: the bridge groups it listed in this build (ll_main_listed_note collects them) and the recent changes of the map rows (sRecent), each when the render map
 // would name it: not dead, not occluded, under the auto-hide limit, not a far avatar's attachment, a fragment handle. The worker lists them as they are, not from its rows a frame old (a group whose handle changed lately is left out of its derive). No walk of a bridge's octree, no check of the bridge's own stamp:
 // a group the main view lists belongs to a marked bridge. Compared with the walk of the bridges' octrees over 35,400 records (lap lh1-def1): 0 differences; the walk equalled the old preparation (a byte a fragment, the visible groups, every slot) for the bridge groups over 42,000 records (rh1).
-static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out)
+static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window)
 {
     LL_CPU_ZONE("geo frame: the record's extra handles");
     static std::vector<U32> seen;
@@ -14904,7 +14791,7 @@ static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out)
     }
     for (const auto& e : sRecent)
     {
-        if ((e.mWhat & RECENT_MAP) && e.mSlot < sMapHandleFrame.size() && e.mSlot < sSlotGroup.size() && sSlotGroup[e.mSlot] && (U32)gFrameCount - sMapHandleFrame[e.mSlot] <= 3)
+        if ((e.mWhat & RECENT_MAP) && e.mSlot < sMapHandleFrame.size() && e.mSlot < sSlotGroup.size() && sSlotGroup[e.mSlot] && (U32)gFrameCount - sMapHandleFrame[e.mSlot] <= window)
         {
             add((LLSpatialGroup*)sSlotGroup[e.mSlot]);
         }
@@ -15254,7 +15141,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         view_extra[1] = (U32)marked_bridges.size();
-        ll_record_extra_handles(cull, bridge_handles);       // (the bridge groups the main view listed and the handles changed in the last 3 frames: the listing's by-product and the recent changes)
+        ll_record_extra_handles(cull, bridge_handles, 3);       // (the bridge groups the main view listed and the handles changed in the last 3 frames: the listing's by-product and the recent changes)
         view_extra[3] = (U32)bridge_handles.size();
         view_extra[2] = 1u;        // stage 10a: 2 = a probe cube face, compared only. Stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
@@ -15298,77 +15185,6 @@ void ll_scene_geo_frame(LLCullResult* cull)
     if (cull_view)
     {
         cull_extra_diag(*LLViewerCamera::getInstance(), handles);
-        // VkFlash (LL_VK_DIAG=1 only): a frame whose geometry is missing or doubled while the scene is the same. The test is the fragments per visible group against its running average, not the fragment count: a camera turning to a sparse direction
-        // takes the visible groups and the fragments down together (the first version, the count against its average, logged 7 frames of a sweep), a flash takes the fragments and not the groups. A run of such frames logs once at its start,
-        // with where the visible groups went (what the render map skipped them for), the camera's move since the last frame and the alpha counts, and once at its end with its length: one or two frames is a flash, a long run a state that changed (a load).
-        if (ll_diag_on())
-        {
-            static double r_avg = 0.0, v_avg = 0.0;       // fragments per visible group, visible groups: running averages of the frames before
-            static U64 frames = 0, said = 0;
-            static U32 run_len = 0, run_start = 0;
-            static U64 runs = 0;
-            static const bool test = getenv("LL_VK_FLASH_TEST") != nullptr;       // (a test: the band is +-3 percent, so a short lap makes runs to read; the real band is 0.85 to 1.15 times the average: the ratio stays within 3 percent of it over 2,400 frames of a still lap)
-            static const double lo = test ? 0.97 : 0.85, hi = test ? 1.03 : 1.15;
-            static LLVector3 last_origin, last_at;
-            const U32 vis = cull->getVisibleGroupsSize();
-            const double ratio = vis ? (double)handles.size() / vis : 0.0;
-            const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin(), at = LLViewerCamera::getInstance()->getAtAxis();
-            const bool off = ++frames > 40 && v_avg > 100.0 && r_avg > 0.0 && (ratio < r_avg * lo || ratio > r_avg * hi);
-            if (frames % 600 == 0)
-            {
-                LL_INFOS("VkFlash") << "watching: " << frames << " main view frames, " << r_avg << " fragments a visible group over " << v_avg << " visible groups on average, " << runs << " runs so far" << (test ? " (LL_VK_FLASH_TEST: band +-3 percent)" : "") << LL_ENDL;
-            }
-            if (off)
-            {
-                if (++run_len == 1)
-                {
-                    ++runs;
-                    run_start = (U32)gFrameCount;
-                    if (said < 60)
-                    {
-                        ++said;
-                        U32 dead = 0, occluded = 0, hidden = 0, no_handle = 0, no_handle_building = 0, released = 0, with_handle = 0;
-                        const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
-                        for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
-                        {
-                            LLSpatialGroup* g = *i;
-                            if (g->isDead()) { ++dead; continue; }
-                            if (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED)) { ++occluded; continue; }
-                            if (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)) { ++hidden; continue; }
-                            if (!g->mGeoHandle)
-                            {
-                                ++no_handle;
-                                no_handle_building += g->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::NEW_DRAWINFO | LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2) ? 1 : 0;
-                                continue;
-                            }
-                            ++with_handle;
-                            released += g->hasState(LLSpatialGroup::FS_RELEASED) ? 1 : 0;
-                        }
-                        const F32 turn_deg = acosf(llclamp(at * last_at, -1.f, 1.f)) * RAD_TO_DEG;
-                        LL_INFOS("VkFlash") << "frame " << gFrameCount << " starts a run: the main view names " << handles.size() << " fragments for " << vis << " visible groups (" << ratio << " a group, the average of the frames before " << r_avg << " for " << v_avg
-                                            << " groups) | of the visible groups: with a fragment " << with_handle << " (Released " << released << "), occluded " << occluded << ", no fragment " << no_handle << " (waiting on a build " << no_handle_building
-                                            << "), auto-hidden " << hidden << ", dead " << dead << ", the rest (far avatars' attachments) " << (S32)vis - (S32)(with_handle + occluded + no_handle + hidden + dead)
-                                            << " | camera moved " << (origin - last_origin).length() << " m and turned " << turn_deg << " degrees since the last frame | consumers " << consumers.size() << ", alpha groups " << cull->getAlphaGroupsSize()
-                                            << ", rigged alpha " << cull->getRiggedAlphaGroupsSize() << LL_ENDL;
-                    }
-                }
-            }
-            else
-            {
-                if (run_len)
-                {
-                    LL_INFOS("VkFlash") << "the run that started in frame " << run_start << " ended after " << run_len << " frames (" << (run_len <= 3 ? "a flash" : "a state that lasted") << "), the main view names " << handles.size() << " fragments for " << vis << " visible groups" << LL_ENDL;
-                }
-                run_len = 0;
-            }
-            if (!off || run_len > 30)       // (the average does not follow a run, unless it lasts: then it is the new normal)
-            {
-                r_avg = r_avg == 0.0 ? ratio : r_avg * 0.95 + ratio * 0.05;
-                v_avg = v_avg == 0.0 ? (double)vis : v_avg * 0.95 + (double)vis * 0.05;
-            }
-            last_origin = origin;
-            last_at = at;
-        }
     }
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();
