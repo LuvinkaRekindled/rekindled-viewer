@@ -4014,6 +4014,19 @@ int cull_split_setting()
 }
 
 // what a job does: the walk of a whole partition, or of one subtree of a partition that was split (mSplit)
+// stage 9: the main view's cull marks the drawables of a static drawable group (terrain, trees, water: render by drawable, in the region partitions) where it lists the group; the shadow, probe, impostor and HUD views do not
+static bool sMarkAtCull = false;
+static bool ll_static_drawable_group(LLSpatialGroup* g)
+{
+    LLSpatialPartition* part = g->getSpatialPartition();
+    if (!part || part->asBridge())
+    {
+        return false;
+    }
+    const U32 type = part->mPartitionType;
+    return type == LLViewerRegion::PARTITION_TERRAIN || type == LLViewerRegion::PARTITION_TREE || type == LLViewerRegion::PARTITION_WATER || type == LLViewerRegion::PARTITION_VOIDWATER;
+}
+
 struct CullItem
 {
     LLSpatialPartition* mPart = nullptr;
@@ -4816,6 +4829,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
 
     sCull->clear();
+    struct MarkAtCullScope
+    {
+        explicit MarkAtCullScope(bool on) { sMarkAtCull = on; }
+        ~MarkAtCullScope() { sMarkAtCull = false; }
+    } mark_at_cull_scope(view.isMainWorldSort() && !gCubeSnapshot);
 
     static const bool main_census_env = (LLCullCensus::sOn = getenv("LL_VK_MAINCENSUS") != nullptr);
     const bool main_census = main_census_env && view.isMainWorld() && !gCubeSnapshot;
@@ -5020,6 +5038,13 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     if (!group->getSpatialPartition()->mRenderByGroup)
     { //render by drawable
         sCull->pushDrawableGroup(group);
+        if (sMarkAtCull && ll_static_drawable_group(group))
+        {
+            for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
+            {
+                markVisible((LLDrawable*)(*i)->getDrawable(), camera);        // (stage 9: what loop (a) of the sort did for these groups)
+            }
+        }
     }
     else
     {   //render by group
@@ -5679,28 +5704,9 @@ static bool ll_attachment_bridge_hidden(LLSpatialBridge* bridge)
     return false;
 }
 
-// stage 9 of doc/vulkan/PLAN-visible-set-owner.md: in the main view's sort (set by stateSort) the avatars' drawables and the bridges are marked visible by the owners' pass (markVisibleOwners), not by loop (a) of the sort over
-// the drawable groups: loop (a) skips the region groups of the avatar, bridge and animesh partitions (they hold only those) and the avatars' drawables and bridges that it meets in the groups a bridge's own cull added
+// stage 9 of doc/vulkan/PLAN-visible-set-owner.md: in the main view's sort (set by stateSort) there is no loop (a) over the drawable groups: the avatars' drawables, the bridges and the groups a bridge's own cull adds are marked by
+// the owners' pass (markVisibleOwners), and the drawables of the static partitions (terrain, trees, water) are marked where their group is listed, by markNotCulled (sMarkAtCull, set by updateCull for the main view)
 static bool sOwnerA = false;
-static bool ll_loopa_owned_group(LLSpatialGroup* g)
-{
-    if (!sOwnerA || !g->mCullId)
-    {
-        return false;
-    }
-    LLSpatialPartition* part = g->getSpatialPartition();
-    if (!part || part->asBridge() || part->mRenderByGroup)
-    {
-        return false;
-    }
-    const U32 type = part->mPartitionType;
-    return type == LLViewerRegion::PARTITION_BRIDGE || type == LLViewerRegion::PARTITION_AVATAR || type == LLViewerRegion::PARTITION_CONTROL_AV;
-}
-static inline bool ll_loopa_owned_drawable(LLDrawable* d)
-{
-    return sOwnerA && d && (d->isSpatialBridge() || d->isAvatar());
-}
-
 void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
 {
     if(drawablep && !drawablep->isDead())
@@ -5745,11 +5751,38 @@ void LLPipeline::markVisibleOwners(LLCamera& camera)
         {
             return false;
         }
-        if (ll_loopa_owned_group(g) && std::find(occluded.begin(), occluded.end(), g) == occluded.end())
+        if (!g->getSpatialPartition()->asBridge() && std::find(occluded.begin(), occluded.end(), g) == occluded.end())
         {
-            occluded.push_back(g);
+            occluded.push_back(g);      // (a region group: the groups a bridge adds are looked at below)
         }
         return true;
+    };
+    // the groups a bridge's marking added to the drawable groups (the groups of its octree): what loop (a) did for them, for the drawables that are not avatars or bridges (those are the owners')
+    size_t added_from = sCull->getDrawableGroupsSize();
+    const auto added_groups = [&]()
+    {
+        while (added_from < sCull->getDrawableGroupsSize())
+        {
+            LLSpatialGroup* g = sCull->beginDrawableGroups()[added_from++];
+            if (g->isDead())
+            {
+                continue;
+            }
+            if (occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            {
+                markOccluder(g);
+                continue;
+            }
+            g->setVisible();
+            for (LLSpatialGroup::element_iter i = g->getDataBegin(); i != g->getDataEnd(); ++i)
+            {
+                LLDrawable* d = (LLDrawable*)(*i)->getDrawable();
+                if (d && !d->isSpatialBridge() && !d->isAvatar())
+                {
+                    markVisible(d, camera);
+                }
+            }
+        }
     };
     U32 n_av = 0, n_br = 0, waves = 0;
     const U32 list_br0 = sCull->getVisibleBridgeSize(), list_d0 = sCull->getVisibleListSize();
@@ -5798,6 +5831,7 @@ void LLPipeline::markVisibleOwners(LLCamera& camera)
             markVisible(b, camera);
             ++n_br;
         }
+        added_groups();
         ++waves;
     }
     for (LLSpatialGroup* g : occluded)
@@ -6446,10 +6480,10 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     {
         LL_CPU_ZONE("stateSort: pre-scan");
         // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
-        for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); i != read.endDrawableGroups(); ++i)
+        for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); !sOwnerA && i != read.endDrawableGroups(); ++i)
         {
             LLSpatialGroup* g = *i;
-            if (!g->isDead() && !ll_loopa_owned_group(g) && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
+            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
         }
         for (LLCullResult::sg_iterator i = read.beginVisibleGroups(); i != read.endVisibleGroups(); ++i)
         {
@@ -6463,7 +6497,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     // the body of the first loop for one group, and of the third: the same on a chunk and in the serial passes below
     auto first_loop_body = [&](LLSpatialGroup* group)
     {
-        if (group->isDead() || ll_loopa_owned_group(group))
+        if (group->isDead())
         {
             return;
         }
@@ -6477,11 +6511,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             group->setVisible();
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
-                LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-                if (!ll_loopa_owned_drawable(drawablep))
-                {
-                    markVisible(drawablep, camera);
-                }
+                markVisible((LLDrawable*)(*i)->getDrawable(), camera);
             }
         }
     };
@@ -6523,7 +6553,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     }
     {
         const U32 cs0 = sort_chunk_size(n_dg, workers), cs1 = sort_chunk_size(n_vg_chunks, workers);
-        for (U32 b = 0; b < n_dg; b += cs0)
+        for (U32 b = 0; !sOwnerA && b < n_dg; b += cs0)
         {
             first.emplace_back();
             first.back().mKind = 0;
@@ -6605,9 +6635,9 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         sSortSink = &ledger_x;
         if (sOwnerA)
         {
-            markVisibleOwners(camera);      // (stage 9: the avatars' drawables and the bridges, after the groups that are not theirs: the groups their marking adds stand beyond n_dg)
+            markVisibleOwners(camera);      // (stage 9: the avatars' drawables, the bridges and the groups their marking adds)
         }
-        for (U32 k = n_dg; k < read.getDrawableGroupsSize(); ++k)
+        for (U32 k = n_dg; !sOwnerA && k < read.getDrawableGroupsSize(); ++k)
         {
             first_loop_body(read.beginDrawableGroups()[k]);
         }
@@ -6949,10 +6979,10 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     {
         markVisibleOwners(camera);
     }
-    for (LLCullResult::sg_iterator iter = read.beginDrawableGroups(); iter != read.endDrawableGroups(); ++iter)
+    for (LLCullResult::sg_iterator iter = read.beginDrawableGroups(); !sOwnerA && iter != read.endDrawableGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
-        if (group->isDead() || ll_loopa_owned_group(group))
+        if (group->isDead())
         {
             continue;
         }
@@ -6977,10 +7007,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-                if (!ll_loopa_owned_drawable(drawablep))
-                {
-                    markVisible(drawablep, camera);
-                }
+                markVisible(drawablep, camera);
                 if (sVisSortOn)
                 {
                     ++LLVisCensus::sSortMarkVisN;
