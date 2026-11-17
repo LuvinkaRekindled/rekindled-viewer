@@ -549,7 +549,6 @@ public:
     virtual void rebuildGeom(LLSpatialGroup* group);
     virtual void rebuildMesh(LLSpatialGroup* group);
 
-    bool visibleObjectsInFrustum(LLCamera& camera);
     /*virtual*/ S32 cull(LLCamera &camera, bool do_occlusion=false); // Cull on arbitrary frustum
     S32 cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select); // Cull on arbitrary frustum
     // <FS> stage 3a: cull(camera) in pieces (see LLViewerOctreeCull::traverseTop); the main view only (no shadow culler)
@@ -619,8 +618,11 @@ public:
     bool inViewFor(LLCamera& camera_in);
     // stage 9 (3.2): a ray against the bridges by the registry (allBridges), not through the region octrees: every bridge whose extents the segment crosses is tested as the octree's check of its entry does (it must be visible, its render
     // type on, then its own octree). Returns the closest hit like LLSpatialPartition::lineSegmentIntersect; the region octrees give no bridge while sPickSkipBridges is set
-    static LLDrawable* lineSegmentIntersectAll(const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+    // (hud: the HUD attachments' bridges, which the HUD pick tests with the HUD render type on; the world pick tests the others, whose partition's render type must be on as the region octree walk required)
+    static LLDrawable* lineSegmentIntersectAll(bool hud, const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
                                                S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent);
+    // stage 9 (3.2): the rectangle select's candidates from the bridges by the registry (what the region octrees' select walk gave through setVisible(camera, results, true)): the bridge's root and its children
+    static void selectAll(LLCamera& camera, std::vector<LLDrawable*>& results);
     static inline bool sPickSkipBridges = false;
     // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (ll_bridge_hiz_collect),
     // the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the bridge is hidden by it while the verdict is recent and its extents still lie inside the box it was made for
