@@ -5889,6 +5889,40 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     }
 }
 
+// stage 10 (bridges): the bridges a view would mark by the registry, with the rules the region octrees' walk gave them: not hidden by markVisible's impostor rule, in the partition the view walks (the bridge partition always, the
+// others when their render type is on; the HUD view takes the HUD partition's bridges), and the bridge's own test against that view's camera (setVisible's: render type, the avatar gate, the frustum, in a shadow pass without the far clip)
+static void ll_view_bridges(LLCamera& camera, bool hud_view, std::vector<LLSpatialBridge*>& out)
+{
+    out.clear();
+    for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
+    {
+        if (b->isDead() || ll_attachment_bridge_hidden(b) || (b->mPartitionType == LLViewerRegion::PARTITION_HUD) != hud_view)
+        {
+            continue;
+        }
+        if (!hud_view)
+        {
+            LLViewerRegion* region = b->mDrawable ? b->mDrawable->getRegion() : nullptr;
+            LLSpatialPartition* part = region ? region->getSpatialPartition(b->mPartitionType) : nullptr;
+            if (!part || (b->mPartitionType != LLViewerRegion::PARTITION_BRIDGE && !gPipeline.hasRenderType(part->mDrawableType)))
+            {
+                continue;
+            }
+        }
+        if (b->inViewFor(camera))
+        {
+            out.push_back(b);
+        }
+    }
+}
+
+// stage 10 (bridges): the views other than the main view's list their bridges by the registry (ll_view_bridges) and mark them (markVisible) before the sort's loops; the walks of the region groups no longer mark a bridge. Not the avatar
+// impostor render (generateImpostor marks the avatar's own attachments itself, and its sort has no cull walk)
+static inline bool ll_bridges_by_registry()
+{
+    return !sOwnerA && !LLPipeline::sImpostorRender;
+}
+
 // stage 9: the boxes of the bridges in view by their own test join the Hi-Z pass of this frame (doOcclusion, after LLHiz::begin): a bridge not awaiting a verdict adds its extents with the groups' fudge; the verdict comes 2 to 4 frames
 // later (LLHiz::apply calls LLSpatialBridge::hizResult)
 void ll_bridge_hiz_collect()
@@ -6644,7 +6678,11 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             group->setVisible();
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
-                markVisible((LLDrawable*)(*i)->getDrawable(), camera);
+                LLDrawable* d = (LLDrawable*)(*i)->getDrawable();
+                if (!(d && d->isSpatialBridge() && ll_bridges_by_registry()))
+                {
+                    markVisible(d, camera);
+                }
             }
         }
     };
@@ -7159,7 +7197,10 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-                markVisible(drawablep, camera);
+                if (!(drawablep && drawablep->isSpatialBridge() && ll_bridges_by_registry()))
+                {
+                    markVisible(drawablep, camera);
+                }
                 if (sVisSortOn)
                 {
                     ++LLVisCensus::sSortMarkVisN;
@@ -7310,6 +7351,17 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     //LLVertexBuffer::unbind();
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+
+    if (ll_bridges_by_registry())
+    {
+        LL_CPU_ZONE("stateSort: bridges by the registry");
+        static std::vector<LLSpatialBridge*> view_bridges;
+        ll_view_bridges(camera, sRenderingHUDs, view_bridges);
+        for (LLSpatialBridge* b : view_bridges)
+        {
+            markVisible(b, camera);
+        }
+    }
 
     // <FS> the split (see sortLoops): 0 as before, 1 compute then apply, 2 the check
     const int split = sort_split_mode(view, defer_pools);
@@ -9743,7 +9795,23 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
                     sCascadeCullCensus.mDrawables[ci].fetch_add(1, std::memory_order_relaxed);
                     sCascadeCullCensus.mDrawablesNew[ci].fetch_add((S32)drawablep->getVisible() < frame ? 1 : 0, std::memory_order_relaxed);
                 }
+                if (drawablep && drawablep->isSpatialBridge())
+                {
+                    continue;       // stage 10: the cascade's bridges are marked from its own list (kind 2)
+                }
                 markVisible(drawablep, camera);
+            }
+        }
+        return;
+    }
+    if (kind == 2)
+    {
+        for (U32 k = begin; k < end; ++k)
+        {
+            LLSpatialBridge* bridge = prep.mBridges[k];
+            if (!bridge->isDead())
+            {
+                markVisible(bridge, camera);
             }
         }
         return;
@@ -9782,9 +9850,9 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
             {
                 continue;
             }
-            if ((RenderSpotLight && drawablep == RenderSpotLight) || (sPrepExclude && drawablep == sPrepExclude))
+            if ((RenderSpotLight && drawablep == RenderSpotLight) || (sPrepExclude && drawablep == sPrepExclude) || drawablep->isSpatialBridge())
             {
-                continue;
+                continue;       // (stage 10: a bridge is marked from the cascade's own list)
             }
             if (census)
             {
@@ -29687,9 +29755,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             for (size_t p = 0; p < pending.size(); ++p)
             {
                 LLCullResult& r = *pending[p].mResult;
-                for (int kind = 0; kind < 2; ++kind)
+                ll_view_bridges(pending[p].mCamera, false, pending[p].mBridges);       // stage 10: the cascade's bridges by the registry
+                for (int kind = 0; kind < 3; ++kind)
                 {
-                    const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (U32)r.mLodGroups.size();     // <FS> C4.4: kind 1 = the groups whose LOD check said yes
+                    const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (kind == 1 ? (U32)r.mLodGroups.size() : (U32)pending[p].mBridges.size());     // <FS> C4.4: kind 1 = the groups whose LOD check said yes
                     static const bool mark_verify = getenv("LL_VK_MARK_VERIFY") != nullptr;
                     if (kind == 1 && mark_verify)
                     {
