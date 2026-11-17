@@ -4803,6 +4803,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
 
     sCull->clear();
+    sCull->mMainView = view.isMainWorldSort() && !gCubeSnapshot;        // (T3: the main view's result stamps the groups it lists, see LLCullResult::pushVisibleGroup)
     struct MarkAtCullScope
     {
         explicit MarkAtCullScope(bool on) { sMarkAtCull = on; }
@@ -8632,6 +8633,7 @@ void LLPipeline::addBeacons()
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera);       // stage 6 (defined with the group table, below): the main view's alpha lists from the consumers' groups
+void ll_alpha_set_compare(LLCullResult* cull, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 compare mode (LL_VK_ALPHASET_CMP=1): the alpha set's list against the render map's, no effect on the lists
 void ll_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
@@ -8999,6 +9001,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
         if (view.isMainWorldSort() && !gCubeSnapshot)
         {
+            ll_alpha_set_compare(sCull, far_skip);      // (the render map's lists are final and sorted here; stage 6 below replaces them)
             ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
         }
         if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
@@ -12989,6 +12992,31 @@ std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cul
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U8> sSlotPartType;                      // <FS> stage 10d: slot -> the group's partition type (255: free); the cascades' cull jobs filter by it without touching the group
 std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
+// <FS> T3 of doc/vulkan/PLAN-visible-set-owner.md: the alpha set. The slots whose map row says the group has an alpha or a rigged alpha key (as stage 6's rule: a group the table serves whole has its alpha in the fragment's bits, any other
+// in the group's keys), kept by the same touch events that refresh the map rows (cull_process, forget): the main thread's own state, current to the last cull_process, the groups touched since are in sDirtySlots.
+std::vector<U32> sAlphaSlots;
+std::vector<U32> sAlphaPos;                         // slot -> its index in sAlphaSlots (~0u: not a member)
+static void alpha_index_set(U32 slot, bool member)
+{
+    if (slot >= sAlphaPos.size())
+    {
+        return;
+    }
+    const U32 pos = sAlphaPos[slot];
+    if (member && pos == ~0u)
+    {
+        sAlphaPos[slot] = (U32)sAlphaSlots.size();
+        sAlphaSlots.push_back(slot);
+    }
+    else if (!member && pos != ~0u)
+    {
+        const U32 last = sAlphaSlots.back();
+        sAlphaSlots[pos] = last;
+        sAlphaPos[last] = pos;
+        sAlphaSlots.pop_back();
+        sAlphaPos[slot] = ~0u;
+    }
+}
 std::vector<U32> sFreeSlots;
 std::vector<LLViewerOctreeGroup*> sNewGroups;       // constructed, not yet given a slot
 std::vector<U32> sDirtySlots;                       // rows to refresh
@@ -13274,6 +13302,7 @@ void cull_process()
             sMapMirror.push_back(CullMapRow());
             sMapHandleFrame.push_back((U32)gFrameCount);
             sMapChangeFrame.push_back((U32)gFrameCount);
+            sAlphaPos.push_back(~0u);
             sRowChangeFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
@@ -13329,6 +13358,11 @@ void cull_process()
             const U32 old_handle = sMapMirror[slot].mHandle;
             const CullMapRow old_row = sMapMirror[slot];
             cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
+            {
+                const CullMapRow& nr = sMapMirror[slot];
+                const bool whole = nr.mHandle && (nr.mFlags & 1u);
+                alpha_index_set(slot, (nr.mFlags & 8u) && (whole ? (nr.mAlphaBits & 3u) != 0 : (nr.mFlags & 6u) != 0));       // (the alpha set: the rule of the worker's alpha rows and stage 6, and the partition renders by group: the alpha pass skips the groups of the others)
+            }
             if (sMapMirror[slot].mHandle != old_handle)
             {
                 sMapHandleFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
@@ -13376,6 +13410,7 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
             memset(&sMirror[slot], 0, sizeof(sMirror[slot]));
             sMirror[slot].mFlags = 33u;
             sMapMirror[slot] = CullMapRow();
+            alpha_index_set(slot, false);
             sSendSlots.push_back(slot);
         }
         group->mCullId = 0;
@@ -14213,6 +14248,128 @@ void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
     for (LLSpatialGroup* g : wrigged)
     {
         cull->pushRiggedAlphaGroup(g);
+    }
+}
+
+// T3 of doc/vulkan/PLAN-visible-set-owner.md, compare mode (LL_VK_ALPHASET_CMP=1, needs LL_VK_DIAG=1; no effect on any list). The alpha lists of the main view from main-thread state that is exact for this frame, with no worker list: the
+// alpha set (the slots whose map row shows an alpha or rigged alpha key, kept by the touch events) plus the slots touched since the last cull_process (judged from the group itself), each tested as the render map tests a visible group:
+// the walk's stamp of this frame (the CPU list holds the visible groups), not dead, not occluded, under the auto-hide limit, not a far avatar's skipped attachment. Called with the render map's lists final and sorted, before stage 6 replaces them.
+// Per 600 frames: the groups in each list, and what differs by reason: a group of the render map's list the set lacks (never a candidate / a candidate without this frame's stamp / refused by a filter or by its own keys) and a group the set
+// names that the render map did not (in the visible list: the keys or the whole-served rule differ / not in the visible list: the stamp is looser than the walk's listing), and the depth order of the groups both name.
+void ll_alpha_set_compare(LLCullResult* cull, const std::unordered_set<const LLSpatialGroup*>& far_skip)
+{
+    static const bool on = getenv("LL_VK_ALPHASET_CMP") != nullptr && ll_diag_on();
+    if (!on || !cull || LLPipeline::shadowRender() || !gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA) || !gPipeline.hasRenderType(LLDrawPool::POOL_ALPHA))
+    {
+        return;
+    }
+    struct Tally
+    {
+        U64 mFrames = 0, mCpuA = 0, mCpuR = 0, mNewA = 0, mNewR = 0, mCands = 0, mDirty = 0, mStale = 0, mOrder = 0, mOrderCmp = 0;
+        U64 mMissA[3] = {}, mMissR[3] = {}, mExtraA[2] = {}, mExtraR[2] = {};
+    };
+    static Tally t;
+    static U32 examples = 0;
+    static std::unordered_set<const LLSpatialGroup*> cpu_a, cpu_r, vis, cand_set, new_a_set, new_r_set;
+    static std::vector<std::pair<U32, LLSpatialGroup*>> cands;
+    static std::vector<LLSpatialGroup*> new_a, new_r;
+    cpu_a.clear(); cpu_r.clear(); vis.clear(); cand_set.clear(); new_a_set.clear(); new_r_set.clear(); cands.clear(); new_a.clear(); new_r.clear();
+    for (LLCullResult::sg_iterator i = cull->beginAlphaGroups(); i != cull->endAlphaGroups(); ++i) { cpu_a.insert(*i); }
+    for (LLCullResult::sg_iterator i = cull->beginRiggedAlphaGroups(); i != cull->endRiggedAlphaGroups(); ++i) { cpu_r.insert(*i); }
+    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i) { vis.insert(*i); }
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        for (U32 slot : sAlphaSlots)
+        {
+            if (slot < sSlotGroup.size() && sSlotGroup[slot])
+            {
+                cands.emplace_back(slot, (LLSpatialGroup*)sSlotGroup[slot]);
+            }
+        }
+        for (U32 slot : sDirtySlots)        // (touched since the last cull_process: judged from the group itself below)
+        {
+            if (slot < sSlotGroup.size() && sSlotGroup[slot] && sAlphaPos[slot] == ~0u)
+            {
+                cands.emplace_back(slot, (LLSpatialGroup*)sSlotGroup[slot]);
+                ++t.mDirty;
+            }
+        }
+    }
+    const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
+    const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
+    // the main view's own listing of this frame: the groups the main view's cull result listed (LLCullResult::pushVisibleGroup stamps mMainListedFrame). The visible stamp (row().visible) is not that: the avatar impostor pass, the
+    // cascades and the probes stamp groups of their own without listing them in the main view's list (a first version asked the stamp: 117 to 332 groups a lap, attachment bridge groups, at login and in bursts)
+    const U32 now_frame = cull->mListSerial;
+    const auto listed_now = [now_frame](const LLSpatialGroup* g) { return g->mMainListedFrame == now_frame; };
+    for (const auto& c : cands)
+    {
+        LLSpatialGroup* g = c.second;
+        if (!cand_set.insert(g).second)
+        {
+            continue;
+        }
+        ++t.mCands;
+        if (g->isDead() || !g->getSpatialPartition() || !g->getSpatialPartition()->mRenderByGroup)
+        {
+            continue;
+        }
+        const bool whole = g->mGeoHandle && g->mGeoAllServed;
+        const bool a = whole ? (g->mGeoAlphaBits & 1) != 0 : ll_group_has_alpha_key(g);
+        const bool r = whole ? (g->mGeoAlphaBits & 2) != 0 : ll_group_has_rigged_alpha_key(g);
+        if (!a && !r)
+        {
+            ++t.mStale;     // (in the set or touched, and no alpha key now)
+            continue;
+        }
+        if (!listed_now(g)
+            || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))
+            || far_skip.count(g))
+        {
+            continue;
+        }
+        if (a) { new_a.push_back(g); new_a_set.insert(g); }
+        if (r) { new_r.push_back(g); new_r_set.insert(g); }
+    }
+    ++t.mFrames;
+    t.mCpuA += cpu_a.size(); t.mCpuR += cpu_r.size(); t.mNewA += new_a.size(); t.mNewR += new_r.size();
+    const auto why = [&](LLSpatialGroup* g) -> int
+    {
+        if (!cand_set.count(g)) { return 0; }
+        if (!listed_now(g)) { return 1; }
+        return 2;
+    };
+    const auto say = [&](const char* what, LLSpatialGroup* g)
+    {
+        if (examples++ < 16)
+        {
+            LL_INFOS("AlphaSet") << "example, " << what << ": slot " << (S32)g->mCullId - 1 << ", partition " << (g->getSpatialPartition() ? (S32)g->getSpatialPartition()->mPartitionType : -1) << (g->getSpatialPartition() && g->getSpatialPartition()->asBridge() ? " (a bridge's)" : "")
+                                 << ", renders by group " << (g->getSpatialPartition() ? g->getSpatialPartition()->mRenderByGroup : false) << ", handle " << g->mGeoHandle << ", all served " << g->mGeoAllServed << ", alpha bits " << (U32)g->mGeoAlphaBits << ", keys " << ll_group_has_alpha_key(g) << ll_group_has_rigged_alpha_key(g) << ", main listed " << g->mMainListedFrame << " (visible stamp " << g->getVisible(LLViewerCamera::CAMERA_WORLD) << ", kept " << g->keptFrame() << ")"
+                                 << " frame " << frame << ", in the visible list " << vis.count(g) << ", occluded " << g->isOcclusionState(LLSpatialGroup::OCCLUDED) << ", dead " << g->isDead() << LL_ENDL;
+        }
+    };
+    for (const LLSpatialGroup* cg : cpu_a) { if (!new_a_set.count(cg)) { LLSpatialGroup* g = const_cast<LLSpatialGroup*>(cg); const int w = why(g); ++t.mMissA[w]; say(w == 0 ? "the render map lists it, the set lacks it (never a candidate)" : w == 1 ? "the render map lists it, no stamp of this frame" : "the render map lists it, refused by a filter or its keys", g); } }
+    for (const LLSpatialGroup* cg : cpu_r) { if (!new_r_set.count(cg)) { ++t.mMissR[why(const_cast<LLSpatialGroup*>(cg))]; } }
+    for (LLSpatialGroup* g : new_a) { if (!cpu_a.count(g)) { const bool listed = vis.count(g) != 0; ++t.mExtraA[listed ? 0 : 1]; say(listed ? "the set names it, in the visible list, the render map has no alpha for it" : "the set names it, not in the visible list", g); } }
+    for (LLSpatialGroup* g : new_r) { if (!cpu_r.count(g)) { ++t.mExtraR[vis.count(g) ? 0 : 1]; } }
+    {
+        static std::vector<LLSpatialGroup*> a, b;
+        a.clear(); b.clear();
+        for (LLCullResult::sg_iterator i = cull->beginAlphaGroups(); i != cull->endAlphaGroups(); ++i) { if (new_a_set.count(*i)) { a.push_back(*i); } }
+        for (LLSpatialGroup* g : new_a) { if (cpu_a.count(g)) { b.push_back(g); } }
+        std::sort(b.begin(), b.end(), LLSpatialGroup::CompareDepthGreater());
+        for (size_t k = 0; k < a.size() && k < b.size(); ++k)
+        {
+            ++t.mOrderCmp;
+            t.mOrder += a[k] != b[k] && a[k]->row().depth != b[k]->row().depth;
+        }
+    }
+    if (t.mFrames % 600 == 0)
+    {
+        LL_INFOS("AlphaSet") << "alpha set against the render map's lists, " << t.mFrames << " main view sorts, per sort: render map " << t.mCpuA / (F64)t.mFrames << " alpha + " << t.mCpuR / (F64)t.mFrames << " rigged, set " << t.mNewA / (F64)t.mFrames << " + " << t.mNewR / (F64)t.mFrames
+                             << " (candidates " << t.mCands / (F64)t.mFrames << ", touched since the last row refresh " << t.mDirty / (F64)t.mFrames << ", no alpha key now " << t.mStale / (F64)t.mFrames << ") | alpha the set lacks (never a candidate / no stamp / filter or keys) "
+                             << t.mMissA[0] << " / " << t.mMissA[1] << " / " << t.mMissA[2] << ", rigged " << t.mMissR[0] << " / " << t.mMissR[1] << " / " << t.mMissR[2] << " | the set names, the render map not (visible list / not in it): alpha " << t.mExtraA[0] << " / " << t.mExtraA[1]
+                             << ", rigged " << t.mExtraR[0] << " / " << t.mExtraR[1] << " | depth order: " << t.mOrder << " of " << t.mOrderCmp << " positions differ" << LL_ENDL;
     }
 }
 

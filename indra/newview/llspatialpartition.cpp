@@ -4475,6 +4475,7 @@ void LLCullResult::pushBack(T& head, U32& count, V* val)
 // <FS> the lists a cull fills (groups, drawables, bridges), without the render maps and the scene table fields that a cull never touches: the results of the pieces of a split cull (LL_VK_SC_SPLIT)
 void LLCullResult::clearLists()
 {
+    ++mListSerial;
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
     mAlphaGroupsSize = 0;
@@ -4494,6 +4495,7 @@ void LLCullResult::clearLists()
 
 void LLCullResult::clear()
 {
+    ++mListSerial;
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
 
@@ -4614,6 +4616,10 @@ LLCullResult::bridge_iterator LLCullResult::endVisibleBridge()
 
 void LLCullResult::pushVisibleGroup(LLSpatialGroup* group)
 {
+    if (mMainView)
+    {
+        group->mMainListedFrame = mListSerial;
+    }
     if (mVisibleGroupsSize < mVisibleGroupsAllocated)
     {
         mVisibleGroups[mVisibleGroupsSize] = group;
