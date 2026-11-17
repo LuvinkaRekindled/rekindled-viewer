@@ -50,7 +50,6 @@ public:
         S32 lodHash;
         S32 visible[kCameras];          // per camera: the frame the group was last visible
         U32 occlusion[kCameras];        // per camera: the occlusion state
-        U32 retainedSlot;               // <FS> C4.5 R2: the retained set (LLVisSet) the group is a member of, 0 = none: while the set is replayed the group's world stamp is the frame of the replay (LLRetainedStamps), not written per group
         // the view caches of LLSpatialGroup (C1b.2). Written by LLSpatialGroup::updateDistance, which accepts the world camera only (the shadow and water views never write them): one writer, so they
         // are not keyed by view. Read by the sort (distance, depth), the rebuild urgency, the alpha ordering (view angle) and the texture priority (pixel area).
         LLVector4a viewAngle;           // the view direction when the group was last re-sorted (alpha)
