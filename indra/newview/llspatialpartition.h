@@ -40,6 +40,7 @@
 #include "llface.h"
 #include "llviewercamera.h"
 #include "llvector4a.h"
+#include "llhiz.h"
 #include "llvoavatar.h"
 #include "llavatarref.h"
 #include "llfetchedgltfmaterial.h"
@@ -590,7 +591,7 @@ public:
 };
 
 // class for creating bridges between spatial partitions
-class LLSpatialBridge : public LLDrawable, public LLSpatialPartition
+class LLSpatialBridge : public LLDrawable, public LLSpatialPartition, public LLHizTarget
 {
 protected:
     ~LLSpatialBridge();
@@ -616,6 +617,14 @@ public:
     // stage 9: the rest of setVisible's own tests as a function of the bridge: render type on, the avatar gate, its extents against the frustum and the far sphere (outside impostor and shadow passes: a pixel area of at least 16).
     // What setVisible would go on to mark; it marks nothing
     bool inViewFor(LLCamera& camera_in);
+    // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (ll_bridge_hiz_collect),
+    // the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the bridge is hidden by it while the verdict is recent and its extents still lie inside the box it was made for
+    /*virtual*/ void hizResult(bool occluded) override;
+    bool hizHides() const;
+    F32 mHizSentBox[6] = {};        // centre and half size of the box added to the pass (agent space), with the fudge the groups' boxes have
+    F32 mHizVerdictBox[6] = {};     // the box the last occluded verdict was made for
+    bool mHizOccluded = false;
+    U32 mHizVerdictFrame = 0;
     // stage 9: every live bridge (made by the constructor, dropped by the destructor; the main thread makes and destroys them): the bridge owner's list
     static const std::vector<LLSpatialBridge*>& allBridges() { return sAll; }
     static std::vector<LLSpatialBridge*> sAll;
