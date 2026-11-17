@@ -13403,6 +13403,32 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     }
     // the worker's list: the late set's rows with a fragment, one each; the viewer adds what changed in the last frames and the bridges' groups
     const std::shared_ptr<const LLVkBridge::ConsumerList> wlist = LLVkBridge::consumerListRead();
+    // T4 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_DIAG=1 only): how often the exact list serves for want of a fresh late list, and why. The consumers need a superset of what the worker draws (its derive differs from the
+    // exact list by about 4 groups a view each way), which only the late list gives: the exact list is their cover for the frames without one. Per 600 counted frames: served by the late list / no list / list older than 30 frames
+    // (its age), and the fallbacks after the first 1,800 frames (the load) with the last one's frame: login only, or during loads and sweeps.
+    if (ll_diag_on())
+    {
+        struct GapStats { U64 mServed = 0, mNoList = 0, mStale = 0, mLate = 0, mCounted = 0; U32 mFrame = ~0u, mLastLate = 0, mMaxAge = 0; };
+        static GapStats gap;
+        if (gap.mFrame != (U32)gFrameCount)
+        {
+            gap.mFrame = (U32)gFrameCount;
+            const U32 age = wlist ? (U32)gFrameCount - wlist->mFrame : 0u;
+            if (!wlist) { ++gap.mNoList; }
+            else if (age > 30) { ++gap.mStale; gap.mMaxAge = std::max(gap.mMaxAge, age); }
+            else { ++gap.mServed; }
+            if ((!wlist || age > 30) && (U32)gFrameCount > 1800)
+            {
+                ++gap.mLate;
+                gap.mLastLate = (U32)gFrameCount;
+            }
+            if (++gap.mCounted % 600 == 0)
+            {
+                LL_INFOS("VkConsumers") << "consumers' handle list over " << gap.mCounted << " main view frames: the late list served " << gap.mServed << ", the exact list stood in for want of a list " << gap.mNoList << ", for a list older than 30 frames " << gap.mStale
+                                        << " (oldest " << gap.mMaxAge << " frames) | after frame 1800: " << gap.mLate << " such frames, the last in frame " << gap.mLastLate << " (now " << gFrameCount << ")" << LL_ENDL;
+            }
+        }
+    }
     if (!wlist || (U32)gFrameCount - wlist->mFrame > 30)
     {
         return cull->mGeoHandles;       // no list, or one that has not been renewed for half a second: the exact list serves (the record's own lists are not touched)
