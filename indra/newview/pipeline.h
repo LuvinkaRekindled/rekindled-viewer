@@ -442,6 +442,7 @@ public:
         const LLDrawable* mExclude = nullptr;   // J1 K3e: a spot light's own drawable, left out of its shadow pass's cull (what RenderSpotLight does for the unprepared pass; the jobs have no such global)
         std::vector<LLDrawable*> mDeferred;     // drawables of visible groups the workers left for the main thread (not volumes)
         std::vector<LLSpatialBridge*> mBridges; // stage 10: the bridges the cascade sees, by the registry (marked by the jobs of kind 2)
+        std::vector<LLDrawable*> mAvatars;      // ... and the avatars' drawables (kind 2, after the bridges)
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
         // (the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them)
         LLAsyncPool::JobPtr mSkinJob;
