@@ -11926,6 +11926,85 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
 
 void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table);
 
+// VkFlash (LL_VK_DIAG=1 only), on the worker where the drawn list is made: a view whose derived set changes by far more than a camera move changes it, while the scene is the same (geometry missing or doubled for a view or two).
+// The test is the number of groups the derive lists against the view before: a sweep to a sparse direction moves it a few percent a view, a flash by a fifth or more (LL_VK_FLASH_TEST=1: 3 percent, to make events to read). A change
+// starts an event: one line with the groups that left the set or joined it and why (the derive's own verdict of each row now: occluded, outside the frustum, its objects outside, no fragment, auto-hidden, dead, a bridge not marked), the
+// camera's move and turn since the view before; and one line at its end: the count back within 10 percent of the one before inside 6 views is a flash, else a step. A status line every 600 views says it ran.
+void flash_watch(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, const std::vector<U32>& vis_words, U64 count)
+{
+    static const bool test = getenv("LL_VK_FLASH_TEST") != nullptr;
+    const double jump = test ? 0.03 : 0.20;
+    static std::vector<U32> prev_vis;
+    static U64 prev_count = 0, views = 0, events = 0, said = 0, base = 0, start_view = 0;
+    static F32 prev_origin[3] = {}, prev_normal[3] = {};
+    static bool open = false;
+    ++views;
+    const double change = prev_count ? ((double)count - (double)prev_count) / (double)prev_count : 0.0;
+    if (open)
+    {
+        const bool back = fabs((double)count - (double)base) <= 0.10 * (double)base;
+        if (back || views - start_view >= 6)
+        {
+            LL_INFOS("VkFlash") << "the change that started in view " << start_view << " " << (back ? "was a flash: back to " : "stayed: a step to ") << count << " groups after " << views - start_view << " views (before it " << base << ")" << LL_ENDL;
+            open = false;
+        }
+    }
+    else if (views > 40 && prev_count > 100 && fabs(change) > jump)
+    {
+        ++events;
+        open = true;
+        base = prev_count;
+        start_view = views;
+        if (said < 60)
+        {
+            ++said;
+            U32 lost = 0, gained = 0, why[10] = {};
+            const size_t words = std::min(prev_vis.size(), vis_words.size());
+            for (size_t w = 0; w < words; ++w)
+            {
+                U32 gone = prev_vis[w] & ~vis_words[w];
+                for (U32 joined = vis_words[w] & ~prev_vis[w]; joined; joined &= joined - 1)
+                {
+                    ++gained;
+                }
+                while (gone)
+                {
+                    U32 bit = 0;
+                    while (!((gone >> bit) & 1u))
+                    {
+                        ++bit;
+                    }
+                    gone &= gone - 1;
+                    const U32 slot = (U32)(w * 32 + bit);
+                    if (slot >= s.mTable.size())
+                    {
+                        continue;
+                    }
+                    ++lost;
+                    const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
+                    ++why[v >= 0 && v < 10 ? v : 9];
+                }
+            }
+            const F32 dx = P.mOrigin[0] - prev_origin[0], dy = P.mOrigin[1] - prev_origin[1], dz = P.mOrigin[2] - prev_origin[2];
+            const F32 dot = P.mPlanes[0][0] * prev_normal[0] + P.mPlanes[0][1] * prev_normal[1] + P.mPlanes[0][2] * prev_normal[2];
+            LL_INFOS("VkFlash") << "view " << views << " changes the derived set from " << prev_count << " to " << count << " groups (" << change * 100.0 << " percent): " << lost << " left the set, " << gained << " joined | why the ones that left are out now (verdict: passes "
+                                << why[CV_PASS] << ", bridge not marked " << why[CV_GATE] << ", dead " << why[CV_DEAD] << ", no fragment " << why[CV_NOHANDLE] << ", render type off " << why[CV_TYPE] << ", occluded " << why[CV_OCC] << ", auto-hidden " << why[CV_HIDE]
+                                << ", outside the frustum " << why[CV_FRUSTUM] << ", objects outside " << why[CV_OBJECTS] << ") | camera moved " << sqrtf(dx * dx + dy * dy + dz * dz) << " m, turned " << acosf(std::min(1.f, std::max(-1.f, dot))) * 57.29578f << " degrees since the view before" << LL_ENDL;
+        }
+    }
+    if (views % 600 == 0)
+    {
+        LL_INFOS("VkFlash") << "watching: " << views << " views of the main view's derive, " << count << " groups now, " << events << " changes beyond " << jump * 100.0 << " percent so far" << (test ? " (LL_VK_FLASH_TEST)" : "") << LL_ENDL;
+    }
+    prev_vis = vis_words;
+    prev_count = count;
+    for (int k = 0; k < 3; ++k)
+    {
+        prev_origin[k] = P.mOrigin[k];
+        prev_normal[k] = P.mPlanes[0][k];
+    }
+}
+
 bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own)
 {
     // The main view's derive (T4b-2 of doc/vulkan/PLAN-visible-set-owner.md): the listed set from the worker's own rows and this record's planes, which the worker draws from. The record names no handles for the main view: the viewer sends the
@@ -11975,6 +12054,7 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
     }
     static std::vector<U32> vis_words;
     vis_words.assign((table + 31) / 32, 0);
+    const U64 derived_before = d.mDerived;
     for (U32 slot = 0; slot < table; ++slot)
     {
         const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
@@ -11992,6 +12072,10 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
         {
             own_out->push_back(s.mMap[slot].mHandle);       // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
         }
+    }
+    if (ll_diag_on())
+    {
+        flash_watch(s, P, occlusion, hide_limit, type_mask, memo, bridge_marked, vis_words, d.mDerived - derived_before);
     }
     {
         DerivePub job;
