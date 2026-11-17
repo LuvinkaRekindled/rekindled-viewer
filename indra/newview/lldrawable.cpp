@@ -1869,6 +1869,29 @@ bool LLSpatialBridge::avatarGateOpen() const
     return true;
 }
 
+bool LLSpatialBridge::inViewFor(LLCamera& camera_in)
+{
+    if (!gPipeline.hasRenderType(mDrawableType) || !avatarGateOpen())
+    {
+        return false;
+    }
+    const LLVector4a* exts = getSpatialExtents();
+    LLVector4a center;
+    center.setAdd(exts[0], exts[1]);
+    center.mul(0.5f);
+    LLVector4a size;
+    size.setSub(exts[1], exts[0]);
+    size.mul(0.5f);
+    if ((LLPipeline::shadowRender() && camera_in.AABBInFrustum(center, size)) ||
+        LLPipeline::sImpostorRender ||
+        (camera_in.AABBInFrustumNoFarClip(center, size) &&
+        AABBSphereIntersect(exts[0], exts[1], camera_in.getOrigin(), camera_in.mFrustumCornerDist)))
+    {
+        return LLPipeline::sImpostorRender || LLPipeline::shadowRender() || LLPipeline::calcPixelArea(center, size, camera_in) >= FORCE_INVISIBLE_AREA;
+    }
+    return false;
+}
+
 void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* results, bool for_select)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
