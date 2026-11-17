@@ -5714,8 +5714,56 @@ void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
 // bridges inside bridges in waves, until no new one qualifies. The region groups loop (a) skipped that are occluded get their markOccluder in ownersCollect, once.
 namespace
 {
+// stage 9 (avatars): an avatar's own Hi-Z verdict, as a bridge has (LLSpatialBridge::hizResult / hizHides): its drawable's extents are a box of the occlusion pass, the verdict follows the groups' rule (occluded on two agreeing
+// verdicts, visible on one), and the avatar is hidden by it while the verdict is recent and its extents still lie inside the box it was made for. Kept by the avatar's pointer, pruned when the avatar is gone
+struct AvHiz : public LLHizTarget
+{
+    LLDrawable* mDrawable = nullptr;
+    F32 mSentBox[6] = {};
+    F32 mVerdictBox[6] = {};
+    bool mOccluded = false;
+    U32 mVerdictFrame = 0;
+    void hizResult(bool occluded) override
+    {
+        if (occluded)
+        {
+            if (mHizOccludedOnce)
+            {
+                mOccluded = true;
+            }
+            mHizOccludedOnce = true;
+            memcpy(mVerdictBox, mSentBox, sizeof(mVerdictBox));
+        }
+        else
+        {
+            mHizOccludedOnce = false;
+            mOccluded = false;
+        }
+        mVerdictFrame = (U32)LLFrameTimer::getFrameCount();
+    }
+    bool hides() const
+    {
+        if (!mOccluded || !mDrawable || (U32)LLFrameTimer::getFrameCount() - mVerdictFrame > 8u)
+        {
+            return false;
+        }
+        const LLVector4a* exts = mDrawable->getSpatialExtents();
+        for (int k = 0; k < 3; ++k)
+        {
+            const F32 c = 0.5f * (exts[0][k] + exts[1][k]), h = 0.5f * (exts[1][k] - exts[0][k]);
+            if (fabsf(c - mVerdictBox[k]) + h > mVerdictBox[3 + k])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+std::unordered_map<const LLVOAvatar*, std::unique_ptr<AvHiz>> sAvHiz;
+
 struct OwnerPass
 {
+    std::vector<AvHiz*> mBoxAv;                     // the avatars in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass
     std::vector<LLDrawable*> mFirst;                // the avatars' drawables, then the bridges whose group the cull listed, by group
     std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (ll_bridge_hiz_collect)
     size_t mAddedFrom = 0;                          // the drawable groups from here on were added by the marking
@@ -5750,11 +5798,6 @@ static inline bool ll_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32
     return LLPipeline::sImpostorRender || fov_changed || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
 }
 
-static bool ll_owner_group_listed(LLSpatialGroup* g, S32 frame)
-{
-    return g && !g->isDead() && g->getSpatialPartition() && !g->getSpatialPartition()->mRenderByGroup && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame;
-}
-
 void LLPipeline::ownersCollect(LLCamera& camera)
 {
     LL_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
@@ -5764,36 +5807,56 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     o.mAddedFrom = sCull->getDrawableGroupsSize();
     o.mListBridges0 = sCull->getVisibleBridgeSize();
     o.mListDrawables0 = sCull->getVisibleListSize();
-    const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
-    const bool occ = useOcclusion() > 1;
-    static std::vector<LLSpatialGroup*> occluded;
-    occluded.clear();
-    const auto occluded_group = [&](LLSpatialGroup* g)
+    // stage 9 (avatars): an avatar's drawable is listed by its own test (its extents against the frustum and the far sphere: what the group walk gave the avatar's group) and its own Hi-Z verdict (AvHiz), not by its group in a
+    // region octree; the boxes of the avatars in view join the Hi-Z pass (ll_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the group's only 0.20,
+    // the own rule's only 0.14; the verdict hid 2.33 a sort, of which the groups listed 0.11
+    o.mBoxAv.clear();
     {
-        if (!(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+        static std::vector<const LLVOAvatar*> alive;
+        alive.clear();
+        for (LLCharacter* c : LLCharacter::sInstances)
         {
-            return false;
+            LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+            LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
+            if (!d || d->isDead())
+            {
+                continue;
+            }
+            alive.push_back(av);
+            std::unique_ptr<AvHiz>& slot = sAvHiz[av];
+            if (!slot)
+            {
+                slot = std::make_unique<AvHiz>();
+            }
+            AvHiz& h = *slot;
+            h.mDrawable = d;
+            const LLVector4a* exts = d->getSpatialExtents();
+            LLVector4a center, size;
+            center.setAdd(exts[0], exts[1]);
+            center.mul(0.5f);
+            size.setSub(exts[1], exts[0]);
+            size.mul(0.5f);
+            if (!camera.AABBInFrustumNoFarClip(center, size) || !AABBSphereIntersect(exts[0], exts[1], camera.getOrigin(), camera.mFrustumCornerDist))
+            {
+                continue;
+            }
+            if (!h.isHizAwaiting())
+            {
+                o.mBoxAv.push_back(&h);         // (the box of the next pass: an avatar hidden now is tested again)
+            }
+            if (!h.hides())
+            {
+                o.mFirst.push_back(d);
+            }
         }
-        if (!g->getSpatialPartition()->asBridge() && std::find(occluded.begin(), occluded.end(), g) == occluded.end())
+        if (sAvHiz.size() > alive.size())
         {
-            occluded.push_back(g);      // (a region group: the groups a bridge adds are looked at in ownersFinish)
+            std::sort(alive.begin(), alive.end());
+            for (auto it = sAvHiz.begin(); it != sAvHiz.end();)
+            {
+                it = std::binary_search(alive.begin(), alive.end(), it->first) ? std::next(it) : sAvHiz.erase(it);
+            }
         }
-        return true;
-    };
-    for (LLCharacter* c : LLCharacter::sInstances)
-    {
-        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
-        LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
-        if (!d || d->isDead())
-        {
-            continue;
-        }
-        LLSpatialGroup* g = d->getSpatialGroup();
-        if (!ll_owner_group_listed(g, frame) || occluded_group(g))
-        {
-            continue;
-        }
-        o.mFirst.push_back(d);
     }
     o.mAvatars = (U32)o.mFirst.size();
     // the bridges: listed by their own test and their own Hi-Z verdict, not by their group in a region octree (stage 9: the groups only gave them the frustum test, which the bridge makes itself, and the hierarchical occlusion, which the
@@ -5832,11 +5895,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         o.mFirst.push_back(b);
     }
     o.mFirstBridges = (U32)ready.size();
-    o.mOccluded = (U32)occluded.size();
-    for (LLSpatialGroup* g : occluded)
-    {
-        markOccluder(g);
-    }
 }
 
 // stage 10 (bridges): the bridges a view would mark by the registry, with the rules the region octrees' walk gave them: not hidden by markVisible's impostor rule, in the partition the view walks (the bridge partition always, the
@@ -5896,6 +5954,26 @@ void ll_bridge_hiz_collect()
             b->mHizSentBox[3 + k] = half[k] + fudge;
         }
         LLHiz::add(b, center, half[0] + fudge, half[1] + fudge, half[2] + fudge, false);
+    }
+    for (AvHiz* h : sOwner.mBoxAv)
+    {
+        if (!h->mDrawable || h->mDrawable->isDead() || h->isHizAwaiting())
+        {
+            continue;
+        }
+        const LLVector4a* exts = h->mDrawable->getSpatialExtents();
+        LLVector4a center, half;
+        center.setAdd(exts[0], exts[1]);
+        center.mul(0.5f);
+        half.setSub(exts[1], exts[0]);
+        half.mul(0.5f);
+        const F32 fudge = 0.25f;
+        for (int k = 0; k < 3; ++k)
+        {
+            h->mSentBox[k] = center[k];
+            h->mSentBox[3 + k] = half[k] + fudge;
+        }
+        LLHiz::add(h, center, half[0] + fudge, half[1] + fudge, half[2] + fudge, false);
     }
 }
 
