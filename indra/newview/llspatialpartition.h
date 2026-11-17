@@ -617,6 +617,11 @@ public:
     // stage 9: the rest of setVisible's own tests as a function of the bridge: render type on, the avatar gate, its extents against the frustum and the far sphere (outside impostor and shadow passes: a pixel area of at least 16).
     // What setVisible would go on to mark; it marks nothing
     bool inViewFor(LLCamera& camera_in);
+    // stage 9 (3.2): a ray against the bridges by the registry (allBridges), not through the region octrees: every bridge whose extents the segment crosses is tested as the octree's check of its entry does (it must be visible, its render
+    // type on, then its own octree). Returns the closest hit like LLSpatialPartition::lineSegmentIntersect; the region octrees give no bridge while sPickSkipBridges is set
+    static LLDrawable* lineSegmentIntersectAll(const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+                                               S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent);
+    static inline bool sPickSkipBridges = false;
     // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (ll_bridge_hiz_collect),
     // the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the bridge is hidden by it while the verdict is recent and its extents still lie inside the box it was made for
     /*virtual*/ void hizResult(bool occluded) override;

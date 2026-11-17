@@ -4243,6 +4243,10 @@ public:
 
         if (drawable->isSpatialBridge())
         {
+            if (LLSpatialBridge::sPickSkipBridges)
+            {
+                return false;       // stage 9 (3.2): the bridges are tested by the registry (LLSpatialBridge::lineSegmentIntersectAll)
+            }
             LLSpatialPartition *part = drawable->asPartition();
             LLSpatialBridge* bridge = part->asBridge();
             if (bridge && gPipeline.hasRenderType(bridge->mDrawableType))
@@ -4303,6 +4307,35 @@ public:
         return false;
     }
 } LL_ALIGN_POSTFIX(16);
+
+LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+                                                     S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent)
+{
+    LLOctreeIntersect intersect(start, end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, intersection, tex_coord, normal, tangent);
+    const bool saved = sPickSkipBridges;
+    sPickSkipBridges = false;
+    // (a bridge's hit shortens the segment: the closest wins; the registry changes only when bridges are made or destroyed, not during a pick, but a copy is walked as the octree's iteration was guarded)
+    const std::vector<LLSpatialBridge*> bridges = allBridges();
+    for (LLSpatialBridge* b : bridges)
+    {
+        if (b->isDead() || !b->mEntry)
+        {
+            continue;
+        }
+        const LLVector4a* ex = b->getSpatialExtents();
+        LLVector4a center, half;
+        center.setAdd(ex[0], ex[1]);
+        center.mul(0.5f);
+        half.setSub(ex[1], ex[0]);
+        half.mul(0.5f);
+        if (LLLineSegmentBoxIntersect(intersect.mStart, intersect.mEnd, center, half))
+        {
+            intersect.check(b->mEntry.get());
+        }
+    }
+    sPickSkipBridges = saved;
+    return intersect.mHit;
+}
 
 LLDrawable* LLSpatialPartition::lineSegmentIntersect(const LLVector4a& start, const LLVector4a& end,
                                                      bool pick_transparent,
