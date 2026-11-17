@@ -400,7 +400,6 @@ public:
     void sortParallelCheck(const View& view);
     void refillPools(LLCullResult& result);
     void stateSort(LLSpatialGroup* group, LLCamera& camera);
-    void stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed = false);
     void stateSort(LLDrawable* drawablep, LLCamera& camera);
     void fillPools(LLCullResult& result, const std::vector<LLDrawable*>* first);       // <FS> stage 2b of PLAN-change-driven-sort.md: the pool fill of a view, from its cull result
     bool sortAccepts(LLDrawable* drawablep);       // <FS> stage 2 of PLAN-change-driven-sort.md: does this drawable take part in the sort (and the pools' fill)

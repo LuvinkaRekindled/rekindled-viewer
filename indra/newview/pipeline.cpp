@@ -5724,6 +5724,32 @@ struct OwnerPass
 OwnerPass sOwner;
 }
 
+// stage 9 (3.3): a bridge's own LOD rule (it was its region group's changeLOD()): the distance of its extents' centre to the camera (the ramp under 16 m as calcDistance has it), the slop test against the distance of its last
+// update (ratio 0.25 over the larger of that and its radius), the round robin of period 16 by its own hash, a changed field of view, a first sort always. The state (mLodDistance) is the main view's
+static void ll_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool fov_changed, U32 frame_now)
+{
+    const LLVector4a* ex = b->getSpatialExtents();
+    const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
+    F32 d = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (d < 16.f)
+    {
+        d = d / 16.f * d / 16.f * 16.f;
+    }
+    const F32 last = b->mLodDistance;
+    const bool yes = last == 0.f || fov_changed || fabsf(d - last) / llmax(last, b->getRadius()) >= 0.25f || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
+    b->mLodUpdate = yes;
+    if (yes)
+    {
+        b->mLodDistance = d;
+    }
+}
+
+// the views other than the main view's that sort the world camera's bridges (the avatar impostor render, the planar mirror) keep no state of their own: the impostor render updates every bridge, the others the round robin and a field of view change
+static inline bool ll_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32 frame_now)
+{
+    return LLPipeline::sImpostorRender || fov_changed || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
+}
+
 static bool ll_owner_group_listed(LLSpatialGroup* g, S32 frame)
 {
     return g && !g->isDead() && g->getSpatialPartition() && !g->getSpatialPartition()->mRenderByGroup && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame;
@@ -5770,68 +5796,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         o.mFirst.push_back(d);
     }
     o.mAvatars = (U32)o.mFirst.size();
-    // the compare for the bridge owners (LL_VK_DIAG=1): the list as the groups give it (the group stamped visible and not occluded) against the bridge's own test (inViewFor: render type, avatar gate, extents against the frustum and
-    // the far sphere, pixel area), both with markVisible's own rule (an impostor's attachments are not marked)
-    if (ll_diag_on())
-    {
-        static U64 sorts = 0, n_bridges = 0, both = 0, old_only = 0, new_only = 0, new_only_occluded = 0, new_only_unstamped = 0, new_only_group_none = 0, old_only_gate = 0, new_only_hud = 0, by_type[16] = {}, by_type_group[2] = {}, att_unstamped = 0, stamp_old = 0, stamp_cur = 0, parent_listed = 0, v_both = 0, v_old_only = 0, v_new_only = 0, v_hides = 0, v_hides_old_visible = 0, v_hides_old_listed_occluded = 0;
-        ++sorts;
-        for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
-        {
-            if (b->isDead() || ll_attachment_bridge_hidden(b))
-            {
-                continue;
-            }
-            LLSpatialGroup* g = b->getSpatialGroup();
-            ++n_bridges;
-            const bool listed = ll_owner_group_listed(g, frame);
-            const bool old_rule = listed && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED));
-            const bool new_rule = b->inViewFor(camera);
-            const bool hides = b->hizHides();
-            const bool new_v = new_rule && !hides;
-            v_both += old_rule && new_v;
-            v_old_only += old_rule && !new_v;
-            v_new_only += !old_rule && new_v;
-            v_hides += new_rule && hides;
-            v_hides_old_visible += new_rule && hides && old_rule;
-            both += old_rule && new_rule;
-            old_only += old_rule && !new_rule;
-            new_only += !old_rule && new_rule;
-            if (!old_rule && new_rule)
-            {
-                if (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment())
-                {
-                    ++new_only_hud;
-                }
-                else if (!g || g->isDead())
-                {
-                    ++new_only_group_none;
-                }
-                else if (listed)
-                {
-                    ++new_only_occluded;
-                }
-                else
-                {
-                    ++new_only_unstamped;
-                    LLSpatialPartition* gp = g->getSpatialPartition();
-                    ++by_type[gp ? (gp->mPartitionType & 15u) : 15u];
-                    ++by_type_group[gp && gp->mRenderByGroup ? 1 : 0];
-                    LLViewerObject* vo = b->mDrawable ? b->mDrawable->getVObj().get() : nullptr;
-                    att_unstamped += vo && vo->isAttachment();
-                    stamp_cur += g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame - 1;
-                    stamp_old += g->getVisible(LLViewerCamera::CAMERA_WORLD) < frame - 1;
-                }
-            }
-            old_only_gate += old_rule && !new_rule && !b->avatarGateOpen();
-        }
-        if (sorts % 600 == 0)
-        {
-            const double n = (double)sorts;
-            LL_DIAG("VkBridgeOwn") << "bridges per sort over " << sorts << ": " << n_bridges / n << " (not hidden by the impostor rule); the group's rule and the bridge's own test both say visible " << both / n << ", the group's only " << old_only / n
-                                    << " (of those the avatar gate closed " << old_only_gate / n << "), the bridge's own only " << new_only / n << " (its group is occluded " << new_only_occluded / n << ", not stamped this frame " << new_only_unstamped / n << ", none " << new_only_group_none / n << ", HUD attachments " << new_only_hud / n << "); WITH THE BRIDGE'S OWN Hi-Z VERDICT: both " << v_both / n << ", the groups' only " << v_old_only / n << ", the own test's only " << v_new_only / n << "; the verdict hides " << v_hides / n << " a sort, of those the groups list " << v_hides_old_visible / n << "; the unstamped ones (without the verdict): group render by drawable " << by_type_group[0] / n << " by group " << by_type_group[1] / n << ", attachments " << att_unstamped / n << ", group stamped a frame ago " << stamp_cur / n << " older " << stamp_old / n << ", by partition type (terrain 1, voidwater 2, water 3, tree 4, particle 5, grass 6, volume 7, bridge 8, avatar 9, control av 10) " << by_type[1] / n << " " << by_type[2] / n << " " << by_type[3] / n << " " << by_type[4] / n << " " << by_type[5] / n << " " << by_type[6] / n << " " << by_type[7] / n << " " << by_type[8] / n << " " << by_type[9] / n << " " << by_type[10] / n << LL_ENDL;
-        }
-    }
     // the bridges: listed by their own test and their own Hi-Z verdict, not by their group in a region octree (stage 9: the groups only gave them the frustum test, which the bridge makes itself, and the hierarchical occlusion, which the
     // verdict gives); a bridge the impostor rule hides is not listed, a HUD attachment's bridge belongs to the HUD view
     static std::vector<LLSpatialBridge*> ready;
@@ -5851,7 +5815,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
             o.mBoxBridges.push_back(b);     // (the box of the next pass: a bridge hidden now is tested again)
         }
     }
-    std::stable_sort(ready.begin(), ready.end(), [](LLSpatialBridge* a, LLSpatialBridge* b) { return a->getSpatialGroup() < b->getSpatialGroup(); });
     // stage 9, 3.1: the bridge's LOD decision is its own (it was its region group's changeLOD()): the distance of its extents' centre to the camera (the ramp under 16 m as calcDistance has it), the slop test against the distance of
     // its last update (the partition's ratio 0.25 over the larger of that and its radius), the round robin of the partition's period 16 (the bridge's own turn: the groups' hashes were independent of it, the rate is the same: the compare
     // over 33,000 sorts had the group saying yes for 13.1 and this rule for 13.0 of 208 listed bridges a sort, the overlap the chance of two round robins), and a changed field of view; a first sort always updates
@@ -5861,20 +5824,7 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         const LLVector3 co = camera.getOrigin();
         for (LLSpatialBridge* b : ready)
         {
-            const LLVector4a* ex = b->getSpatialExtents();
-            const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
-            F32 d = sqrtf(dx * dx + dy * dy + dz * dz);
-            if (d < 16.f)
-            {
-                d = d / 16.f * d / 16.f * 16.f;
-            }
-            const F32 last = b->mLodDistance;
-            const bool yes = last == 0.f || fov_changed || fabsf(d - last) / llmax(last, b->getRadius()) >= 0.25f || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
-            b->mLodUpdate = yes;
-            if (yes)
-            {
-                b->mLodDistance = d;
-            }
+            ll_bridge_lod_decide(b, co, fov_changed, frame_now);
         }
     }
     for (LLSpatialBridge* b : ready)
@@ -6839,38 +6789,12 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         if (view.mWorldCameraID && !view.mCubeSnapshot)
         {
             LLCullResult::bridge_iterator bridges = read.beginVisibleBridge();
-            if (sOwnerA)
-            {
-                for (U32 k = 0; k < n_br; ++k)
-                {
-                    do_distance[k] = !bridges[k]->isDead() && bridges[k]->mLodUpdate;        // (stage 9, 3.1: decided in ownersCollect by the bridge's own rule)
-                }
-            }
-            LLSpatialGroup* last_group = NULL;
             const bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
-            for (U32 k = 0; !sOwnerA && k < n_br; ++k)
+            const U32 frame_now = (U32)LLViewerOctreeEntryData::getCurrentFrame();
+            for (U32 k = 0; k < n_br; ++k)
             {
-                LLSpatialBridge* bridge = bridges[k];
-                LLSpatialGroup* group = bridge->getSpatialGroup();
-                if (last_group == NULL)
-                {
-                    last_group = group;
-                }
-                if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
-                {
-                    do_distance[k] = group->changeLOD() || fov_changed;
-                }
-                if (last_group && last_group != group && last_group->changeLOD())
-                {
-                    sort_journal_group(last_group);
-                    last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
-                }
-                last_group = group;
-            }
-            if (!sOwnerA && last_group && last_group->changeLOD())
-            {
-                sort_journal_group(last_group);
-                last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
+                // (stage 9, 3.1: the main view's decisions were made in ownersCollect by the bridge's own rule)
+                do_distance[k] = !bridges[k]->isDead() && (sOwnerA ? bridges[k]->mLodUpdate : ll_bridge_lod_other(bridges[k], fov_changed, frame_now));
             }
         }
         sSortJournal = saved_journal;
@@ -7234,41 +7158,19 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         }
         else
         {
-            LLSpatialGroup* last_group = NULL;
-            bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+            const bool fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+            const U32 frame_now = (U32)LLViewerOctreeEntryData::getCurrentFrame();
             for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
             {
-                LLCullResult::bridge_iterator cur_iter = i;
-                LLSpatialBridge* bridge = *cur_iter;
-                LLSpatialGroup* group = bridge->getSpatialGroup();
-
-                if (last_group == NULL)
-                {
-                    last_group = group;
-                }
-
+                LLSpatialBridge* bridge = *i;
                 const U64 vis_b0 = sVisSortOn ? LLVisCensus::now() : 0;
-                if (!bridge->isDead() && group && !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                if (!bridge->isDead() && ll_bridge_lod_other(bridge, fov_changed, frame_now))
                 {
-                    stateSort(bridge, camera, fov_changed);
-                }
-
-                if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
-                    last_group != group && last_group->changeLOD())
-                {
-                    sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
+                    bool force_update = false;
+                    bridge->updateDistance(camera, force_update);
                 }
                 if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
-
-                last_group = group;
             }
-
-            if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD &&
-                last_group && last_group->changeLOD())
-            {
-                sort_journal_group(last_group); last_group->row().lastUpdateDistance = last_group->row().distance; LLCullShadow::touch(last_group);
-            }
-    
         }
     }
     {
@@ -7574,15 +7476,6 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
     }
 }
 
-void LLPipeline::stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    if (bridge->getSpatialGroup()->changeLOD() || fov_changed)
-    {
-        bool force_update = false;
-        bridge->updateDistance(camera, force_update);
-    }
-}
 
 // <FS> stage 2 of doc/vulkan/PLAN-change-driven-sort.md: the question stateSort(drawable) asks first, whether this drawable takes part in this sort at all (the render type is on, it is not the spot light's own geometry or
 // the one the shadow prep excludes, it is not a selected object that is hidden, an avatar is within the render distance and visible). The pools' fill asks the same question when it takes its drawables from the cull result.
