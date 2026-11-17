@@ -4741,7 +4741,7 @@ static void main_cull_census(LLCamera& camera)
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* bits = nullptr);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra);        // sun cascade `index`: the worker's answer if it is usable (null if not), and in `extra` the groups changed in the last frames that the cascade's frustum holds (not in the answer)
 bool ll_cascade_covers_type(LLSpatialPartition* part);
 U8 ll_cull_slot_part_type(U32 slot);
@@ -6134,9 +6134,6 @@ int sort_split_setting()
 
 // <FS> stage 8 (loop c of sortLoops, owner 1 of 4): the mesh rebuild of the visible groups. LL_VK_MESH_REG: 0 the loops rebuild as before, 2 the loops rebuild as before and the geometry stage's registry pass counts what
 // it still finds to rebuild (it must be 0: the check), 1 the loops do not rebuild and the geometry stage does, from LLDirtyGroups (the registry the cascades' rebuild already uses, C4.1)
-static const int sMeshRegMode = 1;       // the geometry stage makes the visible groups' mesh rebuilds from the registry of dirty groups (the sort's loops do not)
-static std::mutex sMeshSeenMutex;
-static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the groups sort_rebuild_mesh saw dirty since the last geometry stage
 
 // <FS> stage 8 (loop c, owner 2 of 4): the occlusion discard rule of the loops. LL_VK_CHK_COUNT=1 counts what checkOcclusion does in the loops of the main view's sort: the calls, the ones that had an effect (the parent is
 // OCCLUDED: the group is occluded with it; or a verdict is awaited and the group asked to be discarded: its OCCLUDED state is cleared), by whether the walk replayed the retained sets in that frame (a replayed member never ran
@@ -6194,34 +6191,6 @@ static inline void sort_check_occlusion(LLSpatialGroup* group)
         return;
     }
     group->checkOcclusion();
-}
-
-// <FS> a rebuildMesh of the loops: recorded in the ledger (and made at the apply pass) when a sink is set, made here and recorded when the check tees
-static void sort_rebuild_mesh(LLSpatialGroup* group)
-{
-    if (sMeshRegMode == 1)
-    {
-        return;         // (the geometry stage makes it, rebuildGeometry)
-    }
-    if (sMeshRegMode == 2 && group->hasState(LLSpatialGroup::MESH_DIRTY))
-    {
-        std::lock_guard<std::mutex> lock(sMeshSeenMutex);
-        sMeshSeen.insert(group);        // (the check: the groups the loops looked at dirty)
-    }
-    if (!group->hasState(LLSpatialGroup::MESH_DIRTY))
-    {
-        return;         // (LLSpatialGroup::rebuildMesh does nothing for a group whose mesh is not dirty, and nothing the loops do before it makes one dirty: the 2,000 calls of a sort are not recorded)
-    }
-    if (LLPipeline::sSortSink)
-    {
-        LLPipeline::sSortSink->push_back({ LLPipeline::SortDelta::REBUILD_MESH, 0, nullptr, group, 0.f });
-        return;
-    }
-    if (LLPipeline::sSortTee)
-    {
-        LLPipeline::sSortTee->push_back({ LLPipeline::SortDelta::REBUILD_MESH, 0, nullptr, group, 0.f });
-    }
-    group->rebuildMesh();
 }
 
 // the field of a group the loops write (the check puts it back after the deferred run)
@@ -6514,7 +6483,6 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
                     markVisible(drawablep, camera);
                 }
             }
-            sort_rebuild_mesh(group);
         }
     };
     auto third_loop_body = [&](LLSpatialGroup* group)
@@ -6532,7 +6500,6 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         {
             group->setVisible();
             stateSort(group, camera);
-            sort_rebuild_mesh(group);
         }
     };
 
@@ -7024,9 +6991,6 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             }
             if (sVisSortOn) { LLVisCensus::sSortTicksMarkVis += LLVisCensus::now() - vis_m0; }
 
-            { //rebuild mesh as soon as we know it's visible
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); sort_rebuild_mesh(group); }
-            }
         }
     }
     }
@@ -7099,9 +7063,6 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             group->setVisible();
             stateSort(group, camera);
 
-            { //rebuild mesh as soon as we know it's visible
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); sort_rebuild_mesh(group); }
-            }
         }
     }}
 
@@ -8159,15 +8120,12 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
         }
     }
 
-    if (sMeshRegMode)
     {
         // the mesh rebuild of the groups this view's cull kept and the loops stamped: the drawable groups' first, then the visible groups' (the order of the lists), from the registry of the groups with a dirty bit
         LL_CPU_ZONE("geometry: mesh rebuild (registry)");
         const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
         const LLViewerCamera::eCameraID cam = LLViewerCamera::sCurCameraID;
         const bool occ = LLPipeline::useOcclusion() > 1;
-        static U64 sCalls = 0, sLeft = 0, sLeftSeen = 0, sLeftNew = 0, sLeftSeenOther = 0, sLeftNewOther = 0;
-        ++sCalls;
         // one walk of the registry (a rebuild can add to it, so the walk is of one copy), the groups that qualify sorted into the two lists, rebuilt in the order of the lists
         static std::vector<LLSpatialGroup*> by_drawable, by_group;
         by_drawable.clear();
@@ -8180,22 +8138,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             }
             (group->getSpatialPartition()->mRenderByGroup ? by_group : by_drawable).push_back(group);
         }
-        if (sMeshRegMode == 2)
-        {
-            // (a group the loops saw dirty and that is still dirty is one rebuildMesh leaves dirty (GEOM_DIRTY first): both paths ask it again each sort, no difference; one the loops never saw is the difference)
-            const bool main_view = cam == LLViewerCamera::CAMERA_WORLD;
-            std::lock_guard<std::mutex> lock(sMeshSeenMutex);
-            for (const std::vector<LLSpatialGroup*>* v : { &by_drawable, &by_group })
-            {
-                for (LLSpatialGroup* group : *v)
-                {
-                    const bool seen = sMeshSeen.count(group) != 0;
-                    ++(seen ? (main_view ? sLeftSeen : sLeftSeenOther) : (main_view ? sLeftNew : sLeftNewOther));
-                }
-            }
-            sMeshSeen.clear();
-            sLeft = sLeftSeen + sLeftNew;
-        }
         for (LLSpatialGroup* group : by_drawable)
         {
             group->rebuildMesh();
@@ -8203,12 +8145,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
         for (LLSpatialGroup* group : by_group)
         {
             group->rebuildMesh();
-        }
-        if (sMeshRegMode == 2 && sCalls % 600 == 0)
-        {
-            const double n = (double)sCalls;
-            LL_INFOS("VkMeshReg") << "mesh rebuild by registry, check: over " << sCalls << " sorts, groups a sort that are dirty and visible after the loops: main view, seen by the loops " << sLeftSeen / n << " (left dirty by rebuildMesh), never seen " << sLeftNew / n
-                                  << "; other views, seen " << sLeftSeenOther / n << ", never seen " << sLeftNewOther / n << LL_ENDL;
         }
     }
 
@@ -13605,17 +13541,16 @@ static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
     gPipeline.markNotCulled(g, camera);
 }
 
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok, const std::vector<U32>* own_bits)
+void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them 
-    // (own_bits: the set of a view that is not the main view (a probe cube face, stage 10a): no stamps are derived for it, the pass is the main thread's)
-    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = own_bits ? nullptr : LLVkBridge::consumerListRead();
-    if (!own_bits && !wl)
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    if (!wl)
     {
         ll_cull_stamps_release();       // (no set: the stamps are the groups' own again)
         return;
     }
-    const std::vector<U32>& kept_bits = own_bits ? *own_bits : wl->mKept;
+    const std::vector<U32>& kept_bits = wl->mKept;
     struct KeptApply
     {
         const std::shared_ptr<const LLVkBridge::ConsumerList>& mList;
@@ -13658,66 +13593,63 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     {
             // <FS> 2026-11-16 (the plan, stage 8 finished): the recent list is for every covered partition of the main view, not only the avatar ones: a group made or moved in the last frames is in the walk's list the frame it is made and in
         // the worker's set 1 to 3 frames later (the compare of the kept set has shown about 2 groups a frame the walk keeps and the set does not). LL_VK_KEPT_RECENT=0 turns it off (for the counters' before).
-        if (!own_bits)
+        static U64 passes = 0, in_frustum[4] = {}, missing[4] = {}, missing_recent[4] = {}, supplemented = 0;
+        LL_CPU_ZONE("updateCull: kept pass recent groups");
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 now = (U32)gFrameCount;
+        const U32 n = (U32)sSlotGroup.size();
+        const auto in_set = [&](U32 slot) { return (slot >> 5) < kept_bits.size() && ((kept_bits[slot >> 5] >> (slot & 31u)) & 1u); };
+        static std::unordered_set<U32> added;
+        added.clear();
+        for (const auto& e : sRecent)
         {
-            static U64 passes = 0, in_frustum[4] = {}, missing[4] = {}, missing_recent[4] = {}, supplemented = 0;
-            LL_CPU_ZONE("updateCull: kept pass recent groups");
-            std::lock_guard<std::mutex> lock(sCullMutex);
-            const U32 now = (U32)gFrameCount;
-            const U32 n = (U32)sSlotGroup.size();
-            const auto in_set = [&](U32 slot) { return (slot >> 5) < kept_bits.size() && ((kept_bits[slot >> 5] >> (slot & 31u)) & 1u); };
-            static std::unordered_set<U32> added;
-            added.clear();
-            for (const auto& e : sRecent)
-            {
-                const U32 slot = e.mSlot;
-                if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
-                {
-                    LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
-                    LLSpatialPartition* gpart = g->getSpatialPartition();
-                    if (!gpart || gpart->asBridge() || !ll_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones, and the avatar, bridge and animated object ones with LL_VK_COVER_AV)
-                    {
-                        continue;
-                    }
-                    const LLVector4a* bb = g->getBounds();
-                    if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
-                    {
-                        continue;       // (the row is the group's of this frame: the walk's own box test, so a group outside the frustum is not marked: 144 a pass without the test, about 19 with it)
-                    }
-                    added.insert(slot);
-                    groups.push_back(g);
-                    ++supplemented;
-                }
-            }
-            ++passes;
-            for (U32 slot = 0; ll_diag_on() && slot < n; ++slot)       // (the counters walk every slot: 0.3 ms a frame, LL_VK_DIAG=1 only)
+            const U32 slot = e.mSlot;
+            if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
             {
                 LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
-                if (!g || g->isDead() || g->isEmpty() || !g->getSpatialPartition() || g->getSpatialPartition()->asBridge() || !ll_cull_derived_covers(g->getSpatialPartition()))
+                LLSpatialPartition* gpart = g->getSpatialPartition();
+                if (!gpart || gpart->asBridge() || !ll_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones, and the avatar, bridge and animated object ones with LL_VK_COVER_AV)
                 {
                     continue;
                 }
-                const U32 pi = g->getSpatialPartition()->mPartitionType;
-                const U32 t = pi == LLViewerRegion::PARTITION_AVATAR ? 0u : (pi == LLViewerRegion::PARTITION_BRIDGE ? 1u : (pi == LLViewerRegion::PARTITION_CONTROL_AV ? 2u : 3u));
                 const LLVector4a* bb = g->getBounds();
-                if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+                if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
                 {
-                    continue;
+                    continue;       // (the row is the group's of this frame: the walk's own box test, so a group outside the frustum is not marked: 144 a pass without the test, about 19 with it)
                 }
-                ++in_frustum[t];
-                if (!in_set(slot) && !added.count(slot))
-                {
-                    ++missing[t];
-                    missing_recent[t] += (now - sRowChangeFrame[slot] <= 3);
-                }
+                added.insert(slot);
+                groups.push_back(g);
+                ++supplemented;
             }
-            if (passes % 300 == 0 && ll_diag_on())
+        }
+        ++passes;
+        for (U32 slot = 0; ll_diag_on() && slot < n; ++slot)       // (the counters walk every slot: 0.3 ms a frame, LL_VK_DIAG=1 only)
+        {
+            LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+            if (!g || g->isDead() || g->isEmpty() || !g->getSpatialPartition() || g->getSpatialPartition()->asBridge() || !ll_cull_derived_covers(g->getSpatialPartition()))
             {
-                const double f = (double)passes;
-                LL_INFOS("VkAvCover") << "covered partitions' groups, per pass over " << passes << " (avatar | bridge | animated object | the ordinary partitions): non-empty groups in the frustum (the plain box test) " << in_frustum[0] / f << " | " << in_frustum[1] / f << " | " << in_frustum[2] / f << " | " << in_frustum[3] / f
-                                      << ", not marked by the pass " << missing[0] / f << " | " << missing[1] / f << " | " << missing[2] / f << " | " << missing[3] / f << ", of those with a row made or changed in the last 3 frames " << missing_recent[0] / f << " | " << missing_recent[1] / f << " | " << missing_recent[2] / f << " | " << missing_recent[3] / f
-                                      << "; added from the recent list " << supplemented / f << " a pass" << LL_ENDL;
+                continue;
             }
+            const U32 pi = g->getSpatialPartition()->mPartitionType;
+            const U32 t = pi == LLViewerRegion::PARTITION_AVATAR ? 0u : (pi == LLViewerRegion::PARTITION_BRIDGE ? 1u : (pi == LLViewerRegion::PARTITION_CONTROL_AV ? 2u : 3u));
+            const LLVector4a* bb = g->getBounds();
+            if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+            {
+                continue;
+            }
+            ++in_frustum[t];
+            if (!in_set(slot) && !added.count(slot))
+            {
+                ++missing[t];
+                missing_recent[t] += (now - sRowChangeFrame[slot] <= 3);
+            }
+        }
+        if (passes % 300 == 0 && ll_diag_on())
+        {
+            const double f = (double)passes;
+            LL_INFOS("VkAvCover") << "covered partitions' groups, per pass over " << passes << " (avatar | bridge | animated object | the ordinary partitions): non-empty groups in the frustum (the plain box test) " << in_frustum[0] / f << " | " << in_frustum[1] / f << " | " << in_frustum[2] / f << " | " << in_frustum[3] / f
+                                  << ", not marked by the pass " << missing[0] / f << " | " << missing[1] / f << " | " << missing[2] / f << " | " << missing[3] / f << ", of those with a row made or changed in the last 3 frames " << missing_recent[0] / f << " | " << missing_recent[1] / f << " | " << missing_recent[2] / f << " | " << missing_recent[3] / f
+                                  << "; added from the recent list " << supplemented / f << " a pass" << LL_ENDL;
         }
     }
     // the groups through markNotCulled, as the pool walk does it: chunks of about the same size, a result and a ledger (what the call defers: the wake) for each, the results merged in the order of the chunks and the ledgers
