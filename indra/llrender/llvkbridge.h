@@ -371,30 +371,22 @@ namespace LLVkBridge
     // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
     // (stage 3: the record carries, after the rows, one CullMapRow for each of them)
     U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset);
-    // stage 4 of doc/vulkan/PLAN-visible-set-owner.md: the late list. The worker publishes the groups its derive of the main view's listed set names with the motion margin (and no occlusion cut) as a bit set by slot,
-    // with the frame of the record it was made for; the viewer's consumers of the visible set read the newest one. lateListRead: 0 = nothing newer than newer_than, else the table size (words = ceil(size / 32) of them)
     // stage 7 (LL_VK_CULL_LOD): the worker's own LOD numbers for every row of the table, from its rows and the camera of the main view's record: the distance (the calcDistance formula) and the bit of the slop test of changeLOD(),
-    // published like the late list; the viewer compares them with its own groups' (a compare for now)
+    // published as a list for the viewer to read; the viewer compares them with its own groups' (a compare for now)
     // stage 8b: the exact derived set of the main view (the slots whose groups the worker's derive lists, occlusion included, the bridges' groups by the marked list) as a bit set by slot, with the frame of its record: the
     // visible stamps follow it (a compare first)
     void lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
     U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
-    void lateListPublish(U32 frame, U32 table_size, const U32* words);
-    U32 lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);
     // stage 8 (the viewer's consumers, LL_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
-    // of the late set's rows (one each, in slot order) with their slots, and the slots of the rows with an alpha key and no fragment. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
+    // of the late set's rows (one each, in slot order) with their slots. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
     // The list is immutable once published: the reader holds the pointer, nothing is copied.
-    // Also the alpha groups of the late set (the viewer's alpha lists, LL_VK_CULL_ALPHA=4): the slots of the rows with an alpha key, not occluded, not over the auto-hide limit, not a bridge's, with the depth of each as
-    // LLSpatialPartition::calcDistance makes it (from the row's object bounds and the camera of the record: its origin and its at axis, which the scene record carries in mMotion[2], mMotion[3] and mFactors[3]), in the order of the
-    // sort (the deepest first, the order CompareDepthGreater gives), and the slots with a rigged alpha key (the viewer puts those in the order of the avatars and attachments, which only it knows)
-    // mAlphaBridge: the slots of the late set's bridge groups (the avatars' and the animated objects' attachments) with an alpha or a rigged alpha key: no depth (their rows hold the bridge's extents, their depth is in the bridge's own space),
-    // the viewer judges and orders those itself with the bridge's transformed camera
+    // (The alpha groups are not in it: a list made from the worker's table copy is one to three frames old and misses the frames' own changes; the viewer makes the main view's alpha lists itself, from the alpha set, ll_alpha_set_lists.)
     // mReleased (stage 8c): the slots of the rows of the exact derived set whose group is Released (the draw infos dropped for want of a camera: map row flag 32): the groups a camera accepts again, to be woken
     // mAlphaDirty (stage 8e): the slots of the derived set's rows with an alpha key whose view direction (from the camera of the record to the row's object bounds centre) has moved more than 0.64 (the length of the difference of
     // the two unit vectors) since the worker last named them: LLSpatialGroup::updateDistance's alpha branch did this for every group the walk kept and set ALPHA_DIRTY and asked for a rebuild (the faces of an alpha group are sorted
     // for one view direction); the viewer sets the state for the slots named
     // mKept (stage 8f): a bit set by slot of the groups the walk keeps for the main view (markNotCulled is called for them): the walk's chain over the rows, not dead, not a bridge's, not empty; no fragment handle is needed (a group still to be built is kept too)
-    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mAlphaDirty, mKept; std::vector<F32> mAlphaDepth; };
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mAlphaDirty, mKept; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
     // stage 10a (LL_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner

@@ -4646,14 +4646,6 @@ void LLCullResult::pushAlphaGroup(LLSpatialGroup* group)
     mAlphaGroupsEnd = &mAlphaGroups[mAlphaGroupsSize];
 }
 
-void LLCullResult::resetAlphaGroups()
-{
-    mAlphaGroupsSize = 0;
-    mAlphaGroupsEnd = &mAlphaGroups[0];
-    mRiggedAlphaGroupsSize = 0;
-    mRiggedAlphaGroupsEnd = &mRiggedAlphaGroups[0];
-}
-
 void LLCullResult::pushRiggedAlphaGroup(LLSpatialGroup* group)
 {
     if (mRiggedAlphaGroupsSize < mRiggedAlphaGroupsAllocated)

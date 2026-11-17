@@ -11733,7 +11733,7 @@ int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, 
     return CV_PASS;
 }
 
-// stage 4: the late list, a bit set by slot, of the groups whose fragments the CPU consumers of the visible set (matrices of moving fragments, bindings and palettes of rigged ones, textures) have to serve. It is the exact list's
+// stage 4: the late set, a bit set by slot (the consumers' handle list is made from it), of the groups whose fragments the CPU consumers of the visible set (matrices of moving fragments, bindings and palettes of rigged ones, textures) have to serve. It is the exact list's
 // filters of the render map without the occlusion cut (a group the Hi-Z hides can be uncovered by the time the list is read), with the planes grown by the motion margin and the chain rule of the walk (so the far limit quirk
 // is in it); the groups of the bridges the walk marked are exact (the viewer says which)
 bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, F32 factor, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
@@ -11741,7 +11741,7 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
     const LLVkBridge::CullRow& row = s.mTable[slot];
     const LLVkBridge::CullMapRow& map = s.mMap[slot];
     const U32 flags = row.mFlags;
-    if ((flags & (32u | 16u)) || (!map.mHandle && !(map.mFlags & 6u)))       // (a group with an alpha key and no fragment is in the list too: the alpha lists of stage 6 are made from it)
+    if ((flags & (32u | 16u)) || !map.mHandle)       // (no fragment: no handle to name; the viewer makes the alpha lists itself)
     {
         return false;
     }
@@ -11847,9 +11847,8 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 ++late_n;
             }
         }
-        LLVkBridge::lateListPublish(job.mPass, table, late_words.data());
         {
-            // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each, and the rows with an alpha key and no fragment.
+            // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each.
             // (a handle here may be a frame or two behind the group's fragments: the viewer checks each against the group's current handle)
             auto list = std::make_shared<LLVkBridge::ConsumerList>();
             list->mFrame = job.mPass;
@@ -11857,8 +11856,6 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             static std::vector<U32> seen_stamp;
             static U32 stamp = 0;
             ++stamp;
-            static std::vector<std::pair<F32, U32>> alpha_rows;       // (depth, slot)
-            alpha_rows.clear();
             {
                 // stage 8e: the alpha groups whose view direction moved (see ConsumerList::mAlphaDirty). The reference is the direction at the last time a row was named: -1 in all three components at first, as the group's row started
                 static std::vector<F32> last_view;
@@ -11886,7 +11883,6 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                     }
                 }
             }
-            const F32 at_x = P.mMotion[2], at_y = P.mMotion[3], at_z = P.mFactors[3];
             for (U32 slot = 0; slot < table; ++slot)
             {
                 if (!((late_words[slot >> 5] >> (slot & 31u)) & 1u))
@@ -11894,41 +11890,9 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                     continue;
                 }
                 const LLVkBridge::CullMapRow& m = s.mMap[slot];
-                if ((s.mTable[slot].mFlags & (32u | 64u)) == 64u)
-                {
-                    // a bridge group: named for the viewer to judge (see ConsumerList::mAlphaBridge)
-                    const bool whole = m.mHandle && (m.mFlags & 1u);
-                    if (whole ? (m.mAlphaBits & 3u) != 0 : (m.mFlags & 6u) != 0)
-                    {
-                        list->mAlphaBridge.push_back(slot);
-                    }
-                }
-                if (!(s.mTable[slot].mFlags & (32u | 64u)) && !(occlusion && (s.mTable[slot].mFlags & 4u)) && !(hide_limit > 0.f && m.mSurfaceArea > hide_limit * fmaxf(m.mObjectBoxSize, 10.f)))
-                {
-                    // the alpha lists' membership, as the viewer's stage 6 has it: a group the table serves whole has its alpha in the fragment's bits, any other in the group's alpha keys
-                    const bool whole = m.mHandle && (m.mFlags & 1u);
-                    const bool a = whole ? (m.mAlphaBits & 1u) != 0 : (m.mFlags & 2u) != 0;
-                    const bool r = whole ? (m.mAlphaBits & 2u) != 0 : (m.mFlags & 4u) != 0;
-                    if (a)
-                    {
-                        // calcDistance's depth: v = centre - origin, minus the at axis times 0.25 times the half size (componentwise), dotted with the at axis
-                        const F32 vx = (m.mObjCenter[0] - P.mOrigin[0]) - at_x * 0.25f * m.mObjHalf[0];
-                        const F32 vy = (m.mObjCenter[1] - P.mOrigin[1]) - at_y * 0.25f * m.mObjHalf[1];
-                        const F32 vz = (m.mObjCenter[2] - P.mOrigin[2]) - at_z * 0.25f * m.mObjHalf[2];
-                        alpha_rows.emplace_back(vx * at_x + vy * at_y + vz * at_z, slot);
-                    }
-                    if (r)
-                    {
-                        list->mRigged.push_back(slot);
-                    }
-                }
                 if (!m.mHandle)
                 {
-                    if (m.mFlags & 6u)
-                    {
-                        list->mNoHandle.push_back(slot);
-                    }
-                    continue;
+                    continue;       // (no fragment: no handle to name)
                 }
                 // (a row whose handle changed lately is not left out here: the viewer names a handle only if it is still the group's current one, and adds the changes of the last frames itself)
                 if (seen_stamp.size() <= m.mHandle)
@@ -11947,14 +11911,6 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
                 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
                 cull_kept_bits(s, P, occlusion, memo, list->mKept);
-            }
-            std::sort(alpha_rows.begin(), alpha_rows.end(), [](const std::pair<F32, U32>& x, const std::pair<F32, U32>& y) { return x.first > y.first || (x.first == y.first && x.second < y.second); });
-            list->mAlpha.reserve(alpha_rows.size());
-            list->mAlphaDepth.reserve(alpha_rows.size());
-            for (const auto& e : alpha_rows)
-            {
-                list->mAlpha.push_back(e.second);
-                list->mAlphaDepth.push_back(e.first);
             }
             LLVkBridge::consumerListPublish(std::move(list));
         }
