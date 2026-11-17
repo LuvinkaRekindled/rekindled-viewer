@@ -46,6 +46,7 @@
 #include "llvkasync.h"
 #include <map>
 #include <mutex>
+#include <condition_variable>
 #include <set>
 #include <cstdio>
 #include <tuple>
@@ -12386,9 +12387,9 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
 }
 
 // kind 43 (stage 10a): a view asks for its kept set by id (blob: a CullParams; mFragment = the id, mPass = the viewer's frame). The kept set of the planes, no occlusion, answered under the id for the owner view to read.
-void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+// the answer to one request (stage 10a): the kept set of the view, by slot, from the table copy given (the render thread's own in the inline mode, the derive thread's in the thread mode); never both at once
+void view_request_run(const CullShadowState& s, U32 id, U32 frame, const LLVkBridge::CullParams& params)
 {
-    CullShadowState& s = sCullShadow;
     static U64 asked = 0, answered = 0;
     ++asked;
     if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
@@ -12396,10 +12397,10 @@ void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     auto set = std::make_shared<LLVkBridge::ViewSet>();
-    set->mId = h.mFragment;
-    set->mFrame = h.mPass;
+    set->mId = id;
+    set->mFrame = frame;
     set->mTable = (U32)s.mTable.size();
-    memcpy(&set->mParams, blob, sizeof(LLVkBridge::CullParams));
+    set->mParams = params;
     static std::vector<U8> memo;
     memo.assign(s.mTable.size(), 0);
     // (stage 10d: bit 9 of mPad[0] = the request asks for the late list's margin: the motion bounds of the request, times the factor in mFactors[1])
@@ -12410,6 +12411,132 @@ void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         LL_INFOS("VkCullDerive") << "view requests (stage 10a): " << asked << " asked, " << answered << " answered" << LL_ENDL;
     }
+}
+
+// <FS> 2026-11-17 (doc/vulkan/PLAN-visible-set-owner.md, "off the render thread"): the requests of the cascades, the spot passes and the probe faces are answered on a thread of their own. The render thread was the frame's critical path
+// (95 % busy in the stack lap st2 against 86 % in defaults, the main thread pinned in both; the main thread's pool idle): a kept pass over the whole table for each of about 4 to 6 requests a frame is work it need not do, the answer goes
+// to the viewer a frame or three later whoever makes it. The thread has a table copy of its own: the render thread hands it each delta record (as it applies it to its own copy) and each request, in the order they arrive, so a request sees
+// the table the inline answer saw. LL_VK_DERIVE_THREAD=0 answers inline, as before.
+struct DeriveThread
+{
+    struct Job
+    {
+        bool mRequest = false, mReset = false;
+        U32 mTable = 0, mId = 0, mFrame = 0;
+        LLVkBridge::CullParams mParams;
+        std::vector<U32> mSlots;
+        std::vector<LLVkBridge::CullRow> mRows;
+        std::vector<LLVkBridge::CullMapRow> mMap;
+    };
+    std::mutex mMutex;
+    std::condition_variable mCv;
+    std::deque<Job> mQueue;
+    CullShadowState mS;                 // (only mTable and mMap are used)
+    U64 mDropped = 0;
+    bool mStarted = false;
+
+    void push(Job&& job)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (job.mRequest && mQueue.size() > 400)
+            {
+                ++mDropped;             // (a stalled thread: a request is answered by the next frame's, a delta is never dropped)
+                return;
+            }
+            mQueue.push_back(std::move(job));
+            if (!mStarted)
+            {
+                mStarted = true;
+                std::thread([this] { run(); }).detach();
+            }
+        }
+        mCv.notify_one();
+    }
+
+    void apply(Job& j)
+    {
+        if (j.mReset)
+        {
+            LLVkBridge::CullRow dead;
+            memset(&dead, 0, sizeof(dead));
+            dead.mFlags = 33u;
+            mS.mTable.assign(j.mTable, dead);
+            mS.mMap.assign(j.mTable, LLVkBridge::CullMapRow());
+        }
+        else
+        {
+            LLVkBridge::CullRow dead;
+            memset(&dead, 0, sizeof(dead));
+            dead.mFlags = 33u;
+            mS.mTable.resize(j.mTable, dead);
+            mS.mMap.resize(j.mTable, LLVkBridge::CullMapRow());
+        }
+        for (size_t i = 0; i < j.mSlots.size(); ++i)
+        {
+            const U32 slot = j.mSlots[i];
+            if (slot >= j.mTable)
+            {
+                continue;
+            }
+            mS.mTable[slot] = j.mRows[i];
+            mS.mMap[slot] = j.mMap[i];
+        }
+    }
+
+    void run()
+    {
+        std::deque<Job> batch;
+        for (;;)
+        {
+            {
+                std::unique_lock<std::mutex> lock(mMutex);
+                mCv.wait(lock, [this] { return !mQueue.empty(); });
+                batch.swap(mQueue);
+            }
+            for (Job& j : batch)
+            {
+                if (j.mRequest)
+                {
+                    view_request_run(mS, j.mId, j.mFrame, j.mParams);
+                }
+                else
+                {
+                    apply(j);
+                }
+            }
+            batch.clear();
+        }
+    }
+};
+
+DeriveThread& derive_thread()
+{
+    static DeriveThread* t = new DeriveThread();        // (never destroyed: the thread is detached and may be waiting at exit)
+    return *t;
+}
+
+bool derive_thread_on()
+{
+    static const bool on = !(getenv("LL_VK_DERIVE_THREAD") && atoi(getenv("LL_VK_DERIVE_THREAD")) == 0);
+    return on;
+}
+
+void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    LLVkBridge::CullParams params;
+    memcpy(&params, blob, sizeof(params));
+    if (derive_thread_on())
+    {
+        DeriveThread::Job job;
+        job.mRequest = true;
+        job.mId = h.mFragment;
+        job.mFrame = h.mPass;
+        job.mParams = params;
+        derive_thread().push(std::move(job));
+        return;
+    }
+    view_request_run(sCullShadow, h.mFragment, h.mPass, params);
 }
 
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
@@ -12486,6 +12613,23 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 }
                 s.mRowStamp[slot] = s.mRecords;
             }
+        }
+        if (derive_thread_on())
+        {
+            // the derive thread's copy of the table gets the same delta, in the same order as the requests (see DeriveThread)
+            DeriveThread::Job job;
+            job.mReset = h.mPaletteFloats == 1;
+            job.mTable = table;
+            job.mSlots.resize(h.mEntries);
+            job.mRows.resize(h.mEntries);
+            job.mMap.resize(h.mEntries);
+            if (h.mEntries)
+            {
+                memcpy(job.mSlots.data(), slots, (size_t)h.mEntries * 4);
+                memcpy(job.mRows.data(), rows, (size_t)h.mEntries * sizeof(LLVkBridge::CullRow));
+                memcpy(job.mMap.data(), map_rows, (size_t)h.mEntries * sizeof(LLVkBridge::CullMapRow));
+            }
+            derive_thread().push(std::move(job));
         }
         s.mDeltaRows += h.mEntries;
         s.mRows += table;
