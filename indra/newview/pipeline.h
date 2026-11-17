@@ -254,7 +254,9 @@ public:
 
     // Object related methods
     void        markVisible(LLDrawable *drawablep, LLCamera& camera);
-    void        markVisibleOwners(LLCamera& camera);       // <FS> stage 9: the avatar and bridge owners' pass of the main view's sort (loop (a) for the avatars' drawables and the bridges)
+    void        markVisibleOwners(LLCamera& camera);       // <FS> stage 9: the avatar and bridge owners' pass of the main view's sort (what loop (a) of the sort did for the avatars' drawables and the bridges), serial
+    void        ownersCollect(LLCamera& camera);           // ... its first part: the avatars' drawables and the bridges the cull listed, by group (sOwner.mFirst), and the region groups' markOccluder
+    void        ownersFinish(LLCamera& camera);            // ... its last part: the groups the first marking added, and the bridges inside bridges, in waves
     void        markOccluder(LLSpatialGroup* group);
 
     void        doOcclusion(LLCamera& camera);
