@@ -5793,6 +5793,78 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         o.mFirst.push_back(d);
     }
     o.mAvatars = (U32)o.mFirst.size();
+    // the compare for the bridge owners (LL_VK_DIAG=1): the list as the groups give it (the group stamped visible and not occluded) against the bridge's own test (inViewFor: render type, avatar gate, extents against the frustum and
+    // the far sphere, pixel area), both with markVisible's own rule (an impostor's attachments are not marked)
+    if (ll_diag_on())
+    {
+        static U64 sorts = 0, n_bridges = 0, both = 0, old_only = 0, new_only = 0, new_only_occluded = 0, new_only_unstamped = 0, new_only_group_none = 0, old_only_gate = 0, new_only_hud = 0, by_type[16] = {}, by_type_group[2] = {}, att_unstamped = 0, stamp_old = 0, stamp_cur = 0, parent_listed = 0;
+        ++sorts;
+        for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
+        {
+            if (b->isDead() || ll_attachment_bridge_hidden(b))
+            {
+                continue;
+            }
+            LLSpatialGroup* g = b->getSpatialGroup();
+            ++n_bridges;
+            const bool listed = ll_owner_group_listed(g, frame);
+            const bool old_rule = listed && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED));
+            const bool new_rule = b->inViewFor(camera);
+            both += old_rule && new_rule;
+            old_only += old_rule && !new_rule;
+            new_only += !old_rule && new_rule;
+            if (!old_rule && new_rule)
+            {
+                if (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment())
+                {
+                    ++new_only_hud;
+                }
+                else if (!g || g->isDead())
+                {
+                    ++new_only_group_none;
+                }
+                else if (listed)
+                {
+                    ++new_only_occluded;
+                }
+                else
+                {
+                    ++new_only_unstamped;
+                    LLSpatialPartition* gp = g->getSpatialPartition();
+                    ++by_type[gp ? (gp->mPartitionType & 15u) : 15u];
+                    ++by_type_group[gp && gp->mRenderByGroup ? 1 : 0];
+                    LLViewerObject* vo = b->mDrawable ? b->mDrawable->getVObj().get() : nullptr;
+                    att_unstamped += vo && vo->isAttachment();
+                    stamp_cur += g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame - 1;
+                    stamp_old += g->getVisible(LLViewerCamera::CAMERA_WORLD) < frame - 1;
+                    static int dumped = 0;
+                    if (dumped < 12 && sorts > 300 && sorts % 50 == 0)
+                    {
+                        ++dumped;
+                        const LLVector4a* ex = b->getSpatialExtents();
+                        const LLVector4a* gb = g->getBounds();
+                        LLVector4a ctr, sz;
+                        ctr.setAdd(ex[0], ex[1]); ctr.mul(0.5f);
+                        sz.setSub(ex[1], ex[0]); sz.mul(0.5f);
+                        const LLVector3 co = camera.getOrigin();
+                        const F32 dx = ctr[0] - co.mV[0], dy = ctr[1] - co.mV[1], dz = ctr[2] - co.mV[2];
+                        LLViewerObject* o = b->mDrawable ? b->mDrawable->getVObj().get() : nullptr;
+                        LL_DIAG("VkBridgeOwn") << "a bridge in view by its own test, its group not listed: extents centre " << ctr[0] << " " << ctr[1] << " " << ctr[2] << " half " << sz[0] << " " << sz[1] << " " << sz[2]
+                                               << ", distance to the camera " << sqrtf(dx * dx + dy * dy + dz * dz) << ", the group's box centre " << gb[0][0] << " " << gb[0][1] << " " << gb[0][2] << " half " << gb[1][0] << " " << gb[1][1] << " " << gb[1][2]
+                                               << ", group box in the frustum " << camera.AABBInFrustumNoFarClip(gb[0], gb[1]) << ", group stamp " << g->getVisible(LLViewerCamera::CAMERA_WORLD) << " frame " << frame << ", group empty " << g->isEmpty() << " dirty " << g->isDirty()
+                                               << ", object " << (o ? (o->isAvatar() ? "avatar" : (o->isAttachment() ? "attachment" : "object")) : "none") << ", children " << (o ? (S32)o->getChildren().size() : -1) << ", bridge groups in its octree " << (S32)b->mOctree->getChildCount() << LL_ENDL;
+                    }
+                }
+            }
+            old_only_gate += old_rule && !new_rule && !b->avatarGateOpen();
+        }
+        if (sorts % 600 == 0)
+        {
+            const double n = (double)sorts;
+            LL_DIAG("VkBridgeOwn") << "bridges per sort over " << sorts << ": " << n_bridges / n << " (not hidden by the impostor rule); the group's rule and the bridge's own test both say visible " << both / n << ", the group's only " << old_only / n
+                                    << " (of those the avatar gate closed " << old_only_gate / n << "), the bridge's own only " << new_only / n << " (its group is occluded " << new_only_occluded / n << ", not stamped this frame " << new_only_unstamped / n << ", none " << new_only_group_none / n << ", HUD attachments " << new_only_hud / n << "); the unstamped ones: group render by drawable " << by_type_group[0] / n << " by group " << by_type_group[1] / n << ", attachments " << att_unstamped / n << ", group stamped a frame ago " << stamp_cur / n << " older " << stamp_old / n << ", by partition type (terrain 1, voidwater 2, water 3, tree 4, particle 5, grass 6, volume 7, bridge 8, avatar 9, control av 10) " << by_type[1] / n << " " << by_type[2] / n << " " << by_type[3] / n << " " << by_type[4] / n << " " << by_type[5] / n << " " << by_type[6] / n << " " << by_type[7] / n << " " << by_type[8] / n << " " << by_type[9] / n << " " << by_type[10] / n << LL_ENDL;
+        }
+    }
     static std::vector<LLSpatialBridge*> ready;
     ready.clear();
     for (LLSpatialBridge* b : LLSpatialBridge::allBridges())

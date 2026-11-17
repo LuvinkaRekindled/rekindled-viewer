@@ -613,6 +613,9 @@ public:
     // stage 9 of doc/vulkan/PLAN-visible-set-owner.md: setVisible's avatar gate as a function of the bridge: an attachment's bridge is not marked when its avatar is not visible, was not seen within a
     // frame, is an impostor (outside an impostor pass) or is not fully loaded; every other bridge passes
     bool avatarGateOpen() const;
+    // stage 9: the rest of setVisible's own tests as a function of the bridge: render type on, the avatar gate, its extents against the frustum and the far sphere (outside impostor and shadow passes: a pixel area of at least 16).
+    // What setVisible would go on to mark; it marks nothing
+    bool inViewFor(LLCamera& camera_in);
     // stage 9: every live bridge (made by the constructor, dropped by the destructor; the main thread makes and destroys them): the bridge owner's list
     static const std::vector<LLSpatialBridge*>& allBridges() { return sAll; }
     static std::vector<LLSpatialBridge*> sAll;
