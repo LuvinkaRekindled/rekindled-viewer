@@ -5650,35 +5650,45 @@ void LLPipeline::updateGeom(F32 max_dtime)
     updateMovedList(mMovedBridge);
 }
 
+// stage 9 of doc/vulkan/PLAN-visible-set-owner.md: markVisible's rule for the bridge of an attachment as a function of the bridge: the avatar that wears it is an impostor (outside an impostor pass) or a jelly doll that needs no
+// impostor update: the attachment is not marked, the avatar's impostor stands for it
+static bool ll_attachment_bridge_hidden(LLSpatialBridge* bridge)
+{
+    const LLDrawable* root = bridge->mDrawable;
+    if (root && //  // this test may not be needed, see above
+            root->getVObj()->isAttachment())
+    {
+        LLDrawable* rootparent = root->getParent();
+        if (rootparent) // this IS sometimes NULL
+        {
+            LLViewerObject *vobj = rootparent->getVObj();
+            llassert(vobj); // trying to catch a bad assumption
+            if (vobj) // this test may not be needed, see above
+            {
+                LLVOAvatar* av = vobj->asAvatar();
+                if (av &&
+                    ((!LLPipeline::sImpostorRender && av->isImpostor()) //ignore impostor flag during impostor pass
+                     //|| av->isInMuteList() // <FS:Ansariel> Partially undo MAINT-5700: Draw imposter for muted avatars
+                     || (LLVOAvatar::AOA_JELLYDOLL == av->getOverallAppearance() && !av->needsImpostorUpdate()) ))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
 {
     if(drawablep && !drawablep->isDead())
     {
         if (drawablep->isSpatialBridge())
         {
-            const LLDrawable* root = ((LLSpatialBridge*) drawablep)->mDrawable;
-            llassert(root); // trying to catch a bad assumption
-
-            if (root && //  // this test may not be needed, see above
-                    root->getVObj()->isAttachment())
+            llassert(((LLSpatialBridge*) drawablep)->mDrawable); // trying to catch a bad assumption
+            if (ll_attachment_bridge_hidden((LLSpatialBridge*) drawablep))
             {
-                LLDrawable* rootparent = root->getParent();
-                if (rootparent) // this IS sometimes NULL
-                {
-                    LLViewerObject *vobj = rootparent->getVObj();
-                    llassert(vobj); // trying to catch a bad assumption
-                    if (vobj) // this test may not be needed, see above
-                    {
-                        LLVOAvatar* av = vobj->asAvatar();
-                        if (av &&
-                            ((!sImpostorRender && av->isImpostor()) //ignore impostor flag during impostor pass
-                             //|| av->isInMuteList() // <FS:Ansariel> Partially undo MAINT-5700: Draw imposter for muted avatars
-                             || (LLVOAvatar::AOA_JELLYDOLL == av->getOverallAppearance() && !av->needsImpostorUpdate()) ))
-                        {
-                            return;
-                        }
-                    }
-                }
+                return;
             }
             sCull->pushBridge((LLSpatialBridge*) drawablep);
         }
@@ -8284,6 +8294,66 @@ void ll_lod_cand_refresh();                                             // stage
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
 
+// stage 9 compare (LL_VK_DIAG=1 only, nothing changes): what the avatar owner's list says is visible, against what loop (a) of the sort listed. For every avatar (LLCharacter::sInstances): its drawable is in the visible
+// drawable list when its group is stamped visible this frame and is not occluded (markVisible takes it); each attachment's bridge is in the visible bridge list when the rule of markVisible (ll_attachment_bridge_hidden)
+// lets it pass and its own group is stamped visible and not occluded. Bridges that setVisible's gate (avatarGateOpen) closes are counted apart: they are listed by markVisible and not marked by setVisible.
+static void ll_av_owner_compare(LLCullResult& cull)
+{
+    if (!ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender())
+    {
+        return;
+    }
+    static std::unordered_set<const LLDrawable*> real_d;
+    static std::unordered_set<const LLSpatialBridge*> real_b;
+    real_d.clear();
+    real_b.clear();
+    for (LLCullResult::drawable_iterator d = cull.beginVisibleList(); d != cull.endVisibleList(); ++d) real_d.insert(*d);
+    for (LLCullResult::bridge_iterator b = cull.beginVisibleBridge(); b != cull.endVisibleBridge(); ++b) real_b.insert(*b);
+    const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
+    const bool occ = LLPipeline::useOcclusion() > 1;
+    const auto group_visible = [&](LLSpatialGroup* g) { return g && !g->isDead() && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)); };
+    static U64 sorts = 0, av_n = 0, av_both = 0, av_owner_only = 0, av_real_only = 0, br_n = 0, br_both = 0, br_owner_only = 0, br_real_only = 0, br_gate_closed = 0, real_b_total = 0, real_b_listed_here = 0, no_drawable = 0;
+    ++sorts;
+    real_b_total += real_b.size();
+    for (LLCharacter* c : LLCharacter::sInstances)
+    {
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        if (!av || av->isDead() || !av->mDrawable || av->mDrawable->isDead())
+        {
+            ++no_drawable;
+            continue;
+        }
+        ++av_n;
+        const bool owner = group_visible(av->mDrawable->getSpatialGroup());
+        const bool real = real_d.count(av->mDrawable.get()) != 0;
+        av_both += owner && real;
+        av_owner_only += owner && !real;
+        av_real_only += !owner && real;
+    }
+    for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
+    {
+        if (b->isDead())
+        {
+            continue;
+        }
+        ++br_n;
+        const bool b_owner = !ll_attachment_bridge_hidden(b) && group_visible(b->getSpatialGroup());
+        const bool b_real = real_b.count(b) != 0;
+        br_both += b_owner && b_real;
+        br_owner_only += b_owner && !b_real;
+        br_real_only += !b_owner && b_real;
+        br_gate_closed += b_real && !b->avatarGateOpen();
+    }
+    real_b_listed_here = br_both;
+    if (sorts % 300 == 0)
+    {
+        const double n = (double)sorts;
+        LL_DIAG("VkAvOwner") << "avatar owner list against loop (a), per sort over " << sorts << ": avatars " << av_n / n << " (no drawable " << no_drawable / n << "), their drawable listed by both " << av_both / n << ", owner only " << av_owner_only / n
+                             << ", loop (a) only " << av_real_only / n << " | all bridges " << br_n / n << ", listed by both " << br_both / n << ", owner only " << br_owner_only / n << ", loop (a) only " << br_real_only / n
+                             << " (listed and setVisible's gate closed " << br_gate_closed / n << ") | the visible bridge list holds " << real_b_total / n << ", of which the owner list also names " << real_b_listed_here / n << LL_ENDL;
+    }
+}
+
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8291,6 +8361,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     if (view.isMainWorldSort() && !gCubeSnapshot)
     {
         fs_blink_detect(camera, *sCull);
+        ll_av_owner_compare(*sCull);       // stage 9 (diagnostics only)
     }
     const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     struct VisPostEnd
