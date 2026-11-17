@@ -8,7 +8,6 @@
 #define LL_LLCULLSHADOW_H
 
 #include "stdtypes.h"
-#include "llvkenv.h"        // <FS> ll_vk_env: the stack's defaults
 #include <atomic>
 #include <cstdlib>
 
@@ -18,7 +17,6 @@ class LLSpatialBridge;
 
 namespace LLCullShadow
 {
-    inline const bool sOn = ll_vk_env("LL_VK_CULL_SHADOW") != nullptr;
     inline const bool sPoseLog = getenv("LL_VK_POSE_LOG") != nullptr;      // one line a second: the camera's yaw, pitch and origin (for the run scripts), without the rest
     void poseLog(LLCamera& camera);
 

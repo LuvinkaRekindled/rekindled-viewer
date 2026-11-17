@@ -463,10 +463,7 @@ void LLViewerOctreeEntryData::resetVisible() const
 
 LLViewerOctreeGroup::~LLViewerOctreeGroup()
 {
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::forget(this);         // <FS> S7 C1b: the slot is freed
-    }
+    LLCullShadow::forget(this);         // <FS> S7 C1b: the slot is freed
     LLGroupRows::release(mRowId, DEAD);     // <FS> C1b: the row goes back (a stale pointer to this group reads "dead")
 }
 
@@ -484,10 +481,7 @@ LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node)
     row().bounds[1] = node->getSize();
 
     mOctreeNode->addListener(this);
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::added(this);          // <FS> S7 C1b
-    }
+    LLCullShadow::added(this);          // <FS> S7 C1b
 }
 
 bool LLViewerOctreeGroup::hasElement(LLViewerOctreeEntryData* data)
@@ -549,10 +543,7 @@ void LLViewerOctreeGroup::unbound()
 
     setState(DIRTY);
     bumpPartitionEpoch();               // <FS> C4.3
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::touch(this);          // <FS> S7 C1b: the bounds will change at the next rebound
-    }
+    LLCullShadow::touch(this);          // <FS> S7 C1b: the bounds will change at the next rebound
 
     //all the parent nodes need to rebound this child
     if (mOctreeNode)
@@ -568,10 +559,7 @@ void LLViewerOctreeGroup::unbound()
 
             group->setState(DIRTY);
             group->bumpPartitionEpoch();    // <FS> C4.3
-            if (LLCullShadow::sOn)
-            {
-                LLCullShadow::touch(group);
-            }
+            LLCullShadow::touch(group);
             parent = (OctreeNode*) parent->getParent();
         }
     }
@@ -597,7 +585,7 @@ void LLViewerOctreeGroup::rebound()
         row().extents[0] = group->row().extents[0];
         row().extents[1] = group->row().extents[1];
 
-        if (LLCullShadow::sOn && !group->hasState(SKIP_FRUSTUM_CHECK))
+        if (!group->hasState(SKIP_FRUSTUM_CHECK))
         {
             LLCullShadow::touch(group);     // <FS> S7 C1b: the flag shows in its row
         }
@@ -614,7 +602,7 @@ void LLViewerOctreeGroup::rebound()
         LLVector4a& newMin = row().extents[0];
         LLVector4a& newMax = row().extents[1];
         LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) mOctreeNode->getChild(0)->getListener(0);
-        if (LLCullShadow::sOn && group->hasState(SKIP_FRUSTUM_CHECK))
+        if (group->hasState(SKIP_FRUSTUM_CHECK))
         {
             LLCullShadow::touch(group);     // <FS> S7 C1b
         }
@@ -628,7 +616,7 @@ void LLViewerOctreeGroup::rebound()
         for (U32 i = 1; i < mOctreeNode->getChildCount(); i++)
         {
             group = (LLViewerOctreeGroup*) mOctreeNode->getChild(i)->getListener(0);
-            if (LLCullShadow::sOn && group->hasState(SKIP_FRUSTUM_CHECK))
+            if (group->hasState(SKIP_FRUSTUM_CHECK))
             {
                 LLCullShadow::touch(group);     // <FS> S7 C1b
             }
@@ -681,10 +669,7 @@ void LLViewerOctreeGroup::handleDestruction(const TreeNode* node)
     }
     setState(DEAD);
     bumpPartitionEpoch();               // <FS> C4.3
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::touch(this);          // <FS> S7 C1b: the row shows it dead until the slot is freed
-    }
+    LLCullShadow::touch(this);          // <FS> S7 C1b: the row shows it dead until the slot is freed
     for (OctreeNode::element_iter i = mOctreeNode->getDataBegin(); i != mOctreeNode->getDataEnd(); ++i)
     {
         LLViewerOctreeEntry* obj = *i;
@@ -734,10 +719,7 @@ void LLViewerOctreeGroup::handleChildRemoval(const OctreeNode* parent, const Oct
 void LLViewerOctreeGroup::handleParentChange(const OctreeNode* node)
 {
     bumpPartitionEpoch();               // <FS> C4.3
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::touch(this);          // <FS> S7 C1b: the row names the parent
-    }
+    LLCullShadow::touch(this);          // <FS> S7 C1b: the row names the parent
 }
 
 LLViewerOctreeGroup* LLViewerOctreeGroup::getParent()
@@ -922,7 +904,7 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
 void LLHiz::send(const F32* view_proj)
 {
     struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
-    if (sHizBoxes.empty() && sHizItemBoxes.empty() && !(LLHizRows::sHizRows && LLCullShadow::sOn))       // (stage 8d: with the table's rows as the boxes a pass with none of the viewer's is still a pass)
+    if (sHizBoxes.empty() && sHizItemBoxes.empty() && !(LLHizRows::sHizRows))       // (stage 8d: with the table's rows as the boxes a pass with none of the viewer's is still a pass)
     {
         return;
     }
@@ -1142,7 +1124,7 @@ void LLHiz::apply()
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
         }
-        if (LLHizRows::sHizRows && LLCullShadow::sOn && row_count)
+        if (LLHizRows::sHizRows && row_count)
         {
             LLHizRows::hizRowsApply(row_occ.data(), row_info.data(), row_count, stale);       // <FS> stage 8d: the worker's verdicts of the table's rows, by slot
         }
@@ -1288,7 +1270,7 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             add(sNumObjectsOccluded, 1);
         }
-        if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
+        if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
@@ -1320,7 +1302,7 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         break;
 
     case STATE_MODE_ALL_CAMERAS:
-        if (LLCullShadow::sOn && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if ((state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
@@ -1380,7 +1362,7 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             {
                 add(sNumObjectsUnoccluded, 1);
             }
-            if (LLCullShadow::sOn && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
+            if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
             }
@@ -1413,7 +1395,7 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             break;
 
         case STATE_MODE_ALL_CAMERAS:
-            if (LLCullShadow::sOn && (state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            if ((state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLCullShadow::touch(this);  // <FS> S7 C1b
             }

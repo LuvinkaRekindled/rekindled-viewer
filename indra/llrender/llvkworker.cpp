@@ -12415,7 +12415,7 @@ DeriveThread& derive_thread()
 
 bool derive_thread_on()
 {
-    static const bool on = !(getenv("LL_VK_DERIVE_THREAD") && atoi(getenv("LL_VK_DERIVE_THREAD")) == 0);
+    static const bool on = true;
     return on;
 }
 
