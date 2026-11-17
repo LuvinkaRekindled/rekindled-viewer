@@ -79,6 +79,17 @@
 #include "llvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 #include "fstexturearrivaltrace.h"
 #include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include <unordered_map>
+
+std::string fs_stack_here(int skip, int max_frames);       // (llgpuzonetimer.cpp)
+namespace
+{
+// <FS> 2026-11-16 (LL_VK_DIAG=1): the discard level and the size of the last image a texture was created with, to see a texture created again for the same data (createTexture, scheduleCreateTexture)
+struct TexCreateLast { bool mValid = false; S32 mDiscard = 0; S64 mBytes = 0; std::chrono::steady_clock::time_point mWhen; };
+std::mutex sTexCreateMutex;
+std::unordered_map<LLUUID, TexCreateLast> sTexCreateLast;
+U64 sTexCreateTotal = 0, sTexCreateRedundant = 0, sTexCreateScheduled = 0;
+}
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics
@@ -1953,6 +1964,23 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
                           << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
     }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
+    if (ll_diag_on() && res && mRawImage.notNull())
+    {
+        // <FS> 2026-11-16 (LL_VK_DIAG=1; Adam: images that already show flash white again for a frame on the first load): a texture created again with the discard level and the size of the one it was created with before. A new GPU image
+        // for data the old one holds (a loader's re-decode, a second schedule) is one more chance for the handle to read the stand-in; scheduleCreateTexture says who asked.
+        std::lock_guard<std::mutex> lock(sTexCreateMutex);
+        TexCreateLast& l = sTexCreateLast[mID];
+        ++sTexCreateTotal;
+        if (l.mValid && l.mDiscard == mRawDiscardLevel && l.mBytes == (S64)mRawImage->getDataSize())
+        {
+            ++sTexCreateRedundant;
+        }
+        l = { true, mRawDiscardLevel, (S64)mRawImage->getDataSize(), std::chrono::steady_clock::now() };
+        if (sTexCreateTotal % 1000 == 0)
+        {
+            LL_INFOS("VkTexRedundant") << sTexCreateTotal << " texture creations, " << sTexCreateRedundant << " of them for the discard level and the size the texture was created with before (" << sTexCreateScheduled << " schedules of that kind)" << LL_ENDL;
+        }
+    }
 
     return res;
 }
@@ -1994,6 +2022,24 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
+    if (!mNeedsCreateTexture && ll_diag_on() && mRawImage.notNull())
+    {
+        // (see createTexture: a schedule for the discard level and the size the texture was created with before; the first 40 say who asked)
+        std::lock_guard<std::mutex> lock(sTexCreateMutex);
+        const auto it = sTexCreateLast.find(mID);
+        if (it != sTexCreateLast.end() && it->second.mValid && it->second.mDiscard == mRawDiscardLevel && it->second.mBytes == (S64)mRawImage->getDataSize())
+        {
+            ++sTexCreateScheduled;
+            static U32 lines = 0;
+            if (lines++ < 40)
+            {
+                const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - it->second.mWhen).count();
+                LL_INFOS("VkTexRedundant") << "texture " << mID << " (type " << (S32)mFTType << ", boost " << (S32)mBoostLevel << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << ") is scheduled for creation again, "
+                                           << ms << " ms after it was created, the GPU image's discard level now " << getDiscardLevel() << " (GPU image present " << (S32)(mImageTexp.notNull() && mImageTexp->getHasImageTexture()) << "), fetching " << (S32)mIsFetching << ", fetch state " << mFetchState << ", saved raw discard " << mSavedRawDiscardLevel << ", asked by:\n"
+                                           << fs_stack_here(0, 8) << LL_ENDL;
+            }
+        }
+    }
     if (!mNeedsCreateTexture)
     {
         mNeedsCreateTexture = true;
