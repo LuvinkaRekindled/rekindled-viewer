@@ -323,7 +323,6 @@ struct DebugSwitches
     S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
     S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
     S32 mSnapTest = 0;              // live (snaptest=N): every change of N to a value above 0 takes a snapshot as the exit does (LLAppViewer::doFrame), a repeatable look at what the snapshot costs
-    S32 mCullUse = -1;              // live (culluse=0/1/2, default -1: LL_VK_CULL_USE decides): the main view's cull by the walk (0), the walk with the flat version beside it (1), the flat version alone (2); needs LL_VK_CULL_SHADOW=1
     S32 mVelIdx = 1;                // live (velidx=0/1, default 1): the avatar velocity record drawn indexed (the hardware reads the indices: one vertex shader run per vertex, not per triangle corner); 0 = the draw over the index list, the A/B and the fallback until a week of use, then gone
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
@@ -348,7 +347,7 @@ std::atomic<S32> sViewLive{0}, sPenRaysLive{0};
 std::atomic<S32> sSunNoiseLive{1};
 std::atomic<S32> sRtEarlyLive{-1};
 std::atomic<S32> sSunFilterLive{1}, sPenMaxLive{8}, sPenLodLive{1}, sSunStrengthLive{65};
-std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sCullUseLive{-1}, sSnapTestLive{0};
+std::atomic<S32> sWaterRtLive{0}, sGlossyRtLive{0}, sHitQLive{-1}, sHitRaysLive{-1}, sSunSelfLive{1}, sTexAnimLive{-1}, sSunSamplesLive{0}, sVelIdxLive{1}, sSnapTestLive{0};
 std::atomic<bool> sGateLive{true}, sBodyNameLive{true};     // sDbg.mGate / mBodyName for the main thread (the viewer asks through LLVkBridge)
 std::chrono::steady_clock::time_point sDbgRead;
 
@@ -430,7 +429,6 @@ void read_debug_switches()
                 else if (k == "texanim") d.mTexAnim = (S32)v;
                 else if (k == "sunsamples") d.mSunSamples = (S32)v;
                 else if (k == "velidx") d.mVelIdx = (S32)v;
-                else if (k == "culluse") d.mCullUse = (S32)v;
                 else if (k == "snaptest") d.mSnapTest = (S32)v;
                 else if (k == "hitrays") d.mHitRays = (S32)v;
                 else if (k == "gate") d.mGate = v != 0;
@@ -523,7 +521,6 @@ void read_debug_switches()
     sTexAnimLive.store(d.mTexAnim, std::memory_order_relaxed);
     sSunSamplesLive.store(d.mSunSamples, std::memory_order_relaxed);
     sVelIdxLive.store(d.mVelIdx, std::memory_order_relaxed);
-    sCullUseLive.store(d.mCullUse, std::memory_order_relaxed);
     sSnapTestLive.store(d.mSnapTest, std::memory_order_relaxed);
     sGateLive.store(d.mGate, std::memory_order_relaxed);
     sBodyNameLive.store(d.mBodyName, std::memory_order_relaxed);
@@ -1314,7 +1311,6 @@ S32 sunStrength() { return sSunStrengthLive.load(std::memory_order_relaxed); }
 S32 texAnim() { return sTexAnimLive.load(std::memory_order_relaxed); }
 S32 sunSamples() { return sSunSamplesLive.load(std::memory_order_relaxed); }
 S32 velIdx() { return sVelIdxLive.load(std::memory_order_relaxed); }
-S32 cullUse() { return sCullUseLive.load(std::memory_order_relaxed); }
 S32 snapTest() { return sSnapTestLive.load(std::memory_order_relaxed); }
 S32 debugView() { return sViewLive.load(std::memory_order_relaxed); }
 bool loadingGates() { return sGateLive.load(std::memory_order_relaxed); }

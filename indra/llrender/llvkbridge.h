@@ -350,10 +350,7 @@ namespace LLVkBridge
     void textureNeedStats(U64& textures, U64& readings);
     void textureNeedReading(U32 name, F32 area);                 // (worker) a reading of one finished frame
     void textureNeedForget(U32 name);                            // (worker) the texture is gone
-    // S7 C1 (doc/vulkan/S7-design.md section 14, LL_VK_CULL_SHADOW=1): kind 35, the flat group table (CullRow, 64 bytes) tested against the camera frustum, shadow mode only. blob = CullParams then
-    // count rows; mViewProj of the header is unused, mEntries = rows, mFragment = the serial. The worker writes cullVariants bit sets of ceil(rows / 32) words (bit i = row i passes) into a ring slot of cached
-    // host memory; cullRead copies them (variants * ceil(count / 32) words): 1 = copied, 0 = not published yet, -1 = lost.
-    constexpr U32 cullVariants = 4;
+    // kind 35, the flat group table: CullParams then count delta rows (see cullSend). The worker keeps the table; the derive (kept sets, late list, view requests) reads its copy.
     struct CullParams { F32 mPlanes[7][4]; F32 mOrigin[3]; F32 mCornerDist; F32 mMotion[4]; F32 mFactors[4]; U32 mPlaneCount; U32 mPad[7]; };     // 192 bytes; mMotion = translation bound, rotation bound
     struct CullRow { F32 mCenter[3]; U32 mParent; F32 mHalf[3]; U32 mFlags; F32 mExtMin[3]; F32 mPad0; F32 mExtMax[3]; F32 mPad1; };       // mFlags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test
     static_assert(sizeof(CullParams) == 192 && sizeof(CullRow) == 64, "cull record layout");
@@ -380,8 +377,6 @@ namespace LLVkBridge
     // published like the late list; the viewer compares them with its own groups' (a compare for now)
     // stage 8b: the exact derived set of the main view (the slots whose groups the worker's derive lists, occlusion included, the bridges' groups by the marked list) as a bit set by slot, with the frame of its record: the
     // visible stamps follow it (a compare first)
-    void visibleListPublish(U32 frame, U32 table_size, const U32* words);
-    U32 visibleListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words);        // 0 = nothing newer, else the table size
     void lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
     U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
     void lateListPublish(U32 frame, U32 table_size, const U32* words);
@@ -399,7 +394,7 @@ namespace LLVkBridge
     // the two unit vectors) since the worker last named them: LLSpatialGroup::updateDistance's alpha branch did this for every group the walk kept and set ALPHA_DIRTY and asked for a rebuild (the faces of an alpha group are sorted
     // for one view direction); the viewer sets the state for the slots named
     // mKept (stage 8f): a bit set by slot of the groups the walk keeps for the main view (markNotCulled is called for them): the walk's chain over the rows, not dead, not a bridge's, not empty; no fragment handle is needed (a group still to be built is kept too)
-    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mReleased, mAlphaDirty, mKept; std::vector<F32> mAlphaDepth; };
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mNoHandle, mAlpha, mRigged, mAlphaBridge, mAlphaDirty, mKept; std::vector<F32> mAlphaDepth; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
     // stage 10a (LL_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner
@@ -414,10 +409,6 @@ namespace LLVkBridge
     // occ = the box is occluded, only where there is information. hizRowsRead copies the serial's two sets (words = ceil(rows / 32)); it returns the number of rows, 0 = none for that serial.
     void hizRowsPublish(U32 serial, U32 rows, const U32* occ_words, const U32* info_words);
     U32 hizRowsRead(U32 serial, U32* occ_out, U32* info_out, U32 capacity_words);
-    S32 cullRead(U32 serial, U32 table_size, U32* out);
-    void cullDone(U32 serial);
-    void cullSetResults(const U32* results, U32 capacity_words);    // (worker) the mapped ring: capacity_words per slot
-    void cullPublish(U32 slot, U32 serial);                         // (worker)
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.
@@ -430,7 +421,6 @@ namespace LLVkBridge
     S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
     S32 rtSnapTest();              // rt-debug.txt snaptest=N (0 = not set): every change of N above 0 takes a snapshot as the exit does
-    S32 rtCullUse();               // rt-debug.txt culluse=N (-1 = not set): LL_VK_CULL_USE live, a same-lap A/B of the main view's cull walk against the GPU verdict
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all

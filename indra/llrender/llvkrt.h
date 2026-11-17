@@ -28,7 +28,6 @@ S32 waterReflections();    // waterrt=1: ray traced water reflections
 S32 hitRays();             // hitrays=N: shadow rays per local light at a traced hit (-1 not set)
 S32 hitQuality();          // hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 main pass lighting at the hit)
 S32 snapTest();             // snaptest=N (default 0): a changed N above 0 takes a snapshot like the exit's
-S32 cullUse();             // culluse=0/1/2 (default -1: LL_VK_CULL_USE decides), a same-lap A/B of the main view's cull walk against the GPU verdict
 S32 velIdx();              // velidx=0/1 (default 1): the avatar velocity record drawn indexed; 0 = the draw over the index list (A/B and fallback, to be removed)
 S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
 S32 texAnim();            // texanim=0/1/2 (default -1: the setting decides): texture animation by the CPU / by the vertex shader / CPU with the shader's twin compared

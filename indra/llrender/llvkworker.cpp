@@ -11438,98 +11438,14 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // ---- <FS> S7 C1 (doc/vulkan/S7-design.md section 14), kind 35: the flat group table against the camera frustum, shadow mode: nothing reads the bits but the viewer's comparison log ----
-const char* kCullTestShader = R"GLSL(#version 450
-#extension GL_EXT_buffer_reference : require
-#extension GL_EXT_buffer_reference_uvec2 : require
-layout(local_size_x = 32) in;
-struct Row { vec4 c; vec4 h; vec4 emin; vec4 emax; };
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Rows { Row r[]; };
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Params { vec4 v[12]; };
-layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
-layout(push_constant) uniform PC { uvec2 rows; uvec2 params; uvec2 outp; uint count; uint words; } pc;
-shared uint sBits[4];
-bool inside(Row r, uint flags, float m)
-{
-    Params P = Params(pc.params);
-    uint planes = floatBitsToUint(P.v[10].x);
-    vec3 c = r.c.xyz;
-    vec3 hh = r.h.xyz + vec3(m);
-    for (uint p = 0u; p < planes; ++p)
-    {
-        if (p == 5u) continue;                          // the far plane: the CPU's NoFarClip test leaves it out, the sphere test is the far limit
-        vec4 pl = P.v[p];
-        if (dot(pl.xyz, c) + pl.w - dot(abs(pl.xyz), hh) > 0.0) return false;
-    }
-    if ((flags & 8u) != 0u)
-    {
-        vec3 origin = P.v[7].xyz;
-        float rad = P.v[7].w;
-        vec3 dd = max(max(r.emin.xyz - vec3(m) - origin, origin - (r.emax.xyz + vec3(m))), vec3(0.0));
-        if (dot(dd, dd) > rad * rad) return false;
-    }
-    return true;
-}
-void main()
-{
-    uint i = gl_GlobalInvocationID.x;
-    uint lid = gl_LocalInvocationID.x;
-    if (lid < 4u) sBits[lid] = 0u;
-    barrier();
-    if (i < pc.count)
-    {
-        Rows rows = Rows(pc.rows);
-        Params P = Params(pc.params);
-        Row r = rows.r[i];
-        uint flags = floatBitsToUint(r.h.w);
-        uint parent = floatBitsToUint(r.c.w);
-        bool occ = (flags & 5u) == 4u;                  // occluded and not the root
-        if ((flags & 1u) == 0u)
-        {
-            uint a = parent;
-            for (int d = 0; d < 32 && !occ; ++d)
-            {
-                uint f = floatBitsToUint(rows.r[a].h.w);
-                if ((f & 1u) != 0u) break;              // the root is never occluded
-                if ((f & 4u) != 0u) occ = true;
-                a = floatBitsToUint(rows.r[a].c.w);
-            }
-        }
-        float dist = length(r.c.xyz - P.v[7].xyz);
-        float margin = P.v[8].x + dist * P.v[8].y;
-        for (uint v = 0u; v < 4u; ++v)
-        {
-            float m = v == 0u ? 0.0 : margin * P.v[9][v - 1u];
-            bool pass = (flags & 32u) == 0u && inside(r, flags, m);            // (a free slot: dead) frustum only: the viewer keeps its own occlusion state on top (the Hi-Z verdicts are the CPU's)
-            if (!pass && (flags & 3u) == 2u)            // SKIP_FRUSTUM_CHECK: taken with a parent that passed
-            {
-                Row pr = rows.r[parent];
-                pass = inside(pr, floatBitsToUint(pr.h.w), m);
-            }
-            if (pass) atomicOr(sBits[v], 1u << lid);
-        }
-    }
-    barrier();
-    if (lid < 4u) Out(pc.outp).o[lid * pc.words + gl_WorkGroupID.x] = sBits[lid];
-}
-)GLSL";
-
-constexpr U32 kCullSlots = 8;
-constexpr U32 kCullSlotWords = 4 * 4096;        // 4 variants of 4096 words = 131072 rows a slot
-
 struct CullShadowState
 {
-    bool mTried = false, mReady = false;
-    VkPipelineLayout mLayout = VK_NULL_HANDLE;
-    VkPipeline mPipe = VK_NULL_HANDLE;
-    Buffer mResults;
-    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mWords; };
-    std::deque<Pending> mPending;
     std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
     std::vector<LLVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
     std::vector<U64> mRowStamp;                     // the record (mRecords) that last changed each slot
     std::vector<U64> mHandleStamp;                  // the record that last changed the slot's fragment handle (stage 5: a handle that just changed is the viewer's to name, the row's may be a frame behind the group's fragments)
     std::vector<U32> mSlotOfHandle;                 // the slot of the group that has this scene fragment handle (~0u = none)
-    U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mTooMany = 0, mNoPipeline = 0, mPublished = 0, mLast = 0;
+    U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mNoPipeline = 0, mLast = 0;
 };
 CullShadowState sCullShadow;
 
@@ -11566,72 +11482,6 @@ void hiz_fill_row_boxes(LLVkBridge::HizBox* out, U32 rows)
     }
 }
 
-bool cull_init()
-{
-    CullShadowState& s = sCullShadow;
-    if (s.mReady)
-    {
-        return true;
-    }
-    if (s.mTried)
-    {
-        return false;
-    }
-    s.mTried = true;
-    Context& ctx = Context::instance();
-    VkDevice dev = ctx.getDevice();
-    VkShaderModule mod = hiz_compile(kCullTestShader, "cull test");
-    if (mod == VK_NULL_HANDLE)
-    {
-        return false;
-    }
-    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 32 };
-    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    li.pushConstantRangeCount = 1;
-    li.pPushConstantRanges = &pcr;
-    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mLayout) != VK_SUCCESS)
-    {
-        return false;
-    }
-    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
-    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    pi.stage.pName = "main";
-    pi.stage.module = mod;
-    pi.layout = s.mLayout;
-    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mPipe) != VK_SUCCESS)
-    {
-        return false;
-    }
-    if (!ctx.createBuffer((VkDeviceSize)kCullSlots * kCullSlotWords * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mResults) || !s.mResults.mMapped || !s.mResults.mAddress)
-    {
-        return false;
-    }
-    memset(s.mResults.mMapped, 0, (size_t)kCullSlots * kCullSlotWords * 4);
-    LLVkBridge::cullSetResults((const U32*)s.mResults.mMapped, kCullSlotWords);
-    s.mReady = true;
-    LL_INFOS("VkCull") << "cull shadow ready: " << kCullSlots << " result slots of " << kCullSlotWords << " words" << LL_ENDL;
-    return true;
-}
-
-void cull_poll()
-{
-    CullShadowState& s = sCullShadow;
-    if (!s.mReady)
-    {
-        return;
-    }
-    Context& ctx = Context::instance();
-    while (!s.mPending.empty() && ctx.frameFinished(s.mPending.front().mFrame))
-    {
-        const CullShadowState::Pending p = s.mPending.front();
-        s.mPending.pop_front();
-        vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kCullSlotWords * 4, (VkDeviceSize)p.mWords * 4 * 4);
-        LLVkBridge::cullPublish(p.mSlot, p.mSerial);
-        ++s.mPublished;
-    }
-}
-
 // ---- <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the listed set the worker makes from its own rows and the view's planes, compared with the handles the viewer names (the render map's list). Compare only:
 // nothing draws from the derived set yet. The filters are the render map's: dead, no handle, the partition's render type off, occluded (the row's flag and its ancestors', as the cull test reads them), over the
 // auto-hide surface area, outside the frustum (the exact planes of the view, the far plane and the sphere test as the cull shader reads them, a skip-frustum group taken with a parent that passed).
@@ -11647,7 +11497,6 @@ struct CullDeriveStats
     double mMs = 0.0;
 };
 CullDeriveStats sCullDerive;
-CullDeriveStats sCullDeriveCube;       // stage 10a (LL_VK_CUBE_DERIVE): the probe cube faces, compared only
 
 // LLCamera::AABBInFrustumNoFarClip: 0 outside, 1 partly in, 2 fully in (the planes of the view, the far plane (5) left to the sphere test)
 int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F32 m = 0.f)
@@ -11999,7 +11848,6 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             }
         }
         LLVkBridge::lateListPublish(job.mPass, table, late_words.data());
-        LLVkBridge::visibleListPublish(job.mPass, table, vis_words.data());
         {
             // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each, and the rows with an alpha key and no fragment.
             // (a handle here may be a frame or two behind the group's fragments: the viewer checks each against the group's current handle)
@@ -12036,14 +11884,6 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                         lv[0] = nx; lv[1] = ny; lv[2] = nz;
                         list->mAlphaDirty.push_back(slot);
                     }
-                }
-            }
-            for (U32 slot = 0; slot < table; ++slot)
-            {
-                // the Released rows the derive names (map flag 32): the exact set, not the late one: a group a camera does not accept now is not woken
-                if (((vis_words[slot >> 5] >> (slot & 31u)) & 1u) && (s.mMap[slot].mFlags & 32u))
-                {
-                    list->mReleased.push_back(slot);
                 }
             }
             const F32 at_x = P.mMotion[2], at_y = P.mMotion[3], at_z = P.mFactors[3];
@@ -12175,8 +12015,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     U32 own_flag, lod_flag;
     memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
     memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
-    const bool cube = own_flag == 2;        // stage 10a: a probe cube face: its own stats, no guard, nothing published, nothing drawn from the derive
-    CullDeriveStats& d = cube ? sCullDeriveCube : sCullDerive;
+    CullDeriveStats& d = sCullDerive;
     const auto t0 = std::chrono::steady_clock::now();
     if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
     {
@@ -12302,7 +12141,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                                      << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
         }
     }
-    if (!cube && d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
+    if (d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
     {
         // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
         const U64 skipped = d.mSkippedViews + 1;
@@ -12310,7 +12149,6 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         d.mSkippedViews = skipped;
         return false;
     }
-    if (!cube)
     {
         // what the consumers read is made by the derive thread (derive_publish); the verdict pass above, the draw's, stays here
         DerivePub job;
@@ -12390,18 +12228,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
     }
     d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    if (cube)
-    {
-        if (d.mCompares % 100 == 0 || d.mCompares == 1 || d.mCompares == 10)
-        {
-            const double n = (double)d.mCompares;
-            LL_INFOS("VkCullDerive") << "CUBE FACES (LL_VK_CUBE_DERIVE) derived listed set against the face's handles, over " << d.mCompares << " faces (" << d.mMs / n << " ms each): the face names " << d.mRecord / n << " a face, derived " << d.mDerived / n << ", both " << d.mBoth / n
-                                     << " | missing (named, not derived) " << d.mMissing << ": no row " << d.mMissNoRow << ", dead " << d.mMissDead << ", no handle " << d.mMissNoHandle << ", render type off " << d.mMissType << ", occluded " << d.mMissOcc
-                                     << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", bridge not marked " << d.mMissGate << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
-                                     << " | extra (derived, not named) " << d.mExtra << ": region groups " << d.mExtraRegion << ", bridge groups " << d.mExtraBridge << ", of them rows changed in the last 2 records " << d.mExtraRecent << " | no table " << d.mNoTable << LL_ENDL;
-        }
-    }
-    else if (d.mCompares % 600 == 0)
+    if (d.mCompares % 600 == 0)
     {
         const double n = (double)d.mCompares;
         LL_INFOS("VkCullDerive") << "derived listed set against the record's handles, over " << d.mCompares << " views (" << d.mMs / n << " ms each): the record names " << d.mRecord / n << " a view, derived " << d.mDerived / n << ", both " << d.mBoth / n
@@ -12627,13 +12454,9 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     CullShadowState& s = sCullShadow;
     ++s.mRecords;
-    Renderer& r = Renderer::instance();
-    Context& ctx = Context::instance();
-    cull_poll();
     const U32 table = h.mMatrices;
     if (!table)
     {
-        ++s.mNoPipeline;
         return;
     }
     // the delta goes into the copy first, whatever happens to this record's test: the next record builds on it
@@ -12716,80 +12539,6 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         s.mDeltaRows += h.mEntries;
         s.mRows += table;
-    }
-    {
-        // <FS> 2026-11-17: the viewer sets mPad[6] bit 0 when nothing reads the table test's verdicts (no flat cull, no compare, no stage 4 check): the copy of the whole table into scratch, the dispatch and the
-        // publish are the old flat cull's and are not made. The delta above is kept: the derive (kept sets, view requests) reads the worker's own copy of the table, not the test's answer.
-        LLVkBridge::CullParams pr;
-        memcpy(&pr, blob, sizeof(pr));
-        if (pr.mPad[6] & 1u)
-        {
-            return;
-        }
-    }
-    if (!cull_init())
-    {
-        ++s.mNoPipeline;
-        return;
-    }
-    const U32 words = (table + 31) / 32;
-    if (4 * words > kCullSlotWords)
-    {
-        ++s.mTooMany;
-        return;
-    }
-    const size_t bytes = sizeof(LLVkBridge::CullParams) + (size_t)table * sizeof(LLVkBridge::CullRow);
-    Renderer::ScratchAlloc sc = r.allocVertexScratch(bytes);
-    if (!sc.mPtr || !sc.mAddress)
-    {
-        ++s.mNoPipeline;
-        return;
-    }
-    memcpy(sc.mPtr, blob, sizeof(LLVkBridge::CullParams));
-    memcpy((U8*)sc.mPtr + sizeof(LLVkBridge::CullParams), s.mTable.data(), (size_t)table * sizeof(LLVkBridge::CullRow));
-    const U32 slot = h.mPass % kCullSlots;
-    const U64 out_address = (U64)s.mResults.mAddress + (U64)slot * kCullSlotWords * 4;
-    const U64 params_address = (U64)sc.mAddress;
-    const U64 rows_address = params_address + sizeof(LLVkBridge::CullParams);
-    struct CullPc { U32 mRows[2]; U32 mParams[2]; U32 mOut[2]; U32 mCount; U32 mWords; } pc;
-    static_assert(sizeof(CullPc) == 32, "cull push constants");
-    pc.mRows[0] = (U32)rows_address; pc.mRows[1] = (U32)(rows_address >> 32);
-    pc.mParams[0] = (U32)params_address; pc.mParams[1] = (U32)(params_address >> 32);
-    pc.mOut[0] = (U32)out_address; pc.mOut[1] = (U32)(out_address >> 32);
-    pc.mCount = table;
-    pc.mWords = words;
-    const VkPipeline pipe = s.mPipe;
-    const VkPipelineLayout layout = s.mLayout;
-    const bool recorded = r.recordExternal({}, [&](VkCommandBuffer cmd) {
-        if (LLVkBridge::gPhaseTiming)
-        {
-            ctx.gpuStamp(Context::stampTag("cull shadow test"));
-        }
-        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-        mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        mb.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        di.memoryBarrierCount = 1;
-        di.pMemoryBarriers = &mb;
-        vkCmdPipelineBarrier2(cmd, &di);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
-        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
-        vkCmdDispatch(cmd, words, 1, 1);
-        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT; mb.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-        vkCmdPipelineBarrier2(cmd, &di);
-    });
-    if (!recorded)
-    {
-        ++s.mNoPipeline;
-        return;
-    }
-    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), words });
-    if (s.mRecords - s.mLast >= 600)
-    {
-        s.mLast = s.mRecords;
-        LL_INFOS("VkCull") << "cull shadow worker over " << s.mRecords << " records: " << (double)s.mRows / (double)s.mRecords << " table rows a record, " << (double)s.mDeltaRows / (double)s.mRecords << " delta rows a record, " << s.mResets << " resets, " << s.mBadSlots << " bad slots, published " << s.mPublished << ", still pending " << s.mPending.size()
-            << "; refused: too many rows " << s.mTooMany << ", no pipeline/other " << s.mNoPipeline << LL_ENDL;
     }
 }
 
