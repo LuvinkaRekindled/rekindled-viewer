@@ -11948,138 +11948,40 @@ void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, b
     }
 }
 
-bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
+// <FS> 2026-11-17 (doc/vulkan/PLAN-visible-set-owner.md, "off the render thread"): what the main view's derive publishes for the viewer's consumers (the late list, the visible list, the consumers' list with the kept bits, the LOD numbers) is
+// made from the table copy of the thread that runs this, one to three frames before the viewer reads it, whoever makes it. The verdict pass (the list the worker draws from in the frame) stays in cull_derive_compare.
+struct DerivePub
 {
-    CullShadowState& s = sCullShadow;
-    U32 own_flag, lod_flag;
-    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
-    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
-    const bool cube = own_flag == 2;        // stage 10a: a probe cube face: its own stats, no guard, nothing published, nothing drawn from the derive
-    CullDeriveStats& d = cube ? sCullDeriveCube : sCullDerive;
-    const auto t0 = std::chrono::steady_clock::now();
-    if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
-    {
-        ++d.mNoTable;
-        return false;
-    }
-    LLVkBridge::CullParams P;
-    memcpy(&P, view_blob, sizeof(P));
-    std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
-    if (own_out)
-    {
-        own_out->clear();
-    }
-    const bool occlusion = P.mPad[0] != 0;
-    F32 hide_limit;
-    memcpy(&hide_limit, &P.mPad[1], 4);
+    U32 mPass = 0, mLodFlag = 0;
+    bool mOcclusion = false;
+    F32 mHideLimit = 0.f;
+    LLVkBridge::CullParams mParams;
+    std::vector<U32> mVis;          // the exact derived set by slot (the verdict pass)
+    std::vector<U32> mMarked;       // the root slots of the bridges the walk marked
+};
+
+void derive_publish(const CullShadowState& s, const DerivePub& job)
+{
+    const LLVkBridge::CullParams& P = job.mParams;
+    const bool occlusion = job.mOcclusion;
+    const F32 hide_limit = job.mHideLimit;
     const U32* type_mask = &P.mPad[2];
-    U32 marked_count;
-    memcpy(&marked_count, view_blob + sizeof(LLVkBridge::CullParams) + 4, 4);
-    const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
-    U32 bridge_handle_count;
-    memcpy(&bridge_handle_count, view_blob + sizeof(LLVkBridge::CullParams) + 12, 4);
-    const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles of those bridges' groups that the render map names: exact, from the viewer)
-    U32 max_h = 0;
-    for (U32 i = 0; i < h.mEntries; ++i)
-    {
-        max_h = std::max(max_h, handles[i]);
-    }
-    if (max_h > (1u << 20))
-    {
-        ++d.mNoTable;
-        return false;
-    }
-    static std::vector<U8> mark;
-    mark.assign((size_t)max_h + 1, 0);
-    for (U32 i = 0; i < h.mEntries; ++i)
-    {
-        mark[handles[i]] = 1;
-    }
-    ++d.mCompares;
-    d.mRecord += h.mEntries;
     const U32 table = (U32)s.mTable.size();
-    static std::vector<U8> memo;
-    memo.assign(table, 0);
-    static std::vector<U8> bridge_marked;
-    bridge_marked.assign(table, 0);
-    for (U32 i = 0; i < marked_count; ++i)
+    if (!table || s.mMap.size() != s.mTable.size() || job.mVis.size() < (table + 31) / 32)
     {
-        U32 root;
-        memcpy(&root, marked_slots + (size_t)i * 4, 4);
+        return;
+    }
+    const std::vector<U32>& vis_words = job.mVis;
+    static std::vector<U8> memo, bridge_marked;
+    memo.assign(table, 0);
+    bridge_marked.assign(table, 0);
+    for (const U32 root : job.mMarked)
+    {
         if (root < table)
         {
             bridge_marked[root] = 1;
         }
     }
-    auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
-    const U64 extra_before = d.mExtra, derived_before = d.mDerived;
-    const CullDeriveStats before = d;
-    static std::vector<U32> vis_words;
-    vis_words.assign((table + 31) / 32, 0);
-    for (U32 slot = 0; slot < table; ++slot)
-    {
-        const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
-        if (v == CV_NOHANDLE && !(s.mTable[slot].mFlags & (16u | 32u)) && !(s.mTable[slot].mFlags & 64u) && cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked, false) == CV_PASS)
-        {
-            vis_words[slot >> 5] |= 1u << (slot & 31u);     // (a group with no fragment, an alpha-only group: not in the handle list, in the visible set: it has a stamp too)
-        }
-        if (v != CV_PASS)
-        {
-            continue;
-        }
-        vis_words[slot >> 5] |= 1u << (slot & 31u);         // (the exact derived set by slot, published below: the visible stamps follow it, stage 8b)
-        ++d.mDerived;
-        const U32 handle = s.mMap[slot].mHandle;
-        if (own_out && !(s.mTable[slot].mFlags & 64u) && s.mRecords - s.mHandleStamp[slot] > 2)
-        {
-            own_out->push_back(handle);         // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
-        }
-        if (handle <= max_h && mark[handle])
-        {
-            ++d.mBoth;
-            mark[handle] = 2;
-            continue;
-        }
-        ++d.mExtra;
-        const bool bridge = (s.mTable[slot].mFlags & 64u) != 0;
-        (bridge ? d.mExtraBridge : d.mExtraRegion) += 1;
-        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
-        d.mExtraRecent += recent;
-        if (!bridge)
-        {
-            U32 xt;
-            memcpy(&xt, &s.mTable[slot].mPad0, 4);
-            ++d.mExtraType[xt < 160u ? xt : 160u];
-            d.mExtraNoTris += s.mMap[slot].mDrawTris == 0;
-            d.mExtraNoServed += s.mMap[slot].mServedTris == 0;
-            d.mExtraFull += memo[slot] == ST_FULL;
-            d.mExtraSkipFlag += (s.mTable[slot].mFlags & 2u) != 0;
-            d.mExtraAlpha += s.mMap[slot].mAlphaBits != 0;
-            const int own = cull_group_res(P, s.mTable[slot]);
-            ++d.mExtraOwn[own];
-            const bool parent_own_in = !(s.mTable[slot].mFlags & 1u) && s.mTable[slot].mParent < table && cull_group_res(P, s.mTable[s.mTable[slot].mParent]) != 0;
-            d.mExtraParentOut += !(s.mTable[slot].mFlags & 1u) && !parent_own_in;
-            d.mExtraRoot += (s.mTable[slot].mFlags & 1u) != 0;
-        }
-        if (may_say(bridge ? 1 : 0))
-        {
-            U32 type;
-            memcpy(&type, &s.mTable[slot].mPad0, 4);
-            LL_INFOS("VkCullDerive") << "extra: slot " << slot << " handle " << handle << " flags " << s.mTable[slot].mFlags << " render type " << type << (bridge ? " (a bridge group)" : "") << ", row changed " << (s.mRecords - s.mRowStamp[slot])
-                                     << " records ago, map flags " << (U32)s.mMap[slot].mFlags << ", chain state " << (U32)memo[slot] << " (3 part, 4 full), own result " << cull_group_res(P, s.mTable[slot]) << ", parent slot " << s.mTable[slot].mParent << " flags "
-                                     << (s.mTable[slot].mParent < table ? s.mTable[s.mTable[slot].mParent].mFlags : 0u) << " own result " << (s.mTable[slot].mParent < table ? cull_group_res(P, s.mTable[s.mTable[slot].mParent]) : -1)
-                                     << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
-        }
-    }
-    if (!cube && d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
-    {
-        // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
-        const U64 skipped = d.mSkippedViews + 1;
-        d = before;
-        d.mSkippedViews = skipped;
-        return false;
-    }
-    if (!cube)
     {
         // the late list of this view, published for the viewer's consumers (the variant 1 factor of the record, 1.5)
         static std::vector<U8> memo_late;
@@ -12096,13 +11998,13 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                 ++late_n;
             }
         }
-        LLVkBridge::lateListPublish(h.mPass, table, late_words.data());
-        LLVkBridge::visibleListPublish(h.mPass, table, vis_words.data());
+        LLVkBridge::lateListPublish(job.mPass, table, late_words.data());
+        LLVkBridge::visibleListPublish(job.mPass, table, vis_words.data());
         {
             // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each, and the rows with an alpha key and no fragment.
             // (a handle here may be a frame or two behind the group's fragments: the viewer checks each against the group's current handle)
             auto list = std::make_shared<LLVkBridge::ConsumerList>();
-            list->mFrame = h.mPass;
+            list->mFrame = job.mPass;
             list->mTable = table;
             static std::vector<U32> seen_stamp;
             static U32 stamp = 0;
@@ -12216,9 +12118,8 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             }
             LLVkBridge::consumerListPublish(std::move(list));
         }
-        d.mLate += late_n;
     }
-    if (!cube && (lod_flag & 1u))
+    if (job.mLodFlag & 1u)
     {
         // stage 7 (a compare for now): the LOD numbers of every row. distance: LLSpatialPartition::calcDistance (the length from the camera to the object bounds centre, the squared ramp under 16 m); the bit: the slop test
         // of LLSpatialGroup::changeLOD (the dirty bits and needsUpdate are the viewer's rows' flags, not looked at here). The rows of the groups of bridges hold the bridge's box, not the group's own bounds: no number for them.
@@ -12227,7 +12128,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         lod_dist.assign(table, 0.f);
         lod_bits.assign((table + 31) / 32, 0);
         lod_change.assign((table + 31) / 32, 0);
-        const U32 lod_frame = lod_flag >> 1;        // (the viewer's own frame counter, LLViewerOctreeEntryData::getCurrentFrame(): needsUpdate() reads it)
+        const U32 lod_frame = job.mLodFlag >> 1;        // (the viewer's own frame counter, LLViewerOctreeEntryData::getCurrentFrame(): needsUpdate() reads it)
         for (U32 slot = 0; slot < table; ++slot)
         {
             if (s.mTable[slot].mFlags & (32u | 64u))
@@ -12262,7 +12163,171 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
                 lod_change[slot >> 5] |= 1u << (slot & 31u);
             }
         }
-        LLVkBridge::lodListPublish(h.mPass, table, lod_dist.data(), lod_bits.data(), lod_change.data());
+        LLVkBridge::lodListPublish(job.mPass, table, lod_dist.data(), lod_bits.data(), lod_change.data());
+    }
+}
+
+void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table);
+
+bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
+{
+    CullShadowState& s = sCullShadow;
+    U32 own_flag, lod_flag;
+    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
+    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
+    const bool cube = own_flag == 2;        // stage 10a: a probe cube face: its own stats, no guard, nothing published, nothing drawn from the derive
+    CullDeriveStats& d = cube ? sCullDeriveCube : sCullDerive;
+    const auto t0 = std::chrono::steady_clock::now();
+    if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
+    {
+        ++d.mNoTable;
+        return false;
+    }
+    LLVkBridge::CullParams P;
+    memcpy(&P, view_blob, sizeof(P));
+    std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
+    if (own_out)
+    {
+        own_out->clear();
+    }
+    const bool occlusion = P.mPad[0] != 0;
+    F32 hide_limit;
+    memcpy(&hide_limit, &P.mPad[1], 4);
+    const U32* type_mask = &P.mPad[2];
+    U32 marked_count;
+    memcpy(&marked_count, view_blob + sizeof(LLVkBridge::CullParams) + 4, 4);
+    const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
+    U32 bridge_handle_count;
+    memcpy(&bridge_handle_count, view_blob + sizeof(LLVkBridge::CullParams) + 12, 4);
+    const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles of those bridges' groups that the render map names: exact, from the viewer)
+    // <FS> 2026-11-17: the comparison with the viewer's own handle list (the marks, the classification of the extras and of the missing ones, their counters and lines) is a diagnostic: with LL_VK_DIAG=1 only. The verdict pass
+    // below (the draw's list, the visible set) is the same either way.
+    const bool cmp = ll_diag_on();
+    U32 max_h = 0;
+    static std::vector<U8> mark;
+    if (cmp)
+    {
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            max_h = std::max(max_h, handles[i]);
+        }
+        if (max_h > (1u << 20))
+        {
+            ++d.mNoTable;
+            return false;
+        }
+        mark.assign((size_t)max_h + 1, 0);
+        for (U32 i = 0; i < h.mEntries; ++i)
+        {
+            mark[handles[i]] = 1;
+        }
+    }
+    ++d.mCompares;
+    d.mRecord += h.mEntries;
+    const U32 table = (U32)s.mTable.size();
+    static std::vector<U8> memo;
+    memo.assign(table, 0);
+    static std::vector<U8> bridge_marked;
+    bridge_marked.assign(table, 0);
+    for (U32 i = 0; i < marked_count; ++i)
+    {
+        U32 root;
+        memcpy(&root, marked_slots + (size_t)i * 4, 4);
+        if (root < table)
+        {
+            bridge_marked[root] = 1;
+        }
+    }
+    auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
+    const U64 extra_before = d.mExtra, derived_before = d.mDerived;
+    const CullDeriveStats before = d;
+    static std::vector<U32> vis_words;
+    vis_words.assign((table + 31) / 32, 0);
+    for (U32 slot = 0; slot < table; ++slot)
+    {
+        const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
+        if (v == CV_NOHANDLE && !(s.mTable[slot].mFlags & (16u | 32u)) && !(s.mTable[slot].mFlags & 64u) && cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked, false) == CV_PASS)
+        {
+            vis_words[slot >> 5] |= 1u << (slot & 31u);     // (a group with no fragment, an alpha-only group: not in the handle list, in the visible set: it has a stamp too)
+        }
+        if (v != CV_PASS)
+        {
+            continue;
+        }
+        vis_words[slot >> 5] |= 1u << (slot & 31u);         // (the exact derived set by slot, published below: the visible stamps follow it, stage 8b)
+        ++d.mDerived;
+        const U32 handle = s.mMap[slot].mHandle;
+        if (own_out && !(s.mTable[slot].mFlags & 64u) && s.mRecords - s.mHandleStamp[slot] > 2)
+        {
+            own_out->push_back(handle);         // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
+        }
+        if (!cmp)
+        {
+            continue;
+        }
+        if (handle <= max_h && mark[handle])
+        {
+            ++d.mBoth;
+            mark[handle] = 2;
+            continue;
+        }
+        ++d.mExtra;
+        const bool bridge = (s.mTable[slot].mFlags & 64u) != 0;
+        (bridge ? d.mExtraBridge : d.mExtraRegion) += 1;
+        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
+        d.mExtraRecent += recent;
+        if (!bridge)
+        {
+            U32 xt;
+            memcpy(&xt, &s.mTable[slot].mPad0, 4);
+            ++d.mExtraType[xt < 160u ? xt : 160u];
+            d.mExtraNoTris += s.mMap[slot].mDrawTris == 0;
+            d.mExtraNoServed += s.mMap[slot].mServedTris == 0;
+            d.mExtraFull += memo[slot] == ST_FULL;
+            d.mExtraSkipFlag += (s.mTable[slot].mFlags & 2u) != 0;
+            d.mExtraAlpha += s.mMap[slot].mAlphaBits != 0;
+            const int own = cull_group_res(P, s.mTable[slot]);
+            ++d.mExtraOwn[own];
+            const bool parent_own_in = !(s.mTable[slot].mFlags & 1u) && s.mTable[slot].mParent < table && cull_group_res(P, s.mTable[s.mTable[slot].mParent]) != 0;
+            d.mExtraParentOut += !(s.mTable[slot].mFlags & 1u) && !parent_own_in;
+            d.mExtraRoot += (s.mTable[slot].mFlags & 1u) != 0;
+        }
+        if (may_say(bridge ? 1 : 0))
+        {
+            U32 type;
+            memcpy(&type, &s.mTable[slot].mPad0, 4);
+            LL_INFOS("VkCullDerive") << "extra: slot " << slot << " handle " << handle << " flags " << s.mTable[slot].mFlags << " render type " << type << (bridge ? " (a bridge group)" : "") << ", row changed " << (s.mRecords - s.mRowStamp[slot])
+                                     << " records ago, map flags " << (U32)s.mMap[slot].mFlags << ", chain state " << (U32)memo[slot] << " (3 part, 4 full), own result " << cull_group_res(P, s.mTable[slot]) << ", parent slot " << s.mTable[slot].mParent << " flags "
+                                     << (s.mTable[slot].mParent < table ? s.mTable[s.mTable[slot].mParent].mFlags : 0u) << " own result " << (s.mTable[slot].mParent < table ? cull_group_res(P, s.mTable[s.mTable[slot].mParent]) : -1)
+                                     << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
+        }
+    }
+    if (!cube && d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
+    {
+        // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
+        const U64 skipped = d.mSkippedViews + 1;
+        d = before;
+        d.mSkippedViews = skipped;
+        return false;
+    }
+    if (!cube)
+    {
+        // what the consumers read is made by the derive thread (derive_publish); the verdict pass above, the draw's, stays here
+        DerivePub job;
+        job.mPass = h.mPass;
+        job.mLodFlag = lod_flag;
+        job.mOcclusion = occlusion;
+        job.mHideLimit = hide_limit;
+        job.mParams = P;
+        job.mVis = vis_words;
+        job.mMarked.reserve(marked_count);
+        for (U32 i = 0; i < marked_count; ++i)
+        {
+            U32 root;
+            memcpy(&root, marked_slots + (size_t)i * 4, 4);
+            job.mMarked.push_back(root);
+        }
+        derive_publish_dispatch(std::move(job), s);
     }
     {
         // views that differ from the usual ones by many groups at once (a record that names far fewer groups than the table shows is another view's list, not a state difference)
@@ -12279,7 +12344,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             }
         }
     }
-    for (U32 i = 0; i < h.mEntries; ++i)
+    for (U32 i = 0; cmp && i < h.mEntries; ++i)
     {
         const U32 handle = handles[i];
         if (mark[handle] != 1)
@@ -12421,7 +12486,8 @@ struct DeriveThread
 {
     struct Job
     {
-        bool mRequest = false, mReset = false;
+        bool mRequest = false, mReset = false, mPublish = false;
+        DerivePub mPub;             // mPublish: what the main view's derive publishes for the consumers (derive_publish)
         U32 mTable = 0, mId = 0, mFrame = 0;
         LLVkBridge::CullParams mParams;
         std::vector<U32> mSlots;
@@ -12439,9 +12505,9 @@ struct DeriveThread
     {
         {
             std::lock_guard<std::mutex> lock(mMutex);
-            if (job.mRequest && mQueue.size() > 400)
+            if ((job.mRequest || job.mPublish) && mQueue.size() > 400)
             {
-                ++mDropped;             // (a stalled thread: a request is answered by the next frame's, a delta is never dropped)
+                ++mDropped;             // (a stalled thread: a request and a publication are made again by the next frame's, a delta is never dropped)
                 return;
             }
             mQueue.push_back(std::move(job));
@@ -12496,7 +12562,11 @@ struct DeriveThread
             }
             for (Job& j : batch)
             {
-                if (j.mRequest)
+                if (j.mPublish)
+                {
+                    derive_publish(mS, j.mPub);
+                }
+                else if (j.mRequest)
                 {
                     view_request_run(mS, j.mId, j.mFrame, j.mParams);
                 }
@@ -12520,6 +12590,19 @@ bool derive_thread_on()
 {
     static const bool on = !(getenv("LL_VK_DERIVE_THREAD") && atoi(getenv("LL_VK_DERIVE_THREAD")) == 0);
     return on;
+}
+
+void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table)
+{
+    if (derive_thread_on())
+    {
+        DeriveThread::Job j;
+        j.mPublish = true;
+        j.mPub = std::move(job);
+        derive_thread().push(std::move(j));
+        return;
+    }
+    derive_publish(inline_table, job);
 }
 
 void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
