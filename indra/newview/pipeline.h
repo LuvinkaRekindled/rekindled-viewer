@@ -325,7 +325,6 @@ public:
     void updateMoveNormalAsync(LLDrawable* drawablep);
     void updateMovedList(LLDrawable::drawable_vector_t& move_list);
     void updateMove();
-    bool visibleObjectsInFrustum(LLCamera& camera);
     bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max);
     bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
     bool pointCloudFromExtents(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp);      // <FS> what getVisiblePointCloud makes of the visible extents (the walk is separate: LL_VK_PC_SPLIT)

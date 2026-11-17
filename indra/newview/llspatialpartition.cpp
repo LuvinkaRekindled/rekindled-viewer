@@ -1476,38 +1476,6 @@ public:
     LLVector4a& mMax;
 };
 
-class LLOctreeCullDetectVisible: public LLOctreeCullShadow
-{
-public:
-    LLOctreeCullDetectVisible(LLCamera* camera)
-        : LLOctreeCullShadow(camera), mResult(false) { }
-
-    virtual bool earlyFail(LLViewerOctreeGroup* base_group)
-    {
-        LLSpatialGroup* group = (LLSpatialGroup*)base_group;
-
-        if (mResult || //already found a node, don't check any more
-            (group->getOctreeNode()->getParent() && //never occlusion cull the root node
-             LLPipeline::useOcclusion() &&           //ignore occlusion if disabled
-             group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
-        {
-            return true;
-        }
-
-        return false;
-    }
-
-    virtual void processGroup(LLViewerOctreeGroup* base_group)
-    {
-        if (base_group->isVisible())
-        {
-            mResult = true;
-        }
-    }
-
-    bool mResult;
-};
-
 class LLOctreeSelect : public LLOctreeCull
 {
 public:
@@ -1533,12 +1501,9 @@ public:
             {
                 if (drawable->isSpatialBridge())
                 {
-                    drawable->setVisible(*mCamera, mResults, true);
+                    continue;       // stage 9 (3.2): the bridges' candidates come from the registry (LLSpatialBridge::selectAll)
                 }
-                else
-                {
-                    mResults->push_back(drawable);
-                }
+                mResults->push_back(drawable);
             }
         }
     }
@@ -1712,13 +1677,6 @@ void LLSpatialPartition::visibleExtentsTask(LLCamera& camera, const LLViewerOctr
     LLOctreeCullVisExtents vis(&camera, min, max);
     vis.traverseTask(task);
     empty = empty && vis.mEmpty;
-}
-
-bool LLSpatialPartition::visibleObjectsInFrustum(LLCamera& camera)
-{
-    LLOctreeCullDetectVisible vis(&camera);
-    vis.traverse(mOctree);
-    return vis.mResult;
 }
 
 S32 LLSpatialPartition::cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select)
@@ -4308,7 +4266,7 @@ public:
     }
 } LL_ALIGN_POSTFIX(16);
 
-LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(bool hud, const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
                                                      S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent)
 {
     LLOctreeIntersect intersect(start, end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, intersection, tex_coord, normal, tangent);
@@ -4318,9 +4276,19 @@ LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(const LLVector4a& start, co
     const std::vector<LLSpatialBridge*> bridges = allBridges();
     for (LLSpatialBridge* b : bridges)
     {
-        if (b->isDead() || !b->mEntry)
+        if (b->isDead() || !b->mEntry || (b->mPartitionType == LLViewerRegion::PARTITION_HUD) != hud)
         {
             continue;
+        }
+        if (!hud)
+        {
+            // (the region walk tested the partition the bridge was put in only when its render type was on)
+            LLViewerRegion* region = b->mDrawable ? b->mDrawable->getRegion() : nullptr;
+            LLSpatialPartition* part = region ? region->getSpatialPartition(b->mPartitionType) : nullptr;
+            if (!part || !gPipeline.hasRenderType(part->mDrawableType))
+            {
+                continue;
+            }
         }
         const LLVector4a* ex = b->getSpatialExtents();
         LLVector4a center, half;
@@ -4335,6 +4303,18 @@ LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(const LLVector4a& start, co
     }
     sPickSkipBridges = saved;
     return intersect.mHit;
+}
+
+void LLSpatialBridge::selectAll(LLCamera& camera, std::vector<LLDrawable*>& results)
+{
+    const std::vector<LLSpatialBridge*> bridges = allBridges();
+    for (LLSpatialBridge* b : bridges)
+    {
+        if (!b->isDead())
+        {
+            b->setVisible(camera, &results, true);
+        }
+    }
 }
 
 LLDrawable* LLSpatialPartition::lineSegmentIntersect(const LLVector4a& start, const LLVector4a& end,

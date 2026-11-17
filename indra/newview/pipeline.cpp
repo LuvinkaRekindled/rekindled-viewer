@@ -3814,32 +3814,6 @@ void LLPipeline::checkReferences(LLSpatialGroup* group)
 }
 
 
-bool LLPipeline::visibleObjectsInFrustum(LLCamera& camera)
-{
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
-            iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-    {
-        LLViewerRegion* region = *iter;
-
-        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-        {
-            LLSpatialPartition* part = region->getSpatialPartition(i);
-            if (part)
-            {
-                if (hasRenderType(part->mDrawableType))
-                {
-                    if (part->visibleObjectsInFrustum(camera))
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    return false;
-}
-
 bool LLPipeline::getVisibleExtents(LLCamera& camera, LLVector3& min, LLVector3& max)
 {
     const F32 X = 65536.f;
@@ -20569,7 +20543,7 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
             }
         }
     }
-    if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAll(start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
+    if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAll(false, start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
     {
         drawable = hit;
         local_end = position;
@@ -20713,17 +20687,19 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInHUD(const LLVector4a& start, c
 {
     LLDrawable* drawable = NULL;
 
+    bool toggle = false;
+    if (!hasRenderType(LLPipeline::RENDER_TYPE_HUD))
+    {
+        toggleRenderType(LLPipeline::RENDER_TYPE_HUD);
+        toggle = true;
+    }
+
+    // stage 9 (3.2): the HUD attachments' bridges are tested by the registry after the HUD partition's own drawables, not through the partition's octree
+    LLSpatialBridge::sPickSkipBridges = true;
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
             iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
         LLViewerRegion* region = *iter;
-
-        bool toggle = false;
-        if (!hasRenderType(LLPipeline::RENDER_TYPE_HUD))
-        {
-            toggleRenderType(LLPipeline::RENDER_TYPE_HUD);
-            toggle = true;
-        }
 
         LLSpatialPartition* part = region->getSpatialPartition(LLViewerRegion::PARTITION_HUD);
         if (part)
@@ -20734,11 +20710,19 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInHUD(const LLVector4a& start, c
                 drawable = hit;
             }
         }
-
-        if (toggle)
+    }
+    LLSpatialBridge::sPickSkipBridges = false;
+    {
+        LLVector4a hud_end = (drawable && intersection) ? *intersection : end;
+        if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAll(true, start, hud_end, pick_transparent, false, true, false, face_hit, intersection, tex_coord, normal, tangent))
         {
-            toggleRenderType(LLPipeline::RENDER_TYPE_HUD);
+            drawable = hit;
         }
+    }
+
+    if (toggle)
+    {
+        toggleRenderType(LLPipeline::RENDER_TYPE_HUD);
     }
     return drawable ? drawable->getVObj().get() : NULL;
 }

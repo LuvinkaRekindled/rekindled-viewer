@@ -244,6 +244,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
                 }
             }
         }
+        LLSpatialBridge::selectAll(camera, potentials);     // stage 9 (3.2): the bridges' candidates by the registry
 
         for (LLDrawable* drawable : potentials)
         {
