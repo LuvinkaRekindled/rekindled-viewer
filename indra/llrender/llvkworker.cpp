@@ -12490,6 +12490,16 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         s.mDeltaRows += h.mEntries;
         s.mRows += table;
     }
+    {
+        // <FS> 2026-11-17: the viewer sets mPad[6] bit 0 when nothing reads the table test's verdicts (no flat cull, no compare, no stage 4 check): the copy of the whole table into scratch, the dispatch and the
+        // publish are the old flat cull's and are not made. The delta above is kept: the derive (kept sets, view requests) reads the worker's own copy of the table, not the test's answer.
+        LLVkBridge::CullParams pr;
+        memcpy(&pr, blob, sizeof(pr));
+        if (pr.mPad[6] & 1u)
+        {
+            return;
+        }
+    }
     if (!cull_init())
     {
         ++s.mNoPipeline;

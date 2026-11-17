@@ -4958,7 +4958,15 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         && !cull_use && !derived_use && !vis_cull && !LLOccCensus::sOn && !table_needs_serial && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
     // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
-    static const int visset_mode = [] { const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : 6; LLVisSetHooks::sOn = m >= 3; return m; }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
+    // <FS> 2026-11-17: with the worker's kept sets in use for the main view and the cascades (LL_VK_KEPT=2 and LL_VK_CASC_KEPT=3) nothing replays the retained sets (the main view's pass is the derived one, the cascades' upkeep is skipped) and the
+    // hooks that feed them (noteBounds on every group change, noteStale, the census add) only fill event lists nobody reads: the default is 0 then (a fallback frame walks, as the old path does). LL_VK_VISSET overrides.
+    static const int visset_mode = []
+    {
+        const bool kept_stack = LLCullShadow::sOn && getenv("LL_VK_KEPT") && atoi(getenv("LL_VK_KEPT")) == 2 && getenv("LL_VK_CASC_KEPT") && atoi(getenv("LL_VK_CASC_KEPT")) >= 3;
+        const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : (kept_stack ? 0 : 6);
+        LLVisSetHooks::sOn = m >= 3;
+        return m;
+    }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
     static std::vector<LLSpatialPartition*> vs_parts;
     bool vs_replay = false, vs_check = false;
     if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
@@ -14633,7 +14641,7 @@ void ll_lod_cand_refresh()
     // the loop makes the whole call itself (the check) when there is no set yet, when the set is more than 3 frames old (the worker's round robin turns cover the 3 frames after its own: a stalled frame would lose a group's
     // turn for a whole period), and every 60th sort
     const U32 age = (U32)gFrameCount - sCandFrame;      // (the publication is stamped with gFrameCount, not with the octree's frame counter)
-    sLodSampling = !sLodSwitch || !sCandTable || age > 3u || (++sCandSorts % 60 == 0);
+    sLodSampling = !sLodSwitch || !sCandTable || age > 3u || (ll_diag_on() && ++sCandSorts % 60 == 0);       // (the 60th sort's whole loop is the check of the counters: LL_VK_DIAG=1 only, not a hitch every second in a lap)
 }
 
 void ll_scene_alpha_dirty_apply()
@@ -14718,7 +14726,7 @@ void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
 
 void ll_lod_cand_note(LLSpatialGroup* group, bool live)
 {
-    if (!sLodCand || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender() || LLPipeline::sImpostorRender || !group->mCullId
+    if (!sLodCand || !ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender() || LLPipeline::sImpostorRender || !group->mCullId
         || !sCandTable || !group->getSpatialPartition() || group->getSpatialPartition()->asBridge())
     {
         return;
@@ -14780,7 +14788,9 @@ void ll_lod_cand_report()
 // sort) against the worker's set for the same frame; what the walk keeps and the worker does not, and the other way round.
 void ll_scene_kept_compare(LLCullResult* cull)
 {
-    static const bool on = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr;
+    // <FS> 2026-11-17: a compare is a diagnostic: with LL_VK_KEPT=2 (the pass in use) it runs only with LL_VK_DIAG=1. It built a list of the walk's ~1,400 to 1,800 groups, a hash set of them and a walk over the set's bits every frame
+    // (zone occlusion: doOcclusion 0.05 ms in a default lap, 0.2 with the stage 8 set, 0.4 with LL_VK_COVER_AV: laps df1, sn0, st0).
+    static const bool on = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr && (atoi(getenv("LL_VK_KEPT")) != 2 || ll_diag_on());
     if (!on || !cull || LLPipeline::shadowRender() || gCubeSnapshot || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
     {
         return;
@@ -16631,6 +16641,14 @@ void LLCullShadow::send(LLCamera& camera)
     {
         params.mFactors[k] = sCullFactors[k];
     }
+    // <FS> 2026-11-17: the table test's verdicts (the flat cull of stage C2, the compare, the stage 4 check, the verify) are read only by those; without them the worker does not copy the table, dispatch the test or
+    // publish (mPad[6] bit 0), and the record is not kept to be drained. One path: the kept sets of the derive are what the stage 8 stack uses. LL_VK_CULL_TEST=1 asks for the test anyway (for a before and after).
+    static const bool force_test = getenv("LL_VK_CULL_TEST") != nullptr;
+    const bool verdicts = force_test || sCompare || sUse != 0 || sStage4 || sVerify;
+    if (!verdicts)
+    {
+        params.mPad[6] |= 1u;
+    }
     static std::vector<U32> slots;
     static std::vector<LLVkBridge::CullRow> rows;
     static std::vector<CullMapRow> map_rows;       // stage 3: the map row of each of those slots
@@ -16700,11 +16718,18 @@ void LLCullShadow::send(LLCamera& camera)
             std::lock_guard<std::mutex> lock(sCullMutex);
             sSendSlots.clear();
         }
-        sCullRecs.push_back(std::move(rec));
-        while (sCullRecs.size() > 8)
+        if (verdicts)
         {
-            LLVkBridge::cullDone(sCullRecs.front().mSerial);
-            sCullRecs.pop_front();
+            sCullRecs.push_back(std::move(rec));
+            while (sCullRecs.size() > 8)
+            {
+                LLVkBridge::cullDone(sCullRecs.front().mSerial);
+                sCullRecs.pop_front();
+            }
+        }
+        else
+        {
+            LLVkBridge::cullDone(serial);       // (no verdict will come: the serial window does not wait for it)
         }
     }
     else
