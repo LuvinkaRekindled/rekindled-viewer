@@ -8,6 +8,7 @@
 #define LL_LLCULLSHADOW_H
 
 #include "stdtypes.h"
+#include "llvkenv.h"        // <FS> ll_vk_env: the stack's defaults
 #include <atomic>
 #include <cstdlib>
 
@@ -17,10 +18,10 @@ class LLSpatialBridge;
 
 namespace LLCullShadow
 {
-    inline const bool sOn = getenv("LL_VK_CULL_SHADOW") != nullptr;
+    inline const bool sOn = ll_vk_env("LL_VK_CULL_SHADOW") != nullptr;
     inline const bool sPoseLog = getenv("LL_VK_POSE_LOG") != nullptr;      // one line a second: the camera's yaw, pitch and origin (for the run scripts), without the rest
     inline const bool sVerify = sOn && getenv("LL_VK_CULL_VERIFY") != nullptr;
-    inline const bool sCompare = sOn && !(getenv("LL_VK_CULL_COMPARE") && getenv("LL_VK_CULL_COMPARE")[0] == '0');     // LL_VK_CULL_COMPARE=0: no comparison with the CPU set (the production cost of the table and its test)
+    inline const bool sCompare = sOn && !(ll_vk_env("LL_VK_CULL_COMPARE") && ll_vk_env("LL_VK_CULL_COMPARE")[0] == '0');     // LL_VK_CULL_COMPARE=0: no comparison with the CPU set (the production cost of the table and its test)
     // C2 (doc/vulkan/S7-design.md section 18): LL_VK_CULL_USE=1 derives the main view's visible groups from the GPU verdict next to the walk and compares them (the walk is still what is used); =2 the covered partitions
     // are not walked, their lists come from the verdict. LL_VK_CULL_USE_VARIANT=1..3 picks the margin variant (default 2).
     inline const unsigned sUseEnv = sOn && getenv("LL_VK_CULL_USE") ? (unsigned)atoi(getenv("LL_VK_CULL_USE")) : 0u;

@@ -149,6 +149,7 @@
 
 #include "llenvironment.h"
 #include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "llvkenv.h"        // <FS> ll_vk_env: the stack's defaults
 
 #include "llenvironment.h"
 #include "llsettingsvo.h"
@@ -4962,7 +4963,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     // hooks that feed them (noteBounds on every group change, noteStale, the census add) only fill event lists nobody reads: the default is 0 then (a fallback frame walks, as the old path does). LL_VK_VISSET overrides.
     static const int visset_mode = []
     {
-        const bool kept_stack = LLCullShadow::sOn && getenv("LL_VK_KEPT") && atoi(getenv("LL_VK_KEPT")) == 2 && getenv("LL_VK_CASC_KEPT") && atoi(getenv("LL_VK_CASC_KEPT")) >= 3;
+        const bool kept_stack = LLCullShadow::sOn && ll_vk_env("LL_VK_KEPT") && atoi(ll_vk_env("LL_VK_KEPT")) == 2 && ll_vk_env("LL_VK_CASC_KEPT") && atoi(ll_vk_env("LL_VK_CASC_KEPT")) >= 3;
         const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : (kept_stack ? 0 : 6);
         LLVisSetHooks::sOn = m >= 3;
         return m;
@@ -5156,12 +5157,12 @@ static const bool sLodCompare = LLCullShadow::sOn && getenv("LL_VK_CULL_LOD") !=
 // (2: the switch: in the main view's sort the per-group LOD call returns at once for a group that has a table row, and a pass over the candidates makes it, each live-checked with changeLOD(); every 60th sort of the main view
 // the loop makes the call as before, and the check's counters are those of that sort)
 // LL_VK_LOOPC=1 (needs LL_VK_CULL_SHADOW=1) is all of owners 1 to 3 at once (LL_VK_MESH_REG=1, LL_VK_CHK_REG=1, LL_VK_LOD_CAND=2) and the removal of loop (c) of the sort for the groups they cover (sLoopCSkip below)
-static const int sLodCandMode = LLCullShadow::sOn && getenv("LL_VK_LOOPC") ? 2 : (LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") ? atoi(getenv("LL_VK_LOD_CAND")) : 0);
+static const int sLodCandMode = LLCullShadow::sOn && ll_vk_env("LL_VK_LOOPC") ? 2 : (LLCullShadow::sOn && getenv("LL_VK_LOD_CAND") ? atoi(getenv("LL_VK_LOD_CAND")) : 0);
 static const bool sLodCand = sLodCandMode >= 1;
 static const bool sLodSwitch = sLodCandMode == 2;
 // stage 8e (LL_VK_DIST=1, needs LL_VK_LOOPC=1): the walk no longer calls updateDistance for the groups of the table (render by group, not a bridge's): the LOD candidates make their own distance (stateSort(group)), the urgency and the wake
 // queue ask distanceNow(), and the worker names the alpha groups whose view direction moved (ConsumerList::mAlphaDirty), which is what updateDistance's alpha branch did for every group the walk kept
-static const bool sDistOwner = LLCullShadow::sOn && getenv("LL_VK_DIST") != nullptr && getenv("LL_VK_LOOPC") != nullptr;
+static const bool sDistOwner = LLCullShadow::sOn && ll_vk_env("LL_VK_DIST") != nullptr && ll_vk_env("LL_VK_LOOPC") != nullptr;
 static const bool sDistOwnedInit = (LLSpatialGroup::sDistOwned = sDistOwner, true);
 static inline bool ll_dist_owned(LLSpatialGroup* group)
 {
@@ -5170,7 +5171,7 @@ static inline bool ll_dist_owned(LLSpatialGroup* group)
 }
 // stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group of the kept set is derived from the set (LLKeptStamps, llvieweroctree.h), not written per group: markNotCulled does not call setVisible for a group the pass
 // that is running names; the pass applies the set after its jobs, and writes the stamp back for the groups of the previous set that are not in this one (ll_kept_stamps_apply); a frame the derived path does not run folds the whole set back
-static const bool sKeptStamp = LLCullShadow::sOn && getenv("LL_VK_KSTAMP") != nullptr && getenv("LL_VK_KEPT") && atoi(getenv("LL_VK_KEPT")) == 2;
+static const bool sKeptStamp = LLCullShadow::sOn && ll_vk_env("LL_VK_KSTAMP") != nullptr && ll_vk_env("LL_VK_KEPT") && atoi(ll_vk_env("LL_VK_KEPT")) == 2;
 static const U32* sKeptPassBitsG = nullptr;                 // the bits of the set the pass is making (written by the main thread around the pass's jobs)
 static U32 sKeptPassWordsG = 0;
 static thread_local const U32* sKeptPassBits = nullptr;     // the same, for the thread that is running a part of the pass
@@ -6254,7 +6255,7 @@ int sort_split_setting()
 
 // <FS> stage 8 (loop c of sortLoops, owner 1 of 4): the mesh rebuild of the visible groups. LL_VK_MESH_REG: 0 the loops rebuild as before, 2 the loops rebuild as before and the geometry stage's registry pass counts what
 // it still finds to rebuild (it must be 0: the check), 1 the loops do not rebuild and the geometry stage does, from LLDirtyGroups (the registry the cascades' rebuild already uses, C4.1)
-static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_MESH_REG")) : (LLCullShadow::sOn && getenv("LL_VK_LOOPC") ? 1 : 0);
+static const int sMeshRegMode = getenv("LL_VK_MESH_REG") ? atoi(getenv("LL_VK_MESH_REG")) : (LLCullShadow::sOn && ll_vk_env("LL_VK_LOOPC") ? 1 : 0);
 static std::mutex sMeshSeenMutex;
 static std::unordered_set<const LLSpatialGroup*> sMeshSeen;       // mode 2: the groups sort_rebuild_mesh saw dirty since the last geometry stage
 
@@ -6273,10 +6274,10 @@ static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[
 
 // LL_VK_CHK_REG=1: the loops of the main view's sort do not call it (the discard is made where it already was: the walk's earlyFail for a group the walk visits, the retained set's own handling for a replayed
 // member, LLVisSetHooks::noteStale); with LL_VK_CHK_COUNT=1 too, the counters then say what the call would have cleared (it must stay 0)
-static const bool sChkSkip = (getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1) || (LLCullShadow::sOn && getenv("LL_VK_LOOPC") != nullptr);
+static const bool sChkSkip = (getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1) || (LLCullShadow::sOn && ll_vk_env("LL_VK_LOOPC") != nullptr);
 // stage 8, loop (c) removed: with the three owners on, the loop does nothing for a group they cover (lap lp1-def1, 57,600 sorts, about 1,120 groups a sort: not stamped visible by the walk 0, OCCLUDED 0), so it skips
 // those groups, except on every 60th sort of the main view (sLodSampling), where the whole loop runs as the check
-static const bool sLoopCSkip = LLCullShadow::sOn && getenv("LL_VK_LOOPC") != nullptr && sLodSwitch && sMeshRegMode == 1 && sChkSkip;
+static const bool sLoopCSkip = LLCullShadow::sOn && ll_vk_env("LL_VK_LOOPC") != nullptr && sLodSwitch && sMeshRegMode == 1 && sChkSkip;
 static inline bool sort_loopc_skips(LLSpatialGroup* group)
 {
     return sLoopCSkip && !sLodSampling && ll_lod_cand_covers(group);
@@ -12983,7 +12984,7 @@ bool cull_covered(LLSpatialGroup* sg)
     }
     const U32 pi = part->mPartitionType;
     // <FS> stage 9a (LL_VK_COVER_AV=1): the region partitions of the avatars, the bridges and the animated objects get rows too (the groups that hold the drawables themselves, rendered by drawable); compare first (LL_VK_KEPT=1)
-    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    static const bool cover_av = ll_vk_env("LL_VK_COVER_AV") != nullptr;
     if (cover_av && (pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV))
     {
         return true;
@@ -13449,7 +13450,7 @@ bool sUseSkipped = false;           // a covered partition was left to useVerdic
 // stage 4 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_STAGE4=1): the newest verdict with all its variants, as the CPU consumers of the visible set would read it, kept for the compare of the exact handle list against it
 const bool sStage4 = LLCullShadow::sOn && getenv("LL_VK_CULL_STAGE4") != nullptr;
 // stage 5 (LL_VK_CULL_OWN=1, needs the table): the worker draws the main view from its own derive of the listed set and the CPU's consumers serve the late list (ll_scene_consumer_handles); the record still names the exact list, which the worker compares
-const int sCullOwnMode = LLCullShadow::sOn && getenv("LL_VK_CULL_OWN") ? atoi(getenv("LL_VK_CULL_OWN")) : 0;       // 1 both halves, 2 the worker's derive only (the consumers keep the exact list), 3 the consumers' late list only (the worker draws the record's list)
+const int sCullOwnMode = LLCullShadow::sOn && ll_vk_env("LL_VK_CULL_OWN") ? atoi(ll_vk_env("LL_VK_CULL_OWN")) : 0;       // 1 both halves, 2 the worker's derive only (the consumers keep the exact list), 3 the consumers' late list only (the worker draws the record's list)
 const bool sCullOwn = sCullOwnMode == 1 || sCullOwnMode == 3;           // the consumers
 const bool sCullOwnWorker = sCullOwnMode == 1 || sCullOwnMode == 2;     // the worker
 struct CullVerdictAll
@@ -14286,7 +14287,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     static std::vector<U32> out;
     static std::vector<U32> seen_stamp;      // by fragment handle: the stamp of the frame that named it (nothing is cleared a frame)
     static U32 cur_stamp = 0;
-    static const int cons_mode = getenv("LL_VK_CONSUMERS") ? atoi(getenv("LL_VK_CONSUMERS")) : 0;       // stage 8: 0 the viewer walks the table, 1 the worker's list (consumerListRead) and the viewer adds the recent changes and the bridges' groups, 2 both and a compare
+    static const int cons_mode = ll_vk_env("LL_VK_CONSUMERS") ? atoi(ll_vk_env("LL_VK_CONSUMERS")) : 0;       // stage 8: 0 the viewer walks the table, 1 the worker's list (consumerListRead) and the viewer adds the recent changes and the bridges' groups, 2 both and a compare
     static LLCullResult* key_cull = nullptr;
     static U32 key_frame = ~0u;
     static size_t key_exact = 0, key_groups = 0;
@@ -14790,7 +14791,7 @@ void ll_scene_kept_compare(LLCullResult* cull)
 {
     // <FS> 2026-11-17: a compare is a diagnostic: with LL_VK_KEPT=2 (the pass in use) it runs only with LL_VK_DIAG=1. It built a list of the walk's ~1,400 to 1,800 groups, a hash set of them and a walk over the set's bits every frame
     // (zone occlusion: doOcclusion 0.05 ms in a default lap, 0.2 with the stage 8 set, 0.4 with LL_VK_COVER_AV: laps df1, sn0, st0).
-    static const bool on = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr && (atoi(getenv("LL_VK_KEPT")) != 2 || ll_diag_on());
+    static const bool on = LLCullShadow::sOn && ll_vk_env("LL_VK_KEPT") != nullptr && (atoi(ll_vk_env("LL_VK_KEPT")) != 2 || ll_diag_on());
     if (!on || !cull || LLPipeline::shadowRender() || gCubeSnapshot || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
     {
         return;
@@ -14872,7 +14873,7 @@ void ll_scene_kept_compare(LLCullResult* cull)
 // the animated objects', the HUD particles', the object cache's).
 bool ll_cull_derived_on()
 {
-    static const bool env = LLCullShadow::sOn && getenv("LL_VK_KEPT") != nullptr && atoi(getenv("LL_VK_KEPT")) == 2;
+    static const bool env = LLCullShadow::sOn && ll_vk_env("LL_VK_KEPT") != nullptr && atoi(ll_vk_env("LL_VK_KEPT")) == 2;
     if (!env || !sCullOwnWorker || gShiftFrame)
     {
         return false;
@@ -14890,7 +14891,7 @@ static bool ll_cull_derived_covers(LLSpatialPartition* part)
     const U32 pi = part->mPartitionType;
     // <FS> stage 9b (LL_VK_COVER_AV=1, with LL_VK_KEPT=2): the region partitions of the avatars, the bridges and the animated objects are not walked either: their groups (rows since 9a, the kept compare of lap cav: 2.1 of 1,882 groups a
     // frame differ, as without them) come from the worker's kept set and go through markNotCulled
-    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    static const bool cover_av = ll_vk_env("LL_VK_COVER_AV") != nullptr;
     if (cover_av && (pi == LLViewerRegion::PARTITION_BRIDGE || pi == LLViewerRegion::PARTITION_AVATAR || pi == LLViewerRegion::PARTITION_CONTROL_AV))
     {
         return true;
@@ -14985,7 +14986,7 @@ void ll_cull_stamps_release()
 // drawable group and drops the whole sort to the serial path (stateSort: drawable groups 0.26 ms against 0.03). The other covered groups are rows the worker drops when occluded, and the pre-scan does not ask the visible groups.
 static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
 {
-    static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+    static const bool cover_av = ll_vk_env("LL_VK_COVER_AV") != nullptr;
     if (cover_av && cull_av_region(g) && !LLPipeline::reflectionRender())
     {
         if (LLPipeline::useOcclusion() >= 2)
@@ -15055,7 +15056,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     // are not marked and the avatar, the attachment or the animesh blinks for those frames. LL_VK_COVER_AV_RECENT=1 adds the groups whose row was made or changed in the last 3 frames (no frustum test: a few too many for 3 frames);
     // the counters (a line every 300 passes, tag VkAvCover) count, per partition, the non-empty groups inside the frustum that the pass will not mark.
     {
-        static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
+        static const bool cover_av = ll_vk_env("LL_VK_COVER_AV") != nullptr;
         // <FS> 2026-11-16 (the plan, stage 8 finished): the recent list is for every covered partition of the main view, not only the avatar ones: a group made or moved in the last frames is in the walk's list the frame it is made and in
         // the worker's set 1 to 3 frames later (the compare of the kept set has shown about 2 groups a frame the walk keeps and the set does not). LL_VK_KEPT_RECENT=0 turns it off (for the counters' before).
         static const bool main_recent = !(getenv("LL_VK_KEPT_RECENT") && atoi(getenv("LL_VK_KEPT_RECENT")) == 0);
@@ -15566,7 +15567,7 @@ void ll_scene_lod_compare()
 
 void ll_scene_alpha_stage6(LLCullResult* cull, LLCamera& camera)
 {
-    static const int mode = (sCullOwn && getenv("LL_VK_CULL_ALPHA")) ? atoi(getenv("LL_VK_CULL_ALPHA")) : 0;
+    static const int mode = (sCullOwn && ll_vk_env("LL_VK_CULL_ALPHA")) ? atoi(ll_vk_env("LL_VK_CULL_ALPHA")) : 0;
     if (!mode || LLPipeline::shadowRender() || !cull)
     {
         return;
@@ -16073,7 +16074,7 @@ bool cube_params_match(const LLVkBridge::CullParams& a, const LLVkBridge::CullPa
 int ll_cascade_kept_mode()
 {
     // 1: the same-frame compare; 2: the request asks for the late list's margin, and the newest answer is also compared with the cull of the frame it is read in; 3: the cascades take their groups from the answer (the compare is off)
-    static const int mode = (LLCullShadow::sOn && getenv("LL_VK_CASC_KEPT")) ? atoi(getenv("LL_VK_CASC_KEPT")) : 0;
+    static const int mode = (LLCullShadow::sOn && ll_vk_env("LL_VK_CASC_KEPT")) ? atoi(ll_vk_env("LL_VK_CASC_KEPT")) : 0;
     // LL_VK_CASC_AB=<frames> (a test, with LL_VK_CASC_KEPT=3): the use step is on for that many frames, off for that many, and so on, in ONE lap, so that the two are measured in the same scene (the crowd and the load differ by a
     // millisecond between laps: pc0 against pd3 and pe3); each switch is logged (CascAB)
     static const S32 ab = getenv("LL_VK_CASC_AB") ? atoi(getenv("LL_VK_CASC_AB")) : 0;
