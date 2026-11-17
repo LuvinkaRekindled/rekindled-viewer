@@ -8190,7 +8190,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the compare of the derived listed set with a kind 21 record's handles. Defined with the group table's worker code (kind 35) below, in this named namespace;
 // declared here, outside the anonymous namespace that holds geo_prepare, which calls it (a declaration inside that anonymous namespace would name another function).
-bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own);
+bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own);
 
 // <FS> S3 G2 / G3 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
 // from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). Nothing is looked at per entry per frame: a fragment is checked only when an EVENT says
@@ -9176,41 +9176,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         // stage 3: the listed set from the worker's own rows, against the handles of this record. Stage 5 (the viewer's switch, LL_VK_CULL_OWN=1): when the record says so and the table is up to date, the main view is drawn
         // from that derived list and the record's list is only compared (the matrices and bindings above were taken from the record's own blob positions, which do not move)
-        if (cull_derive_compare(h, handles, (const U8*)(bindings + h.mPaletteFloats), &own_handles))
+        if (cull_derive_main_view(h, (const U8*)(bindings + h.mPaletteFloats), &own_handles))
         {
-            // diagnostic (the rigged fragments of the record's list against the derived one: the whole-list compare is dominated by static groups)
-            static U64 rig_views = 0;
-            if (++rig_views % 300 == 0 && rig_views < 3000)
-            {
-                std::unordered_set<U32> derived_set(own_handles.begin(), own_handles.end());
-                std::unordered_set<U32> record_set(handles, handles + h.mEntries);
-                U32 rig_record = 0, rig_derived = 0, rig_lost = 0, rig_gained = 0, lost_unknown = 0;
-                std::string lost;
-                for (U32 i = 0; i < h.mEntries; ++i)
-                {
-                    GeoFrag* f = geo_find(handles[i]);
-                    const bool rigged = f && !f->mRItems.empty();
-                    rig_record += rigged;
-                    if (!derived_set.count(handles[i]))
-                    {
-                        rig_lost += rigged;
-                        lost_unknown += !f;
-                        if (rigged && lost.size() < 120)
-                        {
-                            lost += " " + std::to_string(handles[i]);
-                        }
-                    }
-                }
-                for (U32 hd : own_handles)
-                {
-                    GeoFrag* f = geo_find(hd);
-                    const bool rigged = f && !f->mRItems.empty();
-                    rig_derived += rigged;
-                    rig_gained += rigged && !record_set.count(hd);
-                }
-                LL_INFOS("VkCullOwn") << "view " << rig_views << ": record names " << h.mEntries << " fragments (" << rig_record << " with rigged items), derived " << own_handles.size() << " (" << rig_derived << " rigged); rigged in the record and not derived "
-                                      << rig_lost << " (handles" << lost << "), rigged derived and not in the record " << rig_gained << ", record handles not derived and unknown to the table " << lost_unknown << LL_ENDL;
-            }
             handles = own_handles.data();
             entries = (U32)own_handles.size();
         }
@@ -11487,13 +11454,7 @@ void hiz_fill_row_boxes(LLVkBridge::HizBox* out, U32 rows)
 // auto-hide surface area, outside the frustum (the exact planes of the view, the far plane and the sphere test as the cull shader reads them, a skip-frustum group taken with a parent that passed).
 struct CullDeriveStats
 {
-    U64 mCompares = 0, mRecord = 0, mDerived = 0, mBoth = 0, mMissing = 0, mExtra = 0, mNoTable = 0;
-    U64 mMissNoRow = 0, mMissDead = 0, mMissNoHandle = 0, mMissType = 0, mMissOcc = 0, mMissHide = 0, mMissFrustum = 0, mMissObjects = 0, mMissGate = 0, mMissPasses = 0, mMissRecent = 0;
-    U64 mSampled[16] = {};      // log lines written by category (a budget each, so the loading phase does not use them all)
-    U64 mSkippedViews = 0, mLate = 0, mOwnUsed = 0, mOwnFallback = 0;
-    U64 mBigViews = 0, mBigViewExtra = 0, mBigViewEntries = 0, mBigViewDerived = 0;      // views with more than 40 extras
-    U64 mExtraType[161] = {}, mExtraNoTris = 0, mExtraNoServed = 0, mExtraFull = 0, mExtraSkipFlag = 0, mExtraAlpha = 0, mExtraOwn[3] = {}, mExtraParentOut = 0, mExtraRoot = 0;      // what the extras have in common (their own frustum result, their parent's)
-    U64 mExtraRegion = 0, mExtraBridge = 0, mExtraRecent = 0;
+    U64 mViews = 0, mDerived = 0, mNoTable = 0, mOwnUsed = 0;
     double mMs = 0.0;
 };
 CullDeriveStats sCullDerive;
@@ -11965,8 +11926,10 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
 
 void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table);
 
-bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* handles, const U8* view_blob, std::vector<U32>* own)
+bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own)
 {
+    // The main view's derive (T4b-2 of doc/vulkan/PLAN-visible-set-owner.md): the listed set from the worker's own rows and this record's planes, which the worker draws from. The record names no handles for the main view: the viewer sends the
+    // groups it can say better than a row a frame old (the marked bridges' groups, the handles changed in the last 3 frames) and nothing else. What the consumers read is made by the derive thread (derive_publish).
     CullShadowState& s = sCullShadow;
     U32 own_flag, lod_flag;
     memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
@@ -11980,7 +11943,7 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     }
     LLVkBridge::CullParams P;
     memcpy(&P, view_blob, sizeof(P));
-    std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // stage 5: the list the worker draws from (the derived set, by slot), when the viewer says so
+    std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // the list the worker draws from (the derived set, by slot)
     if (own_out)
     {
         own_out->clear();
@@ -11994,31 +11957,8 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
     const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
     U32 bridge_handle_count;
     memcpy(&bridge_handle_count, view_blob + sizeof(LLVkBridge::CullParams) + 12, 4);
-    const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles of those bridges' groups that the render map names: exact, from the viewer)
-    // <FS> 2026-11-17: the comparison with the viewer's own handle list (the marks, the classification of the extras and of the missing ones, their counters and lines) is a diagnostic: with LL_VK_DIAG=1 only. The verdict pass
-    // below (the draw's list, the visible set) is the same either way.
-    const bool cmp = ll_diag_on();
-    U32 max_h = 0;
-    static std::vector<U8> mark;
-    if (cmp)
-    {
-        for (U32 i = 0; i < h.mEntries; ++i)
-        {
-            max_h = std::max(max_h, handles[i]);
-        }
-        if (max_h > (1u << 20))
-        {
-            ++d.mNoTable;
-            return false;
-        }
-        mark.assign((size_t)max_h + 1, 0);
-        for (U32 i = 0; i < h.mEntries; ++i)
-        {
-            mark[handles[i]] = 1;
-        }
-    }
-    ++d.mCompares;
-    d.mRecord += h.mEntries;
+    const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles the viewer names: the marked bridges' groups and the handles changed in the last 3 frames, exact)
+    ++d.mViews;
     const U32 table = (U32)s.mTable.size();
     static std::vector<U8> memo;
     memo.assign(table, 0);
@@ -12033,9 +11973,6 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
             bridge_marked[root] = 1;
         }
     }
-    auto may_say = [&d](U32 category) { return d.mCompares >= 1500 && d.mSampled[category]++ < 6; };       // (not the loading phase)
-    const U64 extra_before = d.mExtra, derived_before = d.mDerived;
-    const CullDeriveStats before = d;
     static std::vector<U32> vis_words;
     vis_words.assign((table + 31) / 32, 0);
     for (U32 slot = 0; slot < table; ++slot)
@@ -12051,62 +11988,12 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         vis_words[slot >> 5] |= 1u << (slot & 31u);         // (the exact derived set by slot, published below: the visible stamps follow it, stage 8b)
         ++d.mDerived;
-        const U32 handle = s.mMap[slot].mHandle;
         if (own_out && !(s.mTable[slot].mFlags & 64u) && s.mRecords - s.mHandleStamp[slot] > 2)
         {
-            own_out->push_back(handle);         // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
-        }
-        if (!cmp)
-        {
-            continue;
-        }
-        if (handle <= max_h && mark[handle])
-        {
-            ++d.mBoth;
-            mark[handle] = 2;
-            continue;
-        }
-        ++d.mExtra;
-        const bool bridge = (s.mTable[slot].mFlags & 64u) != 0;
-        (bridge ? d.mExtraBridge : d.mExtraRegion) += 1;
-        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
-        d.mExtraRecent += recent;
-        if (!bridge)
-        {
-            U32 xt;
-            memcpy(&xt, &s.mTable[slot].mPad0, 4);
-            ++d.mExtraType[xt < 160u ? xt : 160u];
-            d.mExtraNoTris += s.mMap[slot].mDrawTris == 0;
-            d.mExtraNoServed += s.mMap[slot].mServedTris == 0;
-            d.mExtraFull += memo[slot] == ST_FULL;
-            d.mExtraSkipFlag += (s.mTable[slot].mFlags & 2u) != 0;
-            d.mExtraAlpha += s.mMap[slot].mAlphaBits != 0;
-            const int own = cull_group_res(P, s.mTable[slot]);
-            ++d.mExtraOwn[own];
-            const bool parent_own_in = !(s.mTable[slot].mFlags & 1u) && s.mTable[slot].mParent < table && cull_group_res(P, s.mTable[s.mTable[slot].mParent]) != 0;
-            d.mExtraParentOut += !(s.mTable[slot].mFlags & 1u) && !parent_own_in;
-            d.mExtraRoot += (s.mTable[slot].mFlags & 1u) != 0;
-        }
-        if (may_say(bridge ? 1 : 0))
-        {
-            U32 type;
-            memcpy(&type, &s.mTable[slot].mPad0, 4);
-            LL_INFOS("VkCullDerive") << "extra: slot " << slot << " handle " << handle << " flags " << s.mTable[slot].mFlags << " render type " << type << (bridge ? " (a bridge group)" : "") << ", row changed " << (s.mRecords - s.mRowStamp[slot])
-                                     << " records ago, map flags " << (U32)s.mMap[slot].mFlags << ", chain state " << (U32)memo[slot] << " (3 part, 4 full), own result " << cull_group_res(P, s.mTable[slot]) << ", parent slot " << s.mTable[slot].mParent << " flags "
-                                     << (s.mTable[slot].mParent < table ? s.mTable[s.mTable[slot].mParent].mFlags : 0u) << " own result " << (s.mTable[slot].mParent < table ? cull_group_res(P, s.mTable[s.mTable[slot].mParent]) : -1)
-                                     << ", served tris " << s.mMap[slot].mServedTris << ", draw tris " << s.mMap[slot].mDrawTris << LL_ENDL;
+            own_out->push_back(s.mMap[slot].mHandle);       // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
         }
     }
-    if (d.mDerived - derived_before > 2 * (U64)h.mEntries + 200)
     {
-        // a record that names less than half of what the table derives is not the main view's list (the lap of 2026-11-15 had about 3 % of them, with 0 to 30 handles: they held 80 % of the extras): not counted
-        const U64 skipped = d.mSkippedViews + 1;
-        d = before;
-        d.mSkippedViews = skipped;
-        return false;
-    }
-    {
-        // what the consumers read is made by the derive thread (derive_publish); the verdict pass above, the draw's, stays here
         DerivePub job;
         job.mPass = h.mPass;
         job.mLodFlag = lod_flag;
@@ -12123,110 +12010,19 @@ bool cull_derive_compare(const LLVkBridge::ShadowPacketsHeader& h, const U32* ha
         }
         derive_publish_dispatch(std::move(job), s);
     }
-    {
-        // views that differ from the usual ones by many groups at once (a record that names far fewer groups than the table shows is another view's list, not a state difference)
-        const U64 ex_view = d.mExtra - extra_before;
-        if (ex_view > 40)
-        {
-            ++d.mBigViews;
-            d.mBigViewExtra += ex_view;
-            d.mBigViewEntries += h.mEntries;
-            d.mBigViewDerived += d.mDerived - derived_before;
-            if (d.mCompares >= 300 && d.mSampled[15]++ < 12)
-            {
-                LL_INFOS("VkCullDerive") << "big view " << d.mCompares << ": the record names " << h.mEntries << ", derived " << d.mDerived - derived_before << ", extra " << ex_view << LL_ENDL;
-            }
-        }
-    }
-    for (U32 i = 0; cmp && i < h.mEntries; ++i)
-    {
-        const U32 handle = handles[i];
-        if (mark[handle] != 1)
-        {
-            continue;
-        }
-        mark[handle] = 3;           // (a handle that is listed twice counts once)
-        ++d.mMissing;
-        const U32 slot = handle < s.mSlotOfHandle.size() ? s.mSlotOfHandle[handle] : ~0u;
-        if (slot >= table)
-        {
-            ++d.mMissNoRow;
-            if (may_say(2))
-            {
-                LL_INFOS("VkCullDerive") << "missing: handle " << handle << " has no row" << LL_ENDL;
-            }
-            continue;
-        }
-        const bool recent = s.mRecords - s.mRowStamp[slot] <= 2;
-        d.mMissRecent += recent;
-        const int why = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
-        switch (why)
-        {
-        case CV_GATE: ++d.mMissGate; break;
-        case CV_DEAD: ++d.mMissDead; break;
-        case CV_NOHANDLE: ++d.mMissNoHandle; break;
-        case CV_TYPE: ++d.mMissType; break;
-        case CV_OCC: ++d.mMissOcc; break;
-        case CV_HIDE: ++d.mMissHide; break;
-        case CV_FRUSTUM: ++d.mMissFrustum; break;
-        case CV_OBJECTS: ++d.mMissObjects; break;
-        default: ++d.mMissPasses; break;
-        }
-        if (may_say(3 + why))
-        {
-            U32 type;
-            memcpy(&type, &s.mTable[slot].mPad0, 4);
-            const LLVkBridge::CullRow& rr = s.mTable[slot];
-            const LLVkBridge::CullMapRow& mm = s.mMap[slot];
-            LL_INFOS("VkCullDerive") << "missing: handle " << handle << " slot " << slot << " rejected by " << why << " (1 dead, 2 no handle, 3 render type off, 4 occluded, 5 auto-hide, 6 frustum, 7 object bounds, 8 bridge not marked, 0 none) flags " << rr.mFlags << " map flags "
-                                     << (U32)mm.mFlags << " render type " << type << (rr.mFlags & 64u ? " (a bridge group)" : "") << ", chain state " << (U32)cull_chain_state(s, P, occlusion, slot, memo, 0) << " (1 occluded, 2 out, 3 part, 4 full), box res "
-                                     << cull_group_res(P, rr) << ", objects res " << cull_objects_res(P, rr, mm) << ", row changed " << (s.mRecords - s.mRowStamp[slot]) << " records ago" << LL_ENDL;
-        }
-    }
     d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    if (d.mCompares % 600 == 0)
+    if (d.mViews % 600 == 0)
     {
-        const double n = (double)d.mCompares;
-        LL_INFOS("VkCullDerive") << "derived listed set against the record's handles, over " << d.mCompares << " views (" << d.mMs / n << " ms each): the record names " << d.mRecord / n << " a view, derived " << d.mDerived / n << ", both " << d.mBoth / n
-                                 << " | missing (named, not derived) " << d.mMissing << ": no row " << d.mMissNoRow << ", dead " << d.mMissDead << ", no handle " << d.mMissNoHandle << ", render type off " << d.mMissType << ", occluded " << d.mMissOcc
-                                 << ", auto-hide " << d.mMissHide << ", frustum " << d.mMissFrustum << ", object bounds " << d.mMissObjects << ", bridge not marked " << d.mMissGate << ", passes now " << d.mMissPasses << ", of them rows changed in the last 2 records " << d.mMissRecent
-                                 << " | extra (derived, not named) " << d.mExtra << ": region groups " << d.mExtraRegion << ", bridge groups " << d.mExtraBridge << ", of them rows changed in the last 2 records " << d.mExtraRecent
-                                 << " | no table " << d.mNoTable << " (totals over the views)" << LL_ENDL;
-        LL_INFOS("VkCullDerive") << "views not counted (the record names under half of what the table derives: not the main view's list): " << d.mSkippedViews << "; the late list (planes grown by the motion margin, no occlusion cut) names " << d.mLate / n << " groups a view" << LL_ENDL;
-        LL_INFOS("VkCullDerive") << "views with more than 40 extras: " << d.mBigViews << " of " << d.mCompares << ", they hold " << d.mBigViewExtra << " of the " << d.mExtra << " extras; there the record names " << (d.mBigViews ? (double)d.mBigViewEntries / d.mBigViews : 0.0)
-                                 << " a view and the table derives " << (d.mBigViews ? (double)d.mBigViewDerived / d.mBigViews : 0.0) << LL_ENDL;
-        std::string types;
-        for (U32 t = 0; t <= 160; ++t)
-        {
-            if (d.mExtraType[t])
-            {
-                types += " " + std::to_string(t) + ":" + std::to_string(d.mExtraType[t]);
-            }
-        }
-        LL_INFOS("VkCullDerive") << "region extras by render type (type:count)" << types << " | of them: nothing drawn (no triangles) " << d.mExtraNoTris << ", nothing served " << d.mExtraNoServed << ", under a wholly-in ancestor or own result 2 " << d.mExtraFull
-                                 << ", skip-frustum nodes " << d.mExtraSkipFlag << ", with alpha " << d.mExtraAlpha << ", own frustum result out/part/full " << d.mExtraOwn[0] << "/" << d.mExtraOwn[1] << "/" << d.mExtraOwn[2]
-                                 << ", parent outside by its own test " << d.mExtraParentOut << ", roots " << d.mExtraRoot << LL_ENDL;
-        if (d.mOwnUsed || d.mOwnFallback)
-        {
-            LL_INFOS("VkCullDerive") << "stage 5: views drawn from the worker's own derive " << d.mOwnUsed << ", views that fell back to the record's list (the derive named under half of it) " << d.mOwnFallback << LL_ENDL;
-        }
+        LL_DIAG("VkCullDerive") << "main view derive, over " << d.mViews << " views: " << d.mMs / (double)d.mViews << " ms each, " << (double)d.mDerived / (double)d.mViews << " groups derived a view, no table " << d.mNoTable << ", drawn from the derive " << d.mOwnUsed << LL_ENDL;
     }
     if (own_out)
     {
-        // the groups of the bridges the walk marked come from the viewer, exactly: a bridge's groups get new fragments often (animesh, attachments), and a handle taken from rows a frame old would leave the new fragment out of the list
-        // for a frame (a flicker)
+        // the groups the viewer names come exactly: a bridge's groups get new fragments often (animesh, attachments), and a handle taken from rows a frame old would leave the group out for a frame (a flicker)
         for (U32 i = 0; i < bridge_handle_count; ++i)
         {
             U32 hd;
             memcpy(&hd, bridge_handles + (size_t)i * 4, 4);
             own_out->push_back(hd);
-        }
-        if (own_out->size() * 2 < h.mEntries)
-        {
-            // the table is not up to date (rows lost, a reset in flight, the first frames): the record's list draws this view
-            ++d.mOwnFallback;
-            own_out->clear();
-            return false;
         }
         ++d.mOwnUsed;
         return true;
