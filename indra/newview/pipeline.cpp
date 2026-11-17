@@ -20538,6 +20538,9 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
 
     sPickAvatar = false; //! LLToolMgr::getInstance()->inBuildMode();
 
+    // stage 9 (3.2): the bridges (worn attachments, animesh parts, linked objects of the bridge partitions) are tested by the registry below, not through the region octrees (the second, avatar pass found nothing in them
+    // that the first did not: an avatar is never inside a bridge)
+    LLSpatialBridge::sPickSkipBridges = true;
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
             iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
@@ -20565,6 +20568,11 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
                 }
             }
         }
+    }
+    if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAll(start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
+    {
+        drawable = hit;
+        local_end = position;
     }
 
     if (!sPickAvatar)
@@ -20652,6 +20660,8 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
             }
         }
     }
+
+    LLSpatialBridge::sPickSkipBridges = false;
 
     // check all avatar nametags (silly, isn't it?)
     for (LLCharacter* character : LLCharacter::sInstances)
