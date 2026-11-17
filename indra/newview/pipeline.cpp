@@ -15250,16 +15250,77 @@ void ll_scene_geo_frame(LLCullResult* cull)
     if (cull_view)
     {
         cull_extra_diag(*LLViewerCamera::getInstance(), handles);
-        // a frame whose list is far from the average of the frames before it (a flash: the geometry of a frame missing or doubled) names itself, with the state of every switch (the first 40 frames after the start are not looked at)
-        static double avg = 0.0;
-        static U64 frames = 0, said = 0;
-        if (++frames > 40 && avg > 100.0 && (handles.size() < avg * 0.6 || handles.size() > avg * 1.6) && said < 60)
+        // VkFlash (LL_VK_DIAG=1 only): a frame whose geometry is missing or doubled while the scene is the same. The test is the fragments per visible group against its running average, not the fragment count: a camera turning to a sparse direction
+        // takes the visible groups and the fragments down together (the first version, the count against its average, logged 7 frames of a sweep), a flash takes the fragments and not the groups. A run of such frames logs once at its start,
+        // with where the visible groups went (what the render map skipped them for), the camera's move since the last frame and the alpha counts, and once at its end with its length: one or two frames is a flash, a long run a state that changed (a load).
+        if (ll_diag_on())
         {
-            ++said;
-            LL_INFOS("VkFlash") << "frame " << gFrameCount << ": the main view names " << handles.size() << " fragments, the average of the frames before is " << avg << " (consumers " << consumers.size() << ", visible groups " << cull->getVisibleGroupsSize() << ", alpha groups " << cull->getAlphaGroupsSize()
-                                << ", rigged alpha " << cull->getRiggedAlphaGroupsSize() << ")" << LL_ENDL;
+            static double r_avg = 0.0, v_avg = 0.0;       // fragments per visible group, visible groups: running averages of the frames before
+            static U64 frames = 0, said = 0;
+            static U32 run_len = 0, run_start = 0;
+            static U64 runs = 0;
+            static const bool test = getenv("LL_VK_FLASH_TEST") != nullptr;       // (a test: the band is +-3 percent, so a short lap makes runs to read; the real band is 0.85 to 1.15 times the average: the ratio stays within 3 percent of it over 2,400 frames of a still lap)
+            static const double lo = test ? 0.97 : 0.85, hi = test ? 1.03 : 1.15;
+            static LLVector3 last_origin, last_at;
+            const U32 vis = cull->getVisibleGroupsSize();
+            const double ratio = vis ? (double)handles.size() / vis : 0.0;
+            const LLVector3 origin = LLViewerCamera::getInstance()->getOrigin(), at = LLViewerCamera::getInstance()->getAtAxis();
+            const bool off = ++frames > 40 && v_avg > 100.0 && r_avg > 0.0 && (ratio < r_avg * lo || ratio > r_avg * hi);
+            if (frames % 600 == 0)
+            {
+                LL_INFOS("VkFlash") << "watching: " << frames << " main view frames, " << r_avg << " fragments a visible group over " << v_avg << " visible groups on average, " << runs << " runs so far" << (test ? " (LL_VK_FLASH_TEST: band +-3 percent)" : "") << LL_ENDL;
+            }
+            if (off)
+            {
+                if (++run_len == 1)
+                {
+                    ++runs;
+                    run_start = (U32)gFrameCount;
+                    if (said < 60)
+                    {
+                        ++said;
+                        U32 dead = 0, occluded = 0, hidden = 0, no_handle = 0, no_handle_building = 0, released = 0, with_handle = 0;
+                        const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
+                        for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+                        {
+                            LLSpatialGroup* g = *i;
+                            if (g->isDead()) { ++dead; continue; }
+                            if (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED)) { ++occluded; continue; }
+                            if (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)) { ++hidden; continue; }
+                            if (!g->mGeoHandle)
+                            {
+                                ++no_handle;
+                                no_handle_building += g->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::NEW_DRAWINFO | LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2) ? 1 : 0;
+                                continue;
+                            }
+                            ++with_handle;
+                            released += g->hasState(LLSpatialGroup::FS_RELEASED) ? 1 : 0;
+                        }
+                        const F32 turn_deg = acosf(llclamp(at * last_at, -1.f, 1.f)) * RAD_TO_DEG;
+                        LL_INFOS("VkFlash") << "frame " << gFrameCount << " starts a run: the main view names " << handles.size() << " fragments for " << vis << " visible groups (" << ratio << " a group, the average of the frames before " << r_avg << " for " << v_avg
+                                            << " groups) | of the visible groups: with a fragment " << with_handle << " (Released " << released << "), occluded " << occluded << ", no fragment " << no_handle << " (waiting on a build " << no_handle_building
+                                            << "), auto-hidden " << hidden << ", dead " << dead << ", the rest (far avatars' attachments) " << (S32)vis - (S32)(with_handle + occluded + no_handle + hidden + dead)
+                                            << " | camera moved " << (origin - last_origin).length() << " m and turned " << turn_deg << " degrees since the last frame | consumers " << consumers.size() << ", alpha groups " << cull->getAlphaGroupsSize()
+                                            << ", rigged alpha " << cull->getRiggedAlphaGroupsSize() << LL_ENDL;
+                    }
+                }
+            }
+            else
+            {
+                if (run_len)
+                {
+                    LL_INFOS("VkFlash") << "the run that started in frame " << run_start << " ended after " << run_len << " frames (" << (run_len <= 3 ? "a flash" : "a state that lasted") << "), the main view names " << handles.size() << " fragments for " << vis << " visible groups" << LL_ENDL;
+                }
+                run_len = 0;
+            }
+            if (!off || run_len > 30)       // (the average does not follow a run, unless it lasts: then it is the new normal)
+            {
+                r_avg = r_avg == 0.0 ? ratio : r_avg * 0.95 + ratio * 0.05;
+                v_avg = v_avg == 0.0 ? (double)vis : v_avg * 0.95 + (double)vis * 0.05;
+            }
+            last_origin = origin;
+            last_at = at;
         }
-        avg = avg == 0.0 ? (double)handles.size() : avg * 0.95 + (double)handles.size() * 0.05;
     }
     LLVkBridge::shadowPackets(header, blob.data(), blob.size());
     s.mHandles += handles.size();
