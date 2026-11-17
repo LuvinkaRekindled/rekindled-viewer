@@ -962,6 +962,11 @@ void LLDrawable::movePartition()
     LL_CPU_ZONE("octree: drawable movePartition");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
+    if (isSpatialBridge())
+    {
+        return;     // stage 9 (3.3): a bridge is not in a region partition
+    }
+
     if (LLPipeline::sAvSink)
     {
         LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this, nullptr, nullptr, 0 });      // <FS> view rework A1: made when the avatar's loop is over
@@ -1580,26 +1585,14 @@ LLSpatialBridge::LLSpatialBridge(LLDrawable* root, bool render_by_group, U32 dat
 
     llassert(mDrawable);
     llassert(mDrawable->getRegion());
-    LLSpatialPartition *part = mDrawable->getRegion()->getSpatialPartition(mPartitionType);
-    llassert(part);
-
-    if (part)
-    {
-        part->put(this);
-    }
+    // stage 9 (3.3): a bridge is no longer an entry of its region's partition (mPartitionType only names the kind): the views list it by the registry (allBridges), the pick tests it by the registry, and it has no group; its extents are
+    // made here and at every move (updateMove)
+    updateSpatialExtents();
 }
 
 LLSpatialBridge::~LLSpatialBridge()
 {
     sAll.erase(std::remove(sAll.begin(), sAll.end(), this), sAll.end());
-    if (mEntry)
-    {
-        if (LLSpatialGroup* group = getSpatialGroup())
-        {
-            group->getSpatialPartition()->remove(this, group);
-        }
-    }
-
     //delete octree here so listeners will still be able to access bridge specific state
     destroyTree();
 }
@@ -2078,20 +2071,14 @@ bool LLSpatialBridge::updateMove()
     llassert_always(mDrawable);
     llassert_always(mDrawable->mVObjp);
     llassert_always(mDrawable->getRegion());
-    LLSpatialPartition* part = mDrawable->getRegion()->getSpatialPartition(mPartitionType);
-    llassert_always(part);
-
     mOctree->balance();
-    if (part)
+    if (LLPipeline::sAvSink)
     {
-        if (LLPipeline::sAvSink)
-        {
-            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::BRIDGE_MOVE, this, nullptr, nullptr, 0 });      // <FS> view rework A1
-        }
-        else
-        {
-            part->move(this, getSpatialGroup(), true);
-        }
+        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::BRIDGE_MOVE, this, nullptr, nullptr, 0 });      // <FS> view rework A1
+    }
+    else
+    {
+        updateSpatialExtents();
     }
     return true;
 }
@@ -2099,11 +2086,7 @@ bool LLSpatialBridge::updateMove()
 // <FS> view rework A1: the shared half of updateMove, made when the avatar's attachment loop replays its writes
 void LLSpatialBridge::moveInPartition()
 {
-    LLSpatialPartition* part = mDrawable && mDrawable->getRegion() ? mDrawable->getRegion()->getSpatialPartition(mPartitionType) : nullptr;
-    if (part)
-    {
-        part->move(this, getSpatialGroup(), true);
-    }
+    updateSpatialExtents();     // (stage 9, 3.3: all that is left of the move in a region partition)
 }
 
 void LLSpatialBridge::shiftPos(const LLVector4a& vec)
