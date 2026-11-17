@@ -661,6 +661,7 @@ public:
 
 private:
     void init(bool firstinit) ;
+    F32 mShrinkWantedSince = 0.f;       // <FS> 2026-11-16: since when the texture has wanted to be smaller than it is, without a break (sCurrentTime; 0 = it does not): scaleDown waits for LL_VK_SHRINK_HOLD seconds of it unless memory is short
 };
 
 //

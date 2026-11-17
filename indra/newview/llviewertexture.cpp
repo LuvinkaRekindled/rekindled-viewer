@@ -3600,6 +3600,10 @@ void LLViewerLODTexture::processTextureStats()
             { // should scale down
                 scaleDown();
             }
+            else
+            {
+                mShrinkWantedSince = 0.f;       // (it does not want to be smaller: the wait of scaleDown starts again)
+            }
         }
 
         if (isUpdateFrozen() // we are out of memory and nearing max allowed bias
@@ -3644,6 +3648,26 @@ bool LLViewerLODTexture::scaleDown()
     {
         return false;
     }
+
+    // <FS> 2026-11-16 (Adam: images that already showed flash white again on the first load): the wish to be smaller is worked out each frame from the size the faces gave the texture THIS frame, so a texture a face does not
+    // reach for one frame (a group out of the walk, a face not updated yet, an object not rezzed) is created at full size and shrunk in the same frame (LLViewerTextureList::updateImages: "Texture will be downscaled
+    // immediately after loading"), and created again at full size when a face asks for it (lap tr2: 5 percent of the creations repeat the level and size of the last one, the GPU image reading a level of 5 a median 68 ms
+    // after the creation at 0). Each step is a new GPU image under the handle. A texture is now shrunk when memory is short (the budget logic's bias is up: the stock reason for shrinking) or when it has wanted to be
+    // smaller without a break for LL_VK_SHRINK_HOLD seconds (30; 0 = as before); an expired texture (the eviction of LL_VK_TEX_EXPIRY) is released at once.
+    static const F32 hold = getenv("LL_VK_SHRINK_HOLD") ? (F32)atof(getenv("LL_VK_SHRINK_HOLD")) : 30.f;
+    if (hold > 0.f && !mExpired && sDesiredDiscardBias <= 1.05f)
+    {
+        const F32 now = llmax(sCurrentTime, 0.001f);
+        if (mShrinkWantedSince <= 0.f)
+        {
+            mShrinkWantedSince = now;
+        }
+        if (now - mShrinkWantedSince < hold)
+        {
+            return false;
+        }
+    }
+    mShrinkWantedSince = 0.f;
 
     if (!mDownScalePending)
     {
