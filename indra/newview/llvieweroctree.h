@@ -183,14 +183,8 @@ protected:
 
 //defines an octree group for an octree node, which contains multiple entries.
 //LL_ALIGN_PREFIX(16)
-// <FS> C4.5 R2: per retained set (the slot in the rows of its members) the frame its replay last ran: that is the world stamp of a member, so a replay does not write a stamp per group
-struct LLRetainedStamps
-{
-    static inline std::atomic<S32> sFrame[256][9];       // [partition slot][camera]: the frame the replay of the set of that partition for that camera last ran
-};
-
 // stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group in the worker's kept set is the frame the set was applied, derived from the set's bits by the group's slot (mCullId - 1), not written per group; a group that leaves
-// the set has its stamp written back by the pass that applies the next set (the same fold as a group leaving a retained set)
+// the set has its stamp written back by the pass that applies the next set
 struct LLKeptStamps
 {
     struct View
@@ -241,28 +235,16 @@ public:
     void setVisible();
     bool isVisible() const;
     virtual bool isRecentlyVisible() const;
-    // (retainedSlot: bits 0-7 the slot of the group's partition, bit 8 + c set when the group is a member of the replayed set for camera c: the stamp for that camera is the set's frame, not written per group)
-    S32  retainedFrame(LLViewerCamera::eCameraID id) const { const U32 r = row().retainedSlot; return (r & (0x100u << id)) ? LLRetainedStamps::sFrame[r & 255u][id].load(std::memory_order_relaxed) : 0; }
     S32  keptFrame() const { const LLKeptStamps::View* k = LLKeptStamps::sView.load(std::memory_order_relaxed); return (k && mCullId && k->has(mCullId - 1)) ? k->mFrame : 0; }
     S32  getVisible(LLViewerCamera::eCameraID id) const
     {
         S32 v = row().visible[id];
-        if (row().retainedSlot) { v = std::max(v, retainedFrame(id)); }
         if (id == LLViewerCamera::CAMERA_WORLD) { v = std::max(v, keptFrame()); }
         return v;
     }
     S32  getAnyVisible() const
     {
-        S32 v = std::max(row().anyVisible, keptFrame());
-        const U32 r = row().retainedSlot;
-        if (r)
-        {
-            for (U32 c = 0; c < LLViewerCamera::CAMERA_WATER0; ++c)
-            {
-                if (r & (0x100u << c)) { v = std::max(v, LLRetainedStamps::sFrame[r & 255u][c].load(std::memory_order_relaxed)); }
-            }
-        }
-        return v;
+        return std::max(row().anyVisible, keptFrame());
     }
     bool isEmpty() const { return mOctreeNode->isEmpty(); }
 
@@ -338,15 +320,8 @@ struct LLCullCensus
     static void noteOcc(class LLOcclusionCullingGroup* group, bool now_occluded, int source);       // pipeline.cpp
 };
 
-// <FS> C4.5 S1b (LL_VK_VISSET >= 1): the events that change what the main view's cull lists, told to the retained set (llspatialpartition.cpp, LLVisSet). Every call site tests sOn first.
-struct LLVisSetHooks
+struct LLHizRows
 {
-    static inline std::atomic<bool> sOn{ false };
-    static void noteOcc(LLViewerOctreeGroup* group);        // the group's world OCCLUDED state changed (its subtree may have: the walk of it is redone from the group)
-    static void noteBounds(LLViewerOctreeGroup* group);     // the group's bounds, extents, object bounds, frustum-skip flag or elements changed
-    static void forget(LLViewerOctreeGroup* group);         // the group is destroyed
-    static void noteStale(LLViewerOctreeGroup* group);      // hizInvalidate: the discard of an awaited verdict is made the next time the walk visits the group (checkOcclusion): the retained set makes it itself
-    static void invalidateAll();                            // everything moved (a region shift): the retained set is rebuilt
     // stage 8d (LL_VK_HIZROWS=2): the table's rows are the Hi-Z's boxes and the worker's verdicts, by slot, are applied here (pipeline.cpp, with the table): sHizRows says so
     static inline const bool sHizRows = []() { const char* e = getenv("LL_VK_HIZROWS"); return e && atoi(e) == 2; }();
     static void hizRowsState(LLViewerOctreeGroup* group, bool occluded);    // the group's world OCCLUDED state is now this (any setter): the mirror of what is applied follows it
@@ -389,14 +364,14 @@ public:
     void checkOcclusion(); // a group that asked to be discarded while its verdict was awaited is visible again; a group under an occluded parent is occluded with it
     // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
     void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
-    void hizInvalidate() { mHizStale = true; if (LLVisSetHooks::sHizRows && mCullId) { LLVisSetHooks::hizRowsInvalidate(this); } if (mHizSerial && LLVisSetHooks::sOn.load(std::memory_order_relaxed)) { LLVisSetHooks::noteStale(this); } }       // (only a verdict that is awaited has a discard to make: with none, hizCollect resets the flag before it sends the next box)  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    void hizInvalidate() { mHizStale = true; if (LLHizRows::sHizRows && mCullId) { LLHizRows::hizRowsInvalidate(this); } }       // (only a verdict that is awaited has a discard to make: with none, hizCollect resets the flag before it sends the next box)  // the group changed (an object was added): the verdict awaited, if any, is out of date
     bool hizIsStale() const { return mHizStale; }
     // <FS> an object (its extents) is now in this group: a held occluded verdict of the group or of a group above it was tested without the object, so where the object is outside the box it covered, the
     // verdict says nothing about it. The occluded state is dropped there (this group and the ones above, one node each: the siblings keep theirs) and the next two agreeing verdicts decide again. Without this
     // an object that moved into a group with a held occluded verdict was missing for the 1 to 4 frames the verdict of its new box took. LL_VK_HIZ_ENTRY_OFF=1 = the old behaviour.
     void hizEntryMoved(const LLVector4a* entry_extents);    bool hizNeedsMainThread() const { return mHizStale && isHizAwaiting(); }   // <FS> checkOcclusion would clear the occlusion state of the subtree (the parallel stateSort leaves such a sort to the main thread)
     virtual void hizResult(bool occluded);
-    void hizRowSet(bool occluded);                          // stage 8d: the worker's verdict of the row, applied to this group alone (the agreement of two verdicts is made by LLVisSetHooks::hizRowsApply)
+    void hizRowSet(bool occluded);                          // stage 8d: the worker's verdict of the row, applied to this group alone (the agreement of two verdicts is made by LLHizRows::hizRowsApply)
     bool isOcclusionState(U32 state) const { return row().occlusion[LLViewerCamera::sCurCameraID] & state; }
     U32  getOcclusionState() const { return row().occlusion[LLViewerCamera::sCurCameraID];}
 
@@ -443,7 +418,6 @@ public:
     // LLViewerOctreeGroup::bumpPartitionEpoch)
     U32              mId = 0;
     std::atomic<U32> mEpoch{ 0 };
-    std::atomic<bool> mVisTracked{ false };      // <FS> C4.5 S1b: the retained set follows this partition (the hooks of groups of other partitions return at once)
 };
 
 class LLViewerOctreeCull : public OctreeTraveler

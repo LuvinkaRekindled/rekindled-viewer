@@ -4021,8 +4021,6 @@ struct CullItem
     bool mTask = false;
     LLViewerOctreeCull::SplitTask mSplit = { nullptr, 0 };
     float mUs = 0.f;
-    bool mReplay = false;       // C4.5 S1c: the retained set is replayed instead of the walk
-    size_t mBegin = 0, mEnd = 0;        // (of the replay list)
 };
 
 // a unit of the result, in the order of the serial loop: a segment (what the top levels of a split partition did, on the calling thread, before the jobs) or a run of items (a job)
@@ -4076,7 +4074,6 @@ struct CullTaskScope
     }
 };
 
-bool sVisSetReplay = false;       // C4.5 S1c: this frame the tracked partitions with a current retained set are replayed (set by updateCull around the pool cull)
 std::vector<std::unique_ptr<LLCullResult>> sCullLocals;
 std::unordered_map<LLSpatialPartition*, float> sCullCostUs;     // the last measured cost of a partition's walk (smoothed), the weight when the runs are cut
 LLCullResult* sCullCheckResult = nullptr;
@@ -4190,11 +4187,11 @@ bool cull_lists_equal(LLCullResult& a, LLCullResult& b)
                 ++shown;
                 LLSpatialGroup* par = g->getParent();
                 LL_WARNS("CullSplit") << "cull check: only the " << side << " listed an occlusion group: partition type " << g->getSpatialPartition()->mPartitionType << ", stored stamp " << g->row().visible[LLViewerCamera::CAMERA_WORLD]
-                    << ", slot " << g->row().retainedSlot << " (its frame " << g->retainedFrame(LLViewerCamera::CAMERA_WORLD) << "), frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", needsUpdate " << g->needsUpdate() << ", occlusion state " << g->row().occlusion[LLViewerCamera::CAMERA_WORLD]
+                    << ", frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", needsUpdate " << g->needsUpdate() << ", occlusion state " << g->row().occlusion[LLViewerCamera::CAMERA_WORLD]
                     << ", parent " << (par ? (par->isOcclusionState(LLSpatialGroup::OCCLUDED) ? "occluded" : "not occluded") : "none") << ", empty " << g->isEmpty() << LL_ENDL;
             }
         };
-        show("pool (replay)", occ_a, sb);
+        show("pool", occ_a, sb);
         show("serial walk", occ_b, sa);
     }
     if (a.getVisibleListSize() != b.getVisibleListSize() || a.getVisibleBridgeSize() != b.getVisibleBridgeSize())
@@ -4254,15 +4251,6 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
             cost[k] = -1.f;
         }
     }
-    std::vector<char> replay(parts.size(), 0);
-    for (size_t k = 0; k < parts.size(); ++k)
-    {
-        if (sVisSetReplay && LLVisSet::replayable(parts[k]))
-        {
-            replay[k] = 1;
-            cost[k] = 0.2f * (float)LLVisSet::replayCount(parts[k]) + 1.f;        // (about 0.2 us a group)
-        }
-    }
     const float unknown_cost = known ? (float)(known_sum / known) : 6.f;
     double total = 0.0;
     for (float& c : cost)
@@ -4305,7 +4293,7 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
         for (size_t k = 0; k < parts.size(); ++k)
         {
             LLSpatialPartition* part = parts[k];
-            if (cost[k] > split_cost && !replay[k])
+            if (cost[k] > split_cost)
             {
                 run = nullptr;
                 static const double node_split = getenv("LL_VK_CULL_NODE_US") ? atof(getenv("LL_VK_CULL_NODE_US")) : 100.0;
@@ -4343,31 +4331,6 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
                     run = &new_chunk(false);
                     run_cost = 0.0;
                 }
-                if (replay[k])
-                {
-                    // a replayed partition in pieces of the same size as a walk job's share: the pieces are consecutive in the result, as the walk's would be
-                    const size_t n = LLVisSet::replayCount(part);
-                    const size_t piece = std::max<size_t>(64, (size_t)(target / 0.2));
-                    for (size_t b = 0; b < std::max<size_t>(n, 1); b += piece)
-                    {
-                        if (!run)
-                        {
-                            run = &new_chunk(false);
-                            run_cost = 0.0;
-                        }
-                        items.push_back({ part, false, { nullptr, 0 }, 0.f });
-                        items.back().mReplay = true;
-                        items.back().mBegin = b;
-                        items.back().mEnd = std::min(n, b + piece);
-                        run->mEnd = items.size();
-                        run_cost += 0.2 * (double)(items.back().mEnd - b) + 0.5;
-                        if (run_cost >= target)
-                        {
-                            run = nullptr;
-                        }
-                    }
-                    continue;
-                }
                 items.push_back({ part, false, { nullptr, 0 }, 0.f });
                 run->mEnd = items.size();
                 run_cost += cost[k];
@@ -4398,11 +4361,7 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
             const auto p0 = std::chrono::steady_clock::now();
             {
                 LL_CPU_ZONE("updateCull: partition cull");
-                if (item.mReplay)
-                {
-                    LLVisSet::replay(item.mPart, camera, item.mBegin, item.mEnd);
-                }
-                else if (item.mTask)
+                if (item.mTask)
                 {
                     item.mPart->cullTask(camera, item.mSplit);
                 }
@@ -4471,10 +4430,6 @@ int cull_partitions_parallel(const LLPipeline::View& view, LLCullResult* into)
     }
     for (size_t k = 0; k < parts.size(); ++k)
     {
-        if (replay[k])
-        {
-            continue;       // (the cost of the walk of a replayed partition stays what it was: the weights are for the walk)
-        }
         LLSpatialPartition* part = parts[k];
         float& c = sCullCostUs[part];
         const float now_us = part_us[part];
@@ -4784,64 +4739,6 @@ static void main_cull_census(LLCamera& camera)
     }
 }
 
-// <FS> C4.5 S1a (LL_VK_VISSET=2): after the main view's cull, every partition's membership is worked out again by the collecting walk (LLSpatialPartition::collectCull: the same frustum and occlusion verdicts,
-// nothing written) and compared with the groups the real cull listed for that partition. The collector is what the retained set will be built from: this proves it gives what the walk gives.
-static void main_vis_verify(LLCamera& camera)
-{
-    static U64 frames = 0, parts_checked = 0, groups_checked = 0, extra = 0, missing = 0, bad_frames = 0;
-    std::unordered_set<const LLSpatialGroup*> real_d, real_v;
-    std::unordered_map<const void*, std::pair<U32, U32>> real_count;
-    for (LLCullResult::sg_iterator g = sCull->beginDrawableGroups(); g != sCull->endDrawableGroups(); ++g)
-    {
-        real_d.insert(*g);
-        ++real_count[(*g)->getSpatialPartition()].first;
-    }
-    for (LLCullResult::sg_iterator g = sCull->beginVisibleGroups(); g != sCull->endVisibleGroups(); ++g)
-    {
-        real_v.insert(*g);
-        ++real_count[(*g)->getSpatialPartition()].second;
-    }
-    static LLSpatialPartition::CullCollect collect;
-    bool bad = false;
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-    {
-        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-        {
-            LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
-            if (!part || !(LLViewerRegion::PARTITION_BRIDGE == i || gPipeline.hasRenderType(part->mDrawableType)))
-            {
-                continue;
-            }
-            part->collectCull(camera, collect);
-            ++parts_checked;
-            U32 ex = 0;
-            for (LLSpatialGroup* g : collect.mDrawable) { if (!real_d.count(g)) { ++ex; } }
-            for (LLSpatialGroup* g : collect.mVisible) { if (!real_v.count(g)) { ++ex; } }
-            const auto rc = real_count.count(part) ? real_count[part] : std::make_pair(0u, 0u);
-            const S64 miss = ((S64)rc.first - (S64)collect.mDrawable.size()) + ((S64)rc.second - (S64)collect.mVisible.size()) + ex;      // (what the real cull listed and the collector did not)
-            groups_checked += rc.first + rc.second;
-            extra += ex;
-            missing += miss > 0 ? miss : 0;
-            if (ex || miss)
-            {
-                bad = true;
-                static int logged = 0;
-                if (++logged <= 8)
-                {
-                    LL_WARNS("VisSet") << "collector differs from the cull: partition type " << part->mPartitionType << " region partition " << i << ": real " << rc.first << " drawable + " << rc.second << " visible groups, collector "
-                        << collect.mDrawable.size() << " + " << collect.mVisible.size() << ", collector groups the cull did not list " << ex << LL_ENDL;
-                }
-            }
-        }
-    }
-    bad_frames += bad ? 1 : 0;
-    if (++frames % 600 == 0)
-    {
-        LL_INFOS("VisSet") << "collector check: " << frames << " frames, " << parts_checked << " partition walks, " << groups_checked << " groups listed by the cull, " << extra << " the collector listed and the cull did not, " << missing
-            << " the cull listed and the collector did not, " << bad_frames << " frames with a difference" << LL_ENDL;
-    }
-}
-
 bool ll_scene_lod_compare_on();       // stage 7 (defined with markNotCulled): the walk's LOD notes, taken one thread at a time
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
@@ -4859,7 +4756,6 @@ static bool ll_cull_derived_covers(LLSpatialPartition* part);
 std::shared_ptr<const LLVkBridge::ViewSet> ll_cube_view_set(LLCamera& camera);          // the newest answer for this face if its planes are this face's planes and it is not too old
 void ll_cube_view_finish(LLCamera& camera, const std::shared_ptr<const LLVkBridge::ViewSet>& set, bool derived);       // the compare (mode 1) and the request for the next time
 
-static std::atomic<bool> sChkReplayFrame{ false };       // (LL_VK_CHK_COUNT, below sort_check_occlusion: this frame's main view walk replayed the retained sets)
 
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
 {
@@ -4957,63 +4853,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     const bool table_needs_serial = LLCullShadow::sOn && (LLCullShadow::sCompare || LLCullShadow::sUse != 0 || ll_scene_lod_compare_on());
     const bool main_cull = view.isMainWorld()
         && !cull_use && !derived_use && !vis_cull && !LLOccCensus::sOn && !table_needs_serial && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
-    // <FS> C4.5 S1b/S1c (LL_VK_VISSET: 2 the collecting walk is compared with the cull, 3 the retained set kept by events is compared with it, 4 the pool cull replays the retained set of the tracked partitions on frames the camera did not change;
-    // every 60th frame of 4 the replay and the real walk both run and their lists are compared, the way LL_VK_CULL_SPLIT=4 compares the pool walk with the serial one)
-    // <FS> 2026-11-17: with the worker's kept sets in use for the main view and the cascades (LL_VK_KEPT=2 and LL_VK_CASC_KEPT=3) nothing replays the retained sets (the main view's pass is the derived one, the cascades' upkeep is skipped) and the
-    // hooks that feed them (noteBounds on every group change, noteStale, the census add) only fill event lists nobody reads: the default is 0 then (a fallback frame walks, as the old path does). LL_VK_VISSET overrides.
-    static const int visset_mode = []
-    {
-        const bool kept_stack = LLCullShadow::sOn && ll_vk_env("LL_VK_KEPT") && atoi(ll_vk_env("LL_VK_KEPT")) == 2 && ll_vk_env("LL_VK_CASC_KEPT") && atoi(ll_vk_env("LL_VK_CASC_KEPT")) >= 3;
-        const int m = getenv("LL_VK_VISSET") ? atoi(getenv("LL_VK_VISSET")) : (kept_stack ? 0 : 6);
-        LLVisSetHooks::sOn = m >= 3;
-        return m;
-    }();      // default 6: replay, and every 300th frame the real walk too, compared (0 = the old path only)
-    static std::vector<LLSpatialPartition*> vs_parts;
-    bool vs_replay = false, vs_check = false;
-    if (visset_mode >= 3 && view.isMainWorld() && !gCubeSnapshot && main_cull)
-    {
-        vs_parts.clear();
-        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-        {
-            for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-            {
-                LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
-                // (the partitions whose groups keep their place: the moving ones, avatars, bridges, particles and control avatars, are walked every frame and not part of the retained set)
-                if (part && gPipeline.hasRenderType(part->mDrawableType)
-                    && (i == LLViewerRegion::PARTITION_TERRAIN || i == LLViewerRegion::PARTITION_VOIDWATER || i == LLViewerRegion::PARTITION_WATER || i == LLViewerRegion::PARTITION_TREE || i == LLViewerRegion::PARTITION_GRASS || i == LLViewerRegion::PARTITION_VOLUME))
-                {
-                    vs_parts.push_back(part);
-                }
-            }
-        }
-        // the camera signature the verdicts were made for: the planes, the corner distance, the origin, and the settings the culler reads
-        static F32 sig[40] = {};
-        F32 now[40] = {};
-        int k = 0;
-        for (U32 i = 0; i < 7; ++i)
-        {
-            const LLPlane& pl = camera.getAgentPlane(i);
-            now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
-        }
-        now[k++] = (F32)camera.getPlaneCount();
-        now[k++] = camera.mFrustumCornerDist;
-        const LLVector3& o = camera.getOrigin();
-        now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
-        now[k++] = (F32)LLPipeline::useOcclusion();
-        now[k++] = LLPipeline::sUseFarClip ? 1.f : 0.f;
-        const bool camera_changed = memcmp(sig, now, sizeof(sig)) != 0;
-        memcpy(sig, now, sizeof(sig));
-        vs_replay = visset_mode >= 4 && cull_split_setting() >= 3;
-        vs_check = vs_replay && ((visset_mode == 4 && (LLFrameTimer::getFrameCount() % 60) == 0) || (visset_mode == 6 && (LLFrameTimer::getFrameCount() % 300) == 0));       // (5: the replay alone, nothing is compared: for the cost)
-        // (a check frame runs the real walk, which stamps the groups itself and must see the stamps of the frame before: the sets claim the frame only when the replay is the only thing that runs)
-        LLVisSet::update(camera, vs_parts, camera_changed, vs_replay && !vs_check);
-    }
-    sVisSetReplay = vs_replay;
-    if (view.isMainWorld() && !gCubeSnapshot)
-    {
-        sChkReplayFrame.store(vs_replay && !vs_check, std::memory_order_relaxed);
-    }
-    const int cull_mode = main_cull ? (vs_check ? 4 : cull_split_setting()) : 0;
+    const int cull_mode = main_cull ? cull_split_setting() : 0;
     int cull_done = 0;
     if (cull_mode >= 3)
     {
@@ -5078,10 +4918,6 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             {
                 ++s.mCheckBad;
             }
-            if (sVisSetReplay && LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame()) != 0)      // <FS> C4.5 R2: the stamps the real walk wrote against the frame the sets claim
-            {
-                ++s.mCheckBad;
-            }
         }
         if (++s.mReport >= 600)
         {
@@ -5094,19 +4930,6 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLCullCensus::sActive.store(false);
         main_cull_census(camera);
     }
-    if (visset_mode >= 2 && visset_mode != 5 && visset_mode != 6 && view.isMainWorld() && !gCubeSnapshot && main_cull)
-    {
-        main_vis_verify(camera);
-    }
-    if (visset_mode >= 3 && visset_mode != 5 && visset_mode != 6 && view.isMainWorld() && !gCubeSnapshot && main_cull)
-    {
-        LLVisSet::verify(camera, vs_parts);
-    }
-    if (visset_mode >= 4 && view.isMainWorld() && !gCubeSnapshot)
-    {
-        LLVisSet::finishFrame();
-    }
-    sVisSetReplay = false;
 
     if (cull_use)
     {
@@ -5332,7 +5155,7 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
-    if (LLVisSetHooks::sHizRows && LLCullShadow::sOn && group && group->mCullId && group->getSpatialPartition() && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->isOcclusionEnabled()
+    if (LLHizRows::sHizRows && LLCullShadow::sOn && group && group->mCullId && group->getSpatialPartition() && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->isOcclusionEnabled()
         && group->getOctreeNode() && group->getOctreeNode()->getParent())
     {
         return;         // stage 8d (LL_VK_HIZROWS=2): the worker tests this group's row every frame; nothing is named, no box collected, no verdict awaited
@@ -6273,7 +6096,7 @@ static std::atomic<U64> sChkNotStamped[2], sChkOccluded[2];       // the loop's 
 static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[2];       // [0] the walk ran, [1] the walk replayed (sChkReplayFrame, set by updateCull)
 
 // LL_VK_CHK_REG=1: the loops of the main view's sort do not call it (the discard is made where it already was: the walk's earlyFail for a group the walk visits, the retained set's own handling for a replayed
-// member, LLVisSetHooks::noteStale); with LL_VK_CHK_COUNT=1 too, the counters then say what the call would have cleared (it must stay 0)
+// member); with LL_VK_CHK_COUNT=1 too, the counters then say what the call would have cleared (it must stay 0)
 static const bool sChkSkip = (getenv("LL_VK_CHK_REG") != nullptr && atoi(getenv("LL_VK_CHK_REG")) == 1) || (LLCullShadow::sOn && ll_vk_env("LL_VK_LOOPC") != nullptr);
 // stage 8, loop (c) removed: with the three owners on, the loop does nothing for a group they cover (lap lp1-def1, 57,600 sorts, about 1,120 groups a sort: not stamped visible by the walk 0, OCCLUDED 0), so it skips
 // those groups, except on every 60th sort of the main view (sLodSampling), where the whole loop runs as the check
@@ -6288,7 +6111,7 @@ static inline void sort_check_occlusion(LLSpatialGroup* group)
     const bool main_view = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && LLPipeline::useOcclusion() > 1;
     if (sChkCount && main_view)
     {
-        const int r = sChkReplayFrame.load(std::memory_order_relaxed) ? 1 : 0;
+        const int r = 0;        // (the walk's replay of retained sets is gone: one column)
         sChkCalls[r].fetch_add(1, std::memory_order_relaxed);
         if (group->getVisible(LLViewerCamera::CAMERA_WORLD) < LLViewerOctreeEntryData::getCurrentFrame())
         {
@@ -9450,12 +9273,6 @@ void LLPipeline::shadowPrepHull(ShadowCascadePrep& prep)
 // of its result, and its subtrees that cost over LL_VK_SC_NODE_US (default 40 us) as jobs of their own), each with a result of its own, appended to the cascade's result in that order afterwards.
 namespace
 {
-// C4.5 R2 (doc/vulkan/PLAN-clean-core.md): the sun cascades' cull replays a retained set (LLVisSet sets 1 to 4) instead of walking the octrees. LL_VK_CASCSET 1 = on (default), 0 = off, 2 = on and the order of every set checked against a collecting walk (with LL_VK_SC_SPLIT=2 the lists against the serial cull)
-int cascade_sets_mode()
-{
-    static const int mode = getenv("LL_VK_CASCSET") ? atoi(getenv("LL_VK_CASCSET")) : 1;
-    return mode;
-}
 std::unordered_map<U64, float> sScCostUs;       // the last measured cost of the walk of a partition for a cascade (smoothed); key: partition * 4 + cascade index
 std::unordered_map<U64, float> sScNodeUs;       // the same for a subtree that was a job; key: node * 4 + cascade index
 std::vector<std::unique_ptr<LLCullResult>> sScLocals;
@@ -9468,14 +9285,13 @@ struct ScChunk
     LLViewerOctreeCull::SplitTask mSplit;
     LLCullResult* mLocal;
     float mUs;
-    bool mReplay = false;               // the retained set of the cascade replays this piece of the partition's list
     size_t mBegin = 0, mEnd = 0;
     int mSet = 0;
     bool mSetUse = false;               // <FS> stage 10d (LL_VK_CASC_KEPT=3): this piece is the cascade's recent groups (sCascSetGroups[mSet])
     bool mSetBits = false;              // ... or a range of words [mBegin, mEnd) of the worker's answer (mBits): the slot to group step is the job's
     const U32* mBits = nullptr;
     U32 mTypeMask = 0;                  // the partition types the cascade takes from the set (a bit each)
-    U8 mKind[32] = {};                  // by partition type: 2 = rendered by group (the visible groups), 1 = by drawable (the drawable groups), as the replay of a retained set names them
+    U8 mKind[32] = {};                  // by partition type: 2 = rendered by group (the visible groups), 1 = by drawable (the drawable groups)
 };
 std::vector<LLSpatialGroup*> sCascSetGroups[6];      // (0 to 3 the sun cascades, 4 and 5 the spot and projector passes) the groups of the covered partitions each sun cascade takes from the worker's set this frame (made on the main thread, read by the cull jobs)
 }
@@ -9507,11 +9323,10 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         ShadowCascadePrep& prep = pending[p];
         prep.mResult->clear();
         prep.mDeferred.clear();
-        // <FS> stage 10d (LL_VK_CASC_KEPT=3): a sun cascade with a usable answer from the worker takes the groups of the covered partitions from it (the partitions are then neither replayed nor walked); the others, and a cascade
-        // without an answer (the first frames, a request that did not come back), are walked as the shadow culler does: the retained sets of the cascades are not kept in this mode
+        // <FS> stage 10d (LL_VK_CASC_KEPT=3): a sun cascade with a usable answer from the worker takes the groups of the covered partitions from it (the partitions are then not walked); the others, and a cascade
+        // without an answer (the first frames, a request that did not come back), are walked as the shadow culler does
         std::shared_ptr<const LLVkBridge::ViewSet> answer = prep.mIndex < 6 ? ll_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex]) : nullptr;       // (the spot and projector passes, 4 and 5, take theirs from the set too)
         const bool from_worker = answer != nullptr;
-        const bool sets_off = ll_cascade_kept_mode() >= 3;
         U32 type_mask = 0;
         U8 kind_of[32] = {};
         for (LLSpatialPartition* part : partitions)
@@ -9520,20 +9335,6 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
             {
                 type_mask |= 1u << (part->mPartitionType & 31u);
                 kind_of[part->mPartitionType & 31u] = part->mRenderByGroup ? 2 : 1;
-                continue;
-            }
-            const int vs_set = 1 + (int)(prep.mIndex & 3);
-            if (cascade_sets_mode() && !sets_off && prep.mIndex < 4 && LLVisSet::replayable(part, vs_set))
-            {
-                const size_t n = LLVisSet::replayCount(part, vs_set);
-                for (size_t b = 0; b < n; b += 1536)
-                {
-                    ScChunk& piece = new_chunk(p, part, false, false, { nullptr, 0 });
-                    piece.mReplay = true;
-                    piece.mBegin = b;
-                    piece.mEnd = std::min<size_t>(n, b + 1536);
-                    piece.mSet = vs_set;
-                }
                 continue;
             }
             const U64 key = ((U64)(uintptr_t)part << 3) | (U64)(prep.mIndex & 7);
@@ -9657,10 +9458,6 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                 }
             }
         }
-        else if (chunk.mReplay)
-        {
-            LLVisSet::replay(chunk.mPart, prep.mCamera, chunk.mBegin, chunk.mEnd, chunk.mSet);
-        }
         else if (chunk.mTask)
         {
             chunk.mPart->cullShadowTask(prep.mCamera, chunk.mSplit);
@@ -9690,7 +9487,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         for (LLCullResult::sg_iterator g = l.beginAlphaGroups(); g != l.endAlphaGroups(); ++g) into.pushAlphaGroup(*g);
         for (LLCullResult::sg_iterator g = l.beginRiggedAlphaGroups(); g != l.endRiggedAlphaGroups(); ++g) into.pushRiggedAlphaGroup(*g);
         into.mLodGroups.insert(into.mLodGroups.end(), l.mLodGroups.begin(), l.mLodGroups.end());       // <FS> C4.4
-        if (!chunk.mSegment && !chunk.mReplay && !chunk.mSetUse && !chunk.mSetBits)
+        if (!chunk.mSegment && !chunk.mSetUse && !chunk.mSetBits)
         {
             const U64 key = ((U64)(uintptr_t)chunk.mPart << 3) | (U64)(pending[chunk.mPrep].mIndex & 7);
             now_us[key] += chunk.mUs;
@@ -13259,11 +13056,11 @@ void cull_process()
             sSlotPartType.resize(sSlotGroup.size() + 64, 255);
         }
         sSlotPartType[slot] = (sg->getSpatialPartition() && sg->getSpatialPartition()->mPartitionType < 32) ? (U8)sg->getSpatialPartition()->mPartitionType : (U8)255;
-        if (LLVisSetHooks::sHizRows)
+        if (LLHizRows::sHizRows)
         {
             // stage 8d: a new group starts with the state it inherited from its parent; no verdict history
-            LLVisSetHooks::hizRowsState(g, (g->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED) != 0);
-            LLVisSetHooks::hizRowsReset(g);
+            LLHizRows::hizRowsState(g, (g->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED) != 0);
+            LLHizRows::hizRowsReset(g);
         }
         sDirtySlots.push_back(slot);
         ++s.mAdded;
@@ -14236,10 +14033,10 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
         const U32 slot = group->mCullId - 1;
         if (slot < sSlotGroup.size() && sSlotGroup[slot] == group)
         {
-            if (LLVisSetHooks::sHizRows)
+            if (LLHizRows::sHizRows)
             {
-                LLVisSetHooks::hizRowsState(group, false);       // stage 8d
-                LLVisSetHooks::hizRowsReset(group);
+                LLHizRows::hizRowsState(group, false);       // stage 8d
+                LLHizRows::hizRowsReset(group);
             }
             sSlotGroup[slot] = nullptr;
             ++sSlotGen[slot];
@@ -15316,17 +15113,17 @@ static inline void hiz_bit(std::vector<U32>& v, U32 slot, bool on)
     if (on) { v[slot >> 5] |= 1u << (slot & 31u); } else { v[slot >> 5] &= ~(1u << (slot & 31u)); }
 }
 
-void LLVisSetHooks::hizRowsState(LLViewerOctreeGroup* group, bool occluded)
+void LLHizRows::hizRowsState(LLViewerOctreeGroup* group, bool occluded)
 {
     hiz_bit(sHizState, group->mCullId - 1, occluded);
 }
 
-void LLVisSetHooks::hizRowsReset(LLViewerOctreeGroup* group)
+void LLHizRows::hizRowsReset(LLViewerOctreeGroup* group)
 {
     hiz_bit(sHizPrevOcc, group->mCullId - 1, false);
 }
 
-void LLVisSetHooks::hizRowsInvalidate(LLViewerOctreeGroup* group)
+void LLHizRows::hizRowsInvalidate(LLViewerOctreeGroup* group)
 {
     // an object was added to the group: it is visible at once (what the discard of an awaited verdict did, made by the event) and two new agreeing verdicts are needed to occlude it again
     hizRowsReset(group);
@@ -15339,7 +15136,7 @@ void LLVisSetHooks::hizRowsInvalidate(LLViewerOctreeGroup* group)
     }
 }
 
-void LLVisSetHooks::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool stale)
+void LLHizRows::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool stale)
 {
     const U32 nw = (rows + 31) / 32;
     if (sHizState.size() < nw) { sHizState.resize(nw, 0u); }
@@ -31815,48 +31612,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         static const int sc_split = getenv("LL_VK_SC_SPLIT") ? atoi(getenv("LL_VK_SC_SPLIT")) : 1;
         if (sc_split != 0)
         {
-            if (cascade_sets_mode() && ll_cascade_kept_mode() < 3)       // (LL_VK_CASC_KEPT=3: the cascades' retained sets are not kept: they go dormant, the worker's set stands in)
-            {
-                LL_CPU_ZONE("shadow prep: cascade sets update");
-                // the partitions the sets follow (the ones the main view's set follows), and per cascade the camera signature the verdicts were made for
-                static std::vector<LLSpatialPartition*> casc_parts;
-                casc_parts.clear();
-                for (LLSpatialPartition* part : partitions)
-                {
-                    const U32 t = part->mPartitionType;
-                    if (t == LLViewerRegion::PARTITION_TERRAIN || t == LLViewerRegion::PARTITION_VOIDWATER || t == LLViewerRegion::PARTITION_WATER || t == LLViewerRegion::PARTITION_TREE || t == LLViewerRegion::PARTITION_GRASS || t == LLViewerRegion::PARTITION_VOLUME)
-                    {
-                        casc_parts.push_back(part);
-                    }
-                }
-                static F32 sigs[4][40] = {};
-                for (ShadowCascadePrep& prep : pending)
-                {
-                    if (prep.mIndex >= 4)
-                    {
-                        continue;       // (a spot light's pass has no retained set)
-                    }
-                    F32 now[40] = {};
-                    int k = 0;
-                    for (U32 i = 0; i < 7; ++i)
-                    {
-                        const LLPlane& pl = prep.mCamera.getAgentPlane(i);
-                        now[k++] = pl[0]; now[k++] = pl[1]; now[k++] = pl[2]; now[k++] = pl[3];
-                    }
-                    now[k++] = (F32)prep.mCamera.getPlaneCount();
-                    now[k++] = prep.mCamera.mFrustumCornerDist;
-                    const LLVector3& o = prep.mCamera.getOrigin();
-                    now[k++] = o.mV[0]; now[k++] = o.mV[1]; now[k++] = o.mV[2];
-                    F32* sig = sigs[prep.mIndex & 3];
-                    const bool changed = memcmp(sig, now, sizeof(now)) != 0;
-                    memcpy(sig, now, sizeof(now));
-                    LLVisSet::update(prep.mCamera, casc_parts, changed, true, 1 + (int)(prep.mIndex & 3));
-                    if (cascade_sets_mode() >= 2)
-                    {
-                        LLVisSet::checkOrder(prep.mCamera, casc_parts, 1 + (int)(prep.mIndex & 3));       // (diagnostic, LL_VK_CASCSET=2)
-                    }
-                }
-            }
             shadowPrepCullSplit(pending, partitions, prep_pool);
             if (sc_split == 2)
             {
@@ -31872,8 +31627,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         lg = list_of(r.mLodGroups.begin(), r.mLodGroups.end());
                     shadowPrepCull(prep, partitions);
                     LLCullResult& s = *prep.mResult;
-                    const bool stamps_ok = !cascade_sets_mode() || prep.mIndex >= 4 || LLVisSet::checkStamps((S32)LLViewerOctreeEntryData::getCurrentFrame(), 1 + (int)(prep.mIndex & 3)) == 0;
-                    const bool same = stamps_ok && lg == list_of(s.mLodGroups.begin(), s.mLodGroups.end()) && vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
+                    const bool same = lg == list_of(s.mLodGroups.begin(), s.mLodGroups.end()) && vg == list_of(s.beginVisibleGroups(), s.endVisibleGroups()) && dg == list_of(s.beginDrawableGroups(), s.endDrawableGroups())
                         && ag == list_of(s.beginAlphaGroups(), s.endAlphaGroups()) && rg == list_of(s.beginRiggedAlphaGroups(), s.endRiggedAlphaGroups())
                         && br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) && vl == list_of(s.beginVisibleList(), s.endVisibleList())
                         && og == list_of(s.beginOcclusionGroups(), s.endOcclusionGroups());
@@ -31885,7 +31639,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                             auto first_diff = [](const std::vector<const void*>& a, const std::vector<const void*>& b) { size_t k = 0; while (k < a.size() && k < b.size() && a[k] == b[k]) { ++k; } return (a.size() == b.size() && k == a.size()) ? (S64)-1 : (S64)k; };
                             LL_WARNS("ShadowPrep") << "cascade cull split check detail: cascade " << prep.mIndex << " first difference at: visible groups " << first_diff(vg, list_of(s.beginVisibleGroups(), s.endVisibleGroups())) << " (" << vg.size() << "), drawable groups "
                                 << first_diff(dg, list_of(s.beginDrawableGroups(), s.endDrawableGroups())) << " (" << dg.size() << "), lod groups " << first_diff(lg, list_of(s.mLodGroups.begin(), s.mLodGroups.end())) << " (" << lg.size() << " against " << s.mLodGroups.size()
-                                << "), visible list " << (vl == list_of(s.beginVisibleList(), s.endVisibleList()) ? "same" : "differs") << ", bridges " << (br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) ? "same" : "differs") << ", stamps " << (stamps_ok ? "ok" : "bad") << LL_ENDL;
+                                << "), visible list " << (vl == list_of(s.beginVisibleList(), s.endVisibleList()) ? "same" : "differs") << ", bridges " << (br == list_of(s.beginVisibleBridge(), s.endVisibleBridge()) ? "same" : "differs") << LL_ENDL;
                         }
                     }
                     ++checks;
