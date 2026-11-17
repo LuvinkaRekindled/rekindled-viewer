@@ -4214,6 +4214,10 @@ public:
         }
         else
         {
+            if (LLSpatialBridge::sPickSkipAvatars && drawable->isAvatar())
+            {
+                return false;       // stage 9 (avatars): the avatars are tested by the registry (LLSpatialBridge::lineSegmentIntersectAvatars)
+            }
             LLViewerObject* vobj = drawable->getVObj();
 
             if (vobj &&
@@ -4302,6 +4306,47 @@ LLDrawable* LLSpatialBridge::lineSegmentIntersectAll(bool hud, const LLVector4a&
         }
     }
     sPickSkipBridges = saved;
+    return intersect.mHit;
+}
+
+LLDrawable* LLSpatialBridge::lineSegmentIntersectAvatars(bool avatar_partition_only, const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+                                                         S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent)
+{
+    LLOctreeIntersect intersect(start, end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, intersection, tex_coord, normal, tangent);
+    const bool saved = sPickSkipAvatars;
+    sPickSkipAvatars = false;
+    for (LLCharacter* c : LLCharacter::sInstances)
+    {
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
+        if (!d || d->isDead() || !d->mEntry)
+        {
+            continue;
+        }
+        const U32 partition_type = av->getPartitionType();
+        if (avatar_partition_only && partition_type != LLViewerRegion::PARTITION_AVATAR)
+        {
+            continue;
+        }
+        // (the region walk tested the partition the avatar was put in only when its render type was on)
+        LLViewerRegion* region = d->getRegion();
+        LLSpatialPartition* part = region ? region->getSpatialPartition(partition_type) : nullptr;
+        if (!part || !gPipeline.hasRenderType(part->mDrawableType))
+        {
+            continue;
+        }
+        const LLVector4a* ex = d->getSpatialExtents();
+        LLVector4a center, half;
+        center.setAdd(ex[0], ex[1]);
+        center.mul(0.5f);
+        half.setSub(ex[1], ex[0]);
+        half.mul(0.5f);
+        if (LLLineSegmentBoxIntersect(intersect.mStart, intersect.mEnd, center, half))
+        {
+            intersect.check(d->mEntry.get());
+        }
+    }
+    sPickSkipAvatars = saved;
     return intersect.mHit;
 }
 
