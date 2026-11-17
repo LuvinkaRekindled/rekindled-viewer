@@ -124,7 +124,7 @@ bool ll_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull progra
 bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 // what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
-void ll_main_listed_note(U32 cull_id, U32 serial);                                           // T3: the main view's visible group list of build `serial` listed the group of this table slot (mCullId; 0 = none): LLCullResult::pushVisibleGroup of a result with mMainView calls it
+void ll_main_listed_note(LLSpatialGroup* group, U32 serial);                                           // T3: the main view's visible group list of build `serial` listed this group: its table slot is stamped, and a group of a bridge's octree is collected (the record's extra handles read it): LLCullResult::pushVisibleGroup of a result with mMainView calls it
 bool ll_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
 bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)

@@ -8617,6 +8617,7 @@ void LLPipeline::addBeacons()
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
 void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
+static std::unordered_set<const LLSpatialGroup*> sMainFarSkip;       // T4a: the groups of the far avatars' attachments over their budget in the main view (far_avatar_tier), as of the main view's last render map
 void ll_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
@@ -8643,14 +8644,14 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     LL_PUSH_CALLSTACKS();
 
     // the far avatars' attachment groups over their budget (the main view only)
-    static std::unordered_set<const LLSpatialGroup*> far_skip;
-    far_skip.clear();
+    static const std::unordered_set<const LLSpatialGroup*> no_far_skip_set;       // (the other views have none)
     if (view.isMainWorldSort())
     {
         LL_CPU_ZONE("render lists: far avatar tier");
-        far_avatar_tier(sCull, far_skip);
+        sMainFarSkip.clear();
+        far_avatar_tier(sCull, sMainFarSkip);       // (the main view's own set: the record's extra handles ask it after the other views' render maps have run)
     }
-
+    const std::unordered_set<const LLSpatialGroup*>& far_skip = view.isMainWorldSort() ? sMainFarSkip : no_far_skip_set;
     // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha group lists come from the alpha set (ll_alpha_set_lists), not from a walk of the visible groups: the render map below collects no
     // alpha groups for it. The other views (probes, shadows, HUD, mirrors, impostors) keep the collection.
     const bool alpha_from_set = view.isMainWorldSort();
@@ -12943,6 +12944,8 @@ std::vector<U32> sSlotGen;                          // slot -> generation (+1 ea
 // in the group's keys), kept by the same touch events that refresh the map rows (cull_process, forget): the main thread's own state, current to the last cull_process, the groups touched since are in sDirtySlots.
 std::vector<U32> sAlphaSlots;
 std::vector<U32> sAlphaPos;                         // slot -> its index in sAlphaSlots (~0u: not a member)
+std::vector<LLSpatialGroup*> sMainListedBridgeGroups;      // the groups of the bridges' octrees the main view's visible list of build sMainListedBridgeSerial listed (a by-product of the listing: ll_main_listed_note)
+U32 sMainListedBridgeSerial = 0;
 std::vector<U32> sMainListed;                       // slot -> the build (LLCullResult::mListSerial) of the main view's visible group list that listed the group: asked before the group is touched (the impostor, shadow and probe passes stamp row().visible without listing a group in the main view's list)
 static void alpha_index_set(U32 slot, bool member)
 {
@@ -14059,11 +14062,21 @@ void LLHizRows::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool sta
     }
 }
 
-void ll_main_listed_note(U32 cull_id, U32 serial)
+void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
 {
+    const U32 cull_id = group->mCullId;
     if (cull_id && cull_id <= sMainListed.size())
     {
         sMainListed[cull_id - 1] = serial;
+    }
+    if (group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
+    {
+        if (sMainListedBridgeSerial != serial)
+        {
+            sMainListedBridgeGroups.clear();        // (a list built again: the groups of the build before are not this build's)
+            sMainListedBridgeSerial = serial;
+        }
+        sMainListedBridgeGroups.push_back(group);
     }
 }
 
@@ -14853,6 +14866,51 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
     sBindJob = job;
 }
 
+// T4a of doc/vulkan/PLAN-visible-set-owner.md: the handles the record names besides the worker's derive, from the main view's own listing and the events: the bridge groups it listed in this build (ll_main_listed_note collects them) and the recent changes of the map rows (sRecent), each when the render map
+// would name it: not dead, not occluded, under the auto-hide limit, not a far avatar's attachment, a fragment handle. The worker lists them as they are, not from its rows a frame old (a group whose handle changed lately is left out of its derive). No walk of a bridge's octree, no check of the bridge's own stamp:
+// a group the main view lists belongs to a marked bridge. Compared with the walk of the bridges' octrees over 35,400 records (lap lh1-def1): 0 differences; the walk equalled the old preparation (a byte a fragment, the visible groups, every slot) for the bridge groups over 42,000 records (rh1).
+static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out)
+{
+    LL_CPU_ZONE("geo frame: the record's extra handles");
+    static std::vector<U32> seen;
+    static U32 stamp = 0;
+    if (seen.size() < sGeoFragByHandle.size() + 1)
+    {
+        seen.resize(sGeoFragByHandle.size() + 1024, 0u);
+    }
+    ++stamp;
+    const U32 listed = cull->mListSerial;
+    const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
+    const auto add = [&](LLSpatialGroup* g)
+    {
+        const U32 h = g->mGeoHandle;
+        const U32 slot = g->mCullId ? g->mCullId - 1 : ~0u;
+        if (h && h < seen.size() && seen[h] != stamp && slot < sMainListed.size() && sMainListed[slot] == listed && !g->isDead()
+            && !(LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            && !(hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))
+            && !sMainFarSkip.count(g))
+        {
+            seen[h] = stamp;
+            out.push_back(h);
+        }
+    };
+    std::lock_guard<std::mutex> lock(sCullMutex);
+    if (sMainListedBridgeSerial == listed)
+    {
+        for (LLSpatialGroup* g : sMainListedBridgeGroups)
+        {
+            add(g);
+        }
+    }
+    for (const auto& e : sRecent)
+    {
+        if ((e.mWhat & RECENT_MAP) && e.mSlot < sMapHandleFrame.size() && e.mSlot < sSlotGroup.size() && sSlotGroup[e.mSlot] && (U32)gFrameCount - sMapHandleFrame[e.mSlot] <= 3)
+        {
+            add((LLSpatialGroup*)sSlotGroup[e.mSlot]);
+        }
+    }
+}
+
 void ll_scene_geo_frame(LLCullResult* cull)
 {
     if (scene_geo_mode() < 2)
@@ -15196,43 +15254,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         view_extra[1] = (U32)marked_bridges.size();
-        // the handles of the marked bridges' groups that the render map names (a group the render map left out is not in the list: the same filters, exactly): the worker lists them as they are, not from its rows a frame old
-        {
-            static std::vector<U8> named;
-            named.assign(sGeoFragByHandle.size() + 1, 0);
-            for (U32 h : handles)
-            {
-                if (h < named.size())
-                {
-                    named[h] = 1;
-                }
-            }
-            for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
-            {
-                LLSpatialGroup* group = *i;
-                const U32 h = group ? group->mGeoHandle : 0;
-                if (h && h < named.size() && named[h] && group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
-                {
-                    named[h] = 0;
-                    bridge_handles.push_back(h);
-                }
-            }
-            // and the groups whose fragment handle changed in the last 3 frames (a rebuilt group: a sign that fades, an object being edited, an avatar's attachment): the worker's row of such a slot is a frame behind and may name a
-            // fragment that is gone, the worker leaves those slots out of its derive for as long
-            for (U32 slot = 0; slot < (U32)sMapHandleFrame.size(); ++slot)
-            {
-                if ((U32)gFrameCount - sMapHandleFrame[slot] > 3)
-                {
-                    continue;
-                }
-                const U32 h = sMapMirror[slot].mHandle;
-                if (h && h < named.size() && named[h])
-                {
-                    named[h] = 0;
-                    bridge_handles.push_back(h);
-                }
-            }
-        }
+        ll_record_extra_handles(cull, bridge_handles);       // (the bridge groups the main view listed and the handles changed in the last 3 frames: the listing's by-product and the recent changes)
         view_extra[3] = (U32)bridge_handles.size();
         view_extra[2] = 1u;        // stage 10a: 2 = a probe cube face, compared only. Stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
