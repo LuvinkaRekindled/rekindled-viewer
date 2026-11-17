@@ -5768,7 +5768,7 @@ struct OwnerPass
     std::vector<LLDrawable*> mFirst;                // the avatars' drawables, then the bridges whose group the cull listed, by group
     std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (ll_bridge_hiz_collect)
     size_t mAddedFrom = 0;                          // the drawable groups from here on were added by the marking
-    U32 mAvatars = 0, mFirstBridges = 0, mListBridges0 = 0, mListDrawables0 = 0;
+    U32 mAvatars = 0;
 };
 OwnerPass sOwner;
 }
@@ -5806,8 +5806,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     o.mFirst.clear();
     o.mBoxBridges.clear();
     o.mAddedFrom = sCull->getDrawableGroupsSize();
-    o.mListBridges0 = sCull->getVisibleBridgeSize();
-    o.mListDrawables0 = sCull->getVisibleListSize();
     // stage 9 (avatars): an avatar's drawable is listed by its own test (its extents against the frustum and the far sphere: what the group walk gave the avatar's group) and its own Hi-Z verdict (AvHiz), not by its group in a
     // region octree; the boxes of the avatars in view join the Hi-Z pass (ll_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the group's only 0.20,
     // the own rule's only 0.14; the verdict hid 2.33 a sort, of which the groups listed 0.11
@@ -5896,7 +5894,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     {
         o.mFirst.push_back(b);
     }
-    o.mFirstBridges = (U32)ready.size();
 }
 
 // stage 10 (bridges): the bridges a view would mark by the registry, with the rules the region octrees' walk gave them: not hidden by markVisible's impostor rule, in the partition the view walks (the bridge partition always, the
@@ -6052,7 +6049,6 @@ void LLPipeline::ownersFinish(LLCamera& camera)
         }
     };
     added_groups();
-    const U32 n_br = o.mFirstBridges, waves = 1;
     // the avatars' own update, after everything is marked (an avatar's visibility looks at its attachments' stamps): whether it is drawn at all (sortAccepts: render type, render distance, visible), its distance, and the LOD update
     // that follows the distance (joint LODs, the mesh data, updateVisibility): what loop (d) of the sort did for them
     for (U32 k = 0; k < o.mAvatars; ++k)
@@ -6062,18 +6058,6 @@ void LLPipeline::ownersFinish(LLCamera& camera)
         {
             stateSort(d, camera);
         }
-    }
-    static U64 sorts = 0, t_av = 0, t_br = 0, t_waves = 0, t_list_br = 0, t_list_d = 0;
-    t_list_br += sCull->getVisibleBridgeSize() - o.mListBridges0;
-    t_list_d += sCull->getVisibleListSize() - o.mListDrawables0;
-    ++sorts;
-    t_av += o.mAvatars;
-    t_br += n_br;
-    t_waves += waves;
-    if (sorts % 600 == 0)
-    {
-        const double n = (double)sorts;
-        LL_DIAG("VkAvOwner") << "avatar and bridge owners' pass, per sort over " << sorts << ": avatar drawables marked " << t_av / n << ", bridges marked " << t_br / n << " in " << t_waves / n << " waves, listed in the visible bridge list " << t_list_br / n << " and the visible drawable list " << t_list_d / n << LL_ENDL;
     }
 }
 
@@ -12959,6 +12943,7 @@ std::vector<U32> sSlotGen;                          // slot -> generation (+1 ea
 // in the group's keys), kept by the same touch events that refresh the map rows (cull_process, forget): the main thread's own state, current to the last cull_process, the groups touched since are in sDirtySlots.
 std::vector<U32> sAlphaSlots;
 std::vector<U32> sAlphaPos;                         // slot -> its index in sAlphaSlots (~0u: not a member)
+std::vector<U32> sMainListed;                       // slot -> the build (LLCullResult::mListSerial) of the main view's visible group list that listed the group: asked before the group is touched (the impostor, shadow and probe passes stamp row().visible without listing a group in the main view's list)
 static void alpha_index_set(U32 slot, bool member)
 {
     if (slot >= sAlphaPos.size())
@@ -13266,6 +13251,7 @@ void cull_process()
             sMapHandleFrame.push_back((U32)gFrameCount);
             sMapChangeFrame.push_back((U32)gFrameCount);
             sAlphaPos.push_back(~0u);
+            sMainListed.push_back(0u);
             sRowChangeFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
             sSlotGen.push_back(1u);
@@ -13374,6 +13360,7 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
             sMirror[slot].mFlags = 33u;
             sMapMirror[slot] = CullMapRow();
             alpha_index_set(slot, false);
+            sMainListed[slot] = 0u;
             sSendSlots.push_back(slot);
         }
         group->mCullId = 0;
@@ -14046,9 +14033,17 @@ void LLHizRows::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool sta
     }
 }
 
+void ll_main_listed_note(U32 cull_id, U32 serial)
+{
+    if (cull_id && cull_id <= sMainListed.size())
+    {
+        sMainListed[cull_id - 1] = serial;
+    }
+}
+
 // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha and rigged alpha group lists, made from the alpha set. The set (sAlphaSlots: the slots whose map row shows an alpha or rigged alpha key, kept by the touch events in
 // cull_process and forget) and the slots touched since the last cull_process (judged from the group itself) are the candidates; each is tested as the render map tested a visible group (not dead, its partition renders by group, the main view's
-// visible group list of this build lists it (mMainListedFrame == mListSerial), not occluded, under the auto-hide limit, not a far avatar's skipped attachment), its distance is made as the render map's join made it, and the lists are ordered
+// visible group list of this build lists it (sMainListed[slot] == mListSerial), not occluded, under the auto-hide limit, not a far avatar's skipped attachment), its distance is made as the render map's join made it, and the lists are ordered
 // as before. All of it is the main thread's own state of this frame: no worker list, so no gap and no lag (the compare of lap as5-def1: 38,400 sorts, the same groups and the same order as the render map's lists).
 void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip)
 {
@@ -14069,9 +14064,10 @@ void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
             seen.resize(sSlotGroup.size() + 256, 0u);
         }
         ++seen_stamp;
+        const U32 listed = cull->mListSerial;
         for (U32 slot : sAlphaSlots)
         {
-            if (slot < sSlotGroup.size() && sSlotGroup[slot])
+            if (slot < sSlotGroup.size() && sMainListed[slot] == listed && sSlotGroup[slot])        // (the main view's listing is asked by slot: the set holds every alpha group of the table, about 2,400, the list about 500 of them)
             {
                 seen[slot] = seen_stamp;
                 cands.push_back((LLSpatialGroup*)sSlotGroup[slot]);
@@ -14079,19 +14075,18 @@ void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
         }
         for (U32 slot : sDirtySlots)        // (touched since the last cull_process: its map row is not made again yet, the group says what it has now)
         {
-            if (slot < sSlotGroup.size() && sSlotGroup[slot] && seen[slot] != seen_stamp)
+            if (slot < sSlotGroup.size() && sMainListed[slot] == listed && sSlotGroup[slot] && seen[slot] != seen_stamp)
             {
                 seen[slot] = seen_stamp;
                 cands.push_back((LLSpatialGroup*)sSlotGroup[slot]);
             }
         }
     }
-    const U32 listed = cull->mListSerial;
     const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
     const bool world = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot;
     for (LLSpatialGroup* g : cands)
     {
-        if (g->isDead() || g->mMainListedFrame != listed || !g->getSpatialPartition() || !g->getSpatialPartition()->mRenderByGroup)
+        if (g->isDead() || !g->getSpatialPartition() || !g->getSpatialPartition()->mRenderByGroup)
         {
             continue;
         }

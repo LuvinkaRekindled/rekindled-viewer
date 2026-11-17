@@ -4618,7 +4618,7 @@ void LLCullResult::pushVisibleGroup(LLSpatialGroup* group)
 {
     if (mMainView)
     {
-        group->mMainListedFrame = mListSerial;
+        ll_main_listed_note(group->mCullId, mListSerial);
     }
     if (mVisibleGroupsSize < mVisibleGroupsAllocated)
     {

@@ -124,6 +124,7 @@ bool ll_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull progra
 bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 // what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
+void ll_main_listed_note(U32 cull_id, U32 serial);                                           // T3: the main view's visible group list of build `serial` listed the group of this table slot (mCullId; 0 = none): LLCullResult::pushVisibleGroup of a result with mMainView calls it
 bool ll_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
 bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
@@ -479,7 +480,6 @@ public:
     struct LLSceneFragment* mSceneFragment = nullptr;
     U64 mGeoServedMask = 0;             // <FS> S3 G4 (S4 B: the bits after the static types are the rigged variants): the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
     U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)
-    U32 mMainListedFrame = 0;           // <FS> T3: the build (LLCullResult::mListSerial) of the main view's visible group list that listed this group (LLCullResult::pushVisibleGroup of a result with mMainView): the alpha set asks it. The impostor, shadow and probe passes stamp row().visible without listing the group in the main view's list, and a list built again in the same frame is another build.
     U8 mGeoAlphaBits = 0;               // <FS> J1 K6 S5a: 1 = the draw map has PASS_ALPHA draws, 2 = PASS_ALPHA_RIGGED (set with mGeoAllServed: the alpha group lists are all postSort takes from an all-served group)
     bool mGeoAllServed = false;         // <FS> R2 (S-retire-views-design.md): every non-empty draw map type of the group is served by the table: postSort has nothing to put in the render map for it
     // <FS> C4.1: the sun cascades' render map job asks this before it walks the group's draw map: bits 0-3 the answer (1 nothing to push, 2 the group has an alpha draw map entry, 4 a rigged alpha one, 8 resident), the rest a key of what the
@@ -665,7 +665,7 @@ class LLCullResult
 public:
     LLCullResult();
 
-    bool mMainView = false;     // <FS> T3: this is the main view's cull result (set by updateCull each time it clears it): pushVisibleGroup stamps the group's mMainListedFrame with mListSerial
+    bool mMainView = false;     // <FS> T3: this is the main view's cull result (set by updateCull each time it clears it): pushVisibleGroup notes the group's table slot as listed by this build (ll_main_listed_note)
     U32 mListSerial = 1;        // <FS> T3: one more each time the visible group list is cleared (clear, clearLists): a group stamped with the current value was listed since the last clear
 
     typedef std::vector<LLSpatialGroup*> sg_list_t;
