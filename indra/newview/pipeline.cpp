@@ -8666,10 +8666,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         far_avatar_tier(sCull, far_skip);
     }
 
-    // T3 of doc/vulkan/PLAN-visible-set-owner.md (sort's tail): the main view's alpha group lists are the worker's (ll_scene_alpha_stage6 makes them, with the few the viewer added); the render map no longer collects, joins or sorts them
-    // there. Until a worker list under 30 frames old exists (after the login, a teleport or a table reset) the main view has no alpha pass. The other views (probes, shadows, HUD, mirrors, impostors) keep the collection.
-    const bool alpha_from_worker = view.isMainWorldSort() && !gCubeSnapshot;
-
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
@@ -8757,7 +8753,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
                             if (geo_elide && group->mGeoAllServed && r2_whole_groups && !view.mRenderingHUDs)
                             {
                                 ++chunk.mElideWhole;
-                                if (group->mGeoAlphaBits && !alpha_from_worker && view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                                if (group->mGeoAlphaBits && view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                                 {
                                     if (group->mGeoAlphaBits & 1) { local.pushAlphaGroup(group); }            // (the distance is updated by the main thread when the lists are joined)
                                     if (group->mGeoAlphaBits & 2) { local.pushRiggedAlphaGroup(group); }
@@ -8766,7 +8762,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
                             }
                         }
                         // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the table draws every type, the statistic below comes from the fragment)
-                        if (!alpha_from_worker && view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                        if (view.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                         {
                             if (ll_group_has_alpha_key(group))
                             {
@@ -8901,7 +8897,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             {
                 // R2: nothing of this group is left for the render map (only alpha, which the alpha group lists take): the draw map is not walked
                 ++sGeoElideWhole;
-                if (group->mGeoAlphaBits && !alpha_from_worker && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+                if (group->mGeoAlphaBits && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
                 {
                     if (group->mGeoAlphaBits & 1)
                     {
@@ -8933,7 +8929,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         }
 
         // (the walk of the group's draw map is gone, 2026-11-12: the render map lists are not filled; the statistic of the triangles drawn is counted above from the fragment)
-        if (!alpha_from_worker && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
+        if (hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Collect Alpha groups");
             if (ll_group_has_alpha_key(group))
@@ -8996,14 +8992,11 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     {
         LL_CPU_ZONE("render lists: sort alpha groups");
         const U64 vis_a0 = vis_post ? LLVisCensus::now() : 0;
-        if (!alpha_from_worker)
-        {
-            // order alpha groups by distance
-            std::sort(sCull->beginAlphaGroups(), sCull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
+        // order alpha groups by distance
+        std::sort(sCull->beginAlphaGroups(), sCull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
 
-            // order rigged alpha groups by avatar attachment order
-            std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
-        }
+        // order rigged alpha groups by avatar attachment order
+        std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
         if (view.isMainWorldSort() && !gCubeSnapshot)
         {
             ll_scene_alpha_stage6(sCull, camera);       // stage 6 (LL_VK_CULL_ALPHA): compare the lists with the ones the consumers' groups give, and replace them in mode 2
