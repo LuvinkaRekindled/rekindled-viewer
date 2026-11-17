@@ -5885,6 +5885,16 @@ void LLPipeline::ownersFinish(LLCamera& camera)
         added_groups();
         ++waves;
     }
+    // the avatars' own update, after everything is marked (an avatar's visibility looks at its attachments' stamps): whether it is drawn at all (sortAccepts: render type, render distance, visible), its distance, and the LOD update
+    // that follows the distance (joint LODs, the mesh data, updateVisibility): what loop (d) of the sort did for them
+    for (U32 k = 0; k < o.mAvatars; ++k)
+    {
+        LLDrawable* d = o.mFirst[k];
+        if (!d->isDead())
+        {
+            stateSort(d, camera);
+        }
+    }
     static U64 sorts = 0, t_av = 0, t_br = 0, t_waves = 0, t_occ = 0, t_list_br = 0, t_list_d = 0;
     t_list_br += sCull->getVisibleBridgeSize() - o.mListBridges0;
     t_list_d += sCull->getVisibleListSize() - o.mListDrawables0;
@@ -6798,7 +6808,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             for (U32 k = chunk.mBegin; k < chunk.mEnd; ++k)
             {
                 LLDrawable* drawablep = visible_list[k];
-                if (!drawablep->isDead())
+                if (!drawablep->isDead() && !(sOwnerA && drawablep->isAvatar()))       // (stage 9: the avatars' own update is the owners' pass's)
                 {
                     stateSort(drawablep, camera);
                 }
@@ -7171,7 +7181,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
              iter != read.endVisibleList(); ++iter)
         {
             LLDrawable *drawablep = *iter;
-            if (!drawablep->isDead())
+            if (!drawablep->isDead() && !(sOwnerA && drawablep->isAvatar()))       // (stage 9: the avatars' own update is the owners' pass's)
             {
                 stateSort(drawablep, camera);
             }
