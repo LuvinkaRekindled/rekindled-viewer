@@ -5679,6 +5679,28 @@ static bool ll_attachment_bridge_hidden(LLSpatialBridge* bridge)
     return false;
 }
 
+// stage 9 of doc/vulkan/PLAN-visible-set-owner.md: in the main view's sort (set by stateSort) the avatars' drawables and the bridges are marked visible by the owners' pass (markVisibleOwners), not by loop (a) of the sort over
+// the drawable groups: loop (a) skips the region groups of the avatar, bridge and animesh partitions (they hold only those) and the avatars' drawables and bridges that it meets in the groups a bridge's own cull added
+static bool sOwnerA = false;
+static bool ll_loopa_owned_group(LLSpatialGroup* g)
+{
+    if (!sOwnerA || !g->mCullId)
+    {
+        return false;
+    }
+    LLSpatialPartition* part = g->getSpatialPartition();
+    if (!part || part->asBridge() || part->mRenderByGroup)
+    {
+        return false;
+    }
+    const U32 type = part->mPartitionType;
+    return type == LLViewerRegion::PARTITION_BRIDGE || type == LLViewerRegion::PARTITION_AVATAR || type == LLViewerRegion::PARTITION_CONTROL_AV;
+}
+static inline bool ll_loopa_owned_drawable(LLDrawable* d)
+{
+    return sOwnerA && d && (d->isSpatialBridge() || d->isAvatar());
+}
+
 void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
 {
     if(drawablep && !drawablep->isDead())
@@ -5699,6 +5721,101 @@ void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
         }
 
         drawablep->setVisible(camera);
+    }
+}
+
+// stage 9: what loop (a) did for the avatars' drawables and the bridges, from the avatars and the bridges themselves. A drawable is marked when its group is a drawable group (render by drawable) stamped visible for this frame (by the
+// walk, the kept pass or the marking of a bridge's octree) and is not occluded, and markVisible's own rules let it pass; a bridge marks the groups of its octree, which makes the bridges inside it candidates: the bridges go in waves
+// until no new one qualifies, each wave in the order of their groups (the sort's bridge decisions write a group's distance when the group changes between neighbours, so the bridges of one group must stand together). The region
+// groups loop (a) skips that are occluded get their markOccluder here, once.
+void LLPipeline::markVisibleOwners(LLCamera& camera)
+{
+    LL_CPU_ZONE("stateSort: avatar and bridge owners");
+    const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
+    const bool occ = useOcclusion() > 1;
+    static std::vector<LLSpatialGroup*> occluded;
+    occluded.clear();
+    const auto listed = [&](LLSpatialGroup* g)
+    {
+        return g && !g->isDead() && g->getSpatialPartition() && !g->getSpatialPartition()->mRenderByGroup && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame;
+    };
+    const auto occluded_group = [&](LLSpatialGroup* g)
+    {
+        if (!(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+        {
+            return false;
+        }
+        if (ll_loopa_owned_group(g) && std::find(occluded.begin(), occluded.end(), g) == occluded.end())
+        {
+            occluded.push_back(g);
+        }
+        return true;
+    };
+    U32 n_av = 0, n_br = 0, waves = 0;
+    const U32 list_br0 = sCull->getVisibleBridgeSize(), list_d0 = sCull->getVisibleListSize();
+    for (LLCharacter* c : LLCharacter::sInstances)
+    {
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
+        if (!d || d->isDead())
+        {
+            continue;
+        }
+        LLSpatialGroup* g = d->getSpatialGroup();
+        if (!listed(g) || occluded_group(g))
+        {
+            continue;
+        }
+        markVisible(d, camera);
+        ++n_av;
+    }
+    static std::vector<LLSpatialBridge*> pending, ready;
+    pending.assign(LLSpatialBridge::allBridges().begin(), LLSpatialBridge::allBridges().end());
+    while (!pending.empty())
+    {
+        ready.clear();
+        size_t keep = 0;
+        for (LLSpatialBridge* b : pending)
+        {
+            LLSpatialGroup* g = b->isDead() ? nullptr : b->getSpatialGroup();
+            if (!listed(g))
+            {
+                pending[keep++] = b;        // (a later wave may stamp its group: it is inside a bridge that is not marked yet)
+            }
+            else if (!occluded_group(g))
+            {
+                ready.push_back(b);
+            }
+        }
+        pending.resize(keep);
+        if (ready.empty())
+        {
+            break;
+        }
+        std::stable_sort(ready.begin(), ready.end(), [](LLSpatialBridge* a, LLSpatialBridge* b) { return a->getSpatialGroup() < b->getSpatialGroup(); });
+        for (LLSpatialBridge* b : ready)
+        {
+            markVisible(b, camera);
+            ++n_br;
+        }
+        ++waves;
+    }
+    for (LLSpatialGroup* g : occluded)
+    {
+        markOccluder(g);
+    }
+    static U64 sorts = 0, t_av = 0, t_br = 0, t_waves = 0, t_occ = 0, t_list_br = 0, t_list_d = 0;
+    t_list_br += sCull->getVisibleBridgeSize() - list_br0;
+    t_list_d += sCull->getVisibleListSize() - list_d0;
+    ++sorts;
+    t_av += n_av;
+    t_br += n_br;
+    t_waves += waves;
+    t_occ += occluded.size();
+    if (sorts % 600 == 0)
+    {
+        const double n = (double)sorts;
+        LL_DIAG("VkAvOwner") << "avatar and bridge owners' pass, per sort over " << sorts << ": avatar drawables marked " << t_av / n << ", bridges marked " << t_br / n << " in " << t_waves / n << " waves, listed in the visible bridge list " << t_list_br / n << " and the visible drawable list " << t_list_d / n << ", occluded region groups " << t_occ / n << LL_ENDL;
     }
 }
 
@@ -6363,7 +6480,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); i != read.endDrawableGroups(); ++i)
         {
             LLSpatialGroup* g = *i;
-            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
+            if (!g->isDead() && !ll_loopa_owned_group(g) && (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || g->hizNeedsMainThread())) return false;
         }
         for (LLCullResult::sg_iterator i = read.beginVisibleGroups(); i != read.endVisibleGroups(); ++i)
         {
@@ -6377,7 +6494,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     // the body of the first loop for one group, and of the third: the same on a chunk and in the serial passes below
     auto first_loop_body = [&](LLSpatialGroup* group)
     {
-        if (group->isDead())
+        if (group->isDead() || ll_loopa_owned_group(group))
         {
             return;
         }
@@ -6391,7 +6508,11 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             group->setVisible();
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
-                markVisible((LLDrawable*)(*i)->getDrawable(), camera);
+                LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
+                if (!ll_loopa_owned_drawable(drawablep))
+                {
+                    markVisible(drawablep, camera);
+                }
             }
             sort_rebuild_mesh(group);
         }
@@ -6515,6 +6636,10 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         std::vector<SortDelta>* saved_sink = sSortSink;
         sSortJournal = journal;
         sSortSink = &ledger_x;
+        if (sOwnerA)
+        {
+            markVisibleOwners(camera);      // (stage 9: the avatars' drawables and the bridges, after the groups that are not theirs: the groups their marking adds stand beyond n_dg)
+        }
         for (U32 k = n_dg; k < read.getDrawableGroupsSize(); ++k)
         {
             first_loop_body(read.beginDrawableGroups()[k]);
@@ -6853,10 +6978,14 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("checkOcclusionAndRebuildMesh");
         LL_CPU_ZONE("stateSort: drawable groups (occlusion + rebuild)");
+    if (sOwnerA)
+    {
+        markVisibleOwners(camera);
+    }
     for (LLCullResult::sg_iterator iter = read.beginDrawableGroups(); iter != read.endDrawableGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
-        if (group->isDead())
+        if (group->isDead() || ll_loopa_owned_group(group))
         {
             continue;
         }
@@ -6881,7 +7010,10 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-                markVisible(drawablep, camera);
+                if (!ll_loopa_owned_drawable(drawablep))
+                {
+                    markVisible(drawablep, camera);
+                }
                 if (sVisSortOn)
                 {
                     ++LLVisCensus::sSortMarkVisN;
@@ -6996,6 +7128,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 
     const View view = currentView(camera, false);
     sVisSortOn = LLVisCensus::sOn && view.isMainWorldSort();
+    sOwnerA = view.isMainWorldSort() && !gCubeSnapshot;        // stage 9: the avatar and bridge owners' pass makes loop (a)'s lists of the avatars' drawables and the bridges
     struct VisSortEnd
     {
         U64 mT0;
@@ -7135,6 +7268,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         LL_CPU_ZONE("stateSort: pool fill");
         fillPools(*sCull, nullptr);       // <FS> stage 2b: a view that is not the main view's deferred one fills the pools from its cull result
     }
+    sOwnerA = false;
 }
 
 // <FS> after the shadow passes (which reset the pool face lists and fill them with their own): the lists of the main view, as the sort that ran before them would have made them
@@ -8294,66 +8428,6 @@ void ll_lod_cand_refresh();                                             // stage
 void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void ll_lod_cand_report();
 
-// stage 9 compare (LL_VK_DIAG=1 only, nothing changes): what the avatar owner's list says is visible, against what loop (a) of the sort listed. For every avatar (LLCharacter::sInstances): its drawable is in the visible
-// drawable list when its group is stamped visible this frame and is not occluded (markVisible takes it); each attachment's bridge is in the visible bridge list when the rule of markVisible (ll_attachment_bridge_hidden)
-// lets it pass and its own group is stamped visible and not occluded. Bridges that setVisible's gate (avatarGateOpen) closes are counted apart: they are listed by markVisible and not marked by setVisible.
-static void ll_av_owner_compare(LLCullResult& cull)
-{
-    if (!ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender())
-    {
-        return;
-    }
-    static std::unordered_set<const LLDrawable*> real_d;
-    static std::unordered_set<const LLSpatialBridge*> real_b;
-    real_d.clear();
-    real_b.clear();
-    for (LLCullResult::drawable_iterator d = cull.beginVisibleList(); d != cull.endVisibleList(); ++d) real_d.insert(*d);
-    for (LLCullResult::bridge_iterator b = cull.beginVisibleBridge(); b != cull.endVisibleBridge(); ++b) real_b.insert(*b);
-    const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
-    const bool occ = LLPipeline::useOcclusion() > 1;
-    const auto group_visible = [&](LLSpatialGroup* g) { return g && !g->isDead() && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)); };
-    static U64 sorts = 0, av_n = 0, av_both = 0, av_owner_only = 0, av_real_only = 0, br_n = 0, br_both = 0, br_owner_only = 0, br_real_only = 0, br_gate_closed = 0, real_b_total = 0, real_b_listed_here = 0, no_drawable = 0;
-    ++sorts;
-    real_b_total += real_b.size();
-    for (LLCharacter* c : LLCharacter::sInstances)
-    {
-        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
-        if (!av || av->isDead() || !av->mDrawable || av->mDrawable->isDead())
-        {
-            ++no_drawable;
-            continue;
-        }
-        ++av_n;
-        const bool owner = group_visible(av->mDrawable->getSpatialGroup());
-        const bool real = real_d.count(av->mDrawable.get()) != 0;
-        av_both += owner && real;
-        av_owner_only += owner && !real;
-        av_real_only += !owner && real;
-    }
-    for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
-    {
-        if (b->isDead())
-        {
-            continue;
-        }
-        ++br_n;
-        const bool b_owner = !ll_attachment_bridge_hidden(b) && group_visible(b->getSpatialGroup());
-        const bool b_real = real_b.count(b) != 0;
-        br_both += b_owner && b_real;
-        br_owner_only += b_owner && !b_real;
-        br_real_only += !b_owner && b_real;
-        br_gate_closed += b_real && !b->avatarGateOpen();
-    }
-    real_b_listed_here = br_both;
-    if (sorts % 300 == 0)
-    {
-        const double n = (double)sorts;
-        LL_DIAG("VkAvOwner") << "avatar owner list against loop (a), per sort over " << sorts << ": avatars " << av_n / n << " (no drawable " << no_drawable / n << "), their drawable listed by both " << av_both / n << ", owner only " << av_owner_only / n
-                             << ", loop (a) only " << av_real_only / n << " | all bridges " << br_n / n << ", listed by both " << br_both / n << ", owner only " << br_owner_only / n << ", loop (a) only " << br_real_only / n
-                             << " (listed and setVisible's gate closed " << br_gate_closed / n << ") | the visible bridge list holds " << real_b_total / n << ", of which the owner list also names " << real_b_listed_here / n << LL_ENDL;
-    }
-}
-
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8361,7 +8435,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     if (view.isMainWorldSort() && !gCubeSnapshot)
     {
         fs_blink_detect(camera, *sCull);
-        ll_av_owner_compare(*sCull);       // stage 9 (diagnostics only)
     }
     const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     struct VisPostEnd

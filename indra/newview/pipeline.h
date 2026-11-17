@@ -254,6 +254,7 @@ public:
 
     // Object related methods
     void        markVisible(LLDrawable *drawablep, LLCamera& camera);
+    void        markVisibleOwners(LLCamera& camera);       // <FS> stage 9: the avatar and bridge owners' pass of the main view's sort (loop (a) for the avatars' drawables and the bridges)
     void        markOccluder(LLSpatialGroup* group);
 
     void        doOcclusion(LLCamera& camera);
