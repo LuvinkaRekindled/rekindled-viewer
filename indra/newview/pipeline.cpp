@@ -15046,10 +15046,14 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     // the counters (a line every 300 passes, tag VkAvCover) count, per partition, the non-empty groups inside the frustum that the pass will not mark.
     {
         static const bool cover_av = getenv("LL_VK_COVER_AV") != nullptr;
-        static const bool recent_on = cover_av && !(getenv("LL_VK_COVER_AV_RECENT") && atoi(getenv("LL_VK_COVER_AV_RECENT")) == 0);       // (on with the switch: 0 turns it off, for the counters' before)
-        if (cover_av && !own_bits)
+        // <FS> 2026-11-16 (the plan, stage 8 finished): the recent list is for every covered partition of the main view, not only the avatar ones: a group made or moved in the last frames is in the walk's list the frame it is made and in
+        // the worker's set 1 to 3 frames later (the compare of the kept set has shown about 2 groups a frame the walk keeps and the set does not). LL_VK_KEPT_RECENT=0 turns it off (for the counters' before).
+        static const bool main_recent = !(getenv("LL_VK_KEPT_RECENT") && atoi(getenv("LL_VK_KEPT_RECENT")) == 0);
+        static const bool recent_on = main_recent && !(getenv("LL_VK_COVER_AV_RECENT") && atoi(getenv("LL_VK_COVER_AV_RECENT")) == 0);
+        if ((cover_av || main_recent) && !own_bits)
         {
-            static U64 passes = 0, in_frustum[3] = {}, missing[3] = {}, missing_recent[3] = {}, supplemented = 0;
+            static U64 passes = 0, in_frustum[4] = {}, missing[4] = {}, missing_recent[4] = {}, supplemented = 0;
+            LL_CPU_ZONE("updateCull: kept pass recent groups");
             std::lock_guard<std::mutex> lock(sCullMutex);
             const U32 now = (U32)gFrameCount;
             const U32 n = (U32)sSlotGroup.size();
@@ -15061,9 +15065,14 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                 for (const auto& e : sRecent)
                 {
                     const U32 slot = e.mSlot;
-                    if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && cull_av_region((LLSpatialGroup*)sSlotGroup[slot]) && !in_set(slot) && !added.count(slot))
+                    if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
                     {
                         LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                        LLSpatialPartition* gpart = g->getSpatialPartition();
+                        if (!gpart || gpart->asBridge() || !ll_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones, and the avatar, bridge and animated object ones with LL_VK_COVER_AV)
+                        {
+                            continue;
+                        }
                         const LLVector4a* bb = g->getBounds();
                         if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
                         {
@@ -15079,12 +15088,12 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             for (U32 slot = 0; ll_diag_on() && slot < n; ++slot)       // (the counters walk every slot: 0.3 ms a frame, LL_VK_DIAG=1 only)
             {
                 LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
-                if (!g || g->isDead() || g->isEmpty() || !cull_av_region(g))
+                if (!g || g->isDead() || g->isEmpty() || !g->getSpatialPartition() || g->getSpatialPartition()->asBridge() || !ll_cull_derived_covers(g->getSpatialPartition()))
                 {
                     continue;
                 }
                 const U32 pi = g->getSpatialPartition()->mPartitionType;
-                const U32 t = pi == LLViewerRegion::PARTITION_AVATAR ? 0u : (pi == LLViewerRegion::PARTITION_BRIDGE ? 1u : 2u);
+                const U32 t = pi == LLViewerRegion::PARTITION_AVATAR ? 0u : (pi == LLViewerRegion::PARTITION_BRIDGE ? 1u : (pi == LLViewerRegion::PARTITION_CONTROL_AV ? 2u : 3u));
                 const LLVector4a* bb = g->getBounds();
                 if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
                 {
@@ -15100,9 +15109,9 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             if (passes % 300 == 0 && ll_diag_on())
             {
                 const double f = (double)passes;
-                LL_INFOS("VkAvCover") << "avatar, bridge and animated object region groups, per pass over " << passes << " (avatar | bridge | animated object): non-empty groups in the frustum " << in_frustum[0] / f << " | " << in_frustum[1] / f << " | " << in_frustum[2] / f
-                                      << ", not marked by the pass " << missing[0] / f << " | " << missing[1] / f << " | " << missing[2] / f << ", of those with a row made or changed in the last 3 frames " << missing_recent[0] / f << " | " << missing_recent[1] / f << " | " << missing_recent[2] / f
-                                      << "; added from the recent list " << supplemented / f << " a pass (LL_VK_COVER_AV_RECENT " << (recent_on ? 1 : 0) << ")" << LL_ENDL;
+                LL_INFOS("VkAvCover") << "covered partitions' groups, per pass over " << passes << " (avatar | bridge | animated object | the ordinary partitions): non-empty groups in the frustum (the plain box test) " << in_frustum[0] / f << " | " << in_frustum[1] / f << " | " << in_frustum[2] / f << " | " << in_frustum[3] / f
+                                      << ", not marked by the pass " << missing[0] / f << " | " << missing[1] / f << " | " << missing[2] / f << " | " << missing[3] / f << ", of those with a row made or changed in the last 3 frames " << missing_recent[0] / f << " | " << missing_recent[1] / f << " | " << missing_recent[2] / f << " | " << missing_recent[3] / f
+                                      << "; added from the recent list " << supplemented / f << " a pass (LL_VK_KEPT_RECENT " << (recent_on ? 1 : 0) << ")" << LL_ENDL;
             }
         }
     }
