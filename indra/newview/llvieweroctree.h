@@ -301,8 +301,6 @@ public:
     U32         mCullId = 0;                // slot + 1 in the table (0: none)
     bool        mCullDirty = false;         // in the list of rows to refresh
     U32         mCullFirstSerial = 0;
-    U32         mCullCpuStamp = 0;
-    U32         mCullUseStamp = 0;          // C2: the last frame the flat version kept it
 
 };//LL_ALIGN_POSTFIX(16);
 

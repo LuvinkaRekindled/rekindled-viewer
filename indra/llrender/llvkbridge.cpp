@@ -46,10 +46,7 @@ void LLVkBridge::textureNeedStats(U64& t, U64& r) { t = r = 0; }
 void LLVkBridge::textureNeedReading(U32, F32) {}
 void LLVkBridge::textureNeedForget(U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
-S32 LLVkBridge::cullRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::lateListPublish(U32, U32, const U32*) {}
-void LLVkBridge::visibleListPublish(U32, U32, const U32*) {}
-U32 LLVkBridge::visibleListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
 U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
 U32 LLVkBridge::lateListRead(U32, U32&, U32*, U32) { return 0; }
@@ -60,9 +57,6 @@ std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() {
 bool LLVkBridge::viewRequest(U32, U32, const CullParams&) { return false; }
 std::shared_ptr<const LLVkBridge::ViewSet> LLVkBridge::viewSetRead(U32) { return nullptr; }
 void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet>) {}
-void LLVkBridge::cullDone(U32) {}
-void LLVkBridge::cullSetResults(const U32*, U32) {}
-void LLVkBridge::cullPublish(U32, U32) {}
 void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
 bool LLVkBridge::paletteArenaAcquire(U32, PaletteArena&) { return false; }
 void LLVkBridge::paletteArenaRegister(U32, F32*, U64, U32) {}
@@ -1353,11 +1347,6 @@ S32 LLVkBridge::rtSnapTest()
     return rtShadowMode() != 0 ? LLVk::Rt::snapTest() : 0;
 }
 
-S32 LLVkBridge::rtCullUse()
-{
-    return rtShadowMode() != 0 ? LLVk::Rt::cullUse() : -1;
-}
-
 S32 LLVkBridge::rtSunSamples()
 {
     return rtShadowMode() != 0 ? LLVk::Rt::sunSamples() : 0;
@@ -1816,13 +1805,8 @@ void LLVkBridge::textureNeedStats(U64& textures, U64& readings)
     readings = gNeedReadings;
 }
 
-// S7 C1: the cull shadow ring, like the Hi-Z one
 namespace
 {
-std::atomic<U32> gCullPublished[8];
-std::atomic<const U32*> gCullResults{ nullptr };
-std::atomic<U32> gCullCapacity{ 0 };
-std::atomic<U32> gCullDone{ 0 };
 U32 gCullSerial = 0;        // main thread only
 }
 
@@ -1832,17 +1816,7 @@ U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullR
     {
         return 0;
     }
-    const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
-    if (capacity && (size_t)cullVariants * ((table_size + 31) / 32) > capacity)
-    {
-        return 0;       // more rows than a slot holds
-    }
-    const U32 serial = gCullSerial + 1;
-    if (serial - gCullDone.load(std::memory_order_acquire) > 6)
-    {
-        return 0;       // the ring would wrap onto a serial that has not been read
-    }
-    gCullSerial = serial;
+    const U32 serial = ++gCullSerial;
     ShadowPacketsHeader header;
     header.mKind = 35;
     header.mEntries = count;
@@ -1863,26 +1837,6 @@ U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullR
     return serial;
 }
 
-S32 LLVkBridge::cullRead(U32 serial, U32 table_size, U32* out)
-{
-    const U32* results = gCullResults.load(std::memory_order_acquire);
-    const U32 capacity = gCullCapacity.load(std::memory_order_relaxed);
-    const size_t words = (size_t)cullVariants * ((table_size + 31) / 32);
-    if (!results || !capacity || words > capacity)
-    {
-        return 0;
-    }
-    const U32 slot = serial % 8;
-    const U32 published = gCullPublished[slot].load(std::memory_order_acquire);
-    if (published == serial)
-    {
-        memcpy(out, results + (size_t)slot * capacity, words * 4);
-        std::atomic_thread_fence(std::memory_order_acquire);
-        return gCullPublished[slot].load(std::memory_order_relaxed) == serial ? 1 : -1;
-    }
-    return published > serial ? -1 : 0;
-}
-
 namespace
 {
 std::mutex gLateMutex;
@@ -1896,33 +1850,6 @@ void LLVkBridge::lateListPublish(U32 frame, U32 table_size, const U32* words)
     gLateWords.assign(words, words + (table_size + 31) / 32);
     gLateFrame = frame;
     gLateTable = table_size;
-}
-
-namespace
-{
-std::mutex gVisMutex;
-std::vector<U32> gVisWords;
-U32 gVisFrame = 0, gVisTable = 0;
-}
-
-void LLVkBridge::visibleListPublish(U32 frame, U32 table_size, const U32* words)
-{
-    std::lock_guard<std::mutex> lock(gVisMutex);
-    gVisWords.assign(words, words + (table_size + 31) / 32);
-    gVisFrame = frame;
-    gVisTable = table_size;
-}
-
-U32 LLVkBridge::visibleListRead(U32 newer_than, U32& frame, U32* words, U32 capacity_words)
-{
-    std::lock_guard<std::mutex> lock(gVisMutex);
-    if (!gVisTable || gVisFrame <= newer_than || gVisWords.size() > capacity_words)
-    {
-        return 0;
-    }
-    memcpy(words, gVisWords.data(), gVisWords.size() * 4);
-    frame = gVisFrame;
-    return gVisTable;
 }
 
 namespace
@@ -2031,25 +1958,6 @@ U32 LLVkBridge::lateListRead(U32 newer_than, U32& frame, U32* words, U32 capacit
     memcpy(words, gLateWords.data(), gLateWords.size() * 4);
     frame = gLateFrame;
     return gLateTable;
-}
-
-void LLVkBridge::cullDone(U32 serial)
-{
-    U32 cur = gCullDone.load(std::memory_order_relaxed);
-    while (serial > cur && !gCullDone.compare_exchange_weak(cur, serial, std::memory_order_release))
-    {
-    }
-}
-
-void LLVkBridge::cullSetResults(const U32* results, U32 capacity_words)
-{
-    gCullCapacity.store(capacity_words, std::memory_order_relaxed);
-    gCullResults.store(results, std::memory_order_release);
-}
-
-void LLVkBridge::cullPublish(U32 slot, U32 serial)
-{
-    gCullPublished[slot % 8].store(serial, std::memory_order_release);
 }
 
 void LLVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
