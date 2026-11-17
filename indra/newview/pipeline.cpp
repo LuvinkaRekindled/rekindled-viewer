@@ -5743,7 +5743,6 @@ namespace
 struct OwnerPass
 {
     std::vector<LLDrawable*> mFirst;                // the avatars' drawables, then the bridges whose group the cull listed, by group
-    std::vector<LLSpatialBridge*> mPending;         // the other bridges: they may be inside a bridge that is not marked yet
     std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (ll_bridge_hiz_collect)
     size_t mAddedFrom = 0;                          // the drawable groups from here on were added by the marking
     U32 mAvatars = 0, mFirstBridges = 0, mListBridges0 = 0, mListDrawables0 = 0, mOccluded = 0;
@@ -5761,7 +5760,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     LL_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
     OwnerPass& o = sOwner;
     o.mFirst.clear();
-    o.mPending.clear();
     o.mBoxBridges.clear();
     o.mAddedFrom = sCull->getDrawableGroupsSize();
     o.mListBridges0 = sCull->getVisibleBridgeSize();
@@ -5798,13 +5796,6 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         o.mFirst.push_back(d);
     }
     o.mAvatars = (U32)o.mFirst.size();
-    for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
-    {
-        if (!b->isDead() && !b->isHizAwaiting() && !ll_attachment_bridge_hidden(b) && b->inViewFor(camera) && !(b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()))
-        {
-            o.mBoxBridges.push_back(b);
-        }
-    }
     // the compare for the bridge owners (LL_VK_DIAG=1): the list as the groups give it (the group stamped visible and not occluded) against the bridge's own test (inViewFor: render type, avatar gate, extents against the frustum and
     // the far sphere, pixel area), both with markVisible's own rule (an impostor's attachments are not marked)
     if (ll_diag_on())
@@ -5867,18 +5858,23 @@ void LLPipeline::ownersCollect(LLCamera& camera)
                                     << " (of those the avatar gate closed " << old_only_gate / n << "), the bridge's own only " << new_only / n << " (its group is occluded " << new_only_occluded / n << ", not stamped this frame " << new_only_unstamped / n << ", none " << new_only_group_none / n << ", HUD attachments " << new_only_hud / n << "); WITH THE BRIDGE'S OWN Hi-Z VERDICT: both " << v_both / n << ", the groups' only " << v_old_only / n << ", the own test's only " << v_new_only / n << "; the verdict hides " << v_hides / n << " a sort, of those the groups list " << v_hides_old_visible / n << "; the unstamped ones (without the verdict): group render by drawable " << by_type_group[0] / n << " by group " << by_type_group[1] / n << ", attachments " << att_unstamped / n << ", group stamped a frame ago " << stamp_cur / n << " older " << stamp_old / n << ", by partition type (terrain 1, voidwater 2, water 3, tree 4, particle 5, grass 6, volume 7, bridge 8, avatar 9, control av 10) " << by_type[1] / n << " " << by_type[2] / n << " " << by_type[3] / n << " " << by_type[4] / n << " " << by_type[5] / n << " " << by_type[6] / n << " " << by_type[7] / n << " " << by_type[8] / n << " " << by_type[9] / n << " " << by_type[10] / n << LL_ENDL;
         }
     }
+    // the bridges: listed by their own test and their own Hi-Z verdict, not by their group in a region octree (stage 9: the groups only gave them the frustum test, which the bridge makes itself, and the hierarchical occlusion, which the
+    // verdict gives); a bridge the impostor rule hides is not listed, a HUD attachment's bridge belongs to the HUD view
     static std::vector<LLSpatialBridge*> ready;
     ready.clear();
     for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
     {
-        LLSpatialGroup* g = b->isDead() ? nullptr : b->getSpatialGroup();
-        if (!ll_owner_group_listed(g, frame))
+        if (b->isDead() || ll_attachment_bridge_hidden(b) || (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()) || !b->inViewFor(camera))
         {
-            o.mPending.push_back(b);        // (a later wave may stamp its group: it is inside a bridge that is not marked yet)
+            continue;
         }
-        else if (!occluded_group(g))
+        if (!b->hizHides())
         {
             ready.push_back(b);
+        }
+        if (!b->isHizAwaiting())
+        {
+            o.mBoxBridges.push_back(b);     // (the box of the next pass: a bridge hidden now is tested again)
         }
     }
     std::stable_sort(ready.begin(), ready.end(), [](LLSpatialBridge* a, LLSpatialBridge* b) { return a->getSpatialGroup() < b->getSpatialGroup(); });
@@ -5953,38 +5949,7 @@ void LLPipeline::ownersFinish(LLCamera& camera)
         }
     };
     added_groups();
-    U32 n_br = o.mFirstBridges, waves = 1;
-    static std::vector<LLSpatialBridge*> ready;
-    while (!o.mPending.empty())
-    {
-        ready.clear();
-        size_t keep = 0;
-        for (LLSpatialBridge* b : o.mPending)
-        {
-            LLSpatialGroup* g = b->isDead() ? nullptr : b->getSpatialGroup();
-            if (!ll_owner_group_listed(g, frame))
-            {
-                o.mPending[keep++] = b;
-            }
-            else if (!(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
-            {
-                ready.push_back(b);         // (an occluded group stays occluded: markNotCulled of a bridge's octree does not look at it again, loop (a) marked it an occluder when it reached the group: added_groups)
-            }
-        }
-        o.mPending.resize(keep);
-        if (ready.empty())
-        {
-            break;
-        }
-        std::stable_sort(ready.begin(), ready.end(), [](LLSpatialBridge* a, LLSpatialBridge* b) { return a->getSpatialGroup() < b->getSpatialGroup(); });
-        for (LLSpatialBridge* b : ready)
-        {
-            markVisible(b, camera);
-            ++n_br;
-        }
-        added_groups();
-        ++waves;
-    }
+    const U32 n_br = o.mFirstBridges, waves = 1;
     // the avatars' own update, after everything is marked (an avatar's visibility looks at its attachments' stamps): whether it is drawn at all (sortAccepts: render type, render distance, visible), its distance, and the LOD update
     // that follows the distance (joint LODs, the mesh data, updateVisibility): what loop (d) of the sort did for them
     for (U32 k = 0; k < o.mAvatars; ++k)
