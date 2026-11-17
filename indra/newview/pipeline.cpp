@@ -8405,14 +8405,25 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
             {
             LL_CPU_ZONE("geometry: drawable groups");
-            for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i)
+            // T5 of doc/vulkan/PLAN-visible-set-owner.md: the groups with GEOM_DIRTY come from the registry of the dirty groups (the events that set the bit add the group), not from a scan of every drawable group the cull kept (rebuildGeom
+            // returned at once for the clean ones, which are nearly all of them). The same stamp rule as the mesh rebuild above: the group is visible to this camera this frame. Compared with the scan over a turning lap (24,000 calls, 181 groups
+            // rebuilt): the registry lacked none; it named 4 terrain groups the scan did not, which another view of the same camera had listed (rebuilt a call earlier).
+            const S32 geom_frame = LLViewerOctreeEntryData::getCurrentFrame();
+            const LLViewerCamera::eCameraID geom_cam = LLViewerCamera::sCurCameraID;
+            const bool geom_occ = LLPipeline::useOcclusion() != 0;
+            static std::vector<LLSpatialGroup*> geom_groups;       // (a rebuild can add to the registry, so the walk is of one copy)
+            geom_groups.clear();
+            for (LLSpatialGroup* group : LLDirtyGroups::snapshot())
             {
-                LLSpatialGroup *group = *i;
-                if (group->isDead())
+                if (!group->isDead() && group->hasState(LLSpatialGroup::GEOM_DIRTY) && !group->getSpatialPartition()->mRenderByGroup && group->getVisible(geom_cam) >= geom_frame
+                    && !(geom_occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
                 {
-                    continue;
+                    geom_groups.push_back(group);
                 }
-                if (!LLPipeline::useOcclusion() || !group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            }
+            for (LLSpatialGroup* group : geom_groups)
+            {
+                if (!group->isDead())
                 {
                     group->rebuildGeom();
                 }
