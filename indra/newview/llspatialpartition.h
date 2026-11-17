@@ -721,7 +721,6 @@ public:
         return removed;
     }
     void pushAlphaGroup(LLSpatialGroup* group);
-    void resetAlphaGroups();        // <FS> stage 6 of doc/vulkan/PLAN-visible-set-owner.md: both alpha lists emptied (the groups the derive names are pushed instead)
     void pushRiggedAlphaGroup(LLSpatialGroup* group);
     void pushOcclusionGroup(LLSpatialGroup* group);
     void pushDrawableGroup(LLSpatialGroup* group);
