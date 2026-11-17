@@ -624,6 +624,11 @@ public:
     // stage 9 (3.2): the rectangle select's candidates from the bridges by the registry (what the region octrees' select walk gave through setVisible(camera, results, true)): the bridge's root and its children
     static void selectAll(LLCamera& camera, std::vector<LLDrawable*>& results);
     static inline bool sPickSkipBridges = false;
+    // stage 9 (avatars): the avatars by the registry (LLCharacter::sInstances), tested as the octree's check of their entry does (the avatar's rigged attachments, then the avatar itself when sPickAvatar is set); the region octrees give no
+    // avatar while sPickSkipAvatars is set. avatar_partition_only: only the avatars of the avatar partition (what the avatar pass of the pick walked), not the animated objects'
+    static LLDrawable* lineSegmentIntersectAvatars(bool avatar_partition_only, const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
+                                                   S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent);
+    static inline bool sPickSkipAvatars = false;
     // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (ll_bridge_hiz_collect),
     // the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the bridge is hidden by it while the verdict is recent and its extents still lie inside the box it was made for
     /*virtual*/ void hizResult(bool occluded) override;

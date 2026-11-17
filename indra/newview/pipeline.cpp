@@ -20591,6 +20591,7 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
     // stage 9 (3.2): the bridges (worn attachments, animesh parts, linked objects of the bridge partitions) are tested by the registry below, not through the region octrees (the second, avatar pass found nothing in them
     // that the first did not: an avatar is never inside a bridge)
     LLSpatialBridge::sPickSkipBridges = true;
+    LLSpatialBridge::sPickSkipAvatars = true;       // stage 9 (avatars): the avatars too are tested by the registry below
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
             iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
@@ -20620,6 +20621,12 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
         }
     }
     if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAll(false, start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
+    {
+        drawable = hit;
+        local_end = position;
+    }
+    LLSpatialBridge::sPickSkipAvatars = false;
+    if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAvatars(false, start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
     {
         drawable = hit;
         local_end = position;
@@ -20663,49 +20670,39 @@ LLViewerObject* LLPipeline::lineSegmentIntersectInWorld(const LLVector4a& start,
 
         //check against avatars
         sPickAvatar = true;
-        for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
-                iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+        // stage 9 (avatars): the avatar pass tests the avatars of the avatar partition by the registry, not through the region octrees
+        if (LLDrawable* hit = LLSpatialBridge::lineSegmentIntersectAvatars(true, start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent))
         {
-            LLViewerRegion* region = *iter;
+            LLVector4a delta;
+            delta.setSub(position, local_end);
 
-            LLSpatialPartition* part = region->getSpatialPartition(LLViewerRegion::PARTITION_AVATAR);
-            if (part && hasRenderType(part->mDrawableType))
-            {
-                LLDrawable* hit = part->lineSegmentIntersect(start, local_end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, &position, tex_coord, normal, tangent);
-                if (hit)
+            if (!drawable ||
+                !drawable->getVObj()->isAttachment() ||
+                delta.getLength3().getF32() > ATTACHMENT_OVERRIDE_DIST)
+            { //avatar overrides if previously hit drawable is not an attachment or
+              //attachment is far enough away from detected intersection
+                drawable = hit;
+                local_end = position;
+            }
+            else
+            { //prioritize attachments over avatars
+                position = local_end;
+
+                if (face_hit)
                 {
-                    LLVector4a delta;
-                    delta.setSub(position, local_end);
-
-                    if (!drawable ||
-                        !drawable->getVObj()->isAttachment() ||
-                        delta.getLength3().getF32() > ATTACHMENT_OVERRIDE_DIST)
-                    { //avatar overrides if previously hit drawable is not an attachment or
-                      //attachment is far enough away from detected intersection
-                        drawable = hit;
-                        local_end = position;
-                    }
-                    else
-                    { //prioritize attachments over avatars
-                        position = local_end;
-
-                        if (face_hit)
-                        {
-                            *face_hit = local_face_hit;
-                        }
-                        if (tex_coord)
-                        {
-                            *tex_coord = local_texcoord;
-                        }
-                        if (tangent)
-                        {
-                            *tangent = local_tangent;
-                        }
-                        if (normal)
-                        {
-                            *normal = local_normal;
-                        }
-                    }
+                    *face_hit = local_face_hit;
+                }
+                if (tex_coord)
+                {
+                    *tex_coord = local_texcoord;
+                }
+                if (tangent)
+                {
+                    *tangent = local_tangent;
+                }
+                if (normal)
+                {
+                    *normal = local_normal;
                 }
             }
         }
