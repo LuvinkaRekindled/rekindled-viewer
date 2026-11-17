@@ -242,10 +242,7 @@ void LLSpatialGroup::clearDrawMap()
     mGeoServedTris = 0;
     mGeoAllServed = false;
     ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::touch(this);          // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map row shows the fragment, the handle and the surface area
-    }
+    LLCullShadow::touch(this);          // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map row shows the fragment, the handle and the surface area
 }
 
 bool LLSpatialGroup::isHUDGroup() const
@@ -520,10 +517,7 @@ void LLSpatialGroup::rebuildGeom()
         {
             gPipeline.markMeshDirty(this);
         }
-        if (LLCullShadow::sOn)
-        {
-            LLCullShadow::touch(this);      // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the rebuild changed the surface area, the fragment, the handle
-        }
+        LLCullShadow::touch(this);      // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the rebuild changed the surface area, the fragment, the handle
     }
 }
 

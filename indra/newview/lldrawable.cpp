@@ -1633,10 +1633,7 @@ void LLSpatialBridge::updateSpatialExtents()
     pos.setAdd(newMin,newMax);
     pos.mul(0.5f);
     updateBinRadius();
-    if (LLCullShadow::sOn)
-    {
-        LLCullShadow::touchBridge(this);        // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups hold world boxes made with its matrix
-    }
+    LLCullShadow::touchBridge(this);        // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups hold world boxes made with its matrix
 }
 
 bool LLSpatialBridge::sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance)
