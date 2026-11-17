@@ -610,6 +610,12 @@ public:
     F32 mConsMin[3] = { 0.f, 0.f, 0.f }, mConsMax[3] = { 0.f, 0.f, 0.f };
     virtual void updateBinRadius();
     virtual void setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* results = NULL, bool for_select = false);
+    // stage 9 of doc/vulkan/PLAN-visible-set-owner.md: setVisible's avatar gate as a function of the bridge: an attachment's bridge is not marked when its avatar is not visible, was not seen within a
+    // frame, is an impostor (outside an impostor pass) or is not fully loaded; every other bridge passes
+    bool avatarGateOpen() const;
+    // stage 9: every live bridge (made by the constructor, dropped by the destructor; the main thread makes and destroys them): the bridge owner's list
+    static const std::vector<LLSpatialBridge*>& allBridges() { return sAll; }
+    static std::vector<LLSpatialBridge*> sAll;
     virtual void updateDistance(LLCamera& camera_in, bool force_update);
     virtual void makeActive();
     virtual void move(LLDrawable *drawablep, LLSpatialGroup *curp, bool immediate = false);

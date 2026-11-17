@@ -1558,6 +1558,8 @@ LLSpatialPartition* LLDrawable::getSpatialPartition()
 // Spatial Partition Bridging Drawable
 //=======================================
 
+std::vector<LLSpatialBridge*> LLSpatialBridge::sAll;
+
 LLSpatialBridge::LLSpatialBridge(LLDrawable* root, bool render_by_group, U32 data_mask, LLViewerRegion* regionp) :
     LLDrawable(root->getVObj(), true),
     LLSpatialPartition(data_mask, render_by_group, regionp)
@@ -1565,6 +1567,7 @@ LLSpatialBridge::LLSpatialBridge(LLDrawable* root, bool render_by_group, U32 dat
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
     mOcclusionEnabled = false;
     mBridge = this;
+    sAll.push_back(this);
     mDrawable = root;
     root->setSpatialBridge(this);
 
@@ -1588,6 +1591,7 @@ LLSpatialBridge::LLSpatialBridge(LLDrawable* root, bool render_by_group, U32 dat
 
 LLSpatialBridge::~LLSpatialBridge()
 {
+    sAll.erase(std::remove(sAll.begin(), sAll.end(), this), sAll.end());
     if (mEntry)
     {
         if (LLSpatialGroup* group = getSpatialGroup())
@@ -1823,17 +1827,8 @@ public:
     }
 };
 
-void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* results, bool for_select)
+bool LLSpatialBridge::avatarGateOpen() const
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
-
-    if (!gPipeline.hasRenderType(mDrawableType))
-    {
-        return;
-    }
-
-
-    //HACK don't draw attachments for avatars that haven't been visible in more than a frame
     LLViewerObject *vobj = mDrawable->getVObj();
     if (vobj && vobj->isAttachment() && !vobj->isHUDAttachment())
     {
@@ -1858,7 +1853,7 @@ void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* 
                 }
                 else
                 {
-                    return;
+                    return false;
                 }
             }
 
@@ -1867,9 +1862,27 @@ void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* 
                 impostor ||
                 !loaded)
             {
-                return;
+                return false;
             }
         }
+    }
+    return true;
+}
+
+void LLSpatialBridge::setVisible(LLCamera& camera_in, std::vector<LLDrawable*>* results, bool for_select)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
+
+    if (!gPipeline.hasRenderType(mDrawableType))
+    {
+        return;
+    }
+
+
+    //HACK don't draw attachments for avatars that haven't been visible in more than a frame
+    if (!avatarGateOpen())
+    {
+        return;
     }
 
 
