@@ -158,7 +158,6 @@ public:
     //  specific_attachment - specific attachment to profile, or nullptr to profile entire avatar
     void generateImpostor(LLVOAvatar* avatar, bool preview_avatar = false, bool for_profile = false, LLViewerObject* specific_attachment = nullptr);
 
-    void bindScreenToTexture();
     void renderFinalize();
     void copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget* dst);
     void generateLuminance(LLRenderTarget* src, LLRenderTarget* dst);
@@ -262,8 +261,6 @@ public:
     void        doOcclusion(LLCamera& camera);
     void        markNotCulled(LLSpatialGroup* group, LLCamera &camera);
     // <FS> C4.5 R2: what markNotCulled did for a member of a retained set that the retained set does not already hold: the list it goes on and the occlusion test (a replay), and for a group that just joined the set its wake and its distance
-    void        replayMember(LLSpatialGroup* group, U8 kind, bool occlude);
-    void        replayAdopted(LLSpatialGroup* group, LLCamera& camera, bool world);
     void        replayMemberShadow(LLSpatialGroup* group, U8 kind);        // a sun cascade's cull: the lists (and the LOD list) markNotCulled fills, nothing else
     void        markMoved(LLDrawable *drawablep, bool damped_motion = false);
     void        markShift(LLDrawable *drawablep);
@@ -340,7 +337,6 @@ public:
     void rebuildPriorityGroups();
     void rebuildGroups();
     void clearRebuildGroups();
-    void clearRebuildDrawables();
 
     //calculate pixel area of given box from vantage point of given camera
     static F32 calcPixelArea(LLVector3 center, LLVector3 size, LLCamera& camera);
@@ -877,8 +873,6 @@ public:
     S32                      mDebugSculptUploadCost;
     S32                      mDebugMeshUploadCost;
 
-    std::atomic<S32>         mNumVisibleFaces;      // (<FS> the chunks of the parallel sort add to it)
-
     S32                     mPoissonOffset;
 
     static S32              sCompiles;
@@ -1286,7 +1280,6 @@ protected:
     LLPointer<LLViewerFetchedTexture>   mFaceSelectImagep;
 
     U32                     mLightMask;
-    U32                     mLightMovingMask;
 
     // <FS:Beq> Add snapshot guides as part of UI rendering to avoid issues in compositor
     struct SnapshotGuideState

@@ -132,6 +132,7 @@ private:
     virtual void startThread(void);
     virtual void endThread(void);
     virtual void threadedUpdate(void);
+    virtual bool hasThreadedUpdate() const { return false; }        // (a thread that overrides threadedUpdate says so: updateQueue posts it only then)
 
 protected:
     handle_t generateHandle();

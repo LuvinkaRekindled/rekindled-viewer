@@ -386,7 +386,6 @@ LLVivoxVoiceClient::LLVivoxVoiceClient() :
 #endif
 
 
-    gIdleCallbacks.addFunction(idle, this);
 }
 
 //---------------------------------------------------
@@ -727,10 +726,6 @@ void LLVivoxVoiceClient::setLoginInfo(
         LL_INFOS("Voice") << "Inferring account server based on SIP URI Host name: "
                           << mVoiceAccountServerURI << LL_ENDL;
     }
-}
-
-void LLVivoxVoiceClient::idle(void* user_data)
-{
 }
 
 //=========================================================================

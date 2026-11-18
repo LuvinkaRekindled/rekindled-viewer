@@ -5494,8 +5494,9 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 }
 
 // the worker side of a record of deferred geometry draws (diffusePullV.glsl): the draw's matrices are in the record, its textures get slots in the bindless table
-static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged = false, bool indexed = false, bool alpha = false)
+static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged)       // (kind 32 only: the transient alpha draws; a rigged record is drawn indexed)
 {
+    const bool indexed = rigged;
     struct GeoGpu
     {
         U32 mPositions[2]; U32 mNormals[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mIndices[2]; U32 mTangents[2]; U32 mTexcoords1[2]; U32 mTexcoords2[2];
@@ -5556,7 +5557,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette id, joints), the palettes are in the frame's shared list
     const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
-    const U32 texmat_count = !alpha ? h.mFragment : 0;       // S6.6b: kinds 3 / 25 / 26 carry the texture matrices of their draws after the matrices (kind 32: its own layout below)
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(176 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -5610,15 +5610,8 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         g.mFirst = e.mFirstIndex;
         g.mModel = e.mMatrix;
         g.mFlags = e.mFlags;
-        if (alpha)
-        {
-            g.mPad[0] = e.mPad3;                                // S5f F3: the texture matrix (0 = none)
-            g.mPad[1] = e.mPbrRow;                              // ... the PBR row
-        }
-        else if (texmat_count)
-        {
-            g.mPad[0] = e.mPad3;                                // S6.6b: the texture matrix of the draw (0 = none)
-        }
+        g.mPad[0] = e.mPad3;                                    // S5f F3: the texture matrix (0 = none)
+        g.mPad[1] = e.mPbrRow;                                  // ... the PBR row
         memcpy(&g.mPad2, &e.mEmissiveOffset, sizeof(U32));       // ... the emissive array (the glow draw; S6 X2: the glow pass's own draws too)
         if (!rigged && e.mWeightOffset)
         {
@@ -5687,23 +5680,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setInts("ll_packet_table", table_words, 2);
     program->setInts("ll_packet_models", models_words, 2);
-    if (texmat_count && program->hasUniform("ll_packet_texmats"))
-    {
-        // S6.6b: the texture matrices of the draws of this record (number 0 = identity)
-        const F32* texmat_src = matrices + 44 * (size_t)h.mMatrices;
-        Renderer::ScratchAlloc texmats = r.allocVertexScratch(64 * ((size_t)texmat_count + 1));
-        if (!texmats.mPtr || !texmats.mAddress)
-        {
-            return;
-        }
-        F32* tm = (F32*)texmats.mPtr;
-        LLVkTexAnim::writeSlot0(tm);
-        memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
-        const U64 texmats_address = (U64)texmats.mAddress;
-        const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
-        program->setInts("ll_packet_texmats", texmats_words, 2);
-    }
-    if (alpha)
     {
         // S5f F3: the record's texture matrices (number 0 = identity) and PBR rows, in scratch memory of their own
         const U32 texmat_count = h.mFragment, pbr_count = h.mPaletteFloats;
@@ -6005,309 +5981,6 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     sDraws += h.mEntries;
     sDrawsTotal += h.mEntries;
 }
-
-// <FS> Avatar motion vectors (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of rigged draws for the velocity pass (kind 8, avatarVelocityPullV.glsl). Entries as kind 2
-// (ShadowSkinEntry; no model matrices), then the palettes of this frame, then the palettes of the frame before, at the same offsets. The viewer sets the other uniforms the normal way.
-static void on_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
-{
-    struct VelocityGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mPrevPalette[2]; U32 mFirst, mJoints; };
-    static_assert(sizeof(VelocityGpu) == 48, "velocity packet entry");
-    static thread_local VertexInput vi_cache;
-    static thread_local std::vector<U32> used_cache, packet_used;
-    static thread_local std::vector<U32> counts;
-    static thread_local std::vector<Buf*> velocity_index_buffers;
-    VertexInput& vi = vi_cache;
-    vi.mBindings.clear();
-    vi.mAttributes.clear();
-    used_cache.clear();
-    packet_used.clear();
-
-    Renderer& r = Renderer::instance();
-    Program* program = r.getProgram();
-    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
-    {
-        ++sStats.mNoProgram;
-        return;
-    }
-    const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
-    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(VelocityGpu) * (size_t)h.mEntries);
-    if (!table.mPtr || !table.mAddress)
-    {
-        return;
-    }
-    // (the entries name their palettes by id: the frame's kind 40 pairs, this frame's table and last frame's)
-    const bool ids_this_frame = gFrameState.mPalFrame == h.mViewerFrame && gFrameState.mPalIdFrame == h.mViewerFrame;
-    const U64 frame_now = Context::instance().getFrameNumber();
-    counts.assign(h.mEntries, 0);
-    velocity_index_buffers.assign(h.mEntries, nullptr);
-    VelocityGpu* out = (VelocityGpu*)table.mPtr;
-    for (U32 i = 0; i < h.mEntries; ++i)
-    {
-        const LLVkBridge::ShadowSkinEntry& e = entries[i];
-        VelocityGpu& g = out[i];
-        memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
-        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
-        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
-        {
-            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
-        }
-        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
-        const U64 wa = pa + e.mWeightOffset;
-        const U64 pal = ids_this_frame ? palette_id_address(e.mPaletteOffset) : 0;
-        if (!pal)
-        {
-            continue;       // no palette in this frame's table: the draw is skipped
-        }
-        U64 prev = palette_id_address_prev(e.mPaletteOffset, h.mViewerFrame);
-        if (!prev)
-        {
-            prev = pal;     // no history (the palette was not in last frame's table): no motion, as an entry whose previous palette is its own
-        }
-        g.mPositions[0] = (U32)pa;
-        g.mPositions[1] = (U32)(pa >> 32);
-        g.mIndices[0] = (U32)ia;
-        g.mIndices[1] = (U32)(ia >> 32);
-        g.mWeights[0] = (U32)wa;
-        g.mWeights[1] = (U32)(wa >> 32);
-        g.mPalette[0] = (U32)pal;
-        g.mPalette[1] = (U32)(pal >> 32);
-        g.mPrevPalette[0] = (U32)prev;
-        g.mPrevPalette[1] = (U32)(prev >> 32);
-        g.mFirst = e.mFirstIndex;
-        g.mJoints = e.mJoints;
-        counts[i] = e.mIndexCount;
-        velocity_index_buffers[i] = ib;
-        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
-        {
-            packet_used.push_back(e.mVertexBuffer);
-            packet_used.push_back(e.mIndexBuffer);
-        }
-    }
-
-    const U64 table_address = (U64)table.mAddress;
-    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
-    // rt-debug.txt velidx=1: the entries are drawn indexed, a run for each index buffer (the hardware reads the indices: the vertex shader runs once for a vertex, not once for each corner of a triangle)
-    const bool indexed_draw = LLVk::Rt::velIdx() != 0;
-    if (program->hasUniform("vel_indexed"))
-    {
-        const S32 flag = indexed_draw ? 1 : 0;
-        program->setInts("vel_indexed", &flag, 1);
-    }
-
-    if (!prepare_draw(vi, used_cache))
-    {
-        return;
-    }
-    ensure_buffers_current(packet_used, 0);
-    r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
-    if (r.bindlessAvailable())
-    {
-        r.bindlessFlush();      // the depth texture the fragment shader reads
-    }
-
-    Renderer::ScratchAlloc commands;
-    const auto& caps = Context::instance().getCaps();
-    if (indexed_draw)
-    {
-        static thread_local std::vector<U32> first_index;
-        first_index.resize(h.mEntries);
-        for (U32 i = 0; i < h.mEntries; ++i)
-        {
-            first_index[i] = entries[i].mFirstIndex;
-        }
-        const U32 drawn = draw_packet_runs(r, h.mEntries, counts.data(), first_index.data(), velocity_index_buffers.data());
-        if (drawn)
-        {
-            if (sStatsEnabled)
-            {
-                sStats.mDone += drawn;
-            }
-        }
-        else
-        {
-            ++sStats.mRendererRefused;
-        }
-        sDraws += h.mEntries;
-        sDrawsTotal += h.mEntries;
-        return;
-    }
-    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
-    {
-        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
-        if (commands.mPtr)
-        {
-            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
-            for (U32 i = 0; i < h.mEntries; ++i)
-            {
-                c[i] = { counts[i], 1u, 0u, i };
-            }
-        }
-    }
-    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
-    {
-        if (sStatsEnabled)
-        {
-            sStats.mDone += h.mEntries;
-        }
-    }
-    else
-    {
-        ++sStats.mRendererRefused;
-    }
-    sDraws += h.mEntries;
-    sDrawsTotal += h.mEntries;
-}
-
-// <FS> Avatar motion vectors, step 1b (doc/vulkan/PLAN-ray-tracing.md, item 6): the worker side of a record of draws that move as a whole (kind 9, objectVelocityPullV.glsl). Entries as the static
-// shadow casters (ShadowPacketEntry), then the model matrices of this frame (mMatrices of them, 16 floats), then the ones of the frame before (same numbers).
-static void on_object_velocity_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
-{
-    struct ObjectGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mFirst, mCount, mModel, mPad; };
-    static_assert(sizeof(ObjectGpu) == 32, "object velocity packet entry");
-    static thread_local VertexInput vi_cache;
-    static thread_local std::vector<U32> used_cache, packet_used;
-    static thread_local std::vector<U32> counts;
-    static thread_local std::vector<Buf*> object_index_buffers;
-    VertexInput& vi = vi_cache;
-    vi.mBindings.clear();
-    vi.mAttributes.clear();
-    used_cache.clear();
-    packet_used.clear();
-
-    Renderer& r = Renderer::instance();
-    Program* program = r.getProgram();
-    if (h.mEntries == 0 || h.mMatrices == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
-    {
-        ++sStats.mNoProgram;
-        return;
-    }
-    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowPacketEntry) * h.mEntries);
-    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(ObjectGpu) * (size_t)h.mEntries);
-    Renderer::ScratchAlloc models = r.allocVertexScratch(128 * (size_t)h.mMatrices);      // this frame's, then last frame's
-    if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
-    {
-        return;
-    }
-    memcpy(models.mPtr, matrices, 128 * (size_t)h.mMatrices);
-    const U64 frame_now = Context::instance().getFrameNumber();
-    counts.assign(h.mEntries, 0);
-    object_index_buffers.assign(h.mEntries, nullptr);
-    ObjectGpu* out = (ObjectGpu*)table.mPtr;
-    for (U32 i = 0; i < h.mEntries; ++i)
-    {
-        const LLVkBridge::ShadowPacketEntry& e = entries[i];
-        ObjectGpu& g = out[i];
-        memset(&g, 0, sizeof(g));
-        Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
-        Buf* ib = packet_buffer_used(e.mIndexBuffer, frame_now);
-        if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
-        {
-            continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
-        }
-        const U64 pa = (U64)vb->mVk.mAddress, ia = (U64)ib->mVk.mAddress;
-        g.mPositions[0] = (U32)pa;
-        g.mPositions[1] = (U32)(pa >> 32);
-        g.mIndices[0] = (U32)ia;
-        g.mIndices[1] = (U32)(ia >> 32);
-        g.mFirst = e.mFirstIndex;
-        g.mCount = e.mIndexCount;
-        g.mModel = e.mMatrix;
-        counts[i] = e.mIndexCount;
-        object_index_buffers[i] = ib;
-        if (packet_used.size() < 2 || packet_used[packet_used.size() - 2] != e.mVertexBuffer || packet_used.back() != e.mIndexBuffer)
-        {
-            packet_used.push_back(e.mVertexBuffer);
-            packet_used.push_back(e.mIndexBuffer);
-        }
-    }
-
-    const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress, prev_address = models_address + 64ull * h.mMatrices;
-    const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
-    const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
-    const S32 prev_words[2] = { (S32)(U32)prev_address, (S32)(U32)(prev_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
-    program->setInts("ll_packet_prev_models", prev_words, 2);
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
-    // rt-debug.txt pktidx=1 (the default): the entries are drawn indexed (see draw_packet_runs)
-    static WorkerDebugKey packet_idx_key = { "pktidx", 1, {} };
-    const bool indexed_draw = worker_debug_key(packet_idx_key) != 0;
-    if (program->hasUniform("object_indexed"))
-    {
-        const S32 flag = indexed_draw ? 1 : 0;
-        program->setInts("object_indexed", &flag, 1);
-    }
-
-    if (!prepare_draw(vi, used_cache))
-    {
-        return;
-    }
-    ensure_buffers_current(packet_used, 0);
-    r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
-    if (r.bindlessAvailable())
-    {
-        r.bindlessFlush();      // the depth texture the fragment shader reads
-    }
-
-    Renderer::ScratchAlloc commands;
-    const auto& caps = Context::instance().getCaps();
-    if (indexed_draw)
-    {
-        static thread_local std::vector<U32> first_index;
-        first_index.resize(h.mEntries);
-        for (U32 i = 0; i < h.mEntries; ++i)
-        {
-            first_index[i] = entries[i].mFirstIndex;
-        }
-        const U32 drawn = draw_packet_runs(r, h.mEntries, counts.data(), first_index.data(), object_index_buffers.data());
-        if (drawn)
-        {
-            if (sStatsEnabled)
-            {
-                sStats.mDone += drawn;
-            }
-        }
-        else
-        {
-            ++sStats.mRendererRefused;
-        }
-        sDraws += h.mEntries;
-        sDrawsTotal += h.mEntries;
-        return;
-    }
-    if (caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance)
-    {
-        commands = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * (size_t)h.mEntries);
-        if (commands.mPtr)
-        {
-            VkDrawIndirectCommand* c = (VkDrawIndirectCommand*)commands.mPtr;
-            for (U32 i = 0; i < h.mEntries; ++i)
-            {
-                c[i] = { counts[i], 1u, 0u, i };
-            }
-        }
-    }
-    if (r.drawPackets(counts.data(), h.mEntries, commands.mPtr ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
-    {
-        if (sStatsEnabled)
-        {
-            sStats.mDone += h.mEntries;
-        }
-    }
-    else
-    {
-        ++sStats.mRendererRefused;
-    }
-    sDraws += h.mEntries;
-    sDrawsTotal += h.mEntries;
-}
-
 
 // <FS> S2 resident fragments (doc/vulkan/S2-handoff.md): the entries of static groups live in a GPU table (the same 32 byte entries the packet shader reads, plus a bounding sphere each), kept by
 // slot; a compute pass tests every entry against the cascade's frustum planes and writes the draw commands (vertex count 0 for the culled ones); the draw is one indirect record. The main thread
@@ -11769,7 +11442,7 @@ void view_request_run(const CullShadowState& s, U32 id, U32 frame, const LLVkBri
 // <FS> 2026-11-17 (doc/vulkan/PLAN-visible-set-owner.md, "off the render thread"): the requests of the cascades, the spot passes and the probe faces are answered on a thread of their own. The render thread was the frame's critical path
 // (95 % busy in the stack lap st2 against 86 % in defaults, the main thread pinned in both; the main thread's pool idle): a kept pass over the whole table for each of about 4 to 6 requests a frame is work it need not do, the answer goes
 // to the viewer a frame or three later whoever makes it. The thread has a table copy of its own: the render thread hands it each delta record (as it applies it to its own copy) and each request, in the order they arrive, so a request sees
-// the table the inline answer saw. LL_VK_DERIVE_THREAD=0 answers inline, as before.
+// the table the inline answer saw.
 struct DeriveThread
 {
     struct Job
@@ -12566,16 +12239,6 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         Rt::updateMaterials((const LLVkBridge::RtMaterialDef*)blob, h.mEntries);
         return;
     }
-    if (h.mKind == 8)
-    {
-        on_velocity_packets(h, blob);
-        return;
-    }
-    if (h.mKind == 9)
-    {
-        on_object_velocity_packets(h, blob);
-        return;
-    }
     if (h.mKind == 27)
     {
         on_palette_segment(h, blob);
@@ -12621,14 +12284,9 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         on_particle_sort(h, blob);   // <FS> GPU particles G1
         return;
     }
-    if (h.mKind == 3 || h.mKind == 25 || h.mKind == 26)
-    {
-        on_geometry_packets(h, blob, h.mKind >= 25, h.mKind == 26);
-        return;
-    }
     if (h.mKind == 32)
     {
-        on_geometry_packets(h, blob, h.mPass == 1, h.mPass == 1, true);       // S5f F3: transient alpha draws (F4: mPass 1 = rigged: indexed draws, palettes of the shared list)
+        on_geometry_packets(h, blob, h.mPass == 1);       // S5f F3: transient alpha draws (F4: mPass 1 = rigged: indexed draws, palettes of the shared list)
         return;
     }
     if (h.mKind == 4)
