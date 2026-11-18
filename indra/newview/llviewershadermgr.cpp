@@ -381,36 +381,6 @@ static bool make_gltf_variants(LLShaderProgram& shader, bool use_sun_shadow)
     return true;
 }
 
-#ifdef SHOW_ASSERT
-// return true if there are no redundant shaders in the given vector
-// also checks for redundant variants
-static bool no_redundant_shaders(const std::vector<LLShaderProgram*>& shaders)
-{
-    std::set<std::string> names;
-    for (LLShaderProgram* shader : shaders)
-    {
-        if (names.find(shader->mName) != names.end())
-        {
-            LL_WARNS("Shader") << "Redundant shader: " << shader->mName << LL_ENDL;
-            return false;
-        }
-        names.insert(shader->mName);
-
-        if (shader->mRiggedVariant)
-        {
-            if (names.find(shader->mRiggedVariant->mName) != names.end())
-            {
-                LL_WARNS("Shader") << "Redundant shader: " << shader->mRiggedVariant->mName << LL_ENDL;
-                return false;
-            }
-            names.insert(shader->mRiggedVariant->mName);
-        }
-    }
-    return true;
-}
-#endif
-
-
 LLViewerShaderMgr::LLViewerShaderMgr() :
     mShaderLevel(SHADER_COUNT, 0),
     mMaxAvatarShaderLevel(0)
@@ -420,54 +390,6 @@ LLViewerShaderMgr::LLViewerShaderMgr() :
 LLViewerShaderMgr::~LLViewerShaderMgr()
 {
     mShaderLevel.clear();
-    mShaderList.clear();
-}
-
-void LLViewerShaderMgr::finalizeShaderList()
-{
-    //ONLY shaders that need WL Param management should be added here
-    mShaderList.push_back(&gAvatarProgram);
-    mShaderList.push_back(&gWaterPullProgram);
-    mShaderList.push_back(&gImpostorProgram);
-    mShaderList.push_back(&gObjectFullbrightAlphaMaskProgram);
-    mShaderList.push_back(&gObjectAlphaMaskNoColorProgram);
-    mShaderList.push_back(&gUnderWaterPullProgram);
-    mShaderList.push_back(&gWaterPullRtProgram);
-    mShaderList.push_back(&gWaterPullRtReflectionProgram);
-    mShaderList.push_back(&gDeferredSunProgram);
-    mShaderList.push_back(&gNativeSunHalfProgram);
-    mShaderList.push_back(&gNativeLightUpsampleProgram);
-    mShaderList.push_back(&gDeferredSunProbeProgram);
-    mShaderList.push_back(&gHazeProgram);
-    mShaderList.push_back(&gWaterHazePullProgram);
-    mShaderList.push_back(&gDeferredSoftenProgram);
-    mShaderList.push_back(&gDeferredRtReflectionProgram);
-    mShaderList.push_back(&gDeferredAvatarAlphaProgram);
-    mShaderList.push_back(&gEnvironmentMapProgram);
-    mShaderList.push_back(&gDeferredWLSkyProgram);
-    mShaderList.push_back(&gDeferredWLCloudProgram);
-    mShaderList.push_back(&gDeferredWLMoonProgram);
-    mShaderList.push_back(&gDeferredWLSunProgram);
-    mShaderList.push_back(&gDeferredPBRAlphaProgram);
-    mShaderList.push_back(&gDeferredPostTonemapProgram);
-    mShaderList.push_back(&gNoPostTonemapProgram);
-    mShaderList.push_back(&gDeferredPostTonemapGammaCorrectProgram);
-    mShaderList.push_back(&gNoPostTonemapGammaCorrectProgram);
-    mShaderList.push_back(&gDeferredPostTonemapLegacyGammaCorrectProgram);
-    mShaderList.push_back(&gNoPostTonemapLegacyGammaCorrectProgram);
-    mShaderList.push_back(&gCASLegacyGammaProgram);
-    mShaderList.push_back(&gDeferredPostGammaCorrectProgram); // for gamma
-    mShaderList.push_back(&gLegacyPostGammaCorrectProgram);
-
-    if (gSavedSettings.getBOOL("GLTFEnabled"))
-    {
-        mShaderList.push_back(&gGLTFPBRMetallicRoughnessProgram);
-    }
-
-    mShaderList.push_back(&gDeferredAvatarProgram);
-
-    // make sure there are no redundancies
-    llassert(no_redundant_shaders(mShaderList));
 }
 
 // static
@@ -522,7 +444,6 @@ void LLViewerShaderMgr::setShaders()
         return;
     }
 
-    mShaderList.clear();
 
     if (!gDeviceCaps.mHasRequirements)
     {
@@ -694,8 +615,6 @@ void LLViewerShaderMgr::setShaders()
         gViewerWindow->setCursor(UI_CURSOR_ARROW);
     }
     gPipeline.createRenderBuffers();
-
-    finalizeShaderList();
 
     reentrance = false;
 }
@@ -3221,15 +3140,5 @@ std::string LLViewerShaderMgr::getShaderDirPrefix(void)
 void LLViewerShaderMgr::updateShaderUniforms(LLShaderProgram * shader)
 {
     LLEnvironment::instance().updateShaderUniforms(shader);
-}
-
-LLViewerShaderMgr::shader_iter LLViewerShaderMgr::beginShaders() const
-{
-    return mShaderList.begin();
-}
-
-LLViewerShaderMgr::shader_iter LLViewerShaderMgr::endShaders() const
-{
-    return mShaderList.end();
 }
 

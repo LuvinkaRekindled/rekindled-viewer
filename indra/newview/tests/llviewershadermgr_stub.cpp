@@ -42,9 +42,6 @@ LLViewerShaderMgr* LLViewerShaderMgr::instance() {
 
     return stub_instance;
 }
-LLViewerShaderMgr::shader_iter fake_iter;
-LLViewerShaderMgr::shader_iter LLViewerShaderMgr::beginShaders() const {return fake_iter;}
-LLViewerShaderMgr::shader_iter LLViewerShaderMgr::endShaders() const {return fake_iter;}
 
 void LLViewerShaderMgr::updateShaderUniforms(LLShaderProgram* shader) {return;}
 std::string LLViewerShaderMgr::getShaderDirPrefix() {return "SHADER_DIR_PREFIX-";}
