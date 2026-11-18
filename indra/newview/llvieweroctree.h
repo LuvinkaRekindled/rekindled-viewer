@@ -318,16 +318,6 @@ struct LLCullCensus
     static void noteOcc(class LLOcclusionCullingGroup* group, bool now_occluded, int source);       // pipeline.cpp
 };
 
-struct LLHizRows
-{
-    // stage 8d (LL_VK_HIZROWS=2): the table's rows are the Hi-Z's boxes and the worker's verdicts, by slot, are applied here (pipeline.cpp, with the table): sHizRows says so
-    static inline const bool sHizRows = []() { const char* e = getenv("LL_VK_HIZROWS"); return e && atoi(e) == 2; }();
-    static void hizRowsState(LLViewerOctreeGroup* group, bool occluded);    // the group's world OCCLUDED state is now this (any setter): the mirror of what is applied follows it
-    static void hizRowsReset(LLViewerOctreeGroup* group);                   // the verdicts that led to the state are out of date (an object was added or moved into the group): two new agreeing verdicts are needed to occlude it again
-    static void hizRowsInvalidate(LLViewerOctreeGroup* group);              // ... and the group is visible at once (hizInvalidate: the old discard of an awaited verdict, made by the event)
-    static void hizRowsApply(const U32* occ, const U32* info, U32 rows, bool stale);      // one batch of the worker's verdicts: word operations, the groups whose state changes are set or cleared
-};
-
 //octree group which has capability to support occlusion culling
 //LL_ALIGN_PREFIX(16)
 class LLOcclusionCullingGroup : public LLViewerOctreeGroup, public LLHizTarget
@@ -365,14 +355,13 @@ public:
     void checkOcclusion(); // a group that asked to be discarded while its verdict was awaited is visible again; a group under an occluded parent is occluded with it
     // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
     void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
-    void hizInvalidate() { mHizStale = true; if (LLHizRows::sHizRows && mCullId) { LLHizRows::hizRowsInvalidate(this); } }       // (only a verdict that is awaited has a discard to make: with none, hizCollect resets the flag before it sends the next box)  // the group changed (an object was added): the verdict awaited, if any, is out of date
+    void hizInvalidate() { mHizStale = true; }       // (only a verdict that is awaited has a discard to make: with none, hizCollect resets the flag before it sends the next box)  // the group changed (an object was added): the verdict awaited, if any, is out of date
     bool hizIsStale() const { return mHizStale; }
     // <FS> an object (its extents) is now in this group: a held occluded verdict of the group or of a group above it was tested without the object, so where the object is outside the box it covered, the
     // verdict says nothing about it. The occluded state is dropped there (this group and the ones above, one node each: the siblings keep theirs) and the next two agreeing verdicts decide again. Without this
     // an object that moved into a group with a held occluded verdict was missing for the 1 to 4 frames the verdict of its new box took. LL_VK_HIZ_ENTRY_OFF=1 = the old behaviour.
     void hizEntryMoved(const LLVector4a* entry_extents);    bool hizNeedsMainThread() const { return mHizStale && isHizAwaiting(); }   // <FS> checkOcclusion would clear the occlusion state of the subtree (the parallel stateSort leaves such a sort to the main thread)
     virtual void hizResult(bool occluded);
-    void hizRowSet(bool occluded);                          // stage 8d: the worker's verdict of the row, applied to this group alone (the agreement of two verdicts is made by LLHizRows::hizRowsApply)
     bool isOcclusionState(U32 state) const { return row().occlusion[LLViewerCamera::sCurCameraID] & state; }
     U32  getOcclusionState() const { return row().occlusion[LLViewerCamera::sCurCameraID];}
 
