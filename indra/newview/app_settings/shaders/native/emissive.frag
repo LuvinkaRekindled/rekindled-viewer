@@ -12,6 +12,6 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     // NOTE: when this shader is used, only alpha is being written to
-    float a = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0.xy).a * vertex_color.a;
+    float a = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0.xy).a * vertex_color.a;
     frag_color = max(vec4(0, 0, 0, a), vec4(0));
 }

@@ -9,13 +9,13 @@ The pass is `class3/deferred/rtReflectionF.glsl` (program "Deferred RT Reflectio
 - the lighting libraries (probes at the hit `sampleProbes` / `sampleProbeAmbient`, `pbrBaseLight`, atmosphere, G-buffer unpack, `tapHeroProbe`).
 
 ## Where the native path stands (read in rkvknative.cpp / rkvkshader.cpp)
-- Stock stages that mention `ll_rt_tlas` get the ray query extension and the set 3 declarations (scene, geometry records `RKRtGeom`, materials `RKRtMaterial`, pins, `ll_rt_tex`) from the loader (rkvkshader.cpp ~1066 and ~1098) and `ProgramInfo::mUsesRt` (the draw binds set 3, rkvkrenderer.cpp ~4071).
+- Stock stages that mention `rk_rt_tlas` get the ray query extension and the set 3 declarations (scene, geometry records `RKRtGeom`, materials `RKRtMaterial`, pins, `rk_rt_tex`) from the loader (rkvkshader.cpp ~1066 and ~1098) and `ProgramInfo::mUsesRt` (the draw binds set 3, rkvkrenderer.cpp ~4071).
 - Native programs (compileNativeProgram) get neither: no ray query extension, no set 3 text, `mUsesRt` stays false; and `nativeOverride` returns the old program for any program with `mUsesRt` ("the ray traced variants are the RT track", rkvknative.cpp ~705). So there is no native ray query shader yet: this pass is the first one, and its library (`native/lib/rt.glsl`) will also serve a native RT sun shadow later.
 - A native pass stands in by manifest line; the old program's uniform values are copied by name into the native one, so the C++ callers do not change.
 
 ## Order of work
 0. **Quick win first (done, uncommitted):** the test views of the hit (hitq 3, 4, 6, 7-15, 17, 18, 22-24) each called the hit function again: five inlined copies of the biggest function in the pass. They are compiled only with `RT_REFL_DEBUG` (environment `LL_VK_RTREFL_DEBUG=1`, permutation added in llviewershadermgr.cpp). The pass the viewer draws with has one call site. Measure the cold compile (PIPEDIAG) against the 29-35 s before.
-1. Loader: native programs that mention `ll_rt_tlas` get the ray query extension, `mUsesRt`, and `nativeOverride` lets a flagged manifest entry through (`rt` marker).
+1. Loader: native programs that mention `rk_rt_tlas` get the ray query extension, `mUsesRt`, and `nativeOverride` lets a flagged manifest entry through (`rt` marker).
 2. `native/lib/rt.glsl`: the set 3 declarations as text (same layouts as the loader's), `rtAlphaHit`, `rtShadowRay`, `rtShadeSurfaceEx`, `rtTraceHitEx` translated line for line (explicit `textureLod`, the rule of feedback-native-shaders-explicit-lod).
 3. `native/rt_reflection.frag` (+ `fullscreen.vert`), manifest family `rtrefl`, pass block members named like the stock uniforms.
 4. Compare old and new (same frame, pixels that differ), compile time (PIPEDIAG), GPU time.

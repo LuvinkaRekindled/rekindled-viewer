@@ -8,8 +8,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;      // the denoiser's output (rgb)
-    uint ll_ti_bumpMap;         // the RT Reflection pass's colour (rgb; a = how much of the pixel was traced)
+    uint rk_ti_diffuseMap;      // the denoiser's output (rgb)
+    uint rk_ti_bumpMap;         // the RT Reflection pass's colour (rgb; a = how much of the pixel was traced)
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -18,8 +18,8 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
-    vec4 orig = texture(ll_tbl2d[LL_HM(ll_ti_bumpMap)], tc);
-    vec3 den = texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], tc).rgb;
+    vec4 orig = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], tc);
+    vec3 den = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], tc).rgb;
     den = max(den, vec3(0.0));
     if (dbg_mode > 2.5)
     {

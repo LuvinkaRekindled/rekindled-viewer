@@ -1276,7 +1276,7 @@ void LLViewerTextureList::updateImages(F32 max_time)
     }
     {
         static U32 calls = 0;
-        if (++calls >= 1800 && ll_diag_on())     // (the summary only prints through LL_DIAG: no scan of the image list when diagnostics are off)
+        if (++calls >= 1800 && rk_diag_on())     // (the summary only prints through LL_DIAG: no scan of the image list when diagnostics are off)
         {
             calls = 0;
             logSummary();
@@ -1395,8 +1395,8 @@ struct FaceLoopPre
     U32 mFacesSeen = 0, mFacesOccluded = 0;
     bool mVolatile = false;
 };
-extern thread_local bool gFSTexPreJob;          // llface.cpp: set while a texture priority job runs
-extern std::atomic<U32> gFSTexPreDirtyReads;    // llface.cpp: dirty joints a job met in calcPixelArea of a rigged face
+extern thread_local bool gRKTexPreJob;          // llface.cpp: set while a texture priority job runs
+extern std::atomic<U32> gRKTexPreDirtyReads;    // llface.cpp: dirty joints a job met in calcPixelArea of a rigged face
 static const FaceLoopPre* sCurrentPre = nullptr;     // main thread: the precomputed loop of the texture being looked at
 static U64 sPreCandidates = 0, sPreComputed = 0, sPreUsed = 0, sPreFrames = 0, sPreEntries = 0;
 
@@ -1978,9 +1978,9 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     // <FS> the share of textures refreshed per frame is 1/FSTextureUpdateDivisor (the viewer default was 20 = 5%)
-    static LLCachedControl<U32> fs_update_divisor(gSavedSettings, "FSTextureUpdateDivisor", 20);
-    static LLCachedControl<U32> fs_burst_divisor(gSavedSettings, "FSTextureUpdateBurstDivisor", 20);
-    static LLCachedControl<F32> fs_burst_seconds(gSavedSettings, "FSTextureUpdateBurstSeconds", 3.f);
+    static LLCachedControl<U32> rk_update_divisor(gSavedSettings, "FSTextureUpdateDivisor", 20);
+    static LLCachedControl<U32> rk_burst_divisor(gSavedSettings, "FSTextureUpdateBurstDivisor", 20);
+    static LLCachedControl<F32> rk_burst_seconds(gSavedSettings, "FSTextureUpdateBurstSeconds", 3.f);
     // The slow rate saves CPU while the view is steady, but new textures then wait a long time for their first request. So the
     // fast (stock) rate is used for a few seconds whenever the view changes: a new region, or the camera has moved or turned
     // noticeably since the last time it was checked.
@@ -2011,22 +2011,22 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             last_region = region;
             last_origin = origin;
             last_at = at;
-            burst_until = now + fs_burst_seconds;
+            burst_until = now + rk_burst_seconds;
         }
         // <FS> a view that has not changed for a while (no new region, camera still) refreshes the textures at a slower rate again: nothing it would find has changed, and the
         // fast rate comes back as soon as the camera moves or turns. LLViewerTextureList::sViewSteady is also read by the object texture priority pass.
-        static LLCachedControl<U32> fs_steady_factor(gSavedSettings, "FSTextureUpdateSteadyFactor", 2);
-        static LLCachedControl<F32> fs_steady_seconds(gSavedSettings, "FSTextureUpdateSteadySeconds", 10.f);
+        static LLCachedControl<U32> rk_steady_factor(gSavedSettings, "FSTextureUpdateSteadyFactor", 2);
+        static LLCachedControl<F32> rk_steady_seconds(gSavedSettings, "FSTextureUpdateSteadySeconds", 10.f);
         static F64 last_change_time = 0.0;
         if (changed || new_textures)
         {
             last_change_time = now;
         }
-        sViewSteady = fs_steady_factor > 1 && now >= burst_until && (now - last_change_time) > fs_steady_seconds;
-        U32 divisor = now < burst_until ? llmin((U32) fs_burst_divisor, (U32) fs_update_divisor) : (U32) fs_update_divisor;
+        sViewSteady = rk_steady_factor > 1 && now >= burst_until && (now - last_change_time) > rk_steady_seconds;
+        U32 divisor = now < burst_until ? llmin((U32) rk_burst_divisor, (U32) rk_update_divisor) : (U32) rk_update_divisor;
         if (sViewSteady)
         {
-            divisor *= llmax((U32) fs_steady_factor, 1u);
+            divisor *= llmax((U32) rk_steady_factor, 1u);
         }
         update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax(divisor, 1u));
     }
@@ -2246,7 +2246,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         const size_t chunks = (entries.size() + chunk - 1) / chunk;
         const std::function<void(size_t)> job = [&](size_t c)
         {
-            struct JobFlag { bool mPrev = gFSTexPreJob; JobFlag() { gFSTexPreJob = true; } ~JobFlag() { gFSTexPreJob = mPrev; } } job_flag;
+            struct JobFlag { bool mPrev = gRKTexPreJob; JobFlag() { gRKTexPreJob = true; } ~JobFlag() { gRKTexPreJob = mPrev; } } job_flag;
             const size_t end = std::min(entries.size(), (c + 1) * chunk);
             for (size_t i = c * chunk; i < end; ++i)
             {
@@ -2264,7 +2264,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         if (++sPreFrames % 3000 == 0)
         {
             LL_INFOS("TexPre") << "texture face loops on the pool, per frame over " << sPreFrames << " frames: " << (double)sPreEntries / sPreFrames << " textures in the slice, " << (double)sPreCandidates / sPreFrames
-                               << " needed a loop, " << (double)sPreComputed / sPreFrames << " computed by jobs, " << (double)sPreUsed / sPreFrames << " used, dirty joints met by the jobs " << gFSTexPreDirtyReads.load() << LL_ENDL;
+                               << " needed a loop, " << (double)sPreComputed / sPreFrames << " computed by jobs, " << (double)sPreUsed / sPreFrames << " used, dirty joints met by the jobs " << gRKTexPreDirtyReads.load() << LL_ENDL;
         }
     }
 

@@ -15,7 +15,7 @@
 #if defined(LL_VULKAN)
 
 #include "rkvkbridge.h"
-#include "llimage.h"            // <FS> fs_sparse_hash (describe_textures)
+#include "llimage.h"            // <FS> rk_sparse_hash (describe_textures)
 #include "rkimagebc7.h"         // <FS> RKImageBC7::lookupLevel (the mip levels of a bake slot that are not what was uploaded)
 #include "rkvknative.h"
 #include "rkvktexanim.h"
@@ -61,8 +61,8 @@
 #include <string>
 #include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
-std::atomic<int> gFsWorkerCpu{ -1 };
-std::atomic<unsigned> gFsWorkerTid{ 0 };
+std::atomic<int> gRkWorkerCpu{ -1 };
+std::atomic<unsigned> gRkWorkerTid{ 0 };
 
 namespace RKVkWorker
 {
@@ -757,7 +757,7 @@ bool ensure_image(Tex& t, RKVkFormat::Target tg, RKVkFormat::Store st, U32 w, U3
         std::chrono::steady_clock::time_point mT0 = std::chrono::steady_clock::now();
         ~CreateTimer()
         {
-            if (!ll_diag_on())
+            if (!rk_diag_on())
             {
                 return;
             }
@@ -4067,7 +4067,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                 }
                 if (ok && r.readbackCompressedMip(t.mImage, 0, 0, blocks))
                 {
-                    const U64 h = fs_sparse_hash(blocks.data(), blocks.size());
+                    const U64 h = rk_sparse_hash(blocks.data(), blocks.size());
                     char hb[160];
                     snprintf(hb, sizeof(hb), " | GPU level 0: %zu bytes hash %llx, the upload's %llx: %s", blocks.size(), (unsigned long long)h, (unsigned long long)finest[i], h == finest[i] ? "SAME" : "DIFFERENT");
                     text += hb;
@@ -4120,7 +4120,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                         lv += " L" + std::to_string(k) + " readback failed";
                         continue;
                     }
-                    const U64 gpu_hash = fs_sparse_hash(blocks.data(), blocks.size());
+                    const U64 gpu_hash = rk_sparse_hash(blocks.data(), blocks.size());
                     const bool same = gpu_hash == level_hashes[i][k];
                     lv += " L" + std::to_string(k) + (same ? " same" : " DIFFERENT");
                     if (!same)
@@ -5375,8 +5375,8 @@ static void on_shadow_alpha_packets(const RKVkBridge::ShadowPacketsHeader& h, co
         const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
         program->setFloatsAt(program->packetUniforms().mTexmats, reinterpret_cast<const F32*>(texmats_words), 2, 1);
     }
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
-    program->setFloats("ll_target_width", &h.mTargetWidth, 1);
+    program->setMatrices("rk_view_proj", h.mViewProj, 4, 4, 1);
+    program->setFloats("rk_target_width", &h.mTargetWidth, 1);
     // rt-debug.txt pktidx=1 (the default): the entries are drawn indexed (see draw_packet_runs)
     static WorkerDebugKey packet_idx_key = { "pktidx", 1, {} };
     const bool indexed_draw = worker_debug_key(packet_idx_key) != 0;
@@ -5888,7 +5888,7 @@ static void on_shadow_skin_packets(const RKVkBridge::ShadowPacketsHeader& h, con
             program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
         }
     }
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    program->setMatrices("rk_view_proj", h.mViewProj, 4, 4, 1);
     // rt-debug.txt shadowidx=1 (the default): the entries are drawn indexed, a run for each index buffer (the hardware reads the indices: the vertex shader runs once for a vertex, not once for each corner of a triangle)
     static WorkerDebugKey shadow_idx_key = { "shadowidx", 1, {} };
     const bool indexed_draw = worker_debug_key(shadow_idx_key) != 0;
@@ -7361,8 +7361,8 @@ static void alpha_res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* b
             program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
         }
     }
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
-    program->setFloats("ll_target_width", &h.mTargetWidth, 1);
+    program->setMatrices("rk_view_proj", h.mViewProj, 4, 4, 1);
+    program->setFloats("rk_target_width", &h.mTargetWidth, 1);
     if (program->hasUniform("shadow_alpha_indexed"))
     {
         const S32 flag = 1;
@@ -7854,7 +7854,7 @@ static void res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
         }
     }
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    program->setMatrices("rk_view_proj", h.mViewProj, 4, 4, 1);
     if (!prepare_draw(vi, used_cache))
     {
         return;
@@ -8050,7 +8050,7 @@ bool geo_timed()
 bool geo_stale_check_on()
 {
     // a diagnostic (LL_VK_DIAG=1, or LL_VK_SCENE_GEO_STALECHECK=1): the events are the mechanism and the check found nothing in 40 laps (millions of fragments looked at); about 27 us of a prepare. =0 turns it off in a diagnostic run.
-    static const bool on = getenv("LL_VK_SCENE_GEO_STALECHECK") ? getenv("LL_VK_SCENE_GEO_STALECHECK")[0] != '0' : ll_diag_on();
+    static const bool on = getenv("LL_VK_SCENE_GEO_STALECHECK") ? getenv("LL_VK_SCENE_GEO_STALECHECK")[0] != '0' : rk_diag_on();
     return on;
 }
 U64 geo_ns(const std::chrono::steady_clock::time_point& since)
@@ -10191,7 +10191,7 @@ void on_light_volumes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // kind 41: the avatar impostors of a deferred pass. Blob: mEntries x ImpostorQuadRow (the GL names of the three images become this frame's bindless slots). The program is the viewer's "Deferred Impostor
-// Shader", which has no table of its own: only its native stand-in (impostor.vert / impostor.frag, which declares ll_impostor_table) draws; with the family off or the stand-in not built nothing is drawn and the
+// Shader", which has no table of its own: only its native stand-in (impostor.vert / impostor.frag, which declares rk_impostor_table) draws; with the family off or the stand-in not built nothing is drawn and the
 // first such record is logged. One draw of 6 vertices a row, the row chosen by the instance.
 void on_impostor_quads(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -10209,7 +10209,7 @@ void on_impostor_quads(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         if (!told)
         {
             told = true;
-            LL_WARNS("VkScene") << "avatar impostors are not drawn: the program '" << program->getName() << "' has no ll_impostor_table (its native stand-in is off or not built: native_gbuffer, impostor.vert)" << LL_ENDL;
+            LL_WARNS("VkScene") << "avatar impostors are not drawn: the program '" << program->getName() << "' has no rk_impostor_table (its native stand-in is off or not built: native_gbuffer, impostor.vert)" << LL_ENDL;
         }
         ++sStats.mNoProgram;
         return;
@@ -11479,7 +11479,7 @@ bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* v
             own_out->push_back(s.mMap[slot].mHandle);       // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
         }
     }
-    if (ll_diag_on())
+    if (rk_diag_on())
     {
         flash_watch(s, P, occlusion, hide_limit, type_mask, memo, bridge_marked, vis_words, d.mDerived - derived_before);
     }
@@ -11750,7 +11750,7 @@ void on_cull_rows(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // <FS> GPU particles G1 (doc/vulkan/PLAN-gpu-particles-gpu-sort.md): the sort of the particle record stores. One workgroup a store (at most 1024 records): the position of each record at the frame's clock
 // (the laws of RKViewerPartRecord::evaluate, the bounce as a floor only: it is an order, not a picture), its key (class, then distance along the camera's at axis, back to front), a bitonic sort in shared
-// memory, and the order of the slots written 16 bits each to the store's index buffer. The draws read it (alphaPullV.glsl, ll_particle_corner, flags & 32).
+// memory, and the order of the slots written 16 bits each to the store's index buffer. The draws read it (alphaPullV.glsl, rk_particle_corner, flags & 32).
 static const char* kParticleSortShader = R"GLSL(
 #version 450
 #extension GL_EXT_buffer_reference : require
@@ -11782,7 +11782,7 @@ uvec2 addr(uvec2 base, uint off)
     return uvec2(lo, base.y + carry);
 }
 
-// the vertical motion above a floor at height 0 with the bounce of RKViewerPartRecord::evaluate (fs_bounce_z in llviewerpartsim.cpp): the flights between the bounces
+// the vertical motion above a floor at height 0 with the bounce of RKViewerPartRecord::evaluate (rk_bounce_z in llviewerpartsim.cpp): the flights between the bounces
 void bounce_z(float z0, float v0, float a, float age, out float z_out, out float v_out)
 {
     float z = z0, v = v0, left = age;
@@ -12502,7 +12502,7 @@ void on_shadow_packets_impl(const RKVkBridge::ShadowPacketsHeader& h, const U8* 
             program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
         }
     }
-    program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
+    program->setMatrices("rk_view_proj", h.mViewProj, 4, 4, 1);
 
     if (!prepare_draw(vi, used_cache))
     {
@@ -12869,8 +12869,8 @@ void after_frame()
             }
         }
     }
-    gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
-    gFsWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
+    gRkWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
+    gRkWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
     RKVk::Context::instance().arenaPrepareTick();        // <FS> LL_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
     std::lock_guard<RKVkBridge::Mutex> lock(gMutex);
     if (sUiDiff)

@@ -34,7 +34,7 @@ bool is_flag(float data, float flag)
     return abs(data - flag) < 0.1;
 }
 
-#define G_TAP(slot) ll_tbl2d[LL_HM(slot)]
+#define G_TAP(slot) rk_tbl2d[LL_HM(slot)]
 
 // how much of the sky's ambient light the occlusion takes away: occluded places get the sky's light through the occlusion matrix, free ones keep it
 vec3 adjust_irradiance(vec3 irradiance, float ambocc)
@@ -49,12 +49,12 @@ vec3 adjust_irradiance(vec3 irradiance, float ambocc)
 void main()
 {
     const vec2 tc = vary_fragcoord;
-    const float depth = texture(G_TAP(ll_ti_depthMap), tc).r;
-    const vec4 albedo = texture(G_TAP(ll_ti_diffuseRect), tc);
-    const vec4 normal_info = texture(G_TAP(ll_ti_normalMap), tc);
+    const float depth = texture(G_TAP(rk_ti_depthMap), tc).r;
+    const vec4 albedo = texture(G_TAP(rk_ti_diffuseRect), tc);
+    const vec4 normal_info = texture(G_TAP(rk_ti_normalMap), tc);
     const float flag = normal_info.w;
 #ifdef HAS_EMISSIVE
-    const vec3 emissive = texture(G_TAP(ll_ti_emissiveRect), tc).rgb;
+    const vec3 emissive = texture(G_TAP(rk_ti_emissiveRect), tc).rgb;
 #else
     const vec3 emissive = vec3(0.0);
 #endif
@@ -77,14 +77,14 @@ void main()
         return;
     }
 
-    const vec3 pos = ll_view_pos(inv_proj, tc, depth);
-    const vec3 norm = ll_decode_normal(normal_info.xy);
+    const vec3 pos = rk_view_pos(inv_proj, tc, depth);
+    const vec3 norm = rk_decode_normal(normal_info.xy);
     // (explicit level 0 from here on: the sky pixels have returned, so the flow differs between neighbouring pixels and an implicit level is undefined; none of these textures has a level chain)
-    const vec4 spec = textureLod(G_TAP(ll_ti_specularRect), tc, 0.0);
+    const vec4 spec = textureLod(G_TAP(rk_ti_specularRect), tc, 0.0);
     // the lightmap (red: the sun's shadow, green: the ambient occlusion) is made by the lighting pass only with sun shadows (SUN_SHADOW) or ambient occlusion (HAS_SSAO), the viewer's global defines;
     // with neither, nothing is read: no shadow takes the sun and nothing is occluded
 #if defined(SUN_SHADOW) || defined(HAS_SSAO)
-    const vec2 lightmap = textureLod(G_TAP(ll_ti_lightMap), tc, 0.0).rg;
+    const vec2 lightmap = textureLod(G_TAP(rk_ti_lightMap), tc, 0.0).rg;
 #else
     const vec2 lightmap = vec2(1.0);
 #endif
@@ -198,7 +198,7 @@ void main()
         if (rt_glossy_reflections != 0)
         {
             // the traced reflection of the RT Reflection pass replaces the probe result where it hit
-            const vec4 rt_refl = textureLod(G_TAP(ll_ti_rtReflMap), tc, 0.0);
+            const vec4 rt_refl = textureLod(G_TAP(rk_ti_rtReflMap), tc, 0.0);
             if (rt_glossy_reflections >= 3)
             {
                 dbg_trace = rt_refl.a == 0.0 ? 0 : (rt_refl.a > 0.5 ? 2 : 1);
@@ -254,7 +254,7 @@ void main()
 #endif
         if (rt_glossy_reflections != 0)
         {
-            const vec4 rt_refl = textureLod(G_TAP(ll_ti_rtReflMap), tc, 0.0);
+            const vec4 rt_refl = textureLod(G_TAP(rk_ti_rtReflMap), tc, 0.0);
             if (rt_glossy_reflections >= 3)
             {
                 dbg_trace = rt_refl.a == 0.0 ? 0 : (rt_refl.a > 0.5 ? 2 : 1);
@@ -306,7 +306,7 @@ void main()
                 const float fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
                 const float gtdenom = 2.0 * nh;
                 const float gt = max(0.0, min(gtdenom * nv / vh, gtdenom * nl / vh));
-                const float lobe = scol * fres * textureLod(G_TAP(ll_ti_lightFunc), vec2(nh, glossiness), 0.0).r * gt / (nh * nl);
+                const float lobe = scol * fres * textureLod(G_TAP(rk_ti_lightFunc), vec2(nh, glossiness), 0.0).r * gt / (nh * nl);
                 color += lit * lobe * sun_light * specular.rgb;
             }
             apply_gloss_env(color, glossenv, specular, pos, norm);

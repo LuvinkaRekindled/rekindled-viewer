@@ -1,5 +1,5 @@
 /**
- * @file llwebrtc_winplayout.h
+ * @file rkwebrtc_winplayout.h
  * @brief Windows voice playout through a normal media stream
  *
  * <FS> Rekindled. libwebrtc's own Windows playout opens its render stream as a communications stream.

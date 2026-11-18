@@ -213,8 +213,8 @@ void LLViewerJointMesh::uploadJointMatrices()
             // updatePaletteHistory) and the camera matrices of both frames. Not in the shadow, impostor and probe renders (their targets have no motion attachment).
             if (mMesh && mMesh->hasWeights() && mPaletteComputed && mPaletteFrame == gFrameCount && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
             {
-                extern bool ll_motion_fold_uniforms(RKShaderProgram* program);
-                if (ll_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr))
+                extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
+                if (rk_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr))
                 {
                     static LLStaticHashedString palette_world_s("matrixPaletteWorld"), palette_prev_s("matrixPalettePrev");
                     RKShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_world_s, 45, mWorldPalette);
@@ -625,11 +625,11 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
 
         if (RKShaderProgram::sCurBoundShaderPtr && RKShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
-            ll_pull_draw_range(buff, offset, count);        // S6.6d
+            rk_pull_draw_range(buff, offset, count);        // S6.6d
         }
         else
         {
-            ll_pool_draw_dropped("avatar body part (skinned)", 1);        // (the old direct draw is gone: no pull program bound)
+            rk_pool_draw_dropped("avatar body part (skinned)", 1);        // (the old direct draw is gone: no pull program bound)
         }
     }
     else
@@ -639,11 +639,11 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
         if (RKShaderProgram::sCurBoundShaderPtr && RKShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
-            ll_pull_draw_range(buff, offset, count);        // S6.6d
+            rk_pull_draw_range(buff, offset, count);        // S6.6d
         }
         else
         {
-            ll_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull program bound)
+            rk_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull program bound)
         }
         RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }

@@ -11,13 +11,13 @@ layout(location = 2) out vec2 screenpos;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
     const uint index = pull_index(row);
     const vec3 position = RowVec4(row.positions).v[index].xyz;
     const vec2 texcoord0 = RowVec2(row.texcoords).t[index];
     const vec4 diffuse_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
-    const mat4 texture_matrix0 = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 texture_matrix0 = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
 
     //transform vertex
     vec4 pos = model.mvp * vec4(position, 1.0);

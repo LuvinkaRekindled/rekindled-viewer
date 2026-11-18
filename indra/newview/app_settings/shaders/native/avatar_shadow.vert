@@ -21,7 +21,7 @@ layout(location = 0) out vec2 vary_texcoord0;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
     const uint at = row.first + uint(gl_VertexIndex);
     uint index = at;
     if ((row.flags & 4u) == 0u)

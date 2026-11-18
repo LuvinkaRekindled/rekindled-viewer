@@ -11,7 +11,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_depthMap;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -159,8 +159,8 @@ vec4 sampleReflectionProbesDebug(vec3 pos)
 void main()
 {
     vec2  tc           = vary_fragcoord.xy;
-    float depth        = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tc.xy).r;
-    vec4  pos          = vec4(ll_view_pos(inv_proj, tc, depth), 1.0);
+    float depth        = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc.xy).r;
+    vec4  pos          = vec4(rk_view_pos(inv_proj, tc, depth), 1.0);
 
     frag_color = max(sampleReflectionProbesDebug(pos.xyz), vec4(0));
 }

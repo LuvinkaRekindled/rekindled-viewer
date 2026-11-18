@@ -7,7 +7,7 @@
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };
 
 layout(location = 0) in vec3 vary_position;
@@ -27,7 +27,7 @@ void main()
 {
     frag_velocity = vec2(1.0, 0.0);
     mirror_clip(vary_position);
-    const vec4 col = texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], vary_texcoord0);
+    const vec4 col = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0);
     if (col.a < minimum_alpha)
     {
         discard;

@@ -1,8 +1,8 @@
 // shadow.glsl: the sun (or moon) shadow of a surface from the four cascades. Used by the sun lightmap pass and by the lit transparent surfaces, so both see the same shadow.
-// The includer declares: shadow_matrix[6], shadow_clip, shadow_res, shadow_bias, shadow_offset, sun_dir, moon_dir, sun_up_factor, and the shadow samplers ll_ti_shadow_shadowMap0 .. 3 (sampler2DShadow slots).
+// The includer declares: shadow_matrix[6], shadow_clip, shadow_res, shadow_bias, shadow_offset, sun_dir, moon_dir, sun_up_factor, and the shadow samplers rk_ti_shadow_shadowMap0 .. 3 (sampler2DShadow slots).
 // jitter is a number that changes from row to row of the screen (the sample column is snapped to the shadow texels with a jitter that follows it, so the snapping does not show as lines).
 
-#define SHADOW_MAP(slot) ll_tbl2dshadow[LL_HM(slot)]
+#define SHADOW_MAP(slot) rk_tbl2dshadow[LL_HM(slot)]
 
 #ifdef SUN_SHADOW
 // one cascade: five taps with the weights 4 + 1 + 1 + 1 + 1 over 8
@@ -38,26 +38,26 @@ float sun_shadow(vec3 pos, vec3 norm, float jitter)
     if (spos.z < near_split.z)
     {
         const float w = 1.0 - max(spos.z - far_split.z, 0.0) / transition.z;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap3, shadow_matrix[3] * spos, jitter) * w;
+        shadow += pcf_sun(rk_ti_shadow_shadowMap3, shadow_matrix[3] * spos, jitter) * w;
         weight += w;
         shadow += max((pos.z + shadow_clip.z) / (shadow_clip.z - shadow_clip.w) * 2.0 - 1.0, 0.0);      // the farthest cascade fades out towards the far clip
     }
     if (spos.z < near_split.y && spos.z > far_split.z)
     {
         const float w = 1.0 - max(spos.z - far_split.y, 0.0) / transition.y - max(near_split.z - spos.z, 0.0) / transition.z;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap2, shadow_matrix[2] * spos, jitter) * w;
+        shadow += pcf_sun(rk_ti_shadow_shadowMap2, shadow_matrix[2] * spos, jitter) * w;
         weight += w;
     }
     if (spos.z < near_split.x && spos.z > far_split.y)
     {
         const float w = 1.0 - max(spos.z - far_split.x, 0.0) / transition.x - max(near_split.y - spos.z, 0.0) / transition.y;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap1, shadow_matrix[1] * spos, jitter) * w;
+        shadow += pcf_sun(rk_ti_shadow_shadowMap1, shadow_matrix[1] * spos, jitter) * w;
         weight += w;
     }
     if (spos.z > far_split.x)
     {
         const float w = 1.0 - max(near_split.x - spos.z, 0.0) / transition.x;
-        shadow += pcf_sun(ll_ti_shadow_shadowMap0, shadow_matrix[0] * spos, jitter) * w;
+        shadow += pcf_sun(rk_ti_shadow_shadowMap0, shadow_matrix[0] * spos, jitter) * w;
         weight += w;
     }
     return shadow / weight;

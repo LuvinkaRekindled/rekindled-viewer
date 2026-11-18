@@ -73,7 +73,7 @@ namespace
     } sHero;
 }
 
-std::string fs_hero_probe_report(double frames)
+std::string rk_hero_probe_report(double frames)
 {
     const HeroCensus& h = sHero;
     std::string text = llformat(", hero probe over %.0f frames: update ran %llu, a mirror picked in %llu (%llu worn by another or self; %.0f m away on average), mirror changes %llu; renderProbes called %llu, skipped: Mirrors setting off %llu, probes off %llu, teleport or startup %llu, no mirror %llu, occluded %llu; rendered faces in %llu",
@@ -412,7 +412,7 @@ void LLHeroProbeManager::renderProbes()
                 const LLVector3 origin(mProbes[0]->mOrigin);
                 face_near = llmax(near_clip, 0.5f * fabsf((origin - mMirrorPosition) * mMirrorNormal));
             }
-            if (ll_mirror_planar())
+            if (rk_mirror_planar())
             {
                 // the planar mirror: one reflected view (the size set by RenderHeroProbeResolution) every `rate + 1` frames, 6 at the most (RenderHeroProbeUpdateRate: 1 Ultra every 2nd frame, 2 High every 3rd, 3 Medium every 4th, 6 Low every 6th); the glass reads it
                 // (heroMipCount < 0) and keeps showing the last one in between; the cube is not rendered
@@ -578,7 +578,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     }
 }
 
-bool ll_mirror_planar()
+bool rk_mirror_planar()
 {
     // on by default since 2026-11-11 (Adam: "looks good"); LL_VK_MIRROR_PLANAR=0 goes back to the cube faces, whose code stays for as long as the planar mirror has not proven itself
     static const bool on = []() { const char* e = getenv("LL_VK_MIRROR_PLANAR"); return !e || atoi(e) != 0; }();
@@ -648,7 +648,7 @@ void LLHeroProbeManager::updateUniforms()
 
     llassert(mMipChain.size() <= size_t(S32_MAX));
     // <FS> the planar mirror: a negative mip count tells the shaders to read mirrorView at the pixel's own position instead of the cube (no change to the uniform block)
-    mHeroData.heroMipCount = ll_mirror_planar() ? -1 : S32(mMipChain.size());
+    mHeroData.heroMipCount = rk_mirror_planar() ? -1 : S32(mMipChain.size());
 }
 
 void LLHeroProbeManager::renderDebug()

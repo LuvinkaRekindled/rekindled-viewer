@@ -1,7 +1,7 @@
 // alpha_pbr_preview.vert: the vertex stage of the material preview's glTF blend program ("Deferred PBR Alpha Shader": the floater that edits a glTF material draws a sphere with it): the vertex buffer's own attributes
 // and the draw's loose matrices, texture transforms and material factors, with the outputs of alpha_pbr.vert (alpha_pbr.frag reads them: the same fragment shader as the scene's glTF blend surfaces). A translation of
 // the attribute path of "Deferred PBR Alpha Shader" (deferred/pbralphaV.glsl): the transform of a coordinate and of the tangent space is lib/gltf.glsl's (the stock texture_transform and tangent_space_transform, in
-// the form the table rows of the pull program use: tr0 = scale and rotation, tr1 = offset). The textures are the draw's (ll_ti_diffuseMap ...): the slots are passed to the fragment stage as the table's rows do.
+// the form the table rows of the pull program use: tr0 = scale and rotation, tr1 = offset). The textures are the draw's (rk_ti_diffuseMap ...): the slots are passed to the fragment stage as the table's rows do.
 // Defines (the manifest line): ALPHA_LIT, ALPHA_PROBES, ALPHA_PBR, PBR_PREVIEW.
 
 #include "alpha_pass.inc"
@@ -48,7 +48,7 @@ void main()
     vary_normal = n;
     vertex_color = diffuse_color;
 
-    vary_slots = uvec4(ll_ti_diffuseMap, ll_ti_bumpMap, ll_ti_specularMap, ll_ti_emissiveMap);
+    vary_slots = uvec4(rk_ti_diffuseMap, rk_ti_bumpMap, rk_ti_specularMap, rk_ti_emissiveMap);
     vary_emissive = emissiveColor;
     vary_factors = vec2(roughnessFactor, metallicFactor);
 }

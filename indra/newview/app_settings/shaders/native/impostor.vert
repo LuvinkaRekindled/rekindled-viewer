@@ -5,7 +5,7 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_impostor_table;
+    uvec2 rk_impostor_table;
 };
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
@@ -21,7 +21,7 @@ layout(location = 3) flat out uint vary_slot_specular;
 
 void main()
 {
-    ImpostorRows rows = ImpostorRows(ll_impostor_table);
+    ImpostorRows rows = ImpostorRows(rk_impostor_table);
     const uint base = uint(gl_InstanceIndex) * 3u;
     const vec4 a = rows.v[base];
     const vec4 b = rows.v[base + 1u];

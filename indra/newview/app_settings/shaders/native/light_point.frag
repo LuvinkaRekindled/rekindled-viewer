@@ -21,8 +21,8 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     const vec2 uv = gl_FragCoord.xy / screen_res;
-    const float depth = textureLod(LV_TAP(ll_ti_depthMap), uv, 0.0).r;
-    const vec3 pos = ll_view_pos(inv_proj, uv, depth);
+    const float depth = textureLod(LV_TAP(rk_ti_depthMap), uv, 0.0).r;
+    const vec3 pos = rk_view_pos(inv_proj, uv, depth);
 
     const float size = vary_light_b.w;
     const vec3 lv = vary_light_b.xyz - pos;
@@ -32,7 +32,7 @@ void main()
         discard;
     }
 
-    LightSurface s = light_surface_geometry(textureLod(LV_TAP(ll_ti_normalMap), uv, 0.0), pos);
+    LightSurface s = light_surface_geometry(textureLod(LV_TAP(rk_ti_normalMap), uv, 0.0), pos);
     if (!s.pbr && dot(s.n, lv) <= 0.0)
     {
         discard;

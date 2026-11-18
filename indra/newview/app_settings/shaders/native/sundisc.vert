@@ -10,12 +10,12 @@ layout(location = 1) out float sun_fade;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
     const uint index = pull_index(row);
     const vec3 position = RowVec4(row.positions).v[index].xyz;
     const vec2 texcoord0 = RowVec2(row.texcoords).t[index];
-    const mat4 texture_matrix0 = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 texture_matrix0 = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
 
     //transform vertex
     vec3 offset = vec3(0, 0, 50);

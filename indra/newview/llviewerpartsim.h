@@ -124,7 +124,7 @@ struct RKViewerPartRecord
 };
 
 // the stepping's interpolations as they are written there (start * (1 - f) + end * f, a channel at a time), so the closed form and the stepping agree to the last bit
-inline LLColor4 fs_part_color_at(const LLColor4& start, const LLColor4& end, F32 f)
+inline LLColor4 rk_part_color_at(const LLColor4& start, const LLColor4& end, F32 f)
 {
     LLColor4 c;
     for (int k = 0; k < 4; ++k)
@@ -134,7 +134,7 @@ inline LLColor4 fs_part_color_at(const LLColor4& start, const LLColor4& end, F32
     return c;
 }
 
-inline LLVector2 fs_part_scale_at(const LLVector2& start, const LLVector2& end, F32 f)
+inline LLVector2 rk_part_scale_at(const LLVector2& start, const LLVector2& end, F32 f)
 {
     return LLVector2(start.mV[0] * (1.f - f) + f * end.mV[0], start.mV[1] * (1.f - f) + f * end.mV[1]);
 }

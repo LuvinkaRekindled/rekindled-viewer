@@ -109,13 +109,13 @@ for target in sorted(native):
             sset |= s['set']
         keyissues, drops, other, notes = [], [], [], []
         for key in (conds[target][k] if k < len(conds[target]) else []):
-            if key.startswith('ll_ti_'):
+            if key.startswith('rk_ti_'):
                 if key[6:] not in n['s']:
                     keyissues.append('%s (a sampler: the native program has no sampler of that name)' % key)
             elif key not in n['u']:
                 keyissues.append('%s (not declared in the native program)' % key)
         keys = set(k2 for k2 in (conds[target][k] if k < len(conds[target]) else []))
-        drops = sorted(x for x in sset if x not in n['u'] and x not in n['s'] and not x.startswith('ll_ti_') and x not in broadcast and x not in keys)
+        drops = sorted(x for x in sset if x not in n['u'] and x not in n['s'] and not x.startswith('rk_ti_') and x not in broadcast and x not in keys)
         mism = sorted('%s (%s vs %s)' % (x, su[x], n['u'][x]) for x in n['u'] if x in su and su[x] != n['u'][x])
         if mism:
             other.append('type mismatch: ' + ', '.join(mism))

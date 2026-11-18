@@ -51,7 +51,7 @@ void main()
     mirror_clip(vary_position);
     water_clip(vary_position);
 
-    const vec4 texel = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+    const vec4 texel = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
 #ifdef ALPHA_MAT
     if ((vary_material & 1u) != 0u)
     {

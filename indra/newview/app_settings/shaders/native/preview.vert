@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 modelview_matrix;
     mat4 projection_matrix;
 #endif
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };
 
 layout(location = 0) in vec3 position;

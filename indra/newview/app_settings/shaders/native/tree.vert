@@ -11,8 +11,8 @@ layout(location = 2) out vec2 vary_texcoord0;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
 
     const uint at = row.first + uint(gl_VertexIndex);
     const uint word = RowWords(row.indices).w[at >> 1];
@@ -26,5 +26,5 @@ void main()
     vary_position = (model.mv * position).xyz;
     vary_normal = normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * normal);
     // the texture matrix is the row's (the old pull program builds it that way: identity when the row has none)
-    vary_texcoord0 = (row_texture_matrix(row, TexMatTable(ll_packet_texmats)) * vec4(RowVec2(row.texcoords).t[index], 0.0, 1.0)).xy;
+    vary_texcoord0 = (row_texture_matrix(row, TexMatTable(rk_packet_texmats)) * vec4(RowVec2(row.texcoords).t[index], 0.0, 1.0)).xy;
 }

@@ -1,5 +1,5 @@
-// alpha_pbr.vert: the vertex shader of the glTF (PBR) blended transparent surfaces, and (PBR_OPAQUE) of the glTF opaque and mask surfaces of the G-buffer pass: the same rows, the same outputs, plus the material's cutoff. A draw is one row of the scene table (alpha_pass.inc: ll_packet_table) and its material is one row of the PBR table
-// (ll_packet_pbr: 10 vec4 = the transforms of the four textures, then roughness / metallic / emissive colour, then the cutoff); the vertex reads its own data from the arrays the row names.
+// alpha_pbr.vert: the vertex shader of the glTF (PBR) blended transparent surfaces, and (PBR_OPAQUE) of the glTF opaque and mask surfaces of the G-buffer pass: the same rows, the same outputs, plus the material's cutoff. A draw is one row of the scene table (alpha_pass.inc: rk_packet_table) and its material is one row of the PBR table
+// (rk_packet_pbr: 10 vec4 = the transforms of the four textures, then roughness / metallic / emissive colour, then the cutoff); the vertex reads its own data from the arrays the row names.
 // Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw: the hardware reads the indices, the vertex number is the index), ALPHA_PBR_HUD (the fullbright HUD form: only the base colour and the emissive
 // texture are used, so no normals or tangents are made).
 // GLOW_EMISSIVE (with ALPHA_PBR_HUD: no normals): the glow second draw of a glTF blend surface (pbr_glow.frag): the vertex colour is the emissive array.
@@ -41,8 +41,8 @@ layout(location = 15) out vec4 vary_prev;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
 
 #ifdef HAS_SKIN
     const uint index = row_clamp_index(row, uint(gl_VertexIndex));
@@ -54,14 +54,14 @@ void main()
     const vec4 position = RowVec4(row.positions).v[index];
 
     // the material row
-    PbrTable table = PbrTable(ll_packet_pbr);       // (not const: a buffer reference variable cannot be)
+    PbrTable table = PbrTable(rk_packet_pbr);       // (not const: a buffer reference variable cannot be)
     const uint at_row = row.pad.y * 10u;
     const vec4 base0 = table.q[at_row + 0u];
     const vec4 base1 = table.q[at_row + 1u];
     const vec4 misc0 = table.q[at_row + 8u];
     const vec4 misc1 = table.q[at_row + 9u];
 
-    const mat4 animation = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 animation = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
     const vec2 texcoord = RowVec2(row.texcoords).t[index];
 
 #ifdef HAS_SKIN
@@ -81,7 +81,7 @@ void main()
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
     {
         // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)
-        MotionTable motion_table = MotionTable(ll_packet_motion);
+        MotionTable motion_table = MotionTable(rk_packet_motion);
         const mat4 prev_model = motion_table.m[2u * row.model + 1u];
         if (prev_model[3][3] != 0.0)
         {

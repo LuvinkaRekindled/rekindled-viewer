@@ -1094,7 +1094,7 @@ public:
         // <FS> motion vectors: the same palette as of the frame before (equal to mGLMp when there is no history: first time, not asked for in the last frame, joint count changed).
         // Same layout as mGLMp. mHasPrev says whether it is real.
         std::vector<F32> mPrevGLMp;
-        // <FS> avatar relative skinning (see ll_rig_anchor): mGLMp and mPrevGLMp hold the palette the pull shaders read: 12 floats a joint and one more entry, the tail, whose first row is (anchor x, y, z, 1)
+        // <FS> avatar relative skinning (see rk_rig_anchor): mGLMp and mPrevGLMp hold the palette the pull shaders read: 12 floats a joint and one more entry, the tail, whose first row is (anchor x, y, z, 1)
         // (all zeros: the palette is plain world matrices). While the palette is relative (mRebased) the plain world version, which the uniform palette programs need, is in mGLMpAbs / mPrevGLMpAbs (no tail).
         // mAnchor / mPrevAnchor: what mGLMp / mPrevGLMp are relative to; the previous palette is always moved to the current anchor, so one anchor serves both in the velocity pass.
         std::vector<F32> mGLMpAbs, mPrevGLMpAbs;
@@ -1109,7 +1109,7 @@ public:
 
         // <FS> stage B3a: the skin this entry was built from (kept so the avatar's job can rebuild it without a request), and the frame the avatar's job built it for (0xFFFFFFFF: not by a job)
         RKSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
-        // <FS> stage B3b: where this palette sits in the frame's shared palette list (ll_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
+        // <FS> stage B3b: where this palette sits in the frame's shared palette list (rk_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
         mutable std::atomic<U64> mListSlot{ ~0ull };
         U32 mJobFor = 0xFFFFFFFFu;
         bool mJobChecked = false;               // (LL_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request

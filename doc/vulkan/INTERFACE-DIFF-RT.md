@@ -117,7 +117,7 @@ Uniforms the callers wrote on the stock program that the native program does not
 | Deferred Fullbright Alpha Mask Pull Skin Shader | stock only samplers: brdfLut, depthMap, normalMap, projectionMap |
 | Deferred Fullbright Alpha Pull Shader | stock only samplers: brdfLut, depthMap, normalMap, projectionMap |
 | Deferred Fullbright Alpha Pull Skin Shader | stock only samplers: brdfLut, depthMap, normalMap, projectionMap |
-| Deferred Impostor Shader | fragment outputs: stock 1, native 4 (expected for the G-buffer family: one array against four variables)<br>native only uniforms: ll_impostor_table<br>stock only samplers: diffuseMap, normalMap, specularMap |
+| Deferred Impostor Shader | fragment outputs: stock 1, native 4 (expected for the G-buffer family: one array against four variables)<br>native only uniforms: rk_impostor_table<br>stock only samplers: diffuseMap, normalMap, specularMap |
 | Deferred PBR Alpha Pull Shader | stock only samplers: depthMap, lightMap, normalMap, projectionMap, shadowMap4, shadowMap5 |
 | Deferred PBR Alpha Pull Skin Shader | stock only samplers: depthMap, lightMap, normalMap, projectionMap, shadowMap4, shadowMap5 |
 | Deferred PBR Opaque Pull Shader | fragment outputs: stock 1, native 4 (expected for the G-buffer family: one array against four variables)<br>stock only samplers: brdfLut, depthMap, heroProbes, irradianceProbes, mirrorView, normalMap, projectionMap, reflectionProbes, sceneDepth, sceneMap |

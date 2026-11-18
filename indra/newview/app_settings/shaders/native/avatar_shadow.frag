@@ -8,7 +8,7 @@
 #ifdef SHADOW_ALPHA
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };
 
 layout(location = 0) in vec2 vary_texcoord0;
@@ -19,7 +19,7 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
 #ifdef SHADOW_ALPHA
-    float alpha = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_diffuseMap))], vary_texcoord0).a;
+    float alpha = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0).a;
 #ifdef SHADOW_COLOR_ALPHA
     alpha *= color.a;
 #endif

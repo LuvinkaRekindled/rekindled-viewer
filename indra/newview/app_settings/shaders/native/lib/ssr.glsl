@@ -1,12 +1,12 @@
 // ssr.glsl: screen space reflections for a transparent glossy surface: march the reflected ray through the previous frame's picture (sceneMap) and its depth (sceneDepth), and answer the colour found and how
-// sure the hit is. Needs ALPHA_SSR_UNIFORMS (alpha_pass.inc: the SSR uniforms and the slots ll_ti_sceneMap / ll_ti_sceneDepth) and viewpos.glsl.
+// sure the hit is. Needs ALPHA_SSR_UNIFORMS (alpha_pass.inc: the SSR uniforms and the slots rk_ti_sceneMap / rk_ti_sceneDepth) and viewpos.glsl.
 // Same marcher as the viewer's ("the original ray marcher" of screenSpaceReflUtil.glsl: exponential steps, then a binary search), so the picture is the same. What is different is the cost:
 // the old call traced FOUR identical rays for a transparent surface (its "glossy" scatter is zero for glossiness 1: every sample is the same ray) and averaged them, and traced for every surface
 // whatever its glossiness, then multiplied the answer by that glossiness: here it traces once, and not at all when the surface is not glossy. Same result, a quarter of the work or none.
 
 // (explicit level 0: the loops below end at a different step for each pixel, and an implicit level needs the neighbouring pixels' derivatives; both textures have one level)
-#define SCENE_MAP ll_tbl2d[LL_HM(ll_ti_sceneMap)]
-#define SCENE_DEPTH ll_tbl2d[LL_HM(ll_ti_sceneDepth)]
+#define SCENE_MAP rk_tbl2d[LL_HM(rk_ti_sceneMap)]
+#define SCENE_DEPTH rk_tbl2d[LL_HM(rk_ti_sceneDepth)]
 
 // the eye space depth of the previous frame at a screen position
 float ssr_scene_depth(vec2 uv)
@@ -14,7 +14,7 @@ float ssr_scene_depth(vec2 uv)
 #if defined(MAT_SSR_NOTEX) || defined(MAT_SSR_NODEPTH)
     return 20.0 + 10.0 * fract(uv.x * 37.0);        // (bisect switch of the manifest line: no texture read, a made up depth that varies a little)
 #else
-    return -ll_view_pos(inv_proj, uv, textureLod(SCENE_DEPTH, uv, 0.0).r).z;
+    return -rk_view_pos(inv_proj, uv, textureLod(SCENE_DEPTH, uv, 0.0).r).z;
 #endif
 }
 
@@ -184,7 +184,7 @@ vec4 ssr_fast_walk(vec3 position, vec3 reflection, vec3 reject_up, vec2 uv_offse
                 }
             }
             const vec2 huv = s0 + d * hi;
-            const vec3 hp = ll_view_pos(inv_proj, huv, textureLod(SCENE_DEPTH, huv, 0.0).r);
+            const vec3 hp = rk_view_pos(inv_proj, huv, textureLod(SCENE_DEPTH, huv, 0.0).r);
             if (water ? dot(hp - p0, up_prev) < 0.5 : length(hp - p0) < 0.15)
             {
                 return vec4(0.0);                   // the surface itself (the water: the water itself, not something standing on it)

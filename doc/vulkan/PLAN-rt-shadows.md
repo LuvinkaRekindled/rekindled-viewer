@@ -10,7 +10,7 @@ The shadow pass packet lambdas in `pipeline.cpp` (`render_shadow_packets`, `rend
 - **Storage** from a new arena kind (`ArenaKind::Accel`, large device blocks with `ACCELERATION_STRUCTURE_STORAGE` usage): no `VkBuffer` per structure.
 - **Build scheduler**: per scene call, structures that are new or stale are sorted by distance of their instance from the camera and built until a triangle budget and a count budget are used up (`LL_VK_RT_BUILD_TRIS`, `LL_VK_RT_BUILD_MAX`); the rest wait for the next frame (shadows of far things appear a few frames late while loading).
 - **TLAS per frame slot**, built in eye space (instance transform = view * model) right before the deferred lighting pass, so shaders trace in the space they already work in (`pos`, `sun_dir`). An empty TLAS is bound when nothing was built.
-- **Descriptor**: set 3, binding 0 = acceleration structure; only programs whose source mentions `ll_rt_tlas` declare and use it (`ProgramInfo::mUsesRt`).
+- **Descriptor**: set 3, binding 0 = acceleration structure; only programs whose source mentions `rk_rt_tlas` declare and use it (`ProgramInfo::mUsesRt`).
 
 ## Switch and comparison
 `LL_VK_RT_SHADOWS=1` (replace the cascades), `2` (split screen: left half cascades, right half ray query), `3` (difference: red = ray says lit and cascades say shadow, blue = the opposite, otherwise the cascade result). Compile-time define `LL_RT_SHADOWS` in the shader programs, so a program without it carries no ray query code. Needs `LL_VK_RT=1` (device features) which the launcher sets. A viewer setting follows once the picture is accepted.

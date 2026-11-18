@@ -4,16 +4,16 @@
 // Variants by define: HAS_SKIN (a rigged caster: the 48 byte packet that also names the weights and the joint palette; its vertex goes through the same skin function as the scene rows, lib/rows.glsl skin_vertex).
 // What the pass writes is depth: shadow.frag only has to exist.
 //
-// The viewer's old program (shadowPullV.glsl, shadowSkinPullV.glsl) multiplied the view projection by the model matrix for every vertex (`ll_view_proj * model * vec4` is (ll_view_proj * model) * vec4: a 4x4 by 4x4
+// The viewer's old program (shadowPullV.glsl, shadowSkinPullV.glsl) multiplied the view projection by the model matrix for every vertex (`rk_view_proj * model * vec4` is (rk_view_proj * model) * vec4: a 4x4 by 4x4
 // product a vertex); here the vertex goes through the model matrix first and the view projection second, two matrix by vector products.
 
 #include "lib/rows.glsl"
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_packet_table;      // the packets of the record (written by the draw record)
-    uvec2 ll_packet_models;     // the model matrices of the record
-    mat4 ll_view_proj;          // the shadow camera's view projection (GL clip space, as the viewer's matrices are)
+    uvec2 rk_packet_table;      // the packets of the record (written by the draw record)
+    uvec2 rk_packet_models;     // the model matrices of the record
+    mat4 rk_view_proj;          // the shadow camera's view projection (GL clip space, as the viewer's matrices are)
 #ifdef HAS_SKIN
     int shadow_indexed;         // 1: an indexed draw (the hardware read the index buffer: gl_VertexIndex is the vertex), 0: a draw over the index list that reads the indices here
 #endif
@@ -47,7 +47,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Sh
 
 void main()
 {
-    const ShadowPacket pk = ShadowPackets(ll_packet_table).p[gl_InstanceIndex];
+    const ShadowPacket pk = ShadowPackets(rk_packet_table).p[gl_InstanceIndex];
 #ifdef HAS_SKIN
     uint index = uint(gl_VertexIndex);
     if (shadow_indexed == 0)
@@ -72,7 +72,7 @@ void main()
     vertex = skin_rotation * position + skin_translation;
     rig_anchor = skin_rig_anchor(pk.palette, pk.joints);
 #endif
-    gl_Position = ll_view_proj * rig_transform(ShadowModels(ll_packet_models).m[pk.model], vertex, rig_anchor);
+    gl_Position = rk_view_proj * rig_transform(ShadowModels(rk_packet_models).m[pk.model], vertex, rig_anchor);
     // GL clip space z is [-w, w], Vulkan's is [0, w]: the viewer's own vertex shaders get this line from the translator, a native one does it itself (see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 }

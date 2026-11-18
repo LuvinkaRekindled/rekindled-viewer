@@ -61,25 +61,25 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_specularRect;
-    uint ll_ti_normalMap;
-    uint ll_ti_depthMap;
-    uint ll_ti_lightMap;
-    uint ll_ti_lightFunc;
-    uint ll_ti_brdfLut;
-    uint ll_ti_rtReflMap;               // the RT Reflection pass's output: rgb the traced reflection, a how much of it replaces the probe result (-1 traced and missed, 0 not traced)
+    uint rk_ti_diffuseRect;
+    uint rk_ti_specularRect;
+    uint rk_ti_normalMap;
+    uint rk_ti_depthMap;
+    uint rk_ti_lightMap;
+    uint rk_ti_lightFunc;
+    uint rk_ti_brdfLut;
+    uint rk_ti_rtReflMap;               // the RT Reflection pass's output: rgb the traced reflection, a how much of it replaces the probe result (-1 traced and missed, 0 not traced)
 #ifdef HAS_EMISSIVE
-    uint ll_ti_emissiveRect;
+    uint rk_ti_emissiveRect;
 #endif
-    uint ll_ti_cubearray_irradianceProbes;
-    uint ll_ti_cubearray_reflectionProbes;
+    uint rk_ti_cubearray_irradianceProbes;
+    uint rk_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
-    uint ll_ti_cubearray_heroProbes;
-    uint ll_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
+    uint rk_ti_cubearray_heroProbes;
+    uint rk_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
 #endif
 #ifdef SSR
-    uint ll_ti_sceneMap;
-    uint ll_ti_sceneDepth;
+    uint rk_ti_sceneMap;
+    uint rk_ti_sceneDepth;
 #endif
 };

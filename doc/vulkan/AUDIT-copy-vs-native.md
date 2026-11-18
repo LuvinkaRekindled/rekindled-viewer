@@ -32,7 +32,7 @@ shader translation, `rkvkmirror.cpp` frame handling.
 
 ## Scaffolding to delete (no design problem, but it is in the way and in the hot path)
 - The inline (non-async) mirror path in the generated wrappers: the hook timers, mutex and `HookStat` objects that run on every GL call that is not a typed record.
-- `LL_VK_VERIFY` (GL-versus-Vulkan comparison, dead without GL), `rkvkverify.h`, remaining `ll_nogl()` guards, dead `mhRC` close code.
+- `LL_VK_VERIFY` (GL-versus-Vulkan comparison, dead without GL), `rkvkverify.h`, remaining `rk_nogl()` guards, dead `mhRC` close code.
 - `rkglstubs.cpp` (the `__imp_` stubs): needed only while dead GL names remain in viewer code; goes when those are removed.
 - The 22-entry stats / debug-filter branches inside `prepare_draw`: keep behind one `if` for profiling builds, not on the normal path.
 

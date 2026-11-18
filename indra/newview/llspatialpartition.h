@@ -82,23 +82,23 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
 */
 struct RKSceneFragment;
 struct GeoRigSource;
-void ll_scene_fragment_free(RKSceneFragment*& fragment);        // pipeline.cpp (S1)
+void rk_scene_fragment_free(RKSceneFragment*& fragment);        // pipeline.cpp (S1)
 class LLSpatialGroup;
-void ll_scene_fragment_build(LLSpatialGroup* group);
+void rk_scene_fragment_build(LLSpatialGroup* group);
 class LLCullResult;
-bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
-bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this framebool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
-bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
-bool ll_scene_geo_hud_view();                                   // J1 K6 S1: the HUD pass (its own cull result: the table is told about it before the HUD's post deferred passes)
-bool ll_scene_geo_hud_any();                                    // ... any of them
-bool ll_scene_geo_hud_type(int tn);                             // ... and a table type the HUD pools draw from rows (the others stay in the HUD's render map)
-bool ll_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
-int ll_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
-bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type);  // <FS> the result holds a draw of this pass type this frame (its render map, or the served items of its fragments)
-void ll_scene_geo_palette_kick(LLCullResult* cull);               // S4 B: end of postSort: the palettes of the rigged items of the listed fragments are made on the pool (ll_scene_geo_frame takes them)
-void ll_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
-void ll_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
-void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
+bool rk_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
+bool rk_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this framebool rk_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
+bool rk_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
+bool rk_scene_geo_hud_view();                                   // J1 K6 S1: the HUD pass (its own cull result: the table is told about it before the HUD's post deferred passes)
+bool rk_scene_geo_hud_any();                                    // ... any of them
+bool rk_scene_geo_hud_type(int tn);                             // ... and a table type the HUD pools draw from rows (the others stay in the HUD's render map)
+bool rk_scene_geo_prepared(LLCullResult* cull);                 // the table was told this frame's visible fragments for this cull result
+int rk_scene_geo_type_number(U32 type);                         // the pass type's number in the table's order (-1: not a table type)
+bool rk_scene_geo_cull_has_type(LLCullResult* cull, U32 type);  // <FS> the result holds a draw of this pass type this frame (its render map, or the served items of its fragments)
+void rk_scene_geo_palette_kick(LLCullResult* cull);               // S4 B: end of postSort: the palettes of the rigged items of the listed fragments are made on the pool (rk_scene_geo_frame takes them)
+void rk_scene_geo_frame(LLCullResult* cull);                    // main view, once a frame before the passes
+void rk_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
+void rk_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
 
 // <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (LL_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
 // draws a table can serve (mServed, equal mKey: one run) and draws it cannot (the old path draws them in place)
@@ -116,17 +116,17 @@ struct RKAlphaPlanView
     U32 mGlowCount = 0;
     bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
 };
-int ll_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged = false);
-bool ll_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
-bool ll_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second draw of the alpha items is drawn from the table (plain / glTF items)
-bool ll_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (LL_VK_SCENE_ALPHA=1 and the AB phase)
-bool ll_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
+int rk_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged = false);
+bool rk_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
+bool rk_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second draw of the alpha items is drawn from the table (plain / glTF items)
+bool rk_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (LL_VK_SCENE_ALPHA=1 and the AB phase)
+bool rk_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 // what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
-void ll_main_listed_note(LLSpatialGroup* group, U32 serial);                                           // T3: the main view's visible group list of build `serial` listed this group: its table slot is stamped, and a group of a bridge's octree is collected (the record's extra handles read it): LLCullResult::pushVisibleGroup of a result with mMainView calls it
-bool ll_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
-bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
-bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
+void rk_main_listed_note(LLSpatialGroup* group, U32 serial);                                           // T3: the main view's visible group list of build `serial` listed this group: its table slot is stamped, and a group of a bridge's octree is collected (the record's extra handles read it): LLCullResult::pushVisibleGroup of a result with mMainView calls it
+bool rk_group_has_alpha_key(const LLSpatialGroup* group);                                   // the draw map has a PASS_ALPHA entry
+bool rk_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
+bool rk_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
 
 class RKDrawBatch final : public LLRefCount
 {
@@ -211,7 +211,7 @@ struct GeoRange
     U32 mStart = 0;         // first vertex
     U32 mEnd = 0;           // last vertex
 };
-inline GeoRange ll_geo_range(const RKDrawBatch* p)
+inline GeoRange rk_geo_range(const RKDrawBatch* p)
 {
     GeoRange r;
     if (p && p->mVertexBuffer.notNull())
@@ -278,7 +278,7 @@ struct GeoRigSource
         return r;
     }
 };
-inline GeoRigSource ll_geo_rig_source(const RKDrawBatch* p)
+inline GeoRigSource rk_geo_rig_source(const RKDrawBatch* p)
 {
     GeoRigSource s;
     if (p)
@@ -305,7 +305,7 @@ inline GeoRigSource ll_geo_rig_source(const RKDrawBatch* p)
 
 class LLSpatialGroup;
 // <FS> C5 J2: one draw of a particle group: a run of rows of the group's row buffer (the GPU particle path, PLAN-gpu-particles.md) with one texture and blend state. A particle group keeps these instead of draw
-// infos: the alpha pass makes its entries from them directly (ll_particle_transient), nothing is allocated per rebuild or classified per draw
+// infos: the alpha pass makes its entries from them directly (rk_particle_transient), nothing is allocated per rebuild or classified per draw
 struct RKParticleRun
 {
     LLPointer<LLViewerTexture> mTexture;
@@ -619,7 +619,7 @@ public:
     static LLDrawable* lineSegmentIntersectAvatars(bool avatar_partition_only, const LLVector4a& start, const LLVector4a& end, bool pick_transparent, bool pick_rigged, bool pick_unselectable, bool pick_reflection_probe,
                                                    S32* face_hit, LLVector4a* intersection, LLVector2* tex_coord, LLVector4a* normal, LLVector4a* tangent);
     static inline bool sPickSkipAvatars = false;
-    // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (ll_bridge_hiz_collect),
+    // stage 9: the bridge's own Hi-Z verdict (the groups of the region partitions give a bridge occlusion through their octree, which the bridge's own extents cannot): its extents are a box of the occlusion pass (rk_bridge_hiz_collect),
     // the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the bridge is hidden by it while the verdict is recent and its extents still lie inside the box it was made for
     /*virtual*/ void hizResult(bool occluded) override;
     bool hizHides() const;
@@ -654,7 +654,7 @@ class LLCullResult
 public:
     LLCullResult();
 
-    bool mMainView = false;     // <FS> T3: this is the main view's cull result (set by updateCull each time it clears it): pushVisibleGroup notes the group's table slot as listed by this build (ll_main_listed_note)
+    bool mMainView = false;     // <FS> T3: this is the main view's cull result (set by updateCull each time it clears it): pushVisibleGroup notes the group's table slot as listed by this build (rk_main_listed_note)
     U32 mListSerial = 1;        // <FS> T3: one more each time the visible group list is cleared (clear, clearLists): a group stamped with the current value was listed since the last clear
 
     typedef std::vector<LLSpatialGroup*> sg_list_t;

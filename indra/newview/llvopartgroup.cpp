@@ -249,7 +249,7 @@ F32 LLVOPartGroup::getPartSize(S32 idx)
         {
             const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
             const F32 frac = (F32)(LLViewerPartSim::getSimTime() - rec.mT0) / rec.mMaxAge;
-            return ((rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale).mV[0];
+            return ((rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? rk_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale).mV[0];
         }
     }
 
@@ -277,16 +277,16 @@ static struct ParticleRebuildStats
     U64 mRebuilds = 0, mParticles = 0, mCount = 0, mSort = 0, mCorners = 0, mRest = 0, mTotal = 0, mGeomCalls = 0, mGeomParts = 0, mGeomCycles = 0, mRows = 0, mRowsCycles = 0, mRowsParticles = 0, mBailRibbon = 0, mBailRibbonParts = 0, mHud = 0, mHudParts = 0, mRGather = 0, mRClear = 0, mRSort = 0, mRBuffer = 0, mRWrite = 0, mRRibbons = 0, mGpuGroups = 0, mFastGroups = 0, mNoMulti = 0, mNoImpure = 0, mNoRibbon = 0, mCGroups = 0, mCClasses = 0, mCMulti = 0, mCTextures = 0, mCRuns = 0, mCParts = 0, mCMixedRuns = 0, mCClassRuns = 0;
 } sPartStats;
 
-bool ll_particle_sort_on();
+bool rk_particle_sort_on();
 
 // GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
-static bool fs_gpu_particles_on()
+static bool rk_gpu_particles_on()
 {
     static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLES"); return !v || atoi(v) != 0; }();
     return on;
 }
 
-static void fs_particle_stats_log()
+static void rk_particle_stats_log()
 {
     const double n = 3000.0, k = 1000.0;
     const double legacy = std::max<double>(1.0, n - (double)sPartStats.mRows);
@@ -350,7 +350,7 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
         return true;
     }
 
-    if (fs_gpu_particles_on() && getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && updateRows(drawable, num_parts))
+    if (rk_gpu_particles_on() && getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && updateRows(drawable, num_parts))
     {
         mDrawable->movePartition();
         LLPipeline::sCompiles++;
@@ -391,7 +391,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
     // G1 step 2: a group of records only, with the GPU sort on: nothing is evaluated here. The extents are the box of the group's path aggregates (and the sources' positions now), the texture
     // priority comes from the classes, the cuts (size, area) are the shader's
     bool alone = false;
-    if (ll_particle_sort_on() && has_records && particles == 0 && !mViewerPartGroupp->mNoGpu)
+    if (rk_particle_sort_on() && has_records && particles == 0 && !mViewerPartGroupp->mNoGpu)
     {
         // (the draws of the sort pass are one buffer: a group alone in its spatial group; with another part group the CPU makes the rows of both and sorts them together)
         LLSpatialGroup* sg = drawable->getSpatialGroup();
@@ -602,7 +602,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             const F32 frac = age / rec.mMaxAge;
             LLVector3 pos, vel;
             rec.evaluate(now, pos, vel);
-            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
+            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? rk_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
 
             max_scale = llmax(max_scale, scale.mV[0], scale.mV[1]);
 
@@ -621,7 +621,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
 
             RKPartEval row;
             row.mPos = pos;
-            row.mColor = (rec.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? fs_part_color_at(rec.mStartColor, rec.mEndColor, frac) : rec.mStartColor;
+            row.mColor = (rec.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? rk_part_color_at(rec.mStartColor, rec.mEndColor, frac) : rec.mStartColor;
             row.mGlow = LLColor4U(0, 0, 0, (U8)ll_round(lerp(rec.mStartGlow, rec.mEndGlow, frac) * 255.f));
             row.mTex = texture;
             row.mBlendSrc = rec.mBlendSrc;
@@ -873,7 +873,7 @@ bool LLVOPartGroup::lineSegmentIntersect(const LLVector4a& start, const LLVector
             LLVector3 pos, vel;
             rec.evaluate(now, pos, vel);
             const F32 frac = age / rec.mMaxAge;
-            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
+            const LLVector2 scale = (rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? rk_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale;
             LLViewerPart tmp;
             tmp.mPosAgent = pos;
             tmp.mScale = scale;
@@ -1196,7 +1196,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     {
         ++sPartStats.mHud;
     }
-    if (mPartitionType == LLViewerRegion::PARTITION_PARTICLE && fs_gpu_particles_on() && rebuildRows(group))
+    if (mPartitionType == LLViewerRegion::PARTITION_PARTICLE && rk_gpu_particles_on() && rebuildRows(group))
     {
         group->row().lastUpdateTime = gFrameTimeSeconds;
         group->clearState(LLSpatialGroup::GEOM_DIRTY);
@@ -1204,7 +1204,7 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
         ++sPartStats.mRows;
         if (++sPartStats.mRebuilds % 3000 == 0)
         {
-            fs_particle_stats_log();
+            rk_particle_stats_log();
         }
         return;
     }
@@ -1276,12 +1276,12 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     sPartStats.mTotal += __rdtsc() - ps_t0;
     if (++sPartStats.mRebuilds % 3000 == 0)
     {
-        fs_particle_stats_log();
+        rk_particle_stats_log();
     }
 }
 
 // G1: the draws of a pure record group sorted on the GPU: one draw info a draw class, over the class's range of the sorted order (the classes' live counts give the ranges)
-static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts, U32 render_pass)
+static void rk_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts, U32 render_pass)
 {
     // the rows the sort pass wrote, class after class (the classes' live counts give the ranges), are drawn as rows of stage 1
     LLVertexBuffer* rows = parts->mRows.get();
@@ -1367,7 +1367,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     lap(sPartStats.mRGather);
     group->clearDrawMap();
     lap(sPartStats.mRClear);
-    if (ll_particle_sort_on() && live_drawables == 1 && only_obj && only_obj->mPure && only_obj->mEval.empty() && only_obj->getViewerPartGroup() && !only_obj->getViewerPartGroup()->mRecords.empty())
+    if (rk_particle_sort_on() && live_drawables == 1 && only_obj && only_obj->mPure && only_obj->mEval.empty() && only_obj->getViewerPartGroup() && !only_obj->getViewerPartGroup()->mRecords.empty())
     {
         // G1 step 2: nothing was evaluated on the CPU (updateRows took the fast path): the group's records are drawn from their store, the sort and the evaluation are the GPU's
         LLViewerPartGroup* parts = only_obj->getViewerPartGroup();
@@ -1382,7 +1382,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         {
             only_obj->mDepth = ((lo + hi) * 0.5f - origin) * at_axis;
         }
-        fs_make_class_draws(group, parts, mRenderPass);
+        rk_make_class_draws(group, parts, mRenderPass);
         lap(sPartStats.mRWrite);
         sPartStats.mRowsParticles += (U32)parts->mRecords.size();
         ++sPartStats.mGpuGroups;

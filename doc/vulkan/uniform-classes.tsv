@@ -49,8 +49,8 @@ per pass / per view	sun_dir	vec3	0	12	111	gbuffer:34,skinned:25,light:23	44
 per pass / per view	inv_proj	mat4	0	64	125	gbuffer:39,other:28,skinned:22	40
 per pass / per view	projection_matrix	mat4	0	64	90	skinned:42,gbuffer:31,other:6	36
 per pass / per view	env_mat	mat3	0	48	78	gbuffer:30,skinned:20,light:17	14
-per pass / per view	ll_packet_models	uvec2	0	8	16	gbuffer:13,shadow:3	13
-per pass / per view	ll_packet_table	uvec2	0	8	16	gbuffer:13,shadow:3	13
+per pass / per view	rk_packet_models	uvec2	0	8	16	gbuffer:13,shadow:3	13
+per pass / per view	rk_packet_table	uvec2	0	8	16	gbuffer:13,shadow:3	13
 per pass / per view	light_position	vec4	8	128	20	skinned:8,alpha:5,gbuffer:4	11
 per pass / per view	inv_modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	10
 per pass / per view	modelview_delta	mat4	0	64	61	gbuffer:30,skinned:20,alpha:4	10
@@ -60,7 +60,7 @@ per pass / per view	shadow_res	vec2	0	8	83	gbuffer:30,skinned:20,light:19	7
 per pass / per view	blend_factor	float	0	4	4	light:2,water:1,sky:1	6
 per pass / per view	cube_snapshot	int	0	4	62	gbuffer:30,skinned:20,alpha:4	5
 per pass / per view	glowDelta	vec2	0	8	1	effects:1	4
-per pass / per view	ll_view_proj	mat4	0	64	3	shadow:3	4
+per pass / per view	rk_view_proj	mat4	0	64	3	shadow:3	4
 per pass / per view	blue_density	vec3	0	12	142	gbuffer:42,other:31,skinned:24	3
 per pass / per view	delta	vec2	0	8	1	light:1	2
 per pass / per view	near_clip	float	0	4	8	alpha:4,light:2,skinned:2	2
@@ -159,73 +159,73 @@ per pass / per view	light_attenuation	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	
 per pass / per view	light_deferred_attenuation	vec2	8	128	2	skinned:1,pbr:1	0
 per pass / per view	light_diffuse	vec3	8	128	20	skinned:8,alpha:5,gbuffer:4	0
 per pass / per view	light_direction	vec3	8	128	18	skinned:8,gbuffer:4,alpha:4	0
-per pass / per view	ll_target_width	float	0	4	1	shadow:1	0
-per pass / per view	ll_ti_alpha_ramp	uint	0	4	2	pbr:1,gbuffer:1	
-per pass / per view	ll_ti_altDiffuseMap	uint	0	4	1	light:1	
-per pass / per view	ll_ti_brdfLut	uint	0	4	103	gbuffer:26,skinned:22,other:20	
-per pass / per view	ll_ti_bumpMap	uint	0	4	24	skinned:11,gbuffer:9,water:2	
-per pass / per view	ll_ti_bumpMap2	uint	0	4	1	water:1	
-per pass / per view	ll_ti_cloud_noise_texture	uint	0	4	1	light:1	
-per pass / per view	ll_ti_cloud_noise_texture_next	uint	0	4	1	light:1	
-per pass / per view	ll_ti_depthMap	uint	0	4	105	gbuffer:26,other:22,skinned:22	
-per pass / per view	ll_ti_detail_0	uint	0	4	1	gbuffer:1	
-per pass / per view	ll_ti_detail_0_base_color	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_0_emissive	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_0_metallic_roughness	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_0_normal	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_1	uint	0	4	1	gbuffer:1	
-per pass / per view	ll_ti_detail_1_base_color	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_1_emissive	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_1_metallic_roughness	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_1_normal	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_2	uint	0	4	1	gbuffer:1	
-per pass / per view	ll_ti_detail_2_base_color	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_2_emissive	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_2_metallic_roughness	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_2_normal	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_3	uint	0	4	1	gbuffer:1	
-per pass / per view	ll_ti_detail_3_base_color	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_3_emissive	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_3_metallic_roughness	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_detail_3_normal	uint	0	4	2	pbr:2	
-per pass / per view	ll_ti_diffuseMap	uint	0	4	83	skinned:25,gbuffer:21,other:12	
-per pass / per view	ll_ti_diffuseRect	uint	0	4	49	light:19,other:17,gbuffer:11	
-per pass / per view	ll_ti_dither_tex	uint	0	4	1	other:1	
-per pass / per view	ll_ti_emissiveMap	uint	0	4	8	pbr:5,skinned:3	
-per pass / per view	ll_ti_emissiveRect	uint	0	4	24	light:19,other:3,effects:1	
-per pass / per view	ll_ti_environmentMap	uint	0	4	14	gbuffer:5,skinned:5,light:2	
-per pass / per view	ll_ti_exclusionTex	uint	0	4	3	water:3	
-per pass / per view	ll_ti_exposureMap	uint	0	4	8	other:4,gbuffer:3,water:1	
-per pass / per view	ll_ti_glowNoiseMap	uint	0	4	1	effects:1	
-per pass / per view	ll_ti_halo_map	uint	0	4	2	other:1,light:1	
-per pass / per view	ll_ti_heroProbes	uint	0	4	48	skinned:20,gbuffer:18,alpha:4	
-per pass / per view	ll_ti_irradianceProbes	uint	0	4	48	skinned:20,gbuffer:18,alpha:4	
-per pass / per view	ll_ti_lightFunc	uint	0	4	28	light:19,gbuffer:5,skinned:4	
-per pass / per view	ll_ti_lightMap	uint	0	4	7	light:3,gbuffer:2,skinned:1	
-per pass / per view	ll_ti_noiseMap	uint	0	4	1	sky:1	
-per pass / per view	ll_ti_normalMap	uint	0	4	106	gbuffer:28,skinned:22,other:21	
-per pass / per view	ll_ti_paint_map	uint	0	4	1	pbr:1	
-per pass / per view	ll_ti_projectionMap	uint	0	4	103	gbuffer:26,skinned:22,other:20	
-per pass / per view	ll_ti_rainbow_map	uint	0	4	2	other:1,light:1	
-per pass / per view	ll_ti_reflectionProbes	uint	0	4	51	skinned:20,gbuffer:18,other:5	
-per pass / per view	ll_ti_sceneDepth	uint	0	4	49	skinned:20,gbuffer:18,alpha:4	
-per pass / per view	ll_ti_sceneMap	uint	0	4	49	skinned:20,gbuffer:18,alpha:4	
-per pass / per view	ll_ti_screenTex	uint	0	4	2	water:2	
-per pass / per view	ll_ti_shadowMap0	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_shadowMap1	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_shadowMap2	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_shadowMap3	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_shadowMap4	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_shadowMap5	uint	0	4	70	skinned:20,light:19,gbuffer:18	
-per pass / per view	ll_ti_specularMap	uint	0	4	21	skinned:10,gbuffer:9,pbr:2	
-per pass / per view	ll_ti_specularRect	uint	0	4	21	light:19,gbuffer:1,other:1	
-per pass / per view	ll_ti_srcMap	uint	0	4	1	other:1	
-per pass / per view	ll_ti_tex0	uint	0	4	30	skinned:11,alpha:8,other:5	
-per pass / per view	ll_ti_tex1	uint	0	4	28	skinned:11,alpha:8,gbuffer:4	
-per pass / per view	ll_ti_tex2	uint	0	4	27	skinned:11,alpha:8,gbuffer:4	
-per pass / per view	ll_ti_tex3	uint	0	4	27	skinned:11,alpha:8,gbuffer:4	
-per pass / per view	ll_ti_texture0	uint	0	4	2	skinned:1,other:1	
-per pass / per view	ll_ti_texture1	uint	0	4	2	skinned:1,other:1	
+per pass / per view	rk_target_width	float	0	4	1	shadow:1	0
+per pass / per view	rk_ti_alpha_ramp	uint	0	4	2	pbr:1,gbuffer:1	
+per pass / per view	rk_ti_altDiffuseMap	uint	0	4	1	light:1	
+per pass / per view	rk_ti_brdfLut	uint	0	4	103	gbuffer:26,skinned:22,other:20	
+per pass / per view	rk_ti_bumpMap	uint	0	4	24	skinned:11,gbuffer:9,water:2	
+per pass / per view	rk_ti_bumpMap2	uint	0	4	1	water:1	
+per pass / per view	rk_ti_cloud_noise_texture	uint	0	4	1	light:1	
+per pass / per view	rk_ti_cloud_noise_texture_next	uint	0	4	1	light:1	
+per pass / per view	rk_ti_depthMap	uint	0	4	105	gbuffer:26,other:22,skinned:22	
+per pass / per view	rk_ti_detail_0	uint	0	4	1	gbuffer:1	
+per pass / per view	rk_ti_detail_0_base_color	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_0_emissive	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_0_metallic_roughness	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_0_normal	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_1	uint	0	4	1	gbuffer:1	
+per pass / per view	rk_ti_detail_1_base_color	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_1_emissive	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_1_metallic_roughness	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_1_normal	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_2	uint	0	4	1	gbuffer:1	
+per pass / per view	rk_ti_detail_2_base_color	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_2_emissive	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_2_metallic_roughness	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_2_normal	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_3	uint	0	4	1	gbuffer:1	
+per pass / per view	rk_ti_detail_3_base_color	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_3_emissive	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_3_metallic_roughness	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_detail_3_normal	uint	0	4	2	pbr:2	
+per pass / per view	rk_ti_diffuseMap	uint	0	4	83	skinned:25,gbuffer:21,other:12	
+per pass / per view	rk_ti_diffuseRect	uint	0	4	49	light:19,other:17,gbuffer:11	
+per pass / per view	rk_ti_dither_tex	uint	0	4	1	other:1	
+per pass / per view	rk_ti_emissiveMap	uint	0	4	8	pbr:5,skinned:3	
+per pass / per view	rk_ti_emissiveRect	uint	0	4	24	light:19,other:3,effects:1	
+per pass / per view	rk_ti_environmentMap	uint	0	4	14	gbuffer:5,skinned:5,light:2	
+per pass / per view	rk_ti_exclusionTex	uint	0	4	3	water:3	
+per pass / per view	rk_ti_exposureMap	uint	0	4	8	other:4,gbuffer:3,water:1	
+per pass / per view	rk_ti_glowNoiseMap	uint	0	4	1	effects:1	
+per pass / per view	rk_ti_halo_map	uint	0	4	2	other:1,light:1	
+per pass / per view	rk_ti_heroProbes	uint	0	4	48	skinned:20,gbuffer:18,alpha:4	
+per pass / per view	rk_ti_irradianceProbes	uint	0	4	48	skinned:20,gbuffer:18,alpha:4	
+per pass / per view	rk_ti_lightFunc	uint	0	4	28	light:19,gbuffer:5,skinned:4	
+per pass / per view	rk_ti_lightMap	uint	0	4	7	light:3,gbuffer:2,skinned:1	
+per pass / per view	rk_ti_noiseMap	uint	0	4	1	sky:1	
+per pass / per view	rk_ti_normalMap	uint	0	4	106	gbuffer:28,skinned:22,other:21	
+per pass / per view	rk_ti_paint_map	uint	0	4	1	pbr:1	
+per pass / per view	rk_ti_projectionMap	uint	0	4	103	gbuffer:26,skinned:22,other:20	
+per pass / per view	rk_ti_rainbow_map	uint	0	4	2	other:1,light:1	
+per pass / per view	rk_ti_reflectionProbes	uint	0	4	51	skinned:20,gbuffer:18,other:5	
+per pass / per view	rk_ti_sceneDepth	uint	0	4	49	skinned:20,gbuffer:18,alpha:4	
+per pass / per view	rk_ti_sceneMap	uint	0	4	49	skinned:20,gbuffer:18,alpha:4	
+per pass / per view	rk_ti_screenTex	uint	0	4	2	water:2	
+per pass / per view	rk_ti_shadowMap0	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_shadowMap1	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_shadowMap2	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_shadowMap3	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_shadowMap4	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_shadowMap5	uint	0	4	70	skinned:20,light:19,gbuffer:18	
+per pass / per view	rk_ti_specularMap	uint	0	4	21	skinned:10,gbuffer:9,pbr:2	
+per pass / per view	rk_ti_specularRect	uint	0	4	21	light:19,gbuffer:1,other:1	
+per pass / per view	rk_ti_srcMap	uint	0	4	1	other:1	
+per pass / per view	rk_ti_tex0	uint	0	4	30	skinned:11,alpha:8,other:5	
+per pass / per view	rk_ti_tex1	uint	0	4	28	skinned:11,alpha:8,gbuffer:4	
+per pass / per view	rk_ti_tex2	uint	0	4	27	skinned:11,alpha:8,gbuffer:4	
+per pass / per view	rk_ti_tex3	uint	0	4	27	skinned:11,alpha:8,gbuffer:4	
+per pass / per view	rk_ti_texture0	uint	0	4	2	skinned:1,other:1	
+per pass / per view	rk_ti_texture1	uint	0	4	2	skinned:1,other:1	
 per pass / per view	lumWeights	vec3	0	12	1	effects:1	0
 per pass / per view	magnification	float	0	4	1	gbuffer:1	
 per pass / per view	maxExtractAlpha	float	0	4	1	effects:1	0

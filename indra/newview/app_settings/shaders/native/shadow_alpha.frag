@@ -18,7 +18,7 @@ void main()
     {
         return;                         // an opaque caster (glTF opaque): no alpha test, nothing sampled
     }
-    float alpha = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0).a;
+    float alpha = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0).a;
     if ((vary_flags & 64u) != 0u)
     {
         // glTF alpha mask: the texture's alpha times the vertex alpha against the material's cutoff, no dithering

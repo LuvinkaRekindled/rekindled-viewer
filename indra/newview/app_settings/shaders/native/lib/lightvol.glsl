@@ -4,7 +4,7 @@
 // surface takes its diffuse by the angle of its normal and its highlight by the lookup of the gloss (lightFunc). What is different from the viewer's programs is the order: the position comes from the depth
 // first, the pixels the light does not reach leave before anything else is read, the normal comes next (the facing test needs nothing more), and the albedo and the material only for the pixels that are lit.
 
-#define LV_TAP(slot) ll_tbl2d[LL_HM(slot)]
+#define LV_TAP(slot) rk_tbl2d[LL_HM(slot)]
 
 // the legacy distance attenuation of the viewer's lights: 2 * (1 - clamp((d + falloff) / (1 + falloff), 0, 1))^2, d = the distance over the light's size
 float light_attenuation(float dist, float falloff)
@@ -29,7 +29,7 @@ struct LightSurface
 LightSurface light_surface_geometry(vec4 normal_info, vec3 pos)
 {
     LightSurface s;
-    s.n = ll_decode_normal(normal_info.xy);
+    s.n = rk_decode_normal(normal_info.xy);
     s.v = -normalize(pos);
     s.nv = clamp(dot(s.n, s.v), 1e-6, 1.0);
     s.env = normal_info.b;
@@ -42,8 +42,8 @@ LightSurface light_surface_geometry(vec4 normal_info, vec3 pos)
 // the material of the surface: the albedo and the specular buffer's sample, for the pixels a light reaches
 void light_surface_material(vec2 uv, inout LightSurface s)
 {
-    const vec4 albedo = textureLod(LV_TAP(ll_ti_diffuseRect), uv, 0.0);
-    const vec4 spec = textureLod(LV_TAP(ll_ti_specularRect), uv, 0.0);
+    const vec4 albedo = textureLod(LV_TAP(rk_ti_diffuseRect), uv, 0.0);
+    const vec4 spec = textureLod(LV_TAP(rk_ti_specularRect), uv, 0.0);
     if (s.pbr)
     {
         // the specular buffer holds occlusion (r), roughness (g), metallic (b)
@@ -84,7 +84,7 @@ vec3 light_legacy(LightSurface s, vec3 lv, float dist, vec3 light_color, float f
         const float fres = x * x * x * x * x * 0.4 + 0.5;
         const float gtdenom = 2.0 * nh;
         const float gt = max(0.0, min(gtdenom * s.nv / vh, gtdenom * nl / vh));
-        const float scol = fres * textureLod(LV_TAP(ll_ti_lightFunc), vec2(nh, s.spec.a), 0.0).r * gt / (nh * nl);
+        const float scol = fres * textureLod(LV_TAP(rk_ti_lightFunc), vec2(nh, s.spec.a), 0.0).r * gt / (nh * nl);
         col += (min(nl * 6.0, 1.0) * atten * scol) * light_color * s.spec.rgb;
     }
     return col;

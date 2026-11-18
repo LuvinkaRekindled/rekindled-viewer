@@ -318,7 +318,7 @@ namespace RKVkBridge
     // bindless slot of the frame), drawn with the pull projector program (native light_volume.vert + light_spot.frag)
     struct SpotVolumeRow { F32 mCenter[3]; F32 mSize; F32 mColor[3]; F32 mFalloff; U32 mCypher; U32 mClassic; U32 mTexture; S32 mShadowIndex; F32 mN[3]; F32 mNear; F32 mP[3]; F32 mRange; F32 mOrigin[3]; F32 mAmbiance; F32 mFocus; F32 mLod; F32 mAmbientLod; F32 mShadowFade; F32 mMat[16]; };
     // kind 41 (2026-11-10): the avatar impostors of a deferred pass in one record, instead of one immediate mode quad (and three texture binds) a avatar. The viewer has bound the program "Deferred Impostor Shader"
-    // (its native stand-in is the only one that draws: it declares ll_impostor_table) and written the pass's matrices; blob = mEntries x ImpostorQuadRow. The worker replaces the three GL names by this
+    // (its native stand-in is the only one that draws: it declares rk_impostor_table) and written the pass's matrices; blob = mEntries x ImpostorQuadRow. The worker replaces the three GL names by this
     // frame's bindless slots and draws each row as 6 vertices (two triangles: the corners are centre -/+ left -/+ up, the order of LLVOAvatar::renderImpostor), the row read from the table by instance.
     struct ImpostorQuadRow { F32 mCenter[3]; U32 mDiffuse; F32 mLeft[3]; U32 mNormal; F32 mUp[3]; U32 mSpecular; };
     struct GeoFragRef { U32 mId, mNameOffset, mNameCount; };
@@ -364,7 +364,7 @@ namespace RKVkBridge
     // stage 8 (the viewer's consumers, LL_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
     // of the late set's rows (one each, in slot order) with their slots. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
     // The list is immutable once published: the reader holds the pointer, nothing is copied.
-    // (The alpha groups are not in it: a list made from the worker's table copy is one to three frames old and misses the frames' own changes; the viewer makes the main view's alpha lists itself, from the alpha set, ll_alpha_set_lists.)
+    // (The alpha groups are not in it: a list made from the worker's table copy is one to three frames old and misses the frames' own changes; the viewer makes the main view's alpha lists itself, from the alpha set, rk_alpha_set_lists.)
     // mReleased (stage 8c): the slots of the rows of the exact derived set whose group is Released (the draw infos dropped for want of a camera: map row flag 32): the groups a camera accepts again, to be woken
     // mAlphaDirty (stage 8e): the slots of the derived set's rows with an alpha key whose view direction (from the camera of the record to the row's object bounds centre) has moved more than 0.64 (the length of the difference of
     // the two unit vectors) since the worker last named them: LLSpatialGroup::updateDistance's alpha branch did this for every group the walk kept and set ALPHA_DIRTY and asked for a rebuild (the faces of an alpha group are sorted

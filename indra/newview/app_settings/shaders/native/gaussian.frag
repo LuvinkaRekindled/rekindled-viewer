@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 };
 
 layout(location = 0) in vec2 vary_texcoord0;
@@ -25,7 +25,7 @@ void main()
     for (int i = 0; i < 9; ++i)
     {
         vec2 tc = vary_texcoord0 + (i - 4) * direction * resScale;
-        col += texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], tc).rgb * w[i];
+        col += texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc).rgb * w[i];
     }
 
     frag_color = max(vec4(col, 0.0), vec4(0));

@@ -24,7 +24,7 @@ bool rtRecordGltfBlend(RKRtGeom g)
     {
         return false;
     }
-    uint mf = floatBitsToUint(RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    uint mf = floatBitsToUint(RKRtMaterials(rk_rt_geoms.g[0].normals).m[mat_id].params.z);
     return (mf & 10u) == 10u;
 }
 
@@ -32,11 +32,11 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 {
     // record 0 (the header) carries the number of records this frame's table holds: a geometry that points past them (a structure that does not match its records) would make this
     // function follow addresses from memory that is not a record, and a GPU fault loses the device for good. Such a hit is not a hit.
-    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    if (record == 0u || record >= rk_rt_geoms.g[0].first)
     {
         return false;
     }
-    RKRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = rk_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
     {
         return false;                       // a record the scene could not vouch for this frame: nothing is read
@@ -67,12 +67,12 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
     if ((g.flags & 4096u) != 0u)
     {
-        slot = ll_rt_slot(slot);            // the record holds a pin index (the persistent bindless table)
+        slot = rk_rt_slot(slot);            // the record holds a pin index (the persistent bindless table)
     }
     // <FS> (2026-11-14, Adam: a head or hair shaped dark patch of the sun shadow for one frame) the same rule as the CPU side (pipeline.cpp rt_texture_ready: a masked caster whose texture has no data is not
     // named): a handle whose entry in this frame slot's handle map is 0 draws the opaque placeholder image, so a card that reads it would block the sun for a frame. Such a record casts nothing.
     if (slot_assigned && LL_HM(slot) == 0u) { return false; }
-    float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod).a;
+    float alpha = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod).a;
     if ((g.flags & 64u) != 0u)
     {
         // glTF alpha mask: texture alpha times vertex alpha against the material's cutoff, no dithering (pbrShadowAlphaMaskF.glsl)
@@ -115,11 +115,11 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 #endif
 float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
 {
-    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    if (record == 0u || record >= rk_rt_geoms.g[0].first)
     {
         return 0.0;
     }
-    RKRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = rk_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
     {
         return 0.0;
@@ -150,12 +150,12 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
     if ((g.flags & 4096u) != 0u)
     {
-        slot = ll_rt_slot(slot);
+        slot = rk_rt_slot(slot);
     }
     // <FS> (2026-11-14, Adam: a head or hair shaped dark patch of the sun shadow for one frame) the same rule as the CPU side (pipeline.cpp rt_texture_ready: a masked caster whose texture has no data is not
     // named): a handle whose entry in this frame slot's handle map is 0 draws the opaque placeholder image, so a card that reads it would block the sun for a frame. Such a record casts nothing.
     if (slot_assigned && LL_HM(slot) == 0u) { return 0.0; }
-    float alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod + 2.0).a;
+    float alpha = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod + 2.0).a;
     if ((g.flags & 64u) != 0u || ((g.flags & 2u) == 0u && (g.flags & 1u) == 0u))
     {
         if ((g.flags & 16u) != 0u)
@@ -177,7 +177,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
 // moves from eye space into that space: a rotation (3 columns) and the camera's place in it (12 floats packed into the first 48 bytes of the record).
 void rtSceneFrame(out mat3 to_scene, out vec3 camera)
 {
-    RKRtGeom h = ll_rt_geoms.g[0];
+    RKRtGeom h = rk_rt_geoms.g[0];
     to_scene = mat3(uintBitsToFloat(uvec3(h.positions.x, h.positions.y, h.indices.x)), uintBitsToFloat(uvec3(h.indices.y, h.texcoords.x, h.texcoords.y)),
                     uintBitsToFloat(uvec3(h.colors.x, h.colors.y, h.slots.x)));
     camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
@@ -244,7 +244,7 @@ float rtShadowRay(vec3 origin, vec3 dir, float tmax, vec2 pos_screen, float lod)
         return 1.0;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x0F, ray_origin, 0.005, ray_dir, tmax);
+    rayQueryInitializeEXT(rq, rk_rt_tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x0F, ray_origin, 0.005, ray_dir, tmax);
     // a ray is given a limited number of masked candidates: a structure that is not what it should be (garbage geometry spread over the scene) must cost a frame some shadows, not
     // a GPU job that outlasts the 2 seconds the driver allows (VK_ERROR_DEVICE_LOST: the viewer cannot go on). The ray stops with what it has found: no hit, lit.
     uint candidates = 0u;
@@ -348,7 +348,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
     for (int segment = 0; segment < 2; ++segment)
     {
         rayQueryEXT rq;
-        rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsNoneEXT, mask, ray_origin, t_start, ray_dir, tmax);
+        rayQueryInitializeEXT(rq, rk_rt_tlas, gl_RayFlagsNoneEXT, mask, ray_origin, t_start, ray_dir, tmax);
         uint candidates = 0u;
         while (rayQueryProceedEXT(rq))
         {
@@ -361,7 +361,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
             if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
             {
                 uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, false));
-                const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
+                const bool skinned = record != 0u && record < rk_rt_geoms.g[0].first && (rk_rt_geoms.g[record].flags & 8192u) != 0u;
                 const float t_cand = rayQueryGetIntersectionTEXT(rq, false);
                 const bool close = t_cand < LL_RT_SUN_SELF_NEAR;
                 const float cover = rtAlphaCover(record, uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false)), rayQueryGetIntersectionBarycentricsEXT(rq, false), lod);
@@ -412,7 +412,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
         const float t_hit = rayQueryGetIntersectionTEXT(rq, true);
         rt_blocker_t = (rt_blocker_t == 0.0) ? t_hit : min(rt_blocker_t, t_hit);
         const uint record = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true)) + uint(rayQueryGetIntersectionGeometryIndexEXT(rq, true));
-        const bool skinned = record != 0u && record < ll_rt_geoms.g[0].first && (ll_rt_geoms.g[record].flags & 8192u) != 0u;
+        const bool skinned = record != 0u && record < rk_rt_geoms.g[0].first && (rk_rt_geoms.g[record].flags & 8192u) != 0u;
 #if LL_RT_SUN_DEBUG == 0
         if (skin_floor > 0.0 && skinned && t_hit < LL_RT_SUN_SELF_NEAR && segment == 0)
         {
@@ -500,8 +500,8 @@ float rtShadowRayArea(vec3 origin, vec3 light_center, float margin, float radius
 }
 
 // <FS> Ray traced reflections (doc/vulkan/PLAN-rt-materials.md, stage M4): one ray from a surface into the ray scene, the hit shaded from the geometry records and the material table.
-// Used first by the water (waterF.glsl, permutation LL_RT_REFLECTIONS). They live here because the scene declarations (the ll_rt_* block, with the function ll_rt_slot) are added to every
-// file that mentions ll_rt_tlas, and two files of one program may not both have them.
+// Used first by the water (waterF.glsl, permutation LL_RT_REFLECTIONS). They live here because the scene declarations (the rk_rt_* block, with the function rk_rt_slot) are added to every
+// file that mentions rk_rt_tlas, and two files of one program may not both have them.
 vec3 rtSrgbToLinear(vec3 c)
 {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -522,11 +522,11 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     n_obj = vec3(0.0, 1.0, 0.0);
     alpha = 1.0;
     fullbright = false;
-    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    if (record == 0u || record >= rk_rt_geoms.g[0].first)
     {
         return false;
     }
-    RKRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = rk_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u || (g.indices.x == 0u && g.indices.y == 0u) || (g.positions.x == 0u && g.positions.y == 0u))
     {
         return false;
@@ -555,7 +555,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     {
         return true;                    // no material: a neutral grey
     }
-    RKRtMaterial m = RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
+    RKRtMaterial m = RKRtMaterials(rk_rt_geoms.g[0].normals).m[mat_id];
     uint mflags = floatBitsToUint(m.params.z);
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
@@ -570,9 +570,9 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         tex_index = floatBitsToUint(pb.v[ix[0]].w) & 3u;
     }
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
-    uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);
+    uint slot = rk_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);
     rt_soft_masked = rt_hair_soft != 0 && (mflags & 4u) != 0u && (g.flags & 8192u) != 0u;
-    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, rt_soft_masked && rt_hair_soft == 3 ? lod + 1.5 : lod);
+    vec4 tex = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(slot))], uv, rt_soft_masked && rt_hair_soft == 3 ? lod + 1.5 : lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
@@ -602,11 +602,11 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         uint emissive_pin = m.slots2.y & 0xFFFFu;
         if (emissive_pin != 0u)
         {
-            uint emissive_slot = ll_rt_slot(emissive_pin);
+            uint emissive_slot = rk_rt_slot(emissive_pin);
             emissive_tex = vec3(0.0);           // <FS> a named emissive map that has no slot yet (not resident): no glow, not the factor alone (a white glow on hair)
             if (emissive_slot != 0u)
             {
-                emissive_tex = rtSrgbToLinear(textureLod(ll_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb);
+                emissive_tex = rtSrgbToLinear(textureLod(rk_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb);
             }
         }
         emissive = m.emissive.xyz * emissive_tex;
@@ -631,12 +631,12 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         uint normal_pin = m.slots2.x & 0xFFFFu;
         if (normal_pin != 0u && (g.flags & 8u) != 0u)
         {
-            uint normal_slot = ll_rt_slot(normal_pin);
+            uint normal_slot = rk_rt_slot(normal_pin);
             if (normal_slot != 0u && (g.flags & 8192u) != 0u)
             {
                 // a skinned avatar draw (kRecSkinned): the tangent frame below is made per triangle and the avatar's normals are smooth (skinned by the compute pass): the frame jumps at every triangle edge
                 // and roughens skin, hair edges and hands. Only the alpha of the map (the legacy glossiness mask) is read.
-                normal_alpha = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).a;
+                normal_alpha = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).a;
             }
             else if (normal_slot != 0u)
             {
@@ -658,7 +658,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
                         tangent = normalize(tangent);
                         vec3 bit = cross(n_obj, tangent);
                         bit *= (dot(bit, bitangent) < 0.0) ? -1.0 : 1.0;       // the handedness of the uv layout
-                        vec4 nmt = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod);
+                        vec4 nmt = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod);
                         vec3 nm = nmt.xyz * 2.0 - 1.0;
                         normal_alpha = nmt.a;
                         n_shaded = normalize(tangent * nm.x + bit * nm.y + n_obj * nm.z);
@@ -668,13 +668,13 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         }
         // roughness and metallic: glTF = factors times the metallic-roughness map (green, blue); legacy = the specular map (rgb colour, alpha glossiness), none = matte
         uint mr_pin = m.slots2.x >> 16;
-        uint mr_slot = mr_pin != 0u ? ll_rt_slot(mr_pin) : 0u;
+        uint mr_slot = mr_pin != 0u ? rk_rt_slot(mr_pin) : 0u;
         if ((mflags & 2u) != 0u)
         {
             float metallic = m.params.x, rough = m.params.y;
             if (mr_slot != 0u)
             {
-                vec3 t = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod).rgb;
+                vec3 t = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod).rgb;
                 rough *= t.g;
                 metallic *= t.b;
             }
@@ -683,7 +683,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         else if (mr_slot != 0u)
         {
             // like the G-buffer pass of legacy materials (materialF.glsl): colour = specular map x the material's specular colour (m.emissive.xyz), glossiness = the exponent / 255 (m.params.w) x normal map alpha
-            vec4 sm = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod);
+            vec4 sm = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(mr_slot))], uv, lod);
             spec = vec4(rtSrgbToLinear(sm.rgb * m.emissive.xyz), m.params.w * normal_alpha);
         }
     }
@@ -700,16 +700,16 @@ bool rtShadeSurface(uint record, uint prim, vec2 bary, float lod, out vec3 albed
 // Is the record's material alpha BLENDED (legacy: hair, some clothes; glTF: translucent meshes such as an avatar's shell)? The main view draws those in the forward alpha pass over the opaque layers behind them.
 bool rtRecordBlended(uint record)
 {
-    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    if (record == 0u || record >= rk_rt_geoms.g[0].first)
     {
         return false;
     }
-    uint mat_id = ll_rt_geoms.g[record].material;
+    uint mat_id = rk_rt_geoms.g[record].material;
     if (mat_id == 0u || mat_id >= 16384u)
     {
         return false;
     }
-    uint mf = floatBitsToUint(RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    uint mf = floatBitsToUint(RKRtMaterials(rk_rt_geoms.g[0].normals).m[mat_id].params.z);
     return (mf & 8u) != 0u;         // <FS> glTF blends too (the translucent shell of an avatar): a layer over what is behind it, lit like any hit
 }
 
@@ -807,7 +807,7 @@ bool rtTraceHitEx(vec3 origin, vec3 dir, vec3 sun_dir, vec2 pos_screen, bool ful
         return false;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x0F, ray_origin, 0.02, ray_dir, tmax);
+    rayQueryInitializeEXT(rq, rk_rt_tlas, 0, 0x0F, ray_origin, 0.02, ray_dir, tmax);
     float lod_start = rt_hit_shadow_variant == 4 ? 0.0 : clamp(0.5 * log2(max(length(origin), 1.0)) - 1.0, 0.0, 4.0);
     uint steps = 0u;
     // the nearest blended candidate seen so far (its place in the scene, kept until the ray is done)
@@ -1037,7 +1037,7 @@ bool rtReceiverIsAvatar(vec3 pos, vec3 norm)
         return false;
     }
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0x0C, ray_origin, 0.0, ray_dir, 2.0 * LL_RT_SUN_SELF_RECV);
+    rayQueryInitializeEXT(rq, rk_rt_tlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0x0C, ray_origin, 0.0, ray_dir, 2.0 * LL_RT_SUN_SELF_RECV);
     uint steps = 0u;
     while (rayQueryProceedEXT(rq))
     {
@@ -1241,7 +1241,7 @@ float rt_sun_shadow(vec3 pos, vec3 norm, vec2 pos_screen)
     vec3 x_camera;
     rtSceneFrame(x_to_scene, x_camera);
     rayQueryEXT xq;
-    rayQueryInitializeEXT(xq, ll_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, x_camera, 0.01, x_to_scene * (pos / depth), depth + 3.0);
+    rayQueryInitializeEXT(xq, rk_rt_tlas, gl_RayFlagsOpaqueEXT, 0x04, x_camera, 0.01, x_to_scene * (pos / depth), depth + 3.0);
     uint x_steps = 0u;
     while (rayQueryProceedEXT(xq))
     {

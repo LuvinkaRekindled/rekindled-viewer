@@ -286,7 +286,7 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
 
 // <FS> GPU particles stage 2 / 3: the vertical motion above a floor at relative height 0 with the stepping's bounce (z mirrored, vertical speed * -0.75 each time the particle is below), as the exact
 // sequence of flights between the bounces; it ends in rest on the floor when the bounces are too small to see (the stepping hops about on it)
-static void fs_bounce_z(F32 z0, F32 v0, F32 a, F32 age, F32& z_out, F32& v_out)
+static void rk_bounce_z(F32 z0, F32 v0, F32 a, F32 age, F32& z_out, F32& v_out)
 {
     F32 z = z0, v = v0, left = age;
     if (z < 0.f)
@@ -386,14 +386,14 @@ void RKViewerPartRecord::evaluate(F64 now, LLVector3& pos, LLVector3& vel) const
         const F32 floor_z = (mMode == FOLLOW && src) ? src->mPosAgent.mV[VZ] : mFloorZ;
         const F32 z0 = (mMode == FOLLOW && src) ? 0.f : mPos0.mV[VZ] - mFloorZ;
         F32 z, v;
-        fs_bounce_z(z0, mVel0.mV[VZ], mAccel.mV[VZ], age, z, v);
+        rk_bounce_z(z0, mVel0.mV[VZ], mAccel.mV[VZ], age, z, v);
         pos.mV[VZ] = floor_z + z;
         vel.mV[VZ] = v;
     }
 }
 
 // the law of a particle as a record, or -1 when it needs the stepping (wind, a callback, a ribbon, a HUD particle, parcel media, a pull towards a target with an acceleration or a bounce, ...)
-static int fs_record_mode(const LLViewerPart& part)
+static int rk_record_mode(const LLViewerPart& part)
 {
     const U32 fl = part.mFlags;
     const U32 excluded = LLPartData::LL_PART_WIND_MASK | LLPartData::LL_PART_RIBBON_MASK | LLPartData::LL_PART_HUD;
@@ -417,7 +417,7 @@ static int fs_record_mode(const LLViewerPart& part)
     return (bounce && part.mPartSourcep.isNull()) ? -1 : RKViewerPartRecord::FREE;
 }
 
-static void fs_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec)
+static void rk_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec)
 {
     rec.mPos0 = part.mSpawnKnown ? part.mSpawnPos : part.mPosAgent;
     rec.mVel0 = part.mSpawnKnown ? part.mSpawnVel : part.mVelocity;
@@ -461,7 +461,7 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
     gPipeline.markRebuild(mVOPartGroupp->mDrawable, LLDrawable::REBUILD_ALL);
 
     RKViewerPartRecord rec;
-    fs_fill_record(part, mode, rec);
+    rk_fill_record(part, mode, rec);
     rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
     {
         // the draw class: texture, blend pair, fullbright (at most four in a group; more and the group is drawn from rows)
@@ -527,10 +527,10 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
     return true;
 }
 
-// the record of a slot as the shader reads it (alphaPullV.glsl / emissivePullV.glsl, ll_record_eval): positions = (pos0, t0 high), normals = (vel0, t0 low), tangents = (accel, max age),
+// the record of a slot as the shader reads it (alphaPullV.glsl / emissivePullV.glsl, rk_record_eval): positions = (pos0, t0 high), normals = (vel0, t0 low), tangents = (accel, max age),
 // weight4 = (target at spawn, floor height), texcoord0 / 1 = start / end scale, texcoord2 = two words (start glow | end glow << 8 | mode << 16 | bounce << 18 | interp colour << 19 | interp scale << 20 |
 // follow velocity << 21 | source number << 24, end colour), colour = start colour
-static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const RKViewerPartRecord* recs)
+static void rk_store_write(LLVertexBuffer* store, U32 slot, U32 count, const RKViewerPartRecord* recs)
 {
     LLStrider<LLVector4a> pos, nrm, tan, wt;
     LLStrider<LLVector2> tc0, tc1, tc2;
@@ -598,7 +598,7 @@ bool LLViewerPartGroup::syncStore()
     }
     if (mStoreAll)
     {
-        fs_store_write(mStore.get(), 0, n, mRecords.data());
+        rk_store_write(mStore.get(), 0, n, mRecords.data());
         mStoreAll = false;
     }
     else
@@ -607,7 +607,7 @@ bool LLViewerPartGroup::syncStore()
         {
             if (slot < n)
             {
-                fs_store_write(mStore.get(), slot, 1, &mRecords[slot]);
+                rk_store_write(mStore.get(), slot, 1, &mRecords[slot]);
             }
         }
     }
@@ -776,7 +776,7 @@ static struct PartSimCensus
     U64 mModeRecs[5] = {};
 } sSimCensus;
 
-static bool fs_partsim_compare_on()
+static bool rk_partsim_compare_on()
 {
     static const bool on = []() { const char* v = getenv("LL_VK_PARTSIM_COMPARE"); return v && atoi(v) != 0; }();
     return on;
@@ -784,17 +784,17 @@ static bool fs_partsim_compare_on()
 
 // the closed form of every law against the stepped state (a particle just stepped to its age): the free flight and the colour / scale / glow are expected to agree, the follow source and target linear laws too;
 // the bounce and the pull towards a target are different laws (continuous, not the stepping's), the log says how far apart they are
-static int fs_record_mode(const LLViewerPart& part);
-static void fs_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec);
-static void fs_partsim_compare(const LLViewerPart* part)
+static int rk_record_mode(const LLViewerPart& part);
+static void rk_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec);
+static void rk_partsim_compare(const LLViewerPart* part)
 {
-    const int mode = fs_record_mode(*part);
+    const int mode = rk_record_mode(*part);
     if (mode < 0)
     {
         return;
     }
     RKViewerPartRecord rec;
-    fs_fill_record(*part, mode, rec);
+    rk_fill_record(*part, mode, rec);
     const F32 age = part->mLastUpdateTime;
     rec.mT0 = 0.0;
     LLVector3 p, v;
@@ -803,12 +803,12 @@ static void fs_partsim_compare(const LLViewerPart* part)
     LLColor4 color = part->mStartColor;
     if (part->mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK)
     {
-        color = fs_part_color_at(part->mStartColor, part->mEndColor, frac);
+        color = rk_part_color_at(part->mStartColor, part->mEndColor, frac);
     }
     LLVector2 scale = part->mStartScale;
     if (part->mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK)
     {
-        scale = fs_part_scale_at(part->mStartScale, part->mEndScale, frac);
+        scale = rk_part_scale_at(part->mStartScale, part->mEndScale, frac);
     }
     const F32 glow = (F32)(U8)ll_round(lerp(part->mStartGlow, part->mEndGlow, frac) * 255.f);
 
@@ -846,7 +846,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
 
     LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
 
-    const bool compare_on = fs_partsim_compare_on();
+    const bool compare_on = rk_partsim_compare_on();
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     LLViewerRegion *regionp = getRegion();
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch    
@@ -857,7 +857,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     {
         LLVector3 a(0.f, 0.f, 0.f);
         LLViewerPart* part = mParticles[i] ;
-        if (ll_diag_on())       // (the census: its only reader is LL_DIAG Q1Census)
+        if (rk_diag_on())       // (the census: its only reader is LL_DIAG Q1Census)
         {
             const U32 fl = part->mFlags;
             ++sSimCensus.mStepped;
@@ -987,7 +987,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
         part->mLastUpdateTime = cur_time;
         if (compare_on && part->mSpawnKnown)
         {
-            fs_partsim_compare(part);
+            rk_partsim_compare(part);
         }
 
 
@@ -1224,7 +1224,7 @@ bool LLViewerPartSim::shouldAddPart()
 }
 
 // <FS> GPU particles stage 2: the particles without per-frame input are kept as records (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SIM=0 steps them; needs the rows of stage 1, LL_VK_GPU_PARTICLES)
-static bool fs_partsim_records_on()
+static bool rk_partsim_records_on()
 {
     static const bool on = []()
     {
@@ -1336,13 +1336,13 @@ void LLViewerPartSim::sortStores()
 
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
-    sSimCensus.mSpawned += ll_diag_on();
+    sSimCensus.mSpawned += rk_diag_on();
     part->mSpawnPos = part->mPosAgent;
     part->mSpawnVel = part->mVelocity;
     part->mSpawnKnown = true;
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
     {
-        const int mode = fs_partsim_records_on() ? fs_record_mode(*part) : -1;
+        const int mode = rk_partsim_records_on() ? rk_record_mode(*part) : -1;
         if (mode >= 0)
         {
             put(part, true, mode);
@@ -1488,7 +1488,7 @@ void LLViewerPartSim::updateSimulation()
         deldir = -1;
     }
 
-    const bool census = ll_diag_on();       // (the census of the simulation: its only reader is LL_DIAG Q1Census)
+    const bool census = rk_diag_on();       // (the census of the simulation: its only reader is LL_DIAG Q1Census)
     const unsigned long long census_t0 = census ? __rdtsc() : 0;
     sSimCensus.mSources += census ? (U64)count : 0;
     S32 num_updates = 0;

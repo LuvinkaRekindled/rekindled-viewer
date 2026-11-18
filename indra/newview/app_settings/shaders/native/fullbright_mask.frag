@@ -21,7 +21,7 @@ void main()
 {
     mirror_clip(vary_position);
 
-    vec4 color = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0.xy);
+    vec4 color = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0.xy);
 
     float final_alpha = color.a * vertex_color.a;
 

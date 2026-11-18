@@ -19,9 +19,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_lightMap;        // the half resolution lightmap
-    uint ll_ti_depthMap;
-    uint ll_ti_normalMap;
+    uint rk_ti_lightMap;        // the half resolution lightmap
+    uint rk_ti_depthMap;
+    uint rk_ti_normalMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -30,14 +30,14 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     const vec2 uv = vary_fragcoord;
-    const float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv).r;
+    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv).r;
     if (depth >= 1.0)
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
         return;
     }
-    const vec3 norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], uv).xy);
-    const vec3 pos = ll_view_pos(inv_proj, uv, depth);
+    const vec3 norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], uv).xy);
+    const vec3 pos = rk_view_pos(inv_proj, uv, depth);
     const float tolerance2 = pos.z * pos.z * 0.00005;
 
     const vec2 half_res = floor((screen_res + 1.0) * 0.5);
@@ -54,15 +54,15 @@ void main()
         const vec2 off = vec2(float(k & 1), float(k >> 1));
         const vec2 idx = clamp(base + off, vec2(0.0), half_res - 1.0);
         const float w = (off.x > 0.5 ? frac.x : 1.0 - frac.x) * (off.y > 0.5 ? frac.y : 1.0 - frac.y);
-        const vec4 col = texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], (idx + 0.5) / half_res);
+        const vec4 col = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], (idx + 0.5) / half_res);
         const vec2 tap_uv = (min(idx * 2.0 + half_offset, screen_res - 1.0) + 0.5) / screen_res;
-        const float tap_depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tap_uv).r;
+        const float tap_depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tap_uv).r;
         if (tap_depth >= 1.0)
         {
             continue;                   // a sky pixel's lightmap value (1.0) is not a lighting value of this surface
         }
-        const vec3 tap_pos = ll_view_pos(inv_proj, tap_uv, tap_depth);
-        const vec3 tap_norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], tap_uv).xy);
+        const vec3 tap_pos = rk_view_pos(inv_proj, tap_uv, tap_depth);
+        const vec3 tap_norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], tap_uv).xy);
         const float d = dot(norm, tap_pos - pos);
         const float d_back = dot(tap_norm, pos - tap_pos);
         const float off_plane = d * d + d_back * d_back;        // how far the two surfaces are from each other, both ways (the fallback takes the tap with the least)

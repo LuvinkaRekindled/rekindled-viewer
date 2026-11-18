@@ -11,9 +11,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_emissiveRect;
+    uint rk_ti_emissiveRect;
 #ifdef USE_LAST_EXPOSURE
-    uint ll_ti_exposureMap;
+    uint rk_ti_exposureMap;
 #endif
 };
 
@@ -22,14 +22,14 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    float L = textureLod(ll_tbl2d[LL_HM(ll_ti_emissiveRect)], vec2(0.5), 8.0).r;
+    float L = textureLod(rk_tbl2d[LL_HM(rk_ti_emissiveRect)], vec2(0.5), 8.0).r;
     const float max_L = dynamic_exposure_params.x;
     L = clamp(L, 0.0, max_L);
     L /= max_L;
     L = L * L;
     float s = mix(dynamic_exposure_params.z, dynamic_exposure_params.y, L);
 #ifdef USE_LAST_EXPOSURE
-    const float prev = textureLod(ll_tbl2d[LL_HM(ll_ti_exposureMap)], vec2(0.5), 0.0).r;
+    const float prev = textureLod(rk_tbl2d[LL_HM(rk_ti_exposureMap)], vec2(0.5), 0.0).r;
     const float speed = -log(dynamic_exposure_params.w) / dynamic_exposure_params2.w;
     s = mix(prev, s, 1.0 - exp(-speed * dt));
 #endif

@@ -1,5 +1,5 @@
 /**
- * @file llwebrtc_winplayout.cpp
+ * @file rkwebrtc_winplayout.cpp
  * @brief Windows voice playout through a normal media stream (see the header)
  */
 
@@ -21,7 +21,7 @@
 #include <cstring>
 #include <vector>
 
-#include "llwebrtc_winplayout.h"
+#include "rkwebrtc_winplayout.h"
 
 namespace
 {

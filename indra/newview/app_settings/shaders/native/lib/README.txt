@@ -7,4 +7,4 @@ Alpha family (doc/vulkan/SHADERS-F2-alpha.md):
   fog.glsl     water_fog, apply_sky_and_water_fog (need color.glsl)
   rows.glsl    the scene table rows (160 bytes) and model blocks (176 bytes) by buffer address, texture animation, skin, particle quads
   gltf.glsl    the glTF texture transform and tangent space transform of the blend pass's vertex shader (alpha_pbr.vert)
-  pbr.glsl     the glTF lighting of the blend pass: the sun, the image based light, the local lights (alpha_pbr.frag; needs ALPHA_PBR's ll_ti_brdfLut)
+  pbr.glsl     the glTF lighting of the blend pass: the sun, the image based light, the local lights (alpha_pbr.frag; needs ALPHA_PBR's rk_ti_brdfLut)

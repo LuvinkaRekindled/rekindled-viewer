@@ -154,12 +154,12 @@ RKShaderProgram            gHazeProgram;
 RKShaderProgram            gWaterHazePullProgram;        // <FS> the table form of the water patches of the haze (native only: waterhaze.vert / waterhaze.frag with WATER_PULL)
 
 // <FS> the water seen from above in a session with ray queries (the ray traced sun shadow and reflection of the water): the pull program with the ray queries, native/manifest.txt `Water Pull RT Shader`
-bool ll_water_rt()
+bool rk_water_rt()
 {
     return sWaterRtMade;
 }
 
-bool ll_water_rt_reflection()
+bool rk_water_rt_reflection()
 {
     return sWaterRtReflectionMade;
 }

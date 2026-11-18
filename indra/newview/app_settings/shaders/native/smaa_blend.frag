@@ -8,10 +8,10 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_blendTex;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_blendTex;
 #if SMAA_REPROJECTION
-    uint ll_ti_velocityTex;
+    uint rk_ti_velocityTex;
 #endif
 };
 
@@ -23,10 +23,10 @@ layout(location = 0) out vec4 frag_color;
 #include "lib/smaa.glsl"
 
 // (after the library: its functions have parameters of these names)
-#define diffuseRect ll_tbl2d[LL_HM(ll_ti_diffuseRect)]
-#define blendTex ll_tbl2d[LL_HM(ll_ti_blendTex)]
+#define diffuseRect rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
+#define blendTex rk_tbl2d[LL_HM(rk_ti_blendTex)]
 #if SMAA_REPROJECTION
-#define velocityTex ll_tbl2d[LL_HM(ll_ti_velocityTex)]
+#define velocityTex rk_tbl2d[LL_HM(rk_ti_velocityTex)]
 #endif
 
 void main()

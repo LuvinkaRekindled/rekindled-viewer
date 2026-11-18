@@ -8,7 +8,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -16,7 +16,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 v = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
+    vec4 v = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
     if (show_flag > 1.5)
     {
         // show_flag 2: the world pass's motion target itself (RG16 unorm, lib/motion.glsl): x = 1.0 = "no motion of its own" (dark blue), anything else is a motion of its own: red/green = pixels (full at 4)

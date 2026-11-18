@@ -265,7 +265,7 @@ bool LLDrawPoolAlpha::hasStaticAlpha()
     for (LLCullResult::sg_iterator i = gPipeline.beginAlphaGroups(); i != gPipeline.endAlphaGroups(); ++i)
     {
         LLSpatialGroup* group = *i;
-        if (group && !group->isDead() && (ll_group_has_static_alpha(group) || !group->mParticleRuns.empty()))
+        if (group && !group->isDead() && (rk_group_has_static_alpha(group) || !group->mParticleRuns.empty()))
         {
             return true;
         }
@@ -406,7 +406,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 
         // <FS> K6 B1 step 1: the alpha masked and the invisible draws are table items (the render map no longer lists them in a view the table serves): the same items are drawn again with the colour program's
         // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: the alpha mask and the invisible alpha draws, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
-        // lists, prepares and elides these types while this view is on (ll_scene_geo_hud_type), so it draws them the same way.
+        // lists, prepares and elides these types while this view is on (rk_scene_geo_hud_type), so it draws them the same way.
         {
             RKShaderProgram* color = &gDrawColorProgram;
             static LLStaticHashedString waterSign("waterSign");
@@ -459,7 +459,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
     }
 }
 
-// <FS> K6 B1 step 3: the blended alpha draws of the groups that have a current alpha plan (ll_alpha_plan: the fragment's served items) are drawn red from the table: one record of the plans' served ranges
+// <FS> K6 B1 step 3: the blended alpha draws of the groups that have a current alpha plan (rk_alpha_plan: the fragment's served items) are drawn red from the table: one record of the plans' served ranges
 // (the record the alpha loop sends for a run: kind 29, {fragment handle, first item, count} each), drawn with the colour program's pull twin. Returns the groups it drew all of; the old walk below draws
 // the others (a group without a plan: a fragment that is not current, a view the table does not serve, a segment the table does not carry).
 // (K6 B1: the Batch Size / Texture Animation views draw the same ranges with their own programs and colour: a view says which)
@@ -473,7 +473,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
 {
     drawn[0].clear();
     drawn[1].clear();
-    if (!ll_alpha_serving() || (LLPipeline::sRenderingHUDs && !ll_scene_geo_hud_any()))
+    if (!rk_alpha_serving() || (LLPipeline::sRenderingHUDs && !rk_scene_geo_hud_any()))
     {
         return;
     }
@@ -506,7 +506,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
             continue;
         }
         RKAlphaPlanView plan;
-        if (ll_alpha_plan(group, plan, rig != 0) != 1 || plan.mHandle == 0)
+        if (rk_alpha_plan(group, plan, rig != 0) != 1 || plan.mHandle == 0)
         {
             continue;
         }
@@ -569,7 +569,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
 // <FS> K6 B1: the Batch Size and Texture Animation debug views from the scene table (they walked every group's draw infos and drew each with pushVerts). The visible fragments' items of every table type are
 // drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour RKDrawBatch::getDebugColor made for it when its entry was built (carried in the
 // table row), Texture Animation tints the draws that have a texture matrix yellow. The blended alpha draws come from the alpha plans' ranges as in the highlight; the rigged ones use the skinned twin.
-void ll_render_table_debug()
+void rk_render_table_debug()
 {
     const bool batch = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BATCH_SIZE);
     const bool anim = gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_ANIM);
@@ -593,9 +593,9 @@ void ll_render_table_debug()
         {
             programs[rig]->bind();
             programs[rig]->uniform4f(LLShaderMgr::DIFFUSE_COLOR, mode, 0, 0, 1);
-            for (int tn = 0; tn < ll_scene_geo_type_count(); ++tn)
+            for (int tn = 0; tn < rk_scene_geo_type_count(); ++tn)
             {
-                const U32 pass = ll_scene_geo_type_pass(tn);
+                const U32 pass = rk_scene_geo_type_pass(tn);
                 if (!rig)
                 {
                     LLRenderPass::pushGeometryPackets(pass);
@@ -637,11 +637,11 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
                 !table_drawn[pass].count(group))       // (drawn from the table above)
             {
                 // (2026-11-12: from the fragment's transient items of the set, no draw info: the set `pass` is the static one, then the rigged one)
-                const int highlight_count = ll_alpha_transient_count(group, pass == 1);
+                const int highlight_count = rk_alpha_transient_count(group, pass == 1);
                 for (int highlight_k = 0; highlight_k < highlight_count; ++highlight_k)
                 {
                     RKAlphaTransientDraw params;
-                    if (!ll_alpha_transient_draw(group, pass == 1, (U32)highlight_k, params) || !params.mVb)
+                    if (!rk_alpha_transient_draw(group, pass == 1, (U32)highlight_k, params) || !params.mVb)
                     {
                         continue;
                     }
@@ -686,7 +686,7 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
 extern U32 gFrameCount;
 
 // <FS> GPU particles G1: the order of a record store is written by the GPU (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SORT=0 sorts on the CPU; implies the shader evaluation of G0)
-bool ll_particle_sort_on()
+bool rk_particle_sort_on()
 {
     static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_SORT"); return !v || atoi(v) != 0; }();
     return on;
@@ -700,9 +700,9 @@ static struct AlphaSceneStats
 } sAlphaScene;
 
 // item E (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rigged alpha draws of the world's colour pass (and its depth passes) draw a simplified index list when the avatar is far enough that the error of the
-// simplification is under half a pixel at its distance (a hair card with 100,000 triangles for a few hundred pixels). The lists are made on a background thread (item A's cache: ll_rigged_lod_lookup in
+// simplification is under half a pixel at its distance (a hair card with 100,000 triangles for a few hundred pixels). The lists are made on a background thread (item A's cache: rk_rigged_lod_lookup in
 // pipeline.cpp); until one is ready the draw's own list is used.
-extern bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count);
+extern bool rk_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count);
 static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
 {
     ib_name = 0;
@@ -728,11 +728,11 @@ static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_na
     }
     const F32 height = (F32)gViewerWindow->getWorldViewHeightRaw();
     const F32 pixel = 2.f * distance * tanf(0.5f * camera->getView()) / llmax(height, 1.f);        // the world size of a pixel of the window at that distance
-    return ll_rigged_lod_lookup(range, 0.5f * pixel, ib_name, count);
+    return rk_rigged_lod_lookup(range, 0.5f * pixel, ib_name, count);
 }
 
 // the scene table's opaque rigged items (pipeline.cpp, the frame record's palette bindings)
-bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
+bool rk_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
 {
     return rigged_lod_for(range, avatar, ib_name, count);
 }
@@ -741,16 +741,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     // <FS> S5g (doc/vulkan/S5-design.md): the scene table is the ONLY alpha path. The main view's passes draw the groups' plans from the fragments (one record per run, in the loop's order), every other draw as a
-    // transient entry; a draw that neither can draw is not drawn (counted, logged once by ll_alpha_transient)
+    // transient entry; a draw that neither can draw is not drawn (counted, logged once by rk_alpha_transient)
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
     // diagnostics (crash / blink hunt 2026-10-22): LL_VK_ALPHA_NO_FRAGMENTS=1 draws every alpha draw as a transient entry (the fragments' plans are not used), LL_VK_ALPHA_NO_TRANSIENT=1 draws no transient entry (what only they draw is missing)
     static const bool dbg_no_fragments = getenv("LL_VK_ALPHA_NO_FRAGMENTS") != nullptr, dbg_no_transient = getenv("LL_VK_ALPHA_NO_TRANSIENT") != nullptr;
     // J1 K6 S5c: the impostor images and the probes' cube faces are views the table serves (their cull results are prepared): their alpha draws come from the fragments' plans too (LL_VK_ALPHA_VIEWS=0 = transient entries from the draw infos as before)
     static const bool alpha_views = !getenv("LL_VK_ALPHA_VIEWS") || getenv("LL_VK_ALPHA_VIEWS")[0] != '0';
-    const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || ll_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && ll_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
+    const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || rk_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && rk_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
     // S5f F4: the draws the fragments do not keep are sent as transient entries in EVERY view that has its pull programs (HUD, impostor render, probe and reflection renders, the depth only passes): a pass
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
-    const bool transient_ok = !dbg_no_transient && ll_alpha_ab_on() && !(LLPipeline::sRenderingHUDs && rigged);
+    const bool transient_ok = !dbg_no_transient && rk_alpha_ab_on() && !(LLPipeline::sRenderingHUDs && rigged);
     struct PendingRange { U32 mHandle, mFirst, mCount; };
     struct PendingSrc { const GeoRigSource* mRig; const U32* mWire; U32 mRank, mCount, mHandle; U32* mBound = nullptr; };       // (S5d: where the items of a rigged range are, for their palette bindings)
     static thread_local std::vector<PendingRange> pending;
@@ -761,8 +761,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     static thread_local std::vector<PendingRange> glow_range[3];
     static thread_local std::vector<PendingSrc> glow_src[3];
     const bool glow_pass = post_water && !depth_only && !mFringePass;       // (the glow second draw is made by the colour passes only)
-    const bool glow_plain_table = (alpha_table || transient_ok) && glow_pass && ll_alpha_glow_table(false);
-    const bool glow_pbr_table = (alpha_table || transient_ok) && glow_pass && ll_alpha_glow_table(true);
+    const bool glow_plain_table = (alpha_table || transient_ok) && glow_pass && rk_alpha_glow_table(false);
+    const bool glow_pbr_table = (alpha_table || transient_ok) && glow_pass && rk_alpha_glow_table(true);
     // S5f F1: the depth only passes (the depth of field depth pass: minimum alpha 0.33 on the mask program; the rigged depth prepass: mDepthCutoff) are served by the same runs: the lit key draws with the fullbright
     // (mask) pull program, as the old code sets simple_shader = fullbright_shader = the mask program for them
     const bool dof_pass = transient_ok && depth_only && mDepthCutoff <= 0.f;
@@ -805,7 +805,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         std::vector<const LLMatrix4*> mMatrixKeys;
         std::vector<U8> mBlob;
     };
-    if (ll_particle_sort_on() && !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && !depth_only && !rigged)
+    if (rk_particle_sort_on() && !LLPipeline::sImpostorRender && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sReflectionRender && !depth_only && !rigged)
     {
         LLViewerPartSim::getInstance()->sortStores();       // G1: the GPU sorts the particle stores of the frame before the first main view alpha pass draws them
     }
@@ -887,7 +887,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         header.mPass = tr_rigged ? 1u : 0u;
         if (tr_rigged)
         {
-            ll_frame_palette_flush();       // (the shared palettes the entries point into go first)
+            rk_frame_palette_flush();       // (the shared palettes the entries point into go first)
         }
         {
             RKRenderState::CullScope cull_face(false, pending_key >= 0 && (((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0));       // a double sided glTF material, a particle group: culling off
@@ -916,13 +916,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         if (tr_rigged && draw_p)
         {
             U32 offset = 0, joints = 0;
-            if (!ll_frame_palette(draw_p->mAvatar, draw_p->mSkin, offset, joints))
+            if (!rk_frame_palette(draw_p->mAvatar, draw_p->mSkin, offset, joints))
             {
                 return;                 // the skin is not loaded yet: not drawn, as the old path
             }
             e.mPaletteOffset = offset;
             e.mJoints = joints;
-            ll_rig_census_add(8, 1);
+            rk_rig_census_add(8, 1);
         }
         U32* fields[6] = { &e.mTextures[0], &e.mTextures[1], &e.mTextures[2], &e.mTextures[3], &e.mNormalMap, &e.mSpecularMap };
         for (int k = 0; k < 6; ++k)
@@ -987,10 +987,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             bindings.clear();
             // <FS> P2 step 2: the binding of a rigged alpha item (palette id, joints, simplified list) is persistent at the worker (the kind 21 record says so): only the ones that changed are sent, the worker
             // resolves the palettes of the run's items itself when the run is named
-            extern bool ll_geo_persist();
-            extern U32 ll_geo_rebind_epoch();
-            const bool persist = ll_geo_persist();
-            const U32 epoch = ll_geo_rebind_epoch();
+            extern bool rk_geo_persist();
+            extern U32 rk_geo_rebind_epoch();
+            const bool persist = rk_geo_persist();
+            const U32 epoch = rk_geo_rebind_epoch();
             LLVOAvatar* last_avatar = nullptr;
             const LLMeshSkinInfo* last_skin = nullptr;
             U32 last_offset = ~0u, last_joints = 0;
@@ -1006,7 +1006,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         last_avatar = avatar;
                         last_skin = skin;
                         U32 offset = 0, joints = 0;
-                        if (ll_frame_palette(avatar, skin, offset, joints))
+                        if (rk_frame_palette(avatar, skin, offset, joints))
                         {
                             last_offset = offset;
                             last_joints = joints;
@@ -1038,7 +1038,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     bindings.push_back({ src.mHandle, src.mWire[src.mRank + k], last_offset, last_joints, lod_ib, lod_count });
                 }
             }
-            ll_frame_palette_flush();
+            rk_frame_palette_flush();
             if (!persist || !bindings.empty())
             {
                 RKVkBridge::ShadowPacketsHeader palette_header;
@@ -1187,7 +1187,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
         }
         int blend_src = (int)LLRender::BF_SOURCE_ALPHA, blend_dst = (int)LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
-        ll_alpha_blend_pair(((U32)key >> 8) & 0xFF, &blend_src, &blend_dst);
+        rk_alpha_blend_pair(((U32)key >> 8) & 0xFF, &blend_src, &blend_dst);
         gRender.blendFunc((LLRender::eBlendFactor)blend_src, (LLRender::eBlendFactor)blend_dst, mAlphaSFactor, mAlphaDFactor);
         {   // a custom blend function may need "invisible" fragments: the minimum alpha is 0 for it, as the old loop sets it per draw (and back for the next run of this program)
             const bool zero_alpha = blend_dst != (int)LLRender::BF_SOURCE_ALPHA && blend_src != (int)LLRender::BF_SOURCE_ALPHA;
@@ -1314,7 +1314,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             bool group_plan;
             {
                 ItemCensus::Scope census_scope(ItemCensus::ALPHA_PLAN);
-                group_plan = alpha_table && !is_particle_or_hud_particle && ll_alpha_plan(group, plan, rigged) == 1 && plan.mHandle != 0;
+                group_plan = alpha_table && !is_particle_or_hud_particle && rk_alpha_plan(group, plan, rigged) == 1 && plan.mHandle != 0;
                 ItemCensus::add(ItemCensus::ALPHA_PLAN, group_plan ? 1 : 0);
             }
             if (!group_plan)
@@ -1333,7 +1333,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     for (const RKParticleRun& run : group->mParticleRuns)
                     {
                         RKAlphaTransient transient;
-                        if (!ll_particle_transient(run, group->mVertexBuffer.get(), depth_only, transient))
+                        if (!rk_particle_transient(run, group->mVertexBuffer.get(), depth_only, transient))
                         {
                             ++sAlphaScene.mDropped;
                             continue;
@@ -1367,7 +1367,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
                 RKAlphaTransient transient;
                 RKAlphaTransientDraw tdraw;
-                if (!ll_alpha_transient_item(group, rigged, k, depth_only, transient, tdraw))
+                if (!rk_alpha_transient_item(group, rigged, k, depth_only, transient, tdraw))
                 {
                     return false;
                 }
@@ -1433,7 +1433,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // current has no items: not drawn this frame (counted)
             if (!group_plan)
             {
-                const int transient_count = ll_alpha_transient_count(group, rigged);
+                const int transient_count = rk_alpha_transient_count(group, rigged);
                 if (transient_count < 0)
                 {
                     ++sAlphaScene.mDropped;
@@ -1478,7 +1478,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             {
                                 RKAlphaTransient glow_transient;
                                 RKAlphaTransientDraw glow_draw;
-                                if (ll_alpha_transient_item(group, rigged, glow_k, false, glow_transient, glow_draw))
+                                if (rk_alpha_transient_item(group, rigged, glow_k, false, glow_transient, glow_draw))
                                 {
                                     tr_add(glow_transient, &glow_draw);
                                 }
@@ -1488,7 +1488,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                                 for (const RKParticleRun* glow_run : glow_particle_runs)
                                 {
                                     RKAlphaTransient glow_transient;
-                                    if (ll_particle_transient(*glow_run, glow_particle_rows, false, glow_transient))
+                                    if (rk_particle_transient(*glow_run, glow_particle_rows, false, glow_transient))
                                     {
                                         tr_add(glow_transient, nullptr);
                                     }

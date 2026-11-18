@@ -11,7 +11,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_srcMap;
+    uint rk_ti_srcMap;
 };
 
 layout(location = 0) in vec2 vary_texcoord0;
@@ -23,7 +23,7 @@ layout(location = 0) out vec4 frag_color;
 // get luminance or inverse luminance depending on bump_code
 float getBumpValue(vec2 texcoord)
 {
-    const vec3 c = texture(ll_tbl2d[LL_HM(ll_ti_srcMap)], texcoord).rgb;
+    const vec3 c = texture(rk_tbl2d[LL_HM(rk_ti_srcMap)], texcoord).rgb;
     const vec3 WEIGHT = vec3(0.2995, 0.5875, 0.1145);
     float l = dot(c, WEIGHT);
     if (bump_code == BE_DARKNESS)

@@ -77,11 +77,11 @@ S64 file_time_seconds(const std::filesystem::file_time_type& t)
 // std::filesystem paths from and to the viewer's UTF-8 strings (C++20 made u8string() a char8_t string)
 #if LL_WINDOWS
 std::filesystem::path fs_path(const std::string& utf8) { return std::filesystem::path(ll_convert_string_to_wide(utf8)); }
-std::string fs_string(const std::filesystem::path& p) { return ll_convert_wide_to_string(p.wstring()); }
+std::string rk_string(const std::filesystem::path& p) { return ll_convert_wide_to_string(p.wstring()); }
 #else
 // on Linux the narrow path strings are UTF-8 already
 std::filesystem::path fs_path(const std::string& utf8) { return std::filesystem::path(utf8); }
-std::string fs_string(const std::filesystem::path& p) { return p.string(); }
+std::string rk_string(const std::filesystem::path& p) { return p.string(); }
 #define _fseeki64 fseeko64
 #endif
 
@@ -237,7 +237,7 @@ void FSDecodedTextureCache::scanIndex()
         for (const auto& entry : std::filesystem::directory_iterator(fs_path(dir), ec))
         {
             if (!entry.is_regular_file(ec)) continue;
-            const std::string name = fs_string(entry.path().filename());
+            const std::string name = rk_string(entry.path().filename());
             // <uuid 36>_<discard>.dec | .dc7
             if (name.size() < 36 + 6 || name[36] != '_') continue;
             const std::string ext = name.substr(name.size() - 4);
@@ -259,7 +259,7 @@ void FSDecodedTextureCache::scanIndex()
                 const bool keep_old = it->second.mDiscard < discard || (it->second.mDiscard == discard && it->second.mFormat != kFormatRaw);
                 if (keep_old)
                 {
-                    stale.push_back(fs_string(entry.path()));
+                    stale.push_back(rk_string(entry.path()));
                     continue;
                 }
                 stale.push_back(fileName(id, it->second.mDiscard, it->second.mFormat));

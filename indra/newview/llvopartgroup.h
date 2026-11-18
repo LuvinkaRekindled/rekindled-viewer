@@ -63,7 +63,7 @@ public:
 
     enum
     {
-        // G0: the record store of a group (llviewerpartsim.cpp, fs_store_write): the arrays hold the fields of a record
+        // G0: the record store of a group (llviewerpartsim.cpp, rk_store_write): the arrays hold the fields of a record
         RECORD_DATA_MASK =  LLVertexBuffer::MAP_VERTEX |
                             LLVertexBuffer::MAP_NORMAL |
                             LLVertexBuffer::MAP_TANGENT |

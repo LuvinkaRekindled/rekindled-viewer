@@ -20,7 +20,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -2047,7 +2047,7 @@ A_STATIC void CasSetup(
 //                                                     NON-PACKED VERSION
 //==============================================================================================================================
 #ifdef A_GPU
- AF3 CasLoad(ASU2 p) { return texelFetch(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], p, 0).rgb; }
+ AF3 CasLoad(ASU2 p) { return texelFetch(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], p, 0).rgb; }
  void CasInput(inout AF1 r,inout AF1 g,inout AF1 b)
  {
  }
@@ -2546,7 +2546,7 @@ void main()
     vec4 diff = vec4(0.f);
     uvec2 point = uvec2(vary_fragcoord * out_screen_res.xy);
     CasFilter(diff.r, diff.g, diff.b, point, cas_param_0, cas_param_1, true);
-    diff.a = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord).a;
+    diff.a = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord).a;
     diff.rgb = linear_to_srgb(diff.rgb);
 
 #ifdef LEGACY_GAMMA

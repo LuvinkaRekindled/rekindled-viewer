@@ -31,8 +31,8 @@ void main()
     frag_velocity = vec2(1.0, 0.0);
     // camera above water: class1\deferred\starsF.glsl
     // camera below water: class1\environment\starsF.glsl
-    vec4 col_a = texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], vary_texcoord0.xy);
-    vec4 col_b = texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], vary_texcoord0.xy);
+    vec4 col_a = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
+    vec4 col_b = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
     vec4 col = mix(col_b, col_a, blend_factor);
 
     col.rgb *= vertex_color.rgb;

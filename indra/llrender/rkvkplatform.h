@@ -137,7 +137,7 @@ struct RKVkThreadHandle
     DWORD (*mProc)(LPVOID);
     LPVOID mParam;
 };
-inline void* ll_vk_thread_entry(void* p)
+inline void* rk_vk_thread_entry(void* p)
 {
     RKVkThreadHandle* h = (RKVkThreadHandle*)p;
     h->mProc(h->mParam);
@@ -146,7 +146,7 @@ inline void* ll_vk_thread_entry(void* p)
 inline HANDLE CreateThread(void*, size_t, DWORD (*proc)(LPVOID), LPVOID param, DWORD, DWORD*)
 {
     RKVkThreadHandle* h = new RKVkThreadHandle{ {}, proc, param };
-    if (pthread_create(&h->mThread, nullptr, ll_vk_thread_entry, h) != 0)
+    if (pthread_create(&h->mThread, nullptr, rk_vk_thread_entry, h) != 0)
     {
         delete h;
         return nullptr;

@@ -45,5 +45,5 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 modelview_matrix;
     mat4 modelview_projection_matrix;
 #endif
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };

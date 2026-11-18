@@ -6,13 +6,13 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     mat4 to_cur;            // jittered clip space of this frame -> unjittered clip space of this frame
     mat4 to_prev;           // jittered clip space of this frame -> unjittered clip space of the last frame
     vec2 render_res;
-    float use_avatar;       // 1 when the avatar velocity pass ran this frame, 2: the diffuseRect is the world pass's motion target (RG16 unorm, ll_motion_encode: x >= 0.99995 means none)
+    float use_avatar;       // 1 when the avatar velocity pass ran this frame, 2: the diffuseRect is the world pass's motion target (RG16 unorm, rk_motion_encode: x >= 0.99995 means none)
 };
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_depthMap;
-    uint ll_ti_diffuseRect;     // the avatar velocity target: rg = total screen motion of an avatar pixel, a = 1 where an avatar wrote
+    uint rk_ti_depthMap;
+    uint rk_ti_diffuseRect;     // the avatar velocity target: rg = total screen motion of an avatar pixel, a = 1 where an avatar wrote
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -20,7 +20,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], vary_fragcoord).r;
+    float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], vary_fragcoord).r;
     vec4 ndc = vec4(vary_fragcoord * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
     vec4 cur = to_cur * ndc;
     vec4 prev = to_prev * ndc;
@@ -32,7 +32,7 @@ void main()
 
     if (use_avatar > 1.5)
     {
-        vec2 e = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord).rg;
+        vec2 e = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord).rg;
         if (e.x < 0.99995)
         {
             mv = (e * 2.0 - 1.0) * 1024.0;
@@ -40,7 +40,7 @@ void main()
     }
     else if (use_avatar > 0.5)
     {
-        vec4 av = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
+        vec4 av = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
         if (av.a > 0.5)
         {
             mv = av.xy;     // an avatar pixel: its own motion replaces the camera motion

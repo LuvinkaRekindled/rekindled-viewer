@@ -26,12 +26,12 @@ layout(location = 4) out vec2 frag_velocity;
 void main()
 {
 #ifdef GB_MOTION
-    frag_velocity = ll_motion_encode(vary_cur, vary_prev, render_res);
+    frag_velocity = rk_motion_encode(vary_cur, vary_prev, render_res);
 #else
     frag_velocity = vec2(1.0, 0.0);
 #endif
     mirror_clip(vary_position);
-    const vec4 diff = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_diffuseMap))], vary_texcoord0);
+    const vec4 diff = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0);
     if (diff.a < minimum_alpha)
     {
         discard;

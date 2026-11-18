@@ -480,7 +480,7 @@ std::string stage_head(int stage, const std::vector<std::pair<std::string, std::
             head += "#extension GL_EXT_ray_query : require\n";
         }
     }
-    head += "#include \"ll_native.glsl\"\n";
+    head += "#include \"rk_native.glsl\"\n";
     return head;
 }
 
@@ -657,11 +657,11 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         for (int ui = 0; ui < program.getNumUniformVariables(); ++ui) dump += " uniform[" + program.getUniform(ui).name + "]";
         LL_INFOS("VkNative") << "native program '" << name << "': no loose uniforms found; the reflection has:" << dump << LL_ENDL;
     }
-    // texture slots: `uint ll_ti_<name>` in the draw block (ll_ti_cube_<name>: a cube map)
+    // texture slots: `uint rk_ti_<name>` in the draw block (rk_ti_cube_<name>: a cube map)
     for (size_t i = 0; i < out.mUniforms.size(); ++i)
     {
         const LooseUniform& u = out.mUniforms[i];
-        if (u.mClass != UC_DRAW || u.mName.compare(0, 6, "ll_ti_") != 0)
+        if (u.mClass != UC_DRAW || u.mName.compare(0, 6, "rk_ti_") != 0)
         {
             continue;
         }
@@ -671,7 +671,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         if (si.mName.compare(0, 10, "cubearray_") == 0)
         {
             si.mName = si.mName.substr(10);
-            si.mType = "samplerCubeArray";      // `ll_ti_cubearray_<name>`: a cube map array (the reflection probes)
+            si.mType = "samplerCubeArray";      // `rk_ti_cubearray_<name>`: a cube map array (the reflection probes)
         }
         else if (si.mName.compare(0, 5, "cube_") == 0)
         {
@@ -690,9 +690,9 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     out.mBindless = !out.mSamplers.empty();
     for (const std::string& text : keep)
     {
-        if (text.find("ll_tbl") != std::string::npos)
+        if (text.find("rk_tbl") != std::string::npos)
         {
-            out.mBindless = true;       // a program that reads the tables with a slot it is given (a varying) has no ll_ti_ sampler but needs the bindless set
+            out.mBindless = true;       // a program that reads the tables with a slot it is given (a varying) has no rk_ti_ sampler but needs the bindless set
         }
     }
     // vertex inputs and fragment outputs are read from the declarations (explicit locations are the contract)

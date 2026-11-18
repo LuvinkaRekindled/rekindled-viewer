@@ -4,9 +4,9 @@
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the scene table of the record
-    uvec2 ll_packet_table;
-    uvec2 ll_packet_models;
-    uvec2 ll_packet_texmats;
+    uvec2 rk_packet_table;
+    uvec2 rk_packet_models;
+    uvec2 rk_packet_texmats;
 
     // the sky of the pass
     vec3 camPosLocal;
@@ -56,14 +56,14 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_rainbow_map;
-    uint ll_ti_halo_map;
-    uint ll_ti_diffuseMap;
-    uint ll_ti_altDiffuseMap;
-    uint ll_ti_cloud_noise_texture;
-    uint ll_ti_cloud_noise_texture_next;
+    uint rk_ti_rainbow_map;
+    uint rk_ti_halo_map;
+    uint rk_ti_diffuseMap;
+    uint rk_ti_altDiffuseMap;
+    uint rk_ti_cloud_noise_texture;
+    uint rk_ti_cloud_noise_texture_next;
 #ifdef HDRI
-    uint ll_ti_environmentMap;  // the HDRI image (equirectangular)
+    uint rk_ti_environmentMap;  // the HDRI image (equirectangular)
 #endif
 };
 

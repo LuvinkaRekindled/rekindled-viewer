@@ -18,7 +18,7 @@ layout(location = 4) out vec2 frag_velocity;
 void main()
 {
     frag_velocity = vec2(1.0, 0.0);
-    const vec4 col = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_diffuseMap))], vary_texcoord0);
+    const vec4 col = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0);
     if (col.a < minimum_alpha)
     {
         discard;

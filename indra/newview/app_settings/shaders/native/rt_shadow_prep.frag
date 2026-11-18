@@ -19,10 +19,10 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_lightMap;        // r: the sun shadow (the hard answer of the centre ray)
-    uint ll_ti_depthMap;
-    uint ll_ti_normalMap;
-    uint ll_ti_emissiveRect;    // the blocker distance map (mRtBlocker, R16F, metres along the sun ray; 0 = lit, no blocker)
+    uint rk_ti_lightMap;        // r: the sun shadow (the hard answer of the centre ray)
+    uint rk_ti_depthMap;
+    uint rk_ti_normalMap;
+    uint rk_ti_emissiveRect;    // the blocker distance map (mRtBlocker, R16F, metres along the sun ray; 0 = lit, no blocker)
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -31,32 +31,32 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     const vec2 tc = vary_fragcoord;
-    const float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tc).r;
+    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc).r;
     if (depth >= 1.0)
     {
         frag_color = vec4(0.0);         // a sky pixel: no surface, no blocker
         return;
     }
-    const float sun = texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], tc).r;
-    const vec3 pos = ll_view_pos(inv_proj, tc, depth);
+    const float sun = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], tc).r;
+    const vec3 pos = rk_view_pos(inv_proj, tc, depth);
 
     // an island: two or more of the four neighbours are sky or off this pixel's tangent plane (the plane distance tolerance of the lightmap blur and of the filter)
     float valid = 1.0;
     {
-        const vec3 n = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], tc).xy);
+        const vec3 n = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], tc).xy);
         const float tol = pos.z * pos.z * 0.00005;
         const vec2 px = 1.0 / screen_res;
         int off = 0;
         for (int i = 0; i < 4; ++i)
         {
             const vec2 s = tc + vec2((i == 0 ? px.x : (i == 1 ? -px.x : 0.0)), (i == 2 ? px.y : (i == 3 ? -px.y : 0.0)));
-            const float sd = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], s).r;
+            const float sd = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], s).r;
             if (sd >= 1.0)
             {
                 ++off;
                 continue;
             }
-            const float d = dot(n, ll_view_pos(inv_proj, s, sd) - pos);
+            const float d = dot(n, rk_view_pos(inv_proj, s, sd) - pos);
             if (!(d * d <= tol))
             {
                 ++off;
@@ -67,7 +67,7 @@ void main()
             valid = 0.0;
         }
     }
-    const float blocker_t = texture(ll_tbl2d[LL_HM(ll_ti_emissiveRect)], tc).r;
+    const float blocker_t = texture(rk_tbl2d[LL_HM(rk_ti_emissiveRect)], tc).r;
     const float r = blocker_t > 0.0 ? min(blocker_t * pen_tan * pen_focal / max(-pos.z, 0.05), pen_max) : 0.0;
     frag_color = vec4(sun * valid, r, blocker_t > 0.0 ? 1.0 : 0.0, valid);
 }

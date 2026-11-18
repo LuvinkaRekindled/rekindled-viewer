@@ -1044,7 +1044,7 @@ void LLVOAvatarSelf::idleUpdate(LLAgent &agent, const F64 &time)
         LLVOAvatar::idleUpdate(agent, time);
         idleUpdateTractorBeam();
 
-        if (ll_diag_on())       // <FS> the bake slot monitor and the periodic GPU readback below are the ears bug hunt (2026-11-14): a texture lookup a frame and a mid-frame GPU flush every 10 s: off unless LL_VK_DIAG
+        if (rk_diag_on())       // <FS> the bake slot monitor and the periodic GPU readback below are the ears bug hunt (2026-11-14): a texture lookup a frame and a mid-frame GPU flush every 10 s: off unless LL_VK_DIAG
         {
             monitorBakeSlots();
         }
@@ -1053,7 +1053,7 @@ void LLVOAvatarSelf::idleUpdate(LLAgent &agent, const F64 &time)
             // quiet: a line only when a GPU image differs from what was uploaded, a handle map differs or a face holds another texture object. The time of the first such line says when it went wrong
             static F64 next_check = 0.0;
             const F64 now = LLTimer::getElapsedSeconds();
-            if (ll_diag_on() && now >= next_check)
+            if (rk_diag_on() && now >= next_check)
             {
                 next_check = now + 10.0;
                 static const F64 first_check = now + 20.0;

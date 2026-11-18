@@ -197,7 +197,7 @@ static const char* sSlotFile[LL_NUM_TEXTURE_LAYERS];          // the call site o
 static int sSlotLine[LL_NUM_TEXTURE_LAYERS];
 static const char* sNextFile = nullptr;                       // set by those functions just before they write the slot
 static int sNextLine = 0;
-static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* who)
+static inline void rk_bindTexUnit_impl(S32 unit_index, U32 texture, const char* who)
 {
     // a unit holds a texture: its dimension is the texture's own
     if (unit_index >= 0 && unit_index < (S32)LL_NUM_TEXTURE_LAYERS)
@@ -211,7 +211,7 @@ static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* 
     }
     RKVkTex::bindSlot(unit_index, texture);
 }
-#define ll_bindTexUnit(unit, texture) ll_bindTexUnit_impl(unit, texture, __func__)
+#define rk_bindTexUnit(unit, texture) rk_bindTexUnit_impl(unit, texture, __func__)
 
 TextureTarget LLTexUnit::getInternalType(eTextureType type)
 {
@@ -228,11 +228,11 @@ void LLTexUnit::refreshState(void)
 
     if (mCurrTexType != TT_NONE)
     {
-        ll_bindTexUnit(mIndex, mCurrTexture);
+        rk_bindTexUnit(mIndex, mCurrTexture);
     }
     else
     {
-        ll_bindTexUnit(mIndex, 0);
+        rk_bindTexUnit(mIndex, 0);
     }
 }
 
@@ -252,7 +252,7 @@ void LLTexUnit::applyTexOptions(RKImageTex* gl_tex)
 {
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
-    ll_bindTexUnit(mIndex, mCurrTexture);
+    rk_bindTexUnit(mIndex, mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     gl_tex->mTexOptionsDirty = false;
     setTextureAddressModeFast(gl_tex->mAddressMode, gl_tex->getTarget());
@@ -284,7 +284,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
             texture->bindDefaultImage(mIndex);
         }
     }
-    ll_bindTexUnit(mIndex, mCurrTexture);
+    rk_bindTexUnit(mIndex, mCurrTexture);
     mHasMipMaps = gl_tex->mHasMipMaps;
     if (gl_tex->mTexOptionsDirty)
     {
@@ -344,7 +344,7 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
                 {
                     mCurrTexType = gl_tex->getTarget();
                     mCurrTexture = gl_tex->getTexName();
-                    ll_bindTexUnit(mIndex, mCurrTexture);
+                    rk_bindTexUnit(mIndex, mCurrTexture);
                     if(gl_tex->updateBindStats())
                     {
                         texture->setActive() ;
@@ -418,7 +418,7 @@ bool LLTexUnit::bind(RKImageTex* texture, bool for_rendering, bool forceBind, S3
         gRender.flush();
         mCurrTexType = texture->getTarget();
         mCurrTexture = texname;
-        ll_bindTexUnit(mIndex, mCurrTexture);
+        rk_bindTexUnit(mIndex, mCurrTexture);
         texture->updateBindStats();
         mHasMipMaps = texture->mHasMipMaps;
         if (texture->mTexOptionsDirty)
@@ -452,7 +452,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
         {
             mCurrTexType = LLTexUnit::TT_CUBE_MAP;
             mCurrTexture = cubeMap->mImages[0]->getTexName();
-            ll_bindTexUnit(mIndex, mCurrTexture);
+            rk_bindTexUnit(mIndex, mCurrTexture);
             mHasMipMaps = cubeMap->mImages[0]->mHasMipMaps;
             cubeMap->mImages[0]->updateBindStats();
             if (cubeMap->mImages[0]->mTexOptionsDirty)
@@ -515,7 +515,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
             mCurrTexType = type;
         }
         mCurrTexture = texture;
-        ll_bindTexUnit(mIndex, texture);
+        rk_bindTexUnit(mIndex, texture);
         mHasMipMaps = hasMips;
     }
     return true;
@@ -539,7 +539,7 @@ void LLTexUnit::bindWhite(const char* file, int line)
         ++sWhiteOverSites[std::string(base ? base + 1 : (file ? file : "?")) + ":" + std::to_string(line) + " held type " + std::to_string((int)mCurrTexType)];
     }
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, sWhiteTexture);
+    rk_bindTexUnit(mIndex, sWhiteTexture);
 }
 
 void LLTexUnit::bindWhiteFast(const char* file, int line)
@@ -549,7 +549,7 @@ void LLTexUnit::bindWhiteFast(const char* file, int line)
     RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, sWhiteTexture);
+    rk_bindTexUnit(mIndex, sWhiteTexture);
 }
 
 void LLTexUnit::bindNone(eTextureType type)
@@ -558,7 +558,7 @@ void LLTexUnit::bindNone(eTextureType type)
     if (mIndex < 0) return;
     gRender.flush();
     mCurrTexture = 0;
-    ll_bindTexUnit(mIndex, 0);
+    rk_bindTexUnit(mIndex, 0);
 }
 
 void LLTexUnit::unbind(eTextureType type, const char* file, int line)
@@ -580,11 +580,11 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            ll_bindTexUnit(mIndex, sWhiteTexture);
+            rk_bindTexUnit(mIndex, sWhiteTexture);
         }
         else
         {
-            ll_bindTexUnit(mIndex, 0);
+            rk_bindTexUnit(mIndex, 0);
         }
     }
 }
@@ -602,11 +602,11 @@ void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
 
         if (type == LLTexUnit::TT_TEXTURE)
         {
-            ll_bindTexUnit(mIndex, sWhiteTexture);
+            rk_bindTexUnit(mIndex, sWhiteTexture);
         }
         else
         {
-            ll_bindTexUnit(mIndex, 0);
+            rk_bindTexUnit(mIndex, 0);
         }
     }
 }
@@ -1546,7 +1546,7 @@ void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat forma
     RKVkTarget::readPixels(LLRenderTarget::currentId(file, line), x, y, width, height, format, type, data, file, line);
 }
 
-std::shared_ptr<RKReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes)
+std::shared_ptr<RKReadbackTicket> rk_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes)
 {
     return RKVkTarget::readPixelsAsync(LLRenderTarget::currentId(__FILE__, __LINE__), x, y, width, height, format, type, bytes, __FILE__, __LINE__);
 }

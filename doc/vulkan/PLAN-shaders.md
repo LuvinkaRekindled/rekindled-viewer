@@ -64,12 +64,12 @@ Warp share is the PC sampler's resident-warps share, a proxy for GPU time, NOT m
 |---|---|---|---|
 | 17.9% | fragment, 33.5 KB | sunLightF / sunLightSSAOF (class2 deferred: screen_res, spot_shadow_mask, proj_*) | the sun lighting pass |
 | 12.8% | fragment, 7.8 KB | shadowAlphaPull (alpha-tested cascade casters) | pair of the next row |
-| 8.8% | vertex, 8.5 KB | a ll_packet_table / ll_view_proj pull vertex (no texmats), 14 variants | most likely shadow simple pull vertex |
+| 8.8% | vertex, 8.5 KB | a rk_packet_table / rk_view_proj pull vertex (no texmats), 14 variants | most likely shadow simple pull vertex |
 | 8.2% | vertex, 27 KB | shadowAlphaPullV (shadow_alpha_indexed) | the alpha caster's vertex shader: 27 KB, includes the skinning |
 | 7.7% | fragment, 10.4 KB | materialF family (frag_data, sun/haze uniforms, 78 variants) | the main G-buffer material pixel shader |
 | 4.6% | fragment, 14.4 KB | postDeferredNoDoFF (depth_jitter) | |
 | 3.8% | fragment, 118 KB | softenLightF (blur_fidelity, ssao_irradiance) | 4 variants |
-| 3.7% | fragment, 1.8 KB | tiny depth + diffuse sampler shader (ll_ti_depthMap), 78 variants | not identified by source yet |
+| 3.7% | fragment, 1.8 KB | tiny depth + diffuse sampler shader (rk_ti_depthMap), 78 variants | not identified by source yet |
 | 2.7% | vertex, 12.8 KB | avatarVelocityPullV | |
 | 2.5% | fragment | terrain (object_plane_s) | |
 | 1.9% | fragment, 79 KB | CASF (cas_param) | final sharpen/tonemap |

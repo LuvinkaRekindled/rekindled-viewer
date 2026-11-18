@@ -10,10 +10,10 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_packet_table;      // the packets of the record
-    uvec2 ll_packet_models;     // the model matrices of the record
-    uvec2 ll_packet_texmats;    // the record's texture matrices (the pad of a packet is its number, 0 = none; slot 0 holds the texture animation clock)
-    mat4 ll_view_proj;          // the shadow camera's view projection (GL clip space)
+    uvec2 rk_packet_table;      // the packets of the record
+    uvec2 rk_packet_models;     // the model matrices of the record
+    uvec2 rk_packet_texmats;    // the record's texture matrices (the pad of a packet is its number, 0 = none; slot 0 holds the texture animation clock)
+    mat4 rk_view_proj;          // the shadow camera's view projection (GL clip space)
     int shadow_alpha_indexed;   // 1: an indexed draw (the hardware read the index buffer: gl_VertexIndex is the vertex), 0: a draw over the index list that reads the indices here
 };
 
@@ -44,7 +44,7 @@ layout(location = 4) flat out float vary_cutoff;
 
 void main()
 {
-    const AlphaPacket pk = AlphaPackets(ll_packet_table).p[gl_InstanceIndex];
+    const AlphaPacket pk = AlphaPackets(rk_packet_table).p[gl_InstanceIndex];
     uint index = uint(gl_VertexIndex);
     if (shadow_alpha_indexed == 0)
     {
@@ -64,7 +64,7 @@ void main()
         vertex = skin_rotation * position.xyz + skin_translation;
         rig_anchor = skin_rig_anchor(pk.palette, pk.joints);
     }
-    gl_Position = ll_view_proj * rig_transform(AlphaModels(ll_packet_models).m[pk.model], vertex, rig_anchor);
+    gl_Position = rk_view_proj * rig_transform(AlphaModels(rk_packet_models).m[pk.model], vertex, rig_anchor);
     // GL clip space z is [-w, w], Vulkan's is [0, w]: the viewer's own vertex shaders get this line from the translator, a native one does it itself (see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 
@@ -88,7 +88,7 @@ void main()
     if (pk.pad != 0u && (pk.flags & 8u) != 0u)
     {
         // up to two texture matrices, the low half of pad first (a glTF face with a texture animation: the animation, then the glTF transform; one for the others)
-        TexMatTable table = TexMatTable(ll_packet_texmats);        // (a buffer reference variable cannot be const)
+        TexMatTable table = TexMatTable(rk_packet_texmats);        // (a buffer reference variable cannot be const)
         for (uint part = 0u; part < 2u; ++part)
         {
             const uint number = part == 0u ? (pk.pad & 0xFFFFu) : (pk.pad >> 16u);

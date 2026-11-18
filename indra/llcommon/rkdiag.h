@@ -10,13 +10,13 @@
 
 #include <cstdlib>
 
-inline bool ll_diag_on()
+inline bool rk_diag_on()
 {
     static const bool on = std::getenv("LL_VK_DIAG") != nullptr;
     return on;
 }
 
 // LL_DIAG("Tag") << ... << LL_ENDL;  is LL_INFOS("Tag") when LL_VK_DIAG is set; otherwise nothing is formatted and nothing is evaluated (a hash in the stream expression is not computed)
-#define LL_DIAG(...) if (!ll_diag_on()) {} else LL_INFOS(__VA_ARGS__)
+#define LL_DIAG(...) if (!rk_diag_on()) {} else LL_INFOS(__VA_ARGS__)
 
 #endif // LL_LLDIAG_H

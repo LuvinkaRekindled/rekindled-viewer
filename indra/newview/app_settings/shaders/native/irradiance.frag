@@ -12,7 +12,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
-    uint ll_ti_cubearray_reflectionProbes;
+    uint rk_ti_cubearray_reflectionProbes;
 };
 
 layout(location = 0) in vec3 vary_dir;
@@ -151,7 +151,7 @@ vec4 filterColor(vec3 N)
         lod = clamp(lod, 0, max_probe_lod);
 
         // sample lambertian at a lower resolution to avoid fireflies
-        vec4 lambertian = textureLod(ll_tblcubearray[nonuniformEXT(LL_HM(ll_ti_cubearray_reflectionProbes))], vec4(H, sourceIdx), lod);
+        vec4 lambertian = textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_reflectionProbes))], vec4(H, sourceIdx), lod);
 
         color += lambertian;
     }

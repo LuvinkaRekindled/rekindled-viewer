@@ -1,6 +1,6 @@
 # Family 4: the remaining old programs, translated line for line (2026-11-10)
 
-Adam, 2026-11-10: "translate all of them in one go. no changes from the original". The programs that still ran on old GLSL in a normal frame (found in the lap log: draws per frame by program, and the programs without `(native)` in the pull twin lines) get a native stand-in that is the old shader translated line for line: same maths, same constants, same uniform and sampler names (the loader copies values by name, the textures follow the sampler name as `ll_ti_<name>`), the GL clip space depth remap where the old program got it appended. No improvements: those are a separate step. Family key `native_post` (rt-debug.txt, 0 = the old programs, live).
+Adam, 2026-11-10: "translate all of them in one go. no changes from the original". The programs that still ran on old GLSL in a normal frame (found in the lap log: draws per frame by program, and the programs without `(native)` in the pull twin lines) get a native stand-in that is the old shader translated line for line: same maths, same constants, same uniform and sampler names (the loader copies values by name, the textures follow the sampler name as `rk_ti_<name>`), the GL clip space depth remap where the old program got it appended. No improvements: those are a separate step. Family key `native_post` (rt-debug.txt, 0 = the old programs, live).
 
 Offline check: `python <work>\native-check.py <vertex> <fragment> [DEFINE=VALUE ...]` (compile and link with glslangValidator before any copy).
 

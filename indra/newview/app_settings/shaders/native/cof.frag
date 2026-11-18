@@ -13,8 +13,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_depthMap;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -39,13 +39,13 @@ void main()
 {
     vec2 tc = vary_fragcoord.xy;
 
-    float z = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tc).r;
+    float z = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc).r;
     z = z*2.0-1.0;
     vec4 ndc = vec4(0.0, 0.0, z, 1.0);
     vec4 p = inv_proj*ndc;
     float depth = p.z/p.w;
 
-    vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord.xy);
+    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord.xy);
 
     float sc = calc_cof(depth);
     sc = min(sc, max_cof);

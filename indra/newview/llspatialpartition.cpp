@@ -210,7 +210,7 @@ LLSpatialGroup::~LLSpatialGroup()
     }
 
     clearDrawMap();
-    ll_scene_fragment_free(mSceneFragment);
+    rk_scene_fragment_free(mSceneFragment);
 }
 
 U32 LLSpatialGroup::sDrawMapsCleared = 0;
@@ -241,7 +241,7 @@ void LLSpatialGroup::clearDrawMap()
     mGeoServedMask = 0;
     mGeoServedTris = 0;
     mGeoAllServed = false;
-    ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
+    rk_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
     RKCullShadow::touch(this);          // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map row shows the fragment, the handle and the surface area
 }
 
@@ -314,7 +314,7 @@ void LLSpatialGroup::validate()
 }
 
 // <FS> LL_VK_LEAVECENSUS=1: for the drawables of avatar bridge groups, how often updateInGroup keeps them and why it does not (the centre is outside the node, or the node is too small for them),
-// by what they are (rigged, flexible, light, other). Reported with the scene census (fs_leave_census_report, every 600 frames).
+// by what they are (rigged, flexible, light, other). Reported with the scene census (rk_leave_census_report, every 600 frames).
 namespace
 {
     struct LeaveCensus
@@ -325,7 +325,7 @@ namespace
     } sLeave;
 }
 
-static void fs_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool inside, bool fits, bool stayed)
+static void rk_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool inside, bool fits, bool stayed)
 {
     static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
     if (!on || !group->getSpatialPartition() || group->getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_AVATAR)
@@ -353,7 +353,7 @@ static void fs_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool i
     }
 }
 
-void fs_leave_census_report(double frames)
+void rk_leave_census_report(double frames)
 {
     static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
     if (!on)
@@ -401,10 +401,10 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
         unbound();
         setState(OBJECT_DIRTY);
         //setState(GEOM_DIRTY);
-        fs_leave_census(this, drawablep, true, true, true);
+        rk_leave_census(this, drawablep, true, true, true);
         return true;
     }
-    fs_leave_census(this, drawablep, inside, fits, false);
+    rk_leave_census(this, drawablep, inside, fits, false);
 
     return false;
 }
@@ -510,7 +510,7 @@ void LLSpatialGroup::rebuildGeom()
         else
         {
             LL_CPU_ZONE("rebuild: scene geometry fragment build");
-            ll_scene_fragment_build(this);
+            rk_scene_fragment_build(this);
         }
 
         if (hasState(LLSpatialGroup::MESH_DIRTY))
@@ -846,7 +846,7 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
 
     F32 dist = 0.f;
 
-    if (ll_group_has_alpha_key(group))
+    if (rk_group_has_alpha_key(group))
     {
         LLVector4a v = eye;
 
@@ -1267,7 +1267,7 @@ void LLSpatialPartition::shift(const LLVector4a &offset)
 { //shift octree node bounding boxes by offset
     LLSpatialShift shifter(offset);
     shifter.traverse(mOctree);
-    if (ll_diag_on() && shifter.mCount)
+    if (rk_diag_on() && shifter.mCount)
     {
         LL_DIAG("VkShift") << "region shift: partition " << (S32)mPartitionType << " " << shifter.mCount << " groups shifted and touched (their table rows are made again: the worker's copy follows)" << LL_ENDL;
     }
@@ -1746,7 +1746,7 @@ void pushBufferVerts(LLSpatialGroup* group, bool push_alpha = true)
     if (group->getSpatialPartition()->mRenderByGroup)
     {
         const LLMatrix4* first_model = nullptr;
-        if (ll_group_first_draw_model(group, first_model))
+        if (rk_group_first_draw_model(group, first_model))
         {
             LLRenderPass::applyModelMatrix(first_model);
 
@@ -3537,7 +3537,7 @@ public:
 
         }
 
-        // (K6 B1: Batch Size and Texture Animation are drawn from the scene table once a frame: ll_render_table_debug)
+        // (K6 B1: Batch Size and Texture Animation are drawn from the scene table once a frame: rk_render_table_debug)
     }
 };
 
@@ -3782,7 +3782,7 @@ void LLSpatialPartition::renderPhysicsShapes(bool wireframe)
 
 void LLSpatialPartition::renderDebug()
 {
-    // (Batch Size and Texture Animation are drawn from the scene table: ll_render_table_debug; this walk has nothing to do for them)
+    // (Batch Size and Texture Animation are drawn from the scene table: rk_render_table_debug; this walk has nothing to do for them)
     if (!gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCTREE |
                                       LLPipeline::RENDER_DEBUG_VERIFY |
                                       LLPipeline::RENDER_DEBUG_OCCLUSION |
@@ -4561,7 +4561,7 @@ void LLCullResult::pushVisibleGroup(LLSpatialGroup* group)
 {
     if (mMainView)
     {
-        ll_main_listed_note(group, mListSerial);
+        rk_main_listed_note(group, mListSerial);
     }
     if (mVisibleGroupsSize < mVisibleGroupsAllocated)
     {

@@ -22,7 +22,7 @@ layout(location = 2) flat out uvec2 vary_light_row;     // the instance (the row
 
 void main()
 {
-    LightRows rows = LightRows(ll_light_table);
+    LightRows rows = LightRows(rk_light_table);
     const uint at = uint(gl_InstanceIndex) * LIGHT_ROW_STRIDE;
     const vec4 r0 = rows.v[at];
     const vec4 r1 = rows.v[at + 1u];

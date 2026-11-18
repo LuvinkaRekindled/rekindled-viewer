@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;      // the sun lightmap (r: the sun shadow, 1 lit .. 0 shadowed)
+    uint rk_ti_diffuseMap;      // the sun lightmap (r: the sun shadow, 1 lit .. 0 shadowed)
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -18,7 +18,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    const ivec2 size = textureSize(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], 0);
+    const ivec2 size = textureSize(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], 0);
     const ivec2 tile = ivec2(floor(vary_fragcoord * tile_count));
     float bytes[4];
     for (int row = 0; row < 4; ++row)
@@ -27,7 +27,7 @@ void main()
         for (int x = 0; x < 8; ++x)
         {
             const ivec2 p = tile * ivec2(8, 4) + ivec2(x, row);
-            if (p.x < size.x && p.y < size.y && texelFetch(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], p, 0).r < 0.5)
+            if (p.x < size.x && p.y < size.y && texelFetch(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], p, 0).r < 0.5)
             {
                 bits |= 1 << x;
             }

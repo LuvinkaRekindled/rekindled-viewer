@@ -17,8 +17,8 @@ layout(location = 7) out float altitude_blend_factor;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
     const uint index = pull_index(row);
     const vec3 position = RowVec4(row.positions).v[index].xyz;
     const vec2 texcoord0 = RowVec2(row.texcoords).t[index];

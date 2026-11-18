@@ -20,7 +20,7 @@ layout(location = 3) out vec3 vary_position;
 void main()
 {
 #ifdef WATER_PULL
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
     const uint at = row.first + uint(gl_VertexIndex);
     const uint word = RowWords(row.indices).w[at >> 1];
     const uint index = (at & 1u) != 0u ? (word >> 16) : (word & 0xFFFFu);

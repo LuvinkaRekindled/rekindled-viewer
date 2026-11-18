@@ -6,7 +6,7 @@
  * flags, the moved lists, GPU records) is written by the main thread from those records afterwards. T2 what a phase's jobs read is not written by anyone
  * until the phase has joined: a main-thread step that writes such data runs before the fork or after the join, never beside it.
  *
- * ll_phase_check("name") goes into the direct write of a shared writer (the lines after the delta sink diversion): "main thread, or no phase running".
+ * rk_phase_check("name") goes into the direct write of a shared writer (the lines after the delta sink diversion): "main thread, or no phase running".
  * A call from another thread, or from the main thread while a fork-join batch is active (sPhaseDepth: from the slot taken in launch to the end of the
  * join), is counted per writer and logged (tag PhaseCheck: the first 10 of each writer, then every 1000th). It never stops the call: it only says
  * that the rule was broken, in every build. Healthy = no line in a lap.
@@ -89,7 +89,7 @@ namespace RKPhaseCheck
     }
 }
 
-inline void ll_phase_check(const char* writer)
+inline void rk_phase_check(const char* writer)
 {
     const bool main_thread = on_main_thread();
     if (main_thread && RKPhaseCheck::sPhaseDepth.load(std::memory_order_relaxed) == 0)

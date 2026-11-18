@@ -268,11 +268,11 @@ private:
 // </FS>
 
 // timer-only zone (not sent to Tracy), for finer breakdowns in the FSGpuZoneTimers log summary
-#define LL_GPU_TIMER_ZONE(name)           RKGpuZoneScope LL_GPUZONE_CAT(llgputimer_, __LINE__)(name);
+#define LL_GPU_TIMER_ZONE(name)           RKGpuZoneScope LL_GPUZONE_CAT(rkgputimer_, __LINE__)(name);
 // <FS> native-vk: Tracy's GPU zones are an OpenGL feature (GL timestamp queries and a GL context) and the viewer has no GL context: a connected
 // Tracy client would have crashed the first GPU zone. The zones keep only the viewer's own timer hook (Vulkan GPU zones for Tracy: see doc/vulkan).
-#define LL_PROFILE_GPU_ZONE(name)         RKGpuZoneScope LL_GPUZONE_CAT(llgpuzone_, __LINE__)(name);
-#define LL_PROFILE_GPU_ZONEC(name,color)  RKGpuZoneScope LL_GPUZONE_CAT(llgpuzone_, __LINE__)(name);
+#define LL_PROFILE_GPU_ZONE(name)         RKGpuZoneScope LL_GPUZONE_CAT(rkgpuzone_, __LINE__)(name);
+#define LL_PROFILE_GPU_ZONEC(name,color)  RKGpuZoneScope LL_GPUZONE_CAT(rkgpuzone_, __LINE__)(name);
 #define LL_PROFILER_GPU_COLLECT
 #define LL_PROFILER_GPU_CONTEXT
 #define LL_PROFILER_GPU_CONTEXT_NS(name, size)

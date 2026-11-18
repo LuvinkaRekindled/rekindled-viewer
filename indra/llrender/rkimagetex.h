@@ -189,7 +189,7 @@ public:
 
     bool getHasImageTexture() const { return mTexName != 0; }
     U32 getTexName() const { return mTexName; }
-    // <FS> a sampled hash (fs_sparse_hash, llimage.h) of the decoded image this texture object last created its GL texture from, and its size in bytes (Show Textures prints them with the bake slots)
+    // <FS> a sampled hash (rk_sparse_hash, llimage.h) of the decoded image this texture object last created its GL texture from, and its size in bytes (Show Textures prints them with the bake slots)
     U64 getUploadHash() const { return mUploadHash; }
     U64 getUploadBytes() const { return mUploadBytes; }
     void setUploadHash(U64 hash, U64 bytes, U64 finest = 0) { mUploadHash = hash; mUploadBytes = bytes; mUploadFinestHash = finest; }

@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -27,7 +27,7 @@ vec3 legacyGamma(vec3 color)
 void main()
 {
     //this is the one of the rare spots where diffuseRect contains linear color values (not sRGB)
-    vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
+    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
     diff.rgb = linear_to_srgb(diff.rgb);
 
 #ifdef LEGACY_GAMMA

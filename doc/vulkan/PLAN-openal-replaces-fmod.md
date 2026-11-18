@@ -9,7 +9,7 @@ Written 2026-11-02. Nothing here is built. Goal (Adam): FMOD gone before release
 - It uses ALUT (`alutInit`, `alutCreateBufferFromFile`, `alutExit`): unmaintained.
 - Streaming: `createDefaultStreamingAudioImpl()` returns null, so `llstartup.cpp` uses `LLStreamingAudio_MediaPlugins` (libvlc/cef plugins). Its metadata path (`updateMetadata`) already exists.
 - FMOD-only work we did that has no OpenAL twin: non-blocking loads, lost-channel handling, change detection, device-change handling off the callback (see `PLAN-audio-main-thread.md`).
-- Voice (WebRTC) and the media playout in `llwebrtc_winplayout` do not touch this.
+- Voice (WebRTC) and the media playout in `rkwebrtc_winplayout` do not touch this.
 
 ## Does audio need the main thread at all?
 

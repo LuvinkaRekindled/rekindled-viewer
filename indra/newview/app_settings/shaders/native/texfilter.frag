@@ -9,7 +9,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
-    uint ll_ti_tex0;
+    uint rk_ti_tex0;
 };
 
 layout(location = 0) in vec2 vary_texcoord0;
@@ -17,7 +17,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    frag_color = texture(ll_tbl2d[LL_HM(ll_ti_tex0)], vary_texcoord0.xy);
+    frag_color = texture(rk_tbl2d[LL_HM(rk_ti_tex0)], vary_texcoord0.xy);
     if (frag_color[0] + frag_color[1] + frag_color[2] < tolerance)
     {
         discard;

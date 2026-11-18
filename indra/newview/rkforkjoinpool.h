@@ -289,12 +289,12 @@ public:
             still_running += running.load(std::memory_order_relaxed) != 0;
         }
         LL_INFOS("ForkJoin") << "self test: " << seconds << " s, " << batches << " batches, " << jobs << " jobs: " << wrong << " wrong (an index run not exactly once), " << still_running << " still running after run() returned" << LL_ENDL;
-        ll_phase_check("self test: main thread, no batch (must not be reported)");
+        rk_phase_check("self test: main thread, no batch (must not be reported)");
         pool->run(64, [](size_t i)
         {
             if (i % 16 == 5)
             {
-                ll_phase_check("self test: inside a batch (4 reports expected)");
+                rk_phase_check("self test: inside a batch (4 reports expected)");
             }
         });
         LL_INFOS("ForkJoin") << "self test: phase check tried (4 reports expected, none for the main thread outside a batch):" << LL_ENDL;

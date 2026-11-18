@@ -61,13 +61,13 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
     {
         // <FS> Rekindled (2026-11-10, Adam: glow blinks): these opaque glow draws write the glow too, so the bloom chain must run in a frame that has only them
         // (7e383a93be set the flag in the alpha pass alone: opaque glow showed only in frames where some alpha glow draw or glowing particle was also served)
-        if (LLPipeline::sRenderGlow && (ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW) || (ll_rigged_packets_enabled() && ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW_RIGGED))))
+        if (LLPipeline::sRenderGlow && (rk_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW) || (rk_rigged_packets_enabled() && rk_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLOW_RIGGED))))
         {
             LLPipeline::sGlowDrawn = true;
         }
         gDeferredEmissivePullProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_GLOW);
-        if (ll_rigged_packets_enabled())
+        if (rk_rigged_packets_enabled())
         {
             gDeferredEmissivePullSkinProgram.bind();
             pushGeometryPackets(LLRenderPass::PASS_GLOW_RIGGED, true);
@@ -113,7 +113,7 @@ void LLDrawPoolSimple::renderDeferred(S32 pass)
     gDeferredDiffusePullProgram.bind();
     pushGeometryPackets(LLRenderPass::PASS_SIMPLE);
 
-    if (ll_rigged_packets_enabled())
+    if (rk_rigged_packets_enabled())
     {
         gDeferredDiffusePullSkinProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_SIMPLE_RIGGED, true);
@@ -130,7 +130,7 @@ void LLDrawPoolAlphaMask::renderDeferred(S32 pass)
     // <FS> J1 K6 A3: the alpha masked draws from the scene table (the cutoff of each draw in its row)
     gDeferredDiffuseAlphaMaskPullProgram.bind();
     pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK);
-    if (ll_rigged_packets_enabled())
+    if (rk_rigged_packets_enabled())
     {
         gDeferredDiffuseAlphaMaskPullSkinProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_ALPHA_MASK_RIGGED, true);
@@ -168,7 +168,7 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
     if (LLPipeline::sRenderingHUDs)
     {
         // <FS> J1 K6 S1: the HUD's fullbright draws from the scene table (the HUD's cull result was told to the worker before the passes); a HUD has no rigged draws
-        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)))
+        if (rk_scene_geo_hud_view() && rk_scene_geo_prepared(gPipeline.getCull()) && rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)))
         {
             gHUDFullbrightPullProgram.bind();
             pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
@@ -179,7 +179,7 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
     // <FS> J1 K6 A3: the opaque fullbright draws from the scene table (the pull program, the same entries as the diffuse pass)
     gDeferredFullbrightPullProgram.bind();
     pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT);
-    if (ll_rigged_packets_enabled())
+    if (rk_rigged_packets_enabled())
     {
         gDeferredFullbrightPullSkinProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true);
@@ -199,7 +199,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     if (LLPipeline::sRenderingHUDs)
     {
         // <FS> J1 K6 S1: the HUD's alpha masked fullbright draws from the scene table
-        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)))
+        if (rk_scene_geo_hud_view() && rk_scene_geo_prepared(gPipeline.getCull()) && rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)))
         {
             gHUDFullbrightMaskPullProgram.bind();
             pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
@@ -210,7 +210,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     // <FS> J1 K6 A3: the alpha masked fullbright draws from the scene table
     gDeferredFullbrightAlphaMaskPullProgram.bind();
     pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK);
-    if (ll_rigged_packets_enabled())
+    if (rk_rigged_packets_enabled())
     {
         gDeferredFullbrightAlphaMaskPullSkinProgram.bind();
         pushGeometryPackets(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true);
