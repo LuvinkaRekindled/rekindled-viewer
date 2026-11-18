@@ -7957,7 +7957,7 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
 static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves (it sets sShadowRender too: the gates of postSort that say "not a shadow pass" take this as well)
 
 // J1 K6 S5a: the pass types no pool draws from the render map in a view the table serves: PASS_SHINY (a shadow caster: the shadow job reads the draw map itself; no pool draws it), PASS_ALPHA_INVISIBLE (the "highlight
-// alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (mGeoAlphaBits).
+// alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (ll_group_has_alpha_key).
 static bool render_map_inert_type(U32 type)
 {
     return type == LLRenderPass::PASS_SHINY || type == LLRenderPass::PASS_SHINY_RIGGED || type == LLRenderPass::PASS_ALPHA_INVISIBLE || type == LLRenderPass::PASS_ALPHA_INVISIBLE_RIGGED
@@ -8336,34 +8336,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             {
                 // R2: nothing of this group is left for the render map (only alpha, which the alpha group lists take): the draw map is not walked
                 ++sGeoElideWhole;
-                if (group->mGeoAlphaBits && !alpha_from_set && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
-                {
-                    if (group->mGeoAlphaBits & 1)
-                    {
-                        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
-                        {
-                            LLSpatialBridge* bridge = group->getSpatialPartition()->asBridge();
-                            if (bridge)
-                            {
-                                LLCamera trans_camera = bridge->transformCamera(camera);
-                                group->updateDistance(trans_camera);
-                            }
-                            else
-                            {
-                                group->updateDistance(camera);
-                            }
-                        }
-                        if (hasRenderType(LLDrawPool::POOL_ALPHA))
-                        {
-                            sCull->pushAlphaGroup(group);
-                        }
-                    }
-                    if ((group->mGeoAlphaBits & 2) && hasRenderType(LLDrawPool::POOL_ALPHA))
-                    {
-                        sCull->pushRiggedAlphaGroup(group);
-                    }
-                }
-                continue;
             }
         }
 
@@ -12164,15 +12136,13 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
         // pool draws them from the group's own lists, the group is named by the alpha group lists below), and PASS_SHINY / PASS_ALPHA_INVISIBLE / PASS_INVISI_SHINY (caster or debug view only; the shadow job reads
         // the draw map itself)
         bool all = true;
-        U8 alpha_bits = 0;
         for (const auto& kv : group->mPendingDraws)
         {
             if (kv.second.empty())
             {
                 continue;
             }
-            if (kv.first == LLRenderPass::PASS_ALPHA) { alpha_bits |= 1; continue; }
-            if (kv.first == LLRenderPass::PASS_ALPHA_RIGGED) { alpha_bits |= 2; continue; }
+            if (kv.first == LLRenderPass::PASS_ALPHA || kv.first == LLRenderPass::PASS_ALPHA_RIGGED) { continue; }
             if (render_map_inert_type(kv.first))
             {
                 continue;
@@ -12185,7 +12155,6 @@ static void scene_geo_attach(LLSpatialGroup* group, LLSceneFragment* f)
             }
         }
         group->mGeoAllServed = all;
-        group->mGeoAlphaBits = alpha_bits;
     }
     ++sGeoReg.mAttached;
     sGeoReg.mRetainWireBytes += blob.size();
@@ -12242,7 +12211,6 @@ static LLSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     group->mGeoServedMask = 0;
     group->mGeoServedTris = 0;
     group->mGeoAllServed = false;
-    group->mGeoAlphaBits = 0;
     if (scene_geo_mode() >= 2)
     {
         scene_geo_attach(group, f);
@@ -12427,7 +12395,6 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
     row.mHandle = g->mGeoHandle;
     row.mServedTris = g->mGeoServedTris;
     row.mDrawTris = ll_group_draw_tris(g);
-    row.mAlphaBits = g->mGeoAlphaBits;
     row.mFlags = (g->mGeoAllServed ? 1u : 0u) | (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u) | (g->hasState(LLSpatialGroup::FS_RELEASED) ? 32u : 0u) | (part && part->isOcclusionEnabled() ? 64u : 0u) | (part && (part->mDrawableType == LLPipeline::RENDER_TYPE_WATER || part->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER) ? 128u : 0u);       // 64: the partition is occlusion tested, 128: a water partition (the Hi-Z box is depth clamped); stage 8d       // 32: Released (stage 8c: kept by the events that release and rebuild a group, the worker names the released rows of its derived set)
     row.mSurfaceArea = g->mSurfaceArea;
     row.mObjectBoxSize = g->row().objectBoxSize;
@@ -12679,8 +12646,7 @@ void cull_process()
             cull_fill_map_row((LLSpatialGroup*)g, sMapMirror[slot]);
             {
                 const CullMapRow& nr = sMapMirror[slot];
-                const bool whole = nr.mHandle && (nr.mFlags & 1u);
-                alpha_index_set(slot, (nr.mFlags & 8u) && (whole ? (nr.mAlphaBits & 3u) != 0 : (nr.mFlags & 6u) != 0));       // (the alpha set: the rule of the worker's alpha rows and stage 6, and the partition renders by group: the alpha pass skips the groups of the others)
+                alpha_index_set(slot, (nr.mFlags & 8u) && (nr.mFlags & 6u) != 0);       // (the alpha set: the rule of the worker's alpha rows and stage 6, and the partition renders by group: the alpha pass skips the groups of the others)
             }
             if (sMapMirror[slot].mHandle != old_handle)
             {
@@ -13437,9 +13403,8 @@ void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
         {
             continue;
         }
-        const bool whole = g->mGeoHandle && g->mGeoAllServed;
-        const bool a = whole ? (g->mGeoAlphaBits & 1) != 0 : ll_group_has_alpha_key(g);
-        const bool r = whole ? (g->mGeoAlphaBits & 2) != 0 : ll_group_has_rigged_alpha_key(g);
+        const bool a = ll_group_has_alpha_key(g);
+        const bool r = ll_group_has_rigged_alpha_key(g);
         if ((!a && !r)
             || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
             || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))

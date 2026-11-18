@@ -357,8 +357,8 @@ namespace LLVkBridge
     struct CullMapRow
     {
         U32 mHandle = 0, mServedTris = 0, mDrawTris = 0;     // the group's scene fragment handle (0 = none), the served and the drawn triangles
-        U8 mAlphaBits = 0;      // the group's mGeoAlphaBits: 1 alpha, 2 rigged alpha
         U8 mFlags = 0;          // 1 all served, 2 has an alpha key, 4 has a rigged alpha key, 8 render by group, 16 the node has children (the walk tests its object bounds too)
+        U8 mPad1 = 0;
         U16 mPad = 0;
         F32 mSurfaceArea = 0.f, mObjectBoxSize = 0.f;     // the inputs of the auto-hide test
         F32 mObjCenter[3] = {}, mObjHalf[3] = {};          // the group's object bounds (LLViewerOctreeCull::checkObjects tests them for a node with children that is partly in); a bridge's group shows the bridge's world box
