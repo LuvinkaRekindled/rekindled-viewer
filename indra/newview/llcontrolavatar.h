@@ -50,15 +50,11 @@ public:
     void getNewConstraintFixups(LLVector3& new_pos_constraint, F32& new_scale_constraint) const;
     void matchVolumeTransform();
 
-    // <FS> PLAN-avatars.md stage C5d (LL_VK_ANIMROOT: 1 default, 0 = as before, 2 = both and compared): an animated object worn by another avatar has the placement of its skeleton's root made ONCE per frame, in its own
+    // <FS> PLAN-avatars.md stage C5d: an animated object worn by another avatar has the placement of its skeleton's root made ONCE per frame, in its own
     // pool job, from the HOST's flat world array, after the host's pose job (the motion batch runs such control avatars in a second phase). Before, the root was placed three times (the main thread at the start of the
     // frame from last frame's host joints, its own job at the same time as the host's, and the host's attachment job through the drawable's update, a write into this avatar's skeleton from another avatar's thread).
-    static int animRootMode();
     bool hostJobOwned() const;
     void placeFromHost();           // main thread, after the host's completion: the root from the host's final pose (matchVolumeTransform)
-    LLVector3 mJobRootPos;          // what the last placement from the attachment gave
-    LLQuaternion mJobRootRot;
-    LLQuaternion mJobObjRot, mJobJointRot;      // its two inputs (the object's own rotation in the drawable, the attachment point's world rotation)
     void updateVolumeGeom();
 
     void setGlobalScale(F32 scale);

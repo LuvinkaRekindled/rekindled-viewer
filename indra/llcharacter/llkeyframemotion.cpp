@@ -134,30 +134,8 @@ U32 LLKeyframeMotion::JointMotionList::dumpDiagInfo()
 
 
 //-----------------------------------------------------------------------------
-// <FS> stage B2 (PLAN-avatars.md): the curves' keys as sorted arrays. LL_VK_CURVEFLAT: 0 the std::map (the red-black tree walked by lower_bound for every curve of every joint of every motion of every
-// avatar every frame), 1 (default) the arrays: std::lower_bound on contiguous times, the same four cases and the same interpolation, 2 both, compared bit for bit.
+// <FS> stage B2 (PLAN-avatars.md): the curves' keys as sorted arrays: std::lower_bound on contiguous times (the red-black tree of the std::map is walked only for a curve whose arrays are not built).
 //-----------------------------------------------------------------------------
-namespace
-{
-int curve_flat_mode()
-{
-    static const int mode = getenv("LL_VK_CURVEFLAT") ? atoi(getenv("LL_VK_CURVEFLAT")) : 1;
-    return mode;
-}
-std::atomic<U64> sCurveCalls{ 0 }, sCurveCompared{ 0 }, sCurveDiffer{ 0 };
-void curve_note_compare(bool same)
-{
-    ++sCurveCompared;
-    if (!same)
-    {
-        ++sCurveDiffer;
-    }
-    if (sCurveCalls.fetch_add(1) % 4000000 == 3999999)
-    {
-        LL_INFOS("CurveFlat") << "keyframe curves compared with the std::map lookups so far: " << sCurveCompared.load() << ", different " << sCurveDiffer.load() << LL_ENDL;
-    }
-}
-}
 
 //-----------------------------------------------------------------------------
 // ScaleCurve::ScaleCurve()
@@ -228,18 +206,11 @@ LLVector3 LLKeyframeMotion::ScaleCurve::getValueFlat(F32 time, F32 duration) con
 
 LLVector3 LLKeyframeMotion::ScaleCurve::getValue(F32 time, F32 duration)
 {
-    const int mode = curve_flat_mode();
-    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    if (!mFlatBuilt || mFlatTimes.size() != mKeys.size())
     {
         return getValueMap(time, duration);
     }
-    if (mode == 1)
-    {
-        return getValueFlat(time, duration);
-    }
-    const LLVector3 a = getValueMap(time, duration), b = getValueFlat(time, duration);
-    curve_note_compare(memcmp(&a, &b, sizeof(LLVector3)) == 0);
-    return a;
+    return getValueFlat(time, duration);
 }
 
 LLVector3 LLKeyframeMotion::ScaleCurve::getValueMap(F32 time, F32 duration)
@@ -368,18 +339,11 @@ LLQuaternion LLKeyframeMotion::RotationCurve::getValueFlat(F32 time, F32 duratio
 
 LLQuaternion LLKeyframeMotion::RotationCurve::getValue(F32 time, F32 duration)
 {
-    const int mode = curve_flat_mode();
-    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    if (!mFlatBuilt || mFlatTimes.size() != mKeys.size())
     {
         return getValueMap(time, duration);
     }
-    if (mode == 1)
-    {
-        return getValueFlat(time, duration);
-    }
-    const LLQuaternion a = getValueMap(time, duration), b = getValueFlat(time, duration);
-    curve_note_compare(memcmp(&a, &b, sizeof(LLQuaternion)) == 0);
-    return a;
+    return getValueFlat(time, duration);
 }
 
 LLQuaternion LLKeyframeMotion::RotationCurve::getValueMap(F32 time, F32 duration)
@@ -511,18 +475,11 @@ LLVector3 LLKeyframeMotion::PositionCurve::getValueFlat(F32 time, F32 duration) 
 
 LLVector3 LLKeyframeMotion::PositionCurve::getValue(F32 time, F32 duration)
 {
-    const int mode = curve_flat_mode();
-    if (mode == 0 || !mFlatBuilt || mFlatTimes.size() != mKeys.size())
+    if (!mFlatBuilt || mFlatTimes.size() != mKeys.size())
     {
         return getValueMap(time, duration);
     }
-    if (mode == 1)
-    {
-        return getValueFlat(time, duration);
-    }
-    const LLVector3 a = getValueMap(time, duration), b = getValueFlat(time, duration);
-    curve_note_compare(memcmp(&a, &b, sizeof(LLVector3)) == 0);
-    return a;
+    return getValueFlat(time, duration);
 }
 
 LLVector3 LLKeyframeMotion::PositionCurve::getValueMap(F32 time, F32 duration)

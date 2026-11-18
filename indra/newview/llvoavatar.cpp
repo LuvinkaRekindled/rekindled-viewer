@@ -8215,50 +8215,6 @@ void LLVOAvatar::runDeferredMotionBlend()
         }
     }
     mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
-    // <FS> PLAN-avatars.md stage B2c, LL_VK_SCALEGUARD=2: with the scale setter not dirtying an unchanged scale, a joint left clean must hold the world matrix a full recompute gives: save the matrices, dirty the whole
-    // skeleton, walk again, compare bit for bit
-    static const bool verify_clean = getenv("LL_VK_SCALEGUARD") && atoi(getenv("LL_VK_SCALEGUARD")) == 2;
-    if (verify_clean && mRoot)
-    {
-        static std::atomic<U64> checked{ 0 }, stale{ 0 }, jobs{ 0 };
-        std::vector<LLJoint*> joints;
-        for (LLJoint* bone : mSkeleton)
-        {
-            if (bone && bone->mUpdateXform)
-            {
-                joints.push_back(bone);
-            }
-        }
-        for (auto& attachment : mAttachmentPoints)
-        {
-            if (attachment.second && attachment.second->mUpdateXform)
-            {
-                joints.push_back(attachment.second);
-            }
-        }
-        std::vector<LLMatrix4a> before(joints.size());
-        for (size_t k = 0; k < joints.size(); ++k)
-        {
-            before[k] = joints[k]->getWorldMatrix4a();
-        }
-        mRoot->touch(LLJoint::ALL_DIRTY);
-        mRoot->updateWorldMatrixChildren();
-        for (size_t k = 0; k < joints.size(); ++k)
-        {
-            ++checked;
-            if (memcmp(&before[k], &joints[k]->getWorldMatrix4a(), sizeof(LLMatrix4a)) != 0)
-            {
-                if (++stale <= 6)
-                {
-                    LL_WARNS("ScaleGuard") << "joint '" << joints[k]->getName() << "' of " << getFullname() << " was left clean with a stale world matrix" << LL_ENDL;
-                }
-            }
-        }
-        if (++jobs % 20000 == 0)
-        {
-            LL_INFOS("ScaleGuard") << "clean joints checked against a full recompute over " << jobs.load() << " jobs: joints " << checked.load() << ", stale " << stale.load() << LL_ENDL;
-        }
-    }
 }
 
 void LLVOAvatar::completeDeferredMotionUpdate()
@@ -13847,7 +13803,7 @@ LLViewerTexture* LLVOAvatar::getBakedTexture(const U8 te)
 
 
 //------------------------------------------------------------------------
-// <FS> PLAN-avatars.md stage B0: the avatar's world matrices as a flat array by joint number, once per avatar per frame (the palettes of all its skins read it), and the flat world pass checked against it
+// <FS> PLAN-avatars.md stage B0: the avatar's world matrices as a flat array by joint number, once per avatar per frame (the palettes of all its skins read it)
 //------------------------------------------------------------------------
 struct LLFlatSkeleton
 {
@@ -13877,17 +13833,10 @@ struct LLFlatSkeleton
     bool mRelOk = false;
 };
 
-static int fs_skelflat_mode()
-{
-    static const int mode = getenv("LL_VK_SKELFLAT") ? atoi(getenv("LL_VK_SKELFLAT")) : 1;       // 1 (default since 2026-11-07: laps sf2 / sf3, palettes bit-equal, Adam: looks good) the palettes from the flat array, 0 the old build, 2 both compared
-    return mode;
-}
-
 namespace
 {
-std::atomic<U64> sFlatPalettes{ 0 }, sFlatPalettesDiffer{ 0 }, sFlatJoints{ 0 }, sFlatJointsDiffer{ 0 }, sFlatFallbacks{ 0 }, sFlatFills{ 0 };
+std::atomic<U64> sFlatPalettes{ 0 }, sFlatFallbacks{ 0 }, sFlatFills{ 0 };
 std::atomic<U32> sFlatLast{ 0 };
-std::atomic<U32> sFlatWorstMilli{ 0 };
 }
 
 static void fs_flat_report()
@@ -13897,9 +13846,8 @@ static void fs_flat_report()
         const double frames = (double)std::max<U32>(1, gFrameCount - sFlatLast.load());
         sFlatLast = gFrameCount;
         LL_INFOS("SkelFlat") << "flat skeleton per frame over " << (U32)frames << " frames: world arrays filled " << sFlatFills.exchange(0) / frames << ", palettes made from the array " << sFlatPalettes.load() / frames
-            << " (not bit-equal to the old build: " << sFlatPalettesDiffer.load() << "), fell back to the old build " << sFlatFallbacks.exchange(0) / frames << "; flat world pass joints checked " << sFlatJoints.load() / frames
-            << " (differ by more than 1e-5: " << sFlatJointsDiffer.load() << ", worst " << sFlatWorstMilli.exchange(0) / 1.0e6 << ")" << LL_ENDL;
-        sFlatPalettes = sFlatPalettesDiffer = sFlatJoints = sFlatJointsDiffer = 0;
+            << ", fell back to the old build " << sFlatFallbacks.exchange(0) / frames << LL_ENDL;
+        sFlatPalettes = 0;
     }
 }
 
@@ -13969,80 +13917,7 @@ static void fs_flat_fill(LLVOAvatar* av, LLFlatSkeleton& flat)
     ++flat.mFillCount;
 }
 
-// the world pass from the joints' LOCAL transforms, exactly what LLXformMatrix::update / updateMatrix do (the world position composes with the parent's scale only when the parent's scale-child-offset
-// flag is set; the world matrix has the joint's own scale, the world rotation and the world position), compared with the world matrices the joints gave
-static void fs_flat_pass_check(LLFlatSkeleton& flat)
-{
-    const U32 N = (U32)flat.mWorld.size();
-    std::vector<LLVector3> wpos(N);
-    std::vector<LLQuaternion> wrot(N);
-    for (S16 k : flat.mOrder)
-    {
-        LLJoint* joint = flat.mJoint[k];
-        LLXformMatrix* xf = joint->getXform();
-        const S16 p = flat.mParent[k];
-        if (p >= 0)
-        {
-            LLJoint* parent = flat.mJoint[p];
-            LLVector3 pos = xf->getPosition();
-            if (parent->getXform()->getScaleChildOffset())
-            {
-                pos.scaleVec(parent->getXform()->getScale());
-            }
-            pos *= wrot[p];
-            pos += wpos[p];
-            wpos[k] = pos;
-            wrot[k] = xf->getRotation() * wrot[p];
-        }
-        else if (joint->getParent())
-        {
-            // a parent that is not in the array (the avatar's root joint above the skeleton): its world state is the start of the chain, taken from the joint object
-            LLJoint* parent = joint->getParent();
-            LLVector3 pos = xf->getPosition();
-            if (parent->getXform()->getScaleChildOffset())
-            {
-                pos.scaleVec(parent->getXform()->getScale());
-            }
-            const LLQuaternion parent_rot = parent->getWorldRotation();
-            pos *= parent_rot;
-            pos += parent->getWorldPosition();
-            wpos[k] = pos;
-            wrot[k] = xf->getRotation() * parent_rot;
-        }
-        else
-        {
-            wpos[k] = xf->getPosition();
-            wrot[k] = xf->getRotation();
-        }
-        LLMatrix4 m;
-        m.initAll(xf->getScale(), wrot[k], wpos[k]);
-        LLMatrix4a ma;
-        ma.loadu(m);
-        const F32* a = ma.getF32ptr();
-        const F32* b = flat.mWorld[k].getF32ptr();
-        F32 worst = 0.f;
-        for (int i = 0; i < 16; ++i)
-        {
-            worst = std::max(worst, fabsf(a[i] - b[i]));
-        }
-        ++sFlatJoints;
-        if (!(worst <= 1e-5f))
-        {
-            ++sFlatJointsDiffer;
-            static std::atomic<U32> said{ 0 };
-            if (said++ < 8)
-            {
-                LL_INFOS("SkelFlat") << "flat world pass differs: joint " << k << " '" << joint->getName() << "' parent number " << p << " (" << (joint->getParent() ? joint->getParent()->getName() : std::string("none")) << "), worst " << worst
-                    << "; flat translation (" << a[12] << ", " << a[13] << ", " << a[14] << ") joint's (" << b[12] << ", " << b[13] << ", " << b[14] << "); local position " << xf->getPosition() << LL_ENDL;
-            }
-        }
-        const U32 milli = (U32)std::min<F32>(worst * 1.0e6f, 4.0e9f);
-        U32 seen = sFlatWorstMilli.load();
-        while (milli > seen && !sFlatWorstMilli.compare_exchange_weak(seen, milli)) {}
-    }
-}
-
-// <FS> avatar relative skinning: the chain of fs_flat_pass_check, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
+// <FS> avatar relative skinning: the chain of the flat world pass, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
 // subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when LL_VK_RIGREBASE_CHECK=1.
 static bool fs_flat_rel_fill(LLFlatSkeleton& flat, const F32* anchor)
 {
@@ -14141,7 +14016,7 @@ static bool fs_flat_rel_fill(LLFlatSkeleton& flat, const F32* anchor)
 bool LLVOAvatar::flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor)
 {
     // (called under the palette mutex right after flatPalette: the flat array is the current one)
-    if (!mFlatSkel || fs_skelflat_mode() == 0)
+    if (!mFlatSkel)
     {
         return false;
     }
@@ -14155,12 +14030,6 @@ bool LLVOAvatar::flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo
 
 void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin)
 {
-    const int mode = fs_skelflat_mode();
-    if (mode == 0)
-    {
-        LLSkinningUtil::initSkinningMatrixPalette(mat, count, skin, this);
-        return;
-    }
     // (called under the palette mutex of updateSkinInfoMatrixPalette: one at a time)
     if (!mFlatSkel)
     {
@@ -14171,33 +14040,15 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     {
         fs_flat_fill(this, flat);
         flat.mFrame = gFrameCount;
-        if (mode == 2)
-        {
-            fs_flat_pass_check(flat);
-        }
     }
     LLSkinningUtil::initJointNums(const_cast<LLMeshSkinInfo*>(skin), this);
     const bool ok = LLSkinningUtil::initSkinningMatrixPaletteFlat(mat, count, skin, flat.mWorld.data(), flat.mHas.data(), (S32)flat.mWorld.size());
-    if (!ok || mode == 2)
+    if (!ok)
     {
         LLMeshSkinInfo::matrix_list_t reference(count);
         LLSkinningUtil::initSkinningMatrixPalette(reference.data(), count, skin, this);
-        if (ok)
-        {
-            ++sFlatPalettes;
-            if (memcmp(reference.data(), mat, sizeof(LLMatrix4a) * (size_t)count) != 0)
-            {
-                ++sFlatPalettesDiffer;
-            }
-        }
-        else
-        {
-            ++sFlatFallbacks;
-        }
-        if (!ok || mode == 2)
-        {
-            memcpy(mat, reference.data(), sizeof(LLMatrix4a) * (size_t)count);      // (the old result stands in compare mode, and where the array lacks a joint)
-        }
+        ++sFlatFallbacks;
+        memcpy(mat, reference.data(), sizeof(LLMatrix4a) * (size_t)count);      // (the old build stands where the array lacks a joint)
     }
     else
     {
@@ -14356,21 +14207,11 @@ void LLVOAvatar::sPalJobWallNsAdd(U64 ns)
     ++sPalJobRuns;
 }
 
-// <FS> PLAN-avatars.md stage C (LL_VK_FLATFILL: 1 default, 0 off, 2 compared): the flat world array as the output of the avatar's pose job
-static int fs_flatfill_mode()
-{
-    static const int mode = getenv("LL_VK_FLATFILL") ? atoi(getenv("LL_VK_FLATFILL")) : 1;
-    return mode;
-}
-
-namespace
-{
-std::atomic<U64> sFlatFillJob{ 0 }, sFlatFillReused{ 0 }, sFlatFillRedone{ 0 }, sFlatFillChecked{ 0 }, sFlatFillDifferent{ 0 }, sFlatPassChecked{ 0 }, sFlatPassDifferent{ 0 };
-}
+// <FS> PLAN-avatars.md stage C: the flat world array as the output of the avatar's pose job
 
 // The world pass of the avatar's pose job as a flat pass over the joints in array order (parents first), which replaces the recursive walk of the joint tree for an avatar that has palettes: each joint that the walk
-// would visit (its chain of parents all take part, mUpdateXform) and that is dirty gets its world matrix worked out by the joint's own function (LLJoint::updateWorldMatrix: the same arithmetic, the joint object's
-// caches are the writeback), and the flat array takes the result in the same loop: the array is the pass's output. Not for an avatar whose root is under another transform (sitting on an object), nor one
+// would visit (its chain of parents all take part, mUpdateXform) and that is dirty gets its world matrix worked out in this loop (the same arithmetic as LLJoint::updateWorldMatrix), and the joint is made clean as a view of the
+// flat array, which takes the result: the array is the pass's output. Not for an avatar whose root is under another transform (sitting on an object), nor one
 // without palettes: the walk does those. True when it did the pass.
 // <FS> stage C: every writer of the joints' world data outside the pose job must reach the array or say it no longer holds. Found by the attachment compare lap: a sitting-on-ground avatar's root is moved by
 // the hover offset after the pass and the chain walked again, the array kept the old position (6 cm) and 6 % of the attachment matrices from it differed from the chain
@@ -14382,24 +14223,18 @@ void LLVOAvatar::releaseJointViews()
         {
             if (joint)
             {
-                joint->setView(nullptr, nullptr, nullptr, false, 0, 0);
+                joint->setView(nullptr, nullptr, nullptr, false, 0);
                 joint->getXform()->releaseLocals();
             }
         }
     }
 }
 
-static int fs_localview_mode()
-{
-    static const int mode = getenv("LL_VK_LOCALVIEW") ? atoi(getenv("LL_VK_LOCALVIEW")) : 1;     // 1 the joints' local position, rotation and scale live in the avatar's flat array; 0 in the joint objects (the old way)
-    return mode;
-}
-
 // <FS> PLAN-avatars.md stage C: the joints' locals move into the avatar's flat array. Main thread, before the avatar's jobs of the frame: the structure is made when it changed, and every joint not yet bound gets a
 // slot (the slot takes the joint's values over first, then the xform's getters and setters follow it, so the blend's setters write the array and every reader of a local reads it)
 void LLVOAvatar::ensureJointLocals()
 {
-    if (fs_localview_mode() == 0 || fs_flatfill_mode() == 0 || fs_skelflat_mode() == 0 || !mRoot || mMatrixPaletteCache.empty())
+    if (!mRoot || mMatrixPaletteCache.empty())
     {
         return;
     }
@@ -14459,7 +14294,7 @@ void LLVOAvatar::walkWorldAfterPass(bool rerun_pass)
 
 bool LLVOAvatar::flatWorldPass()
 {
-    if (fs_flatfill_mode() == 0 || fs_skelflat_mode() == 0 || !mRoot || mMatrixPaletteCache.empty() || mRoot->getXform()->getParent() != nullptr)
+    if (!mRoot || mMatrixPaletteCache.empty() || mRoot->getXform()->getParent() != nullptr)
     {
         return false;
     }
@@ -14477,9 +14312,7 @@ bool LLVOAvatar::flatWorldPass()
         flat.mStructKey = key;
     }
     // The arithmetic of LLXformMatrix::update / updateMatrix, in array order from the joints' locals, with the parents' world position, rotation, scale and scale-child-offset kept in arrays (the first joints'
-    // parent is the root, which is worked out first by the joint's own function). Mode 1 writes the results back into the joint objects (the views); mode 2 leaves the joints alone, so that the old walk that
-    // follows works them out the old way and the array can be compared with it.
-    const bool writeback = fs_flatfill_mode() == 1;
+    // parent is the root, which is worked out first by the joint's own function). The joints are views of the arrays: the results are not written into the joint objects.
     U8 active[LL_CHARACTER_MAX_ANIMATED_JOINTS];
     if (flat.mWPos.size() != N)
     {
@@ -14513,7 +14346,6 @@ bool LLVOAvatar::flatWorldPass()
         const bool act = parent_active && joint->mUpdateXform;
         active[k] = act ? 1 : 0;
         LLXformMatrix* xf = joint->getXform();
-        U8 view_kind = 0;
         bool clean_before = true;
         if (!locals)
         {
@@ -14539,18 +14371,7 @@ bool LLVOAvatar::flatWorldPass()
             LLMatrix4 m;
             m.initAll(locals ? locals[k].mScale : jscale[k], rot, pos);
             flat.mWorld[k].loadu(m);
-            if (writeback)
-            {
-                if (LLJoint::sViewMode == 3)
-                {
-                    joint->setCleanFromPass();      // (the joint is a view: its world data is this slot of the arrays, the xform's world fields are not written)
-                }
-                else
-                {
-                    joint->setWorldFromPass(pos, rot);
-                }
-                view_kind = 1;
-            }
+            joint->setCleanFromPass();      // (the joint is a view: its world data is this slot of the arrays, the xform's world fields are not written)
         }
         else
         {
@@ -14563,42 +14384,13 @@ bool LLVOAvatar::flatWorldPass()
             flat.mWorld[k] = joint->getWorldMatrix4a();       // (a joint the walk leaves alone is worked out on request: a collision volume, an empty attachment point)
             std::atomic_thread_fence(std::memory_order_acquire);
         }
-        if (writeback)
-        {
-            // the joint as a view (LLJoint::mViewValid): its slot in the arrays is what it is, as long as nothing touches it; a joint still dirty (outside the walk's subtree) is not
-            const bool view_valid = joint->mDirtyFlags == 0 && clean_before;
-            joint->setView(&wpos[k], &wrot[k], &flat.mWorld[k], view_valid, view_kind ? view_kind : (view_valid ? 2 : 3), pass_serial);
-        }
+        // the joint as a view (LLJoint::mViewValid): its slot in the arrays is what it is, as long as nothing touches it; a joint still dirty (outside the walk's subtree) is not
+        const bool view_valid = joint->mDirtyFlags == 0 && clean_before;
+        joint->setView(&wpos[k], &wrot[k], &flat.mWorld[k], view_valid, pass_serial);
     }
     flat.mFrame = gFrameCount;
     flat.mFromJob = true;
     ++flat.mFillCount;
-    ++sFlatFillJob;
-    if (LLJoint::sViewMode == 2 && (sFlatFillJob.load() % 20000) == 0)
-    {
-        LL_INFOS("JointView") << "joint world getters answered from the array and compared with the xform: " << LLJoint::sViewChecked.load() << ", different " << LLJoint::sViewDifferent.load() << LL_ENDL;
-    }
-    if (fs_flatfill_mode() == 2)
-    {
-        // verify: the old walk works the joints out the old way after the pass, a fresh fill reads them, and the array must be what the pass made, bit for bit
-        mRoot->updateWorldMatrixChildren();
-        LLFlatSkeleton fresh;
-        fs_flat_fill(this, fresh);
-        ++sFlatPassChecked;
-        bool same = fresh.mWorld.size() == flat.mWorld.size() && fresh.mHas == flat.mHas;
-        for (size_t k = 0; same && k < fresh.mWorld.size(); ++k)
-        {
-            same = !fresh.mHas[k] || memcmp(&fresh.mWorld[k], &flat.mWorld[k], sizeof(LLMatrix4a)) == 0;
-        }
-        if (!same)
-        {
-            ++sFlatPassDifferent;
-        }
-        if ((sFlatPassChecked % 20000) == 0)
-        {
-            LL_INFOS("FlatPass") << "flat world pass: avatars done by the pass " << sFlatFillJob.load() << ", checked against the walk and a fresh fill " << sFlatPassChecked.load() << ", different " << sFlatPassDifferent.load() << LL_ENDL;
-        }
-    }
     return true;
 }
 
@@ -14669,36 +14461,8 @@ void LLVOAvatar::buildPalettesInJob()
     if (mFlatSkel)
     {
         // the array the pose job filled holds while no joint was touched after it (the completions: hover, ground sit, attachment overrides); else it is filled again from the final skeleton of this frame
-        if (mFlatSkel->mFromJob && mFlatSkel->mFrame == gFrameCount && !skeletonDirty())
+        if (!mFlatSkel->mFromJob || mFlatSkel->mFrame != gFrameCount || skeletonDirty())
         {
-            ++sFlatFillReused;
-            if (fs_flatfill_mode() == 2)
-            {
-                LLFlatSkeleton fresh;
-                fs_flat_fill(this, fresh);
-                ++sFlatFillChecked;
-                bool same = fresh.mWorld.size() == mFlatSkel->mWorld.size() && fresh.mHas == mFlatSkel->mHas;
-                for (size_t k = 0; same && k < fresh.mWorld.size(); ++k)
-                {
-                    same = !fresh.mHas[k] || memcmp(&fresh.mWorld[k], &mFlatSkel->mWorld[k], sizeof(LLMatrix4a)) == 0;
-                }
-                if (!same)
-                {
-                    ++sFlatFillDifferent;
-                }
-                if ((sFlatFillChecked % 20000) == 0)
-                {
-                    LL_INFOS("FlatFill") << "flat world array filled by the pose job " << sFlatFillJob.load() << ", reused by the palette job " << sFlatFillReused.load() << ", filled again (a joint touched after) " << sFlatFillRedone.load()
-                        << "; reused arrays compared with a fresh fill " << sFlatFillChecked.load() << ", different " << sFlatFillDifferent.load() << LL_ENDL;
-                }
-            }
-        }
-        else
-        {
-            if (mFlatSkel->mFromJob)
-            {
-                ++sFlatFillRedone;
-            }
             mFlatSkel->mFrame = ~0u;
         }
     }
