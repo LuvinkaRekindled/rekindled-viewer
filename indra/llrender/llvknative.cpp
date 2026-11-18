@@ -772,7 +772,8 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     return true;
 }
 
-// ---- the manifest, the families, the swap at the draw -------------------------------------------------------------------------
+// ---- the manifest: the native program of each line ----------------------------------------------------------------------------
+// (Every program is built from its manifest line by LLShaderProgram::link: nativeOnlyLine. There is no stock program behind a native one and no swap at the draw any more.)
 
 namespace
 {
@@ -810,53 +811,21 @@ int debug_key(const std::string& key, int def)
     return value;
 }
 
-U64 file_stamp(const std::string& path)
-{
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &d))
-    {
-        return 0;
-    }
-    return ((U64)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
-}
-
 struct Def
 {
     std::string mTarget, mVertex, mFragment, mFamily, mGeometry;       // mGeometry: the option `geometry <file>` (a third stage, optional)
     std::vector<std::pair<std::string, std::string>> mDefines;
-    std::vector<std::pair<U32, U32>> mSpec;
-    bool mDefaultOn = false;                                // `default on` in the manifest: the family is on unless rt-debug.txt says native_<family>=0
-    std::vector<std::string> mRequire;                      // the program is a stand-in only for old programs that have all of these loose uniforms (a variant test: the old sun program with SSAO has ssao_radius)
-    std::vector<std::pair<std::string, S32>> mWhen;         // `when name=value`: and only while the old program's uniform holds this value at the draw (a case of the old shader the native one does not do yet, e.g. classic_mode=1)
-    std::unique_ptr<Program> mProgram;
-    std::vector<std::pair<std::string, U64>> mFiles;       // every file the program was built from and its time stamp
-    std::chrono::steady_clock::time_point mChecked;
-    bool mTried = false;
-    U32 mGlobalGen = 0;        // the generation of the viewer's global defines the program was built with
-    S32 mNext = -1;            // the next manifest line that names the same program (a variant), -1: none
-    U64 mUses = 0;             // draws made with the native program (logged every 2000)
-    // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the draws of the old program that did NOT take the native program, by reason. Kept on the first manifest line that names the program.
-    enum { FB_FAMILY_OFF, FB_NOT_FIT, FB_RT, FB_NOT_READY, FB_OUTPUTS, FB_COUNT };
-    U64 mFallback[FB_COUNT] = {};
+    bool mDefaultOn = false;                                // `default on` in the manifest
     bool mRtQuery = false;                                  // `rtquery` in the manifest: in a session with ray queries the program is built with LL_RT_QUERY (the ray query code of lib/rt.glsl, the extension and the draw's set 3: PLAN-native-only-end-state.md, A3)
-    bool mRtVariant = false;                                // `rt` in the manifest: the program has a stock ray traced variant that draws in RT mode (mUsesRt), so its stock program stays until the RT track's port
-    bool mNativeOnly = false;                               // set by load_manifest: converted family, the only line of its program, default on, no require / when / spec: createShader builds it, nativeOverride never swaps it (an `rt` line: only while the session has no ray traced shadows, see native_only_now)
+    bool mNativeOnly = false;                               // set by load_manifest: a converted family, the only line of its program, default on
 };
 
 struct Manager
 {
     std::string mRoot;
     std::vector<std::unique_ptr<Def>> mDefs;
-    std::vector<std::pair<std::unique_ptr<Program>, U64>> mRetired;     // replaced programs, destroyed some frames later (the GPU may still draw with them)
     bool mReady = false;
-    bool mBuiltAll = false;                                 // LL_VK_NATIVE_BUILD_ALL=1: every line has been built once (the interface comparison of stage 4)
 };
-
-Manager& manager()
-{
-    static Manager m;
-    return m;
-}
 
 std::string trim(const std::string& s)
 {
@@ -865,7 +834,7 @@ std::string trim(const std::string& s)
     return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
 
-std::atomic<bool> gRtSession(false);        // set by nativeSetRtSession: this session's stock programs carry ray query code
+std::atomic<bool> gRtSession(false);        // set by nativeSetRtSession: this session has ray queries
 
 // <FS> shader cleanup (stage 4): the families whose programs are native only (no stock program behind them). One line per step of DESIGN-stock-carrier-removal.md section 4.
 bool native_only_family(const std::string& family)
@@ -937,19 +906,9 @@ void load_manifest(Manager& m)
             const size_t sp = f[i].find(' ');
             const std::string kind = f[i].substr(0, sp);
             const std::string rest = sp == std::string::npos ? "" : trim(f[i].substr(sp + 1));
-            if (kind == "require")
-            {
-                d->mRequire.push_back(rest);
-                continue;
-            }
             if (kind == "default" && rest == "on")
             {
                 d->mDefaultOn = true;
-                continue;
-            }
-            if (kind == "rt")
-            {
-                d->mRtVariant = true;
                 continue;
             }
             if (kind == "rtquery")
@@ -963,35 +922,12 @@ void load_manifest(Manager& m)
                 continue;
             }
             const size_t eq = rest.find('=');
-            if (eq == std::string::npos)
-            {
-                continue;
-            }
-            if (kind == "define")
+            if (kind == "define" && eq != std::string::npos)
             {
                 d->mDefines.push_back({ rest.substr(0, eq), rest.substr(eq + 1) });
             }
-            else if (kind == "spec")
-            {
-                d->mSpec.push_back({ (U32)atoi(rest.c_str()), (U32)atoi(rest.c_str() + eq + 1) });
-            }
-            else if (kind == "when")
-            {
-                d->mWhen.push_back({ rest.substr(0, eq), (S32)atoi(rest.c_str() + eq + 1) });
-            }
         }
         m.mDefs.push_back(std::move(d));
-    }
-    for (size_t i = 0; i < m.mDefs.size(); ++i)
-    {
-        for (size_t j = i + 1; j < m.mDefs.size(); ++j)
-        {
-            if (m.mDefs[j]->mTarget == m.mDefs[i]->mTarget)
-            {
-                m.mDefs[i]->mNext = (S32)j;        // (the chain of variants of one program, in manifest order)
-                break;
-            }
-        }
     }
     for (size_t i = 0; i < m.mDefs.size(); ++i)
     {
@@ -1004,100 +940,36 @@ void load_manifest(Manager& m)
                 ++lines;
             }
         }
-        d.mNativeOnly = native_only_family(d.mFamily) && lines == 1 && d.mDefaultOn && d.mRequire.empty() && d.mWhen.empty() && d.mSpec.empty();
+        d.mNativeOnly = native_only_family(d.mFamily) && lines == 1 && d.mDefaultOn;
     }
     LL_INFOS("VkNative") << m.mDefs.size() << " native program(s) in " << m.mRoot << "/manifest.txt" << LL_ENDL;
-}
-
-bool stale(const Def& d)
-{
-    for (const auto& f : d.mFiles)
-    {
-        if (file_stamp(f.first) != f.second)
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 // the viewer's global defines (set from the main thread, read by the worker)
 std::mutex gGlobalLock;
 std::vector<std::pair<std::string, std::string>> gGlobalDefines;
-U32 gGlobalGen = 1;
 
-// the line is built by createShader (no stock program behind it) in this session
-bool native_only_now(const Def& d)
-{
-    return d.mNativeOnly && !(d.mRtVariant && gRtSession.load());
-}
-
-void build(Manager& m, Def& d)
-{
-    d.mTried = true;
-    ProgramInfo info;
-    std::vector<std::string> files;
-    std::string error;
-    d.mFiles.clear();
-    std::vector<std::pair<std::string, std::string>> defines;
-    {
-        std::lock_guard<std::mutex> guard(gGlobalLock);
-        defines = gGlobalDefines;
-        d.mGlobalGen = gGlobalGen;
-    }
-    defines.insert(defines.end(), d.mDefines.begin(), d.mDefines.end());
-    if (d.mRtQuery && gRtSession.load())
-    {
-        defines.push_back({ "LL_RT_QUERY", "1" });      // a session with ray queries: the program traces its sun shadow (compileNativeProgram adds the extension and sets mUsesRt)
-    }
-    const bool ok = compileNativeProgram(d.mTarget, m.mRoot, d.mVertex, d.mFragment, defines, info, &files, &error, d.mGeometry);
-    files.push_back(m.mRoot + "/manifest.txt");
-    for (const std::string& f : files)
-    {
-        d.mFiles.push_back({ f, file_stamp(f) });
-    }
-    if (!ok)
-    {
-        return;         // the old program of the same name keeps drawing (and the files are watched: the next save tries again)
-    }
-    info.mSpec = d.mSpec;
-    auto p = std::make_unique<Program>();
-    if (!p->create(d.mTarget + " (native)", info))
-    {
-        return;
-    }
-    if (d.mProgram)
-    {
-        m.mRetired.push_back({ std::move(d.mProgram), Context::instance().getFrameNumber() });
-    }
-    d.mProgram = std::move(p);
-}
+// <FS> shader cleanup (stage 4 step 1): the lookup of createShader (main thread), with its own parse of the manifest and its own lock
+std::mutex gLookupLock;
+Manager gLookup;
 
 } // namespace
 
 void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines)
 {
     std::lock_guard<std::mutex> guard(gGlobalLock);
-    if (defines != gGlobalDefines)
-    {
-        gGlobalDefines = defines;
-        ++gGlobalGen;
-    }
+    gGlobalDefines = defines;
 }
 
 const std::string& nativeRoot()
 {
-    Manager& m = manager();
-    if (!m.mReady)
+    std::lock_guard<std::mutex> guard(gLookupLock);
+    if (!gLookup.mReady)
     {
-        load_manifest(m);
+        load_manifest(gLookup);
     }
-    return m.mRoot;
+    return gLookup.mRoot;
 }
-
-// <FS> shader cleanup (stage 4 step 1): the lookup of createShader (main thread). It reads its own parse of the manifest, under its own lock: the manager above belongs to the worker thread.
-static std::mutex gLookupLock;
-static Manager gLookup;
 
 bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines, std::string& geometry)
 {
@@ -1119,7 +991,7 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
             }
         }
     }
-    if (!line || count != 1 || !native_only_now(*line))
+    if (!line || count != 1 || !line->mNativeOnly)
     {
         return false;
     }
@@ -1148,222 +1020,6 @@ void nativeSetRtSession(bool on)
 int nativeKey(const std::string& key, int def)
 {
     return debug_key(key, def);
-}
-
-Program* nativeOverride(Program* p)
-{
-    Manager& m = manager();
-    S32 idx = p->nativeIdx();
-    if (idx == -1)
-    {
-        return p;
-    }
-    if (!m.mReady)
-    {
-        load_manifest(m);
-    }
-    static const bool build_all = getenv("LL_VK_NATIVE_BUILD_ALL") != nullptr;
-    if (build_all && !m.mBuiltAll)
-    {
-        // <FS> stage 4 step 0: every manifest line is built now (a long first draw, for the interface comparison only)
-        m.mBuiltAll = true;
-        const auto built_at = std::chrono::steady_clock::now();
-        for (auto& line : m.mDefs)
-        {
-            if (!line->mTried && !native_only_now(*line))
-            {
-                build(m, *line);
-                line->mChecked = built_at;
-            }
-        }
-    }
-    if (idx == -2)
-    {
-        idx = -1;
-        for (size_t i = 0; i < m.mDefs.size() && idx < 0; ++i)
-        {
-            if (m.mDefs[i]->mTarget == p->getName())
-            {
-                idx = (S32)i;          // (the first line of the manifest for this program; the others follow by mNext)
-            }
-        }
-        p->setNativeIdx(idx);
-        if (idx < 0)
-        {
-            return p;
-        }
-    }
-    // several manifest lines may name the same program (variants for the cases the old shader covers with a branch: `when classic_mode=1`, ...): the first whose conditions hold is the stand-in
-    Def* chosen = nullptr;
-    Def& head = *m.mDefs[(size_t)idx];
-    bool unfit = false;
-    for (S32 i = idx; i >= 0 && !chosen; i = m.mDefs[(size_t)i]->mNext)
-    {
-        Def& c = *m.mDefs[(size_t)i];
-        if (debug_key("native_" + c.mFamily, c.mDefaultOn ? 1 : 0) == 0)
-        {
-            continue;
-        }
-        bool fits = true;
-        for (const std::string& r : c.mRequire)
-        {
-            fits = fits && p->hasUniform(r);           // a variant of the old program this one does not replace
-        }
-        for (const auto& w : c.mWhen)
-        {
-            S32 v = 0;
-            fits = fits && p->uniformWord(w.first, v) && v == w.second;       // a case this variant does not cover
-        }
-        if (fits)
-        {
-            chosen = &c;
-        }
-        else
-        {
-            unfit = true;
-        }
-    }
-    if (!chosen)
-    {
-        ++head.mFallback[unfit ? Def::FB_NOT_FIT : Def::FB_FAMILY_OFF];
-        return p;
-    }
-    Def& d = *chosen;
-    if (p->getInfo().mUsesRt)
-    {
-        ++head.mFallback[Def::FB_RT];
-        return p;               // the ray traced variants are the RT track
-    }
-    const auto now = std::chrono::steady_clock::now();
-    if (!d.mTried)
-    {
-        build(m, d);
-        d.mChecked = now;
-    }
-    else if (now - d.mChecked > std::chrono::milliseconds(500))
-    {
-        d.mChecked = now;
-        bool globals_changed = false;
-        {
-            std::lock_guard<std::mutex> guard(gGlobalLock);
-            globals_changed = d.mGlobalGen != gGlobalGen;
-        }
-        if (globals_changed)
-        {
-            LL_INFOS("VkNative") << "native program '" << d.mTarget << "': the viewer's shader settings changed, rebuilding" << LL_ENDL;
-            build(m, d);
-        }
-        else if (debug_key("native_reload", 1) != 0 && stale(d))
-        {
-            LL_INFOS("VkNative") << "native program '" << d.mTarget << "': a source changed, rebuilding" << LL_ENDL;
-            build(m, d);
-        }
-        const U64 frame = Context::instance().getFrameNumber();
-        while (!m.mRetired.empty() && m.mRetired.front().second + 16 < frame)
-        {
-            m.mRetired.erase(m.mRetired.begin());
-        }
-    }
-    if (!d.mProgram || !d.mProgram->isValid())
-    {
-        ++head.mFallback[Def::FB_NOT_READY];
-        return p;
-    }
-    // another set of outputs (the sun program with the blocker distance of the ray traced shadows). Not for the G-buffer family: the viewer's programs declare one array (`out vec4 frag_data[4]`, one name) and the
-    // native ones one variable a target (frag_albedo, frag_spec, frag_normal, frag_emissive), so the names never counted the same and every G-buffer stand-in was refused here: none of them had ever drawn
-    // (found 2026-11-09 evening, when the native terrain compiled and showed no draws)
-    if (d.mFamily != "gbuffer" && p->getInfo().mOutputs.size() != d.mProgram->getInfo().mOutputs.size())
-    {
-        ++head.mFallback[Def::FB_OUTPUTS];
-        return p;
-    }
-    d.mProgram->adoptFrom(*p);
-    if (++d.mUses % 2000 == 1)
-    {
-        LL_INFOS("VkNative") << "native program '" << d.mTarget << "': " << d.mUses << " draws so far" << LL_ENDL;
-    }
-    return d.mProgram.get();
-}
-
-std::string interfaceText(const ProgramInfo& info)
-{
-    std::string out = "u ";
-    bool first = true;
-    for (const LooseUniform& u : info.mUniforms)
-    {
-        if (u.mName.compare(0, 6, "ll_ti_") == 0)
-        {
-            continue;
-        }
-        out += (first ? "" : ";") + u.mName + ":" + u.mType + (u.mArraySize ? "[" + std::to_string(u.mArraySize) + "]" : "");
-        first = false;
-    }
-    out += " | s ";
-    first = true;
-    for (const SamplerInfo& s : info.mSamplers)
-    {
-        out += (first ? "" : ";") + s.mName + ":" + s.mType;
-        first = false;
-    }
-    out += " | a ";
-    first = true;
-    for (size_t i = 0; i < info.mAttributes.size(); ++i)
-    {
-        out += (first ? "" : ";") + info.mAttributes[i] + "@" + std::to_string(i < info.mAttributeLocations.size() ? info.mAttributeLocations[i] : 0u);
-        first = false;
-    }
-    out += " | o " + std::to_string(info.mOutputs.size());
-    return out;
-}
-
-void dumpNativeInterfaces()
-{
-    Manager& m = manager();
-    for (const auto& d : m.mDefs)
-    {
-        if (native_only_now(*d))
-        {
-            continue;           // (the program of the same name is the native program itself)
-        }
-        if (d->mProgram)
-        {
-            LL_INFOS("InterfaceDiff") << "native | " << d->mTarget << " | " << d->mFamily << " | " << d->mVertex << "," << d->mFragment << " | " << interfaceText(d->mProgram->getInfo()) << LL_ENDL;
-        }
-        else
-        {
-            LL_INFOS("InterfaceDiff") << "native-none | " << d->mTarget << " | " << d->mFamily << " | " << (d->mTried ? "build failed" : "never built") << LL_ENDL;
-        }
-    }
-}
-
-// <FS> shader cleanup (stage 4): one log line (tag NativeCensus) for every manifest line: the draws it made and, on the first line of a program, the draws of the old program that did not take the native one,
-// by reason. Printed with the program census (LL_VK_PROGRAM_CENSUS=1) and only when a draw has been counted. Read by doc/vulkan/inventory-shaders.py.
-void dumpNativeCensus()
-{
-    Manager& m = manager();
-    U64 total = 0;
-    for (const auto& d : m.mDefs)
-    {
-        total += d->mUses;
-        for (int r = 0; r < Def::FB_COUNT; ++r)
-        {
-            total += d->mFallback[r];
-        }
-    }
-    if (total == 0)
-    {
-        return;
-    }
-    for (const auto& d : m.mDefs)
-    {
-        if (native_only_now(*d))
-        {
-            continue;           // (a native only program is not swapped in at the draw: its binds are in the program census)
-        }
-        LL_INFOS("NativeCensus") << "native | " << d->mTarget << " | family " << d->mFamily << " | uses " << d->mUses << " | family_off " << d->mFallback[Def::FB_FAMILY_OFF]
-            << " | not_fit " << d->mFallback[Def::FB_NOT_FIT] << " | rt " << d->mFallback[Def::FB_RT] << " | not_ready " << d->mFallback[Def::FB_NOT_READY]
-            << " | outputs " << d->mFallback[Def::FB_OUTPUTS] << LL_ENDL;
-    }
 }
 
 } // namespace LLVk

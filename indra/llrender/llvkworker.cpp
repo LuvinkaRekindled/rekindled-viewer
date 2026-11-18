@@ -2999,62 +2999,6 @@ void pass_poison()
     }
 }
 
-// <FS> shaders family 2: the packet draws (records that draw from the tables, not through draw_context_apply) take a native stand-in too. Made after the record has written its uniforms into the viewer's program
-// (the packet table, models and texture matrices are copied into the native program by name), put back when the record's draws are done.
-// (LL_VK_NATIVE_LOG=1: once per native program, which texture each sampler of the program and of the program it stands in reads: the unit, the texture's name, size, dimension and handle)
-void log_native_bindings(Program* old_program, Program* native_program)
-{
-    static std::set<const Program*> told;
-    if (!told.insert(native_program).second)
-    {
-        return;
-    }
-    for (int pass = 0; pass < 2; ++pass)
-    {
-        Program* p = pass == 0 ? old_program : native_program;
-        const ProgramInfo& info = p->getInfo();
-        for (size_t k = 0; k < info.mSamplers.size(); ++k)
-        {
-            const U32 unit = p->getSamplerUnit(k);
-            const U32 name = unit < 32 ? gPassState.mUnitTex[unit] : 0;
-            Tex* t = name ? tex_ptr(name) : nullptr;
-            LL_INFOS("VkNative") << (pass == 0 ? "OLD " : "NATIVE ") << p->getName() << ": sampler " << info.mSamplers[k].mName << " (" << info.mSamplers[k].mType << ") unit " << unit << " texture " << name
-                << (t ? std::string(" ") + std::to_string(t->mWidth) + "x" + std::to_string(t->mHeight) + " dim " + std::to_string((int)t->mDim) + " levels " + std::to_string(t->mLevels) + " handle " + std::to_string(t->mHandle) : std::string(" (none)")) << LL_ENDL;
-        }
-    }
-}
-
-struct NativeDrawSwap
-{
-    Renderer& mR;
-    Program* mOld;
-    bool mOn = false;
-    NativeDrawSwap(Renderer& r, Program* p) : mR(r), mOld(p)
-    {
-        if (p && p->nativeIdx() != -1)
-        {
-            Program* n = nativeOverride(p);
-            if (n != p)
-            {
-                static const bool log_on = getenv("LL_VK_NATIVE_LOG") != nullptr;
-                if (log_on)
-                {
-                    log_native_bindings(p, n);
-                }
-                r.setProgram(n);
-                mOn = true;
-            }
-        }
-    }
-    ~NativeDrawSwap()
-    {
-        if (mOn)
-        {
-            mR.setProgram(mOld);
-        }
-    }
-};
-
 // CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
 void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
 {
@@ -3062,10 +3006,6 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
     {
         Renderer& r = Renderer::instance();
         Program* use = (Program*)program;
-        if (use && use->nativeIdx() != -1)
-        {
-            use = nativeOverride(use);          // a native stand-in (llvknative.h), when its family is on
-        }
         if (r.getProgram() != use)
         {
             r.setProgram(use);
@@ -5738,7 +5678,6 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         }
     }
 
-    NativeDrawSwap native_swap(r, program);         // (the transient alpha draws too: a native stand-in when its family is on)
     if (!prepare_draw(vi, used_cache))
     {
         static std::set<std::string> told;
@@ -9572,7 +9511,6 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
         program->setFloatsAt(pu.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
     }
-    NativeDrawSwap native_swap(r, program);         // <FS> family 3: the G-buffer table draws with a native stand-in when its family is on (the old program's values are copied by name)
     if (!prepare_draw(vi, used_cache))
     {
         return;
@@ -10086,7 +10024,6 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         program->setFloatsAt(pu.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
     }
     if (timed) { a.mNsUniforms += geo_ns(t0); t0 = std::chrono::steady_clock::now(); }
-    NativeDrawSwap native_swap(r, program);         // (the alpha run draws with a native stand-in when its family is on)
     if (!prepare_draw(vi, used_cache))
     {
         return;
@@ -10264,7 +10201,6 @@ void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    NativeDrawSwap native_swap(r, old_program);
     Program* program = r.getProgram();
     const Program::PacketUniforms& pu = program->packetUniforms();
     if (pu.mImpostors == ~0u)
