@@ -453,6 +453,7 @@ struct Buf
     Buffer mVk;
     U64 mSize = 0;
     U64 mLastUseFrame = ~0ull;
+    U64 mRenameSeq = 0;                 // sRes.mRefreshSeq when its range was last renamed (or made): a resident pass has read the current range only if a refresh came after (res_in_flight_impl)
     // Large vertex / index buffers live in plain video memory and are changed with GPU copies (Renderer::updateBuffer). Small and streaming
     // buffers (and uniform / pixel buffers) keep the host-visible path below.
     bool mDevicePath = false;
@@ -469,6 +470,7 @@ struct Buf
     unsigned mRtName = 0;               // its GL name, for the list of changed watched buffers
     bool mResWatched = false;           // S2: a resident fragment of the ray scene reads it: a change (epoch, moves, version) is logged by name (sResChanged)
     U32 mResName = 0;
+    bool mResPair = false;              // a resident pair reads it (set where the pair finds it): a change of its storage (epoch, moves) is logged by name (sResPairChanged) and the refresh looks at the pairs of that name
     U32 mRenamesInFrame = 0;            // the renames of this buffer in the frame mRenamedFrame (a chain: every write of a frame renamed again)
     U64 mRenamedFrame = ~0ull;          // the frame of the last rename of this buffer (LL_VK_RENAME_ONCE: a range allocated this frame has not been listed by any fragment yet)
     bool mGeoWatched = false;           // S3: a scene geometry fragment reads it: a change of its storage (epoch, moves) is logged by name (sGeoChanged), and the write path asks whether the fragments listed it lately
@@ -1929,10 +1931,14 @@ std::string geo_explain_address(unsigned long long at);
 // off brought the race back): the table draws read rows COPIED for the frame (the static G-buffer types and the alpha runs, as the rigged ones always did) and never a table the worker rewrites in place while frames are
 // in flight; and a buffer renamed in this frame is not renamed again by every further write of the frame unless a fragment listed it after the rename (the chains of 5 to 53 renames that emptied the host arena in one frame)
 std::vector<U32> sGeoChanged;           // S3: names of the buffers a scene geometry fragment reads whose storage changed (causes 0 and 2) since the last prepare
+std::vector<U32> sResPairChanged;       // the names of the buffers a resident pair reads whose storage changed (causes 0 and 2) since the last refresh: res_refresh looks at the pairs of these names, not at every pair
+bool res_in_flight_impl(U32 name, U64 rename_seq);
+U64 res_refresh_seq();
 inline void res_touched(const Buf& b, int cause)
 {
     if (b.mResWatched) { sResChanged.push_back(b.mResName); ++sResCause[cause]; }
     if (b.mGeoWatched && cause != 1) { sGeoChanged.push_back(b.mResName); }
+    if (b.mResPair && cause != 1) { sResPairChanged.push_back(b.mResName); }
 }
 U64 sBufferTopology = 0;                // see Buf::mRtWatched
 std::vector<unsigned> sTopologyNames;  // the names behind the count (cleared when taken; sTopologyOverflow: too many)
@@ -2198,7 +2204,8 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
     Context& ctx = Context::instance();
     const U64 frame = ctx.getFrameNumber();
     const bool in_flight = (b.mLastUseFrame != ~0ull && !ctx.frameKnownFinished(b.mLastUseFrame))
-        || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame, b.mRenamedFrame != ~0ull ? b.mRenamedFrame : 0ull));
+        || (b.mGeoWatched && geo_in_flight_impl(b.mResName, frame, b.mRenamedFrame != ~0ull ? b.mRenamedFrame : 0ull))
+        || (b.mResPair && res_in_flight_impl(name, b.mRenameSeq));
     ctx.flight(Context::FL_BUF_WRITE, (unsigned long long)name, offset, size, (unsigned long long)b.mVk.mAddress | (in_flight ? 1ull : 0ull));
     if (in_flight && b.mVk.valid())
     {
@@ -2238,6 +2245,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
                     note_topology_change(b);
                 }
                 b.mLastUseFrame = ~0ull;
+                b.mRenameSeq = res_refresh_seq();
                 b.mRenamesInFrame = (b.mRenamedFrame == frame) ? b.mRenamesInFrame + 1 : 1;
                 sRenameStats.mChained += b.mRenamesInFrame > 1;
                 sRenameStats.mMaxChain = std::max(sRenameStats.mMaxChain, b.mRenamesInFrame);
@@ -2266,6 +2274,7 @@ void write_buffer(U32 name, Buf& b, U64 offset, U64 size, const void* data, bool
             ctx.destroyBuffer(b.mVk);
             b.mVk = fresh;
             b.mLastUseFrame = ~0ull;
+            b.mRenameSeq = res_refresh_seq();
             ++sRenameStats.mCount;
             sRenameStats.mBytes += keep;
             renamed = true;
@@ -2811,6 +2820,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
     release_storage(b);
     b.mSize = (U64)size;
     b.mLastUseFrame = ~0ull;
+    b.mRenameSeq = res_refresh_seq();
     b.mShadow.clear();
     b.mDevicePath = want_device;
     ++b.mVersion; res_touched(b, 1);
@@ -6049,6 +6059,10 @@ static struct ResState
     U64 mHandleFirst[2] = {}, mHandleReplaced[2] = {}, mHandleSame[2] = {};       // full notes by kind: the first of an entry, one that found its group gone (a new one made), and the rest
     U64 mRefreshFrame = ~0ull;
     U64 mRefreshNs = 0;
+    U64 mRefreshSeq = 0;                // refreshes so far (a sequence number: the write path asks whether one came after a buffer's last rename)
+    U64 mSweptGeneration = ~0ull;       // the buffer table's generation the last full sweep of the pairs was made in
+    U64 mPinEpochSeen = ~0ull;          // the pin epoch the resident alpha rows were last checked for
+    U32 mSlice = 0;                     // the rotating slice of the fragments looked at every frame as a safety net (1 in kResSlices)
     std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
     U64 mPasses = 0, mDrawn = 0, mReport = 0, mOverflow = 0, mUnresolved = 0, mRecheck = 0;
 } sRes;
@@ -6109,6 +6123,12 @@ static void res_reclaim(U64 frame)
 }
 
 // 0: nothing changed, 1: the pair has other addresses now (or lost them), 2: not there (yet)
+static void res_mark_pair_buffers(ResPair& p)
+{
+    if (p.mPvb) { p.mPvb->mResPair = true; p.mPvb->mResName = p.mVb; }
+    if (p.mPib) { p.mPib->mResPair = true; p.mPib->mResName = p.mIb; }
+}
+
 static int res_pair_check(ResPair& p)
 {
     if (p.mGen != sPacketBufferGeneration)
@@ -6117,6 +6137,7 @@ static int res_pair_check(ResPair& p)
         auto i = sGL.mBuffers.find(p.mIb);
         p.mPvb = v == sGL.mBuffers.end() ? nullptr : &v->second;
         p.mPib = i == sGL.mBuffers.end() ? nullptr : &i->second;
+        res_mark_pair_buffers(p);
         p.mGen = sPacketBufferGeneration;
         p.mOk = false;
         if (!p.mPvb || !p.mPib)
@@ -6287,6 +6308,7 @@ static bool res_pair_buffers(ResPair& p)
     {
         res_pair_note_stale(p, old_v, old_i);
     }
+    res_mark_pair_buffers(p);
     return true;
 }
 
@@ -6487,6 +6509,7 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             res_write_entries(stored, k);
         }
+        sRes.mUnresolved += stored.mPairs[k].mOk ? 0 : 1;       // (a pair whose buffers are not usable yet: the refresh sweeps every pair until none is left)
     }
 }
 
@@ -6498,42 +6521,110 @@ static void res_refresh(U64 frame)
         return;
     }
     sRes.mRefreshFrame = frame;
+    ++sRes.mRefreshSeq;
     const auto t_refresh = std::chrono::steady_clock::now();
     struct RefreshTimer { std::chrono::steady_clock::time_point mT; ~RefreshTimer() { sRes.mRefreshNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mT).count(); } } refresh_timer = { t_refresh };
     res_reclaim(frame);
-    U64 unresolved = 0;
-    const bool pending = !sPendingBufs.empty();
+    // The pairs are looked at when something says they changed, not every pair every frame (that sweep was 312 us a pass, once a frame: 1.75 ms of the 1.89 ms of kind 16, lap rt-def1):
+    //  - the buffers a pair reads whose storage changed (epoch or moves: sResPairChanged, every site that changes them calls res_touched);
+    //  - every pair, when a buffer entry went (the table's generation moved: the cached pointers are dropped) or a pair is not usable yet (its buffer appears without an event);
+    //  - a rotating 1 in kResSlices of the fragments every frame, a safety net: an event that did not come is found within kResSlices frames.
+    // That a buffer is read by a resident pass is no longer a stamp on every buffer every frame: the write path asks res_in_flight_impl.
+    static const U32 kResSlices = 32;
     bool flush = false;
-    for (auto& kv : sRes.mFrags)
+    for (U32 name : sPendingBufs)
     {
-        ResFrag& f = kv.second;
-        for (size_t k = 0; k < f.mPairs.size(); ++k)
+        if (name && sResPairByName.find(name) != sResPairByName.end())
         {
-            ResPair& p = f.mPairs[k];
-            const int c = res_pair_check(p);
-            if (c == 1)
-            {
-                res_write_entries(f, k);
-                alpha_res_rows_pair(f, k);
-                ++sRes.mRecheck;
-            }
-            if (p.mOk)
-            {
-                p.mPvb->mLastUseFrame = frame;
-                p.mPib->mLastUseFrame = frame;
-                flush = flush || (pending && (p.mPvb->mPending || p.mPib->mPending));
-            }
-            else
-            {
-                ++unresolved;
-            }
-        }
-        if (f.mAlphaRes && f.mAlphaPinEpoch != sGeoPinEpoch)
-        {
-            alpha_res_rows_all(f);      // a pin of its textures got another bindless slot
+            flush = true;       // data written by the main thread this frame to a buffer a pair reads is recorded before anything reads it
+            break;
         }
     }
-    sRes.mUnresolved = unresolved;
+    const auto visit = [&](ResFrag& f, size_t k)
+    {
+        ResPair& p = f.mPairs[k];
+        const bool was_ok = p.mOk;
+        if (res_pair_check(p) == 1)
+        {
+            res_write_entries(f, k);
+            alpha_res_rows_pair(f, k);
+            ++sRes.mRecheck;
+        }
+        if (was_ok && !p.mOk)
+        {
+            ++sRes.mUnresolved;
+        }
+        else if (!was_ok && p.mOk && sRes.mUnresolved)
+        {
+            --sRes.mUnresolved;
+        }
+    };
+    if (sRes.mUnresolved > 0 || sRes.mSweptGeneration != sPacketBufferGeneration)
+    {
+        sRes.mSweptGeneration = sPacketBufferGeneration;
+        U64 unresolved = 0;
+        for (auto& kv : sRes.mFrags)
+        {
+            ResFrag& f = kv.second;
+            for (size_t k = 0; k < f.mPairs.size(); ++k)
+            {
+                ResPair& p = f.mPairs[k];
+                if (res_pair_check(p) == 1)
+                {
+                    res_write_entries(f, k);
+                    alpha_res_rows_pair(f, k);
+                    ++sRes.mRecheck;
+                }
+                unresolved += p.mOk ? 0 : 1;
+            }
+        }
+        sRes.mUnresolved = unresolved;
+        sResPairChanged.clear();
+    }
+    else
+    {
+        if (!sResPairChanged.empty())
+        {
+            std::sort(sResPairChanged.begin(), sResPairChanged.end());
+            sResPairChanged.erase(std::unique(sResPairChanged.begin(), sResPairChanged.end()), sResPairChanged.end());
+            for (U32 name : sResPairChanged)
+            {
+                auto range = sResPairByName.equal_range(name);
+                for (auto m = range.first; m != range.second; ++m)
+                {
+                    ResPair* p = m->second;
+                    if (p->mFrag && p->mIndex < p->mFrag->mPairs.size() && &p->mFrag->mPairs[p->mIndex] == p)
+                    {
+                        visit(*p->mFrag, p->mIndex);
+                    }
+                }
+            }
+            sResPairChanged.clear();
+        }
+        const size_t n = sRes.mCull.size();
+        const size_t lo = n * sRes.mSlice / kResSlices, hi = n * (sRes.mSlice + 1) / kResSlices;
+        sRes.mSlice = (sRes.mSlice + 1) % kResSlices;
+        for (size_t i = lo; i < hi; ++i)
+        {
+            ResFrag* f = sRes.mCull[i].mFrag;
+            for (size_t k = 0; f && k < f->mPairs.size(); ++k)
+            {
+                visit(*f, k);
+            }
+        }
+    }
+    if (sGeoPinEpoch != sRes.mPinEpochSeen)
+    {
+        // a pin of their textures got another bindless slot: the rows of the resident alpha fragments (only the fragments with alpha casters have a cull item with the flag)
+        sRes.mPinEpochSeen = sGeoPinEpoch;
+        for (const ResCullItem& item : sRes.mCull)
+        {
+            if (item.mHasAlpha && item.mFrag && item.mFrag->mAlphaRes && item.mFrag->mAlphaPinEpoch != sGeoPinEpoch)
+            {
+                alpha_res_rows_all(*item.mFrag);
+            }
+        }
+    }
     if (flush)
     {
         flush_buffer_updates();     // data written by the main thread this frame is recorded before anything reads it
@@ -6582,6 +6673,10 @@ static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8*
         f->mAlphaPairOf.push_back((U32)k);
     }
     res_register_pairs(*f);
+    for (const ResPair& np : f->mPairs)
+    {
+        sRes.mUnresolved += np.mOk ? 0 : 1;       // (the pairs this record added are looked at by the next refresh: a full sweep)
+    }
     if (!f->mInCull)
     {
         ResCullItem item = { { f->mBounds[0], f->mBounds[1], f->mBounds[2] }, f->mBounds[3], f->mAlpha[0].mMatrix, h.mFragment, f, false, true };
@@ -8655,6 +8750,24 @@ void geo_rebuild(GeoFrag& f, U64 frame_now, bool first)
     }
     f.mPinEpochSeen = sGeoPinEpoch;
     (void)frame_now;
+}
+
+bool res_in_flight_impl(U32 name, U64 rename_seq)
+{
+    // a buffer a resident pair reads is in flight when a refresh came after its last rename (a resident pass of that frame reads its current range) and that frame is not finished: what the per frame stamp of every pair said
+    if (sRes.mRefreshSeq <= rename_seq || sRes.mRefreshFrame == ~0ull)
+    {
+        return false;
+    }
+    if (sResPairByName.find(name) == sResPairByName.end())
+    {
+        return false;
+    }
+    return !Context::instance().frameKnownFinished(sRes.mRefreshFrame);
+}
+U64 res_refresh_seq()
+{
+    return sRes.mRefreshSeq;
 }
 
 // a watched buffer got other storage (called by the write path through res_touched, causes 0 and 2): the fragments reading it look at their pairs when next listed
