@@ -45,7 +45,7 @@ Decision gate: whichever timer owns the burst picks the next stage. Expected out
 
 ## Stage 1: asynchronous sound loading (about 1 day)
 
-Setting `FSAudioAsyncLoad` (default on once verified).
+Setting `RKAudioAsyncLoad` (default on once verified).
 
 Generic engine (backend-neutral, survives the backend swap):
 1. `LLAudioBuffer`: add virtual `isReady()` (default true) and `checkLoaded()` (default no-op).
@@ -62,7 +62,7 @@ Also in this stage (cheap, removes more main-thread work): skip `fileExists` bef
 
 ## Stage 2: source and channel loops (about half a day, only if Stage 0 shows them)
 
-Setting `FSAudioSourceUpdateInterval`.
+Setting `RKAudioSourceUpdateInterval`.
 - Update priorities for a rotating slice of sources per frame (muted, far and idle sources less often); keep every source that has a channel at full rate.
 - `updateChannels()` runs twice per `idle()`: run the second pass only for channels whose source changed.
 - Change detection in `LLAudioChannelFMODSTUDIO`: do not re-send `setVolume`, `setMode`, and 3D attributes when gain, loop flag and position/velocity are unchanged (small epsilon on position).
@@ -74,7 +74,7 @@ If Stage 0 shows many evictions per second: raise or make adaptive the buffer ca
 
 ## Stage 4: device changes off the main thread (about 1 day, riskier)
 
-Setting `FSAudioDeviceWorker`.
+Setting `RKAudioDeviceWorker`.
 - Replace the work done inside `systemCallback` (`set_device`, `getDevices`, `OnOutputDeviceListChanged`) and `LLAudioEngine_FMODSTUDIO::setDevice` with a flag + a job on a worker. FMOD runs with `FMOD_INIT_THREAD_UNSAFE`, so calling it from another thread needs that flag removed (cost: a lock per API call, about 500 calls/frame, expected negligible; measure with the Stage 0 timers).
 - Keep `gAudioDeviceMutex` semantics (voice shares it; FIRE-36022 was a hot-unplug crash with a USB headset). Keep the COM init on the main thread as it is.
 - Test: Bluetooth headset off/on, default device change in Windows, choosing a device in Preferences, voice on and off during a change.

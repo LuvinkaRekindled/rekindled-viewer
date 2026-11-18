@@ -48,7 +48,7 @@ public:
 
     S32 animateTextures(F32 &off_s, F32 &off_t, F32 &scale_s, F32 &scale_t, F32 &rotate);
 
-    // <FS> FSTexAnimOnGPU (rkvktexanim.h): the origin of the frame counter, in frame time seconds. The counter is (clock - origin) * rate in the non smooth modes; a smooth mode adds
+    // <FS> RKTexAnimOnGPU (rkvktexanim.h): the origin of the frame counter, in frame time seconds. The counter is (clock - origin) * rate in the non smooth modes; a smooth mode adds
     // the time it has already accumulated (mLastTime, in frames).
     F64 getTimerOrigin() const { return mTimer.startTime() - ((mMode & SMOOTH) && mRate != 0.f ? mLastTime / (F64)mRate : 0.0); }
     void forceRecalc() { mLastFrame = -1.f; }     // (the next animateTextures call returns a result and the faces get their matrices written again)

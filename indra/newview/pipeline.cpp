@@ -440,7 +440,7 @@ bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
         norm = TexelFormat::RGB10A2;
         emissive = TexelFormat::RGB8;
     }
-    else if (gSavedSettings.getBOOL("FSGBufferSlimNormal"))
+    else if (gSavedSettings.getBOOL("RKGBufferSlimNormal"))
     {
         norm = TexelFormat::RGB10A2;        // <FS> family 3: half the bytes of the normal target; the emissive target keeps its float format
     }
@@ -627,9 +627,9 @@ void LLPipeline::init()
     connectRefreshCachedSettingsSafe("RenderResolutionMultiplier");
 // [/SL:KB]
     // <FS> DLSS: a changed mode or switch re-reads the render scale (the screen buffers are reallocated by the listeners in llviewercontrol.cpp)
-    connectRefreshCachedSettingsSafe("FSVkDLSS");
-    connectRefreshCachedSettingsSafe("FSVkDLSSQuality");
-    connectRefreshCachedSettingsSafe("FSVkDLSSScale");
+    connectRefreshCachedSettingsSafe("RKVkDLSS");
+    connectRefreshCachedSettingsSafe("RKVkDLSSQuality");
+    connectRefreshCachedSettingsSafe("RKVkDLSSScale");
     connectRefreshCachedSettingsSafe("RenderUIBuffer");
     connectRefreshCachedSettingsSafe("RenderShadowDetail");
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
@@ -1351,9 +1351,9 @@ void LLPipeline::refreshCachedSettings()
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     RenderResolutionMultiplier = gSavedSettings.getF32("RenderResolutionMultiplier");
 // [/SL:KB]
-    // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; RK_VK_DLSS is set at start-up by FSVkDLSS)
+    // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; RK_VK_DLSS is set at start-up by RKVkDLSS)
     static const bool dlss_started = getenv("RK_VK_DLSS") != nullptr;
-    sDLSS = dlss_started && gSavedSettings.getBOOL("FSVkDLSS");
+    sDLSS = dlss_started && gSavedSettings.getBOOL("RKVkDLSS");
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
@@ -2489,8 +2489,8 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
 
 int LLPipeline::coldMode()
 {
-    // <FS> default: the setting FSObjectExpiry (on = mode 4, Cold + Released + the object kill, as soaked in laps clK/clL/clQ on 2026-10-30); RK_VK_EXPIRY=0..4 overrides it (read once, a change needs a restart)
-    static const int mode = getenv("RK_VK_EXPIRY") ? atoi(getenv("RK_VK_EXPIRY")) : (gSavedSettings.controlExists("FSObjectExpiry") && gSavedSettings.getBOOL("FSObjectExpiry") ? 4 : 0);
+    // <FS> default: the setting RKObjectExpiry (on = mode 4, Cold + Released + the object kill, as soaked in laps clK/clL/clQ on 2026-10-30); RK_VK_EXPIRY=0..4 overrides it (read once, a change needs a restart)
+    static const int mode = getenv("RK_VK_EXPIRY") ? atoi(getenv("RK_VK_EXPIRY")) : (gSavedSettings.controlExists("RKObjectExpiry") && gSavedSettings.getBOOL("RKObjectExpiry") ? 4 : 0);
     return mode;
 }
 
@@ -7614,7 +7614,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 //     locked while it is culled (every cascade that sees it rebounds and walks its octree)
 //   - mesh and geometry rebuilds (GL buffers), the priority group queue and the dirty mesh queue
 //   - the draw pools (avatars, terrain, water, trees, grass) and the sky: reset and filled per cascade right before it is drawn
-// FSParallelShadowPrep turns it on and off live. FSParallelShadowPrepCheck also runs the old serial path for each cascade
+// RKParallelShadowPrep turns it on and off live. RKParallelShadowPrepCheck also runs the old serial path for each cascade
 // and logs where the two results differ.
 
 namespace
@@ -7915,7 +7915,7 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
     // (the marking of the groups the walks found is shadowPrepMark, in chunks)
 }
 
-// <FS> RK_VK_SC_SPLIT (default 1, 0 = one pool job a cascade as before; check it with FSParallelShadowPrepCheck): the cull of every pending cascade as pool jobs by partition and by subtree. The units of a cascade are
+// <FS> RK_VK_SC_SPLIT (default 1, 0 = one pool job a cascade as before; check it with RKParallelShadowPrepCheck): the cull of every pending cascade as pool jobs by partition and by subtree. The units of a cascade are
 // made in the order of the serial walk (the partitions in list order; a partition that cost over RK_VK_SC_SPLIT_US (default 60 us) for that cascade last time has its top levels walked here, between the segments
 // of its result, and its subtrees that cost over RK_VK_SC_NODE_US (default 40 us) as jobs of their own), each with a result of its own, appended to the cascade's result in that order afterwards.
 namespace
@@ -9096,7 +9096,7 @@ struct RKSceneFragment
 
 namespace
 {
-// <FS> K6 (draw info removal, stage 1): the scene table with resident fragments is the only path. The switches that chose another one are gone: the FSVkResidentScene setting,
+// <FS> K6 (draw info removal, stage 1): the scene table with resident fragments is the only path. The switches that chose another one are gone: the RKVkResidentScene setting,
 // RK_VK_SCENE_FRAGMENTS, RK_VK_SCENE_VERIFY, RK_VK_SCENE_GEO (0 = no table, 1 = verify only), RK_VK_VIEWJOBS and its A/B alternation, RK_VK_BUILDER_VERIFY. The accessors stay as constants for this step so that the
 // branches they guard can be removed one at a time (a branch of the "off" side is dead code now).
 constexpr bool scene_resident_on() { return true; }
@@ -15736,7 +15736,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
     }
 }
 
-// <FS> Shadow pass bookkeeping for the FSGpuZoneTimers log: the index of the renderShadow call within the
+// <FS> Shadow pass bookkeeping for the RKGpuZoneTimers log: the index of the renderShadow call within the
 // frame (sun cascades first, then spot lights, then the reflection probe's cascades).
 static U32 sShadowPassIndex = 0;
 static std::atomic<U32> sCascadeStaticEntries[4];     // <FS> the static caster entries the last pass of each sun cascade sent (the cascade diagnostic in generateSunShadow reads it)
@@ -15772,7 +15772,7 @@ static const char* shadow_pass_batches_name(U32 i, bool cube, bool rigged)
     return names[cube ? 1 : 0][rigged ? 1 : 0][llmin(i, 9U)];
 }
 
-// <FS> names for the per-pool GPU timer zones (FSGpuZoneTimers log summary)
+// <FS> names for the per-pool GPU timer zones (RKGpuZoneTimers log summary)
 static const char* pool_gpu_zone_name(U32 type, bool post)
 {
     switch (type)
@@ -18947,7 +18947,7 @@ void LLPipeline::resetVertexBuffers(LLDrawable* drawable)
 // transform in its left-handed coordinates; as textureUtilV.glsl texture_transform. Made at the moment of the call (a GPU texture animation holds parameters: evaluated now)
 static void rt_uv_transform(const LLMatrix4* anim_in, const LLGLTFMaterial::TextureTransform* khr, F32* out)
 {
-    // <FS> with FSTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, rkvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
+    // <FS> with RKTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, rkvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
     // and this transform read the parameters as a matrix (the rate and the timer origin as scales and offsets), so the alpha test of an animated leaf looked up a texture at coordinates that
     // depended on when the animation started. The matrix the parameters give at this moment is used (RK_VK_RT_TEXANIM_FIX=0: the old reading, to compare)
     LLMatrix4 baked;
@@ -20526,7 +20526,7 @@ static F32 halton(U32 index, U32 base)
     return r;
 }
 
-// <FS> <work>/rt-debug.txt dlssq=N (default -1: the setting FSVkDLSSQuality decides): the DLSS quality changed live without touching the setting, so one lap can compare qualities in turn
+// <FS> <work>/rt-debug.txt dlssq=N (default -1: the setting RKVkDLSSQuality decides): the DLSS quality changed live without touching the setting, so one lap can compare qualities in turn
 // (the key driver of the lap scripts, a same-lap A/B). Read here, by the viewer, once per half second: the ray scene's reader only runs with ray tracing on. Returns true when the value changed.
 static S32 sDlssqOverride = -1;
 
@@ -20559,10 +20559,10 @@ static bool pollDlssqOverride()
 
 F32 LLPipeline::getDLSSScale()
 {
-    F32 scale = sDlssqOverride >= 0 ? 0.f : gSavedSettings.getF32("FSVkDLSSScale");
+    F32 scale = sDlssqOverride >= 0 ? 0.f : gSavedSettings.getF32("RKVkDLSSScale");
     if (scale <= 0.f)
     {
-        switch (sDlssqOverride >= 0 ? sDlssqOverride : gSavedSettings.getS32("FSVkDLSSQuality"))
+        switch (sDlssqOverride >= 0 ? sDlssqOverride : gSavedSettings.getS32("RKVkDLSSQuality"))
         {
         case 0: scale = 0.5f; break;
         case 2: scale = 0.67f; break;
@@ -20791,11 +20791,11 @@ LLRenderTarget* LLPipeline::rtReflectionTarget(const LLRenderTarget* screen)
     return t;
 }
 
-// <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): on with the setting FSVkAmdDenoise (or RK_VK_AMD_DENOISE=1) when an upscaler is in use without ray reconstruction (FSR on an
+// <FS> the AMD FidelityFX reflection denoiser (doc/vulkan/PLAN-amd-denoiser.md): on with the setting RKVkAmdDenoise (or RK_VK_AMD_DENOISE=1) when an upscaler is in use without ray reconstruction (FSR on an
 // NVIDIA card, or any other card), the traced mirror is on and the denoiser's libraries are linked
 bool LLPipeline::amdDenoiserWanted()
 {
-    static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoise", false);
+    static LLCachedControl<bool> setting(gSavedSettings, "RKVkAmdDenoise", false);
     static const bool env = getenv("RK_VK_AMD_DENOISE") && atoi(getenv("RK_VK_AMD_DENOISE")) != 0;
     return (setting || env) && sDLSS && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && RKVkBridge::denoiseAvailable()
         && gDnsrPrepProgram.isComplete() && gDnsrPackProgram.isComplete() && gDnsrUnpackProgram.isComplete();
@@ -20803,7 +20803,7 @@ bool LLPipeline::amdDenoiserWanted()
 
 bool LLPipeline::amdSunDenoiserWanted()
 {
-    static LLCachedControl<bool> setting(gSavedSettings, "FSVkAmdDenoiseShadows", false);
+    static LLCachedControl<bool> setting(gSavedSettings, "RKVkAmdDenoiseShadows", false);
     static const bool env = getenv("RK_VK_AMD_DENOISE_SHADOWS") && atoi(getenv("RK_VK_AMD_DENOISE_SHADOWS")) != 0;
     // the setting (on by default) counts with FSR as the upscaler only (DLSS has its own handling; ray reconstruction denoises shadows itself); RK_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler
     return ((setting && RKVkBridge::upscalerIsFsr()) || env) && sDLSS && RKVkBridge::rtShadowMode() && !gCubeSnapshot && !gSnapshot && mMotionMap.isComplete() && RKVkBridge::denoiseAvailable()
@@ -21231,7 +21231,7 @@ S32 LLPipeline::neuralRenderMode()
     {
         return flag >= 3 ? 1 : (flag == 2 ? 3 : 0);
     }
-    static LLCachedControl<S32> mode(gSavedSettings, "FSVkNeuralRenderMode", 0);
+    static LLCachedControl<S32> mode(gSavedSettings, "RKVkNeuralRenderMode", 0);
     return llclamp((S32)mode, 0, 2);
 }
 
@@ -22225,7 +22225,7 @@ void LLPipeline::renderFinalize()
 
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         // <FS> the upscaler sharpens by itself and the sharpening here ran BEFORE it, at the render size: with it on the CAS pass is skipped (Adam 2026-11-09; the tonemap then does the gamma itself)
-        static LLCachedControl<bool> cas_with_dlss(gSavedSettings, "FSCASWithUpscaler", false);
+        static LLCachedControl<bool> cas_with_dlss(gSavedSettings, "RKCASWithUpscaler", false);
         bool apply_cas = cas_sharpness != 0.0f && (!dlss || cas_with_dlss) && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
         // the CAS pass needs a scratch target of the picture's size: the lighting's, at the render size
@@ -22402,7 +22402,7 @@ void LLPipeline::renderFinalize()
         // <FS> selection outlines and other overlays test against this depth after the upscale: with the camera jitter in it they flicker (see the shader). Only while one is shown.
         static const LLStaticHashedString depth_texel("depth_texel");
         static const LLStaticHashedString depth_radius("depth_radius");
-        static LLCachedControl<S32> overlay_depth_mode(gSavedSettings, "FSOverlayDepthMode", 4);
+        static LLCachedControl<S32> overlay_depth_mode(gSavedSettings, "RKOverlayDepthMode", 4);
         const bool overlay = overlay_depth_mode() > 0 && LLViewerCamera::sJitterInEffect && !gCubeSnapshot && !LLSelectMgr::getInstance()->getSelection()->isEmpty();
         gDeferredPostNoDoFNoiseProgram.uniform2f(depth_texel, overlay ? 1.f / (F32)mRT->deferredScreen.getWidth() : 0.f, overlay ? 1.f / (F32)mRT->deferredScreen.getHeight() : 0.f);
         gDeferredPostNoDoFNoiseProgram.uniform1f(depth_radius, overlay_depth_mode() == 3 ? -1.f : (overlay_depth_mode() == 2 ? 2.f : (overlay_depth_mode() >= 4 ? 0.f : 1.f)));
@@ -22793,10 +22793,10 @@ static U32 rt_avatar_kind(LLVOAvatar* avatar)
 // Should the main view name this avatar's rigged draws to the ray scene in this frame? The scene call gives an avatar a new pose only every RKVkBridge::rtSkinPeriod(distance) viewer
 // frames (1 within 8 m, up to 4 beyond 28 m) and keeps its last structure in between, so naming a far avatar's draws every frame was main thread work (palettes, entries, texture checks)
 // that nothing used: 0.5 ms and more in a crowd. An avatar is named when its period has passed since it was last named (the shadow passes name it too, on their own cadence), the viewer's
-// own and the near ones every frame. FSRtNameByDistance = false names every avatar every frame as before.
+// own and the near ones every frame. RKRtNameByDistance = false names every avatar every frame as before.
 static bool rt_name_avatar_due(LLVOAvatar* avatar)
 {
-    static LLCachedControl<bool> by_distance(gSavedSettings, "FSRtNameByDistance", true);
+    static LLCachedControl<bool> by_distance(gSavedSettings, "RKRtNameByDistance", true);
     if (!by_distance || avatar->isSelf())
     {
         return true;
@@ -23588,7 +23588,7 @@ void LLPipeline::renderDeferredLighting()
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         }
 
-        denoiseSunShadow(deferred_light_target);        // <FS> the AMD shadow denoiser on the centre ray's sun channel (off unless FSVkAmdDenoiseShadows): before the penumbra filter
+        denoiseSunShadow(deferred_light_target);        // <FS> the AMD shadow denoiser on the centre ray's sun channel (off unless RKVkAmdDenoiseShadows): before the penumbra filter
         LLRenderTarget* penumbra = nullptr;        // <FS> the lightmap with the penumbra filter applied to its sun channel (mRtShadowTemp)
         if (RKVkBridge::rtShadowMode() && !gCubeSnapshot && RKVkBridge::rtSunFilter() != 0 && mRtBlocker.isComplete() && mRtShadowTemp.isComplete()
             && mRtSunHard.isComplete() && gRtShadowFilterProgram.isComplete() && gRtShadowPrepProgram.isComplete() && RenderDeferredSSAO)
@@ -23803,7 +23803,7 @@ void LLPipeline::renderDeferredLighting()
         {
             // (rt-debug.txt glossyrt)
             rt_glossy_mode = RKVkBridge::rtGlossyReflections();
-                static LLCachedControl<S32> glossy_mirror_setting(gSavedSettings, "FSVkMirrorQuality", 0);       // 0 Off, 1 .. 4 the quality levels (the checkbox FSVkGlossyMirror is gone: Off is the first level)
+                static LLCachedControl<S32> glossy_mirror_setting(gSavedSettings, "RKVkMirrorQuality", 0);       // 0 Off, 1 .. 4 the quality levels (the checkbox RKVkGlossyMirror is gone: Off is the first level)
                 if (rt_glossy_mode == 0 && glossy_mirror_setting > 0 && RKVkBridge::rtMaterialsAvailable())
                 {
                     rt_glossy_mode = 1;         // the preference (Graphics > Vulkan): the traced glossy mirror; rt-debug.txt glossyrt=N still overrides it for tests
@@ -23842,9 +23842,9 @@ void LLPipeline::renderDeferredLighting()
                 static LLStaticHashedString rt_noise_frame_s("rt_noise_frame");
                 rt_shader.uniform1f(rt_noise_frame_s, (F32)(gFrameCount & 63));        // the soft shadow rays of the traced hits turn their pattern every frame
                 static LLStaticHashedString rt_hit_quality_s("rt_hit_quality");
-                // the levels of the preference FSVkMirrorQuality (rt-debug.txt hitq / hitrays override them for tests): 1 Low = flat colours at the hits (hitq 0), 2 Medium = lit hits (hitq 1), 3 High = lit hits + the
+                // the levels of the preference RKVkMirrorQuality (rt-debug.txt hitq / hitrays override them for tests): 1 Low = flat colours at the hits (hitq 0), 2 Medium = lit hits (hitq 1), 3 High = lit hits + the
                 // local lights with one shadow ray each (hitq 2), 4 Ultra = the same with 4 soft shadow rays per light
-                static LLCachedControl<S32> mirror_quality_setting(gSavedSettings, "FSVkMirrorQuality", 0);
+                static LLCachedControl<S32> mirror_quality_setting(gSavedSettings, "RKVkMirrorQuality", 0);
                 const S32 mirror_level = llclamp((S32)mirror_quality_setting, 1, 4);
                 const S32 dbg_hit_quality = RKVkBridge::rtHitQuality();
                 const S32 dbg_hit_rays = RKVkBridge::rtHitRays();
@@ -24939,9 +24939,9 @@ void LLPipeline::setEnvMat(RKShaderProgram& shader)
 // <FS> the improved reflection trace: bit 0 water, bit 1 other glossy surfaces, bit 2 the water ray takes fewer, uneven steps (finer near the surface, coarser far away) (live, read every time the probes are bound)
 static U32 ssr_trace_mode_bits()
 {
-    static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "FSSSRWaterTrace", true);
-    static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "FSSSRSurfaceTrace", false);
-    static LLCachedControl<bool> ssr_water_adaptive(gSavedSettings, "FSWaterTraceAdaptive", true);
+    static LLCachedControl<bool> ssr_water_trace(gSavedSettings, "RKSSRWaterTrace", true);
+    static LLCachedControl<bool> ssr_surface_trace(gSavedSettings, "RKSSRSurfaceTrace", false);
+    static LLCachedControl<bool> ssr_water_adaptive(gSavedSettings, "RKWaterTraceAdaptive", true);
     return (ssr_water_trace ? 1 : 0) | (ssr_surface_trace ? 2 : 0) | (ssr_water_adaptive ? 4 : 0);
 }
 
@@ -25111,7 +25111,7 @@ static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_TREE("Alpha Tree");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_ALPHA_GRASS("Alpha Grass");
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_FULLBRIGHT_ALPHA_MASKED("Fullbright Alpha Masked");
 
-// <FS> Render packets: the static, untextured casters of a shadow pass leave as one record the Vulkan worker draws by reading the buffers by address. K6 group C: the switches are gone (FSShadowPackets and its
+// <FS> Render packets: the static, untextured casters of a shadow pass leave as one record the Vulkan worker draws by reading the buffers by address. K6 group C: the switches are gone (RKShadowPackets and its
 // per kind settings, RK_SHADOW_PACKETS_AB, RK_SHADOW_NO_RIGGED, RK_SHADOW_RIGGED_AB: all on since the packets were made, the old per draw loops they chose between are deleted); what is left is whether the worker and
 // its pull program are there.
 static bool shadow_packets_enabled()
@@ -25383,7 +25383,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         const auto prep_start = std::chrono::steady_clock::now();
         if (prepared)
         {
-            static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
+            static LLCachedControl<bool> check_prep(gSavedSettings, "RKParallelShadowPrepCheck", false);
             { RK_CPU_ZONE("renderShadow: prep finish"); shadowPrepFinish(*prepared); }
             if (check_prep && prepared->mIndex < 4)
             {
@@ -27328,9 +27328,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     // <FS> parallel preparation of the cascades (see shadowPrepCull): the cascades that need a real render are collected
     // in the loop and prepared together after it. Not for reflection probe renders, not while the GPU zone timers count
     // batches (they share counters), not while selected objects are hidden (that check reads the selection).
-    static LLCachedControl<bool> parallel_prep(gSavedSettings, "FSParallelShadowPrep", false);
-    // <FS> FSParallelShadowPrepAB: test mode, the setting is ignored and the mode alternates every 30 seconds (the log shows both)
-    static LLCachedControl<bool> parallel_prep_ab(gSavedSettings, "FSParallelShadowPrepAB", false);
+    static LLCachedControl<bool> parallel_prep(gSavedSettings, "RKParallelShadowPrep", false);
+    // <FS> RKParallelShadowPrepAB: test mode, the setting is ignored and the mode alternates every 30 seconds (the log shows both)
+    static LLCachedControl<bool> parallel_prep_ab(gSavedSettings, "RKParallelShadowPrepAB", false);
     const bool use_parallel = parallel_prep_ab
         ? ((std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 30) % 2) == 1
         : (bool)parallel_prep;
@@ -27385,7 +27385,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             prep.mJobView = &cascade_views.back();
         }
 
-        static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
+        static LLCachedControl<bool> check_prep(gSavedSettings, "RKParallelShadowPrepCheck", false);
         if (check_prep)
         {
             // the serial path first, for the comparison (see shadowPrepCompare)
@@ -27548,7 +27548,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 }
                 // <FS> markVisible of an attachment's bridge walks the bridge's own octree (LLSpatialBridge::setVisible), and that walk pushes the bridge's groups into the result the thread is
                 // working with, which here is the chunk's own: they have to be appended too, or an avatar's attachments (the rigged body of a mesh avatar) are in no cascade's render map and cast
-                // no shadow (the check mode, FSParallelShadowPrepCheck, reported them missing for nearly every cascade: visible, drawable, alpha and rigged alpha groups, and the render maps).
+                // no shadow (the check mode, RKParallelShadowPrepCheck, reported them missing for nearly every cascade: visible, drawable, alpha and rigged alpha groups, and the render maps).
                 for (LLCullResult::sg_iterator g = c.mLocal->beginVisibleGroups(); g != c.mLocal->endVisibleGroups(); ++g)
                 {
                     into.pushVisibleGroup(*g);
@@ -27821,10 +27821,10 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         };
 
         // <FS> getVisiblePointCloud is an octree walk of every partition for each cascade (0.39 ms a frame on the main thread, the biggest piece of the cascade setup) and only reads (the roots are brought up
-        // to date here, rebound() writes): one pool job a cascade. RK_VK_PC_CHECK=1 compares each result with the serial walk and logs the differences. FSParallelShadowPointCloud turns it off live.
+        // to date here, rebound() writes): one pool job a cascade. RK_VK_PC_CHECK=1 compares each result with the serial walk and logs the differences. RKParallelShadowPointCloud turns it off live.
         struct PointCloudJob { LLCamera mCam; LLVector3 mMin, mMax; std::vector<LLVector3> mFp; bool mHave = false; };
         std::vector<PointCloudJob> clouds;
-        static LLCachedControl<bool> parallel_clouds(gSavedSettings, "FSParallelShadowPointCloud", true);
+        static LLCachedControl<bool> parallel_clouds(gSavedSettings, "RKParallelShadowPointCloud", true);
         if (prep_pool && parallel_clouds && !gCubeSnapshot && RenderShadowSplits >= 0)
         {
             PhaseLap cloud_lap;
@@ -27893,9 +27893,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         // while the camera moves the far cascades are fitted a little wider so that the map lasts: by the angle the camera turns and the distance it travels in the reuse interval. Zero when the camera is still, so
         // the picture of a still camera is what it was. The rate is worked out once a frame (a second camera in the same frame, a mirror, does not change it).
         static const int cover_mode = getenv("RK_VK_CASCADE_COVER") ? atoi(getenv("RK_VK_CASCADE_COVER")) : 1;
-        static LLCachedControl<U32> cover_interval(gSavedSettings, "FSShadowFarCascadeInterval", 2);
-        static LLCachedControl<U32> cover_first(gSavedSettings, "FSShadowFarCascadeFirst", 2);
-        static LLCachedControl<F32> cover_max_margin(gSavedSettings, "FSShadowFarCascadeMaxMargin", 0.12f);
+        static LLCachedControl<U32> cover_interval(gSavedSettings, "RKShadowFarCascadeInterval", 2);
+        static LLCachedControl<U32> cover_first(gSavedSettings, "RKShadowFarCascadeFirst", 2);
+        static LLCachedControl<F32> cover_max_margin(gSavedSettings, "RKShadowFarCascadeMaxMargin", 0.12f);
         const bool cover_on = cover_mode != 0 && !gCubeSnapshot && cover_interval > 1 && !rt_sun_cascades_unused() && !hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA);
         F32 cover_turn_frac = 0.f, cover_travel = 0.f;      // the angle turned (as a share of the horizontal field of view) and the distance travelled in a reuse interval
         F32 cover_tan_half = 1.f;
@@ -28337,14 +28337,14 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             bool reuse_shadow_map = false;
             if (!gCubeSnapshot && !hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA))
             {
-                static LLCachedControl<U32> far_interval(gSavedSettings, "FSShadowFarCascadeInterval", 2);
-                static LLCachedControl<U32> far_first(gSavedSettings, "FSShadowFarCascadeFirst", 2);
-                static LLCachedControl<F32> far_max_move(gSavedSettings, "FSShadowFarCascadeMaxCameraMove", 0.5f);
-                static LLCachedControl<F32> far_max_turn(gSavedSettings, "FSShadowFarCascadeMaxCameraTurn", 1.0f);
+                static LLCachedControl<U32> far_interval(gSavedSettings, "RKShadowFarCascadeInterval", 2);
+                static LLCachedControl<U32> far_first(gSavedSettings, "RKShadowFarCascadeFirst", 2);
+                static LLCachedControl<F32> far_max_move(gSavedSettings, "RKShadowFarCascadeMaxCameraMove", 0.5f);
+                static LLCachedControl<F32> far_max_turn(gSavedSettings, "RKShadowFarCascadeMaxCameraTurn", 1.0f);
                 CascadeReuse& cr = sCascadeReuse[j];
                 // <FS> ray tracing only: the far cascades' passes only name casters to the ray scene (nothing is drawn, no shadow map is read) and the scene keeps the casters of a pass that does not run
                 // for a few frames, so the camera and the sun do not matter: each far cascade just takes its turn (staggered), whatever the camera does
-                static LLCachedControl<U32> rt_far_interval(gSavedSettings, "FSRtShadowFarCascadeInterval", 4);
+                static LLCachedControl<U32> rt_far_interval(gSavedSettings, "RKRtShadowFarCascadeInterval", 4);
                 if (rt_sun_cascades_unused() && rt_far_interval > 1 && (U32)j >= far_first && cr.mValid && cr.mTexture == mRT->shadow[j].getDepth())
                 {
                     const U64 frame_now = LLFrameTimer::getFrameCount();
@@ -28452,9 +28452,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
             {
                 // <FS> arm the cascade avatar cull for this pass
-                static LLCachedControl<bool> cascade_cull(gSavedSettings, "FSShadowCascadeAvatarCull", true);
-                static LLCachedControl<F32> cascade_margin(gSavedSettings, "FSShadowCascadeCullMargin", 12.f);
-                static LLCachedControl<F32> cascade_min_elevation(gSavedSettings, "FSShadowCascadeCullMinSunElevation", 25.f);
+                static LLCachedControl<bool> cascade_cull(gSavedSettings, "RKShadowCascadeAvatarCull", true);
+                static LLCachedControl<F32> cascade_margin(gSavedSettings, "RKShadowCascadeCullMargin", 12.f);
+                static LLCachedControl<F32> cascade_min_elevation(gSavedSettings, "RKShadowCascadeCullMinSunElevation", 25.f);
                 const F32 sun_elevation_sin = caster_dir.mV[VZ]; // z is up, caster_dir points at the sun or moon
 
                 pass1_lap.mark(PH_PASS1);

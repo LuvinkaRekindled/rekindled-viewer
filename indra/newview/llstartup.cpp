@@ -1130,7 +1130,7 @@ bool idle_startup()
 
                     // <FS:Ansariel> Output device selection
                     gAudiop->setDevice(LLUUID(gSavedSettings.getString("FSOutputDeviceUUID")));
-                    gAudiop->setHRTF(gSavedSettings.getBOOL("FSAudioHRTF"));
+                    gAudiop->setHRTF(gSavedSettings.getBOOL("RKAudioHRTF"));
 
                     gAudiop->setMuted(true);
                 }

@@ -1522,7 +1522,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         // <FS> Optionally update other avatars' animations in parallel: the
         // serial part of each avatar's update runs in this loop, the pose
         // blend is collected into the batch and run below.
-        static LLCachedControl<bool> parallelAvatarMotion(gSavedSettings, "FSParallelAvatarMotion");
+        static LLCachedControl<bool> parallelAvatarMotion(gSavedSettings, "RKParallelAvatarMotion");
         static std::vector<LLPointer<LLVOAvatar> > motion_batch;
         motion_batch.clear();
         if (parallelAvatarMotion)

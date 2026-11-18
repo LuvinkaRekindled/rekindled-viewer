@@ -64,7 +64,7 @@ Return 0.3-0.4 ms (est.) for one phase; each loop still needs its own compute/ap
 ## 3. Not a fit
 
 - **Alpha pool runs** (`run_begin` 0.36 ms) and the **lighting / geometry draw issue**: order-dependent GPU recording; the cost is the number of program and blend changes, not per-item work.
-- **UI** (0.9-1.0 ms): hundreds of views at 1-2 us; the lever is a retained layer (`FSUIRecordCache` is that), not threads.
+- **UI** (0.9-1.0 ms): hundreds of views at 1-2 us; the lever is a retained layer (`RKUIRecordCache` is that), not threads.
 - **Rebuilds** (`rebuildGeom` / `rebuildPriorityGroups` / `rebuildMesh`, 0.3-0.4 ms): mapped-buffer lists, mesh repo notification and draw-info allocation are shared; `PLAN-statesort-offmain.md` section 6 defers them to their own plan.
 - **Texture fetch dispatch** (0.4 ms) and **mesh repo notifications**: queue bookkeeping, event-driven changes at best.
 - **Particles** (0.25 ms): would fit (per-source motion compute, group placement and `markRebuild` as apply), but `PLAN-gpu-particles.md` removes the CPU simulation.

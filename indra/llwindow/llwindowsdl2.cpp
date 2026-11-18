@@ -2615,7 +2615,7 @@ void LLWindowSDL::destroySharedContext(void* context)
 
 void LLWindowSDL::toggleVSync(bool enable_vsync)
 {
-    // <FS> the present mode is the swapchain's (FSVkPresentMode)
+    // <FS> the present mode is the swapchain's (RKVkPresentMode)
 }
 // </FS:Zi>
 

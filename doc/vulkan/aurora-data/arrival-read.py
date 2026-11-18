@@ -1,4 +1,4 @@
-"""Reads texture-arrival.csv (FSTextureArrivalTrace) and answers the five questions of PLAN-aurora-ideas.md section 6, step one.
+"""Reads texture-arrival.csv (RKTextureArrivalTrace) and answers the five questions of PLAN-aurora-ideas.md section 6, step one.
 
 usage: python -I arrival-read.py <csv> [--window SECONDS] [--tail N]   (the window runs from the 'world' row; default 90)
 

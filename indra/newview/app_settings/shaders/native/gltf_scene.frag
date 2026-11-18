@@ -1150,7 +1150,7 @@ vec3 getPoissonSample(int i) {
     return POISSON3D_SAMPLES[i] * 2 - 1;
 }
 
-// <FS> Fast reflection trace (water, and other glossy surfaces when FSSSRSurfaceTrace is on). The general marcher below takes exponentially growing steps and only counts a hit that lands within a fixed 1.5 cm of a surface, so
+// <FS> Fast reflection trace (water, and other glossy surfaces when RKSSRSurfaceTrace is on). The general marcher below takes exponentially growing steps and only counts a hit that lands within a fixed 1.5 cm of a surface, so
 // which step the ray happens to land on decides if it hits: one flat band of reflection per step length, and grain where neighbouring ripples disagree. This one
 // walks a fixed number of steps in screen space (perspective correct), accepts a crossing within a thickness that grows with the step, and finds the exact crossing
 // with a binary search. The screen position of the hit is returned (alpha is the confidence).
@@ -1189,7 +1189,7 @@ vec4 traceScreenRayFast(vec3 viewPos, vec3 dir, vec3 rejectUp, vec2 uvOffset)
         return vec4(0);
     }
 
-    // <FS> bit 2 of ssrTraceMode (FSWaterTraceAdaptive): water rays take fewer steps, spaced unevenly: fine next to the surface where nearby things reflect, coarse far away
+    // <FS> bit 2 of ssrTraceMode (RKWaterTraceAdaptive): water rays take fewer steps, spaced unevenly: fine next to the surface where nearby things reflect, coarse far away
     // where the reflected picture is small and soft anyway. The thickness test below already scales with the step.
     bool adaptive = water && ((int(ssrTraceMode + 0.5) & 4) != 0);
     const int maxSteps = 48;

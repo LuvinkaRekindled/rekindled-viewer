@@ -6,7 +6,7 @@ This plan takes the ray traced reflection out of the lighting shader. It replace
 ## What is wrong (read from the code and the logs of 2026-11-11)
 
 - **One pipeline holds the start-up.** The log of Adam's start: `login waits for 1 of 383 GPU pipelines to be built` (STATE_AGENTS_WAIT, `llstartup.cpp`), still waiting after 2.5 minutes. The one pipeline is the *Deferred Soften Shader* with `RK_RT_REFLECTIONS`: about 176 s cold (notes of 2026-11-07).
-- **It is built whenever RT is configured, not when the mirror is on.** `rt_reflections_possible()` (`llviewershadermgr.cpp:1288`) is true when the environment has `RK_VK_RT_SHADOWS` and `RK_VK_RT_MATERIALS=1`; `loadShaders` then adds the permutation to the soften program (`:3651`) and to the water program (`:1330`). `FSVkGlossyMirror` only picks the runtime value of `rt_glossy_reflections`. So everyone who starts with RT materials pays the compile, mirror or not.
+- **It is built whenever RT is configured, not when the mirror is on.** `rt_reflections_possible()` (`llviewershadermgr.cpp:1288`) is true when the environment has `RK_VK_RT_SHADOWS` and `RK_VK_RT_MATERIALS=1`; `loadShaders` then adds the permutation to the soften program (`:3651`) and to the water program (`:1330`). `RKVkGlossyMirror` only picks the runtime value of `rt_glossy_reflections`. So everyone who starts with RT materials pays the compile, mirror or not.
 - **Cold = any change.** A shader edit, a GPU driver change or a different variant (the glossy mirror on, the quality level) is a new pipeline. The pipeline cache (117 MB, `Renderer::init`) is written at a normal exit only.
 - **What is inside `softenLightF.glsl` (975 lines).**
 

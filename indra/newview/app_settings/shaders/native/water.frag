@@ -169,7 +169,7 @@ void main()
     const float perceptualRoughness = blurMultiplier;
     vec3 radiance = water_reflection(distort2, pos, wave_ibl, 1.0 - perceptualRoughness);
 
-// the reflection is a variant of its own (the manifest define RK_RT_WATER_REFLECTION): the water without it is the sun shadow ray alone, a much smaller program (the setting FSVkRTWater is off by default)
+// the reflection is a variant of its own (the manifest define RK_RT_WATER_REFLECTION): the water without it is the sun shadow ray alone, a much smaller program (the setting RKVkRTWater is off by default)
 #if defined(RK_RT_QUERY) && defined(SUN_SHADOW) && defined(RK_RT_WATER_REFLECTION)
     if (rt_water_reflections == 2)
     {

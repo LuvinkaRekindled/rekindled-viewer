@@ -89,15 +89,15 @@ namespace RKVkBridge
     // across display() and the work that follows it (reflection probe updates, snapshots), then releases it and ends it.
     void holdFrame(bool hold);
 
-    // Present mode (setting FSVkPresentMode with the Vertical Sync preference): 0 follow Vertical Sync, 1 vsync, 2 uncapped, 3 uncapped without tearing.
+    // Present mode (setting RKVkPresentMode with the Vertical Sync preference): 0 follow Vertical Sync, 1 vsync, 2 uncapped, 3 uncapped without tearing.
     // Safe to call at any time; the swapchain follows at the start of the next frame.
     void setPresentPreference(S32 mode, bool vsync_on);
 
-    // Snapshot experiment (setting FSVkSnapVariant): called before each display() a snapshot makes.
+    // Snapshot experiment (setting RKVkSnapVariant): called before each display() a snapshot makes.
     // 1 = flush what has been recorded and carry on, 2 = close the off-screen frame and open a new one, 3 = like 2 but also wait for the GPU.
     void snapshotBoundary(S32 mode);
 
-    // ---- upscaling (setting FSVkDLSS, the upscaler switch; see rkvkupscale.h) ----
+    // ---- upscaling (setting RKVkDLSS, the upscaler switch; see rkvkupscale.h) ----
     // The GL names of four textures and what the upscaler needs to know about them; sizes are in pixels.
     struct UpscaleArgs
     {
@@ -386,14 +386,14 @@ namespace RKVkBridge
     U32 rtShadowMode();
     // live switches (rt-debug.txt gate=, bodyname=), 1 by default: do not trace avatars still loading and masked casters whose texture has no data; name the body meshes of the last frames again
     bool rtLoadingGates();
-    bool rtMaterialsAvailable();       // ray tracing is on and has the material table (the traced glossy mirror and the traced water reflections can run: the FSVkMirrorQuality (above Off) / FSVkRTWater settings ask for them)
+    bool rtMaterialsAvailable();       // ray tracing is on and has the material table (the traced glossy mirror and the traced water reflections can run: the RKVkMirrorQuality (above Off) / RKVkRTWater settings ask for them)
     S32 rtGlossyReflections();      // rt-debug.txt glossyrt=N (needs RK_VK_RT_MATERIALS=1): ray traced reflections on glossy surfaces of the lighting pass
     S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs RK_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
     S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
     S32 rtSnapTest();              // rt-debug.txt snaptest=N (0 = not set): every change of N above 0 takes a snapshot as the exit does
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
-    S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
+    S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting RKTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all
     S32 rtEarly();                 // rt-debug.txt rtearly=0/1/3 (default -1: the environment variable RK_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
     void nativeRtSession(bool on);   // <FS> whether this session's stock programs carry ray query code (the global define RK_RT_SHADOWS), pushed with the global defines (rkvknative.h)

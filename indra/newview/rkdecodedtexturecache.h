@@ -13,7 +13,7 @@
  * index at start-up (one directory listing) and keeps the cache under its size cap by removing the files read least recently (a hit touches the file's time).
  * Nothing here runs on the main thread except the once-a-minute report and the settings read.
  *
- * Settings: FSDecodedTextureCache (on/off, live: off means no read and no write, today's path), FSDecodedTextureCacheSizeMB (the cap). RenderCompressTextures
+ * Settings: RKDecodedTextureCache (on/off, live: off means no read and no write, today's path), RKDecodedTextureCacheSizeMB (the cap). RenderCompressTextures
  * decides whether BC7 chains are produced and may be served (off: a BC7 file is a miss, and a raw decode replaces it).
  */
 
@@ -31,10 +31,10 @@
 #include <unordered_set>
 #include <string>
 
-class FSDecodedTextureCache : public RKDecodedImageCache
+class RKDecodedTextureCache : public RKDecodedImageCache
 {
 public:
-    static FSDecodedTextureCache& instance();
+    static RKDecodedTextureCache& instance();
 
     // Main thread, after the texture cache's initCache: the directory under 'location' (<cache>/decodedcache), the writer thread, the index scan (on the writer).
     // 'purge' (the texture cache was purged or its version changed) removes everything first.
@@ -60,8 +60,8 @@ public:
     bool recentlyServed(const LLUUID& id) const;
 
 private:
-    FSDecodedTextureCache();
-    ~FSDecodedTextureCache();
+    RKDecodedTextureCache();
+    ~RKDecodedTextureCache();
 
     struct Entry
     {

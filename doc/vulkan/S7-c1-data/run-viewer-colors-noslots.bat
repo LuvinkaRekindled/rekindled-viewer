@@ -7,5 +7,5 @@ set RK_VK_STANDIN_MAGENTA=2
 set RK_VK_SLOT_RECLAIM=0
 set RK_VK_SLOT_QUARANTINE=0
 cd /d <work>\phoenix-firestorm\build-vc170-64\newview\Release
-firestorm-bin.exe --set BackgroundYieldTime 0 --set FSVulkanRenderer 1
+firestorm-bin.exe --set BackgroundYieldTime 0 --set RKVulkanRenderer 1
 endlocal

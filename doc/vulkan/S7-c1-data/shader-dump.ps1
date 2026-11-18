@@ -7,7 +7,7 @@ Get-ChildItem Env: | Where-Object { $_.Name -like 'RK_VK_*' } | ForEach-Object {
 $env:RK_VK_SHADER_DUMP_DIR = $Dir
 $log = "$env:APPDATA\Firestorm_x64\logs\Firestorm.log"
 if (Test-Path $log) { Remove-Item $log -Force }
-$p = Start-Process -FilePath '<work>\phoenix-firestorm\build-vc170-64\newview\Release\firestorm-bin.exe' -WorkingDirectory '<work>\phoenix-firestorm\build-vc170-64\newview\Release' -ArgumentList '--set','BackgroundYieldTime','0','--set','FSVulkanRenderer','1' -PassThru
+$p = Start-Process -FilePath '<work>\phoenix-firestorm\build-vc170-64\newview\Release\firestorm-bin.exe' -WorkingDirectory '<work>\phoenix-firestorm\build-vc170-64\newview\Release' -ArgumentList '--set','BackgroundYieldTime','0','--set','RKVulkanRenderer','1' -PassThru
 for ($i = 0; $i -lt 240; ++$i) { Start-Sleep 1; if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'STATE_LOGIN_WAIT' -Quiet -ErrorAction SilentlyContinue)) { break } }
 Start-Sleep 5
 Get-Process firestorm-bin -ErrorAction SilentlyContinue | Stop-Process -Force

@@ -102,7 +102,7 @@ public:
     F32 getPixelMeterRatio() const              { return mPixelMeterRatio; }
     S32 getScreenPixelArea() const              { return mScreenPixelArea; }
 
-    // DLSS (FSVkDLSS): the next setPerspective for the main scene shifts the image by a sub-pixel amount. The jitter is in pixels of the render
+    // DLSS (RKVkDLSS): the next setPerspective for the main scene shifts the image by a sub-pixel amount. The jitter is in pixels of the render
     // resolution, +x towards higher columns and +y towards higher rows of the render targets (texel space, as DLSS wants it); setPerspective keeps the projection without the shift in sUnjitteredProjection.
     static bool sJitterActive;
     static glm::vec2 sJitterPixels;

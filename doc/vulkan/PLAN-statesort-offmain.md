@@ -63,7 +63,7 @@ Each stage is behind a switch with the old path intact, and each has a gate in t
 **Stage 1: the split, still serial (the de-risking step; about two days).**
 - `LLVOVolume::computeLOD(camera) const -> {distance, detail, flags}` and `applyLOD(const SortDelta&)`; `LLDrawable::computeDistance(camera, deltas)` writes its own fields and appends deltas instead of calling `markRebuild` / `markPartitionMove`; `LLSpatialGroup::updateDistance` likewise for `ALPHA_DIRTY`; `wakeRequest` goes through a per-thread list.
 - `stateSort` becomes `sortCompute(chunk_begin, chunk_end, local_result, deltas)` + `sortApply(deltas)` + the rebuild calls, run serially over one chunk. The bridges and drawables loops fold into the group loops as in section 3.
-- Check mode `FSSortSplitCheck`: run the old path into a reference result, the new path into the real one, diff the four lists, the LOD of every drawable touched and the queues' contents (the `FSParallelShadowPrepCheck` pattern, 22724).
+- Check mode `RKSortSplitCheck`: run the old path into a reference result, the new path into the real one, diff the four lists, the LOD of every drawable touched and the queues' contents (the `RKParallelShadowPrepCheck` pattern, 22724).
 - Gate: 0 differences over a lap at the club and the plaza; `stateSort` zone within 0.05 ms of before (no gain expected, no loss allowed). Also fixes the `mWakeQ` race in the cascade jobs.
 
 **Stage 2: the compute pass in chunks on the pool (about a day once stage 1 holds).**

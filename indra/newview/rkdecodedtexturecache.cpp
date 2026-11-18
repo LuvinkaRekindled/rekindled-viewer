@@ -88,27 +88,27 @@ std::string rk_string(const std::filesystem::path& p) { return p.string(); }
 const char* extension_of(U8 format) { return format == kFormatRaw ? ".dec" : ".dc7"; }
 }
 
-FSDecodedTextureCache& FSDecodedTextureCache::instance()
+RKDecodedTextureCache& RKDecodedTextureCache::instance()
 {
-    static FSDecodedTextureCache s;
+    static RKDecodedTextureCache s;
     return s;
 }
 
-FSDecodedTextureCache::FSDecodedTextureCache() {}
-FSDecodedTextureCache::~FSDecodedTextureCache() {}
+RKDecodedTextureCache::RKDecodedTextureCache() {}
+RKDecodedTextureCache::~RKDecodedTextureCache() {}
 
-std::string FSDecodedTextureCache::subDir(const LLUUID& id) const
+std::string RKDecodedTextureCache::subDir(const LLUUID& id) const
 {
     const std::string s = id.asString();
     return mDir + gDirUtilp->getDirDelimiter() + s.substr(0, 1);
 }
 
-std::string FSDecodedTextureCache::fileName(const LLUUID& id, S32 discard, U8 format) const
+std::string RKDecodedTextureCache::fileName(const LLUUID& id, S32 discard, U8 format) const
 {
     return subDir(id) + gDirUtilp->getDirDelimiter() + id.asString() + "_" + std::to_string(discard) + extension_of(format);
 }
 
-void FSDecodedTextureCache::init(ELLPath location, bool purge)
+void RKDecodedTextureCache::init(ELLPath location, bool purge)
 {
     mDir = gDirUtilp->getExpandedFilename(location, kDirName);
     if (purge)
@@ -130,7 +130,7 @@ void FSDecodedTextureCache::init(ELLPath location, bool purge)
                              << (RKImageBC7::enabled() ? "on" : "off") << LL_ENDL;
 }
 
-void FSDecodedTextureCache::shutdown()
+void RKDecodedTextureCache::shutdown()
 {
     LLImageDecodeThread::setDecodedCache(nullptr);
     if (mWriter)
@@ -144,7 +144,7 @@ void FSDecodedTextureCache::shutdown()
     mInitialised = false;
 }
 
-bool FSDecodedTextureCache::post(std::function<void()> work)
+bool RKDecodedTextureCache::post(std::function<void()> work)
 {
     if (!mWriter)
     {
@@ -153,10 +153,10 @@ bool FSDecodedTextureCache::post(std::function<void()> work)
     return mWriter->getQueue().post(std::move(work));
 }
 
-void FSDecodedTextureCache::update()
+void RKDecodedTextureCache::update()
 {
-    static LLCachedControl<bool> on(gSavedSettings, "FSDecodedTextureCache", true);
-    static LLCachedControl<U32> cap_mb(gSavedSettings, "FSDecodedTextureCacheSizeMB", 8192);
+    static LLCachedControl<bool> on(gSavedSettings, "RKDecodedTextureCache", true);
+    static LLCachedControl<U32> cap_mb(gSavedSettings, "RKDecodedTextureCacheSizeMB", 8192);
     static LLCachedControl<bool> compress(gSavedSettings, "RenderCompressTextures", false);
     mEnabled.store(mInitialised && on(), std::memory_order_relaxed);
     mCapBytes.store((U64)llmax(256u, (U32)cap_mb) << 20, std::memory_order_relaxed);
@@ -222,7 +222,7 @@ void FSDecodedTextureCache::update()
                              << " ms of encoding; on disk " << entries << " textures, " << (total >> 20) << " of " << (mCapBytes.load() >> 20) << " MB" << LL_ENDL;
 }
 
-void FSDecodedTextureCache::scanIndex()
+void RKDecodedTextureCache::scanIndex()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     const F64 start = LLTimer::getElapsedSeconds();
@@ -293,7 +293,7 @@ void FSDecodedTextureCache::scanIndex()
                              << (S32)((LLTimer::getElapsedSeconds() - start) * 1000.0) << " ms" << LL_ENDL;
 }
 
-LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw)
+LLPointer<LLImageRaw> RKDecodedTextureCache::read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw)
 {
     if (checked_raw) *checked_raw = false;
     if (!enabled() || discard < 0)
@@ -407,18 +407,18 @@ LLPointer<LLImageRaw> FSDecodedTextureCache::read(const LLUUID& id, S32 discard,
         }
         mServed.insert(id);
     }
-    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("dechit", id, discard, (S32)format, (S64)result->getDataSize());
+    if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("dechit", id, discard, (S32)format, (S64)result->getDataSize());
     post([this, id]() { touch(id); });
     return result;
 }
 
-bool FSDecodedTextureCache::recentlyServed(const LLUUID& id) const
+bool RKDecodedTextureCache::recentlyServed(const LLUUID& id) const
 {
     std::lock_guard<std::mutex> lock(mServedMutex);
     return mServed.find(id) != mServed.end();
 }
 
-void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw)
+void RKDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw)
 {
     if (!enabled() || !raw || discard < 0 || discard > 255 || !raw->getData() || raw->getWidth() == 0 || raw->getHeight() == 0)
     {
@@ -502,7 +502,7 @@ void FSDecodedTextureCache::write(const LLUUID& id, S32 discard, const LLImageRa
     }
 }
 
-void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw, bool checked_raw)
+void RKDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<LLImageRaw> raw, bool checked_raw)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     const U32 w = raw->getWidth(), h = raw->getHeight(), c = raw->getComponents();
@@ -598,7 +598,7 @@ void FSDecodedTextureCache::writeFile(const LLUUID& id, S32 discard, LLPointer<L
 
 // writer thread. The stored raw file (whatever its finest level) is read whole, judged by the BC7 check at its finest level and, if it passes, replaced by the
 // chain (writeFile: tmp, rename, index); if it fails, its header gets the kept-raw mark. Either way no later hit on this texture runs the check again.
-void FSDecodedTextureCache::convertFile(const LLUUID& id)
+void RKDecodedTextureCache::convertFile(const LLUUID& id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     S32 discard = -1;
@@ -662,7 +662,7 @@ void FSDecodedTextureCache::convertFile(const LLUUID& id)
 }
 
 // writer thread: the kept-raw mark, set in the header in place (one byte)
-void FSDecodedTextureCache::markFile(const LLUUID& id)
+void RKDecodedTextureCache::markFile(const LLUUID& id)
 {
     S32 discard = -1;
     {
@@ -684,7 +684,7 @@ void FSDecodedTextureCache::markFile(const LLUUID& id)
     fclose(f);
 }
 
-void FSDecodedTextureCache::touch(const LLUUID& id)
+void RKDecodedTextureCache::touch(const LLUUID& id)
 {
     S32 discard = -1;
     U8 format = kFormatRaw;
@@ -701,7 +701,7 @@ void FSDecodedTextureCache::touch(const LLUUID& id)
 }
 
 // index lock held by the caller
-void FSDecodedTextureCache::evict()
+void RKDecodedTextureCache::evict()
 {
     const U64 cap = mCapBytes.load(std::memory_order_relaxed);
     while (mTotalBytes > cap && !mIndex.empty())
@@ -718,7 +718,7 @@ void FSDecodedTextureCache::evict()
     }
 }
 
-void FSDecodedTextureCache::remove(const LLUUID& id)
+void RKDecodedTextureCache::remove(const LLUUID& id)
 {
     S32 discard = -1;
     U8 format = kFormatRaw;
@@ -738,7 +738,7 @@ void FSDecodedTextureCache::remove(const LLUUID& id)
     }
 }
 
-void FSDecodedTextureCache::purgeAll()
+void RKDecodedTextureCache::purgeAll()
 {
     if (mDir.empty())
     {

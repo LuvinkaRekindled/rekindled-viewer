@@ -4,7 +4,7 @@ Repo `<work>\phoenix-firestorm`, branch `native-vk`, last commit `777fff0a` (tra
 
 ## Where things stand
 
-The traced glossy mirror is done and committed (quality levels Low / Medium / High / Ultra in Preferences > Graphics > Vulkan, `FSVkMirrorQuality`; hair layer, smooth avatar normals, soft light shadows). What it still lacks, and what ray reconstruction (RR) is for: **a traced reflection has no history, motion vectors or denoising of its own.** One ray per pixel, noisy soft shadows (4 rays per light with per-frame rotated noise at Ultra), and the reflected avatar flickers a little when the camera moves (DLSS sees the mirror surface as static while the reflected avatar shifts by parallax). The agreed order (Adam, 2026-10-13): hit shading A+B (done) -> **RR guide buffers + RR evaluate, first on the mirror, then the water** -> GPU scene S1+.
+The traced glossy mirror is done and committed (quality levels Low / Medium / High / Ultra in Preferences > Graphics > Vulkan, `RKVkMirrorQuality`; hair layer, smooth avatar normals, soft light shadows). What it still lacks, and what ray reconstruction (RR) is for: **a traced reflection has no history, motion vectors or denoising of its own.** One ray per pixel, noisy soft shadows (4 rays per light with per-frame rotated noise at Ultra), and the reflected avatar flickers a little when the camera moves (DLSS sees the mirror surface as static while the reflected avatar shifts by parallax). The agreed order (Adam, 2026-10-13): hit shading A+B (done) -> **RR guide buffers + RR evaluate, first on the mirror, then the water** -> GPU scene S1+.
 
 ## What the viewer feeds DLSS today (verified 2026-10-14)
 

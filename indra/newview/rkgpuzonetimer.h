@@ -3,7 +3,7 @@
  * @brief Logs how much GPU time each profiled zone takes
  *
  * The viewer's GPU profiling zones (LL_PROFILE_GPU_ZONE) are normally only visible in Tracy. While
- * the FSGpuZoneTimers setting is on, they also record GL timestamp queries, and a per-zone summary
+ * the RKGpuZoneTimers setting is on, they also record GL timestamp queries, and a per-zone summary
  * (average GPU milliseconds and calls per frame) is written to the log every ten seconds.
  */
 

@@ -1,5 +1,5 @@
 ﻿# Like rt-run-shot3.ps1, but after the 40 s settle the camera is moved with the arrow keys until the wait is over (turn left, turn right, walk forward, walk back). Starts the viewer (ray shadows mode 1) with extra arguments, logs in, waits, copies the log, quits. Checks every step against the viewer's own log and always makes sure the viewer is gone at the end.
-# Usage: powershell -File rt-run-shot3.ps1 -Name tag -Wait 110 -ExtraArgs "--set,FSDeferredPackets,1"   (comma separated, one string)
+# Usage: powershell -File rt-run-shot3.ps1 -Name tag -Wait 110 -ExtraArgs "--set,RKDeferredPackets,1"   (comma separated, one string)
 param([string]$Name = 'run', [int]$Wait = 110, [string]$ExtraArgs = '', [switch]$PauseAtLogin)
 
 Add-Type @"

@@ -22,7 +22,7 @@ No. OpenAL Soft's API is thread safe and it mixes on its own thread. What ties a
 - **Loading:** `LLAudioDecodeMgr` already decodes on workers. The WAV read plus `alBufferData` moves to the audio thread (or a worker), so the 3-4 ms/frame load burst and the file open leave main. A buffer is "not ready" until the audio thread says so (the `isReady`/`getLength` guard from the FMOD plan applies).
 - **Device:** `getDevices`, `setDevice`, the system-events callback and the preference-panel list refresh run on the audio thread, result posted to main. Removes the 0.4-0.8 s device-change stall.
 
-One path after the move: a temporary switch `FSAudioThread` (and `RK_AUDIO_BACKEND=openal|fmod` while both backends exist), then delete the losing paths.
+One path after the move: a temporary switch `RKAudioThread` (and `RK_AUDIO_BACKEND=openal|fmod` while both backends exist), then delete the losing paths.
 
 ## Stages
 
@@ -42,7 +42,7 @@ One path after the move: a temporary switch `FSAudioThread` (and `RK_AUDIO_BACKE
 
 **6b. HRTF (found 2026-11-02, Adam: the beach sounded more real).** OpenAL Soft turns HRTF on by itself for a headphone output; mono world sounds are placed in 3D with it, which FMOD did not do, at a lower level than the plain panning. Keep it as a feature: a setting (auto / on / off) in Preferences > Sound, applied with `ALC_HRTF_SOFT` in the context attributes or `alcResetDeviceSOFT` live; a small gain trim so it is not quieter than before (measure the same loop with HRTF on and off, 0.5 s of the beach at one spot); log which HRTF the device got (`ALC_HRTF_STATUS_SOFT`). Stereo sounds and UI sounds are not placed. Tests: `run-viewer-openal-log.bat` (log of the default), `run-viewer-openal-nohrtf.bat` (off through `alsoft-nohrtf.ini`).
 
-**Status 2026-11-02 (stage 0 done, Adam listening on the beach):** OpenAL Soft 1.24.2 starts and plays (waves, gulls, wind, voice fine, output device switch works). Without HRTF it already sounds better than FMOD to Adam; with HRTF (the automatic headphone default) it sounds more realistic but is quieter and noticeably different; he may get used to it. Decision: HRTF stays an option, default off (`FSAudioHRTF`, checkbox in Preferences > Sound, written, not yet built). Temporary switch `RK_AUDIO_BACKEND=openal` (llstartup.cpp), launchers `run-viewer-openal.bat`, `-log`, `-nohrtf`.
+**Status 2026-11-02 (stage 0 done, Adam listening on the beach):** OpenAL Soft 1.24.2 starts and plays (waves, gulls, wind, voice fine, output device switch works). Without HRTF it already sounds better than FMOD to Adam; with HRTF (the automatic headphone default) it sounds more realistic but is quieter and noticeably different; he may get used to it. Decision: HRTF stays an option, default off (`RKAudioHRTF`, checkbox in Preferences > Sound, written, not yet built). Temporary switch `RK_AUDIO_BACKEND=openal` (llstartup.cpp), launchers `run-viewer-openal.bat`, `-log`, `-nohrtf`.
 
 **7. Remove FMOD (only after Adam has run OpenAL for a while).**
 - `llaudioengine_fmodstudio.*`, `lllistener_fmodstudio.*`, `llstreamingaudio_fmodstudio.*`, `lllistener_ds3d.h` if unused; `FMODSTUDIO.cmake` and the include sites; `--fmodstudio` manifest arguments (`newview/CMakeLists.txt`, `viewer_manifest.py`, `fs_viewer_manifest.py`); `llstartup.cpp`, `llprogressview.cpp` (`LL_FMODSTUDIO` blocks), `llaudioengine.cpp` comment.

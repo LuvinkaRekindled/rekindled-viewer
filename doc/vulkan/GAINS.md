@@ -7,9 +7,9 @@ Hardware: RTX 5060 Ti, Windows 11. "Crowd" = a busy sim with 40-90 avatars.
 
 | Change | Result |
 |---|---|
-| Parallel avatar animation (FSParallelAvatarMotion, now on) | avatar update about 3 ms/frame less |
-| Far sun-shadow cascades reused every Nth frame (FSShadowFarCascadeInterval) | about 3 ms/frame |
-| Texture update divisor 80 + a 3 s burst at 20 after a region change or camera move (FSTextureUpdateDivisor) | about 1.4 ms/frame |
+| Parallel avatar animation (RKParallelAvatarMotion, now on) | avatar update about 3 ms/frame less |
+| Far sun-shadow cascades reused every Nth frame (RKShadowFarCascadeInterval) | about 3 ms/frame |
+| Texture update divisor 80 + a 3 s burst at 20 after a region change or camera move (RKTextureUpdateDivisor) | about 1.4 ms/frame |
 | Crowd of about 50 avatars, plain OpenGL, all of the above | **28.8 -> 17.8 ms/frame** (35 -> 56 fps) |
 
 Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-indirect for static casters, skin palette UBO, texture-priority threading.
@@ -21,7 +21,7 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Finding: the viewer is main-thread CPU bound in crowds, not GPU bound | explains why GPU-side tricks gave nothing |
 | Cheaper recording of GL calls into Vulkan | 25-29 ms -> 5 ms per iteration |
 | Draw-path work (state/sampler/vertex-input caching, spin mutex) | crowded shadowed sim **about 65 -> about 100 fps**; 20.1 -> 15.4 ms/frame |
-| Worker thread replays the queued GL calls (FSVulkanAsync) | heavy sim: OpenGL about 50 fps, inline Vulkan about 25, threaded Vulkan **60 fps standing, 78 fps moving** |
+| Worker thread replays the queued GL calls (RKVulkanAsync) | heavy sim: OpenGL about 50 fps, inline Vulkan about 25, threaded Vulkan **60 fps standing, 78 fps moving** |
 | Coalescing queue records (RK_VK_COALESCE) | records 154k -> 70k per frame, frame 16.4 -> 14.9 ms |
 | Pool spin-before-sleep | about 14.5 ms |
 | Post-teleport stall (about 55 s) | fixed (buffer rename copied from video memory) |
@@ -40,13 +40,13 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Change | Result |
 |---|---|
 | Texture option hoist | about +5 fps |
-| Shadow packets: static, alpha-masked (bindless textures) and rigged casters as records (FSShadowPackets, on) | **about +10 fps** (same spot, on vs off); worker -2 to -3 ms; shadow GPU +0.5 ms, total GPU unchanged |
+| Shadow packets: static, alpha-masked (bindless textures) and rigged casters as records (RKShadowPackets, on) | **about +10 fps** (same spot, on vs off); worker -2 to -3 ms; shadow GPU +0.5 ms, total GPU unchanged |
 | Far-cascade interval 3 -> 4 | 0.5-0.7 ms/frame of shadow time |
-| Deferred geometry packets (FSDeferredPackets, off) | worker -1.4 ms, **no frame-time gain** (main thread is the limit); kept as an option |
+| Deferred geometry packets (RKDeferredPackets, off) | worker -1.4 ms, **no frame-time gain** (main thread is the limit); kept as an option |
 | Skeleton world matrices inside the parallel blend | about 2% of the main thread |
 | Water: dedicated SSR trace (bands, grain and flicker gone) | visual fix; Adam saw more fps too (not measured) |
 | Rigged attachment bounding-box override skipped when unchanged | 0.43 -> 0.22 ms/frame in a crowd of 43 |
-| Rigged attachments of standing avatars updated every 8th frame (FSSkipStaticRiggedAttachmentUpdates, on) | about +3 fps (Adam, dancers) |
+| Rigged attachments of standing avatars updated every 8th frame (RKSkipStaticRiggedAttachmentUpdates, on) | about +3 fps (Adam, dancers) |
 | Object-cache light bounds | correctness (lights exist before their source is in view), costs a little more light work |
 
 ## 5. native-vk (2026-10-07)
@@ -64,17 +64,17 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Draw records: texture binds as a producer-side slot table, changed slots written with the draw; vertex array state, shader bind, sampler params, render target binds as single records | records per frame 28,300 -> about 19,900; no fps change (CPU-bound spot); queue writing about 0.5-0.6 ms of the frame |
 | Bindless textures for 169 of 200 programs (the rest: no samplers 16, geometry stage, 8 SMAA programs whose helper parameters collide with sampler names) | neutral at a CPU-bound spot (A/B: both about 75 fps; frames settle faster); the foundation for indirect draws. Worker time per draw is about 1.0 us either way |
 | Worker draw path: flat texture/buffer lookups, cached render-target resolution, draw state translated on change only | render target and state phases now 0.24 ms/frame together; the rest of the worker draw time is spread (uniform block 1.2, textures 0.7, vertex input 1.0 ms/frame at 4,000 draws) |
-| **Animated textures skipped for objects out of view (FSSkipHiddenTextureAnim) + face matrices in closed form** | **loop 14.5-15.0 -> 11.95-12.0 ms at Adam's spot (about 20%)**: animated textures 1.7 -> 0.47 ms, 1,953 -> 340 objects per frame, idle() 5.1 -> 3.3 ms, display() 9.4 -> 8.5 ms |
-| **Other residents' avatars that are not in view get the full update every 2nd frame (4th beyond 50 m), FSReduceHiddenAvatarUpdates** | **loop 11.99 -> 11.15 ms**: full avatar updates 66 -> 28.5 per frame, object list 2.22 -> 1.73 ms, avatar motion batch 0.91 -> 0.64 ms. Together with the animated-texture change the loop went from 14.5-15.0 to 11.15 ms (about 23%) |
+| **Animated textures skipped for objects out of view (RKSkipHiddenTextureAnim) + face matrices in closed form** | **loop 14.5-15.0 -> 11.95-12.0 ms at Adam's spot (about 20%)**: animated textures 1.7 -> 0.47 ms, 1,953 -> 340 objects per frame, idle() 5.1 -> 3.3 ms, display() 9.4 -> 8.5 ms |
+| **Other residents' avatars that are not in view get the full update every 2nd frame (4th beyond 50 m), RKReduceHiddenAvatarUpdates** | **loop 11.99 -> 11.15 ms**: full avatar updates 66 -> 28.5 per frame, object list 2.22 -> 1.73 ms, avatar motion batch 0.91 -> 0.64 ms. Together with the animated-texture change the loop went from 14.5-15.0 to 11.15 ms (about 23%) |
 | **Bug fix: the no-GL start-up reported the device's descriptor limit (1,048,576) as the number of texture units; display() loops over every unit each frame** | **loop 12.64 -> 7.69 ms, display() 9.15 -> 5.06 ms, idle() 3.27 -> 2.41 ms; Adam measured +45 fps at the spot.** Found with a Tracy self-time export ("Texture Unbind" 7.3 ms self) and a CPU zone around the loop; now reports 32 per stage / 192 combined like a driver |
 
 Since the start of the 2026-10-07 evening session the loop at Adam's spot went from 14.5-15.0 ms to 7.7 ms.
 
-GPU time at Adam's spot after the fixes (RK_VK_PHASES + FSGpuZoneTimers, run-viewer-clean-gpuzones.bat; GPU 6.5-6.7 ms per frame, GPU busy about 80-90%): alpha pass (post water) 1.47 ms (22%), DLSS 1.17 (18%), water 0.82 (12%), G-buffer materials 0.46 (7%), sun lighting program 0.33, sky 0.31, atmospherics 0.23, soften shadow 0.23, alpha (pre water) 0.21, all sun shadow maps about 0.35, local lights 0.01. The CPU side is about 7.5 ms (display 5.1, idle 2.4). Both sides are now close to balanced.
+GPU time at Adam's spot after the fixes (RK_VK_PHASES + RKGpuZoneTimers, run-viewer-clean-gpuzones.bat; GPU 6.5-6.7 ms per frame, GPU busy about 80-90%): alpha pass (post water) 1.47 ms (22%), DLSS 1.17 (18%), water 0.82 (12%), G-buffer materials 0.46 (7%), sun lighting program 0.33, sky 0.31, atmospherics 0.23, soften shadow 0.23, alpha (pre water) 0.21, all sun shadow maps about 0.35, local lights 0.01. The CPU side is about 7.5 ms (display 5.1, idle 2.4). Both sides are now close to balanced.
 
 | Alpha shader: sun shadow lookup after the alpha discards (identical output) | alpha pass 1.47 -> 1.40 ms GPU |
-| Texture refresh slows again after 10 s of a steady view (FSTextureUpdateSteadyFactor) + object texture priority pass every other frame then | about 0.18 ms of main-thread time |
-| **Water reflection ray: at most 30 uneven steps instead of up to 48 (FSWaterTraceAdaptive)** | **water 0.85 -> 0.63 ms GPU (-26%), total GPU 6.47 -> 6.22 ms; no visible difference (Adam)** |
+| Texture refresh slows again after 10 s of a steady view (RKTextureUpdateSteadyFactor) + object texture priority pass every other frame then | about 0.18 ms of main-thread time |
+| **Water reflection ray: at most 30 uneven steps instead of up to 48 (RKWaterTraceAdaptive)** | **water 0.85 -> 0.63 ms GPU (-26%), total GPU 6.47 -> 6.22 ms; no visible difference (Adam)** |
 | Tried and removed: skipping the lighting of transparent pixels under 2% alpha | 0.03 ms, not worth the code |
 
 | Loose uniform writes pile up on the main thread and are written with the next draw (draw-record plan, uniform step) | records per frame 18,900-19,900 -> 13,550; queue writing unchanged within noise |
@@ -105,7 +105,7 @@ The same spot, the same settings, the official OpenGL viewer against `run-viewer
 ## Regression-checklist findings fixed (2026-10-08)
 | Finding | Cause | Fix |
 |---|---|---|
-| Saved snapshots had no water reflections | the first render after the live view has no previous-frame scene copy at the snapshot's size (world view without UI differs from the live one) | FSSnapshotWarmupFrames extra renders before the kept one |
+| Saved snapshots had no water reflections | the first render after the live view has no previous-frame scene copy at the snapshot's size (world view without UI differs from the live one) | RKSnapshotWarmupFrames extra renders before the kept one |
 | Saved snapshots had no DLSS anti-aliasing | each render of a snapshot shares one frame number, so the upscale reset its history every time | renders of one snapshot continue each other's history, 18 warm-up frames (one jitter cycle), 3 for thumbnails; jitter advances per render |
 | Hair and other textures black after minimize | texture downscale needs a frame to draw and copy into; a minimized window has none, so the new storage stayed empty | the downscale queue waits while the window is minimized or hidden |
 

@@ -2,7 +2,7 @@
  * @file rkvktexanim.h
  * @brief <FS> Texture animation evaluated by the vertex shader (PLAN-aurora-ideas.md 1.1).
  *
- * A face with a texture animation used to get a new texture matrix from the main thread every time its frame changed (LLVOVolume::animateTextures). With FSTexAnimOnGPU the
+ * A face with a texture animation used to get a new texture matrix from the main thread every time its frame changed (LLVOVolume::animateTextures). With RKTexAnimOnGPU the
  * face's matrix slot (the 16 floats the draw already carries, wherever the draw goes: the alpha runs, the geometry packets, the scene table's moving slots) holds the animation's
  * parameters instead, marked by a 0 in float 15 (a real texture matrix has a 1 there), and the pull vertex shaders turn it into the matrix against the frame clock (slot 0 of the
  * texture matrix table, which no draw reads as a matrix, carries the clock). The CPU writes the parameters when they change, not every frame.
@@ -14,7 +14,7 @@
  *   11 sign of the sine in the closed form (the convention the matrix products were found to follow)    15 = 0
  * The clock is two floats, the whole seconds and the rest, so that the difference to an origin stays exact however long the viewer has run.
  *
- * evaluate() below is the CPU twin of rk_texanim_core in llshadermgr.cpp (line for line): the compare mode of FSTexAnimOnGPU, the faces that bake their matrix into texture
+ * evaluate() below is the CPU twin of rk_texanim_core in llshadermgr.cpp (line for line): the compare mode of RKTexAnimOnGPU, the faces that bake their matrix into texture
  * coordinates, and the programs that are not pull programs use it.
  */
 #ifndef RK_RKVKTEXANIM_H

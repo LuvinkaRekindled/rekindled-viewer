@@ -2016,7 +2016,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     */
     // create window
 
-    RKVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), gSavedSettings.getBOOL("RenderVSyncEnable")); // <FS> before the swapchain exists
+    RKVkBridge::setPresentPreference((S32)gSavedSettings.getS32("RKVkPresentMode"), gSavedSettings.getBOOL("RenderVSyncEnable")); // <FS> before the swapchain exists
 
     U32 max_core_count = gSavedSettings.getU32("EmulateCoreCount");
     F32 max_gl_version = gSavedSettings.getF32("RenderMaxOpenGLVersion");
@@ -6150,7 +6150,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
 
     // PRE SNAPSHOT
     // <FS> snapshot experiment and diagnostics for the Vulkan renderer (inert without the setting / environment variable)
-    static LLCachedControl<S32> rk_vk_snap_variant(gSavedSettings, "FSVkSnapVariant", 0);
+    static LLCachedControl<S32> rk_vk_snap_variant(gSavedSettings, "RKVkSnapVariant", 0);
     LL_INFOS("VkSnap") << "rawSnapshot " << image_width << "x" << image_height << " keep_aspect " << keep_window_aspect << " texture " << is_texture
                        << " ui " << show_ui << " hud " << show_hud << " no_post " << no_post << " type " << (S32)type << " variant " << (S32)rk_vk_snap_variant << LL_ENDL;
     // </FS>
@@ -6363,7 +6363,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                 // builds its picture from the frames before it; the first render after the live view has neither at this size (the snapshot's world view differs from the
                 // live one: no UI), so it came out without reflections and with an upscale that has no history. Two or three more renders are cheap next to a snapshot.
                 // DLSS needs about one jitter cycle (18 positions at Quality) of history to look like the live view; a thumbnail does not need that, the picture that is saved does.
-                static LLCachedControl<S32> rk_snap_warmup(gSavedSettings, "FSSnapshotWarmupFrames", 18);
+                static LLCachedControl<S32> rk_snap_warmup(gSavedSettings, "RKSnapshotWarmupFrames", 18);
                 const bool full_size = (S64)image_width * image_height > 400000;
                 S32 warmup = LLPipeline::sRenderDeferred ? (LLPipeline::sDLSS && scale_factor <= 1.f ? (full_size ? (S32)rk_snap_warmup : llmin((S32)rk_snap_warmup, 3)) : llmin((S32)rk_snap_warmup, 1)) : 0;
                 if (rk_vk_snap_variant == 4)

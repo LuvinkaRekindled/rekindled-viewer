@@ -107,7 +107,7 @@ bool ssr_trace(vec3 position, vec3 reflection, out vec3 hit)
     return false;
 }
 
-// <FS> the improved trace for surfaces other than water (the setting FSSSRSurfaceTrace, bit 1 of ssrTraceMode): the non water case of traceScreenRayFast of the viewer's screenSpaceReflUtil.glsl. The marcher
+// <FS> the improved trace for surfaces other than water (the setting RKSSRSurfaceTrace, bit 1 of ssrTraceMode): the non water case of traceScreenRayFast of the viewer's screenSpaceReflUtil.glsl. The marcher
 // above takes growing steps and only counts a hit that lands within distanceBias of a surface, so which step the ray happens to land on decides if it hits (flat bands of reflection, grain). This one walks a fixed
 // number of steps in screen space (perspective correct), accepts a crossing within a thickness that grows with the step, and finds the exact crossing with a binary search. The step is fixed per pixel (no shimmer).
 // The walk is shared with the water's trace (ssr_water below): reject_up is zero for a surface; for the water it is world up in eye space (a hit within half a metre above the water's own point is the water,
@@ -300,7 +300,7 @@ vec4 ssr_opaque(vec2 tc, vec3 view_pos, vec3 norm, float gloss)
 
 #ifdef WATER_PASS
 // the reflection of the screen in the water: the viewer's trace of the water (tapScreenSpaceReflection with rejectUp set). rgb the colour, a how much of it to use. With the improved water trace (bit 0 of
-// ssrTraceMode, the setting FSSSRWaterTrace) one ray is traced against a mostly smoothed normal, so that neighbouring ripples reflect a coherent picture and the ripples only shift where the colour is read
+// ssrTraceMode, the setting RKSSRWaterTrace) one ray is traced against a mostly smoothed normal, so that neighbouring ripples reflect a coherent picture and the ripples only shift where the colour is read
 // (the reflection wobbles instead of flickering); without it the marcher traces with the scatter of the opaque surfaces.
 vec4 ssr_water(vec2 tc, vec3 view_pos, vec3 norm, float gloss, vec3 reject_up)
 {

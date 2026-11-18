@@ -10,7 +10,7 @@ They start the viewer THROUGH `ngfx.exe` (Nsight Graphics 2026.3.1, `C:\Program 
 1. Check no `rekindled-bin` is running, then run the launcher (PowerShell: `cmd /c "<work>\run-viewer-gputrace-shaders-rtoff.bat"`, in the background).
 2. Log in by hand, stand at the crowd spot at your own yaw, let it settle (about a minute).
 3. Press F11 ONCE. 3 frames (`--limit-to-frames 3`, 1000 ms max) are traced. ngfx ends the viewer itself afterwards; do not quit it by hand, do not kill it.
-4. Flags that matter: `--activity "GPU Trace Profiler" --start-after-hotkey --limit-to-frames 3 --auto-export --multi-pass-metrics --real-time-shader-profiler --set-gpu-clocks unaltered --output-dir <work>\nsight-traces`. The viewer env has `RK_VK_LABELS=1` (debug labels) and `--set FSGpuZoneTimers 1` (zone names); every other `RK_VK_*` variable of the shell is cleared first by the launcher.
+4. Flags that matter: `--activity "GPU Trace Profiler" --start-after-hotkey --limit-to-frames 3 --auto-export --multi-pass-metrics --real-time-shader-profiler --set-gpu-clocks unaltered --output-dir <work>\nsight-traces`. The viewer env has `RK_VK_LABELS=1` (debug labels) and `--set RKGpuZoneTimers 1` (zone names); every other `RK_VK_*` variable of the shell is cleared first by the launcher.
 5. The zone timers slow the main thread, so the GPU idles part of the window: whole-frame percentages come out low (SM 13.7%). Use the shares, not the absolute percentages.
 
 ## Where the data is
@@ -19,7 +19,7 @@ They start the viewer THROUGH `ngfx.exe` (Nsight Graphics 2026.3.1, `C:\Program 
 - `GPUTRACE_FRAME.xls`: whole-frame counters, three columns = three frames. Includes one row per shader: `GPUTrace.PCSampler.tpc__warps_active_shader_node_main_0x<hash>.avg.per_cycle_elapsed` (resident warps per cycle of that shader; each hash also has a `pct_of_peak` row, ignore it), and per stage `tpc__warps_active_shader_{vertex,pixel,compute,ngx}`.
 - `D3DPERF_EVENTS.xls`: only the DLSS evaluate (`nv.ngx.dlss.Evaluate`, 1.26 ms).
 - `GPUTRACE_REGIMES.xls`: per-event counters, again only the DLSS event (our Vulkan labels are not exported).
-- NOT in the export: per-pass limiters/ms and source-level shader stalls (UI only). Per-pass GPU ms come from the `FSGpuZoneTimers` lap (log line "GPU time by render pass", see PLAN-shaders.md).
+- NOT in the export: per-pass limiters/ms and source-level shader stalls (UI only). Per-pass GPU ms come from the `RKGpuZoneTimers` lap (log line "GPU time by render pass", see PLAN-shaders.md).
 
 ## Naming the hashes
 

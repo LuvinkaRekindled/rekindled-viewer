@@ -264,7 +264,7 @@ void display_update_camera()
 // </FS:CR> Aurora sim
     LLViewerCamera::getInstance()->setFar(final_far);
     LLVOAvatar::sRenderDistance = llclamp(final_far, 16.f, 256.f);
-    gPipeline.updateJitter();   // FSVkDLSS: this projection is the main scene's
+    gPipeline.updateJitter();   // RKVkDLSS: this projection is the main scene's
     gViewerWindow->setup3DRender();
     LLViewerCamera::sJitterActive = false;
 
@@ -513,7 +513,7 @@ U32 gEarlySortResorts = 0;     // <FS> frames in which the early sort had to be 
 
 void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 {
-    // <FS> per-zone GPU timing in the log (only does anything while FSGpuZoneTimers is on).
+    // <FS> per-zone GPU timing in the log (only does anything while RKGpuZoneTimers is on).
     // Done first, before any zone of this frame opens, so the previous frame is complete.
     RKGpuZoneTimer::onFrameEnd();
 
@@ -983,8 +983,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static const char* early_env = getenv("RK_VK_EARLY_SORT");
         static const bool early_alternate = early_env && early_env[0] == 'a';
         static const bool early_env_enabled = !(early_env && early_env[0] == '0');
-        static LLCachedControl<bool> early_sort_setting(gSavedSettings, "FSEarlySort", true);        // live: Debug Settings
-        static LLCachedControl<bool> async_builders_setting(gSavedSettings, "FSAsyncBuilders", true);
+        static LLCachedControl<bool> early_sort_setting(gSavedSettings, "RKEarlySort", true);        // live: Debug Settings
+        static LLCachedControl<bool> async_builders_setting(gSavedSettings, "RKAsyncBuilders", true);
         RKAsyncPool::sRunInline = !async_builders_setting;
         const bool early_sort = early_env_enabled && early_sort_setting && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
         sFrameMode = early_sort ? 1 : 0;

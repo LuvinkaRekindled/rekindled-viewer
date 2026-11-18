@@ -42,7 +42,7 @@ Already in `1b24c599`: the clean skeleton walk of `updateCharacterPostMotion` is
 The attachment's joint world matrix is known when the loop runs. Keep the last *applied* matrix per attachment (64 bytes on the `LLViewerJointAttachment` / object); when the new one differs by less than 1 mm in position and 0.06 degrees in rotation, do nothing for that attachment this frame (no drawable move, no bridge move, no `updateText`). The rigged attachments already do the equivalent (8-frame stagger), so the visual idea is accepted. Anything that selects or edits an attachment, a non-plain attachment, a first visit, or a changed attachment list brings the full update back.
 
 - Gain from the census: 88 of 160 rigid attachments are under 1 mm: **about 0.3-0.35 ms in the loop and 0.1 downstream, 0.4 ms in all** (heavy crowd), a standing crowd more, a dancing one less.
-- Effort: small (about 40 lines in `idleUpdateMisc`, a setting `FSSkipStaticRigidAttachmentUpdates`, counters), no threading, no new write points. Failure mode: a visible lag of up to 1 mm, rotation up to 0.06 degrees (1 mm at the end of a 1 m prim).
+- Effort: small (about 40 lines in `idleUpdateMisc`, a setting `RKSkipStaticRigidAttachmentUpdates`, counters), no threading, no new write points. Failure mode: a visible lag of up to 1 mm, rotation up to 0.06 degrees (1 mm at the end of a 1 m prim).
 - What it leaves: the moving 72 rigid attachments (0.3 ms) and the old chain for them: stage b would take those later, for about 0.2 ms more instead of 0.4-0.5.
 
 ## 5. The rest of the report, with the numbers now

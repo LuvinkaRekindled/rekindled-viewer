@@ -523,7 +523,7 @@ private:
     ArenaStats mArenaCounters;
 };
 
-// How the swapchain presents (setting FSVkPresentMode with the Vertical Sync preference; the environment variable RK_VK_PRESENT overrides both).
+// How the swapchain presents (setting RKVkPresentMode with the Vertical Sync preference; the environment variable RK_VK_PRESENT overrides both).
 // mode: 0 follow the Vertical Sync preference (on: FIFO, off: IMMEDIATE), 1 vsync (FIFO), 2 uncapped (IMMEDIATE, can tear), 3 uncapped without tearing (MAILBOX).
 // Takes effect at once: the swapchain is recreated at the start of the next frame.
 void setPresentPreference(int mode, bool vsync_on);

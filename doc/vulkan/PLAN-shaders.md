@@ -4,7 +4,7 @@ Order set by Adam: clean core, then PLAN-hotspots (first pass done), then this s
 
 ## 1. Where the GPU time goes, RT off, crowd spot (lap gz9-phasesoff1, 2026-11-08)
 
-Method: `h6-fixed.ps1 -Mode phasesoff -Prefix gz9-` with `H6_EXTRA_ARGS=--set,FSGpuZoneTimers,1`; last-location login at the crowd spot, two still phases (60 s + 120 s), 25 one-per-6-s "GPU time by render pass" readings after settling. The zone timers perturb the main thread (frame 11 ms in this lap, the worker waited for work 3.3 ms a frame), so only the GPU ms per pass count here, never the fps. The log line lists the top ~45 names only, so the sum of the table is a little under the frame.
+Method: `h6-fixed.ps1 -Mode phasesoff -Prefix gz9-` with `H6_EXTRA_ARGS=--set,RKGpuZoneTimers,1`; last-location login at the crowd spot, two still phases (60 s + 120 s), 25 one-per-6-s "GPU time by render pass" readings after settling. The zone timers perturb the main thread (frame 11 ms in this lap, the worker waited for work 3.3 ms a frame), so only the GPU ms per pass count here, never the fps. The log line lists the top ~45 names only, so the sum of the table is a little under the frame.
 
 GPU frame, estimated from the DLSS share (1.29 ms = 20%): **about 6.4 ms**.
 
@@ -42,7 +42,7 @@ Not covered yet: RT on (the lap that matters for the RT lighting pipeline), a di
 
 ## 4. Nsight GPU Trace, RT off, crowd spot (2026-11-08 10:11, rekindled-bin_2026_11_08_10_11_56.ngfx-gputrace)
 
-Launcher `<work>\run-viewer-gputrace-shaders-rtoff.bat` (labels, FSGpuZoneTimers, RT off, real-time shader profiler, multi-pass metrics; F11 by hand after the settle). Three frames traced, 36 MB report in `<work>\nsight-traces`.
+Launcher `<work>\run-viewer-gputrace-shaders-rtoff.bat` (labels, RKGpuZoneTimers, RT off, real-time shader profiler, multi-pass metrics; F11 by hand after the settle). Three frames traced, 36 MB report in `<work>\nsight-traces`.
 
 What the auto-export holds: GPUTRACE_FRAME.xls has the whole-frame counters AND one row per shader (`tpc__warps_active_shader_node_main_0x<hash>`, the PC sampler's resident warps per cycle for each shader, three frames); D3DPERF_EVENTS has only the DLSS evaluate (1.26 ms, SM ~98% busy, dense compute, nothing to tune). The Vulkan labels and per-pass limiters are not in the export (they are in the .ngfx-gputrace UI). Per-shader share is the way in: rank by hash, name the hashes with `aftermath-decode/hashspirv.exe` against the viewer's SPIR-V cache.
 

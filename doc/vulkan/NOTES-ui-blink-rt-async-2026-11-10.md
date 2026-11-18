@@ -18,7 +18,7 @@ Status: **cause narrowed to the async compute split (E2) with ray scene material
 
 | Idea | Evidence against |
 |---|---|
-| The UI record cache (`FSUIRecordCache`) | still blinks with it at 0; mode 0 makes `ui_draw_view` call `viewp->draw()` directly (`llview.cpp:1598`). Its refresh interval N did flip between 3 and 4 (frame time near 9.5 ms) but it is not the cause |
+| The UI record cache (`RKUIRecordCache`) | still blinks with it at 0; mode 0 makes `ui_draw_view` call `viewp->draw()` directly (`llview.cpp:1598`). Its refresh interval N did flip between 3 and 4 (frame time near 9.5 ms) but it is not the cause |
 | GPU hitches | about 97% of presented frames under 12 ms in the logs (VkPhases histograms), the rest mostly 12-25 ms |
 | Camera jitter on the UI | the UI and the tags are drawn after the upscale inside `RKUnjitteredScope` (`llviewerdisplay.cpp:1868`), straight into the window |
 | The dirty rectangle UI buffer (`RenderUIBuffer`) | off by default and in no settings file of Adam's; Adam had assumed the UI was drawn in rectangles: it is not |
@@ -62,7 +62,7 @@ Files: `rkvkcontext.cpp` (`createDevice`, `splitFrame`, `submitCompute`, `endFra
 
 Read, no error found:
 
-- Saved settings first: Adam's user settings have no override of `FSUIRecordCache`, `FSUIRecordCacheHz` or `RenderUIBuffer`.
+- Saved settings first: Adam's user settings have no override of `RKUIRecordCache`, `RKUIRecordCacheHz` or `RenderUIBuffer`.
 - The full-screen draw that puts the finished picture into the backbuffer (`renderFinalize`, `pipeline.cpp` ~24182-24206) is unconditional and runs with blending off (`BlendScope blend(false)` at the top of the function), so it cannot let the old backbuffer through by its blend state.
 - No pipeline was built in the background in the 22:02 and 22:43 runs (0 "pipeline built in the background" lines), so that draw was not dropped for a pipeline that was still compiling.
 - `Context::splitFrame`, `submitCompute`, `endFrame`, `flushFrameAndWait`, `Renderer::splitFrame`, `on_rt_scene`: the parts are submitted in order, the last part (lighting, post, present pass, UI, the blit) is one command buffer, and a flush in a split frame records into the current part again. Nothing replays a part.

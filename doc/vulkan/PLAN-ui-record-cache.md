@@ -18,7 +18,7 @@ Goal: take the widgets' 0.65-0.70 ms (harness layout) off the main thread on the
 
 **Key** (a unit replays only if all are equal): the view pointer, its screen rect, the innermost clip rect (and whether there is one), the UI scale, `LLFontGL::sCurOrigin`, the modelview matrix at entry, a hash of the producer's render state block at entry, a UI epoch (window resize, UI scale, skin or colour table reload), and the list of texture ids the records name, each still the same texture (below).
 
-**Refresh rate.** Target `FSUIRecordCacheHz` (default 30): a unit is live every `N = clamp(round(fps / Hz), 1, 4)` frames, staggered by its pointer so the live units are spread evenly over the frames (no spike every Nth frame). N = 1 is off.
+**Refresh rate.** Target `RKUIRecordCacheHz` (default 30): a unit is live every `N = clamp(round(fps / Hz), 1, 4)` frames, staggered by its pointer so the live units are spread evenly over the frames (no spike every Nth frame). N = 1 is off.
 
 **Input: per unit, no input hooks.** A unit is live every frame while the mouse is inside its rect, while the keyboard focus or the mouse capture is the view or one of its descendants, and for 15 frames after any of those ended (so a hover or a button release is drawn at once). Everything else is sliced. A floater that is dragged or resized changes its rect: the key differs. Anything that opens or closes (visibility, a new view) is a new key or a new unit.
 
@@ -36,19 +36,19 @@ Goal: take the widgets' 0.65-0.70 ms (harness layout) off the main thread on the
 ## Risks, and how each is checked
 1. **A belief that the boundary does not cover shows as a wrong texture, colour or clip on a replay frame.** `RK_VK_UI_CACHE_VERIFY=1`: on every replay frame the live draw is also recorded (not spliced) and compared with the cached bytes; the log counts mismatches per unit. In a static UI the mismatch rate must be 0 except for the views that really change (the status bar). Pictures: the same scripted spot with the cache on and off, `rt-shot-diff.py`, UI crops.
 2. **Stale pictures** up to N frames (33 ms at 90 fps, N = 3). Your eyes decide N and the Hz.
-3. **A widget that depends on being drawn every frame** (a timer in `draw()`, a blink, a drag preview). Found by use; `FSUIRecordCache` off per view class is a one-line list.
+3. **A widget that depends on being drawn every frame** (a timer in `draw()`, a blink, a drag preview). Found by use; `RKUIRecordCache` off per view class is a one-line list.
 4. **Memory**: a cap of 8 MB of cached bytes, least recently live first dropped.
 5. **Sub-stream on the main thread**: it exists and was tested on the cascades (`RK_VK_SUBSTREAM_TEST`); the UI's `LLRender::flush` goes through `drawScratch` -> `writeDraw` -> `mainReserve`, which the sub-stream buffer already intercepts (`tlsBuf`). Checked first, on a single unit, before any slicing.
 
-## Steps (each measured or checked before the next; behind `FSUIRecordCache`, default off until you have looked)
+## Steps (each measured or checked before the next; behind `RKUIRecordCache`, default off until you have looked)
 1. `rkvkasync`: `segmentBoundary()`, `SegmentRecording` (begin / end returning the bytes and the texture ids, op scan), `replay(bytes)`. Single unit (the people floater), N = 1: records recorded and spliced at once, nothing replayed: must be byte-identical to the uncached stream (verify) and the picture identical.
 2. `llrender`: the texture unit belief reset, `RKVkState::blockHash()`, texture id set in `deleteTextures`.
 3. `llui`: the unit table, the key, eligibility, the schedule and the input rules; hooks in `drawChildren` / `drawChild`.
 4. Counters (live, replayed, uncacheable, mismatches, bytes, cost saved per unit), the verify mode, a same-lap A/B (`ui-cache.txt`: off / 30 Hz / 20 Hz), a launcher for your own layout.
 5. Laps (harness layout and yours), pictures, then you drive it: hover, type in chat, drag and resize floaters, open and close, scroll the people list, minimap, tooltips, menus.
 
-## Status 2026-10-27: built, off by default (`FSUIRecordCache` 0); measured; waiting for Adam's hands-on check
-Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, `spliceSideEffects`, texture and buffer name registries with a cache epoch; `LLRender::segmentBoundary`; `LLView::drawChildren/drawChild` -> `ui_draw_view`). Switches: setting `FSUIRecordCache` (0 / 1) and `FSUIRecordCacheHz` (30); `RK_VK_UI_CACHE=<mode>,<hz>` (0 off, 1 record only the units of `RK_VK_UI_CACHE_UNITS`, 2 sliced replay) and, with `RK_VK_FARTIER_FILE=1`, `<work>/ui-cache.txt` for same-lap A/B; `RK_VK_UI_CACHE_VERIFY=1`. Launcher `<work>\run-viewer-uicache.bat`. Log tag `UiCache` every 600 frames: per unit live / replay cost, live and replayed frames, forced by input, key misses, records, bytes, recordings and the records that made some not cacheable, verify mismatches.
+## Status 2026-10-27: built, off by default (`RKUIRecordCache` 0); measured; waiting for Adam's hands-on check
+Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, `spliceSideEffects`, texture and buffer name registries with a cache epoch; `LLRender::segmentBoundary`; `LLView::drawChildren/drawChild` -> `ui_draw_view`). Switches: setting `RKUIRecordCache` (0 / 1) and `RKUIRecordCacheHz` (30); `RK_VK_UI_CACHE=<mode>,<hz>` (0 off, 1 record only the units of `RK_VK_UI_CACHE_UNITS`, 2 sliced replay) and, with `RK_VK_FARTIER_FILE=1`, `<work>/ui-cache.txt` for same-lap A/B; `RK_VK_UI_CACHE_VERIFY=1`. Launcher `<work>\run-viewer-uicache.bat`. Log tag `UiCache` every 600 frames: per unit live / replay cost, live and replayed frames, forced by input, key misses, records, bytes, recordings and the records that made some not cacheable, verify mismatches.
 
 **What the first laps found (all fixed):**
 1. *The pending immediate-mode batch.* `LLRender` batches vertices until the next state change, so the last widget of a recorded unit was still pending when the recording ended and was flushed afterwards, outside the segment, with whatever texture the main producer believed: a white square for the "?", a neighbour's icon on hover, a missing "Developer" label (laps ucv1- / uca1-, Adam saw it as flashing). `segmentBoundary()` flushes first and the recording flushes before it ends.
@@ -58,7 +58,7 @@ Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, 
 
 **Numbers (quiet region, 6 people listed, 200 fps, harness layout; same lap, `uca2-`):** widgets 0.31-0.33 ms with the cache off, 0.19-0.20 ms on (the frame interval is 5 ms: N = 4, the UI is redrawn at 50 Hz). 8 units, 40 with a saved segment, about 440-520 KB; per frame 2 live draws (0.13 ms, recording overhead 0.007) and 6 replays (0.009 ms, 1-3 us each); the units' own estimate 0.16-0.37 ms a frame, the lap shows 0.12 ms because the UI is small here. Crowd layout (people list 0.2 ms, 30 rows): estimate 0.3-0.4 ms. Verify (`ucv3-`): 444-448 replay frames checked per unit, 0 mismatches for the bottom toolbar, IM box and camera floater; mismatches only where the content changes (status bar 38 of 445: clock and FPS text; people list 6 of 444). Records and pictures: same UI, no difference seen in `ucf1-` and `ucm2-` (cache on, record only).
 
-**Not exercised by the harness (Adam, with `FSUIRecordCache` 1 or the launcher):** hover and click (a hovered unit is drawn every frame, plus 15 frames after), typing in chat, dragging and resizing a floater (the rect is in the key), scrolling the people list, opening and closing floaters and menus, tool tips, the minimap, the radar, an inventory window, a very full people list; what looks stale and for how long (the target is `FSUIRecordCacheHz`).
+**Not exercised by the harness (Adam, with `RKUIRecordCache` 1 or the launcher):** hover and click (a hovered unit is drawn every frame, plus 15 frames after), typing in chat, dragging and resizing a floater (the rect is in the key), scrolling the people list, opening and closing floaters and menus, tool tips, the minimap, the radar, an inventory window, a very full people list; what looks stale and for how long (the target is `RKUIRecordCacheHz`).
 
-## Status 2026-10-31: Adam's hands-on check done ("the ui seems fine"); `FSUIRecordCache` is on by default (1) from the next build. Off with the setting (0) or `RK_VK_UI_CACHE=0`.
+## Status 2026-10-31: Adam's hands-on check done ("the ui seems fine"); `RKUIRecordCache` is on by default (1) from the next build. Off with the setting (0) or `RK_VK_UI_CACHE=0`.
 

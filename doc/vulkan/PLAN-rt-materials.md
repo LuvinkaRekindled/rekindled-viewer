@@ -165,7 +165,7 @@ The native renderer builds a program's pipeline in the background and drops draw
 | `RK_VK_ASYNC=0` (no worker thread) | 0 of 12 |
 | `RK_VK_ASYNC=lockstep` (worker, main waits every frame) | 0 of 12 |
 | ray tracing off, mirror on | 2 of 2 crashed (so ray tracing is not required) |
-| packets off (FSDeferredPackets/FSShadowPackets 0), bindless on | crashed (login 1) |
+| packets off (RKDeferredPackets/RKShadowPackets 0), bindless on | crashed (login 1) |
 | `RK_VK_FRAMES=6`, COARSE_BARRIERS, NO_DEVICE_BUFFERS, ARENA=0, NO_QUERIES, INDEXED_CHANNELS=1, bone palette index clamp, UPDATE_UNUSED_WHILE_PENDING flag | each still crashed |
 | bindless limited by program (`RK_VK_BINDLESS_ONLY=a|b`): first 97 of 194 programs / first 48 crash; first 24 clean; every subset of programs 25-48 clean | no single program: it needs many bindless programs at once |
 

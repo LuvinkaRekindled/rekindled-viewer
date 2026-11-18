@@ -33,7 +33,7 @@ namespace RKVkUpscale
         float mFrameTimeMs = 16.6f;                     // the time since the last frame
     };
 
-    // an upscaler is wanted at all (RK_VK_DLSS is set by the FSVkDLSS setting: the name is a left over, it is the upscaler switch)
+    // an upscaler is wanted at all (RK_VK_DLSS is set by the RKVkDLSS setting: the name is a left over, it is the upscaler switch)
     bool requested();
 
     // before the instance / device are created: what the backend wants on top of ours

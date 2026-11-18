@@ -780,7 +780,7 @@
              top_delta="-5"
              right="-5" />
             <check_box
-             control_name="FSAudioHRTF"
+             control_name="RKAudioHRTF"
              height="16"
              initial_value="false"
              label="Place sounds around the head on headphones (HRTF)"

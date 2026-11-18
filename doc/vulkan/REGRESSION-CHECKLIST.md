@@ -44,7 +44,7 @@ Run `<work>\run-viewer-guardcheck.bat` (the guard checks and `RK_VK_FORMAT_VERIF
 ## Lifetime stress lap (2026-11-13, GPU-LIFETIMES.md step 6)
 Not always on: after a change to a channel the CPU hands to the GPU (scratch rings, palettes, arenas, handle tables, buffer writes, a new record kind, the ray scene's inputs). One lap in RT mode, launcher `h6-fixed.ps1 -Mode rt`, the knobs in `H6_EXTRA_ENV` (the launcher strips `RK_VK_*` from the shell):
 
-`RK_VK_FRAMES=6;RK_VK_ARENA_POISON=1;RK_VK_STANDIN_MAGENTA=1;RK_VK_ARENA_BLOCK_MB=16;RK_VK_RT_EARLY=1;RK_VK_RT_MATERIALS=1`, `H6_EXTRA_ARGS='--set,FSVkMirrorQuality,3'`.
+`RK_VK_FRAMES=6;RK_VK_ARENA_POISON=1;RK_VK_STANDIN_MAGENTA=1;RK_VK_ARENA_BLOCK_MB=16;RK_VK_RT_EARLY=1;RK_VK_RT_MATERIALS=1`, `H6_EXTRA_ARGS='--set,RKVkMirrorQuality,3'`.
 
 - **Pass:** no device lost, no flicker or magenta on screen (avatar shadows, textures), and in the log: `written in place` 0, `view release guard` 0, `retire list ... count rose again` 0, `PassCheck` / `StateGuard` warnings none new.
 - **`RK_VK_RT_EARLY=1` is required with poison.** Poison fills a given-up range in graphics queue command order. With the ray scene on the compute queue (`RK_VK_RT_EARLY 3`, the default) nothing orders a structure build against that fill: the poison-only lap of 2026-11-13 lost the device inside an acceleration structure build (fault address in no arena block) and the six-slot + poison + magenta lap showed avatar shadow flicker; neither came back with `RK_VK_RT_EARLY=1`, and six slots alone (no poison) were clean. The viewer logs a warning when poison runs with the compute queue on. A real late read shows with `RK_VK_RT_EARLY=1` too.

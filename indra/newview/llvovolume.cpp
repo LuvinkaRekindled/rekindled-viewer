@@ -938,7 +938,7 @@ void LLVOVolume::animateTextures()
     }
 }
 
-// <FS> FSTexAnimOnGPU (rkvktexanim.h). The sine's sign of texanim_matrix: found once by making a matrix with the products animateTextures used to build and seeing which closed form
+// <FS> RKTexAnimOnGPU (rkvktexanim.h). The sine's sign of texanim_matrix: found once by making a matrix with the products animateTextures used to build and seeing which closed form
 // it equals (the same test sTexAnimConvention does, on a fixed rotation)
 static F32 texanim_sine_sign()
 {
@@ -973,7 +973,7 @@ static F32 texanim_sine_sign()
             return sign;
         }
     }
-    LL_WARNS("TexAnim") << "texture animation matrices: neither closed form matches the matrix products, FSTexAnimOnGPU cannot match the main thread" << LL_ENDL;
+    LL_WARNS("TexAnim") << "texture animation matrices: neither closed form matches the matrix products, RKTexAnimOnGPU cannot match the main thread" << LL_ENDL;
     sign = 1.f;
     return sign;
 }

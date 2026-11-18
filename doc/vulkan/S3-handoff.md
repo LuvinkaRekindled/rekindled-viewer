@@ -2,7 +2,7 @@
 
 Read first: `PLAN-gpu-scene.md` (the redesign, slices S0-S7), `S1-handoff.md`, `S2-handoff.md` (status parts 1-14 at its end), the memory file `project-s-slices-status.md`. Branch `native-vk`, repo `<work>\phoenix-firestorm`.
 
-## Where S0-S2 stand (all committed, default on via the setting `FSVkResidentScene`, restart needed)
+## Where S0-S2 stand (all committed, default on via the setting `RKVkResidentScene`, restart needed)
 - **S0** persistent bindless table, **S1** per-group retained fragments (`RKSceneFragment` in pipeline.cpp), RETAIN / RELEASE, `RK_VK_SCENE_VERIFY`.
 - **S2** resident kind 0 shadow casters in a worker table (`ResGpu32` entries, bounds, models in `Memory::UploadDevice`, never read back by the CPU), GPU cull + indirect draw (`kCullShader`), the ray scene fed by residency (`RK_VK_SCENE_RAYRANGE`), TLAS instance rows by deltas (`RK_VK_RT_INSTDELTA`), resident alpha masked casters (`RK_VK_SCENE_RAYALPHA`, on again by Adam's choice after the stale-address fix d9995666), texture identity by events (`getTexId` / name events, pins for the alpha records: `RK_VK_RT_PINS`).
 - Switches: `RK_VK_SCENE_RESIDENT`, `_RAYRANGE`, `_RAYALPHA`, `RK_VK_RT_INSTDELTA`, `RK_VK_RT_PINS`, `RK_VK_RT_STALECHECK` (safety net, every 16th scene call), `RK_VK_SCENE_EVDEDUPE`. An explicit env value (also 0) beats the setting.
