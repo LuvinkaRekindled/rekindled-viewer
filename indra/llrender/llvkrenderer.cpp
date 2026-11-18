@@ -41,6 +41,11 @@ namespace LLVk
 
 namespace
 {
+// pipelines the driver had to COMPILE (its cache did not hold them: VkPipelineCreationFeedback) since the cache was last written. A pipeline served from the cache adds nothing to it, so a run whose pipelines
+// all come from the cache has nothing to save: the 220 MB write on the render thread (190 ms) every 18,000 frames and again at exit was for nothing (AUDIT-shaders-2026-11-18.md section 1 item 1).
+// A driver that does not report the feedback counts every pipeline, as before.
+std::atomic<U32> gPipelineCacheMisses{ 0 };
+
 // where the driver's pipeline cache lives between runs; empty when switched off
 std::string pipeline_cache_path()
 {
@@ -965,6 +970,24 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
     gi.pDynamicState = &dyn;
     gi.layout = r.mPipelineLayout;
 
+    // what the driver says about this build: served from its pipeline cache or compiled (the stage entries are required to match the stage count)
+    VkPipelineCreationFeedback feedback = {};
+    VkPipelineCreationFeedback stage_feedback[4] = {};
+    VkPipelineCreationFeedbackCreateInfo fi = { VK_STRUCTURE_TYPE_PIPELINE_CREATION_FEEDBACK_CREATE_INFO };
+    fi.pPipelineCreationFeedback = &feedback;
+    fi.pipelineStageCreationFeedbackCount = stage_count;
+    fi.pPipelineStageCreationFeedbacks = stage_feedback;
+    ri.pNext = &fi;         // (stage_count is at most 3: vertex, fragment, geometry)
+    auto note_cache = [&](VkResult res)
+    {
+        const bool hit = (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT) && (feedback.flags & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT);
+        if (res == VK_SUCCESS && !hit)
+        {
+            gPipelineCacheMisses.fetch_add(1, std::memory_order_relaxed);
+        }
+        return res;
+    };
+
     gi.flags = flags;
     gDebugProgram = getName().c_str();      // (validation messages about this pipeline name its program)
     // <FS> compile time baseline (PLAN-rt-reflection-pass.md step 0): LL_VK_PIPEDIAG=1 logs, for every pipeline the driver needed more than a second for, a hash of what it was given
@@ -975,7 +998,7 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
         auto cache_size = [&]() { size_t sz = 0; vkGetPipelineCacheData(ctx.getDevice(), r.mPipelineCache, &sz, nullptr); return sz; };
         const size_t before = cache_size();
         const auto t0 = std::chrono::steady_clock::now();
-        const VkResult res = vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
+        const VkResult res = note_cache(vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out));
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         if (ms > 1000.0)
         {
@@ -995,7 +1018,7 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
         }
         return res;
     }
-    return vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out);
+    return note_cache(vkCreateGraphicsPipelines(ctx.getDevice(), r.mPipelineCache, 1, &gi, nullptr, &out));
 }
 
 void Program::requestBuild(const PipelineKey& key, bool prewarm)
@@ -1096,7 +1119,6 @@ void Program::drainCompletedPipelines()
             continue;
         }
         p.mPipelines[d.mKey] = d.mPipeline;
-        Renderer::instance().mPipelinesSinceSave++;
         if (d.mPrewarm)
         {
             if (!is_optional_program(p.mName))
@@ -1190,7 +1212,6 @@ VkPipeline Program::getPipeline(const PipelineKey& key)
         gSyncStats.mPipelineBuildMicros.fetch_add(micros, std::memory_order_relaxed);
         U64 prev = gSyncStats.mPipelineBuildMaxMicros.load(std::memory_order_relaxed);
         while (micros > prev && !gSyncStats.mPipelineBuildMaxMicros.compare_exchange_weak(prev, micros, std::memory_order_relaxed)) {}
-        Renderer::instance().mPipelinesSinceSave++;
     }
     note_variant(mName, key);
     mPipelines[key] = pipeline;
@@ -2144,6 +2165,12 @@ void Renderer::savePipelineCache()
     {
         return;
     }
+    const U32 misses = gPipelineCacheMisses.load(std::memory_order_relaxed);
+    if (misses == 0)
+    {
+        save_variants();        // (the variant list is small and follows what was drawn; the driver's cache holds nothing new)
+        return;
+    }
     VkDevice dev = Context::instance().getDevice();
     size_t size = 0;
     if (vkGetPipelineCacheData(dev, mPipelineCache, &size, nullptr) != VK_SUCCESS || size == 0)
@@ -2165,8 +2192,8 @@ void Renderer::savePipelineCache()
         {
             remove(path.c_str());
             rename(tmp.c_str(), path.c_str());
-            LL_INFOS("Vulkan") << "pipeline cache saved: " << data.size() / 1024 << " KB (" << mPipelinesSinceSave << " pipelines built since the last save)" << LL_ENDL;
-            mPipelinesSinceSave = 0;
+            LL_INFOS("Vulkan") << "pipeline cache saved: " << data.size() / 1024 << " KB (" << misses << " pipelines compiled since the last save)" << LL_ENDL;
+            gPipelineCacheMisses.fetch_sub(misses, std::memory_order_relaxed);
         }
     }
     save_variants();
@@ -2214,7 +2241,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
 {
     mZoneStack.clear();         // GPU zones do not span command buffers
     Program::drainCompletedPipelines();
-    if (mPipelinesSinceSave > 0 && ++mPipelineCacheLastSaveFrame >= 18000)
+    if (gPipelineCacheMisses.load(std::memory_order_relaxed) > 0 && ++mPipelineCacheLastSaveFrame >= 18000)
     {
         mPipelineCacheLastSaveFrame = 0;
         savePipelineCache();

@@ -298,7 +298,6 @@ public:
     // The driver's compiled pipelines, kept between runs (<cache>/vk_pipeline_cache.bin): loaded in init(), written at shutdown and every few minutes
     // while new pipelines keep being built, so a crash does not lose a whole session of them. LL_VK_PIPELINE_CACHE=0 turns it off.
     void savePipelineCache();
-    U32 mPipelinesSinceSave = 0;
     U64 mPipelineCacheLastSaveFrame = 0;
     bool isReady() const { return mReady; }
 
