@@ -1054,7 +1054,6 @@ F32 gpu_benchmark()
         LLViewerShaderMgr::instance()->initAttribsAndUniforms();
 
         gBenchmarkProgram.mName = "Benchmark Shader";
-        gBenchmarkProgram.mFeatures.attachNothing = true;
         // <FS> a native only program (native/manifest.txt, family copy: copy.vert + copy.frag): no stock files
         gBenchmarkProgram.mShaderLevel = 1;
         if (!gBenchmarkProgram.createShader())

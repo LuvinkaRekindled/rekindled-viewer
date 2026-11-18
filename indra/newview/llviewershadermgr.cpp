@@ -274,7 +274,6 @@ static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& rigged
 {
     riggedShader.mName = llformat("Skinned %s", shader.mName.c_str());
     riggedShader.mFeatures = shader.mFeatures;
-    riggedShader.mFeatures.hasObjectSkinning = true;
     riggedShader.mDefines = shader.mDefines;    // NOTE: Must come before addPermutation
 
     riggedShader.mShaderLevel = shader.mShaderLevel;
@@ -331,13 +330,7 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
 
         variant.mFeatures.calculatesLighting = false;
         variant.mFeatures.hasLighting = false;
-        variant.mFeatures.isAlphaLighting = true;
-        variant.mFeatures.hasSrgb = true;
         variant.mFeatures.calculatesAtmospherics = true;
-        variant.mFeatures.hasAtmospherics = true;
-        variant.mFeatures.hasGamma = true;
-        variant.mFeatures.hasShadows = use_sun_shadow;
-        variant.mFeatures.isDeferred = true; // include deferredUtils
         variant.mFeatures.hasReflectionProbes = true;
 
         if (use_sun_shadow)
@@ -362,7 +355,6 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
 
 static bool make_gltf_variants(LLShaderProgram& shader, bool use_sun_shadow)
 {
-    shader.mFeatures.mGLTF = true;
     shader.mGLTFVariants.resize(LLShaderProgram::NUM_GLTF_VARIANTS);
 
     for (U32 i = 0; i < LLShaderProgram::NUM_GLTF_VARIANTS; ++i)
@@ -927,12 +919,7 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gWaterPullProgram.mName = "Water Pull Shader";
         gWaterPullProgram.mFeatures.calculatesAtmospherics = true;
-        gWaterPullProgram.mFeatures.hasAtmospherics = true;
-        gWaterPullProgram.mFeatures.hasGamma = true;
-        gWaterPullProgram.mFeatures.hasSrgb = true;
         gWaterPullProgram.mFeatures.hasReflectionProbes = true;
-        gWaterPullProgram.mFeatures.hasTonemap = true;
-        gWaterPullProgram.mFeatures.hasShadows = use_sun_shadow;
         gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -971,7 +958,6 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gUnderWaterPullProgram.mName = "Underwater Pull Shader";
         gUnderWaterPullProgram.mFeatures.calculatesAtmospherics = true;
-        gUnderWaterPullProgram.mFeatures.hasAtmospherics = true;
         gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gUnderWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
         gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1102,7 +1088,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (success)
         {
             gGLTFPBRMetallicRoughnessProgram.mName = "GLTF PBR Metallic Roughness Shader";
-            gGLTFPBRMetallicRoughnessProgram.mFeatures.hasSrgb = true;
 
             // <FS> native only programs (native/manifest.txt, family gbuffer: gltf_scene.vert + gltf_scene.frag, one line for each of the 16 variants): no stock files
             gGLTFPBRMetallicRoughnessProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1129,13 +1114,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         shader->mFeatures.calculatesLighting = false;
         shader->mFeatures.hasLighting = false;
-        shader->mFeatures.isAlphaLighting = true;
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasShadows = use_sun_shadow;
-        shader->mFeatures.isDeferred = true; // include deferredUtils
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
 
         // <FS> a native only program (native/manifest.txt, family alpha: alpha_pbr_preview.vert + alpha_pbr.frag): no stock files. The material preview floater draws with it (llgltfmaterialpreviewmgr.cpp)
@@ -1163,13 +1142,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                     detail,
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
                     (mapping == 1 ? "flat" : "triplanar"));
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.isAlphaLighting = true;
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasTransport = true;
-            shader->mFeatures.isPBRTerrain = true;
             shader->addPermutation("LL_VERTEX_PULL", "1");       // (as the pull twin had it: a draw of a vertex buffer under it is one entry of a geometry record)
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
@@ -1198,7 +1171,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredImpostorProgram.mName = "Deferred Impostor Shader";
-        gDeferredImpostorProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredImpostorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
@@ -1217,10 +1189,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mName = shader == &gDeferredLightPullProgram ? "Deferred Light Pull Shader"
             : shader == &gDeferredSpotLightPullProgram ? "Deferred SpotLight Pull Shader"
             : shader == &gDeferredMultiLightProgram ? "Deferred MultiLight Shader" : "Deferred MultiSpotLight Shader";
-        shader->mFeatures.isDeferred = true;
-        shader->mFeatures.hasFullGBuffer = true;
-        shader->mFeatures.hasShadows = true;
-        shader->mFeatures.hasSrgb = true;
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
         llassert(success);
@@ -1231,9 +1199,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         bool use_ao = gSavedSettings.getBOOL("RenderDeferredSSAO");
 
         gDeferredSunProgram.mName = "Deferred Sun Shader";
-        gDeferredSunProgram.mFeatures.isDeferred    = true;
-        gDeferredSunProgram.mFeatures.hasShadows    = true;
-        gDeferredSunProgram.mFeatures.hasAmbientOcclusion = use_ao;
 
         // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag; the ray traced sun lightmap is its rtquery variant, a session without occlusion its LL_NO_AO one): no stock files
         gDeferredSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1246,8 +1211,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredSunProbeProgram.mName = "Deferred Sun Probe Shader";
-        gDeferredSunProbeProgram.mFeatures.isDeferred = true;
-        gDeferredSunProbeProgram.mFeatures.hasShadows = true;
 
         // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag with LL_NO_AO): no stock files
         gDeferredSunProbeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1259,7 +1222,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredBlurLightProgram.mName = "Deferred Blur Light Shader";
-        gDeferredBlurLightProgram.mFeatures.isDeferred = true;
 
         // <FS> a native only program (native/manifest.txt, family blur): no stock files
         gDeferredBlurLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1269,7 +1231,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         // <FS> native only programs (PLAN-shaders-rewrite.md, SHADERS-F1-lighting.md): the half resolution lightmap. A failure leaves them incomplete: the lighting pass then keeps the full resolution path.
         gNativeSunHalfProgram.mName = "Native Sun Lightmap Half";
-        gNativeSunHalfProgram.mFeatures.isDeferred = true;
         gNativeSunHalfProgram.mNativeVertex = "fullscreen.vert";
         gNativeSunHalfProgram.mNativeFragment = "sun_lightmap.frag";
         gNativeSunHalfProgram.mNativeDefines = { { "LL_HALF", "1" } };
@@ -1277,7 +1238,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNativeSunHalfProgram.createShader();
 
         gNativeLightUpsampleProgram.mName = "Native Lightmap Upsample";
-        gNativeLightUpsampleProgram.mFeatures.isDeferred = true;
         gNativeLightUpsampleProgram.mNativeVertex = "fullscreen.vert";
         gNativeLightUpsampleProgram.mNativeFragment = "lightmap_upsample.frag";
         gNativeLightUpsampleProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1296,21 +1256,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram;
             shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Shader" : "Deferred Alpha Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasSrgb = true;
             if (fullbright)
             {
                 // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
-                shader->mFeatures.hasAtmospherics = true;
-                shader->mFeatures.isDeferred = true;
             }
             else
             {
                 shader->mFeatures.calculatesLighting = false;
                 shader->mFeatures.hasLighting = false;
-                shader->mFeatures.isAlphaLighting = true;
-                shader->mFeatures.hasAtmospherics = true;
-                shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
             }
             add_common_permutations(shader);
@@ -1336,13 +1289,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->mName = "Deferred PBR Alpha Pull Shader";
         shader->mFeatures.calculatesLighting = false;
         shader->mFeatures.hasLighting = false;
-        shader->mFeatures.isAlphaLighting = true;
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasShadows = use_sun_shadow;
-        shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(shader);
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1368,21 +1315,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredAlphaPullSkinProgram;
             shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Skin Shader" : "Deferred Alpha Pull Skin Shader";
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasSrgb = true;
             if (fullbright)
             {
                 // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + alpha_fullbright.frag): no stock files (the lit program below keeps its own for the sessions with ray queries)
-                shader->mFeatures.hasAtmospherics = true;
-                shader->mFeatures.isDeferred = true;
             }
             else
             {
                 shader->mFeatures.calculatesLighting = false;
                 shader->mFeatures.hasLighting = false;
-                shader->mFeatures.isAlphaLighting = true;
-                shader->mFeatures.hasAtmospherics = true;
-                shader->mFeatures.hasShadows = use_sun_shadow;
                 shader->mFeatures.hasReflectionProbes = true;
             }
             add_common_permutations(shader);
@@ -1406,13 +1346,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mName = "Deferred PBR Alpha Pull Skin Shader";
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasSrgb = true;
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
-            shader->mFeatures.isDeferred = true;
             shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
             add_common_permutations(shader);
             if (use_sun_shadow)
@@ -1443,13 +1377,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLShaderProgram* shader = skin ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram;
             shader->mName = skin ? "Deferred Alpha Uber Pull Skin Shader" : "Deferred Alpha Uber Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasSrgb = true;
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
             if (skin)
             {
@@ -1480,13 +1409,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLShaderProgram* shader = skin ? &gDeferredAlphaUberMatPullSkinProgram : &gDeferredAlphaUberMatPullProgram;
             shader->mName = skin ? "Deferred Alpha Uber Material Pull Skin Shader" : "Deferred Alpha Uber Material Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasSrgb = true;
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
             if (skin)
             {
@@ -1515,10 +1439,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         LLShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
         shader->mName = skin ? "Deferred Fullbright Pull Skin Shader" : "Deferred Fullbright Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasSrgb = true;
-        shader->mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
@@ -1535,10 +1455,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         LLShaderProgram* shader = &gHUDFullbrightPullProgram;
         shader->mName = "HUD Fullbright Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasSrgb = true;
-        shader->mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader();
@@ -1556,9 +1472,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         LLShaderProgram* shader = &gHUDFullbrightShinyPullProgram;
         shader->mName = "HUD Fullbright Shiny Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.hasReflectionProbes = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1578,9 +1491,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         LLShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
         shader->mName = skin ? "Deferred Fullbright Shiny Pull Skin Shader" : "Deferred Fullbright Shiny Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.hasReflectionProbes = true;
         // <FS> a native only program (native/manifest.txt): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1637,14 +1547,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (fullbright)
             {
                 shader->mFeatures.calculatesAtmospherics = true;
-                shader->mFeatures.hasGamma = true;
-                shader->mFeatures.hasAtmospherics = true;
-                shader->mFeatures.hasSrgb = true;
-                shader->mFeatures.isDeferred = true;
             }
             else
             {
-                shader->mFeatures.hasSrgb = true;
             }
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (!shader->createShader())
@@ -1668,11 +1573,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         const bool skin = i == 1;
         LLShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
         shader->mName = skin ? "Deferred PBR Opaque Pull Skin Shader" : "Deferred PBR Opaque Pull Shader";
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
         // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1689,11 +1590,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         LLShaderProgram* shader = &gHUDPBROpaquePullProgram;
         shader->mName = "HUD PBR Opaque Pull Shader";
-        shader->mFeatures.hasSrgb = true;
         shader->mFeatures.calculatesAtmospherics = true;
-        shader->mFeatures.hasAtmospherics = true;
-        shader->mFeatures.hasGamma = true;
-        shader->mFeatures.isDeferred = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
         // <FS> a native only program (native/manifest.txt, family gbuffer: alpha_pbr.vert + pbr_opaque_hud.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1711,7 +1608,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         auto make_glow = [&](LLShaderProgram* shader, const char* name, const char* bindless, bool skin, bool srgb) -> bool
         {
             shader->mName = name;
-            shader->mFeatures.hasSrgb = srgb;
             shader->addPermutation(bindless, "1");
             if (skin)
             {
@@ -1762,15 +1658,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             LLShaderProgram* shader = &gHUDFullbrightAlphaPullProgram;
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.isDeferred = true;
             success = make_pull(shader, "HUD Fullbright Alpha Pull Shader", {}, false);
             if (success)
             {
                 shader = &gHUDPBRAlphaPullProgram;
-                shader->mFeatures.hasSrgb = true;
                 success = make_pull(shader, "HUD PBR Alpha Pull Shader", {}, false);       // (a native only program: alpha_pbr.vert + alpha_pbr_hud.frag)
             }
         }
@@ -1781,9 +1672,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LLShaderProgram* shader = rigged ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram;
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
-            shader->mFeatures.hasSrgb = true;
-            shader->mFeatures.isAlphaLighting = true;
-            shader->mFeatures.hasShadows = use_sun_shadow;
             shader->mFeatures.hasReflectionProbes = true;
             // <FS> a native only program (native/manifest.txt, family alpha): no stock files
             success = make_pull(shader, rigged ? "Skinned Deferred Alpha Impostor Pull Shader" : "Deferred Alpha Impostor Pull Shader", {}, rigged);
@@ -1800,9 +1688,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             const bool rigged = i == 1;
             LLShaderProgram* shader = rigged ? &gDeferredFullbrightMaskPullSkinProgram : &gDeferredFullbrightMaskPullProgram;
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->mFeatures.hasGamma = true;
-            shader->mFeatures.hasAtmospherics = true;
-            shader->mFeatures.hasSrgb = true;
             success = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Mask Alpha Pull Shader", {}, rigged);
         }
         llassert(success);
@@ -1811,13 +1696,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredSoftenProgram.mName = "Deferred Soften Shader";
-        gDeferredSoftenProgram.mFeatures.hasSrgb = true;
         gDeferredSoftenProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredSoftenProgram.mFeatures.hasAtmospherics = true;
-        gDeferredSoftenProgram.mFeatures.hasGamma = true;
-        gDeferredSoftenProgram.mFeatures.isDeferred = true;
-        gDeferredSoftenProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredSoftenProgram.mFeatures.hasShadows = false;      // <FS> the lighting pass reads the lightmap only; shadowUtil.glsl (the ray scene declarations) stays out so the ray traced variants of this program, and the native stand-in refusing them, are gone
         gDeferredSoftenProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
         // <FS> a native only program (native/manifest.txt, family resolve): no stock files. The sun shadow and the ambient occlusion reach it as the native global defines SUN_SHADOW and HAS_SSAO.
@@ -1832,13 +1711,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> the traced glossy reflection (rtReflectionF.glsl): the code the lighting pass used to hold. The same libraries as the lighting pass, its own program and pipeline: the lighting pass
         // compiles without the ray queries, this one is built in the background (doc/vulkan/PLAN-rt-reflection-pass.md)
         gDeferredRtReflectionProgram.mName = "Deferred RT Reflection Shader";
-        gDeferredRtReflectionProgram.mFeatures.hasSrgb = true;
         gDeferredRtReflectionProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredRtReflectionProgram.mFeatures.hasAtmospherics = true;
-        gDeferredRtReflectionProgram.mFeatures.hasGamma = true;
-        gDeferredRtReflectionProgram.mFeatures.isDeferred = true;
-        gDeferredRtReflectionProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredRtReflectionProgram.mFeatures.hasShadows = true;
         gDeferredRtReflectionProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
         add_common_permutations(&gDeferredRtReflectionProgram);
@@ -1851,12 +1724,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gHazeProgram.mName = "Haze Shader";
-        gHazeProgram.mFeatures.hasSrgb                = true;
         gHazeProgram.mFeatures.calculatesAtmospherics = true;
-        gHazeProgram.mFeatures.hasAtmospherics        = true;
-        gHazeProgram.mFeatures.hasGamma               = true;
-        gHazeProgram.mFeatures.isDeferred             = true;
-        gHazeProgram.mFeatures.hasShadows             = use_sun_shadow;
         gHazeProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
         // <FS> a native only program (native/manifest.txt, family post: haze.frag): no stock files
@@ -1873,12 +1741,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // a record (the vertex buffers read by address)
         gWaterHazePullProgram.mName = "Water Haze Pull Shader";
         gWaterHazePullProgram.mShaderGroup           = LLShaderProgram::SG_WATER;
-        gWaterHazePullProgram.mFeatures.hasSrgb                = true;
         gWaterHazePullProgram.mFeatures.calculatesAtmospherics = true;
-        gWaterHazePullProgram.mFeatures.hasAtmospherics        = true;
-        gWaterHazePullProgram.mFeatures.hasGamma               = true;
-        gWaterHazePullProgram.mFeatures.isDeferred             = true;
-        gWaterHazePullProgram.mFeatures.hasShadows             = use_sun_shadow;
         gWaterHazePullProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
         gWaterHazePullProgram.addPermutation("LL_VERTEX_PULL", "1");
         gWaterHazePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1890,8 +1753,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredShadowCubeProgram.mName = "Deferred Shadow Cube Shader";
-        gDeferredShadowCubeProgram.mFeatures.isDeferred = true;
-        gDeferredShadowCubeProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowCubeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowCubeProgram.createShader();
@@ -1902,8 +1763,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success && LLVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
-        gDeferredShadowPullProgram.mFeatures.isDeferred = true;
-        gDeferredShadowPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowPullProgram.createShader();
@@ -1914,8 +1773,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success && LLVkBridge::shadowAlphaPacketsAvailable())
     {
         gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
-        gDeferredShadowAlphaPullProgram.mFeatures.isDeferred = true;
-        gDeferredShadowAlphaPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowAlphaPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowAlphaPullProgram.createShader();
@@ -1926,8 +1783,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success && LLVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowSkinPullProgram.mName = "Deferred Shadow Skin Pull Shader";
-        gDeferredShadowSkinPullProgram.mFeatures.isDeferred = true;
-        gDeferredShadowSkinPullProgram.mFeatures.hasShadows = true;
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
         gDeferredShadowSkinPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredShadowSkinPullProgram.createShader();
@@ -1938,7 +1793,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredDiffusePullProgram.mName = "Deferred Diffuse Pull Shader";
-        gDeferredDiffusePullProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredDiffusePullProgram);
@@ -1950,7 +1804,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
         // <FS> S4 A1: ... and its rigged variant (HAS_SKIN: the draw's weights and palette are read by address). Required.
         gDeferredDiffusePullSkinProgram.mName = "Deferred Diffuse Pull Skin Shader";
-        gDeferredDiffusePullSkinProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullSkinProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (getenv("LL_VK_SKIN_TEST"))
@@ -1980,7 +1833,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             pull.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (alpha_mode != 0)
             {
-                pull.mFeatures.hasAlphaMask = true;
             }
             if (alpha_mode == 1)
             {
@@ -1995,11 +1847,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 }
                 add_common_permutations(&pull);
             }
-            pull.mFeatures.hasSrgb = true;
             pull.mFeatures.calculatesAtmospherics = true;
-            pull.mFeatures.hasAtmospherics = true;
-            pull.mFeatures.hasGamma = true;
-            pull.mFeatures.hasShadows = use_sun_shadow;
             pull.mFeatures.hasReflectionProbes = true;
             if (!pull.createShader())
             {
@@ -2019,7 +1867,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             skin.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (alpha_mode != 0)
             {
-                skin.mFeatures.hasAlphaMask = true;
             }
             if (alpha_mode == 1)
             {
@@ -2037,11 +1884,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 }
                 add_common_permutations(&skin);
             }
-            skin.mFeatures.hasSrgb = true;
             skin.mFeatures.calculatesAtmospherics = true;
-            skin.mFeatures.hasAtmospherics = true;
-            skin.mFeatures.hasGamma = true;
-            skin.mFeatures.hasShadows = use_sun_shadow;
             skin.mFeatures.hasReflectionProbes = true;
             if (!skin.createShader())
             {
@@ -2062,7 +1905,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family shadow: avatar_shadow.vert + avatar_shadow.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
         gDeferredAvatarShadowProgram.mName = "Deferred Avatar Shadow Shader pull";
-        gDeferredAvatarShadowProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarShadowProgram.createShader();
@@ -2072,7 +1914,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredAvatarAlphaShadowProgram.mName = "Deferred Avatar Alpha Shadow Shader pull";       // <FS> a native only program (family shadow), as above
-        gDeferredAvatarAlphaShadowProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarAlphaShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaShadowProgram.createShader();
@@ -2081,7 +1922,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredAvatarAlphaMaskShadowProgram.mName = "Deferred Avatar Alpha Mask Shadow Shader pull";       // <FS> a native only program (family shadow), as above
-        gDeferredAvatarAlphaMaskShadowProgram.mFeatures.hasSkinning  = true;
         gDeferredAvatarAlphaMaskShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaMaskShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaMaskShadowProgram.createShader();
@@ -2093,11 +1933,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredTerrainPullProgram.mName = "Deferred Terrain Pull Shader";
-        gDeferredTerrainPullProgram.mFeatures.hasSrgb = true;
-        gDeferredTerrainPullProgram.mFeatures.isAlphaLighting = true;
         gDeferredTerrainPullProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredTerrainPullProgram.mFeatures.hasAtmospherics = true;
-        gDeferredTerrainPullProgram.mFeatures.hasGamma = true;
         gDeferredTerrainPullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredTerrainPullProgram.createShader();
         if (!success)
@@ -2111,7 +1947,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: avatar.vert + avatar.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
         gDeferredAvatarProgram.mName = "Deferred Avatar Shader pull";
-        gDeferredAvatarProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
@@ -2124,16 +1959,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> the avatar pool's blended parts: the pull program itself (it was the stock program of this name and its pull twin: the twin machinery is gone, PLAN-twin-removal.md, section 9). Native only without ray
         // traced shadows (native/manifest.txt, `rt`: avatar.vert + avatar_alpha.frag), the stock files are for the sessions with ray queries
         gDeferredAvatarAlphaProgram.mName = "Deferred Avatar Alpha Shader pull";
-        gDeferredAvatarAlphaProgram.mFeatures.hasSkinning = true;
         gDeferredAvatarAlphaProgram.mFeatures.calculatesLighting = false;
         gDeferredAvatarAlphaProgram.mFeatures.hasLighting = false;
-        gDeferredAvatarAlphaProgram.mFeatures.isAlphaLighting = true;
-        gDeferredAvatarAlphaProgram.mFeatures.hasSrgb = true;
         gDeferredAvatarAlphaProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredAvatarAlphaProgram.mFeatures.hasAtmospherics = true;
-        gDeferredAvatarAlphaProgram.mFeatures.hasGamma = true;
-        gDeferredAvatarAlphaProgram.mFeatures.isDeferred = true;
-        gDeferredAvatarAlphaProgram.mFeatures.hasShadows = true;
         gDeferredAvatarAlphaProgram.mFeatures.hasReflectionProbes = true;
 
 
@@ -2156,8 +1984,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gExposureProgram.mName = "Exposure";
-        gExposureProgram.mFeatures.hasSrgb = true;
-        gExposureProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gExposureProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgram.createShader();
@@ -2167,8 +1993,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gExposureProgramNoFade.mName = "Exposure (no fade)";
-        gExposureProgramNoFade.mFeatures.hasSrgb = true;
-        gExposureProgramNoFade.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gExposureProgramNoFade.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gExposureProgramNoFade.createShader();
@@ -2196,7 +2020,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> the penumbra filter of the ray traced sun shadow (PLAN-rt-shadow-penumbra.md step 2b): two separable passes over the lightmap's sun channel, sized by the blocker distance map
         gRtShadowFilterProgram.mName = "RT Shadow Penumbra Filter";
-        gRtShadowFilterProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family sun: rt_shadow_filter.frag): no stock files
         gRtShadowFilterProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gRtShadowFilterProgram.createShader())
@@ -2204,7 +2027,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkRt") << "the RT shadow penumbra filter did not compile: the centre ray's shadow stays hard" << LL_ENDL;
         }
         gRtShadowPrepProgram.mName = "RT Shadow Penumbra Prep";
-        gRtShadowPrepProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family sun: rt_shadow_prep.frag): no stock files
         gRtShadowPrepProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         if (!gRtShadowPrepProgram.createShader())
@@ -2214,8 +2036,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         // <FS> the AMD FidelityFX reflection denoiser's helper passes (PLAN-amd-denoiser.md): native only programs (native/manifest.txt, family post)
         gDnsrPrepProgram.mName = "Denoise Prep";
-        gDnsrPrepProgram.mFeatures.isDeferred = true;
-        gDnsrPrepProgram.mFeatures.hasFullGBuffer = true;
         gDnsrPrepProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDnsrPrepProgram);
         if (!gDnsrPrepProgram.createShader())
@@ -2223,7 +2043,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the denoiser prep program did not compile: no AMD reflection denoiser" << LL_ENDL;
         }
         gDnsrPackProgram.mName = "Denoise Pack";
-        gDnsrPackProgram.mFeatures.isDeferred = true;
         gDnsrPackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDnsrPackProgram);
         if (!gDnsrPackProgram.createShader())
@@ -2231,7 +2050,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the denoiser pack program did not compile: no AMD reflection denoiser" << LL_ENDL;
         }
         gDnsrSunPackProgram.mName = "Denoise Sun Pack";
-        gDnsrSunPackProgram.mFeatures.isDeferred = true;
         gDnsrSunPackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDnsrSunPackProgram);
         if (!gDnsrSunPackProgram.createShader())
@@ -2239,7 +2057,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the denoiser sun pack program did not compile: no AMD shadow denoiser" << LL_ENDL;
         }
         gDnsrSunUnpackProgram.mName = "Denoise Sun Unpack";
-        gDnsrSunUnpackProgram.mFeatures.isDeferred = true;
         gDnsrSunUnpackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDnsrSunUnpackProgram);
         if (!gDnsrSunUnpackProgram.createShader())
@@ -2247,7 +2064,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             LL_WARNS("VkMotion") << "the denoiser sun unpack program did not compile: no AMD shadow denoiser" << LL_ENDL;
         }
         gDnsrUnpackProgram.mName = "Denoise Unpack";
-        gDnsrUnpackProgram.mFeatures.isDeferred = true;
         gDnsrUnpackProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDnsrUnpackProgram);
         if (!gDnsrUnpackProgram.createShader())
@@ -2276,7 +2092,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (LLVkBridge::rtShadowMode())
         {
             gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
-            gRtMaterialDebugProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
             gRtMaterialDebugProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             add_common_permutations(&gRtMaterialDebugProgram);
@@ -2290,8 +2105,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostGammaCorrectProgram.mName = "Deferred Gamma Correction Post Process";
-        gDeferredPostGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gDeferredPostGammaCorrectProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostGammaCorrectProgram.createShader();
@@ -2301,8 +2114,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gLegacyPostGammaCorrectProgram.mName = "Legacy Gamma Correction Post Process";
-        gLegacyPostGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gLegacyPostGammaCorrectProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gLegacyPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLegacyPostGammaCorrectProgram.createShader();
@@ -2312,9 +2123,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostTonemapProgram.mName = "Deferred Tonemap Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gDeferredPostTonemapProgram.mFeatures.hasSrgb = true;
-        gDeferredPostTonemapProgram.mFeatures.isDeferred = true;
-        gDeferredPostTonemapProgram.mFeatures.hasTonemap = true;
         gDeferredPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapProgram.createShader();
         llassert(success);
@@ -2323,9 +2131,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gNoPostTonemapProgram.mName = "No Post Tonemap Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gNoPostTonemapProgram.mFeatures.hasSrgb = true;
-        gNoPostTonemapProgram.mFeatures.isDeferred = true;
-        gNoPostTonemapProgram.mFeatures.hasTonemap = true;
         gNoPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapProgram.createShader();
         llassert(success);
@@ -2334,9 +2139,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostTonemapGammaCorrectProgram.mName = "Deferred Tonemap Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gDeferredPostTonemapGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gDeferredPostTonemapGammaCorrectProgram.mFeatures.isDeferred = true;
-        gDeferredPostTonemapGammaCorrectProgram.mFeatures.hasTonemap = true;
         gDeferredPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2345,9 +2147,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gNoPostTonemapGammaCorrectProgram.mName = "No Post Tonemap Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gNoPostTonemapGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gNoPostTonemapGammaCorrectProgram.mFeatures.isDeferred = true;
-        gNoPostTonemapGammaCorrectProgram.mFeatures.hasTonemap = true;
         gNoPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2356,9 +2155,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostTonemapLegacyGammaCorrectProgram.mName = "Deferred Tonemap Legacy Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gDeferredPostTonemapProgram.mFeatures.isDeferred = true;
-        gDeferredPostTonemapLegacyGammaCorrectProgram.mFeatures.hasTonemap = true;
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -2367,9 +2163,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gNoPostTonemapLegacyGammaCorrectProgram.mName = "No Post Tonemap Legacy Gamma Post Process";       // <FS> native only (native/manifest.txt, family post): no stock files
-        gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.hasSrgb = true;
-        gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.isDeferred = true;
-        gNoPostTonemapLegacyGammaCorrectProgram.mFeatures.hasTonemap = true;
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -2388,7 +2181,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (success)
             {
                 gFXAAProgram[i].mName = llformat("FXAA Shader (%s)", quality_pair.second.c_str());
-                gFXAAProgram[i].mFeatures.isDeferred = true;
                 // <FS> native only programs (native/manifest.txt, family post: fxaa.vert + fxaa.frag, FXAA_PRESET = the quality preset's number: 12, 23, 28, 39): no stock files
                 gFXAAProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
                 success = gFXAAProgram[i].createShader();
@@ -2438,7 +2230,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (success)
             {
                 gSMAAEdgeDetectProgram[i].mName = llformat("SMAA Edge Detection (%s)", smaa_pair.second.c_str());
-                gSMAAEdgeDetectProgram[i].mFeatures.isDeferred = true;
 
 
                 gSMAAEdgeDetectProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2457,7 +2248,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (success)
             {
                 gSMAABlendWeightsProgram[i].mName = llformat("SMAA Blending Weights (%s)", smaa_pair.second.c_str());
-                gSMAABlendWeightsProgram[i].mFeatures.isDeferred = true;
 
 
                 gSMAABlendWeightsProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2476,7 +2266,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (success)
             {
                 gSMAANeighborhoodBlendProgram[i].mName = llformat("SMAA Neighborhood Blending (%s)", smaa_pair.second.c_str());
-                gSMAANeighborhoodBlendProgram[i].mFeatures.isDeferred = true;
 
 
                 gSMAANeighborhoodBlendProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2508,7 +2297,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success && gDeviceCaps.mApiVersionNumber > 4.05f)
     {
         gCASProgram.mName = "Contrast Adaptive Sharpening Shader";
-        gCASProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gCASProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCASProgram.createShader();
@@ -2524,7 +2312,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success && gDeviceCaps.mApiVersionNumber > 4.05f)
     {
         gCASLegacyGammaProgram.mName = "Contrast Adaptive Sharpening Legacy Gamma Shader";
-        gCASLegacyGammaProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gCASLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCASLegacyGammaProgram.createShader();
@@ -2540,7 +2327,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostProgram.mName = "Deferred Post Shader";
-        gDeferredPostProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostProgram.createShader();
@@ -2550,7 +2336,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredCoFProgram.mName = "Deferred CoF Shader";
-        gDeferredCoFProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredCoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredCoFProgram.createShader();
@@ -2560,7 +2345,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredDoFCombineProgram.mName = "Deferred DoFCombine Shader";
-        gDeferredDoFCombineProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredDoFCombineProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredDoFCombineProgram.createShader();
@@ -2570,7 +2354,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostNoDoFProgram.mName = "Deferred Post NoDoF Shader";
-        gDeferredPostNoDoFProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostNoDoFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFProgram.createShader();
@@ -2580,7 +2363,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredPostNoDoFNoiseProgram.mName = "Deferred Post NoDoF Noise Shader";
-        gDeferredPostNoDoFNoiseProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gDeferredPostNoDoFNoiseProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostNoDoFNoiseProgram.createShader();
@@ -2592,9 +2374,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> the HDRI sky (use_hdri_sky(): an HDRI image is loaded): a native only program (native/manifest.txt, family gbuffer: sky.vert + sky.frag with HDRI), read by address like the sky: no stock files
         gEnvironmentMapProgram.mName = "Environment Map Program pull";
         gEnvironmentMapProgram.mFeatures.calculatesAtmospherics = true;
-        gEnvironmentMapProgram.mFeatures.hasAtmospherics = true;
-        gEnvironmentMapProgram.mFeatures.hasGamma = true;
-        gEnvironmentMapProgram.mFeatures.hasSrgb = true;
         gEnvironmentMapProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gEnvironmentMapProgram.mShaderGroup = LLShaderProgram::SG_SKY;
@@ -2609,9 +2388,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSkyProgram.mName = "Deferred Windlight Sky Shader pull";
         gDeferredWLSkyProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSkyProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredWLSkyProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLSkyProgram.mFeatures.hasGamma = true;
-        gDeferredWLSkyProgram.mFeatures.hasSrgb = true;
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSkyProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gDeferredWLSkyProgram.createShader();
@@ -2624,9 +2400,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLCloudProgram.mName = "Deferred Windlight Cloud Program pull";
         gDeferredWLCloudProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLCloudProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredWLCloudProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLCloudProgram.mFeatures.hasGamma = true;
-        gDeferredWLCloudProgram.mFeatures.hasSrgb = true;
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLCloudProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gDeferredWLCloudProgram.createShader();
@@ -2639,10 +2412,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSunProgram.mName = "Deferred Windlight Sun Program pull";
         gDeferredWLSunProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSunProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredWLSunProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLSunProgram.mFeatures.hasGamma = true;
-        gDeferredWLSunProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLSunProgram.mFeatures.hasSrgb = true;
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSunProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gDeferredWLSunProgram.createShader();
@@ -2655,10 +2424,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLMoonProgram.mName = "Deferred Windlight Moon Program pull";
         gDeferredWLMoonProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLMoonProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredWLMoonProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLMoonProgram.mFeatures.hasGamma = true;
-        gDeferredWLMoonProgram.mFeatures.hasAtmospherics = true;
-        gDeferredWLMoonProgram.mFeatures.hasSrgb = true;
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLMoonProgram.mShaderGroup = LLShaderProgram::SG_SKY;
         success = gDeferredWLMoonProgram.createShader();
@@ -2706,7 +2471,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if(success)
     {
         gRlvSphereProgram.mName = "RLVa Sphere Post Processing Shader";
-        gRlvSphereProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gRlvSphereProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gRlvSphereProgram.createShader();
@@ -2725,10 +2489,7 @@ bool LLViewerShaderMgr::loadShadersObject()
         gObjectAlphaMaskNoColorProgram.mName = "No color alpha mask Shader";
         gObjectAlphaMaskNoColorProgram.mFeatures.calculatesLighting = true;
         gObjectAlphaMaskNoColorProgram.mFeatures.calculatesAtmospherics = true;
-        gObjectAlphaMaskNoColorProgram.mFeatures.hasGamma = true;
-        gObjectAlphaMaskNoColorProgram.mFeatures.hasAtmospherics = true;
         gObjectAlphaMaskNoColorProgram.mFeatures.hasLighting = true;
-        gObjectAlphaMaskNoColorProgram.mFeatures.hasAlphaMask = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gObjectAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gObjectAlphaMaskNoColorProgram.createShader();
@@ -2737,7 +2498,6 @@ bool LLViewerShaderMgr::loadShadersObject()
     if (success)
     {
         gImpostorProgram.mName = "Impostor Shader";
-        gImpostorProgram.mFeatures.hasSrgb = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gImpostorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gImpostorProgram.createShader();
@@ -2759,8 +2519,6 @@ bool LLViewerShaderMgr::loadShadersObject()
         gPhysicsPreviewProgram.mName = "Preview Physics Shader";
         gPhysicsPreviewProgram.mFeatures.calculatesLighting = false;
         gPhysicsPreviewProgram.mFeatures.calculatesAtmospherics = false;
-        gPhysicsPreviewProgram.mFeatures.hasGamma = false;
-        gPhysicsPreviewProgram.mFeatures.hasAtmospherics = false;
         gPhysicsPreviewProgram.mFeatures.hasLighting = false;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gPhysicsPreviewProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
@@ -2785,13 +2543,9 @@ bool LLViewerShaderMgr::loadShadersAvatar()
     if (success)
     {
         gAvatarProgram.mName = "Avatar Shader";
-        gAvatarProgram.mFeatures.hasSkinning = true;
         gAvatarProgram.mFeatures.calculatesAtmospherics = true;
         gAvatarProgram.mFeatures.calculatesLighting = true;
-        gAvatarProgram.mFeatures.hasGamma = true;
-        gAvatarProgram.mFeatures.hasAtmospherics = true;
         gAvatarProgram.mFeatures.hasLighting = true;
-        gAvatarProgram.mFeatures.hasAlphaMask = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gAvatarProgram.mShaderLevel = mShaderLevel[SHADER_AVATAR];
         success = gAvatarProgram.createShader();
@@ -2827,7 +2581,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gHighlightProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         // both forms are native only (native/manifest.txt, family post: highlight_face.vert + highlight_face.frag, the skinned one with HAS_SKIN: the old rigged draws of the alpha pool's debug view)
         gSkinnedHighlightProgram.mName = "Skinned Highlight Shader";
-        gSkinnedHighlightProgram.mFeatures.hasObjectSkinning = true;
         gSkinnedHighlightProgram.mShaderLevel = gHighlightProgram.mShaderLevel;
         gHighlightProgram.mRiggedVariant = &gSkinnedHighlightProgram;
         success = gSkinnedHighlightProgram.createShader();
@@ -2840,7 +2593,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
         LLShaderProgram& pull = gHighlightPullSkinProgram;
         pull.mName = "Highlight Pull Skin Shader";
         // <FS> a native only program (native/manifest.txt, family alpha): no stock files (it declares `color` and the table's address itself)
-        pull.mFeatures.hasObjectSkinning = true;
         pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = pull.createShader();
         if (!success)
@@ -2857,7 +2609,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
             // <FS> a native only program (native/manifest.txt, family alpha): no stock files
             if (skin)
             {
-                debug_program.mFeatures.hasObjectSkinning = true;
             }
             debug_program.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             success = debug_program.createShader();
@@ -2987,7 +2738,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gDebugProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         // both forms are native only (native/manifest.txt, family post: debug.vert + debug.frag, the skinned one with HAS_SKIN)
         gSkinnedDebugProgram.mName = "Skinned Debug Shader";
-        gSkinnedDebugProgram.mFeatures.hasObjectSkinning = true;
         gSkinnedDebugProgram.mShaderLevel = gDebugProgram.mShaderLevel;
         gDebugProgram.mRiggedVariant = &gSkinnedDebugProgram;
         success = gSkinnedDebugProgram.createShader();
@@ -3018,11 +2768,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         gReflectionProbeDisplayProgram.mName = "Reflection Probe Display Shader";
         gReflectionProbeDisplayProgram.mFeatures.hasReflectionProbes = true;
-        gReflectionProbeDisplayProgram.mFeatures.hasSrgb = true;
         gReflectionProbeDisplayProgram.mFeatures.calculatesAtmospherics = true;
-        gReflectionProbeDisplayProgram.mFeatures.hasAtmospherics = true;
-        gReflectionProbeDisplayProgram.mFeatures.hasGamma = true;
-        gReflectionProbeDisplayProgram.mFeatures.isDeferred = true;
         // <FS> a native only program (native/manifest.txt, family post): no stock files
         gReflectionProbeDisplayProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gReflectionProbeDisplayProgram.createShader();
@@ -3061,7 +2807,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
             // LLTerrainPaintMap currently uses an RGB8 texture internally
             bit_depth = llclamp(bit_depth, 1, 8);
             shader->mName = llformat("Terrain Bake Shader RGB%o", bit_depth);
-            shader->mFeatures.isPBRTerrain = true;
 
             shader->mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             const U32 value_range = (1 << bit_depth) - 1;
@@ -3088,9 +2833,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gReflectionMipProgram.mName = "Reflection Mip Shader";
-        gReflectionMipProgram.mFeatures.isDeferred = true;
-        gReflectionMipProgram.mFeatures.hasGamma = true;
-        gReflectionMipProgram.mFeatures.hasAtmospherics = true;
         gReflectionMipProgram.mFeatures.calculatesAtmospherics = true;
         // <FS> a native only program (native/manifest.txt, family post: reflectionmip.vert + reflectionmip.frag): no stock files
         gReflectionMipProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
@@ -3100,9 +2842,6 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         gGaussianProgram.mName = "Reflection Mip Gaussian Shader";       // <FS> (it shared its name with the program above: the manifest tells programs apart by name) a native only program (family post: reflectionmip.vert + gaussian.frag): no stock files
-        gGaussianProgram.mFeatures.isDeferred = true;
-        gGaussianProgram.mFeatures.hasGamma = true;
-        gGaussianProgram.mFeatures.hasAtmospherics = true;
         gGaussianProgram.mFeatures.calculatesAtmospherics = true;
         gGaussianProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gGaussianProgram.createShader();

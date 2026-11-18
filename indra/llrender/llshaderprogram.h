@@ -39,30 +39,12 @@
 class LLShaderFeatures
 {
 public:
+    // (the fields the code reads: llrender.cpp syncMatrices, llvertexbuffer.cpp, lldrawpoolbump.cpp and LLShaderProgram::createShader; the other 20 were set by the shader manager and read by nothing)
     S32 mIndexedTextureChannels = 0;
     bool calculatesLighting = false;
     bool calculatesAtmospherics = false;
-    bool hasLighting = false; // implies no transport (it's possible to have neither though)
-    bool isAlphaLighting = false; // indicates lighting shaders need not be linked in (lighting performed directly in alpha shader to match deferred lighting functions)
-    bool isSpecular = false;
-    bool hasTransport = false; // implies no lighting (it's possible to have neither though)
-    bool hasSkinning = false;
-    bool hasObjectSkinning = false;
-    bool mGLTF = false;
-    bool hasAtmospherics = false;
-    bool hasGamma = false;
-    bool hasShadows = false;
-    bool hasAmbientOcclusion = false;
-    bool hasSrgb = false;
-    bool isDeferred = false;
-    bool hasFullGBuffer = false;
-    bool hasScreenSpaceReflections = false;
-    bool hasAlphaMask = false;
+    bool hasLighting = false;
     bool hasReflectionProbes = false;
-    bool attachNothing = false;
-    bool hasHeroProbes = false;
-    bool isPBRTerrain = false;
-    bool hasTonemap = false;
 };
 
 // ============= Structure for caching shader uniforms ===============
@@ -135,14 +117,6 @@ public:
 class LLShaderProgram
 {
 public:
-    // NOTE: Keep gShaderConsts and LLShaderProgram::ShaderConsts_e in sync!
-    enum eShaderConsts
-    {
-        SHADER_CONST_CLOUD_MOON_DEPTH
-        , SHADER_CONST_STAR_DEPTH
-        , NUM_SHADER_CONSTS
-    };
-
     // enum primarily used to control application sky settings uniforms
     typedef enum
     {
@@ -261,8 +235,6 @@ public:
     }
     void removePermutation(std::string name);
 
-    void addConstant(const LLShaderProgram::eShaderConsts shader_const);
-
     //enable/disable texture channel for specified uniform
     //if given texture uniform is active in the shader,
     //the corresponding channel will be active upon return
@@ -288,8 +260,6 @@ public:
     void bind(bool rigged);
 
     bool isComplete() const { return mProgramObject != 0; }
-
-    LLUUID hash();
 
     // Unbinds any previously bound shader by explicitly binding no shader.
     static void unbind();
@@ -340,8 +310,6 @@ public:
     typedef std::map<std::string, std::string> defines_map_t; //NOTE: this must be an ordered map to maintain hash consistency
     defines_map_t mDefines;
     static defines_map_t sGlobalDefines;
-    LLUUID mShaderHash;
-    bool mUsingBinaryProgram = false;
 
     // <FS> Vulkan mirror: a Vulkan twin of this program, and the map from this program's GL uniform locations to
     // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
@@ -368,8 +336,6 @@ public:
     void vkSendRange(U32 cls, U32 offset, U32 size);
     void vkAnnounce();                          // S6.2: all the class blocks, whole, as the first use of the program in this pass
     U64 mVkEpoch = 0;                           // the pass epoch it was last announced in
-    // the value cache the setters used to keep per shader (a hash map): true when the value must be written; with range writes the class block copy does the comparing and this is always true
-    bool uniformValueChanged(S32 location, const LLVector4& value, bool force = false);
 
     //statistics for profiling shader performance
     bool mProfilePending = false;

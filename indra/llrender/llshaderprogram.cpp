@@ -82,26 +82,6 @@ boost::json::value LLShaderProgram::sDefaultStats;
 LLShaderProgram    gUIProgram;
 LLShaderProgram    gSolidColorProgram;
 
-// NOTE: Keep gShaderConsts* and LLShaderProgram::ShaderConsts_e in sync!
-const std::string gShaderConstsKey[LLShaderProgram::NUM_SHADER_CONSTS] =
-{
-      "LL_SHADER_CONST_CLOUD_MOON_DEPTH"
-    , "LL_SHADER_CONST_STAR_DEPTH"
-};
-
-// NOTE: Keep gShaderConsts* and LLShaderProgram::ShaderConsts_e in sync!
-const std::string gShaderConstsVal[LLShaderProgram::NUM_SHADER_CONSTS] =
-{
-      "0.99998" // SHADER_CONST_CLOUD_MOON_DEPTH // SL-14113
-    , "0.99999" // SHADER_CONST_STAR_DEPTH       // SL-14113
-};
-
-
-bool shouldChange(const LLVector4& v1, const LLVector4& v2)
-{
-    return v1 != v2;
-}
-
 //===============================
 // LLGLSL Shader implementation
 //===============================
@@ -674,12 +654,6 @@ static inline bool vkDiffCopy(U8* dst, const F32* src, U32 floats)
     }
 }
 
-bool LLShaderProgram::uniformValueChanged(S32 location, const LLVector4& value, bool force)
-{
-    // (the class block copy compares the values: nothing is filtered here any more)
-    return true;
-}
-
 // a range of this shader's copy of a class block changed: it goes to the worker (or, before the queue runs, straight into the program)
 void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
 {
@@ -912,23 +886,11 @@ bool LLShaderProgram::createShader()
         return false;
     }
 
-#if LL_DARWIN
-    if(!gDeviceCaps.mIsApple)
-    {
-        // work-around missing mix(vec3,vec3,bvec3)
-        mDefines["OLD_SELECT"] = "1";
-    }
-#endif
-
-    mShaderHash = hash();
-
     // a program is a handle of our own: the shader objects attached to it are compiled together when it is linked
     static U32 sNextProgramObject = 0;
     mProgramObject = ++sNextProgramObject;
 
     bool success = true;
-
-    mUsingBinaryProgram = false;
 
     // Map attributes and uniforms
     if (success)
@@ -943,18 +905,8 @@ bool LLShaderProgram::createShader()
     {
         LL_SHADER_LOADING_WARNS() << "Failed to link shader: " << mName << LL_ENDL;
 
-        // Try again using a lower shader level;
-        if (mShaderLevel > 0)
-        {
-            LL_SHADER_LOADING_WARNS() << "Failed to link using shader level " << mShaderLevel << " trying again using shader level " << (mShaderLevel - 1) << LL_ENDL;
-            mShaderLevel--;
-            return createShader();
-        }
-        else
-        {
-            // Give up and unload shader.
-            unloadInternal();
-        }
+        // Give up and unload shader.
+        unloadInternal();
     }
     else if (mFeatures.mIndexedTextureChannels > 0)
     { //override texture channels for indexed texture rendering
@@ -1066,12 +1018,8 @@ bool LLShaderProgram::mapAttributes()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    bool res = true;
-    if (!mUsingBinaryProgram)
-    {
-        //link the program
-        res = link();
-    }
+    //link the program
+    bool res = link();
 
     mAttribute.clear();
 #if LL_RELEASE_WITH_DEBUG_INFO
@@ -1216,11 +1164,6 @@ void LLShaderProgram::addPermutation(std::string name, std::string value)
     {
         mVertexPull = true;
     }
-}
-
-void LLShaderProgram::addConstant(const LLShaderProgram::eShaderConsts shader_const)
-{
-    addPermutation(gShaderConstsKey[shader_const], gShaderConstsVal[shader_const]);
 }
 
 void LLShaderProgram::removePermutation(std::string name)
@@ -1834,7 +1777,6 @@ void LLShaderProgram::uniform1i(U32 index, S32 x)
 
         if (mUniform[index] >= 0)
         {
-            if (uniformValueChanged(mUniform[index], LLVector4((F32)x, 0.f, 0.f, 0.f)))
             {
                 mirrorScalar(mUniform[index], 1, {(double)(x)});
             }
@@ -1871,7 +1813,6 @@ void LLShaderProgram::uniform1f(U32 index, F32 x)
 
         if (mUniform[index] >= 0)
         {
-            if (uniformValueChanged(mUniform[index], LLVector4(x, 0.f, 0.f, 0.f)))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x)});
             }
@@ -1908,7 +1849,6 @@ void LLShaderProgram::uniform2f(U32 index, F32 x, F32 y)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(x, y, 0.f, 0.f);
-            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y)});
             }
@@ -1934,7 +1874,6 @@ void LLShaderProgram::uniform3f(U32 index, F32 x, F32 y, F32 z)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(x, y, z, 0.f);
-            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z)});
             }
@@ -1960,7 +1899,6 @@ void LLShaderProgram::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(x, y, z, w);
-            if (uniformValueChanged(mUniform[index], vec))
             {
                 mirrorScalar(mUniform[index], 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
             }
@@ -1986,7 +1924,6 @@ void LLShaderProgram::uniform1iv(U32 index, U32 count, const S32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 1, 1, count, v);
             }
@@ -2012,7 +1949,6 @@ void LLShaderProgram::uniform4iv(U32 index, U32 count, const S32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
             }
         }
@@ -2038,7 +1974,6 @@ void LLShaderProgram::uniform1fv(U32 index, U32 count, const F32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(v[0], 0.f, 0.f, 0.f);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 1, count, v);
             }
@@ -2064,7 +1999,6 @@ void LLShaderProgram::uniform2fv(U32 index, U32 count, const F32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(v[0], v[1], 0.f, 0.f);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 2, count, v);
             }
@@ -2090,7 +2024,6 @@ void LLShaderProgram::uniform3fv(U32 index, U32 count, const F32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(v[0], v[1], v[2], 0.f);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 mirrorVector(mUniform[index], 0, 3, count, v);
             }
@@ -2116,7 +2049,6 @@ void LLShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec(v[0], v[1], v[2], v[3]);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 mirrorVector(mUniform[index], 0, 4, count, v);
@@ -2143,7 +2075,6 @@ void LLShaderProgram::uniform4uiv(U32 index, U32 count, const U32* v)
         if (mUniform[index] >= 0)
         {
             LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-            if (uniformValueChanged(mUniform[index], vec, true))
             {
                 LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
                 mirrorVector(mUniform[index], 1, 4, count, v);
@@ -2298,7 +2229,6 @@ void LLShaderProgram::uniform1i(const LLStaticHashedString& uniform, S32 v)
     if (location >= 0)
     {
         LLVector4 vec((F32)v, 0.f, 0.f, 0.f);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 1, {(double)(v)});
         }
@@ -2314,7 +2244,6 @@ void LLShaderProgram::uniform1iv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], 0.f, 0.f, 0.f);
-        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 1, count, v);
@@ -2331,7 +2260,6 @@ void LLShaderProgram::uniform4iv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 4, count, v);
@@ -2348,7 +2276,6 @@ void LLShaderProgram::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 
     if (location >= 0)
     {
         LLVector4 vec((F32)i, (F32)j, 0.f, 0.f);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 1, {(double)(i), (double)(j)});
         }
@@ -2365,7 +2292,6 @@ void LLShaderProgram::uniform1f(const LLStaticHashedString& uniform, F32 v)
     if (location >= 0)
     {
         LLVector4 vec(v, 0.f, 0.f, 0.f);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(v)});
         }
@@ -2381,7 +2307,6 @@ void LLShaderProgram::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 
     if (location >= 0)
     {
         LLVector4 vec(x, y, 0.f, 0.f);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y)});
         }
@@ -2398,7 +2323,6 @@ void LLShaderProgram::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 
     if (location >= 0)
     {
         LLVector4 vec(x, y, z, 0.f);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z)});
         }
@@ -2414,7 +2338,6 @@ void LLShaderProgram::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 
     if (location >= 0)
     {
         LLVector4 vec(x, y, z, w);
-        if (uniformValueChanged(location, vec))
         {
             mirrorScalar(location, 0, {(double)(x), (double)(y), (double)(z), (double)(w)});
         }
@@ -2430,7 +2353,6 @@ void LLShaderProgram::uniform1fv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec(v[0], 0.f, 0.f, 0.f);
-        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 1, count, v);
         }
@@ -2446,7 +2368,6 @@ void LLShaderProgram::uniform2fv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec(v[0], v[1], 0.f, 0.f);
-        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 2, count, v);
         }
@@ -2462,7 +2383,6 @@ void LLShaderProgram::uniform3fv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec(v[0], v[1], v[2], 0.f);
-        if (uniformValueChanged(location, vec, true))
         {
             mirrorVector(location, 0, 3, count, v);
         }
@@ -2478,7 +2398,6 @@ void LLShaderProgram::uniform4fv(const LLStaticHashedString& uniform, U32 count,
     if (location >= 0)
     {
         LLVector4 vec(v);
-        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 0, 4, count, v);
@@ -2495,7 +2414,6 @@ void LLShaderProgram::uniform4uiv(const LLStaticHashedString& uniform, U32 count
     if (location >= 0)
     {
         LLVector4 vec((F32)v[0], (F32)v[1], (F32)v[2], (F32)v[3]);
-        if (uniformValueChanged(location, vec, true))
         {
             LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
             mirrorVector(location, 1, 4, count, v);
@@ -2585,33 +2503,6 @@ void LLShaderUniforms::apply(LLShaderProgram* shader)
     {
         shader->uniform3fv(uniform.mUniform, 1, uniform.mValue.mV);
     }
-}
-
-LLUUID LLShaderProgram::hash()
-{
-    HBXXH128 hash_obj;
-    hash_obj.update(mName);
-    hash_obj.update(&mShaderGroup, sizeof(mShaderGroup));
-    hash_obj.update(&mShaderLevel, sizeof(mShaderLevel));
-    hash_obj.update(mNativeVertex);
-    hash_obj.update(mNativeFragment);
-    for (const auto& define_pair : mDefines)
-    {
-        hash_obj.update(define_pair.first);
-        hash_obj.update(define_pair.second);
-
-    }
-    for (const auto& define_pair : LLShaderProgram::sGlobalDefines)
-    {
-        hash_obj.update(define_pair.first);
-        hash_obj.update(define_pair.second);
-
-    }
-    hash_obj.update(&mFeatures, sizeof(LLShaderFeatures));
-    hash_obj.update(gDeviceCaps.mVendorString);
-    hash_obj.update(gDeviceCaps.mDeviceString);
-    hash_obj.update(gDeviceCaps.mApiVersionString);
-    return hash_obj.digest();
 }
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
