@@ -51,7 +51,8 @@ float getDepth(vec2 pos_screen)
 
 vec4 getNorm(vec2 screenpos)
 {
-    vec4 norm = decodeNormal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], screenpos.xy));
+    // (level 0 explicitly: the lookup now comes after the discard of the sky pixels, and an implicit level needs the neighbours of the quad; the G-buffer has no mip levels)
+    vec4 norm = decodeNormal(textureLod(ll_tbl2d[LL_HM(ll_ti_normalMap)], screenpos.xy, 0.0));
     return norm;
 }
 
@@ -59,6 +60,11 @@ void main()
 {
     vec2  tc           = vary_fragcoord.xy;
     float depth        = getDepth(tc.xy);
+    if (depth >= 1.0)
+    {
+        //should only be true of sky, clouds, sun/moon, and stars: nothing to haze, no position, normal or atmosphere work for these pixels
+        discard;
+    }
     vec4  pos          = getPositionWithDepth(tc, depth);
     vec4  norm         = getNorm(tc);
     vec3  light_dir   = (sun_up_factor == 1) ? sun_dir : moon_dir;
@@ -83,12 +89,6 @@ void main()
 
     vec3  irradiance = vec3(0);
     vec3  radiance  = vec3(0);
-
-    if (depth >= 1.0)
-    {
-        //should only be true of sky, clouds, sun/moon, and stars
-        discard;
-    }
 
     float alpha = 0.0;
 

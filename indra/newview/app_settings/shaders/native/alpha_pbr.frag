@@ -65,7 +65,13 @@ void main()
     const vec3 orm = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slots.z))], vary_tc_orm).rgb;
     const float roughness = orm.g * vary_factors.x;
     const float metallic = orm.b * vary_factors.y;
-    const vec3 emissive = vary_emissive * srgb_to_linear(texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive).rgb);
+    // (no emissive colour, no emissive: the map is not read then; the lookup is in a branch, so it takes the derivatives from outside it)
+    const vec2 emissive_dx = dFdx(vary_tc_emissive), emissive_dy = dFdy(vary_tc_emissive);
+    vec3 emissive = vec3(0.0);
+    if (vary_emissive != vec3(0.0))
+    {
+        emissive = vary_emissive * srgb_to_linear(textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive, emissive_dx, emissive_dy).rgb);
+    }
 
     // the image based light: the ambient (other skies; a classic sky's own ambient light is kept) and the reflection of the world, blurred by the roughness
     const float gloss = 1.0 - roughness;
