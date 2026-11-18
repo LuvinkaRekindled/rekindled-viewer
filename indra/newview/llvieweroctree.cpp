@@ -924,7 +924,7 @@ void RKHiz::send(const F32* view_proj)
 
 namespace
 {
-const bool sHizKeepVerdicts = getenv("LL_VK_BLINK") != nullptr;         // (diagnostic: the last verdict of every target, for the blink detector)
+const bool sHizKeepVerdicts = getenv("RK_VK_BLINK") != nullptr;         // (diagnostic: the last verdict of every target, for the blink detector)
 std::unordered_map<U32, std::array<U32, 5>> sHizLastVerdict;
 }
 
@@ -996,11 +996,11 @@ void RKHiz::apply()
         }
         // <FS> plan 8.38: a verdict is only good for the camera it was tested with. The results arrive 2 to 4 frames after the boxes were sent; while the camera moves fast (a zoom, a flight through foliage)
         // an occluded verdict that was right for its frame is applied where the camera is now, and the group vanishes for a few frames (the own avatar for 15 frames, 2026-11-02). A batch whose camera has
-        // moved more than LL_VK_HIZ_STALE_M metres (0.5) or turned more than LL_VK_HIZ_STALE_DEG degrees (2) since is stale: its occluded verdicts count as visible (its visible ones are always safe).
+        // moved more than RK_VK_HIZ_STALE_M metres (0.5) or turned more than RK_VK_HIZ_STALE_DEG degrees (2) since is stale: its occluded verdicts count as visible (its visible ones are always safe).
         bool stale = false;
         {
-            static const F32 stale_m = getenv("LL_VK_HIZ_STALE_M") ? (F32)atof(getenv("LL_VK_HIZ_STALE_M")) : 0.5f;
-            static const F32 stale_cos = cosf((getenv("LL_VK_HIZ_STALE_DEG") ? (F32)atof(getenv("LL_VK_HIZ_STALE_DEG")) : 2.f) * 3.14159265f / 180.f);
+            static const F32 stale_m = getenv("RK_VK_HIZ_STALE_M") ? (F32)atof(getenv("RK_VK_HIZ_STALE_M")) : 0.5f;
+            static const F32 stale_cos = cosf((getenv("RK_VK_HIZ_STALE_DEG") ? (F32)atof(getenv("RK_VK_HIZ_STALE_DEG")) : 2.f) * 3.14159265f / 180.f);
             const LLViewerCamera* cam = LLViewerCamera::getInstance();
             const LLVector3& eye = cam->getOrigin();
             const LLVector3& at = cam->getAtAxis();
@@ -1027,7 +1027,7 @@ void RKHiz::apply()
             {
                 sHizLastVerdict[p.mIds[i]] = { word, words[3 * i + 1], words[3 * i + 2], (U32)gFrameCount, stale ? 1u : 0u };
             }
-            static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
+            static const bool ignore = getenv("RK_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
         }
         RKVkBridge::hizDone(p.mSerial);

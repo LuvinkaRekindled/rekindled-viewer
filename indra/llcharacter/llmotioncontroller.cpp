@@ -561,13 +561,13 @@ void LLMotionController::updateIdleActiveMotions()
 }
 
 
-// <FS> PLAN-avatars.md stage B2 census (LL_VK_POSECENSUS=1): where the time of one avatar's pose job goes: each motion class's onUpdate, addMotion, the blend, and the controller's own part (the rest of
+// <FS> PLAN-avatars.md stage B2 census (RK_VK_POSECENSUS=1): where the time of one avatar's pose job goes: each motion class's onUpdate, addMotion, the blend, and the controller's own part (the rest of
 // finishUpdateMotions), logged every 20000 jobs
 namespace
 {
 bool pose_census_on()
 {
-    static const bool on = getenv("LL_VK_POSECENSUS") != nullptr;
+    static const bool on = getenv("RK_VK_POSECENSUS") != nullptr;
     return on;
 }
 struct PoseCensusClass

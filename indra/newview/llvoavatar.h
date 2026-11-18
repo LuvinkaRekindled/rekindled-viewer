@@ -352,7 +352,7 @@ public:
     // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job) and
     // idleUpdateMisc replays them in its turn (replayAttachmentJob) instead of running the loop
     void            idleUpdateAttachments(bool visible);
-    // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
+    // <FS> PLAN-avatars.md stage B3a (RK_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
     void            buildPalettesInJob();
     // <FS> PLAN-avatars.md stage C: the flat world array (RKFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
@@ -378,7 +378,7 @@ public:
     U32 mAttRowsRevision = ~0u;
     void            rebuildAttRows();
     static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)
-    static void     sPalJobWallNsAdd(U64 ns);       // (LL_VK_PALTIME: the wall time of the palette jobs of a batch)
+    static void     sPalJobWallNsAdd(U64 ns);       // (RK_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();
     static LLVOAvatar* sAttachmentSelectedAvatar;   // with sAttachmentSelectedForJobs == 1: the avatar the selected attachments belong to (null: not known, every avatar counts as selected)
     static void     askAttachmentSelection(S32& selected, LLVOAvatar*& avatar);     // main thread: is an attachment (or a HUD object) selected, and whose
@@ -721,7 +721,7 @@ public:
     U8          mFarTierMain = 0;               // the far avatar tier of the main view (pipeline.cpp far_avatar_tier): 0 full, 1 beyond RenderFarAvatarDistance, 2 beyond RenderFarAvatarDistance2 (hysteresis)
     U32         farUpdatePeriod();              // 1 near, or 2 / 3 for a visible avatar beyond FSAvatarFarUpdateDistance (see llvoavatar.cpp)
     static bool isLiveInstance(const LLVOAvatar* avatar);     // a pointer a spatial group kept (LLSpatialGroup::mAvatarp) may name an avatar that is gone: true when it is one of the characters alive now (a set made once a frame)
-    std::vector<F32> mRtPosePrev;           // census (LL_VK_ITEMCENSUS): the palette of its biggest skin when the main view last named it to the ray scene
+    std::vector<F32> mRtPosePrev;           // census (RK_VK_ITEMCENSUS): the palette of its biggest skin when the main view last named it to the ray scene
     U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)
     U64         mRtNameChecked = ~0ull;         // the frame mRtNameDue was decided in
     bool        mRtNameDue = true;
@@ -946,7 +946,7 @@ private:
 public:
     static void cullAvatarsByPixelArea();
     bool        isCulled() const { return mCulled; }
-    bool        isMatricesOnlyDeferred() const { return mDeferredMatricesOnly; }     // <FS> LL_VK_AVCLASS census: a hidden avatar whose batch entry only works out the skeleton matrices
+    bool        isMatricesOnlyDeferred() const { return mDeferredMatricesOnly; }     // <FS> RK_VK_AVCLASS census: a hidden avatar whose batch entry only works out the skeleton matrices
 private:
     bool        mCulled;
 
@@ -1112,7 +1112,7 @@ public:
         // <FS> stage B3b: where this palette sits in the frame's shared palette list (rk_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
         mutable std::atomic<U64> mListSlot{ ~0ull };
         U32 mJobFor = 0xFFFFFFFFu;
-        bool mJobChecked = false;               // (LL_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request
+        bool mJobChecked = false;               // (RK_VK_PALJOB=2) the job's palette was compared with a rebuild at the first request
 
         // <FS> P1 step 3: the palette's id (0 = none yet): what a record names the palette by instead of a float offset in a frame's list; made at the first write into a list, given back with the entry
         mutable std::atomic<U32> mPaletteId{ 0 };
@@ -1423,7 +1423,7 @@ private:
 
 public:
     virtual std::string getFullname() const; // Returns "FirstName LastName"
-    // <FS> PLAN-avatars.md stage B3d, name tag events (LL_VK_NAMETAGPOLL): something the tag shows may have changed (animations, names and title, complexity, rez state, appearance, typing, chat, marks): look at its
+    // <FS> PLAN-avatars.md stage B3d, name tag events (RK_VK_NAMETAGPOLL): something the tag shows may have changed (animations, names and title, complexity, rez state, appearance, typing, chat, marks): look at its
     // inputs at the next chance. bumpNameTagGen(): the same for every avatar (the mute list, the friend list).
     void            invalidateNameTagInputs() { mNameTagForce = true; }
     void            updateWindEffectForDraw();          // B3d: the cloth wind state, worked out when the avatar is drawn
@@ -1434,7 +1434,7 @@ protected:
     static void     getAnimNames(std::vector<std::string>* names);
 private:
     bool            mNameIsSet;
-    F64             mNameTagLastPoll = -1.0;        // <FS> stage B3d: when the tag's inputs were last looked at (LL_VK_NAMETAGPOLL); mNameTagForce: look next time
+    F64             mNameTagLastPoll = -1.0;        // <FS> stage B3d: when the tag's inputs were last looked at (RK_VK_NAMETAGPOLL); mNameTagForce: look next time
     bool            mNameTagForce = false;
     U32             mNameTagGen = 0;                // (the global generation this avatar's tag was last looked at under)
     LLSD            mClientTagData;

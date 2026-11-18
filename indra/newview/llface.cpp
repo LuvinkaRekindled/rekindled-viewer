@@ -667,7 +667,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
 
 // <FS> The selection's wireframe of a mesh draws the volume face's CPU arrays. Through the immediate mode that is one call per index and a flush every 2048 vertices: for a worn body mesh about 1.5 ms a frame on the main
 // thread (a hundred draws), for as long as it is selected, and the arrays do not change while it is selected. A face's positions and indices are copied into a vertex buffer once and the buffer is drawn in one call;
-// it is made again when the face's arrays, counts or (for a rigged volume) the count of skinning updates change. LL_VK_SELWIRE=0: the immediate mode as before. Main thread only.
+// it is made again when the face's arrays, counts or (for a rigged volume) the count of skinning updates change. RK_VK_SELWIRE=0: the immediate mode as before. Main thread only.
 namespace
 {
 struct SelWire
@@ -706,7 +706,7 @@ void renderFace(LLDrawable* drawable, LLFace *face)
         if (volume)
         {
             const LLVolumeFace& vol_face = volume->getVolumeFace(face->getTEOffset());
-            static const bool wire_cache = !getenv("LL_VK_SELWIRE") || atoi(getenv("LL_VK_SELWIRE")) != 0;
+            static const bool wire_cache = !getenv("RK_VK_SELWIRE") || atoi(getenv("RK_VK_SELWIRE")) != 0;
             if (wire_cache && vol_face.mPositions && vol_face.mIndices && vol_face.mNumVertices > 0 && vol_face.mNumIndices > 0 && (!vobj->isSculpted() || vobj->isMesh()) && !vobj->isFlexible())
             {
                 const U32 frame = LLFrameTimer::getFrameCount();
@@ -1413,10 +1413,10 @@ void push_for_transform(LLVertexBuffer* buff, U32 source_count, U32 dest_count)
 }
 
 // <FS> cheaper fill: the transpose of the inverse of a skin's bind shape matrix (the normal matrix of a rigged face) was worked out for every face; the faces of a batch share a skin, so the last one is kept,
-// per thread, with the matrix it came from (compared by value: a changed bind shape matrix gives a new result). LL_VK_CHEAP_FILL=0 turns it off, 2 checks every hit.
+// per thread, with the matrix it came from (compared by value: a changed bind shape matrix gives a new result). RK_VK_CHEAP_FILL=0 turns it off, 2 checks every hit.
 static int face_cheap_fill_mode()
 {
-    static const int mode = getenv("LL_VK_CHEAP_FILL") ? atoi(getenv("LL_VK_CHEAP_FILL")) : 1;
+    static const int mode = getenv("RK_VK_CHEAP_FILL") ? atoi(getenv("RK_VK_CHEAP_FILL")) : 1;
     return mode;
 }
 
@@ -1450,12 +1450,12 @@ static void bind_shape_normal_matrix(const LLMatrix4a& bind, LLMatrix4a& out)
     have = true;
 }
 
-// <FS> LL_VK_GEOMCHECK (default on while the "bad range in a structure to build" warnings of the ray scene are open, 0 = off): a face's geometry is checked as it is written, and the owner is named once per object and
+// <FS> RK_VK_GEOMCHECK (default on while the "bad range in a structure to build" warnings of the ray scene are open, 0 = off): a face's geometry is checked as it is written, and the owner is named once per object and
 // kind of defect: positions of the volume face that are not finite or beyond 1e5 (the volume's own data), positions written to the buffer that are (the transform), indices of the volume face past its vertex count, indices
 // whose buffer position (the face's offset) leaves the face's slots or wraps the 16 bits. The ray scene builder skips such a range (it names the buffers only).
 static bool geom_check_on()
 {
-    static const bool on = getenv("LL_VK_GEOMCHECK") ? atoi(getenv("LL_VK_GEOMCHECK")) != 0 : true;
+    static const bool on = getenv("RK_VK_GEOMCHECK") ? atoi(getenv("RK_VK_GEOMCHECK")) != 0 : true;
     return on;
 }
 

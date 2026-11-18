@@ -68,7 +68,7 @@
 #include "fsassetblacklist.h" //For Asset blacklist
 #include "llviewermenu.h"
 #include "llviewernetwork.h" // <FS:Ansariel> OpenSim compatibility
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 LLTrace::CountStatHandle<F64> LLTextureFetch::sCacheHit("texture_cache_hit");
 LLTrace::CountStatHandle<F64> LLTextureFetch::sCacheAttempt("texture_cache_attempt");

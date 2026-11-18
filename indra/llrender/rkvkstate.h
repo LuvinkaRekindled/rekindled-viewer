@@ -7,7 +7,7 @@
  * block it wrote and, when they differ, writes one CMD_STATE record holding the block. The worker copies the block into the renderer: no GL state machine.
  *
  * Step 1 (this file): dual-write beside the old GL-shaped state calls; the worker verifies the block against what the old path would have produced
- * (LL_VK_STATE_VERIFY=1) and logs mismatches.
+ * (RK_VK_STATE_VERIFY=1) and logs mismatches.
  *
  * Compiled only with -DUSE_VULKAN=ON.
  */

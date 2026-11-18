@@ -71,9 +71,9 @@ public:
     void writeRange(U32 cls, U32 offset, U32 size, const U8* data);
     // the loose uniform block of a class as built (initial values from the shader text): the producer's own copy starts from it
     const std::vector<U8>& shadowOf(U32 cls) const { return mShadow[cls]; }
-    RKVkPassCensus::ProgState mCensus;      // S6.0: when the stream last wrote each uniform class block (LL_VK_PASSCENSUS)
+    RKVkPassCensus::ProgState mCensus;      // S6.0: when the stream last wrote each uniform class block (RK_VK_PASSCENSUS)
     static bool isLive(const Program* p);   // S6.3: created and not destroyed
-    static void poisonAll();                // S6.2 (LL_VK_PASSCLOSE=3): every program's loose uniform blocks are overwritten with a pattern and marked for upload
+    static void poisonAll();                // S6.2 (RK_VK_PASSCLOSE=3): every program's loose uniform blocks are overwritten with a pattern and marked for upload
 
     // texture unit each sampler reads (GL numbering; defaults to the sampler's binding)
     void setSamplerUnit(size_t sampler_index, U32 unit) { if (sampler_index < mSamplerUnits.size()) mSamplerUnits[sampler_index] = unit; }
@@ -84,7 +84,7 @@ public:
     S32 getSamplerBinding(const std::string& name) const;
 
     // The pipeline for a draw into these target formats, or VK_NULL_HANDLE when it is not ready: the driver could only build it by compiling, so the build
-    // runs on a background thread and the draw is dropped until it is done (LL_VK_PIPELINE_ASYNC=0 builds it right here, the old behaviour).
+    // runs on a background thread and the draw is dropped until it is done (RK_VK_PIPELINE_ASYNC=0 builds it right here, the old behaviour).
     VkPipeline getPipeline(const PipelineKey& key);
     // takes the pipelines the background threads have finished (called before a lookup and once per frame)
     static void drainCompletedPipelines();
@@ -270,7 +270,7 @@ public:
     bool init();
     void shutdown();
     // The driver's compiled pipelines, kept between runs (<cache>/vk_pipeline_cache.bin): loaded in init(), written at shutdown and every few minutes
-    // while new pipelines keep being built, so a crash does not lose a whole session of them. LL_VK_PIPELINE_CACHE=0 turns it off.
+    // while new pipelines keep being built, so a crash does not lose a whole session of them. RK_VK_PIPELINE_CACHE=0 turns it off.
     void savePipelineCache();
     U64 mPipelineCacheLastSaveFrame = 0;
     bool isReady() const { return mReady; }
@@ -347,7 +347,7 @@ public:
     Image* getWhiteTexture() { return &mWhite; }
     Program* getProgram() const { return mProgram; }
     bool inPass() const { return mRendering; }
-    // LL_VK_PHASES: a short description of the current render target ("1483x777 c4 d" = size, colour attachments, depth) with the depth image's identity, so
+    // RK_VK_PHASES: a short description of the current render target ("1483x777 c4 d" = size, colour attachments, depth) with the depth image's identity, so
     // that passes of the same size (the shadow cascades) stay apart
     std::string describeTarget() const
     {
@@ -384,14 +384,14 @@ public:
     // starts) and becomes a GPU copy of just the changed bytes when flushBufferUpdates() records it: before a draw that reads the buffer, and
     // at the end of the frame. Copies are ordered against the draws recorded before them by barriers, as GL promises.
     bool updateBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, const void* data);
-    // the same, filling with a 32-bit value (LL_VK_ARENA_POISON: freed arena ranges show garbage instead of a stale picture); offset and size multiples of 4
+    // the same, filling with a 32-bit value (RK_VK_ARENA_POISON: freed arena ranges show garbage instead of a stale picture); offset and size multiples of 4
     bool fillBuffer(VkBuffer dst, VkDeviceSize offset, VkDeviceSize size, U32 value);
     // records every pending copy (ends the current render pass if there is something to record); false while no frame is being recorded
     bool flushBufferUpdates();
     // texture uploads since the last call: how many, how many bytes, how many ended a render pass that was in progress
     struct UploadStats { U32 mCount = 0; U64 mBytes = 0; U32 mPassSplits = 0; };
     UploadStats takeUploadStats() { UploadStats s = mUploadStats; mUploadStats = UploadStats(); return s; }
-    // C9 diagnostics (LL_VK_PHASES): what the image layout transitions were for. setBarrierCause names the reason for the transitions made until it is set again (returns the old one).
+    // C9 diagnostics (RK_VK_PHASES): what the image layout transitions were for. setBarrierCause names the reason for the transitions made until it is set again (returns the old one).
     const char* setBarrierCause(const char* cause) { const char* old = mBarrierCause; mBarrierCause = cause; return old; }
     // the transitions since the last call grouped by cause, image kind and layout change (per frame), the images with the most, and how many ended a render pass
     std::string takeBarrierReport(size_t frames);
@@ -440,7 +440,7 @@ public:
     void queryEnd();
     // writes a timestamp now; 'end' tells the harvest which half of an elapsed-time query it is
     bool queryTimestamp(U64 serial, bool end);
-    void statSegment(U32 tag);          // LL_VK_FRAGSTATS: the statistics query goes on under this GPU time tag
+    void statSegment(U32 tag);          // RK_VK_FRAGSTATS: the statistics query goes on under this GPU time tag
     void takeQueryResults(std::vector<QueryResult>& out);
     // <FS> what became of the occlusion queries since the last call: results with samples, results with none, queries whose draw never reached the GPU (reported as none)
     struct OccStats { U64 mPassed = 0, mNone = 0, mNeverDrawn = 0; };
@@ -475,7 +475,7 @@ private:
     U32 mPassTag = 0;
     U32 mBeginTag = 0;
     bool mBeginSplit = false;
-    bool mDrawStamps = false;           // this pass stamps every draw (LL_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
+    bool mDrawStamps = false;           // this pass stamps every draw (RK_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
     U32 mDrawStampCount = 0;            // draws stamped in this pass
     U32 drawTag(const char* what, U32 count, U32 first, S32 vertex_offset);
     // The draw ring: the last 16384 draws of the worker, whatever the pass, as plain records (no strings), each also a checkpoint in the command buffer (Context::serialCheckpoint, set BEFORE
@@ -593,7 +593,7 @@ private:
     Buffer mRing[Context::FRAMES_IN_FLIGHT];
     Buffer mDummyUbo;
     Image mWhite;
-    Image mMagenta;             // <FS> debug (LL_VK_STANDIN_MAGENTA=1): the bindless stand-in is magenta, so a surface that samples it shows
+    Image mMagenta;             // <FS> debug (RK_VK_STANDIN_MAGENTA=1): the bindless stand-in is magenta, so a surface that samples it shows
     Image mFallback[4];             // white stand-ins: 2D array, cube, cube array, 3D (mWhite is the 2D one)
     std::map<SamplerDesc, VkSampler> mSamplers;
 
@@ -612,13 +612,13 @@ private:
     struct BarrierImageStat { U32 mCount = 0; std::string mKind; };   // the kind is copied at the transition: the image can be freed before the report
     std::unordered_map<const Image*, BarrierImageStat> mBarrierPerImage;
     std::unordered_map<std::string, U32> mBarrierWho;       // F3.5c': transitions by the pass that needed them: image | layouts | cause | program | GPU zone | the pass's target
-    // F3.5c: the depth use of each producer pass segment (between two target changes) that has a depth attachment: draws that write it, draws in read-only depth, the rest, how many worker passes it took (LL_VK_PHASES)
+    // F3.5c: the depth use of each producer pass segment (between two target changes) that has a depth attachment: draws that write it, draws in read-only depth, the rest, how many worker passes it took (RK_VK_PHASES)
     struct PassUse { U32 mSegments = 0; U64 mWorkerPasses = 0, mWrites = 0, mRO = 0, mPlain = 0; U32 mMixed = 0; };
     std::unordered_map<std::string, PassUse> mPassUse;
     std::string mPUKey;
     U64 mPassBeginsTotal = 0, mPUStartBegins = 0, mPUWrites = 0, mPURO = 0, mPUPlain = 0;
     void finishPassUse();
-    // F3.5c: the declared read-only depth against what the worker infers (LL_VK_DEPTHRO_VERIFY=1 or LL_VK_PHASES), by program: agree, declared but the draw writes depth, samples the depth with nothing declared
+    // F3.5c: the declared read-only depth against what the worker infers (RK_VK_DEPTHRO_VERIFY=1 or RK_VK_PHASES), by program: agree, declared but the draw writes depth, samples the depth with nothing declared
     struct DeclStat { U64 mAgree = 0, mDeclaredOnly = 0, mViolation = 0, mMissing = 0; std::string mName; };   // the name is copied: the program can be gone before the report
     std::unordered_map<const Program*, DeclStat> mDeclStats;
     bool mBarrierEndedPass = false;                 // the transition being made had to end a render pass first
@@ -634,9 +634,9 @@ private:
     // C9: the depth-target use of each draw (write on / depth buffer sampled by the program) and what each change of use cost
     U32 mDepthUseCounts[4] = {};
     struct UniformCopyStat { U64 mCopies = 0, mBytes = 0, mDirty = 0, mSame = 0; std::string mName; };   // the name is copied: the program can be gone before the report
-    std::unordered_set<U64> mUniformSeen;       // LL_VK_PHASES: (program, content) hashes of the blocks copied in the frame being counted
+    std::unordered_set<U64> mUniformSeen;       // RK_VK_PHASES: (program, content) hashes of the blocks copied in the frame being counted
     U64 mUniformSeenFrame = ~0ull;
-    std::unordered_map<const Program*, UniformCopyStat> mUniformCopies;    // LL_VK_PHASES: loose uniform blocks copied into the ring, per program
+    std::unordered_map<const Program*, UniformCopyStat> mUniformCopies;    // RK_VK_PHASES: loose uniform blocks copied into the ring, per program
     int mDepthUsePrev = -1;
     const Image* mDepthUseRoot = nullptr;
     std::unordered_map<std::string, U32> mDepthUseChanges;      // "from>to program" -> draws that changed the use
@@ -646,7 +646,7 @@ private:
     std::vector<DeferredCopy> mDeferredCopies;      // written outside a frame: staged when the next frame begins
     // <FS> hitchless loading (doc/vulkan/PLAN-hitchless-loading.md): a texture upload made between frames (the viewer updates its textures in idle(), outside display(): most uploads of a login) used to be a
     // submit to the queue and a wait for the GPU, one for each upload, on the render worker. It is now kept (filled into a staging block at once) and recorded into the next frame before anything
-    // draws, one barrier pair a texture. LL_VK_UPLOAD_BATCH=0 brings the old path back.
+    // draws, one barrier pair a texture. RK_VK_UPLOAD_BATCH=0 brings the old path back.
     struct DeferredUpload { Image* mImage; VkImage mHandle; U32 mMip, mLayer, mX, mY, mW, mH, mD; VkDeviceSize mOffset; U32 mBlock; };
     bool mFlushSync = false;                        // <FS> a flush made with a submit and a wait (no frame active): its staging blocks are free the moment the wait ends
     std::vector<Buffer> mDoomedBlocks;              // <FS> the blocks of that flush that are not kept: destroyed right after the wait, not when a frame slot comes round (during a loading screen no frame does)
@@ -666,7 +666,7 @@ private:
     void flushDeferredUploadsNow();                     // outside a frame: records and submits them (before anything else that submits on its own or reads an image back)
     void dropDeferredUploads(VkImage handle);           // the image is being destroyed
 public:
-    // LL_VK_PHASES diagnostics: how many indexed draws changed nothing but the draw command, and how many of those continued the previous draw's index range
+    // RK_VK_PHASES diagnostics: how many indexed draws changed nothing but the draw command, and how many of those continued the previous draw's index range
     struct DrawDiag { U32 mDraws = 0, mUnchanged = 0, mMergeable = 0; };
     DrawDiag takeDrawDiag() { DrawDiag d = mDrawDiag; mDrawDiag = DrawDiag(); return d; }
 private:
@@ -765,7 +765,7 @@ private:
     std::vector<U8> mOccBegun[Context::FRAMES_IN_FLIGHT];
     std::vector<U64> mTsSerial[Context::FRAMES_IN_FLIGHT];
     std::vector<U8> mTsIsEnd[Context::FRAMES_IN_FLIGHT];
-    // LL_VK_FRAGSTATS=1 (with LL_VK_PHASES): the fragment shader invocations of every render pass, against its pixel count (the overdraw a forward renderer would pay for); logged every 600 frames
+    // RK_VK_FRAGSTATS=1 (with RK_VK_PHASES): the fragment shader invocations of every render pass, against its pixel count (the overdraw a forward renderer would pay for); logged every 600 frames
     static constexpr U32 MAX_STAT_QUERIES = 2048;
     VkQueryPool mStatPool[Context::FRAMES_IN_FLIGHT] = {};
     std::vector<U32> mStatTag[Context::FRAMES_IN_FLIGHT];

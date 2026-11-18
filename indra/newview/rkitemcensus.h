@@ -1,6 +1,6 @@
 /**
  * @file rkitemcensus.h
- * @brief LL_VK_ITEMCENSUS=1: time and count the small main thread items of doc/vulkan/overview-brief/REPORT-fable.md (ideas 4, 5, 6, 9, 12)
+ * @brief RK_VK_ITEMCENSUS=1: time and count the small main thread items of doc/vulkan/overview-brief/REPORT-fable.md (ideas 4, 5, 6, 9, 12)
  *
  * The cpu zone line of the log lists only the largest zones, so these small items need a line of their own: every 600 frames one
  * "ItemCensus" line with the ms a frame and the counts a frame of each item. The timing is the processor's time stamp counter
@@ -52,7 +52,7 @@ namespace ItemCensus
 
     inline bool on()
     {
-        static const bool value = []() { const char* e = getenv("LL_VK_ITEMCENSUS"); return e && atoi(e) != 0; }();
+        static const bool value = []() { const char* e = getenv("RK_VK_ITEMCENSUS"); return e && atoi(e) != 0; }();
         return value;
     }
 

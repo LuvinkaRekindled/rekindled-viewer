@@ -352,7 +352,7 @@ public:
     U32 mBinds;
     static U32 sTotalBinds;
     U32 mCensusBinds = 0;                       // <FS> shader cleanup (PLAN-draw-info-removal.md stage 4): the bind() calls since the program was created
-    static void dumpProgramCensus();            // <FS> LL_VK_PROGRAM_CENSUS=1: one log line (tag ProgramCensus) for every loaded program: name, binds, shader level, files, native files
+    static void dumpProgramCensus();            // <FS> RK_VK_PROGRAM_CENSUS=1: one log line (tag ProgramCensus) for every loaded program: name, binds, shader level, files, native files
 
     // this pointer should be set to whichever shader represents this shader's rigged variant
     RKShaderProgram* mRiggedVariant = nullptr;
@@ -382,7 +382,7 @@ public:
 
     const char* getName() const { return mName.c_str(); }
 
-    RKUniCensus::ProgStats mCensus;     // <FS> U0 counters (LL_VK_UNICENSUS=1)
+    RKUniCensus::ProgStats mCensus;     // <FS> U0 counters (RK_VK_UNICENSUS=1)
     void censusProgram();               // registers the program with the census (first call)
     void censusUniform(S32 twin, bool changed);
     const std::string* censusUniformName(size_t index) const;       // the name and class of the program's uniform number index (null when there is none)

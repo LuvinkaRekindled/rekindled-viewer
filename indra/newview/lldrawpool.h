@@ -148,7 +148,7 @@ int rk_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const R
 // rigged shadow records); the new part of the list is sent (kind 27) by rk_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool rk_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
 void rk_frame_palette_flush();
-void rk_rig_census_add(int what, U64 n);          // <FS> P3 census (LL_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see rk_rig_census_log)
+void rk_rig_census_add(int what, U64 n);          // <FS> P3 census (RK_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see rk_rig_census_log)
 void rk_rig_census_log();
 U32 rk_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
 void rk_palette_id_free(U32 id);

@@ -521,7 +521,7 @@ bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const c
     return true;
 }
 
-// an unbind(TT_TEXTURE) did nothing when the unit held another type (mCurrTexType); bindWhite always writes white. LL_VK_TEXUNIT_VERIFY counts the calls where that is a difference.
+// an unbind(TT_TEXTURE) did nothing when the unit held another type (mCurrTexType); bindWhite always writes white. RK_VK_TEXUNIT_VERIFY counts the calls where that is a difference.
 static U64 sWhiteOverOtherType = 0;
 static std::map<std::string, U64> sWhiteOverSites;                 // call site and the type the unit held
 
@@ -1027,7 +1027,7 @@ void LLRender::syncLightState()
         shader->mAlphaLightStamp = mAlphaLightStamp;
     }
 
-    static const bool light_log = getenv("LL_VK_LIGHTLOG") != nullptr;
+    static const bool light_log = getenv("RK_VK_LIGHTLOG") != nullptr;
     if (light_log)
     {   // diagnostic: the light state a program is given (and whether it is uploaded at all): one line when the lit slots differ from the last line of this program, or every 300 calls
         static std::map<const RKShaderProgram*, std::pair<std::string, U32>> last;
@@ -1864,14 +1864,14 @@ void LLRender::end()
     }
 }
 
-// ---- F3.4a: LL_VK_TEXUNIT_VERIFY=1 -----------------------------------------------------------------------------------------------------------------------------------
+// ---- F3.4a: RK_VK_TEXUNIT_VERIFY=1 -----------------------------------------------------------------------------------------------------------------------------------
 // At every immediate-mode (scratch) draw: what would "an untextured batch (no texCoord call since the last flush) samples white from its own draw record" change?
 //   A: untextured batch and unit 0 holds something that is not white  -> today this draw depends on an unbind that did not happen (the rule would change its picture: it would get white)
 //   B: batch with texture coordinates and unit 0 holds white           -> the draw wants white and gets it by an explicit unbind today: needs LLTexUnit::bindWhite() once the unbinds go
 // Reported every 600 frames (tag TexUnitVerify), by the shader that draws and the LLTexUnit function that last wrote unit 0.
 namespace TexUnitVerify
 {
-static const bool sOn = []() { const char* e = getenv("LL_VK_TEXUNIT_VERIFY"); return e && e[0] == '1'; }();
+static const bool sOn = []() { const char* e = getenv("RK_VK_TEXUNIT_VERIFY"); return e && e[0] == '1'; }();
 struct Key { std::string mShader; std::string mWriter; char mKind; };
 static std::map<std::string, U64> sCounts;
 static U64 sBatches = 0, sUntextured = 0, sTextured = 0, sA = 0, sB = 0;
@@ -2498,7 +2498,7 @@ glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)
 namespace RKRenderMatrix
 {
 
-bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); return e && e[0] == '1'; }();
+bool sGuardCheck = []() { const char* e = getenv("RK_VK_MATRIX_GUARD_CHECK"); return e && e[0] == '1'; }();
 
 namespace
 {

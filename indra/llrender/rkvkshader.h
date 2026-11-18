@@ -73,10 +73,10 @@ struct ProgramInfo
     std::string mError;
 };
 
-// LL_VK_DEBUG_SHADERS (environment): the draw state overrides of D:/claude/vk-debug.txt (rkvkworker.cpp)
+// RK_VK_DEBUG_SHADERS (environment): the draw state overrides of D:/claude/vk-debug.txt (rkvkworker.cpp)
 inline bool debugShadersEnabled()
 {
-    static const bool enabled = getenv("LL_VK_DEBUG_SHADERS") != nullptr;
+    static const bool enabled = getenv("RK_VK_DEBUG_SHADERS") != nullptr;
     return enabled;
 }
 

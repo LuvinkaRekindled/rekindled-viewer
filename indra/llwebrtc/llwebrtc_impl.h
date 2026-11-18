@@ -195,9 +195,9 @@ public:
     {
         RTC_CHECK(inner_);
 #if defined(_WIN32)
-        // <FS> Rekindled: LL_RTC_MEDIA_PLAYOUT=0 goes back to libwebrtc's own playout, which opens a
+        // <FS> Rekindled: RK_RTC_MEDIA_PLAYOUT=0 goes back to libwebrtc's own playout, which opens a
         // communications stream (see rkwebrtc_winplayout.h).
-        const char* v = std::getenv("LL_RTC_MEDIA_PLAYOUT");
+        const char* v = std::getenv("RK_RTC_MEDIA_PLAYOUT");
         mUseMedia     = !(v && v[0] == '0');
         RTC_LOG(LS_INFO) << "voice playout through a media stream: " << (mUseMedia ? "on" : "off");
 #endif

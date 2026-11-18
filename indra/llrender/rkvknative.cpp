@@ -130,7 +130,7 @@ U32 std140_bytes(const std::string& type, U32 array_size)
 // ---- the compile cache: a native program's SPIR-V and its reflection, kept on disk between runs ------------------------------------------------
 // Compiling the 196 programs of a run with glslang took 720 to 750 ms on the render thread with the main thread blocked, at every start and at every shader setting change (AUDIT-shaders-2026-11-18.md
 // section 1 items 2 and 3). A program's result depends on its stage files, their includes and the defines; the cache entry records the content hash of every file the build read and is used only when
-// every one of them is the same as now. One file a program under <cache>/native_spirv/, written after a successful compile. LL_VK_NATIVE_CACHE=0 turns it off.
+// every one of them is the same as now. One file a program under <cache>/native_spirv/, written after a successful compile. RK_VK_NATIVE_CACHE=0 turns it off.
 
 constexpr U32 kNativeCacheVersion = 1;
 // (the build of this file: a change of the reflection code in it drops every entry)
@@ -248,7 +248,7 @@ struct CacheReader
 
 bool native_cache_on()
 {
-    static const bool on = !(getenv("LL_VK_NATIVE_CACHE") && getenv("LL_VK_NATIVE_CACHE")[0] == '0');
+    static const bool on = !(getenv("RK_VK_NATIVE_CACHE") && getenv("RK_VK_NATIVE_CACHE")[0] == '0');
     return on;
 }
 
@@ -791,7 +791,7 @@ int debug_key(const std::string& key, int def)
     {
         return it->second.mValue;
     }
-    static const std::string path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return std::string(e && e[0] ? e : "D:/claude/rt-debug.txt"); }();
+    static const std::string path = []() { const char* e = getenv("RK_VK_RT_DEBUG_FILE"); return std::string(e && e[0] ? e : "D:/claude/rt-debug.txt"); }();
     int value = def;
     std::string text;
     if (read_file(path, text))
@@ -853,7 +853,7 @@ bool native_only_family(const std::string& family)
 void load_manifest(Manager& m)
 {
     m.mReady = true;
-    const char* e = getenv("LL_VK_NATIVE_DIR");
+    const char* e = getenv("RK_VK_NATIVE_DIR");
     if (e && e[0])
     {
         m.mRoot = e;

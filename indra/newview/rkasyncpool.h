@@ -183,13 +183,13 @@ public:
         mPendingCount.store((int)mPending.size(), std::memory_order_release);
     }
 
-    // the pool the builders share: LL_VK_BUILDER_THREADS workers (default 2; 0 = every job runs at its wait(), on the thread that waits)
+    // the pool the builders share: RK_VK_BUILDER_THREADS workers (default 2; 0 = every job runs at its wait(), on the thread that waits)
     static RKAsyncPool& shared()
     {
         static RKAsyncPool* pool = []()
         {
             unsigned n = 2;
-            if (const char* e = getenv("LL_VK_BUILDER_THREADS"))
+            if (const char* e = getenv("RK_VK_BUILDER_THREADS"))
             {
                 n = (unsigned)atoi(e);
             }

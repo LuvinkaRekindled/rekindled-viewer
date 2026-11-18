@@ -348,17 +348,17 @@ void setViewport(S32 x, S32 y, S32 w, S32 h)
     b.mViewportSet = true;
 }
 
-// LL_VK_SCISSOR_TRACE=<frame>: the scissor calls of that frame and the next, with the context they went to (a debugging aid for the sub-stream)
+// RK_VK_SCISSOR_TRACE=<frame>: the scissor calls of that frame and the next, with the context they went to (a debugging aid for the sub-stream)
 static std::atomic<U32> gScissorTraceFirst{0};
 
-void setScissorTraceFrame(U32 frame)       // the viewer sets it relative to the first world frame (LL_VK_SCISSOR_TRACE=rel)
+void setScissorTraceFrame(U32 frame)       // the viewer sets it relative to the first world frame (RK_VK_SCISSOR_TRACE=rel)
 {
     gScissorTraceFirst = frame;
 }
 
 static bool scissor_trace_now()
 {
-    static const char* e = getenv("LL_VK_SCISSOR_TRACE");
+    static const char* e = getenv("RK_VK_SCISSOR_TRACE");
     if (!e)
     {
         return false;
@@ -541,7 +541,7 @@ std::string statsReport()
 namespace RKRenderState
 {
 
-bool sGuardCheck = []() { const char* e = getenv("LL_VK_STATE_GUARD_CHECK"); return e && e[0] == '1'; }();
+bool sGuardCheck = []() { const char* e = getenv("RK_VK_STATE_GUARD_CHECK"); return e && e[0] == '1'; }();
 
 namespace
 {
@@ -589,7 +589,7 @@ std::string guardReport()
     return buf;
 }
 
-bool sWhy = []() { const char* e = getenv("LL_VK_STATE_WHY"); return e && e[0] == '1'; }();
+bool sWhy = []() { const char* e = getenv("RK_VK_STATE_WHY"); return e && e[0] == '1'; }();
 bool sInGuard = false;
 
 namespace

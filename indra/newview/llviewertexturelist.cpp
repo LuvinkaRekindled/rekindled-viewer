@@ -80,7 +80,7 @@
 #include "llspatialpartition.h"
 #include "rkviewertexturerecs.h"
 #include <algorithm>
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 namespace
 {
@@ -97,7 +97,7 @@ IdxStats sIdx;
 struct RecStats
 {
     U64 mUsed = 0, mFellBack = 0;               // textures sized from the worker's result / that kept the face loop (no result, stale, volatile faces, another number of faces)
-    // <FS> LL_VK_TEXREC_WHY=1 (diagnostic, 2026-11-15): why a visit kept the face loop, and the visits split by whether the texture has an image of its own (idea 3, GPU texture need for loaded textures)
+    // <FS> RK_VK_TEXREC_WHY=1 (diagnostic, 2026-11-15): why a visit kept the face loop, and the visits split by whether the texture has an image of its own (idea 3, GPU texture need for loaded textures)
     U64 mFbNone = 0, mFbStale = 0, mFbVolatile = 0, mFbCount = 0, mFbBig = 0;
     U64 mVisLoaded = 0, mVisUnloaded = 0, mFacesLoaded = 0, mFacesUnloaded = 0, mUsedLoaded = 0, mUsedUnloaded = 0, mFbLoaded = 0, mFbUnloaded = 0;
 };
@@ -1032,7 +1032,7 @@ void LLViewerTextureList::idxLog()
                              << (F64)(st.mGroupNs - ps.mGroupNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame (" << st.mGroupEvents - ps.mGroupEvents << " events), faceChanged calls "
                              << st.mFaceChangedCalls - ps.mFaceChangedCalls << ", records not sent " << st.mSkipped - ps.mSkipped
                              << " | sized from the worker's result " << sRecStats.mUsed - pv.mUsed << ", kept the face loop " << sRecStats.mFellBack - pv.mFellBack << LL_ENDL;
-        if (getenv("LL_VK_TEXREC_WHY"))
+        if (getenv("RK_VK_TEXREC_WHY"))
         {
             LL_INFOS("VkTexRecWhy") << "in 10 s, kept the face loop because: no result " << sRecStats.mFbNone - pv.mFbNone << ", stale (another face set) " << sRecStats.mFbStale - pv.mFbStale << ", volatile faces " << sRecStats.mFbVolatile - pv.mFbVolatile
                                     << ", another number of faces " << sRecStats.mFbCount - pv.mFbCount << ", over the face limit " << sRecStats.mFbBig - pv.mFbBig
@@ -1373,8 +1373,8 @@ extern bool gCubeSnapshot;
 namespace
 {
 // <FS> native-vk: the result of the face loop of updateImageDecodePriority is kept for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
-// grid (and the bias in one bucket), for LL_VK_TEXSTAMP_AGE seconds (default 8).
-const F32 sStampAge = []{ const char* e = getenv("LL_VK_TEXSTAMP_AGE"); return e ? (F32)atof(e) : 8.f; }();
+// grid (and the bias in one bucket), for RK_VK_TEXSTAMP_AGE seconds (default 8).
+const F32 sStampAge = []{ const char* e = getenv("RK_VK_TEXSTAMP_AGE"); return e ? (F32)atof(e) : 8.f; }();
 struct StampStats
 {
     U64 mHit = 0, mMissNew = 0, mMissFaces = 0, mMissCamera = 0, mMissBias = 0, mMissAge = 0, mVolatile = 0, mOffScreen = 0;
@@ -1467,7 +1467,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
         if (!rec_use) ++sRecStats.mFellBack;
-        static const bool rec_why = getenv("LL_VK_TEXREC_WHY") != nullptr;
+        static const bool rec_why = getenv("RK_VK_TEXREC_WHY") != nullptr;
         if (rec_why)
         {
             const bool loaded = img && img->getTexName() != 0;        // (no image of its own yet: the records name the shared default image)
@@ -2242,7 +2242,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             computed.fetch_add(1, std::memory_order_relaxed);
             return true;
         };
-        static const size_t chunk = getenv("LL_VK_TEX_PRE_CHUNK") ? (size_t)std::max(1, atoi(getenv("LL_VK_TEX_PRE_CHUNK"))) : 8;       // (a chunk with a few rigged faces, a joint walk each, ran long beside the others at 32)
+        static const size_t chunk = getenv("RK_VK_TEX_PRE_CHUNK") ? (size_t)std::max(1, atoi(getenv("RK_VK_TEX_PRE_CHUNK"))) : 8;       // (a chunk with a few rigged faces, a joint walk each, ran long beside the others at 32)
         const size_t chunks = (entries.size() + chunk - 1) / chunk;
         const std::function<void(size_t)> job = [&](size_t c)
         {

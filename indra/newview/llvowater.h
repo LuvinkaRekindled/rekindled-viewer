@@ -69,7 +69,7 @@ public:
     virtual U32 getPartitionType() const;
 
     /*virtual*/ bool isActive() const; // Whether this object needs to do an idleUpdate.
-    // <FS> LL_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
+    // <FS> RK_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
     /*virtual*/ bool usesDistance() const { return false; }
 
     void setIsEdgePatch(const bool edge_patch);

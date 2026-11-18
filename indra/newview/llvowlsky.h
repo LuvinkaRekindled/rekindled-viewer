@@ -43,7 +43,7 @@ public:
 
     /*virtual*/ void         idleUpdate(LLAgent &agent, const F64 &time);
     /*virtual*/ bool         isActive(void) const;
-    // <FS> LL_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
+    // <FS> RK_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
     /*virtual*/ bool usesDistance() const { return false; }
     /*virtual*/ LLDrawable * createDrawable(LLPipeline *pipeline);
     /*virtual*/ bool         updateGeometry(LLDrawable *drawable);

@@ -28,7 +28,7 @@ int requested()
 {
     static const int value = []() {
         char buf[16] = {};
-        return GetEnvironmentVariableA("LL_VK_DLSS_NR", buf, sizeof(buf)) > 0 ? atoi(buf) : 0;
+        return GetEnvironmentVariableA("RK_VK_DLSS_NR", buf, sizeof(buf)) > 0 ? atoi(buf) : 0;
     }();
     return value;
 }
@@ -42,7 +42,7 @@ int featureId()
 
 void probe(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const NVSDK_NGX_FeatureDiscoveryInfo&)
 {
-    LL_WARNS("VkDlssNr") << "LL_VK_DLSS_NR is set but this build has no NGX support" << LL_ENDL;
+    LL_WARNS("VkDlssNr") << "RK_VK_DLSS_NR is set but this build has no NGX support" << LL_ENDL;
 }
 void queryAvailability(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const NVSDK_NGX_FeatureDiscoveryInfo&) {}
 bool available() { return false; }
@@ -194,7 +194,7 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
         return;
     }
     gDevice = device;
-    LL_INFOS("VkDlssNr") << "DLSS-NR probe (LL_VK_DLSS_NR=" << requested() << "): what the NGX core says about feature " << featureId() << " (" << feature_name(featureId()) << ")" << LL_ENDL;
+    LL_INFOS("VkDlssNr") << "DLSS-NR probe (RK_VK_DLSS_NR=" << requested() << "): what the NGX core says about feature " << featureId() << " (" << feature_name(featureId()) << ")" << LL_ENDL;
 
     // 1. the capability parameters: the names the driver's NGX core has for DLSSNR (set when it found a snippet and judged it)
     int available = 0;
@@ -212,9 +212,9 @@ void probe(VkInstance instance, VkPhysicalDevice physical, VkDevice device, NVSD
         log_int(caps, "SuperSamplingDenoising.Available");
         log_int(caps, "FrameGeneration.Available");
 
-        // LL_VK_DLSS_NR_RATIO=1: call the scaling ratio callback with the DLSSOptimalSettingsCallback convention (NVSDK_NGX_Result cb(NVSDK_NGX_Parameter*), inputs and
+        // RK_VK_DLSS_NR_RATIO=1: call the scaling ratio callback with the DLSSOptimalSettingsCallback convention (NVSDK_NGX_Result cb(NVSDK_NGX_Parameter*), inputs and
         // outputs through the parameters). A guess: a wrong convention crashes here, on the CPU, before login. Off unless asked for.
-        if (ratio_cb && GetEnvironmentVariableA("LL_VK_DLSS_NR_RATIO", nullptr, 0) > 0)
+        if (ratio_cb && GetEnvironmentVariableA("RK_VK_DLSS_NR_RATIO", nullptr, 0) > 0)
         {
             NVSDK_NGX_Parameter* p = nullptr;
             if (NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_AllocateParameters(&p)) && p)

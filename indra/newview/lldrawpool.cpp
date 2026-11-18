@@ -583,7 +583,7 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
 RKShadowDrawStats gShadowDrawStats;
 RKGeometryPacketStats gGeometryPacketStats;
 
-// <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch FS_DEFERRED_PACKETS_AB
+// <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch RK_DEFERRED_PACKETS_AB
 // (twin era tools that turned the records off) are gone, and so are the checks that the pull programs exist (they are required: a program that cannot be made ends the shader load); what is left is the worker's packet path.
 // static
 bool LLRenderPass::deferredPacketsEnabled()
@@ -591,7 +591,7 @@ bool LLRenderPass::deferredPacketsEnabled()
     return RKVkBridge::shadowAlphaPacketsAvailable();
 }
 
-// <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
+// <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches RK_VK_RIGGED_PACKETS and RK_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
 bool rk_rigged_packets_enabled()
 {
     return LLRenderPass::deferredPacketsEnabled();
@@ -608,7 +608,7 @@ static struct FramePalettes
     std::unordered_map<const F32*, U32> mOffsets;       // by the palette cache's data pointer (stable for the frame)
     U64 mFlushedFloats = 0;                             // census: floats sent since the last log line
     U64 mRequests = 0, mAdded = 0;
-    // <FS> PLAN-avatars.md rigged draws as rows, P1 (LL_VK_PALARENA: 1 default, 0 = the copies as before, 2 = also compares what the arena holds): the part of the list that fits is written straight into a palette
+    // <FS> PLAN-avatars.md rigged draws as rows, P1 (RK_VK_PALARENA: 1 default, 0 = the copies as before, 2 = also compares what the arena holds): the part of the list that fits is written straight into a palette
     // arena of the renderer (offsets 0 .. its capacity), named to the worker by a kind 39 record, no copy; what does not fit (or a frame with no arena free) goes into mData as before, at offsets after the capacity
     RKVkBridge::PaletteArena mArena;
     bool mArenaOn = false;
@@ -618,7 +618,7 @@ static struct FramePalettes
     U64 mIdleRequests = 0;                              // requests that came in the idle phase while the coming frame's list was prepared (they are refused, not allowed to reset it)
     U32 mDataBase = 0;                                  // the list offset of mData[0]: the arena's capacity when an arena serves the frame, else 0
     U64 mArenaFrames = 0, mArenaFallbackFrames = 0, mArenaOverflows = 0, mArenaVerified = 0, mArenaWrong = 0;
-    // <FS> P1 step 3 (palette ids, LL_VK_PALID: 1 default, 0 = offsets as before): every palette stamped into the frame's list is logged as a pair (its entry's id, its float offset); the pairs go to the worker (kind 40)
+    // <FS> P1 step 3 (palette ids, RK_VK_PALID: 1 default, 0 = offsets as before): every palette stamped into the frame's list is logged as a pair (its entry's id, its float offset); the pairs go to the worker (kind 40)
     // after the data they point into, the worker resolves each to an address once, and the records name a palette by its id
     U32 mPairs[2 * PALETTE_PAIR_CAP];
     std::atomic<U32> mPairCursor{ 0 };
@@ -629,7 +629,7 @@ static std::atomic<U64> sPairOverflows{ 0 };
 
 static int palette_arena_mode()
 {
-    static const int mode = getenv("LL_VK_PALARENA") ? atoi(getenv("LL_VK_PALARENA")) : 1;
+    static const int mode = getenv("RK_VK_PALARENA") ? atoi(getenv("RK_VK_PALARENA")) : 1;
     return mode;
 }
 
@@ -739,7 +739,7 @@ void rk_palette_id_free(U32 id)
     ids.mFree.push_back(index);
 }
 
-// <FS> P3 census (LL_VK_RIGCENSUS=1): where the rigged draws of a frame go. 0-2 the G-buffer's per frame records (own avatar / other avatars / animesh), 3 left out of them (the table draws them), 4 not drawn
+// <FS> P3 census (RK_VK_RIGCENSUS=1): where the rigged draws of a frame go. 0-2 the G-buffer's per frame records (own avatar / other avatars / animesh), 3 left out of them (the table draws them), 4 not drawn
 // (no skin / no palette), 5 fallback to the old path, 6 entries of the cascades' rigged shadow records, 7 builds of those records, 8 transient rigged alpha entries, 9 rigged draw infos in the render maps
 // the cascade jobs push (read from the caster lists)
 static std::atomic<U64> sRigCensus[12];
@@ -749,7 +749,7 @@ static std::atomic<U64> sStaticFallbackReason[16], sStaticFallbackType[64];     
 static std::atomic<U64> sRigGltf[4];       // the rigged glTF draws that went to the old path: all / double sided / with a texture matrix / the glow pass without an emissive array
 static bool rig_census_on()
 {
-    static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;       // (read once: the census is asked about for every rigged draw of every frame)
+    static const bool on = getenv("RK_VK_RIGCENSUS") != nullptr;       // (read once: the census is asked about for every rigged draw of every frame)
     return on;
 }
 void rk_rig_census_add(int what, U64 n)
@@ -989,7 +989,7 @@ bool rk_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     {
         offset = (U32)slot;
         sPalFastRequests.fetch_add(1, std::memory_order_relaxed);
-        static const bool verify = getenv("LL_VK_PALLIST") && atoi(getenv("LL_VK_PALLIST")) == 2;
+        static const bool verify = getenv("RK_VK_PALLIST") && atoi(getenv("RK_VK_PALLIST")) == 2;
         if (verify)
         {
             // compare mode: what the list holds at that offset is this palette, float for float

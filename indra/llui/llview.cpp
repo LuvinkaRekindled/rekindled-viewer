@@ -56,7 +56,7 @@
 #include "lllineeditor.h"
 #include "lltexteditor.h"
 #include "lltextbox.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 static const S32 LINE_HEIGHT = 15;
 
@@ -1298,7 +1298,7 @@ void LLView::draw()
 }
 
 // <FS> a child entirely outside the innermost clip rect (a row of a scrolled list that is not in the visible part, a tab that is scrolled away) is drawn and then discarded by the scissor: nothing
-// of it can be seen. With LL_VK_ITEMCENSUS the time of such draws is counted (UI census slot 10).
+// of it can be seen. With RK_VK_ITEMCENSUS the time of such draws is counted (UI census slot 10).
 // true when the view (its bounding rect when it has one: it may draw outside its rect) has no pixel inside the innermost clip rect
 static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 {
@@ -1319,8 +1319,8 @@ static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 // A view that costs enough to draw is recorded as a segment of draw records (RKVkSubStream on this thread, spliced at once: the stream is what a live draw writes) and, on most frames,
 // the saved records are played again instead of calling draw(). The segment is made self-contained by LLRender::segmentBoundary() before and after (what the producer believes about the
 // worker is sent again). A unit is drawn live when its key changed (rect, clip, scale, matrix, entry render state, epoch), while the mouse is over it, while it holds the keyboard focus or
-// the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and LL_VK_UI_CACHE hz), staggered between the units.
-// LL_VK_UI_CACHE=<mode> [<hz>]: 0 off (default), 1 record only (named units: LL_VK_UI_CACHE_UNITS=a,b: drawn live and recorded every frame, nothing replayed), 2 sliced replay. LL_VK_UI_CACHE_VERIFY=1:
+// the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and RK_VK_UI_CACHE hz), staggered between the units.
+// RK_VK_UI_CACHE=<mode> [<hz>]: 0 off (default), 1 record only (named units: RK_VK_UI_CACHE_UNITS=a,b: drawn live and recorded every frame, nothing replayed), 2 sliced replay. RK_VK_UI_CACHE_VERIFY=1:
 // on a replay frame the live draw is recorded too (not spliced) and compared with the saved bytes.
 #include "rkvksubstream.h"
 #include "rkrendermatrix.h"
@@ -1395,7 +1395,7 @@ const UiCacheCfg& ui_cache_cfg()
     if (!read_env)
     {
         read_env = true;
-        if (const char* e = getenv("LL_VK_UI_CACHE"))
+        if (const char* e = getenv("RK_VK_UI_CACHE"))
         {
             env_set = true;
             float hz = 30.f;
@@ -1406,8 +1406,8 @@ const UiCacheCfg& ui_cache_cfg()
                 if (hz > 0.f) cfg.mHz = hz;
             }
         }
-        cfg.mVerify = getenv("LL_VK_UI_CACHE_VERIFY") && atoi(getenv("LL_VK_UI_CACHE_VERIFY")) != 0;
-        if (const char* u = getenv("LL_VK_UI_CACHE_UNITS"))
+        cfg.mVerify = getenv("RK_VK_UI_CACHE_VERIFY") && atoi(getenv("RK_VK_UI_CACHE_VERIFY")) != 0;
+        if (const char* u = getenv("RK_VK_UI_CACHE_UNITS"))
         {
             std::string list(u);
             size_t at = 0;

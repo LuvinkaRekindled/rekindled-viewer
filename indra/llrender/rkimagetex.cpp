@@ -49,7 +49,7 @@
 #include "llvertexbuffer.h"
 #include "llrendertarget.h"
 #include <unordered_set>
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 extern LL_COMMON_API bool on_main_thread();
 
@@ -1189,8 +1189,8 @@ void RKImageTex::generateTextures(S32 numTextures, U32 *textures)
 }
 
 // <FS> native-vk (blink after load): the number of frames a dropped texture name waits before it is deleted was 3 (the stock value, for the GPU). About 46 draws per run still named a name that had been deleted
-// (a white frame each, counted in VkTexCopy: draw samples of a deleted name), so scene rows and cached draw data can hold a name longer than that. LL_VK_TEX_DELETE_DELAY sets it (default 8, at most 30).
-static const int DELETE_DELAY = []{ const char* e = getenv("LL_VK_TEX_DELETE_DELAY"); const int v = e ? atoi(e) : 8; return v < 3 ? 3 : (v > 30 ? 30 : v); }();
+// (a white frame each, counted in VkTexCopy: draw samples of a deleted name), so scene rows and cached draw data can hold a name longer than that. RK_VK_TEX_DELETE_DELAY sets it (default 8, at most 30).
+static const int DELETE_DELAY = []{ const char* e = getenv("RK_VK_TEX_DELETE_DELAY"); const int v = e ? atoi(e) : 8; return v < 3 ? 3 : (v > 30 ? 30 : v); }();
 static std::vector<U32> sFreeList[31+1];
 
 // static

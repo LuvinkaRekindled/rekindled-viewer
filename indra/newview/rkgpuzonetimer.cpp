@@ -202,15 +202,15 @@ namespace
         const char* mName = nullptr;
         long long mNanos = 0;
         unsigned mCalls = 0;
-        unsigned long long mCycles = 0;     // FS_CPU_ZONES_CPU=1: the thread's own cycles inside the zone (what ran; wall time minus this is time spent blocked or descheduled)
+        unsigned long long mCycles = 0;     // RK_CPU_ZONES_CPU=1: the thread's own cycles inside the zone (what ran; wall time minus this is time spent blocked or descheduled)
         unsigned mCycleCalls = 0;           // ... over this many calls (only zones nested at most three deep are read: one reading costs about 170 ns)
     };
     CpuZone sCpuZones[1024];
     unsigned sCpuZoneCount = 0;
     std::thread::id sCpuMainThread;
     bool sCpuMainThreadKnown = false;
-    const bool sCpuZonesOn = getenv("FS_CPU_ZONES") != nullptr;
-    const bool sCpuCyclesOn = sCpuZonesOn && getenv("FS_CPU_ZONES_CPU") != nullptr;
+    const bool sCpuZonesOn = getenv("RK_CPU_ZONES") != nullptr;
+    const bool sCpuCyclesOn = sCpuZonesOn && getenv("RK_CPU_ZONES_CPU") != nullptr;
     double sCyclesPerNs = 0.0;                  // calibrated once (a short busy loop), only used to turn cycles into milliseconds
     double sCycleReadNs = 0.0;                  // what one QueryThreadCycleTime call costs, measured at the calibration
     unsigned sCpuFrames = 0;
@@ -218,9 +218,9 @@ namespace
     unsigned long long sCpuThreadCyclesFirst = 0;
     int sCpuDepth = 0;
 
-    // LL_VK_CPUPROBE=1 with FS_CPU_ZONES=1: which logical processor the main thread runs on at each frame end (histogram over the window, moves between frames), and the
+    // RK_VK_CPUPROBE=1 with RK_CPU_ZONES=1: which logical processor the main thread runs on at each frame end (histogram over the window, moves between frames), and the
     // clock of every logical processor at the report (CallNtPowerInformation, loaded at run time). A 9950X has two core complexes and SMT pairs on neighbouring numbers.
-    const bool sCoreProbeOn = sCpuZonesOn && getenv("LL_VK_CPUPROBE") != nullptr;
+    const bool sCoreProbeOn = sCpuZonesOn && getenv("RK_VK_CPUPROBE") != nullptr;
     unsigned sCoreHist[64] = {};
     unsigned sCoreMoves = 0;
     DWORD sCoreLast = 0xFFFFFFFFu;
@@ -428,7 +428,7 @@ namespace
     }
 }
 
-// <FS> U0 (doc/vulkan/U-pass-uniforms-design.md): the census of uniform writes, shader binds and texture binds (LL_VK_UNICENSUS=1 with FS_CPU_ZONES=1), per frame over 600 frames
+// <FS> U0 (doc/vulkan/U-pass-uniforms-design.md): the census of uniform writes, shader binds and texture binds (RK_VK_UNICENSUS=1 with RK_CPU_ZONES=1), per frame over 600 frames
 static void uni_census_report(double frames)
 {
     using namespace RKUniCensus;
@@ -677,7 +677,7 @@ void RKCpuZoneScope::frame()
 #if LL_WINDOWS
 #include <mutex>
 #include <dbghelp.h>
-// <FS> the name of the function an address is in (DbgHelp, loaded here the way the hitch watcher does it), for censuses that count by call site (LL_VK_REBUILDCENSUS in LLPipeline::markRebuild)
+// <FS> the name of the function an address is in (DbgHelp, loaded here the way the hitch watcher does it), for censuses that count by call site (RK_VK_REBUILDCENSUS in LLPipeline::markRebuild)
 std::string rk_describe_address(const void* pc)
 {
     typedef BOOL(WINAPI * SymInitializeFn)(HANDLE, PCSTR, BOOL);
@@ -719,7 +719,7 @@ std::string rk_describe_address(const void* pc)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
-// LL_VK_HITCHWATCH=<ms>: where is the main thread when a frame takes seconds?
+// RK_VK_HITCHWATCH=<ms>: where is the main thread when a frame takes seconds?
 //
 // The 2.4 s hitches of 2026-10-26 (frame max 2453.9 and 2361.3 ms, the 0% GPU dips) were blocked time inside whatever zone the main thread was in (idle: audio in one
 // lap, idle: idleNetwork in the next), and the log went quiet for the whole process, so the cause is not a call but a wait. This watcher thread looks at the time of
@@ -962,7 +962,7 @@ namespace
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
-// LL_VK_SAMPLE=<ms>: a sampling profile of the main thread, without administrator rights. Every <ms> (2 is a good value) the thread is suspended for the few microseconds it takes to read where it
+// RK_VK_SAMPLE=<ms>: a sampling profile of the main thread, without administrator rights. Every <ms> (2 is a good value) the thread is suspended for the few microseconds it takes to read where it
 // is (the same capture as the hitch watcher), and every 10 s the functions that held it are logged with their share of the samples ("Sampler" tag). Two windows of a lap (before a turn, after it) show
 // whether the same functions got slower all over (memory or cache: the shares stay, the loop gets longer) or particular ones grew. Needs the pdb next to the executable for names.
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
@@ -1246,12 +1246,12 @@ void HitchWatch::frame()
 {
     static const double threshold = []()
     {
-        const char* e = getenv("LL_VK_HITCHWATCH");
+        const char* e = getenv("RK_VK_HITCHWATCH");
         return e ? atof(e) : 0.0;
     }();
     static const double sample_ms = []()
     {
-        const char* e = getenv("LL_VK_SAMPLE");
+        const char* e = getenv("RK_VK_SAMPLE");
         return e ? atof(e) : 0.0;
     }();
     if (threshold <= 0.0 && sample_ms <= 0.0)
@@ -1275,11 +1275,11 @@ void HitchWatch::frame()
     sHwLastFrame.store(hw_now());
 }
 
-// <FS> LL_VK_GROWTH=1: one line every 10 s from the main loop with what could be growing while the scene is flat (process private bytes, working set, page faults,
+// <FS> RK_VK_GROWTH=1: one line every 10 s from the main loop with what could be growing while the scene is flat (process private bytes, working set, page faults,
 // object and active object counts, vertex buffer bytes). For the late creep in a long still (doc/vulkan/EXPIRY-design.md).
 void rk_growth_probe()
 {
-    static const bool on = getenv("LL_VK_GROWTH") != nullptr;
+    static const bool on = getenv("RK_VK_GROWTH") != nullptr;
     if (!on)
     {
         return;
@@ -1307,7 +1307,7 @@ void rk_growth_probe()
     last_faults = pmc.PageFaultCount;
 }
 
-// <FS> LL_VK_SYNC_LOG: names the functions that wait in RKVkAsync::syncCall
+// <FS> RK_VK_SYNC_LOG: names the functions that wait in RKVkAsync::syncCall
 static const bool sSyncSymbolizerSet = []() { RKVkBridge::setSymbolizer(&rk_describe_address); return true; }();
 
 // <FS> one stack address as text: module+offset (what a pdb reads) and the nearest symbol
@@ -1323,7 +1323,7 @@ std::string rk_describe_frame(const void* pc)
     return llformat("%s+0x%llx  %s", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)pc - (DWORD64)module), rk_describe_address(pc).c_str());
 }
 
-// <FS> the calling thread's stack as text, one frame a line (module+offset and the nearest symbol), for probes that log where something happened (LL_VK_DRAWABLE_TRACE)
+// <FS> the calling thread's stack as text, one frame a line (module+offset and the nearest symbol), for probes that log where something happened (RK_VK_DRAWABLE_TRACE)
 std::string rk_stack_here(int skip, int max_frames)
 {
     void* frames[48] = {};
@@ -1345,7 +1345,7 @@ std::string rk_stack_here(int skip, int max_frames)
 
 // <FS> The faulting thread's stack when an access violation happens (written next to the executable as crash-stack-<pid>.txt, and to the log): the viewer's own crash handler leaves no dump here, and the
 // Windows event only gives a module and an offset. A first-chance handler for the access violation only (C++ exceptions and the SEH the work queue converts are other codes); at most 6 are written.
-// Off with LL_VK_NO_CRASHSTACK=1.
+// Off with RK_VK_NO_CRASHSTACK=1.
 namespace
 {
     LONG CALLBACK rk_crash_stack_handler(EXCEPTION_POINTERS* ep)
@@ -1403,7 +1403,7 @@ namespace
     }
 
     const bool sCrashStackInstalled = []() {
-        if (!getenv("LL_VK_NO_CRASHSTACK"))
+        if (!getenv("RK_VK_NO_CRASHSTACK"))
         {
             AddVectoredExceptionHandler(1, rk_crash_stack_handler);
         }

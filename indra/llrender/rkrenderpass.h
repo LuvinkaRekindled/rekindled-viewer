@@ -13,11 +13,11 @@
  *       ... draws ...
  *   }
  *
- * Counters: with LL_VK_OPSTATS (or LL_VK_PHASES) the VkOps "worker operations" line has a "render targets (producer)" part: binds, nested binds,
+ * Counters: with RK_VK_OPSTATS (or RK_VK_PHASES) the VkOps "worker operations" line has a "render targets (producer)" part: binds, nested binds,
  * flushes, clears (how many directly after their bind, with no draw in between), the deepest nesting, and the bind / clear call sites
  * (file:line, through default arguments like the state guards) per frame.
  *
- * LL_VK_PASS_CHECK=1: the first occurrence per call site is logged (category PassCheck) for: a bindTarget() of a target that is already bound
+ * RK_VK_PASS_CHECK=1: the first occurrence per call site is logged (category PassCheck) for: a bindTarget() of a target that is already bound
  * (it would be in the stack of open passes twice), a bindTarget() of a target without a frame buffer, a flush() of a target that is not the innermost bound
  * one (bad nesting: the chain is not a stack), a flush() without a bind, a clear() of a target that is not the innermost bound one, a target
  * released while bound, and a target still bound at the end of the frame (a missing flush; the message names the bind site).
@@ -51,7 +51,7 @@ void end(LLRenderTarget& target, const char* file, int line);
 void suspend(LLRenderTarget& target, const char* file, int line);       // ends the pass on the target (flush) ...
 void resume(LLRenderTarget& target, const char* file, int line);        // ... and takes it up again (bindTarget): the pass of a caller that a callee has to interrupt
 
-// before the present: LL_VK_PASS_CHECK=1 reports a target that is still bound
+// before the present: RK_VK_PASS_CHECK=1 reports a target that is still bound
 void frameEnd();
 // the VkOps part for the render targets of the producer (counts since the last call, per frame)
 std::string report(size_t frames);

@@ -116,7 +116,7 @@ S32  LLViewerRegion::sLastCameraUpdated = 0;
 S32  LLViewerRegion::sNewObjectCreationThrottle = -1;
 LLViewerRegion::vocache_entry_map_t LLViewerRegion::sRegionCacheCleanup;
 
-// <FS> LL_VK_EXPIRY=4, the object kill stage (doc/vulkan/RESEARCH-after-turn-dgc-mesh.md section 1). Counters, and the entries it killed (only the pointers, to count how many were instantiated again).
+// <FS> RK_VK_EXPIRY=4, the object kill stage (doc/vulkan/RESEARCH-after-turn-dgc-mesh.md section 1). Counters, and the entries it killed (only the pointers, to count how many were instantiated again).
 namespace
 {
     struct RkKillStats
@@ -1834,11 +1834,11 @@ bool LLViewerRegion::isViewerCameraStatic()
     return sLastCameraUpdated < LLViewerOctreeEntryData::getCurrentFrame();
 }
 
-// <FS> LL_VK_EXPIRY=4: the stock rule that forgets what is behind you is off in this tree (LLVOCacheEntry::isAnyVisible answers true), so a turn leaves every object it instantiated (24k -> 48k objects at
+// <FS> RK_VK_EXPIRY=4: the stock rule that forgets what is behind you is off in this tree (LLVOCacheEntry::isAnyVisible answers true), so a turn leaves every object it instantiated (24k -> 48k objects at
 // the plaza, and the cost of walking them stays after the turn). This brings a kill back with the viewer's own relevance model instead of the old radius rule: an object that no camera (world, shadow, probes)
-// has had in view for LL_VK_KILL_AGE_S seconds (default 60, as Released), that is farther than SceneLoadMinRadius, and that nothing needs (not selected, no sound, particles, light, media, no avatar on it) is
+// has had in view for RK_VK_KILL_AGE_S seconds (default 60, as Released), that is farther than SceneLoadMinRadius, and that nothing needs (not selected, no sound, particles, light, media, no avatar on it) is
 // killed through the existing killObject; it comes back from its cache entry by the paced path the stock code uses (NewObjectCreationThrottle). Nothing is killed until the camera has been still for
-// LL_VK_KILL_STILL_S seconds (default 3), so a view that is changing is never thinned out under it. Paced: LL_VK_KILL_LOOK entries looked at (64) and LL_VK_KILL_MAX killed (8) a call.
+// RK_VK_KILL_STILL_S seconds (default 3), so a view that is changing is never thinned out under it. Paced: RK_VK_KILL_LOOK entries looked at (64) and RK_VK_KILL_MAX killed (8) a call.
 static bool rk_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 frame, S64 min_age)
 {
     LLViewerOctreeEntry* octree_entry = entry->getEntry();
@@ -1893,7 +1893,7 @@ void rk_kill_report()
     {
         active += region->getNumOfActiveCachedObjects();
     }
-    LL_INFOS("SceneCensus") << "Kill (LL_VK_EXPIRY=4): " << sRkKill.mCalls << " calls (" << sRkKill.mMovingCalls << " held back while the camera moved), entries looked at " << sRkKill.mLooked << ", stale and free " << sRkKill.mWanted
+    LL_INFOS("SceneCensus") << "Kill (RK_VK_EXPIRY=4): " << sRkKill.mCalls << " calls (" << sRkKill.mMovingCalls << " held back while the camera moved), entries looked at " << sRkKill.mLooked << ", stale and free " << sRkKill.mWanted
         << ", killed " << sRkKill.mKilled << ", made again " << sRkKill.mRecreated << ", killed and not back " << sRkKilled.size() << ", active cached objects now " << active << LL_ENDL;
 }
 
@@ -1920,10 +1920,10 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
     if (LLPipeline::coldMode() >= 4)
     {
         // <FS> the object kill stage (see rk_kill_wanted)
-        static const F32 still_s = getenv("LL_VK_KILL_STILL_S") ? (F32)atof(getenv("LL_VK_KILL_STILL_S")) : 3.f;
-        static const F32 age_s = getenv("LL_VK_KILL_AGE_S") ? (F32)atof(getenv("LL_VK_KILL_AGE_S")) : 60.f;
-        static const size_t look = getenv("LL_VK_KILL_LOOK") ? (size_t)atoi(getenv("LL_VK_KILL_LOOK")) : 64;
-        static const size_t cap = getenv("LL_VK_KILL_MAX") ? (size_t)atoi(getenv("LL_VK_KILL_MAX")) : 8;
+        static const F32 still_s = getenv("RK_VK_KILL_STILL_S") ? (F32)atof(getenv("RK_VK_KILL_STILL_S")) : 3.f;
+        static const F32 age_s = getenv("RK_VK_KILL_AGE_S") ? (F32)atof(getenv("RK_VK_KILL_AGE_S")) : 60.f;
+        static const size_t look = getenv("RK_VK_KILL_LOOK") ? (size_t)atoi(getenv("RK_VK_KILL_LOOK")) : 64;
+        static const size_t cap = getenv("RK_VK_KILL_MAX") ? (size_t)atoi(getenv("RK_VK_KILL_MAX")) : 8;
         static LLVector3 anchor_pos, anchor_at;
         static F64 moved_at = 0.0, fps_at = 0.0;
         static U64 fps_frame = 0;
@@ -3003,7 +3003,7 @@ void LLViewerRegion::decodeBoundingInfo(LLVOCacheEntry* entry)
 
     // <FS> A light reaches far beyond its source: the cull below must see the glow (the radius the lighting pass uses, 1.5 x the light radius), or the light does not exist
     // until its source is in view.
-    static const bool light_bounds = getenv("FS_NO_LIGHT_BOUNDS") == nullptr;      // FS_NO_LIGHT_BOUNDS=1: the cull sees only the source, as before (for A/B runs)
+    static const bool light_bounds = getenv("RK_NO_LIGHT_BOUNDS") == nullptr;      // RK_NO_LIGHT_BOUNDS=1: the cull sees only the source, as before (for A/B runs)
     if (light_bounds && entry->getDP() && entry->getDP()->getBufferSize() > 0)
     {
         const F32 glow = LLViewerObject::extractLightRadius(entry->getDP()) * 1.5f;

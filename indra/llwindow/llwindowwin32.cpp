@@ -41,7 +41,7 @@
 #include "llexception.h"
 #include "llfasttimer.h"
 #include "rkdevicecaps.h"
-#include "rkvkbridge.h"     // <FS> LL_VK_NOGL: the main window is handed to Vulkan
+#include "rkvkbridge.h"     // <FS> RK_VK_NOGL: the main window is handed to Vulkan
 #include "llstring.h"
 #include "lldir.h"
 #include "llsdutil.h"

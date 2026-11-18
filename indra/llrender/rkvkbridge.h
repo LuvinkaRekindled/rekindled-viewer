@@ -3,7 +3,7 @@
  * @brief Vulkan "mirror" mode: OpenGL stays the renderer of record while the llrender classes replay what they do
  *        into the Vulkan backend, which renders the same frame into its own window.
  *
- * Enabled by the environment variable LL_VK_MIRROR=1 in a build made with -DUSE_VULKAN=ON. Everything here is a
+ * Enabled by the environment variable RK_VK_MIRROR=1 in a build made with -DUSE_VULKAN=ON. Everything here is a
  * no-op otherwise. Mirror calls made outside a mirrored frame are ignored (uploads still work), and any failure
  * switches the mirror off without affecting the OpenGL viewer.
  */
@@ -29,7 +29,7 @@ namespace RKVkBridge
     constexpr unsigned kGeoPassTypes = 26;       // (J1 K4: + fullbright shiny, bump, post bump; J1 K6 S4: + grass, which has no rigged variant; J1 K6 B1: + the invisible alpha draws, drawn by the Highlight Transparent view only)
     // true once Vulkan is initialised and the mirror has not been switched off
     bool isReady();
-    // <FS> LL_VK_SYNC_LOG: names an address in the report of the main thread's waits on the worker (the viewer's symbol lookup)
+    // <FS> RK_VK_SYNC_LOG: names an address in the report of the main thread's waits on the worker (the viewer's symbol lookup)
     void setSymbolizer(std::string (*fn)(const void*));
     // video memory as the OS sees this process (what it uses, what it may use before the driver pages allocations out), for the viewer's texture budget; false when no Vulkan device
     bool videoMemory(U64& usage_bytes, U64& budget_bytes);
@@ -51,7 +51,7 @@ namespace RKVkBridge
     void setStartupFailureHandler(void (*handler)());   // <FS> called once, after the user has been told why Vulkan could not start (ensureReady): the app leaves quietly (no generic video driver text, no fatal error flow)
     std::string startupFailureMessage();    // <FS> the message the user was shown when Vulkan could not start (empty while it has not failed); the app leaves its start-up through the normal failure path when it is not empty
 
-    // LL_VK_NOGL: the viewer has no OpenGL context, so the main window is given here (once it exists) and the picture is presented into it
+    // RK_VK_NOGL: the viewer has no OpenGL context, so the main window is given here (once it exists) and the picture is presented into it
     void setMainWindow(void* hwnd);
     // What the viewer needs to know about the graphics device, in plain types (C6): identity strings in the form the viewer parses, the limits its feature
     // code reads (values as a GL driver of this class reports them), the measured memory bandwidth and the ray tracing / DLSS capabilities.
@@ -64,7 +64,7 @@ namespace RKVkBridge
         F32 mMaxAnisotropy = 1.f;
         F32 mMemoryBandwidthGBps = 0.f;     // measured; 0 = not measured
         bool mAccelStruct = false, mRayQuery = false, mRayTracingPipeline = false, mRayTracingUsable = false;
-        bool mRayTracingEnabled = false;    // switched on at device creation (LL_VK_RT=1)
+        bool mRayTracingEnabled = false;    // switched on at device creation (RK_VK_RT=1)
         bool mNeuralRender = false;         // <FS> DLSS-NR (neural rendering) can run (DLSS on, NGX says the feature is available and supported, nvngx_dlssnr.dll next to the viewer)
     };
     // The device the viewer renders with, starting Vulkan if needed. False if Vulkan cannot be started.
@@ -142,7 +142,7 @@ namespace RKVkBridge
     void denoiseReflections(const DenoiseArgs& args);
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
-    // <FS> the value of LL_VK_DLSS_NR (0 unset, 1 probe, 2 evaluate, 3 show), and whether the feature can run (probe said yes, nothing failed since)
+    // <FS> the value of RK_VK_DLSS_NR (0 unset, 1 probe, 2 evaluate, 3 show), and whether the feature can run (probe said yes, nothing failed since)
     S32 neuralRenderMode();
     bool neuralRenderAvailable();
     // the texture mip bias DLSS wants for the current render scale (log2 of it, 0 at 100% or with DLSS off); samplers made afterwards use it
@@ -188,7 +188,7 @@ namespace RKVkBridge
     struct ShadowPacketEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mMatrix, mMatrixId, mMaterial, mTexcoordOffset, mColorOffset, mNormalOffset; };
     // kind 2: a rigged draw: the offset of its weight4 array in the vertex buffer, and its palette (offset in floats from the start of the palettes, joint count)
     // (ray tracing: the vertex range the draw uses, the avatar it belongs to and the identity of its skin, both stable from frame to frame)
-    // ray scene materials (LL_VK_RT_MATERIALS): mMaterial = RtMaterialDef id of the draw (0 = none), mNormalOffset / mTexcoordOffset / mColorOffset = byte offsets of those arrays in the vertex
+    // ray scene materials (RK_VK_RT_MATERIALS): mMaterial = RtMaterialDef id of the draw (0 = none), mNormalOffset / mTexcoordOffset / mColorOffset = byte offsets of those arrays in the vertex
     // buffer (0 = none)
     // <FS> J1 K3b: what a cascade's rigged record needs per draw when no ray scene reads it (a third of ShadowSkinEntry): the buffers, the index range, the model matrix number, the weights' offset, the palette (an id of the
     // frame's shared list) and its joints. The worker expands it to a ShadowSkinEntry (mEntryBytes in the header says which a record carries).
@@ -211,7 +211,7 @@ namespace RKVkBridge
         ALPHA_UV = 262144,          // ray tracing: mUv is valid for a RIGGED entry (a texture animation on a masked rigged draw), as it is for ALPHA_HARD ones (bit 18; bits 12 - 17 are the texture windows, see kAlphaWindowShift)
         ALPHA_OPAQUE = 2048         // kind 1 (raster): a caster with no alpha test (opaque glTF): the fragment shader samples nothing. ALPHA_HARD (64) in the raster pass: texture alpha times vertex alpha against mCutoff, no dithering
     };
-    // texture windows (2026-11-12): a batch of more than four textures is drawn by several entries over the same index range, each naming four (or two, or one: the test width LL_VK_SHADOW_WINDOW) of the textures. The
+    // texture windows (2026-11-12): a batch of more than four textures is drawn by several entries over the same index range, each naming four (or two, or one: the test width RK_VK_SHADOW_WINDOW) of the textures. The
     // window number is in bits 12 - 15 of mFlags (the textures window * width ... of the batch are the entry's mTextures), the width code in bits 16 - 17 (0: four textures, 1: two, 2: one). shadowAlphaPullV.glsl
     // collapses the triangles whose texture index (position.w) is in another window, so each texture is drawn by one entry.
     constexpr U32 kAlphaWindowShift = 12, kAlphaWindowMask = 15u << 12, kAlphaWidthShift = 16, kAlphaWidthMask = 3u << 16;
@@ -263,7 +263,7 @@ namespace RKVkBridge
     // kind 4 (ray tracing only, nothing is drawn): one mesh of an avatar's own body, as the old path draws it. mMode 1: skinned by the palette (15 joints, 12 floats each, after
     // the entries; one weight float per vertex at mWeightOffset picks joint i and i + 1), 2: rigid under mModel (column-major, the joint's world matrix)
     // mAlphaFlags: 0 = opaque, else an alpha masked part (hair, eyelashes, skirt) with the diffuse texture mTexture (GL name, 0 = none), the byte offset of its texcoord0 array and the cutoff: the same as ShadowAlphaFlags, tree style (no vertex alpha)
-    // ray scene materials (LL_VK_RT_MATERIALS): mTexcoordOffset is set for every mesh that has texcoords (mAlphaFlags decides alone whether the alpha test runs), mNormalOffset = byte offset of
+    // ray scene materials (RK_VK_RT_MATERIALS): mTexcoordOffset is set for every mesh that has texcoords (mAlphaFlags decides alone whether the alpha test runs), mNormalOffset = byte offset of
     // the normal array (0 = none), mMaterial = RtMaterialDef id of the mesh (0 = none)
     struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; U32 mAlphaFlags, mTexture, mTexcoordOffset; F32 mCutoff; U32 mNormalOffset, mMaterial; };
     // kinds 6 and 7 (ray tracing only, nothing is drawn): the rigged draws of the MAIN view named to the ray scene every frame, as kind 2 (ShadowSkinEntry) and kind 1 with
@@ -301,7 +301,7 @@ namespace RKVkBridge
     };
     // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps
     //   them in scratch memory of the frame (segments by offset); entries of kind 32 (rigged) and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.
-    // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
+    // S3 G2 / G3 (doc/vulkan/S3-design.md, RK_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
     // The fragments are named by the viewer's dense HANDLE (RKSceneFragment::mGeoHandle, reused only after the release was sent).
     // kind 20 RETAIN_GEO: mFragment = handle, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none),
     //   then mPaletteFloats GL names, the fragment's textures in list order (the worker pins them: permanent bindless slots).
@@ -355,13 +355,13 @@ namespace RKVkBridge
     // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
     // (stage 3: the record carries, after the rows, one CullMapRow for each of them)
     U32 cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset);
-    // stage 7 (LL_VK_CULL_LOD): the worker's own LOD numbers for every row of the table, from its rows and the camera of the main view's record: the distance (the calcDistance formula) and the bit of the slop test of changeLOD(),
+    // stage 7 (RK_VK_CULL_LOD): the worker's own LOD numbers for every row of the table, from its rows and the camera of the main view's record: the distance (the calcDistance formula) and the bit of the slop test of changeLOD(),
     // published as a list for the viewer to read; the viewer compares them with its own groups' (a compare for now)
     // stage 8b: the exact derived set of the main view (the slots whose groups the worker's derive lists, occlusion included, the bridges' groups by the marked list) as a bit set by slot, with the frame of its record: the
     // visible stamps follow it (a compare first)
     void lodListPublish(U32 frame, U32 table_size, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
     U32 lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
-    // stage 8 (the viewer's consumers, LL_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
+    // stage 8 (the viewer's consumers, RK_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
     // of the late set's rows (one each, in slot order) with their slots. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
     // The list is immutable once published: the reader holds the pointer, nothing is copied.
     // (The alpha groups are not in it: a list made from the worker's table copy is one to three frames old and misses the frames' own changes; the viewer makes the main view's alpha lists itself, from the alpha set, rk_alpha_set_lists.)
@@ -373,7 +373,7 @@ namespace RKVkBridge
     struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mAlphaDirty, mKept; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
-    // stage 10a (LL_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner
+    // stage 10a (RK_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner
     // filters by its own render types) for the planes it names, under an id of its own; the worker answers when its rows are up to date (a few frames later); the owner reads the newest answer for its id and uses it only when the planes it
     // has now are the planes it asked with (mParams) and the answer is not too old (mFrame is the viewer's frame of the request). viewRequest sends kind 43 and returns false when nothing can be sent.
     struct ViewSet { U32 mId = 0, mFrame = 0, mTable = 0; CullParams mParams; std::vector<U32> mKept; };
@@ -381,21 +381,21 @@ namespace RKVkBridge
     std::shared_ptr<const ViewSet> viewSetRead(U32 id);
     void viewSetPublish(std::shared_ptr<const ViewSet> set);        // (worker)
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
-    // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
+    // ---- ray query shadows (RK_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.
     U32 rtShadowMode();
     // live switches (rt-debug.txt gate=, bodyname=), 1 by default: do not trace avatars still loading and masked casters whose texture has no data; name the body meshes of the last frames again
     bool rtLoadingGates();
     bool rtMaterialsAvailable();       // ray tracing is on and has the material table (the traced glossy mirror and the traced water reflections can run: the FSVkMirrorQuality (above Off) / FSVkRTWater settings ask for them)
-    S32 rtGlossyReflections();      // rt-debug.txt glossyrt=N (needs LL_VK_RT_MATERIALS=1): ray traced reflections on glossy surfaces of the lighting pass
-    S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs LL_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
+    S32 rtGlossyReflections();      // rt-debug.txt glossyrt=N (needs RK_VK_RT_MATERIALS=1): ray traced reflections on glossy surfaces of the lighting pass
+    S32 rtWaterReflections();      // rt-debug.txt waterrt=1 (needs RK_VK_RT_MATERIALS=1): the water traces its reflection into the ray scene
     S32 rtHitRays();               // rt-debug.txt hitrays=N (-1 = not set): shadow rays per local light at a traced hit
     S32 rtHitQuality();            // rt-debug.txt hitq=N: how a hit of the traced glossy mirror is lit (0 flat diffuse, 1 the main pass lighting at the hit)
     S32 rtSnapTest();              // rt-debug.txt snaptest=N (0 = not set): every change of N above 0 takes a snapshot as the exit does
     S32 rtSunSamples();            // rt-debug.txt sunsamples=N (0 = not set: RenderRTShadowSamples decides), a same-lap cost A/B of the sun rays per pixel
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all
-    S32 rtEarly();                 // rt-debug.txt rtearly=0/1/3 (default -1: the environment variable LL_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
+    S32 rtEarly();                 // rt-debug.txt rtearly=0/1/3 (default -1: the environment variable RK_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
     void nativeRtSession(bool on);   // <FS> whether this session's stock programs carry ray query code (the global define RK_RT_SHADOWS), pushed with the global defines (rkvknative.h)
     void nativeGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines);     // <FS> the viewer's global shader defines (rkvknative.h), pushed each time the viewer's shaders are set up (main thread)
     S32 nativeKey(const char* key, S32 def);     // <FS> a live key of rt-debug.txt (native shaders, rkvknative.h): `key=N`, or 'def' when the line is missing; any thread
@@ -410,7 +410,7 @@ namespace RKVkBridge
     U32 rtSkinPeriod(float distance);      // viewer frames between two poses the ray scene takes of an avatar this far from the eye (1 when ray tracing is off)
     // Builds the scene the shadow passes of this frame named (their casters) for the camera view: bottom-level structures as the budget allows, then the top-level structure in
     // eye space. Call before the lighting that samples the sun shadow. view: the camera's view matrix, column-major.
-    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; U32 mSnapshot = 0; U32 mPhase = 0; U32 mAsync = 0; };       // (mPhase: 0 the whole call, 1 skin + builds + top level with no barrier after them, 2 only that barrier: LL_VK_RT_EARLY, doc/vulkan/PLAN-async-compute.md; mAsync: phase 1 on the compute queue, E2, LL_VK_RT_EARLY=3)       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in; mSnapshot: a render of a snapshot, where the avatars' structures are built again and not refitted, see rkvkrt.cpp)
+    struct RtSceneArgs { F32 mView[16] = {}; F32 mDistanceScale = 1.f; U32 mSnapshot = 0; U32 mPhase = 0; U32 mAsync = 0; };       // (mPhase: 0 the whole call, 1 skin + builds + top level with no barrier after them, 2 only that barrier: RK_VK_RT_EARLY, doc/vulkan/PLAN-async-compute.md; mAsync: phase 1 on the compute queue, E2, RK_VK_RT_EARLY=3)       // (mDistanceScale: what the far avatar rules multiply a distance by, less than 1 when the camera zooms in; mSnapshot: a render of a snapshot, where the avatars' structures are built again and not refitted, see rkvkrt.cpp)
     void rtScene(const RtSceneArgs& args);
     // the device can read buffers by address and the mirror is running
     bool shadowPacketsAvailable();
@@ -422,7 +422,7 @@ namespace RKVkBridge
     void pipelineBuilds(U64& pending, U64& total);
     // blob: mEntries ShadowPacketEntry, then mMatrices * 16 floats
     void shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes);
-    // <FS> PLAN-avatars.md, rigged draws as rows, P1 (LL_VK_PALARENA): the frame's palettes are written by the viewer straight into memory the renderer owns (a host visible, mapped buffer with a device address),
+    // <FS> PLAN-avatars.md, rigged draws as rows, P1 (RK_VK_PALARENA): the frame's palettes are written by the viewer straight into memory the renderer owns (a host visible, mapped buffer with a device address),
     // not copied into the frame list and then twice more (kind 27: the record, the worker's scratch). paletteArenaAcquire gives the arena of a viewer frame (false: none is free, the old copies are used);
     // a kind 39 record (mPass = the viewer frame, mEntries = the arena index, mFragment = the first float, mPaletteFloats = how many) names a written part as a segment of the frame's list; the renderer frees
     // an arena frameCount() + 3 renderer frames after the last record that named it (the ring rule of the palette scratch: the ray scene reads palettes up to two frames later).

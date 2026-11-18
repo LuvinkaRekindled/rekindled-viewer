@@ -62,7 +62,7 @@ static void touch_default_probe(LLReflectionMap* probe)
     }
 }
 
-// <FS> the hero probe census (LL_VK_CPUPROBE=1, in the CpuZones line): is a mirror picked, how far, is it worn, does the probe render or does something skip it
+// <FS> the hero probe census (RK_VK_CPUPROBE=1, in the CpuZones line): is a mirror picked, how far, is it worn, does the probe render or does something skip it
 namespace
 {
     struct HeroCensus
@@ -353,7 +353,7 @@ void LLHeroProbeManager::renderProbes()
     if (!LLPipeline::RenderMirrors || !LLPipeline::sReflectionProbesEnabled || gTeleportDisplay ||
         LLStartUp::getStartupState() < STATE_STARTED)
     {
-        // <FS> which of the four said no (LL_VK_CPUPROBE=1, the hero probe census in the CpuZones line)
+        // <FS> which of the four said no (RK_VK_CPUPROBE=1, the hero probe census in the CpuZones line)
         if (!LLPipeline::RenderMirrors) { ++sHero.mSkipMirrorsOff; }
         else if (!LLPipeline::sReflectionProbesEnabled) { ++sHero.mSkipProbesOff; }
         else { ++sHero.mSkipState; }
@@ -580,13 +580,13 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
 bool rk_mirror_planar()
 {
-    // on by default since 2026-11-11 (the user: "looks good"); LL_VK_MIRROR_PLANAR=0 goes back to the cube faces, whose code stays for as long as the planar mirror has not proven itself
-    static const bool on = []() { const char* e = getenv("LL_VK_MIRROR_PLANAR"); return !e || atoi(e) != 0; }();
+    // on by default since 2026-11-11 (the user: "looks good"); RK_VK_MIRROR_PLANAR=0 goes back to the cube faces, whose code stays for as long as the planar mirror has not proven itself
+    static const bool on = []() { const char* e = getenv("RK_VK_MIRROR_PLANAR"); return !e || atoi(e) != 0; }();
     return on;
 }
 
 // <FS> the planar mirror, step 1 (doc/vulkan/PLAN-planar-mirror.md): the world seen from the viewer's camera reflected across the mirror's plane, at the main view's size, into mMirrorViewRT.
-// The glass reads it (heroMipCount < 0); the cube faces are the fallback (LL_VK_MIRROR_PLANAR=0)
+// The glass reads it (heroMipCount < 0); the cube faces are the fallback (RK_VK_MIRROR_PLANAR=0)
 void LLHeroProbeManager::updateMirrorView(bool is_dynamic, F32 near_clip)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;

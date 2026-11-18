@@ -32,7 +32,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
 {
     if (RKVkDlssNr::requested() > 0)
     {
-        LL_WARNS("VkNgx") << "LL_VK_DLSS_NR is set but this build has no NGX support (DLSS-NR is a local build option: REKINDLED_LOCAL_NR)" << LL_ENDL;
+        LL_WARNS("VkNgx") << "RK_VK_DLSS_NR is set but this build has no NGX support (DLSS-NR is a local build option: REKINDLED_LOCAL_NR)" << LL_ENDL;
     }
     return false;
 }
@@ -185,7 +185,7 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
         NVSDK_NGX_VULKAN_Shutdown1(device);
         return false;
     }
-    // DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): whether the feature is usable here (the capability object is owned by NGX); the probe logs everything the core says about feature 18 when LL_VK_DLSS_NR is set
+    // DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): whether the feature is usable here (the capability object is owned by NGX); the probe logs everything the core says about feature 18 when RK_VK_DLSS_NR is set
     RKVkDlssNr::queryAvailability(instance, physical, device, capabilities, discovery_info(NVSDK_NGX_Feature_SuperSampling));
     if (RKVkDlssNr::requested() > 0)
     {

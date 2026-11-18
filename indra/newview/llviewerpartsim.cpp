@@ -46,7 +46,7 @@
 #include "llviewertexture.h"
 #include "llvertexbuffer.h"
 #include "llvopartgroup.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 const F32 PART_SIM_BOX_SIDE = 16.f;
 
@@ -766,7 +766,7 @@ static struct PartSimCensus
     U64 mFollowSrc = 0, mWind = 0, mTargetPos = 0, mTargetLinear = 0, mBounce = 0, mCallback = 0, mRibbon = 0, mFollowVel = 0, mInterpColor = 0, mInterpScale = 0, mEmissive = 0;
     U64 mAnalytic = 0, mAnalyticSrc = 0, mParented = 0, mAgeSum = 0;
     U64 mMaxAgeMs = 0;
-    // closed form against the stepped state (LL_VK_PARTSIM_COMPARE=1): the largest differences of the window
+    // closed form against the stepped state (RK_VK_PARTSIM_COMPARE=1): the largest differences of the window
     U64 mCmpN = 0, mCmpPosOver = 0;
     F32 mCmpPos = 0.f, mCmpVel = 0.f, mCmpColor = 0.f, mCmpScale = 0.f, mCmpGlow = 0.f, mCmpPosAge = 0.f;
     // by law (free, follow source, target linear, target position, bounce): steps compared, largest and root mean square position difference
@@ -778,7 +778,7 @@ static struct PartSimCensus
 
 static bool rk_partsim_compare_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_PARTSIM_COMPARE"); return v && atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("RK_VK_PARTSIM_COMPARE"); return v && atoi(v) != 0; }();
     return on;
 }
 
@@ -1223,13 +1223,13 @@ bool LLViewerPartSim::shouldAddPart()
     return true;
 }
 
-// <FS> GPU particles stage 2: the particles without per-frame input are kept as records (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SIM=0 steps them; needs the rows of stage 1, LL_VK_GPU_PARTICLES)
+// <FS> GPU particles stage 2: the particles without per-frame input are kept as records (default on since 2026-11-02; RK_VK_GPU_PARTICLE_SIM=0 steps them; needs the rows of stage 1, RK_VK_GPU_PARTICLES)
 static bool rk_partsim_records_on()
 {
     static const bool on = []()
     {
-        const char* rows = getenv("LL_VK_GPU_PARTICLES");
-        const char* sim = getenv("LL_VK_GPU_PARTICLE_SIM");
+        const char* rows = getenv("RK_VK_GPU_PARTICLES");
+        const char* sim = getenv("RK_VK_GPU_PARTICLE_SIM");
         return (!rows || atoi(rows) != 0) && (!sim || atoi(sim) != 0);
     }();
     return on;

@@ -15,7 +15,7 @@
 #include <deque>
 #include <mutex>
 #include <unordered_map>
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 namespace
 {

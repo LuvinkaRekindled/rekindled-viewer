@@ -33,7 +33,7 @@ namespace RKVkUpscale
         float mFrameTimeMs = 16.6f;                     // the time since the last frame
     };
 
-    // an upscaler is wanted at all (LL_VK_DLSS is set by the FSVkDLSS setting: the name is a left over, it is the upscaler switch)
+    // an upscaler is wanted at all (RK_VK_DLSS is set by the FSVkDLSS setting: the name is a left over, it is the upscaler switch)
     bool requested();
 
     // before the instance / device are created: what the backend wants on top of ours
@@ -52,7 +52,7 @@ namespace RKVkUpscale
     bool evaluate(VkCommandBuffer cmd, const Params& p);
 
     // the mip bias for filtered texture lookups at the current render scale (log2 of the scale; FSR asks for one more stop when it upscales).
-    // LL_VK_DLSS_LODBIAS overrides it, LL_VK_DLSS_SCALE gives the start scale
+    // RK_VK_DLSS_LODBIAS overrides it, RK_VK_DLSS_SCALE gives the start scale
     float lodBias();
     void setLodBias(float bias);
 

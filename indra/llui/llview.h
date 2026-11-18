@@ -679,7 +679,7 @@ public:
     static bool sDebugCamera;
 
     static bool sIsRectDirty;
-    // <FS> profiling hook (FS_CPU_ZONES): called before and after the draw() of the views near the top of the tree
+    // <FS> profiling hook (RK_CPU_ZONES): called before and after the draw() of the views near the top of the tree
     static void (*sDrawHook)(const LLView* view, bool begin);
     static LLRect sDirtyRect;
 

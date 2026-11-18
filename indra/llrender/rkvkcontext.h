@@ -56,9 +56,9 @@ extern const char* gDebugProgram;
 extern bool gDeviceLost;
 
 // Vulkan entry points (loaded by Context::init)
-#define LL_VK_GLOBAL_FN(name) extern PFN_##name name;
-#define LL_VK_INSTANCE_FN(name) extern PFN_##name name;
-#define LL_VK_DEVICE_FN(name) extern PFN_##name name;
+#define RK_VK_GLOBAL_FN(name) extern PFN_##name name;
+#define RK_VK_INSTANCE_FN(name) extern PFN_##name name;
+#define RK_VK_DEVICE_FN(name) extern PFN_##name name;
 #include "rkvkfunctions.inl"
 extern PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
 
@@ -110,7 +110,7 @@ struct Capabilities
     U32 mTransferQueues = 0;
 
     // C6: ray tracing. mExt* = the device offers the extension, the rest = the device says the feature works. Nothing here is switched on at device creation
-    // unless ray tracing was asked for (LL_VK_RT=1): mEnabled tells whether the extensions and features are on the device that was created.
+    // unless ray tracing was asked for (RK_VK_RT=1): mEnabled tells whether the extensions and features are on the device that was created.
     struct RayTracing
     {
         bool mExtAccel = false, mExtDeferredHost = false, mExtRayQuery = false, mExtPipeline = false, mExtPositionFetch = false, mExtMaintenance1 = false;
@@ -218,14 +218,14 @@ struct StagingAlloc
 class Context
 {
 public:
-    // The most frame slots there can be (array bounds). How many are used: frameCount(), 3 unless LL_VK_FRAMES says otherwise (2..6). Every viewer frame uses two
+    // The most frame slots there can be (array bounds). How many are used: frameCount(), 3 unless RK_VK_FRAMES says otherwise (2..6). Every viewer frame uses two
     // slots (the frame and the off-screen frame after its present), so with 3 the thread that records them can only be about 1.5 viewer frames ahead of the GPU.
     static const U32 FRAMES_IN_FLIGHT = 6;
     static U32 frameCount()
     {
         static const U32 count = []() {
             char buf[16] = {};
-            const U32 n = GetEnvironmentVariableA("LL_VK_FRAMES", buf, sizeof(buf)) > 0 ? (U32)atoi(buf) : 3;
+            const U32 n = GetEnvironmentVariableA("RK_VK_FRAMES", buf, sizeof(buf)) > 0 ? (U32)atoi(buf) : 3;
             return n < 2 ? 2u : (n > FRAMES_IN_FLIGHT ? FRAMES_IN_FLIGHT : n);
         }();
         return count;
@@ -241,17 +241,17 @@ public:
     void shutdown();
     bool isReady() const { return mReady; }
 
-    // ---- LL_VK_PHASES: GPU time by render pass ----
+    // ---- RK_VK_PHASES: GPU time by render pass ----
     // A timestamp is written when each render pass begins; the time up to the next one is charged to that pass's tag. Read back when the frame slot is reused.
     static const U32 MAX_GPU_STAMPS = 4096;
-    // A stamp tag with this bit is a DRAW stamp (LL_VK_DRAW_STAMPS, small passes such as avatar impostors): written after the draw it describes, it does not change which pass the time belongs to.
+    // A stamp tag with this bit is a DRAW stamp (RK_VK_DRAW_STAMPS, small passes such as avatar impostors): written after the draw it describes, it does not change which pass the time belongs to.
     // When a frame hangs, the first draw stamp that never completed names the draw the GPU is stuck in.
     static const U32 STAMP_DRAW = 0x80000000u;
     static U32 stampTag(const std::string& name);       // the number standing for a pass description (0 is "start of frame")
     static U32 drawStampTag(const std::string& text);   // the same for a draw description, with STAMP_DRAW set (looked up by hash; a full table gives a generic tag)
     static std::string stampTagName(U32 tag);
     void gpuStamp(U32 tag);
-    void (*mStampHook)(U32 tag) = nullptr;      // LL_VK_FRAGSTATS: called for every non-draw stamp (the renderer's statistics query changes its tag with the time table's)
+    void (*mStampHook)(U32 tag) = nullptr;      // RK_VK_FRAGSTATS: called for every non-draw stamp (the renderer's statistics query changes its tag with the time table's)
     void drawCheckpoint(U32 tag);
     void checkpointOnly(U32 tag);       // an NV checkpoint named by a stamp tag, without a timestamp (work that is not a pass: uploads, copies)
     void serialCheckpoint(U64 serial);  // a checkpoint named by a draw's serial number (bit 62 set): see Renderer::noteDraw
@@ -282,7 +282,7 @@ public:
     std::mutex mDeferredNextMutex;
     std::vector<std::function<void()>> mDeferredNext;      // given up while no frame is being recorded: goes with the next frame (see destroyLater)
     std::atomic<U64> mDeferredNextBytes{ 0 };              // <FS> the bytes of the buffers in mDeferredNext (a destroy of a buffer says its size): a loading screen shows no frame for seconds and this list only empties when one begins
-    std::atomic<bool> mDrainWanted{ false };               // <FS> mDeferredNext holds more than LL_VK_DEFER_DRAIN_MB (default 512): drained at the end of the next immediate submit (drainDeferredNext)
+    std::atomic<bool> mDrainWanted{ false };               // <FS> mDeferredNext holds more than RK_VK_DEFER_DRAIN_MB (default 512): drained at the end of the next immediate submit (drainDeferredNext)
     void drainDeferredNext();
     std::vector<DedicatedBuffer> mDedicated;
     std::string describeDedicated(unsigned long long at);
@@ -309,7 +309,7 @@ public:
     }
     static unsigned flightThread();
     void dumpFlight(unsigned count, const char* why);
-    std::string describeBinding(U64 handle, bool buffer = false) const;      // LL_VK_ADDR_LOG: where the memory of an image (VkImage handle) is
+    std::string describeBinding(U64 handle, bool buffer = false) const;      // RK_VK_ADDR_LOG: where the memory of an image (VkImage handle) is
     void setSlotDescriber(std::function<std::string(U32)> fn) { mSlotDescriber = std::move(fn); }
     std::function<std::string(U32)> mSlotDescriber;
     std::function<std::string()> mBindlessAudit;
@@ -397,13 +397,13 @@ public:
 
     // Records into a one-off command buffer, submits it and waits. For start-up work and rare uploads only.
     bool immediateSubmit(const std::function<void(VkCommandBuffer)>& record);
-    void arenaPrepareTick();    // once a frame on the render worker: finished fills make their blocks ready, and a spare host block is made and filled ahead of need (LL_VK_HOST_BLOCK_GATE)
+    void arenaPrepareTick();    // once a frame on the render worker: finished fills make their blocks ready, and a spare host block is made and filled ahead of need (RK_VK_HOST_BLOCK_GATE)
 
     // Submits what the current frame has recorded so far, waits for the GPU, and carries on recording into the same
     // frame (same slot, same command buffer, swapchain semaphores untouched). Lets a readback see the frame's results.
     bool flushFrameAndWait();
 
-    // <FS> E2 (doc/vulkan/PLAN-async-compute.md, LL_VK_RT_EARLY=3): the ray scene work on the compute queue. A semaphore wait holds a whole submission, so the frame's graphics commands are cut into
+    // <FS> E2 (doc/vulkan/PLAN-async-compute.md, RK_VK_RT_EARLY=3): the ray scene work on the compute queue. A semaphore wait holds a whole submission, so the frame's graphics commands are cut into
     // command buffers at the points where the queues meet. asyncOn() is true when the device has the compute queue and the timeline semaphore and the switch asked for it.
     bool asyncOn() const { return mAsyncOn; }
     // true while the frame being recorded has had a part submitted already (splitFrame: the ray scene built on the compute queue): that part is on the GPU and reads the frame slot's handle map
@@ -431,7 +431,7 @@ private:
         VkFence mFence = VK_NULL_HANDLE;
         VkSemaphore mAcquire = VK_NULL_HANDLE;
         bool mSubmitted = false;
-        VkQueryPool mTsPool = VK_NULL_HANDLE;   // timestamps: 0 the start and 1 the end of this frame's command buffer, then one per render pass (LL_VK_PHASES)
+        VkQueryPool mTsPool = VK_NULL_HANDLE;   // timestamps: 0 the start and 1 the end of this frame's command buffer, then one per render pass (RK_VK_PHASES)
         bool mTsPending = false;                // the end timestamp was written and has not been read yet
         bool mOffscreen = false;                // the off-screen frame the mirror opens after the present (not the frame that is presented)
         std::vector<U32> mStampTags;            // what each per-pass timestamp stands for (see Context::stampTag)
@@ -450,7 +450,7 @@ private:
     bool selfTest();
     void measureBandwidth();            // C6: device-local copy throughput into mCaps.mMemoryBandwidthGBps (start-up, single threaded)
     void destroyFrameResources(Frame& f);
-    void reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT>& addresses);     // LL_VK_ADDR_LOG: what held the fault page and when it was given up
+    void reportAddressHistory(const std::vector<VkDeviceFaultAddressInfoEXT>& addresses);     // RK_VK_ADDR_LOG: what held the fault page and when it was given up
 
     GpuPassStats mPassStats;
     bool mNextOffscreen = false;
@@ -503,7 +503,7 @@ private:
         U64 mIdleSince = 0;                 // the frame it went into the pool
         U64 mUsed = 0;                      // bytes allocated in it (the placement takes the fullest block that fits; under mArenaMutex)
         U64 mEmptyFrame = 0;                // the frame its last allocation was freed (an empty regular block is given back after a while, see arenaTrimPool)
-        bool mReady = true;                 // false while the GPU has not yet written the whole block once (host blocks with LL_VK_HOST_BLOCK_GATE: see arenaStartReadyFill); nothing is placed in it until then
+        bool mReady = true;                 // false while the GPU has not yet written the whole block once (host blocks with RK_VK_HOST_BLOCK_GATE: see arenaStartReadyFill); nothing is placed in it until then
         VkFence mReadyFence = VK_NULL_HANDLE;
         VkCommandPool mReadyPool = VK_NULL_HANDLE;
     };
@@ -523,7 +523,7 @@ private:
     ArenaStats mArenaCounters;
 };
 
-// How the swapchain presents (setting FSVkPresentMode with the Vertical Sync preference; the environment variable LL_VK_PRESENT overrides both).
+// How the swapchain presents (setting FSVkPresentMode with the Vertical Sync preference; the environment variable RK_VK_PRESENT overrides both).
 // mode: 0 follow the Vertical Sync preference (on: FIFO, off: IMMEDIATE), 1 vsync (FIFO), 2 uncapped (IMMEDIATE, can tear), 3 uncapped without tearing (MAILBOX).
 // Takes effect at once: the swapchain is recreated at the start of the next frame.
 void setPresentPreference(int mode, bool vsync_on);
@@ -568,7 +568,7 @@ private:
     bool mPresentOutOfDate = false;
 };
 
-// LL_VK_PHASES statistics: image barriers recorded, graphics pipelines built (and how long the driver took)
+// RK_VK_PHASES statistics: image barriers recorded, graphics pipelines built (and how long the driver took)
 struct SyncStats
 {
     std::atomic<U64> mImageBarriers{ 0 };

@@ -313,7 +313,7 @@ void LLSpatialGroup::validate()
 #endif
 }
 
-// <FS> LL_VK_LEAVECENSUS=1: for the drawables of avatar bridge groups, how often updateInGroup keeps them and why it does not (the centre is outside the node, or the node is too small for them),
+// <FS> RK_VK_LEAVECENSUS=1: for the drawables of avatar bridge groups, how often updateInGroup keeps them and why it does not (the centre is outside the node, or the node is too small for them),
 // by what they are (rigged, flexible, light, other). Reported with the scene census (rk_leave_census_report, every 600 frames).
 namespace
 {
@@ -327,7 +327,7 @@ namespace
 
 static void rk_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool inside, bool fits, bool stayed)
 {
-    static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
+    static const bool on = getenv("RK_VK_LEAVECENSUS") != nullptr;
     if (!on || !group->getSpatialPartition() || group->getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_AVATAR)
     {
         return;
@@ -355,7 +355,7 @@ static void rk_leave_census(LLSpatialGroup* group, LLDrawable* drawablep, bool i
 
 void rk_leave_census_report(double frames)
 {
-    static const bool on = getenv("LL_VK_LEAVECENSUS") != nullptr;
+    static const bool on = getenv("RK_VK_LEAVECENSUS") != nullptr;
     if (!on)
     {
         return;
@@ -380,12 +380,12 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 
     OctreeNode* parent = mOctreeNode->getOctParent();
 
-    // <FS> FSFlexibleStayInGroup (default on; LL_VK_FLEXI_STAY=0 also turns it off, for A/B laps). A flexible prim's extents change every update, so its bin radius crosses the "fits in this node"
+    // <FS> FSFlexibleStayInGroup (default on; RK_VK_FLEXI_STAY=0 also turns it off, for A/B laps). A flexible prim's extents change every update, so its bin radius crosses the "fits in this node"
     // threshold back and forth and the prim was taken out of its group and put in another again and again (lap rqf: ~8 attachment moves a frame left their group, each one dirtying two groups for a
     // full rebuild: ~10 avatar groups a frame; with the change laps abA/abB: rebuildPriorityGroups 0.78 -> 0.28 ms, loop -0.9 ms). The group's extents are worked out from what is in it (unbound),
     // so culling does not depend on the node a prim sits in: a flexible prim stays while its centre is inside the node.
     static LLCachedControl<bool> flexi_stay_setting(gSavedSettings, "FSFlexibleStayInGroup", true);
-    static const bool flexi_stay_env = !getenv("LL_VK_FLEXI_STAY") || getenv("LL_VK_FLEXI_STAY")[0] != '0';
+    static const bool flexi_stay_env = !getenv("RK_VK_FLEXI_STAY") || getenv("RK_VK_FLEXI_STAY")[0] != '0';
     bool stay_flexible = false;
     if (flexi_stay_setting && flexi_stay_env)
     {
@@ -927,7 +927,7 @@ F32 LLSpatialGroup::getUpdateUrgency() const
     }
 }
 
-// <FS> stage 8e (LL_VK_DIST): the distance of the group's object bounds centre to the camera, with the ramp calcDistance puts under 16 m (the alpha branch of calcDistance does not change it: only the depth and the dirty state
+// <FS> stage 8e (RK_VK_DIST): the distance of the group's object bounds centre to the camera, with the ramp calcDistance puts under 16 m (the alpha branch of calcDistance does not change it: only the depth and the dirty state
 // are made there). Without the switch it is the row's, as before.
 F32 LLSpatialGroup::distanceNow() const
 {
@@ -4415,7 +4415,7 @@ void LLCullResult::pushBack(T& head, U32& count, V* val)
     count++;
 }
 
-// <FS> the lists a cull fills (groups, drawables, bridges), without the render maps and the scene table fields that a cull never touches: the results of the pieces of a split cull (LL_VK_SC_SPLIT)
+// <FS> the lists a cull fills (groups, drawables, bridges), without the render maps and the scene table fields that a cull never touches: the results of the pieces of a split cull (RK_VK_SC_SPLIT)
 void LLCullResult::clearLists()
 {
     ++mListSerial;

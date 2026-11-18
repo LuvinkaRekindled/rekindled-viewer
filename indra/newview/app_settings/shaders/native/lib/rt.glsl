@@ -13,7 +13,7 @@ float rtSunBlockerT()
 {
     return rt_sun_blocker_t;
 }
-// <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (rkvkrt.cpp), in eye space like everything here.
+// <FS> Ray query sun shadow (RK_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (rkvkrt.cpp), in eye space like everything here.
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
 // <FS> a translucent glTF mesh (an avatar's shell: base colour alpha blended) is a layer for the traced reflection only (rtTraceHitEx); a sun ray goes through it, as it did before such draws were named to the ray scene
@@ -108,7 +108,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
 
 // Coverage (0..1) of a masked or blended candidate for the SOFT shadows of traced hits (rtShadowRaySoft): the texture alpha is read from a blurred mip (hair strands and foliage are cut-outs finer than a
 // pixel: a binary ray gives hard stripes where the main view's filtered shadow maps give a soft shade), and a ramp around the cutoff turns it into a fraction.
-// LL_VK_RT_SUN_BLENDCOVER (default 1): a BLENDED card (record flag 512, the alpha pool's draws: most hair) covers by its alpha itself, which is what blending draws (a texel at alpha 0.4 lets 60 % through).
+// RK_VK_RT_SUN_BLENDCOVER (default 1): a BLENDED card (record flag 512, the alpha pool's draws: most hair) covers by its alpha itself, which is what blending draws (a texel at alpha 0.4 lets 60 % through).
 // The ramp around the cutoff is for masked cards; applied to blended hair (cutoff 0.598, the shadow maps' cut) it dropped every wisp under 0.43 from the shadow and made everything over 0.76 a solid.
 #ifndef RK_RT_SUN_BLEND_COVER
 #define RK_RT_SUN_BLEND_COVER 1
@@ -215,8 +215,8 @@ bool rtRayOk(vec3 o, vec3 d)
 bool rt_soft_masked = false;            // set by rtShadeSurfaceEx: the last surface looked at was a skinned masked draw taken softly
 // (the uniform rt_hit_shadow_samples is declared by the includer, see water.frag)      // shadow rays per local light at a traced hit: 1 (one ray at the light's centre), 2 or 4 (the light is a disc, soft shadows); 0 = not set (4)
 
-// <FS> the number of masked candidates the sun ray may test before it stops and calls the pixel lit (LL_VK_RT_CANDIDATES, default 512). Under a dense canopy a ray meets hundreds of leaf quads; at 96 whether it reaches
-// an opaque hit or enough leaves depends on the ray's start and the traversal order, so the shadow flips with the view. LL_VK_RT_CAPDEBUG=1: a ray that stopped at the limit is drawn fully shadowed instead of lit.
+// <FS> the number of masked candidates the sun ray may test before it stops and calls the pixel lit (RK_VK_RT_CANDIDATES, default 512). Under a dense canopy a ray meets hundreds of leaf quads; at 96 whether it reaches
+// an opaque hit or enough leaves depends on the ray's start and the traversal order, so the shadow flips with the view. RK_VK_RT_CAPDEBUG=1: a ray that stopped at the limit is drawn fully shadowed instead of lit.
 // 2026-11-14 (the user: the shadows of an avatar's umbrella canopy and wings, and holes in its ground shadow, came and went under a rain and cloud mesh of 20 stacked masked layers; the capdebug view showed a disc of capped
 // rays under it): 96 was used up inside those layers before the ray met the masked wings or the canopy, in an order that changes with the view. At 256 the disc was gone and nothing flickered, only the densest middle
 // of the cloud still ran out; at 1024 nothing did. 512 is chosen for the hundreds of quads of a dense canopy that this comment always named, not for that one cloud. The order candidates come in is arbitrary, so
@@ -282,22 +282,22 @@ float rtSunRay(vec3 origin, vec3 dir, vec2 pos_screen, float lod)
 
 // Soft version for the shadows of traced hits (the glossy mirror, local lights and the sun at a hit): masked and blended candidates do not stop the ray, each one lets through the fraction its blurred
 // alpha leaves (rtAlphaCover), the product is the light that arrives; an opaque hit blocks all. 1 = lit, 0 = blocked.
-// LL_VK_RT_SUN_SELFNEAR (metres, default 0.8): the distance up to which a skinned avatar surface counts as a translucent self shadow (see rtShadowRaySoftS). The floor of the light fades out between 40 % of it and
+// RK_VK_RT_SUN_SELFNEAR (metres, default 0.8): the distance up to which a skinned avatar surface counts as a translucent self shadow (see rtShadowRaySoftS). The floor of the light fades out between 40 % of it and
 // all of it, so a hand held at that distance does not cast two shadows (a light one for the fingers inside the limit and a dark one for the wrist outside it)
 #ifndef RK_RT_SUN_SELF_NEAR
 #define RK_RT_SUN_SELF_NEAR 0.8
 #endif
-// LL_VK_RT_SUN_SELFFADE (fraction of SELFNEAR, default 0.4): where the fade of the floor starts; 1 = no fade (the floor is the same for every close avatar surface: no contours of the head's layers in a shadow)
+// RK_VK_RT_SUN_SELFFADE (fraction of SELFNEAR, default 0.4): where the fade of the floor starts; 1 = no fade (the floor is the same for every close avatar surface: no contours of the head's layers in a shadow)
 #ifndef RK_RT_SUN_SELF_FADE
 #define RK_RT_SUN_SELF_FADE 0.4
 #endif
 #define RK_RT_SUN_SELF_NEAR0 (RK_RT_SUN_SELF_NEAR * RK_RT_SUN_SELF_FADE)
-// LL_VK_RT_SUN_PENUMBRA (metres, default 0.008 since 2026-11-01; 0 = off, with LL_VK_RT_SUN_ALPHA_STRENGTH 0.6 that is the translucent floor of 2026-10-28): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
+// RK_VK_RT_SUN_PENUMBRA (metres, default 0.008 since 2026-11-01; 0 = off, with RK_VK_RT_SUN_ALPHA_STRENGTH 0.6 that is the translucent floor of 2026-10-28): the width of the penumbra of a close avatar self shadow on the skin. A ray from 5 cm away gives a crisp edge (a copy of the lips on the neck, the fingers on the shoulder),
 // where skin scatters light a few millimetres sideways and blurs it. When the first ray of a pixel hit a close skinned surface at distance t, the other rays of the pixel go to a disc of radius PENUMBRA / t (at most 0.35).
 #ifndef RK_RT_SUN_PENUMBRA
 #define RK_RT_SUN_PENUMBRA 0.008
 #endif
-// LL_VK_RT_SUN_PENUMBRA_RAYS (default 8, at most 16): the rays of a pixel whose first ray met a close skinned surface. Two rays on a wide disc give a handful of levels per pixel, and a snapshot has no accumulation to
+// RK_VK_RT_SUN_PENUMBRA_RAYS (default 8, at most 16): the rays of a pixel whose first ray met a close skinned surface. Two rays on a wide disc give a handful of levels per pixel, and a snapshot has no accumulation to
 // smooth them: the soft edge is a stack of steps (the lips and the jaw drawn as contours in the shadow on the neck). Only those pixels pay.
 #ifndef RK_RT_SUN_PENUMBRA_RAYS
 #define RK_RT_SUN_PENUMBRA_RAYS 8
@@ -335,7 +335,7 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
     const float skin_floor = 1.0 - strength;
     float t_start = 0.005;
     uint mask = 0x0Fu;                          // everything; once the avatar's side of the answer is final, only the world (0x03)
-    bool capped = false;                        // the candidate limit (LL_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
+    bool capped = false;                        // the candidate limit (RK_VK_RT_CANDIDATES, default 96) was reached: the walk stopped before it met everything on the way
     bool none = true;
     bool settled = false;                       // the walk through everything ended early: the avatar's side of the answer is final (see below), the world pass follows
     // The avatar's side of the answer becomes final in two ways, and then one more query goes through the WORLD alone, over the whole ray again (so a world card counted once is not counted twice: the
@@ -435,12 +435,12 @@ float rtShadowRaySoftS(vec3 origin, vec3 dir, float tmax, float lod, float stren
 #ifdef RK_RT_CAP_DEBUG
     if (capped && none)
     {
-        return 0.0;                         // test (LL_VK_RT_CAPDEBUG=1): a ray that stopped at the limit is drawn fully shadowed
+        return 0.0;                         // test (RK_VK_RT_CAPDEBUG=1): a ray that stopped at the limit is drawn fully shadowed
     }
 #endif
     const float floor_now = skin_floor * rtSelfFloorScale(rt_near_skin_t);
 #if RK_RT_SUN_DEBUG == 1
-    return none ? 1.0 : 0.0;                // test (LL_VK_RT_SUN_DEBUG=1): only solid (opaque) hits make a shadow, what the alpha loop found is ignored
+    return none ? 1.0 : 0.0;                // test (RK_VK_RT_SUN_DEBUG=1): only solid (opaque) hits make a shadow, what the alpha loop found is ignored
 #elif RK_RT_SUN_DEBUG == 2
     return none ? transmit * max(skin, floor_now) : 1.0;      // test (=2): only what the alpha loop found makes a shadow, solid hits are ignored
 #else
@@ -977,21 +977,21 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
     return vec4(mix(color, fallback, fade), 1.0);
 }
 
-// <FS> test switches (LL_VK_RT_SUN_BIAS metres, default 0.003: how far off the surface along the normal the ray starts. It was 0.015 until 2026-10-27: anything closer to a surface than that could not shadow
-// it, so the shadow of a strand of hair gave out where the strand came close to the face; 0.003 is what the user found right by eye. LL_VK_RT_SUN_NOFACE=1: a surface facing away from the light is traced too)
+// <FS> test switches (RK_VK_RT_SUN_BIAS metres, default 0.003: how far off the surface along the normal the ray starts. It was 0.015 until 2026-10-27: anything closer to a surface than that could not shadow
+// it, so the shadow of a strand of hair gave out where the strand came close to the face; 0.003 is what the user found right by eye. RK_VK_RT_SUN_NOFACE=1: a surface facing away from the light is traced too)
 #ifndef RK_RT_SUN_BIAS
 #define RK_RT_SUN_BIAS 0.003
 #endif
-// LL_VK_RT_SUN_TMIN (metres, default 0 = off): the sun ray starts this far along the light direction: whatever is closer to the surface than that along the light cannot shadow it, while a shadow from farther up
+// RK_VK_RT_SUN_TMIN (metres, default 0 = off): the sun ray starts this far along the light direction: whatever is closer to the surface than that along the light cannot shadow it, while a shadow from farther up
 // (a chin on the chest) keeps its whole shape. The first answer to the hard streaks of hair on skin (0.04), not needed since the soft alpha ray and the small start offset (below) give hair a continuous shadow.
-// LL_VK_RT_SUN_BIAS_ALPHA (metres, default 0.015): the same for blended surfaces (hair cards a few millimetres apart shade each other, grey strands in the hair, when it is as small as the one of skin)
+// RK_VK_RT_SUN_BIAS_ALPHA (metres, default 0.015): the same for blended surfaces (hair cards a few millimetres apart shade each other, grey strands in the hair, when it is as small as the one of skin)
 #ifndef RK_RT_SUN_BIAS_ALPHA
 #define RK_RT_SUN_BIAS_ALPHA 0.015
 #endif
-// LL_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 1 since 2026-11-01 with the penumbra cone: the cone makes the self shadow soft, no floor; 0.6 = the translucent floor of 2026-10-28; 1 = an avatar blocks its own light fully): the most light the close surfaces of an avatar may block together on that same
+// RK_VK_RT_SUN_ALPHA_STRENGTH (0..1, default 1 since 2026-11-01 with the penumbra cone: the cone makes the self shadow soft, no floor; 0.6 = the translucent floor of 2026-10-28; 1 = an avatar blocks its own light fully): the most light the close surfaces of an avatar may block together on that same
 // avatar (rtShadowRaySoftS: hair on the face, a hand on the shoulder, the chin on the chest). Hair and skin are translucent and bounce light, so a self shadow is never as dark as an opaque object's.
 // 0.6 is the user's choice by eye (2026-10-28, with SELFNEAR 0.8, the receiver probe and the 4 mm start disc).
-// LL_VK_RT_SUN_HAIRFILL (0..1, default 0): the shadow of a blended surface (the hair itself) is lifted toward lit by this fraction: bounced light and scattering fill the shadows hair has on itself.
+// RK_VK_RT_SUN_HAIRFILL (0..1, default 0): the shadow of a blended surface (the hair itself) is lifted toward lit by this fraction: bounced light and scattering fill the shadows hair has on itself.
 #ifndef RK_RT_SUN_ALPHA_STRENGTH
 #define RK_RT_SUN_ALPHA_STRENGTH 1.0
 #endif
@@ -1004,7 +1004,7 @@ vec4 rtReflection(vec3 origin, vec3 dir, vec3 sun_dir, vec3 sunlit_linear, vec3 
 #ifndef RK_RT_SUN_TMIN
 #define RK_RT_SUN_TMIN 0.0
 #endif
-// LL_VK_RT_SUN_SOFTALPHA (metres, default 12, 0 = off): up to this view distance the sun ray lets each masked or blended card (hair) through by the fraction its blurred alpha leaves (rtShadowRaySoft) instead of
+// RK_VK_RT_SUN_SOFTALPHA (metres, default 12, 0 = off): up to this view distance the sun ray lets each masked or blended card (hair) through by the fraction its blurred alpha leaves (rtShadowRaySoft) instead of
 // the yes/no alpha test of rtShadowRay: a lock of hair then casts a continuous, partly transparent shadow, not one that is a full shadow or nothing per pixel (gaps, stair steps along the cards)
 #ifndef RK_RT_SUN_SOFTALPHA
 #define RK_RT_SUN_SOFTALPHA 12.0
@@ -1018,7 +1018,7 @@ float rtSunRayAt(vec3 origin, vec3 dir, vec2 pos_screen, float lod, float view_d
     return rtSunRay(origin, dir, pos_screen, lod);
 }
 
-// LL_VK_RT_SUN_SELFRECV (metres, default 0.02, 0 = off): the translucent self shadow is for an avatar surface shadowing the SAME avatar (hair on the face, the chin on the chest). The ground at the feet is
+// RK_VK_RT_SUN_SELFRECV (metres, default 0.02, 0 = off): the translucent self shadow is for an avatar surface shadowing the SAME avatar (hair on the face, the chin on the chest). The ground at the feet is
 // within SELFNEAR of the legs too, and its shadow faded out toward the feet (the user's snapshot, 2026-10-28 01:31). The G-buffer does not say what a pixel is, the ray scene does: a probe through the
 // receiver's own surface (from this far under it to this far over it, along its normal) into the avatar structures alone (mask 0x0C) hits when the receiver is avatar geometry. Only a pixel whose first
 // ray met a close avatar surface pays the probe; a receiver that is not an avatar traces that ray again at full strength. (Verified 02:13 with a stripes view: hits the whole avatar, hair included, nothing else.)
@@ -1050,7 +1050,7 @@ bool rtReceiverIsAvatar(vec3 pos, vec3 norm)
     return rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-// LL_VK_RT_SUN_SSS (metres, default 0.004, 0 = off; the user chose 4 mm by eye, 2026-10-28): each ray of a pixel starts at a random point of a disc of this radius on the receiver's surface (the tangent plane), not at the pixel itself. Skin scatters
+// RK_VK_RT_SUN_SSS (metres, default 0.004, 0 = off; the user chose 4 mm by eye, 2026-10-28): each ray of a pixel starts at a random point of a disc of this radius on the receiver's surface (the tangent plane), not at the pixel itself. Skin scatters
 // the light it receives a few millimetres sideways, so the shadow a face shows is the shadow averaged over that much of its surface: a soft edge on BOTH sides of the caster's silhouette. A wider sun disc
 // (RK_RT_SUN_PENUMBRA) could only widen the rays of a pixel whose first ray had already met a caster, so the outside of every edge stayed crisp. A few millimetres on the ground is nothing next to the
 // sun's own penumbra, so it applies to every receiver. No extra rays; the accumulation smooths the noise of the random start.

@@ -1709,9 +1709,9 @@ bool idle_startup()
         // <FS> J1: the login goes on when the GPU pipelines of the shaders are built, and BEFORE the region is connected (a first version of this wait stood at the end of the start-up, with the agent already in the
         // region: the simulator dropped the connection after 150 s without agent updates). After a shader change, or on the first start on a machine, the heavy ones (the lighting pass with the ray queries inlined: about 3
         // minutes) compile in the background and every draw that needs one is dropped until it is done: the world came up lit wrong or black (the black mirror). Nothing to wait for on a warm start (the driver's cache
-        // answers). The progress screen is up meanwhile, with the count. LL_VK_STARTUP_PIPELINE_WAIT=0 = as before; the wait ends after 15 minutes whatever.
+        // answers). The progress screen is up meanwhile, with the count. RK_VK_STARTUP_PIPELINE_WAIT=0 = as before; the wait ends after 15 minutes whatever.
         {
-            static const bool wait_on = !getenv("LL_VK_STARTUP_PIPELINE_WAIT") || getenv("LL_VK_STARTUP_PIPELINE_WAIT")[0] != '0';
+            static const bool wait_on = !getenv("RK_VK_STARTUP_PIPELINE_WAIT") || getenv("RK_VK_STARTUP_PIPELINE_WAIT")[0] != '0';
             static LLTimer wait_timer;
             static bool wait_started = false;
             U64 pending = 0, total = 0;
