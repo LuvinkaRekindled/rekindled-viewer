@@ -7924,42 +7924,44 @@ struct GeoGpuG
 static_assert(sizeof(GeoGpuG) == 160, "geometry table entry");
 struct GeoFrag
 {
+    // the fields every frame reads of every listed fragment (the listing, the counts, the copy, the alpha safety check, the pin epoch test), together: a fragment is about 1 KB and these were spread over it, a cache line each
     std::vector<LLVkBridge::GeoWire> mItems;
-    std::vector<U32> mSlots;            // the table slot of each item
-    std::vector<U32> mPairOf;           // each item's index into mPairs
     std::vector<ResPair> mPairs;        // the distinct (vertex, index) buffers of its items
     std::vector<U64> mAddr;             // per pair: vertex and index buffer address as last written into the entries (the stale check reads these, never the write-combined table)
-    std::vector<U32> mTexName;          // the GL name the viewer last told for each local texture
-    std::vector<U32> mPin;              // its pin (0 = none)
-    std::vector<U32> mTexSlot;          // the slot the entries were last written with
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
-    std::vector<U32> mPbrOfItem;                // S5c: per item, its PBR row + 1 (0 = none)
     std::vector<VkDrawIndexedIndirectCommand> mARCmds;      // S5d: the draws of its rigged alpha items (type 27), in item order: indexed, the count 0 until the viewer bound a palette this frame
-    std::vector<U32> mARCount0, mARItem, mARItemCmd;        // ... their index counts, the item of each command, the command of each item (~0u: none)
-    std::vector<U32> mRLodIb, mRLodCount;                   // item E for the opaque rigged items: per command of mRCmds, the simplified list the viewer chose for this frame (GL name of its index buffer, its count); 0 = the item's own
-    std::vector<U32> mARLodIb, mARLodCount;                 // item E: per command, a simplified index list (the GL name of its index buffer, its count) the viewer chose for this frame; 0 = the item's own list
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
     // the non empty runs of mCmds, by type and side (P3: the double sided commands of a type follow its single sided ones): a fragment has about two commands, so a frame visits its runs, not 13 types x 2 sides
     struct SRun { U32 mType, mFirst, mCount; bool mDs; };
     std::vector<SRun> mSRuns;
-    // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
-    struct RRun { U32 mPair, mFirst, mCount; bool mDs; };       // (P3: mDs = the run's items are double sided: drawn by the kind 22 that has culling off)
     std::vector<VkDrawIndexedIndirectCommand> mRCmds;
-    std::vector<U32> mRCount0;                  // the index count of each (a skin without a palette this frame draws nothing: count 0)
-    std::vector<RRun> mRRuns;
-    U32 mRTypeFirst[kGeoTypes + 1] = {};
-    std::vector<U32> mRItemCmd;                 // per item: its command in mRCmds (~0u: none)
-    U32 mMaxModel = 0;                          // the highest matrix slot its items name: the pass matrices must cover it whether or not the viewer sent that slot this frame (a fragment released by the viewer during the frame is still listed: an item must never index past the matrix scratch)
-    std::vector<U64> mPalAddr;                  // per item: the palette address last bound (0: never): an item draws only with one
-    std::vector<U32> mPalJoints;
-    // <FS> P2: the persistent binding of each rigged item (per item, so a rebuild keeps it): its palette id (~0u: none), joints and the simplified list the viewer chose; the viewer sends changes
-    std::vector<U32> mRItemId, mRItemJoints, mRItemLodIb, mRItemLodCount;
     std::vector<U32> mRItems;                   // the items that have a rigged command, in command order
     bool mDirtyPairs = true, mDirtyEntries = true;
     U64 mPinEpochSeen = ~0ull;
     U64 mListedFrame = ~0ull;           // the frame it was last listed (the buffers it reads count as in flight for the frames after)
     U64 mSafetyFrame = ~0ull;           // S5 safety: the frame an alpha record last checked its buffers against the live ones
     U32 mHandle = 0;
+    U32 mMaxModel = 0;                          // the highest matrix slot its items name: the pass matrices must cover it whether or not the viewer sent that slot this frame (a fragment released by the viewer during the frame is still listed: an item must never index past the matrix scratch)
+    // the rest: read when a fragment is built or its items are drawn
+    std::vector<U32> mSlots;            // the table slot of each item
+    std::vector<U32> mPairOf;           // each item's index into mPairs
+    std::vector<U32> mTexName;          // the GL name the viewer last told for each local texture
+    std::vector<U32> mPin;              // its pin (0 = none)
+    std::vector<U32> mTexSlot;          // the slot the entries were last written with
+    std::vector<U32> mPbrOfItem;                // S5c: per item, its PBR row + 1 (0 = none)
+    std::vector<U32> mARCount0, mARItem, mARItemCmd;        // ... their index counts, the item of each command, the command of each item (~0u: none)
+    std::vector<U32> mRLodIb, mRLodCount;                   // item E for the opaque rigged items: per command of mRCmds, the simplified list the viewer chose for this frame (GL name of its index buffer, its count); 0 = the item's own
+    std::vector<U32> mARLodIb, mARLodCount;                 // item E: per command, a simplified index list (the GL name of its index buffer, its count) the viewer chose for this frame; 0 = the item's own list
+    // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
+    struct RRun { U32 mPair, mFirst, mCount; bool mDs; };       // (P3: mDs = the run's items are double sided: drawn by the kind 22 that has culling off)
+    std::vector<U32> mRCount0;                  // the index count of each (a skin without a palette this frame draws nothing: count 0)
+    std::vector<RRun> mRRuns;
+    U32 mRTypeFirst[kGeoTypes + 1] = {};
+    std::vector<U32> mRItemCmd;                 // per item: its command in mRCmds (~0u: none)
+    std::vector<U64> mPalAddr;                  // per item: the palette address last bound (0: never): an item draws only with one
+    std::vector<U32> mPalJoints;
+    // <FS> P2: the persistent binding of each rigged item (per item, so a rebuild keeps it): its palette id (~0u: none), joints and the simplified list the viewer chose; the viewer sends changes
+    std::vector<U32> mRItemId, mRItemJoints, mRItemLodIb, mRItemLodCount;
 };
 struct GeoStats
 {
