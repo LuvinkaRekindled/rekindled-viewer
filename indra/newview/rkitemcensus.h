@@ -8,8 +8,8 @@
  * Main thread only. Off unless the variable is set.
  */
 
-#ifndef LL_LLITEMCENSUS_H
-#define LL_LLITEMCENSUS_H
+#ifndef RK_RKITEMCENSUS_H
+#define RK_RKITEMCENSUS_H
 
 #include "linden_common.h"
 #include "llframetimer.h"
@@ -322,4 +322,4 @@ namespace ItemCensus
     }
 }
 
-#endif // LL_LLITEMCENSUS_H
+#endif // RK_RKITEMCENSUS_H

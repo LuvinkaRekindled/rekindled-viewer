@@ -9,16 +9,16 @@ Receivers and their rays (`shadowUtil.glsl`, `rtSunShadowCore` about line 905):
 - **Opaque receivers (skin, clothes, ground): the sun lightmap pass** (`sunLightSSAOF.glsl`, uniforms set in `renderDeferredLighting`, pipeline.cpp about 20289). `RenderRTShadowSamples` (2) rays per pixel on a disc of `RenderRTShadowSoftness` (0.35 degrees), noise moved every frame with DLSS, **accumulated over 8 frames** (`accumulateSunShadow`, `shadowAccumF.glsl`, `RenderRTShadowHistory`). The lightmap **blur is skipped with DLSS** (`RenderShadowBlurWithDLSS` false since lap aab4-, 0.4 ms of GPU); Adam then said "fine, maybe a little more blur to match the old look later".
 - **Blended receivers (hair, glass, decals): the alpha pass** (`prepare_alpha_shader`, lldrawpoolalpha.cpp about 130). `rt_sun_alpha` = 1, a disc twice the lightmap's, **one jittered ray per pixel** (`RenderRTShadowAlphaRays` 1, the upscaler averages), fewer rays with distance (`RenderRTShadowAlphaLodNear/Far`), none beyond `RenderRTShadowAlphaMaxDistance` (48 m). Nothing accumulates these.
 
-Casters, per ray (`rtSunRayAt`, about line 905): within `LL_RT_SUN_SOFTALPHA` (12 m of view distance) the ray is `rtShadowRaySoftS`: it does not stop at a masked or blended card but multiplies the light by `1 - cover`, where `rtAlphaCover` (about line 170) reads the card's alpha from a mip two levels blurrier and ramps it around the cutoff. Cards of skinned avatar draws (record flag `kRecSkinned` 8192, rkvkrt.cpp 75) go into a separate product `skin` whose total is floored at `1 - strength`. **Beyond 12 m** the ray is the binary `rtShadowRay` with the shadow maps' dithering. Opaque hits block everything.
+Casters, per ray (`rtSunRayAt`, about line 905): within `RK_RT_SUN_SOFTALPHA` (12 m of view distance) the ray is `rtShadowRaySoftS`: it does not stop at a masked or blended card but multiplies the light by `1 - cover`, where `rtAlphaCover` (about line 170) reads the card's alpha from a mip two levels blurrier and ramps it around the cutoff. Cards of skinned avatar draws (record flag `kRecSkinned` 8192, rkvkrt.cpp 75) go into a separate product `skin` whose total is floored at `1 - strength`. **Beyond 12 m** the ray is the binary `rtShadowRay` with the shadow maps' dithering. Opaque hits block everything.
 
 The knobs that exist and are off (compile-time, `llviewershadermgr.cpp` about 1025-1077, from environment variables):
 
 | define | env | default | what |
 |---|---|---|---|
-| `LL_RT_SUN_ALPHA_STRENGTH` | `LL_VK_RT_SUN_ALPHA_STRENGTH` | 1.0 | the most light all skinned cards together may block (0.65 = a lock of hair blocks at most 65 %) |
-| `LL_RT_SUN_HAIRFILL` | `LL_VK_RT_SUN_HAIRFILL` | 0.0 | the shadow on a blended receiver (the hair itself) lifted toward lit by this fraction |
-| `LL_RT_SUN_SOFTALPHA` | `LL_VK_RT_SUN_SOFTALPHA` | 12 m | view distance up to which the soft coverage walk runs |
-| `LL_RT_SUN_BIAS_ALPHA` | `LL_VK_RT_SUN_BIAS_ALPHA` | 0.015 | ray start offset for blended receivers |
+| `RK_RT_SUN_ALPHA_STRENGTH` | `LL_VK_RT_SUN_ALPHA_STRENGTH` | 1.0 | the most light all skinned cards together may block (0.65 = a lock of hair blocks at most 65 %) |
+| `RK_RT_SUN_HAIRFILL` | `LL_VK_RT_SUN_HAIRFILL` | 0.0 | the shadow on a blended receiver (the hair itself) lifted toward lit by this fraction |
+| `RK_RT_SUN_SOFTALPHA` | `LL_VK_RT_SUN_SOFTALPHA` | 12 m | view distance up to which the soft coverage walk runs |
+| `RK_RT_SUN_BIAS_ALPHA` | `LL_VK_RT_SUN_BIAS_ALPHA` | 0.015 | ray start offset for blended receivers |
 
 Why the result is hard and dark:
 
@@ -31,13 +31,13 @@ Why the result is hard and dark:
 
 ### A. Translucency as a live setting, applied to hair only (first)
 
-`LL_RT_SUN_ALPHA_STRENGTH` becomes a uniform `rt_sun_hair_strength` from a setting `RenderRTShadowHairStrength` (default about 0.6, 1 = as now), set by the lightmap pass and the alpha pass. The floor applies to records tagged **hair**, not to every skinned card: a lace skirt or a mesh jacket's alpha trim should still block what its coverage says.
+`RK_RT_SUN_ALPHA_STRENGTH` becomes a uniform `rt_sun_hair_strength` from a setting `RenderRTShadowHairStrength` (default about 0.6, 1 = as now), set by the lightmap pass and the alpha pass. The floor applies to records tagged **hair**, not to every skinned card: a lace skirt or a mesh jacket's alpha trim should still block what its coverage says.
 
 The hair tag: a new record flag (a free bit after `kRecSkinned`, e.g. 16384, verify against rkvkrt.cpp 60-80) set by the worker from a flag in `ShadowSkinEntry` / `ShadowAlphaEntry` (`mAvatarKind` has free bits above 32: use one, "head attachment"). The viewer sets it in `rt_name_rigged_main_view` (pipeline.cpp 19760) and the cascade naming for a rigged draw whose object is attached at a head point (Skull, Chin, Mouth, Nose, the ears and eyes: `LLViewerObject::getAttachmentState()` decoded with `ATTACHMENT_ID_FROM_STATE`; the draw's object has to be found from the draw info's group or face, `LLDrawInfo` does not carry it: check), and for the body record of the system hair mesh (kind 4, `noteRayShadow`). Everything else skinned keeps strength 1.
 
 Cost: with a floor the walk no longer terminates after a few cards (`transmit * max(skin, floor) < 0.03` stops it today); it runs to the opaque hit behind the hair or to the 96-candidate cap. Rays through hair are a few percent of the lightmap's; measure `1713x898 c1` and the alpha run in a same-lap A/B (test file switch like `far-tier.txt`). Expect under 0.1 ms.
 
-Gate: Adam by eye, live: hair shadow on the face and neck lighter at 0.6, skirts unchanged. Beyond 12 m nothing changes (binary ray); raising `LL_RT_SUN_SOFTALPHA` to 20-25 m is the companion knob if the crowd distance shows the switch.
+Gate: Adam by eye, live: hair shadow on the face and neck lighter at 0.6, skirts unchanged. Beyond 12 m nothing changes (binary ray); raising `RK_RT_SUN_SOFTALPHA` to 20-25 m is the companion knob if the crowd distance shows the switch.
 
 ### B. A wider sun for hair casters (the blur, first choice)
 
@@ -57,7 +57,7 @@ What the old blur did for faces without its 0.4 ms: blur only where the caster i
 
 Hair receiving the sun: today one ray, noisy, no accumulation, fully dark. Two parts:
 
-- **Fill:** `LL_RT_SUN_HAIRFILL` becomes a setting `RenderRTShadowHairFill` (about 0.25-0.4), applied in `rtSunShadow` for `rt_sun_alpha` pixels as the code already does; the lift models the scattering that lights the shadowed side of a lock. Near free; Adam judges live.
+- **Fill:** `RK_RT_SUN_HAIRFILL` becomes a setting `RenderRTShadowHairFill` (about 0.25-0.4), applied in `rtSunShadow` for `rt_sun_alpha` pixels as the code already does; the lift models the scattering that lights the shadowed side of a lock. Near free; Adam judges live.
 - **Borrow:** in the alpha pass, a blended pixel whose G-buffer depth is within a few centimetres behind it (the scalp, cheek or shoulder under the hair) takes the **accumulated sun lightmap** at that pixel instead of tracing: the skin's soft, accumulated, hair-translucent (after A) shadow is a good proxy for the hair 2 cm in front of it, and it is cheaper than a ray. Hair far from any surface (ponytail tips against the background, depth gap over `RenderRTShadowHairBorrowDepth`, about 5 cm) traces as now. The alpha pass already binds the lightmap for the spot shadows (check `bindDeferredShader` for the alpha pool); the depth it needs is the G-buffer depth, also bound. Risk: a halo where the surface behind changes (hair edge against a wall 1 m back: the gap test handles it; against another avatar's shoulder 4 cm back: borrowed, acceptable). Saves the alpha run's hair rays too (the rigged alpha run was 0.8-1.2 ms with rays, about 45 % of it rays).
 
 ## 3. Order and gates

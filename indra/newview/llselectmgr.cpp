@@ -6890,7 +6890,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
             if (objectp->mDrawable->isState(LLDrawable::RIGGED))
             {
-                LL_CPU_ZONE("selection: rigged volume update");
+                RK_CPU_ZONE("selection: rigged volume update");
                 vobj->updateRiggedVolume(true, LLRiggedVolume::UPDATE_ALL_FACES, true, true);       // <FS> (skipped while the joint matrices are the same as the last call's)
             }
         }
@@ -6899,7 +6899,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
         S32 num_tes = llmin((S32)objectp->getNumTEs(), (S32)objectp->getNumFaces()); // avatars have TEs but no faces
         {
-            LL_CPU_ZONE("selection: mesh wireframe faces");
+            RK_CPU_ZONE("selection: mesh wireframe faces");
             for (S32 te = 0; te < num_tes; ++te)
             {
                 if (node->isTESelected(te))

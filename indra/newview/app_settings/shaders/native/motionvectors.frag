@@ -20,7 +20,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], vary_fragcoord).r;
+    float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], vary_fragcoord).r;
     vec4 ndc = vec4(vary_fragcoord * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
     vec4 cur = to_cur * ndc;
     vec4 prev = to_prev * ndc;
@@ -32,7 +32,7 @@ void main()
 
     if (use_avatar > 1.5)
     {
-        vec2 e = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord).rg;
+        vec2 e = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord).rg;
         if (e.x < 0.99995)
         {
             mv = (e * 2.0 - 1.0) * 1024.0;
@@ -40,7 +40,7 @@ void main()
     }
     else if (use_avatar > 0.5)
     {
-        vec4 av = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
+        vec4 av = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord);
         if (av.a > 0.5)
         {
             mv = av.xy;     // an avatar pixel: its own motion replaces the camera motion

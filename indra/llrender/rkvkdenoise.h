@@ -10,8 +10,8 @@
  * The matrices are the viewer's (OpenGL conventions: the depth buffer holds (z_ndc + 1) / 2, the texture coordinate v of a row is (y_ndc + 1) / 2); the conversion to the denoiser's (Direct3D
  * conventions: v = 1 - (y_ndc + 1) / 2, the depth is z_ndc) is done here.
  */
-#ifndef LL_LLVKDENOISE_H
-#define LL_LLVKDENOISE_H
+#ifndef RK_RKVKDENOISE_H
+#define RK_RKVKDENOISE_H
 
 #include "rkvkcontext.h"
 
@@ -70,4 +70,4 @@ namespace RKVkDenoise
     bool shadows(VkCommandBuffer cmd, const ShadowParams& params);
 }
 
-#endif // LL_LLVKDENOISE_H
+#endif // RK_RKVKDENOISE_H

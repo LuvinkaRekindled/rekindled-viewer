@@ -16,7 +16,7 @@ void main()
 {
     mirror_clip(vary_position);
     water_clip(vary_position);
-    const vec4 texel = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+    const vec4 texel = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0);
     const float alpha = texel.a * vertex_color.a;
     if (alpha < minimum_alpha)
     {

@@ -21,10 +21,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKSHADER_H
-#define LL_LLVKSHADER_H
+#ifndef RK_RKVKSHADER_H
+#define RK_RKVKSHADER_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 
@@ -82,6 +82,6 @@ inline bool debugShadersEnabled()
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKSHADER_H
+#endif // RK_RKVKSHADER_H

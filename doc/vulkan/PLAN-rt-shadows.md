@@ -13,7 +13,7 @@ The shadow pass packet lambdas in `pipeline.cpp` (`render_shadow_packets`, `rend
 - **Descriptor**: set 3, binding 0 = acceleration structure; only programs whose source mentions `rk_rt_tlas` declare and use it (`ProgramInfo::mUsesRt`).
 
 ## Switch and comparison
-`LL_VK_RT_SHADOWS=1` (replace the cascades), `2` (split screen: left half cascades, right half ray query), `3` (difference: red = ray says lit and cascades say shadow, blue = the opposite, otherwise the cascade result). Compile-time define `LL_RT_SHADOWS` in the shader programs, so a program without it carries no ray query code. Needs `LL_VK_RT=1` (device features) which the launcher sets. A viewer setting follows once the picture is accepted.
+`LL_VK_RT_SHADOWS=1` (replace the cascades), `2` (split screen: left half cascades, right half ray query), `3` (difference: red = ray says lit and cascades say shadow, blue = the opposite, otherwise the cascade result). Compile-time define `RK_RT_SHADOWS` in the shader programs, so a program without it carries no ray query code. Needs `LL_VK_RT=1` (device features) which the launcher sets. A viewer setting follows once the picture is accepted.
 
 ## Stages
 - **A (this commit series)**: opaque casters, TLAS, ray query shadows, compare modes, log line with counts/ms. Known and expected differences: no shadows from avatars/rigged attachments, none from alpha masked casters (trees, fences, hair cards) in modes 1-3.

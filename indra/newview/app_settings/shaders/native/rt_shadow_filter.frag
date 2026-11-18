@@ -39,8 +39,8 @@ vec2 vogel(int i, int n)
 void main()
 {
     const vec2 tc = vary_fragcoord;
-    vec4 c = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], tc);
-    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc).r;
+    vec4 c = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], tc);
+    const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tc).r;
     if (depth >= 1.0)
     {
         frag_color = c;             // a sky pixel: nothing reads its sun channel
@@ -48,8 +48,8 @@ void main()
     }
 
     // 1. the width: the pixel's own, or the window's average blocker width where that is wider
-    float r = textureLod(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc, 0.0).g;
-    const vec2 win = textureLod(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc, log2(max(pen_max, 1.0))).gb;      // (width sum, blocker count) over the window, each divided by the same pixel count
+    float r = textureLod(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc, 0.0).g;
+    const vec2 win = textureLod(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc, log2(max(pen_max, 1.0))).gb;      // (width sum, blocker count) over the window, each divided by the same pixel count
     if (win.y > 0.001)
     {
         r = max(r, win.x / win.y);
@@ -61,27 +61,27 @@ void main()
     }
 
     const vec3 pos = rk_view_pos(inv_proj, tc, depth);
-    const vec3 n = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], tc).xy);
+    const vec3 n = rk_decode_normal(texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], tc).xy);
     // the lightmap blur's plane distance tolerance: looser with distance, where angles and distances are abrupt within a small screen area
     const float tol = pos.z * pos.z * 0.00005;
 
     // 2. the filter: the hard shadow over the disc of radius r, the weight falling to 0 at the rim; each tap at the mip level of the taps' spacing (sqrt(pi / N) r for N taps on the disc)
     const float lod = max(log2(r * 0.443) + pen_lod, 0.0);
-    const vec4 m0 = textureLod(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc, lod);
+    const vec4 m0 = textureLod(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc, lod);
     float sum = m0.r;               // (premultiplied by the surface flag: a = the share of surface pixels in the footprint)
     float wsum = m0.a;
     for (int i = 0; i < FILTER_TAPS; ++i)
     {
         const vec2 u = vogel(i, FILTER_TAPS);
         const vec2 stc = tc + u * r / screen_res;
-        const vec3 spos = rk_view_pos(inv_proj, stc, texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], stc).r);
+        const vec3 spos = rk_view_pos(inv_proj, stc, texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], stc).r);
         const float d = dot(n, spos - pos);
         if (!(d * d <= tol))
         {
             continue;
         }
         const float w = 1.0 - 0.75 * dot(u, u);
-        const vec4 m = textureLod(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], stc, lod);
+        const vec4 m = textureLod(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], stc, lod);
         sum += m.r * w;
         wsum += m.a * w;
     }

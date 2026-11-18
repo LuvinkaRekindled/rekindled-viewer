@@ -6,10 +6,10 @@
  *        Local testing only, never shipped: the only nvngx_dlssnr.dll we have is the NVIDIA-signed one from a mod bundle; with the flag unset not one line here runs.
  */
 
-#ifndef LL_LLVKDLSSNR_H
-#define LL_LLVKDLSSNR_H
+#ifndef RK_RKVKDLSSNR_H
+#define RK_RKVKDLSSNR_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkcontext.h"
 
@@ -70,5 +70,5 @@ namespace RKVkDlssNr
     void shutdown();
 }
 
-#endif // LL_VULKAN
-#endif // LL_LLVKDLSSNR_H
+#endif // RK_VULKAN
+#endif // RK_RKVKDLSSNR_H

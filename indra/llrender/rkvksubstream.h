@@ -1,14 +1,14 @@
 /**
  * @file rkvksubstream.h
- * @brief Recording draw work on another thread (F3), for code outside the render library (no LL_VULKAN needed to include this).
+ * @brief Recording draw work on another thread (F3), for code outside the render library (no RK_VULKAN needed to include this).
  *
  * A thread that calls begin() writes its render state, texture binds, uniforms and draws into a private buffer of records (its own render state context, its own pending
  * slots and uniform writes); the main thread calls splice() at the point of the frame where that work would have run, and the buffer joins the queue, in order. See
  * RKVkAsync::SubStream. The sub-stream starts from the render state the main producer has when it is constructed, so build it on the main thread where the work belongs.
  */
 
-#ifndef LL_LLVKSUBSTREAM_H
-#define LL_LLVKSUBSTREAM_H
+#ifndef RK_RKVKSUBSTREAM_H
+#define RK_RKVKSUBSTREAM_H
 
 #include <vector>
 #include <string>
@@ -50,4 +50,4 @@ private:
     void* mImpl;
 };
 
-#endif // LL_LLVKSUBSTREAM_H
+#endif // RK_RKVKSUBSTREAM_H

@@ -19,7 +19,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    const vec4 col = vertex_color * texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
+    const vec4 col = vertex_color * texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
     if (col.a < minimum_alpha)
     {
         discard;

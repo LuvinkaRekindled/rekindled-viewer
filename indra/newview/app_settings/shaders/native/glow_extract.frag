@@ -27,7 +27,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 col = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_fragcoord);
+    vec4 col = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_fragcoord);
     float amount = 0.0;
     if (warmthAmount < 1.0)
     {
@@ -42,7 +42,7 @@ void main()
 #ifdef HAS_NOISE
     // dithering: reduces the banding of the reduced precision glow buffer (the noise map is 128 by 128; the extraction is in screen space)
     const float TRUE_NOISE_RES = 128.0;
-    const vec3 glow_noise = texture(rk_tbl2d[LL_HM(rk_ti_glowNoiseMap)], vary_fragcoord * (screen_res / TRUE_NOISE_RES)).xyz;
+    const vec3 glow_noise = texture(rk_tbl2d[RK_HM(rk_ti_glowNoiseMap)], vary_fragcoord * (screen_res / TRUE_NOISE_RES)).xyz;
     const float NOISE_DEPTH = 64.0;
     col.rgb = max(col.rgb + glow_noise / NOISE_DEPTH, vec3(0.0));
 #endif

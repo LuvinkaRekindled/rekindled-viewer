@@ -148,7 +148,7 @@
 #include "llhudeffectresetskeleton.h"
 #include "llnetmap.h"
 #include "llsidepanelappearance.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include "llviewermenufile.h"
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
 
@@ -3624,33 +3624,33 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
     {
         AvScope s(AV_PC_NAMEPOS);
         AvSelfScope self_scope(3, this);
-        LL_CPU_ZONE("av post: name tag position");
+        RK_CPU_ZONE("av post: name tag position");
         hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
     }
 
     {
         AvScope s(AV_PC_VOICEVIS);
         AvSelfScope self_scope(4, this);
-        LL_CPU_ZONE("av post: voice visualizer");
+        RK_CPU_ZONE("av post: voice visualizer");
         idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
     }
     {
         AvScope s(AV_PC_MISC);
         AvSelfScope self_scope(5, this);
-        LL_CPU_ZONE("av post: idleUpdateMisc (attachment replay, matrices)");
+        RK_CPU_ZONE("av post: idleUpdateMisc (attachment replay, matrices)");
         idleUpdateMisc( detailed_update );
     }
     {
         AvScope s(AV_PC_APPEARANCE);
         AvSelfScope self_scope(9, this);
-        LL_CPU_ZONE("av post: appearance animation");
+        RK_CPU_ZONE("av post: appearance animation");
         idleUpdateAppearanceAnimation();
     }
     if (detailed_update)
     {
         AvScope s(AV_PC_DETAILED);
         AvSelfScope self_scope(10, this);
-        LL_CPU_ZONE("av post: lipsync, loading, water, wind");
+        RK_CPU_ZONE("av post: lipsync, loading, water, wind");
         idleUpdateLipSync( voice_enabled );
         idleUpdateLoadingEffect();
         // <FS> B3d: the below water fact is worked out in the avatar's pool job next to the root (mBelowWaterDone); the wind effect at draw time, where its cloth uniforms are set (updateWindEffectForDraw)
@@ -3671,7 +3671,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
     {
         AvScope s(AV_PC_NAMETAG);
         AvSelfScope self_scope(11, this);
-        LL_CPU_ZONE("av post: name tag");
+        RK_CPU_ZONE("av post: name tag");
         if (RKAvatarTable::nameTagOpen(this))
         {
             idleUpdateNameTag(hud_name_pos);
@@ -3837,7 +3837,7 @@ static bool FSSkipUnchangedBBoxOverride()
 
 static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
 {
-    LL_CPU_ZONE("octree: avatar override_bbox");
+    RK_CPU_ZONE("octree: avatar override_bbox");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
 
     // <FS> A rigged attachment keeps the box it was given (LLVOVolume::updateSpatialExtents does nothing), so giving it the same box again only makes
@@ -3861,7 +3861,7 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
     }
 
     ++gAttStats.ovApplied;
-    LL_CPU_ZONE("octree: avatar override_bbox applied");
+    RK_CPU_ZONE("octree: avatar override_bbox applied");
     drawable->setSpatialExtents(extents[0], extents[1]);
     drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
     drawable->movePartition();
@@ -4006,7 +4006,7 @@ static void rk_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSp
 
 void LLVOAvatar::idleUpdateAttachments(bool visible)
 {
-        LL_CPU_ZONE("att: attachment loop (per avatar)");
+        RK_CPU_ZONE("att: attachment loop (per avatar)");
         AvLedgerScope ledger_scope(!isSelf() && !LLPipeline::sAvSink);
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
@@ -4409,7 +4409,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         LLVector4a extents[2];
                         const bool skip_this_rigged = skip_rigged_this_frame && !attached_object->isAnimatedObject();       // (an animated object follows the attachment point every frame, see the rows above)
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && !skip_this_rigged)
-                        { LL_CPU_ZONE("att: transformExtents"); const auto t = att_now(); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); gAttStats.nsExtents += att_ns(t); }
+                        { RK_CPU_ZONE("att: transformExtents"); const auto t = att_now(); bridge->transformExtents(mDrawable->getSpatialExtents(), extents); gAttStats.nsExtents += att_ns(t); }
 
                         if (attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
                         {
@@ -4554,7 +4554,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     // if selecting any attachments, update all of them as non-damped
                     if (!skip_update && !skip_rigid)
                     {
-                        LL_CPU_ZONE("att: drawable move");
+                        RK_CPU_ZONE("att: drawable move");
                         const auto t = att_now();
                         // <FS> PLAN-avatars.md stage C: a plain rigid attachment whose own transform is unchanged needs only its matrix and its faces' centres written (the
                         // joint moved, nothing else), not the whole damped move with its moved list entry, state bits and text; the full move when anything differs
@@ -4589,7 +4589,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         {
                             if (!skip_rigid && !cons_frozen)
                             {
-                                LL_CPU_ZONE("att: bridge move (not rigged)");
+                                RK_CPU_ZONE("att: bridge move (not rigged)");
                                 const auto t = att_now();
                                 gPipeline.updateMoveNormalAsync(bridge);
                                 gAttStats.nsBridge += att_ns(t);
@@ -4597,7 +4597,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         }
                         else
                         {
-                            LL_CPU_ZONE("att: bridge move (rigged)");
+                            RK_CPU_ZONE("att: bridge move (rigged)");
                             //specialized impl of updateMoveNormalAsync just for rigged attachment SpatialBridge
                             if (!skip_update)
                             {
@@ -4637,7 +4637,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         }
                     }
 
-                    { LL_CPU_ZONE("att: updateText"); const auto t = att_now(); attached_object->updateText(); gAttStats.nsText += att_ns(t); }
+                    { RK_CPU_ZONE("att: updateText"); const auto t = att_now(); attached_object->updateText(); gAttStats.nsText += att_ns(t); }
                 }
                 if (rowops_on && LLPipeline::sAvSink)
                 {
@@ -7411,7 +7411,7 @@ void RKAvatarTable::noteCheck(int which, bool same)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_DIAG("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
+        RK_DIAG("AvTable") << "reads from the row per frame over " << (U32)frames << " frames (different from the live answer, in all this window): impostor " << reads[0] / frames << " (" << different[0] << "), too slow "
             << reads[1] / frames << " (" << different[1] << "), visually muted " << reads[2] / frames << " (" << different[2] << "), overall appearance " << reads[3] / frames << " (" << different[3]
             << "), voice enabled " << reads[4] / frames << " (" << different[4] << "), speaking " << reads[5] / frames << " (" << different[5] << ")" << LL_ENDL;
         for (int k = 0; k < 6; ++k) { reads[k] = different[k] = 0; }
@@ -7529,7 +7529,7 @@ bool RKAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_DIAG("AvTable") << "attachment loop gate from the row per frame over " << (U32)frames << " frames: " << reads / frames << " avatars, different from updateCharacter's result " << different / frames << " (" << different << " in this window)" << LL_ENDL;
+        RK_DIAG("AvTable") << "attachment loop gate from the row per frame over " << (U32)frames << " frames: " << reads / frames << " avatars, different from updateCharacter's result " << different / frames << " (" << different << " in this window)" << LL_ENDL;
         reads = different = 0;
     }
     return bit;
@@ -7546,7 +7546,7 @@ bool RKAvatarTable::nameTagOpen(const LLVOAvatar* av)
     {
         const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - last);
         last = LLFrameTimer::getFrameCount();
-        LL_DIAG("AvTable") << "name tags per frame over " << (U32)frames << " frames: updated " << ran / frames << ", left out (not in the camera's frustum, no chat) " << skipped / frames << LL_ENDL;
+        RK_DIAG("AvTable") << "name tags per frame over " << (U32)frames << " frames: updated " << ran / frames << ", left out (not in the camera's frustum, no chat) " << skipped / frames << LL_ENDL;
         ran = skipped = 0;
     }
     return open;
@@ -7987,7 +7987,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     AvImpTimer imp_done_timer(2, this);
     { AvSelfScope self_scope(0, this); flushDeferredStopRequests(); }        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
-    { AvSelfScope self_scope(1, this); LL_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
+    { AvSelfScope self_scope(1, this); RK_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
     { AvSelfScope self_scope(2, this); idleUpdatePostCharacter(mDeferredDetailedUpdate); }
 }
 
@@ -14602,7 +14602,7 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
             const U32 total = with_history + without_history;
             if (total % 20000 == 0)
             {
-                LL_DIAG("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame); flagged by the palette catcher " << (U32)palette_flagged << LL_ENDL;
+                RK_DIAG("VkMotion") << "rigged palettes computed: " << with_history << " with a previous palette, " << without_history << " without (new, or not asked for in the last frame); flagged by the palette catcher " << (U32)palette_flagged << LL_ENDL;
             }
         }
     }
@@ -15195,7 +15195,7 @@ S32 LLVOAvatar::getUnbakedPixelAreaRank()
 // static
 void LLVOAvatar::cullAvatarsByPixelArea()
 {
-    LL_CPU_ZONE("avatars: cullAvatarsByPixelArea");
+    RK_CPU_ZONE("avatars: cullAvatarsByPixelArea");
     LLCharacter::sInstances.sort([](LLCharacter* lhs, LLCharacter* rhs)
         {
             return ((LLVOAvatar*)lhs)->mVisibilityPreference > ((LLVOAvatar*)rhs)->mVisibilityPreference;

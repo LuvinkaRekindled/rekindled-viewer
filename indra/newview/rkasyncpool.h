@@ -21,8 +21,8 @@
  * $/LicenseInfo$
  */
 
-#ifndef LL_LLASYNCPOOL_H
-#define LL_LLASYNCPOOL_H
+#ifndef RK_RKASYNCPOOL_H
+#define RK_RKASYNCPOOL_H
 
 #include <algorithm>
 #include <atomic>
@@ -252,4 +252,4 @@ struct RKBuilderGuard
     }
 };
 
-#endif // LL_LLASYNCPOOL_H
+#endif // RK_RKASYNCPOOL_H

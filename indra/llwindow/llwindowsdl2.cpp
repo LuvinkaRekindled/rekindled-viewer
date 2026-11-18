@@ -114,7 +114,7 @@ Window LLWindowSDL::get_SDL_XWindowID(void)
     if (gWindowImplementation) {
         return gWindowImplementation->mSDL_XWindowID;
     }
-    return LL_X11_NONE;
+    return RK_X11_NONE;
 }
 
 //static
@@ -172,7 +172,7 @@ namespace
         else if (request.selection == XA_CLIPBOARD)
         {
             // Did not have what they wanted, so no property set
-            reply.property = LL_X11_NONE;
+            reply.property = RK_X11_NONE;
         }
         else
             return;
@@ -246,7 +246,7 @@ namespace
             }
         } while (!response && SDL_GetTicks() < end );
 
-        return response && xevent.xselection.property != LL_X11_NONE;
+        return response && xevent.xselection.property != RK_X11_NONE;
     }
 }
 
@@ -325,7 +325,7 @@ bool LLWindowSDL::getSelectionText(Atom selection, LLWString& text)
     maybe_lock_display();
 
     Window owner = XGetSelectionOwner(mSDL_Display, selection);
-    if (owner == LL_X11_NONE)
+    if (owner == RK_X11_NONE)
     {
         if (selection == XA_PRIMARY)
         {
@@ -418,7 +418,7 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     mPreeditor = nullptr;
 
 #if LL_X11
-    mSDL_XWindowID = LL_X11_NONE;
+    mSDL_XWindowID = RK_X11_NONE;
     mSDL_Display = NULL;
 #endif // LL_X11
 
@@ -876,7 +876,7 @@ void LLWindowSDL::destroyContext()
     SDL_StopTextInput();
 #if LL_X11
     mSDL_Display = NULL;
-    mSDL_XWindowID = LL_X11_NONE;
+    mSDL_XWindowID = RK_X11_NONE;
     Lock_Display = NULL;
     Unlock_Display = NULL;
 #endif // LL_X11
@@ -1232,7 +1232,7 @@ void LLWindowSDL::beforeDialog()
 {
     bool running_x11 = false;
 #if LL_X11
-    running_x11 = (mSDL_XWindowID != LL_X11_NONE);
+    running_x11 = (mSDL_XWindowID != RK_X11_NONE);
 #endif //LL_X11
 
     LL_INFOS() << "LLWindowSDL::beforeDialog()" << LL_ENDL;
@@ -1269,7 +1269,7 @@ void LLWindowSDL::afterDialog()
 {
     bool running_x11 = false;
 #if LL_X11
-    running_x11 = (mSDL_XWindowID != LL_X11_NONE);
+    running_x11 = (mSDL_XWindowID != RK_X11_NONE);
 #endif //LL_X11
 
     LL_INFOS() << "LLWindowSDL::afterDialog()" << LL_ENDL;
@@ -1339,7 +1339,7 @@ void LLWindowSDL::flashIcon(F32 seconds)
 
 bool LLWindowSDL::isClipboardTextAvailable()
 {
-    return mSDL_Display && XGetSelectionOwner(mSDL_Display, XA_CLIPBOARD) != LL_X11_NONE;
+    return mSDL_Display && XGetSelectionOwner(mSDL_Display, XA_CLIPBOARD) != RK_X11_NONE;
 }
 
 bool LLWindowSDL::pasteTextFromClipboard(LLWString &dst)
@@ -1524,7 +1524,7 @@ bool LLWindowSDL::SDLReallyCaptureInput(bool capture)
                 result = XGrabPointer(mSDL_Display, mSDL_XWindowID,
                               True, 0, GrabModeAsync,
                               GrabModeAsync,
-                              LL_X11_NONE, LL_X11_NONE, CurrentTime);
+                              RK_X11_NONE, RK_X11_NONE, CurrentTime);
                 maybe_unlock_display();
                 if (GrabSuccess == result)
                     newGrab = true;

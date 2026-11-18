@@ -36,7 +36,7 @@
 #include "llrendertarget.h"
 #include "lltexture.h"
 #include "llshadermgr.h"
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include "rkvkasync.h"
 #endif
 #include "glm/gtc/type_ptr.hpp"

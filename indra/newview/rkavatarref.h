@@ -9,8 +9,8 @@
  * as an unskinned static mesh. isSelf() is null safe.
  */
 
-#ifndef LL_LLAVATARREF_H
-#define LL_LLAVATARREF_H
+#ifndef RK_RKAVATARREF_H
+#define RK_RKAVATARREF_H
 
 #include "llvoavatar.h"
 #include <atomic>
@@ -52,4 +52,4 @@ private:
     U32 mHandle = 0;
 };
 
-#endif // LL_LLAVATARREF_H
+#endif // RK_RKAVATARREF_H

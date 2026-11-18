@@ -189,11 +189,11 @@ vec3 probe_mix(vec3 pos, vec3 dir, float lod, vec3 amblit, bool radiance)
         vec3 tap;
         if (radiance)
         {
-            tap = textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_reflectionProbes))], vec4(v, float(refIndex[i].x)), lod).rgb * refParams[i].y;
+            tap = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(v, float(refIndex[i].x)), lod).rgb * refParams[i].y;
         }
         else
         {
-            tap = textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_irradianceProbes))], vec4(v, float(refIndex[i].x)), 0.0).rgb * refParams[i].x;
+            tap = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_irradianceProbes))], vec4(v, float(refIndex[i].x)), 0.0).rgb * refParams[i].x;
             tap = mix(amblit, tap, min(refParams[i].x, 1.0));
         }
         col[p] += tap * w;
@@ -259,9 +259,9 @@ vec3 probe_hero(vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
     {
         // the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view was rendered from the camera mirrored across the plane with the same projection, so the glass pixel at screen position (u, v)
         // shows what that view has at (1 - u, v); the target has the size of the screen target this pixel is in
-        const vec2 view_size = vec2(textureSize(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_mirrorView))], 0));
-        return mix(glossenv, textureLod(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_mirrorView))], vec2(1.0 - gl_FragCoord.x / view_size.x, gl_FragCoord.y / view_size.y), 0.0).xyz, w);
+        const vec2 view_size = vec2(textureSize(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_mirrorView))], 0));
+        return mix(glossenv, textureLod(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_mirrorView))], vec2(1.0 - gl_FragCoord.x / view_size.x, gl_FragCoord.y / view_size.y), 0.0).xyz, w);
     }
-    return mix(glossenv, textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_heroProbes))], vec4(env_mat * reflected, 0.0), (1.0 - glossiness) * float(heroMipCount)).xyz, w);
+    return mix(glossenv, textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_heroProbes))], vec4(env_mat * reflected, 0.0), (1.0 - glossiness) * float(heroMipCount)).xyz, w);
 }
 #endif

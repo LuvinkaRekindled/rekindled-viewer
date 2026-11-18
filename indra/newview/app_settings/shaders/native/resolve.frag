@@ -34,7 +34,7 @@ bool is_flag(float data, float flag)
     return abs(data - flag) < 0.1;
 }
 
-#define G_TAP(slot) rk_tbl2d[LL_HM(slot)]
+#define G_TAP(slot) rk_tbl2d[RK_HM(slot)]
 
 // how much of the sky's ambient light the occlusion takes away: occluded places get the sky's light through the occlusion matrix, free ones keep it
 vec3 adjust_irradiance(vec3 irradiance, float ambocc)

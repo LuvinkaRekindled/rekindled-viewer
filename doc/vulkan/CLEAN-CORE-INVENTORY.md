@@ -40,7 +40,7 @@ Reading: the UI / tools surface is small and mostly face iteration, texture get/
 ### LLSpatialGroup
 - **Octree node (stays as the CPU spatial index):** from LLOcclusionCullingGroup / LLViewerOctreeGroup (bounds, state, occlusion state, visibility stamps per camera id).
 - **Derived draw data (delete with the draw infos):** mDrawMap (U32 type -> vector<LLPointer<LLDrawInfo>>), mVertexBuffer, mBufferMap, mDrawMapSerial, mSceneFragment, mGeoServedMask, mGeoServedTris, mGeoAllServed, mGeoHandle, mSceneSeenSerial/Frame, mChurn*.
-- **Per-group caches written by whichever view culls it (shared-write hazards between views):** mDistance, mDepth, mLastUpdateDistance, mLastUpdateTime, mPixelArea, mRadius, mViewAngle, mLastUpdateViewAngle; the state bits (GEOM_DIRTY, ALPHA_DIRTY, IN_BUILD_Q1/2, FS_RELEASED, FS_WAKING, NEW_DRAWINFO, ...).
+- **Per-group caches written by whichever view culls it (shared-write hazards between views):** mDistance, mDepth, mLastUpdateDistance, mLastUpdateTime, mPixelArea, mRadius, mViewAngle, mLastUpdateViewAngle; the state bits (GEOM_DIRTY, ALPHA_DIRTY, IN_BUILD_Q1/2, RK_RELEASED, RK_WAKING, NEW_DRAWINFO, ...).
 - **Alpha ordering for avatars:** mAvatarp, mRenderOrder. Others: mBridgeList, mReflectionProbe, mObjectBoxSize, mGeometryBytes, mSurfaceArea, mBuilt.
 
 ## 3. What blocks parallelism today, from the fields

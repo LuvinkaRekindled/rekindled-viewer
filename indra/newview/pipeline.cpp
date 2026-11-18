@@ -147,7 +147,7 @@
 // [/RLVa:KB]
 
 #include "llenvironment.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 #include "llenvironment.h"
 #include "llsettingsvo.h"
@@ -2404,14 +2404,14 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     total_ops += (U64)(end - begin);
     if (++calls % 6000 == 0)
     {
-        LL_DIAG("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
+        RK_DIAG("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
                              << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", bridge moves " << by_kind[AvOp::BRIDGE_MOVE] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
     }
 }
 
 void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
 {
-    LL_CPU_ZONE("pipeline: updateMoveDampedAsync");
+    RK_CPU_ZONE("pipeline: updateMoveDampedAsync");
     LL_PROFILE_ZONE_SCOPED;
     if (FreezeTime)
     {
@@ -2450,7 +2450,7 @@ void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
 
 void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
 {
-    LL_CPU_ZONE("pipeline: updateMoveNormalAsync");
+    RK_CPU_ZONE("pipeline: updateMoveNormalAsync");
     LL_PROFILE_ZONE_SCOPED;
     if (FreezeTime)
     {
@@ -2565,7 +2565,7 @@ void LLPipeline::releaseScan()
     {
         return;
     }
-    LL_CPU_ZONE("expiry: release due groups");
+    RK_CPU_ZONE("expiry: release due groups");
     ++sRelScans;
     const S32 min_age = release_min_age();
     for (LLSpatialGroup* group : due)
@@ -2576,7 +2576,7 @@ void LLPipeline::releaseScan()
         {
             continue;       // (queued again by its next build)
         }
-        if (group->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::FS_RELEASED | LLSpatialGroup::FS_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
+        if (group->hasState(LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::IN_BUILD_Q2 | LLSpatialGroup::RK_RELEASED | LLSpatialGroup::RK_WAKING | LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::MESH_DIRTY | LLSpatialGroup::ALPHA_DIRTY))
         {
             continue;       // (a rebuild is coming: it queues the group again; a released or waking group has nothing to release)
         }
@@ -2591,21 +2591,21 @@ void LLPipeline::releaseScan()
             continue;
         }
         group->clearDrawMap();
-        group->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::FS_RELEASED);
+        group->setState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::RK_RELEASED);
         ++sRelReleased;
         sRelReleasedInfos += infos;
     }
 }
 
-// <FS> the wake queue is written by the threads of the parallel shadow preparation (markNotCulled of a Released group) as well as by the main thread: one lock for the queue and the FS_WAKING bit
+// <FS> the wake queue is written by the threads of the parallel shadow preparation (markNotCulled of a Released group) as well as by the main thread: one lock for the queue and the RK_WAKING bit
 static std::mutex sWakeMutex;
 
 void LLPipeline::wakeRequest(LLSpatialGroup* group)
 {
     std::lock_guard<std::mutex> lock(sWakeMutex);
-    if (!group->hasState(LLSpatialGroup::FS_WAKING))
+    if (!group->hasState(LLSpatialGroup::RK_WAKING))
     {
-        group->setState(LLSpatialGroup::FS_WAKING);
+        group->setState(LLSpatialGroup::RK_WAKING);
         mWakeQ.push_back(group);
     }
 }
@@ -2631,11 +2631,11 @@ void LLPipeline::wakeGroups()
         now.assign(mWakeQ.begin(), mWakeQ.begin() + n);
         mWakeQ.erase(mWakeQ.begin(), mWakeQ.begin() + n);
     }
-    LL_CPU_ZONE("expiry: wake groups");
+    RK_CPU_ZONE("expiry: wake groups");
     for (LLSpatialGroup* group : now)
     {
-        group->clearState(LLSpatialGroup::FS_WAKING);
-        if (!group->isDead() && group->hasState(LLSpatialGroup::FS_RELEASED))
+        group->clearState(LLSpatialGroup::RK_WAKING);
+        if (!group->isDead() && group->hasState(LLSpatialGroup::RK_RELEASED))
         {
             group->setState(LLSpatialGroup::GEOM_DIRTY);
             markRebuild(group);
@@ -2669,7 +2669,7 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 
 void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list)
 {
-    LL_CPU_ZONE("pipeline: updateMovedList");
+    RK_CPU_ZONE("pipeline: updateMovedList");
     LL_PROFILE_ZONE_SCOPED;
     // <FS> by index: updateMove marks the parent and the children of a drawable moved (markMoved, from makeActive), which pushes onto this very list; a push that moves the vector's storage left the iterator of the
     // old loop pointing at freed memory (a crash reading 0xFFFFFFFFFFFFFFFF during the loading of a crowd). An entry pushed during the pass is reached later in the same pass, as the loop always meant.
@@ -3231,38 +3231,38 @@ void LLPipeline::cpuProbe()
     }
     static volatile U64 sink = 0;
     {
-        LL_CPU_ZONE("probe: dependent arithmetic (100k)");
+        RK_CPU_ZONE("probe: dependent arithmetic (100k)");
         U64 x = 12345;
         for (int i = 0; i < 100000; ++i) x = x * 2862933555777941757ull + 3037000493ull;
         sink = x;
     }
     {
-        LL_CPU_ZONE("probe: pointer chase 128 KB (20k)");
+        RK_CPU_ZONE("probe: pointer chase 128 KB (20k)");
         U32 p = 0;
         for (int i = 0; i < 20000; ++i) p = small_chain[p];
         sink = p;
     }
     {
         // the middle sizes (a chase that fits L1 or reaches DRAM does not feel another thread's data in the shared cache; these do)
-        LL_CPU_ZONE("probe: pointer chase 2 MB (20k)");
+        RK_CPU_ZONE("probe: pointer chase 2 MB (20k)");
         static U32 q2 = 0;
         for (int i = 0; i < 20000; ++i) q2 = l2_chain[q2];
         sink = q2;
     }
     {
-        LL_CPU_ZONE("probe: pointer chase 8 MB (20k)");
+        RK_CPU_ZONE("probe: pointer chase 8 MB (20k)");
         static U32 q3 = 0;
         for (int i = 0; i < 20000; ++i) q3 = l3_chain[q3];
         sink = q3;
     }
     {
-        LL_CPU_ZONE("probe: pointer chase 32 MB (10k)");
+        RK_CPU_ZONE("probe: pointer chase 32 MB (10k)");
         static U32 q4 = 0;
         for (int i = 0; i < 10000; ++i) q4 = l3big_chain[q4];
         sink = q4;
     }
     {
-        LL_CPU_ZONE("probe: pointer chase 128 MB (1k)");
+        RK_CPU_ZONE("probe: pointer chase 128 MB (1k)");
         static U32 q = 0;
         for (int i = 0; i < 1000; ++i) q = big_chain[q];
         sink = q;
@@ -3296,7 +3296,7 @@ void LLPipeline::updateMove()
     updateMovedList(mMovedList);
 
     //balance octrees
-    LL_CPU_ZONE("octree: balance (all partitions)");
+    RK_CPU_ZONE("octree: balance (all partitions)");
     ItemCensus::Scope census_scope(ItemCensus::BALANCE);
     for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
         iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
@@ -3762,7 +3762,7 @@ static bool rk_partition_emptied(LLSpatialPartition* part)
     {
         return false;
     }
-    // (a counter, LL_DIAG VkWalkFallback: the stage 9 and 11 note says these hold nothing; a non empty one is reported)
+    // (a counter, RK_DIAG VkWalkFallback: the stage 9 and 11 note says these hold nothing; a non empty one is reported)
     ++sPartSkipped;
     sPartSkippedNonEmpty += part->mOctree && (part->mOctree->getElementCount() || part->mOctree->getChildCount());
     return true;
@@ -3787,7 +3787,7 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     return view;
 }
 
-static void rk_main_set_note();       // diagnostics (LL_DIAG): the age of the set on every main view frame, the frames with no set, the skipped walks of the emptied partitions; the pool counters
+static void rk_main_set_note();       // diagnostics (RK_DIAG): the age of the set on every main view frame, the frames with no set, the skipped walks of the emptied partitions; the pool counters
 static void rk_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
 bool rk_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void rk_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
@@ -3838,7 +3838,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         camera.disableUserClipPlane();
     }
 
-    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+    { RK_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     // stage 8f, finished: in the main world view the covered partitions are never walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, whatever its age and whatever gShiftFrame says, each
     // group goes through markNotCulled as the walk's own did (rk_cull_derived_pass: it does nothing but release the stamps when there is no set yet). The other views (cascades, probes, HUD, impostors, snapshots) cull as before.
@@ -3851,7 +3851,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     if (view.mWorldCameraID && !view.mHud && !view.mCubeSnapshot)
     {
-        LL_CPU_ZONE("occlusion: Hi-Z results");
+        RK_CPU_ZONE("occlusion: Hi-Z results");
         RKHiz::apply();        // <FS> S7 H3: the verdicts of the boxes sent a few frames ago
     }
 
@@ -3878,12 +3878,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
                     // (one zone a partition: a few calls a frame each, so the zone cost stays small)
                     static const char* const part_zones[] = { "updateCull: cull HUD", "updateCull: cull TERRAIN", "updateCull: cull VOIDWATER", "updateCull: cull WATER", "updateCull: cull TREE", "updateCull: cull PARTICLE",
                         "updateCull: cull GRASS", "updateCull: cull VOLUME", "updateCull: cull BRIDGE", "updateCull: cull AVATAR", "updateCull: cull CONTROL_AV", "updateCull: cull HUD_PARTICLE", "updateCull: cull (other)" };
-                    LL_CPU_ZONE(part_zones[i < 12 ? i : 12]);
+                    RK_CPU_ZONE(part_zones[i < 12 ? i : 12]);
                     if (main_kept && rk_cull_derived_skip(part))
                     {
                         continue;       // (stage 8f: the worker's kept set stands in for this partition's walk, below)
                     }
-                    { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+                    { RK_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
                 }
             }
         }
@@ -3894,13 +3894,13 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             // <FS:Beq> Fix area search again
             //vo_part->cull(camera, sUseOcclusion > 0);
-            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
+            { RK_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
     if (main_kept)
     {
         rk_main_set_note();
-        LL_CPU_ZONE("updateCull: kept groups");
+        RK_CPU_ZONE("updateCull: kept groups");
         rk_cull_derived_pass(camera, view, !RKGpuZoneTimer::isActive());
         rk_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
     }
@@ -3967,7 +3967,7 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
         return;
     }
 
-    if (group->hasState(LLSpatialGroup::FS_RELEASED))
+    if (group->hasState(LLSpatialGroup::RK_RELEASED))
     {
         if (sSortSink)
         {
@@ -4076,7 +4076,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("doOcclusion");
-    LL_CPU_ZONE("occlusion: doOcclusion");
+    RK_CPU_ZONE("occlusion: doOcclusion");
     llassert(!gCubeSnapshot);
 
     // the shadow cascades, reflections and cube snapshots have no occlusion data of their own (it is the world camera's); without the Vulkan worker nothing is tested and nothing is occluded
@@ -4120,7 +4120,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 
     RKCullShadow::send(camera);         // <FS> S7 C1: the flat group table, shadow mode
     {
-        LL_CPU_ZONE("occlusion: Hi-Z send");
+        RK_CPU_ZONE("occlusion: Hi-Z send");
         LL_PROFILE_GPU_ZONE("hiz");
         const glm::mat4 hiz_view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
         RKHiz::send(glm::value_ptr(hiz_view_proj));
@@ -4463,7 +4463,7 @@ void LLPipeline::rebuildPriorityGroups()
 
 void LLPipeline::updateGeom(F32 max_dtime)
 {
-    LL_CPU_ZONE("pipeline: updateGeom");
+    RK_CPU_ZONE("pipeline: updateGeom");
     LLTimer update_timer;
     LLPointer<LLDrawable> drawablep;
 
@@ -4656,7 +4656,7 @@ static inline bool rk_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32
 
 void LLPipeline::ownersCollect(LLCamera& camera)
 {
-    LL_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
+    RK_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
     OwnerPass& o = sOwner;
     o.mFirst.clear();
     o.mBoxBridges.clear();
@@ -4873,7 +4873,7 @@ void rk_bridge_hiz_collect()
 
 void LLPipeline::ownersFinish(LLCamera& camera)
 {
-    LL_CPU_ZONE("stateSort: avatar and bridge owners (finish)");
+    RK_CPU_ZONE("stateSort: avatar and bridge owners (finish)");
     OwnerPass& o = sOwner;
     const S32 frame = (S32)LLViewerOctreeEntryData::getCurrentFrame();
     const bool occ = useOcclusion() > 1;
@@ -4919,7 +4919,7 @@ void LLPipeline::ownersFinish(LLCamera& camera)
 // the serial form (the serial sort): the same, marked on this thread
 void LLPipeline::markVisibleOwners(LLCamera& camera)
 {
-    LL_CPU_ZONE("stateSort: avatar and bridge owners");
+    RK_CPU_ZONE("stateSort: avatar and bridge owners");
     ownersCollect(camera);
     for (LLDrawable* d : sOwner.mFirst)
     {
@@ -5399,7 +5399,7 @@ void LLPipeline::applySortDeltasRange(const SortDelta* begin, const SortDelta* e
 // the check: the loops deferred (into a scratch result, nothing applied, what they write put back), then as before with every call recorded, and the two lists compared
 void LLPipeline::sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b)
 {
-    LL_CPU_ZONE("stateSort: split check");
+    RK_CPU_ZONE("stateSort: split check");
     static LLCullResult scratch;
     static U64 checked = 0, mismatched = 0, entries = 0, kinds[5] = {};
     LLCullResult& real = *sCull;
@@ -5550,7 +5550,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     }
     if (view.mUseOcclusion > 1)
     {
-        LL_CPU_ZONE("stateSort: pre-scan");
+        RK_CPU_ZONE("stateSort: pre-scan");
         // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
         for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); !sOwnerA && i != read.endDrawableGroups(); ++i)
         {
@@ -5694,11 +5694,11 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             }
         }
     };
-    { LL_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->runLabeled("stateSort: compute 1", first.size(), first_job); }
+    { RK_CPU_ZONE("stateSort: compute 1 (wait for the pool)"); pool->runLabeled("stateSort: compute 1", first.size(), first_job); }
 
     // what the first loop found, in chunk order: the visible drawables and bridges, and the groups that a bridge's own cull (LLSpatialBridge::setVisible) added to the lists
     {
-        LL_CPU_ZONE("stateSort: merge 1");
+        RK_CPU_ZONE("stateSort: merge 1");
         for (SortChunk& chunk : first)
         {
             if (chunk.mKind != 0)
@@ -5716,7 +5716,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     // ---- serial: the drawable groups added by the bridges (the first loop of the serial sort goes on over them: its end is the end of the list as it grows)
     std::vector<SortDelta> ledger_x;
     {
-        LL_CPU_ZONE("stateSort: serial added groups (drawable)");
+        RK_CPU_ZONE("stateSort: serial added groups (drawable)");
         SortJournal* saved_journal = sSortJournal;
         std::vector<SortDelta>* saved_sink = sSortSink;
         sSortJournal = journal;
@@ -5738,7 +5738,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     const U32 n_vd = read.getVisibleListSize();
     std::vector<char> do_distance(n_br, 0);
     {
-        LL_CPU_ZONE("stateSort: bridge decisions");
+        RK_CPU_ZONE("stateSort: bridge decisions");
         SortJournal* saved_journal = sSortJournal;
         sSortJournal = journal;
         if (view.mWorldCameraID && !view.mCubeSnapshot)
@@ -5803,12 +5803,12 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             }
         }
     };
-    { LL_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->runLabeled("stateSort: compute 2", second.size(), second_job); }
+    { RK_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->runLabeled("stateSort: compute 2", second.size(), second_job); }
 
     // ---- serial: the visible groups the bridges' culls added (the third loop of the serial sort goes over the whole list, these at its end)
     std::vector<SortDelta> ledger_y;
     {
-        LL_CPU_ZONE("stateSort: serial added groups (visible)");
+        RK_CPU_ZONE("stateSort: serial added groups (visible)");
         SortJournal* saved_journal = sSortJournal;
         std::vector<SortDelta>* saved_sink = sSortSink;
         sSortJournal = journal;
@@ -5827,7 +5827,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
 
     // ---- the ledgers in the order of the serial loops, and the pool lists (visible groups, visible drawables)
     {
-        LL_CPU_ZONE("stateSort: join");
+        RK_CPU_ZONE("stateSort: join");
         for (SortChunk& chunk : first) if (chunk.mKind == 0) ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
         ledger.insert(ledger.end(), ledger_x.begin(), ledger_x.end());
         for (SortChunk& chunk : second) if (chunk.mKind == 2) ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
@@ -5942,7 +5942,7 @@ void LLPipeline::sortDryRun(const View& view, bool parallel, void* result_ptr)
 // LL_VK_SORT_SPLIT=4: the compute on this thread against the compute on the pool, on the same input; then the sort runs as before (the frame is made by the old loops)
 void LLPipeline::sortParallelCheck(const View& view)
 {
-    LL_CPU_ZONE("stateSort: parallel check");
+    RK_CPU_ZONE("stateSort: parallel check");
     static U64 checked = 0, same_count = 0, differed = 0, serial_only = 0;
     static SortDryResult a, b;
     sortDryRun(view, false, &a);
@@ -6043,7 +6043,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
 {
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("checkOcclusionAndRebuildMesh");
-        LL_CPU_ZONE("stateSort: drawable groups (occlusion + rebuild)");
+        RK_CPU_ZONE("stateSort: drawable groups (occlusion + rebuild)");
     if (sOwnerA)
     {
         markVisibleOwners(camera);
@@ -6079,7 +6079,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("WorldCamera");
-        LL_CPU_ZONE("stateSort: visible bridges");
+        RK_CPU_ZONE("stateSort: visible bridges");
         if (sOwnerA)
         {
             // stage 9 (3.1): the main view's bridges decided their LOD in ownersCollect (the bridge's own rule)
@@ -6110,7 +6110,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
     }
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("StateSort: visible groups");
-        LL_CPU_ZONE("stateSort: visible groups");
+        RK_CPU_ZONE("stateSort: visible groups");
     for (LLCullResult::sg_iterator iter = read.beginVisibleGroups(); iter != read.endVisibleGroups(); ++iter)
     {
         LLSpatialGroup* group = *iter;
@@ -6133,7 +6133,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWABLE("stateSort"); // LL_RECORD_BLOCK_TIME(FTM_STATESORT_DRAWABLE);
-        LL_CPU_ZONE("stateSort: visible drawables");
+        RK_CPU_ZONE("stateSort: visible drawables");
         for (LLCullResult::drawable_iterator iter = read.beginVisibleList();
              iter != read.endVisibleList(); ++iter)
         {
@@ -6172,11 +6172,11 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 
     //LLVertexBuffer::unbind();
 
-    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+    { RK_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     if (rk_bridges_by_registry())
     {
-        LL_CPU_ZONE("stateSort: bridges by the registry");
+        RK_CPU_ZONE("stateSort: bridges by the registry");
         static std::vector<LLSpatialBridge*> view_bridges;
         rk_view_bridges(camera, sRenderingHUDs, view_bridges);
         for (LLSpatialBridge* b : view_bridges)
@@ -6246,7 +6246,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
             }
             const auto t_mid = std::chrono::steady_clock::now();
             {
-                LL_CPU_ZONE("stateSort: apply deltas");
+                RK_CPU_ZONE("stateSort: apply deltas");
                 applySortDeltas(ledger_a);
             }
             if (timed)
@@ -6291,7 +6291,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     {
         // stage 8, owner 3 of 4: the groups whose turn it is (the candidates: the worker's slop bits, the dirty registry, the round robin wheel), each live-checked by stateSort(group): the per-group LOD call the loop skipped.
         // Serial, on this thread, for the sorts the pool did not take or that kept loop (c) in the pool's chunks (LL_VK_LOD_CAND=2 alone)
-        LL_CPU_ZONE("stateSort: LOD candidates");
+        RK_CPU_ZONE("stateSort: LOD candidates");
         sLodCandRunning = true;
         for (LLSpatialGroup* group : sLodCandList)
         {
@@ -6299,13 +6299,13 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         }
         sLodCandRunning = false;
     }
-    { LL_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
-    { LL_CPU_ZONE("stateSort: render lists"); buildRenderLists(camera); }
-    { LL_CPU_ZONE("stateSort: beacons"); addBeacons(); }
+    { RK_CPU_ZONE("stateSort: geometry stage"); rebuildGeometry(camera); }
+    { RK_CPU_ZONE("stateSort: render lists"); buildRenderLists(camera); }
+    { RK_CPU_ZONE("stateSort: beacons"); addBeacons(); }
     mEarlySort = false;
     if (!defer_pools)
     {
-        LL_CPU_ZONE("stateSort: pool fill");
+        RK_CPU_ZONE("stateSort: pool fill");
         fillPools(*sCull, nullptr);       // <FS> stage 2b: a view that is not the main view's deferred one fills the pools from its cull result
     }
     sOwnerA = false;
@@ -6314,7 +6314,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 // <FS> after the shadow passes (which reset the pool face lists and fill them with their own): the lists of the main view, as the sort that ran before them would have made them
 void LLPipeline::refillPools(LLCullResult& result)
 {
-    LL_CPU_ZONE("refill pools");
+    RK_CPU_ZONE("refill pools");
     grabReferences(result);        // the shadow passes and the impostors left sCull pointing at their own results
     if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
                       LLPipeline::RENDER_TYPE_CONTROL_AV,
@@ -7171,7 +7171,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
 
     {
         // the mesh rebuild of the groups this view's cull kept and the loops stamped: the drawable groups' first, then the visible groups' (the order of the lists), from the registry of the groups with a dirty bit
-        LL_CPU_ZONE("geometry: mesh rebuild (registry)");
+        RK_CPU_ZONE("geometry: mesh rebuild (registry)");
         const S32 frame = LLViewerOctreeEntryData::getCurrentFrame();
         const LLViewerCamera::eCameraID cam = LLViewerCamera::sCurCameraID;
         const bool occ = LLPipeline::useOcclusion() > 1;
@@ -7203,7 +7203,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             RKRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of the drawable groups and of the priority groups, together
             // rebuild drawable geometry
             {
-            LL_CPU_ZONE("geometry: drawable groups");
+            RK_CPU_ZONE("geometry: drawable groups");
             // T5 of doc/vulkan/PLAN-visible-set-owner.md: the groups with GEOM_DIRTY come from the registry of the dirty groups (the events that set the bit add the group), not from a scan of every drawable group the cull kept (rebuildGeom
             // returned at once for the clean ones, which are nearly all of them). The same stamp rule as the mesh rebuild above: the group is visible to this camera this frame. Compared with the scan over a turning lap (24,000 calls, 181 groups
             // rebuilt): the registry lacked none; it named 4 terrain groups the scan did not, which another view of the same camera had listed (rebuilt a call earlier).
@@ -7231,7 +7231,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             LL_PUSH_CALLSTACKS();
             // rebuild groups
 
-            { LL_CPU_ZONE("geometry: priority groups"); rebuildPriorityGroups(); }
+            { RK_CPU_ZONE("geometry: priority groups"); rebuildPriorityGroups(); }
             rebuild_batch.flush();
         }
 
@@ -7242,7 +7242,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     // pack vertex buffers for groups that chose to delay their updates
     {
         LL_PROFILE_GPU_ZONE("rebuildMesh");
-        LL_CPU_ZONE("geometry: delayed rebuildMesh");
+        RK_CPU_ZONE("geometry: delayed rebuildMesh");
         for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
         {
             (*iter)->rebuildMesh();
@@ -7256,7 +7256,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
 // with the world camera; the block itself skips shadow renders and cube snapshots).
 void LLPipeline::addBeacons()
 {
-    LL_CPU_ZONE("pipeline: addBeacons");
+    RK_CPU_ZONE("pipeline: addBeacons");
     LL_PUSH_CALLSTACKS();
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("beacon rendering flags");
@@ -7442,7 +7442,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     static const std::unordered_set<const LLSpatialGroup*> no_far_skip_set;       // (the other views have none)
     if (view.isMainWorldSort())
     {
-        LL_CPU_ZONE("render lists: far avatar tier");
+        RK_CPU_ZONE("render lists: far avatar tier");
         sMainFarSkip.clear();
         far_avatar_tier(sCull, sMainFarSkip);       // (the main view's own set: the record's extra handles ask it after the other views' render maps have run)
     }
@@ -7454,7 +7454,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     // build render map
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
-        LL_CPU_ZONE("render lists: build render map");
+        RK_CPU_ZONE("render lists: build render map");
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
@@ -7467,7 +7467,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         static U64 cube_sorts = 0;
         if (++cube_sorts % 600 == 1)
         {
-            LL_DIAG("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << rk_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << rk_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
+            RK_DIAG("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << rk_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << rk_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
                 << ", geo_list " << geo_list << ", geo_elide " << geo_elide << ", visible groups " << sCull->getVisibleGroupsSize() << ", shadow render " << LLPipeline::shadowRender() << ", camera id " << (S32)LLViewerCamera::sCurCameraID << LL_ENDL;
         }
     }
@@ -7583,7 +7583,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("sort alpha groups");
     if (!LLPipeline::shadowRender())
     {
-        LL_CPU_ZONE("render lists: sort alpha groups");
+        RK_CPU_ZONE("render lists: sort alpha groups");
         if (alpha_from_set)
         {
             rk_alpha_set_lists(sCull, camera, far_skip);        // (the main view: made from the alpha set, distance and order included)
@@ -7778,7 +7778,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
     t.mCascades += cascades;
     if (t.mFrames >= 300)
     {
-        LL_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
+        RK_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " sun cascade preparation: "
             << llformat("%.3f ms/frame on the main thread, %.1f cascades/frame", (double)t.mNs / 1.0e6 / t.mFrames, (double)t.mCascades / t.mFrames)
             << " (" << t.mFrames << " frames)" << LL_ENDL;
         std::string phases;
@@ -7791,7 +7791,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
                 ns = 0;
             }
         }
-        LL_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
+        RK_DIAG("ShadowPrep") << (parallel ? "parallel" : "serial") << " phases (ms/frame):" << phases << LL_ENDL;
         std::string per_cascade;
         for (int c = 0; c < 4; ++c)
         {
@@ -7799,7 +7799,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             sCascadeRenderNs[c] = 0;
             sCascadeRenders[c] = 0;
         }
-        LL_DIAG("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
+        RK_DIAG("ShadowPrep") << "renderShadow by cascade:" << per_cascade << LL_ENDL;
         if (shadow_census_on() && t.mFrames > 0)
         {
             const double f = (double)t.mFrames;
@@ -7836,7 +7836,7 @@ void note_shadow_prep_frame(bool parallel, U32 cascades)
             if (jobs)
             {
                 const double n = (double)jobs;
-                LL_DIAG("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment, %.1f rigged sources named",
+                RK_DIAG("ShadowPrep") << llformat("render map jobs (per job, %llu jobs): %.1f groups, %.1f with a current resident fragment, %.1f rigged sources named",
                     (unsigned long long)jobs, sViewJobs.mGroups.exchange(0) / n, sViewJobs.mResidentGroups.exchange(0) / n, sViewJobs.mRiggedStatic.exchange(0) / n) << LL_ENDL;
             }
         }
@@ -7900,14 +7900,14 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
         if (part_census && part_index < 96)
         {
             const auto t0 = std::chrono::steady_clock::now();
-            { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+            { RK_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
             sPartCullNs[part_index].fetch_add((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count(), std::memory_order_relaxed);
             sPartCullCalls[part_index].fetch_add(1, std::memory_order_relaxed);
             sPartCullType[part_index].store(part->mPartitionType, std::memory_order_relaxed);
         }
         else
         {
-            { LL_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
+            { RK_CPU_ZONE("updateCull: partition cull"); part->cull(camera); }
         }
         ++part_index;
     }
@@ -7945,7 +7945,7 @@ std::vector<LLSpatialGroup*> sCascSetGroups[6];      // (0 to 3 the sun cascades
 
 void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, RKForkJoinPool* pool)
 {
-    LL_CPU_ZONE("shadow prep: cull split");
+    RK_CPU_ZONE("shadow prep: cull split");
     static const double split_cost = getenv("LL_VK_SC_SPLIT_US") ? atof(getenv("LL_VK_SC_SPLIT_US")) : 60.0;
     static const double node_split = getenv("LL_VK_SC_NODE_US") ? atof(getenv("LL_VK_SC_NODE_US")) : 40.0;
     std::deque<ScChunk> chunks;
@@ -7964,7 +7964,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         return chunks.back();
     };
     {
-    LL_CPU_ZONE("shadow prep: cull split units (top levels)");
+    RK_CPU_ZONE("shadow prep: cull split units (top levels)");
     for (size_t p = 0; p < pending.size(); ++p)
     {
         ShadowCascadePrep& prep = pending[p];
@@ -8117,11 +8117,11 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     };
     if (!work.empty())
     {
-        LL_CPU_ZONE("shadow prep: cull job (wait for the pool)");
+        RK_CPU_ZONE("shadow prep: cull job (wait for the pool)");
         pool->runLabeled("shadow prep: cull job (serial split)", work.size(), job);
     }
     // the results of each cascade, in the order of the serial walk
-    LL_CPU_ZONE("shadow prep: cull split merge");
+    RK_CPU_ZONE("shadow prep: cull split merge");
     for (const ScChunk& chunk : chunks)
     {
         LLCullResult& into = *pending[chunk.mPrep].mResult;
@@ -8302,7 +8302,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
                         continue;
                     }
                     if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
-                    { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                    { RK_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
                 }
             }
         }
@@ -8314,7 +8314,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
                 if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                { RK_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
         for (LLCullResult::sg_iterator iter = result.beginVisibleGroups(); iter != result.endVisibleGroups(); ++iter)
@@ -8323,7 +8323,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
             if (!group->isDead() && group->hasState(LLSpatialGroup::MESH_DIRTY))
             {
                 if (census) { ++sCascadeCullCensus.mMeshDirty[world_sees(group)]; }
-                { LL_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
+                { RK_CPU_ZONE("stateSort: rebuildMesh"); group->rebuildMesh(); }
             }
         }
         }
@@ -9752,7 +9752,7 @@ static void scene_geo_fill(LLSpatialGroup* group, RKSceneFragment& f)
                             }
                             if (!row.empty()) text += " | type " + std::to_string(k) + ":" + row;
                         }
-                        LL_DIAG("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
+                        RK_DIAG("VkScene") << "fallback draws by type and reason (1 no count, 2 avatar mismatch, 3 glTF, 4 no buffer names, 5 32 bit indices, 6 no position first, 7 no normals, 8 no texcoord0, 9 no colour, 10 no skin, 11 materials, 12 texture matrix, 13 more than 4 textures, 0 other):" << text << LL_ENDL;
                     }
                 }
                 ++f.mGeoFallbackCount;
@@ -9869,7 +9869,7 @@ static void scene_geo_fill(LLSpatialGroup* group, RKSceneFragment& f)
     sGeoFillNonRegion += f.mGeoRegion ? 0 : 1;
     if (sGeoFillCalls % 4000 == 0)
     {
-        LL_DIAG("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
+        RK_DIAG("VkScene") << "fragment G entry builds: " << sGeoFillCalls << ", " << (double)sGeoFillNs / 1000.0 / sGeoFillCalls << " us each, " << (double)sGeoFillItems / sGeoFillCalls << " entries each, "
             << sGeoFillFallback << " fallback draws, " << sGeoTexmatRows << " rows with a texture matrix slot, " << sGeoFillNonRegion << " fragments not region-only, region matrix slots used " << sSlotMatrix.size() << LL_ENDL;
         std::string by_type;
         for (size_t t = 0; t < 2 * kGeoTypeCount; ++t)
@@ -9879,7 +9879,7 @@ static void scene_geo_fill(LLSpatialGroup* group, RKSceneFragment& f)
                 by_type += " " + std::to_string(t < kGeoTypeCount ? kGeoTypes[t].mType : kGeoTypes[t - kGeoTypeCount].mType + 1) + (t >= kGeoTypeCount ? "r" : "") + ":" + std::to_string(type_served[t]);
             }
         }
-        LL_DIAG("VkScene") << "items made by pass type number (r = the rigged variant; PASS_GRASS is " << (U32)LLRenderPass::PASS_GRASS << "):" << by_type << LL_ENDL;
+        RK_DIAG("VkScene") << "items made by pass type number (r = the rigged variant; PASS_GRASS is " << (U32)LLRenderPass::PASS_GRASS << "):" << by_type << LL_ENDL;
     }
 }
 
@@ -10458,7 +10458,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, RKSceneFragment& f,
     sAlphaPlanNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     if (sAlphaPlanBuilds % 4000 == 0)
     {
-        LL_DIAG("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
+        RK_DIAG("VkScene") << "alpha plan builds: " << sAlphaPlanBuilds << ", " << (double)sAlphaPlanNs / 1000.0 / sAlphaPlanBuilds << " us each, " << (double)sAlphaPlanServed / sAlphaPlanBuilds << " served draws, "
             << (double)sAlphaPlanOld / sAlphaPlanBuilds << " old draws, " << (double)sAlphaPlanSegs / sAlphaPlanBuilds << " segments each; texture matrices " << sAlphaPlanTexMatrix << ", draws left old for want of a matrix slot " << sAlphaPlanNoSlot << LL_ENDL;
         {
             std::string why_text;
@@ -10469,7 +10469,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, RKSceneFragment& f,
                     why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhyTr[w]);
                 }
             }
-            LL_DIAG("VkScene") << "alpha transient draws by reason (S5f F3, all passes so far):" << why_text << LL_ENDL;
+            RK_DIAG("VkScene") << "alpha transient draws by reason (S5f F3, all passes so far):" << why_text << LL_ENDL;
         }
         for (int rig = 0; rig < 2; ++rig)
         {   // S5f F2: draws of the plan builds by reason (all builds so far)
@@ -10481,7 +10481,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, RKSceneFragment& f,
                     why_text += std::string(" | ") + sAlphaWhyName[w] + " " + std::to_string((unsigned long long)sAlphaWhy[rig][w]);
                 }
             }
-            LL_DIAG("VkScene") << "alpha plan draws by reason (" << (rig ? "rigged" : "static") << "):" << why_text << LL_ENDL;
+            RK_DIAG("VkScene") << "alpha plan draws by reason (" << (rig ? "rigged" : "static") << "):" << why_text << LL_ENDL;
         }
     }
 }
@@ -10641,7 +10641,7 @@ static void scene_fragment_walk_summary(LLSpatialGroup* group, RKSceneFragment& 
             {
                 std::string text;
                 for (U32 t = 0; t < 128; ++t) { if (by_type[t]) { text += " " + std::to_string(t) + ":" + std::to_string(by_type[t]); } }
-                LL_DIAG("ShadowPrep") << "fragment walk summary: pass types with draws no fragment names (type: fragments made), PASS_SHINY_RIGGED is " << (U32)LLRenderPass::PASS_SHINY_RIGGED << ":" << text << LL_ENDL;
+                RK_DIAG("ShadowPrep") << "fragment walk summary: pass types with draws no fragment names (type: fragments made), PASS_SHINY_RIGGED is " << (U32)LLRenderPass::PASS_SHINY_RIGGED << ":" << text << LL_ENDL;
             }
         }
     }
@@ -11173,7 +11173,7 @@ static RKSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     group->mPendingDraws.clear();
     if (sFragStats.mBuilt % 20000 == 0)
     {
-        LL_DIAG("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
+        RK_DIAG("VkScene") << "draw map emptied after the fragment build: " << sFragStats.mBuiltEmpty << " fragments made from an empty draw map, " << sFragStats.mBufferChangedEmpty << " rebuilds asked because buffer ids changed, "
             << LLSpatialGroup::sGuardFragmentOnly << " guard calls for a fragment alone, " << RKBuilderGuard::sQuiesces.load() << " quiesces of the async pool" << LL_ENDL;
     }
     RKCullShadow::touch(group);         // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the handle, the served and alpha bits, the walk summary are new
@@ -11208,7 +11208,7 @@ std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map
 struct RecentSlot { U32 mFrame; U32 mSlot; U8 mWhat; };
 enum : U8 { RECENT_BOX = 1, RECENT_MAP = 2 };
 std::deque<RecentSlot> sRecent;
-U64 sRecentOccCleared = 0, sRecentOccSkipped = 0, sRecentAdded = 0;      // (2026-11-17, proof counters of the recent list and occlusion: LL_DIAG VkRecentOcc)
+U64 sRecentOccCleared = 0, sRecentOccSkipped = 0, sRecentAdded = 0;      // (2026-11-17, proof counters of the recent list and occlusion: RK_DIAG VkRecentOcc)
 static void recent_note(U32 slot, U8 what)
 {
     sRecent.push_back({ (U32)gFrameCount, slot, what });
@@ -11590,7 +11590,7 @@ void cull_process()
             {
                 sMapHandleFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
             }
-            if (rk_diag_on() && memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)       // (only LL_DIAG's LOD candidate check reads it)
+            if (rk_diag_on() && memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)       // (only RK_DIAG's LOD candidate check reads it)
             {
                 sMapChangeFrame[slot] = (U32)gFrameCount;
             }
@@ -12022,7 +12022,7 @@ static void rk_kept_mark(LLSpatialGroup* g, LLCamera& camera)
     gPipeline.markNotCulled(g, camera);
 }
 
-// STEP 3 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, LL_DIAG VkWalkFallback, nothing changes in the frame): the main view never walks the covered partitions now, the kept
+// STEP 3 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, RK_DIAG VkWalkFallback, nothing changes in the frame): the main view never walks the covered partitions now, the kept
 // pass runs on every frame through whatever set exists. What is counted: the age of the set on every frame (0, 1, 2, 3, 4 to 6, 7 to 20, over 20), the frames with no set (login: nothing is listed for the covered
 // partitions) and the frames with an empty set, the shift frames, and the walks of the emptied partitions that were skipped. The same 600 frame hook reports the fork-join pool's counters and the thread phase check totals.
 static void rk_main_set_note()
@@ -12030,7 +12030,7 @@ static void rk_main_set_note()
     static U64 pool_frames = 0;
     if (++pool_frames % 600 == 0)
     {
-        LL_DIAG("VkWalkFallback") << "fork-join pool: " << RKForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
+        RK_DIAG("VkWalkFallback") << "fork-join pool: " << RKForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
             << RKForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << RKForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << RKForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
         RKPhaseCheck::logSummary();
     }
@@ -12056,11 +12056,11 @@ static void rk_main_set_note()
     if ((!wl || wl->mKept.empty()) && lines < 60)
     {
         ++lines;
-        LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << ": " << (!wl ? "no set" : "empty set") << ", the covered partitions list nothing" << (gShiftFrame ? " (shift frame)" : "") << LL_ENDL;
+        RK_DIAG("VkWalkFallback") << "frame " << gFrameCount << ": " << (!wl ? "no set" : "empty set") << ", the covered partitions list nothing" << (gShiftFrame ? " (shift frame)" : "") << LL_ENDL;
     }
     if (frames % 600 == 0)
     {
-        LL_DIAG("VkWalkFallback") << "main view frames " << frames << ": no set " << no_set << ", empty set " << empty_set << ", shift frames " << shift << "; age of the set when there is one: 0 "
+        RK_DIAG("VkWalkFallback") << "main view frames " << frames << ": no set " << no_set << ", empty set " << empty_set << ", shift frames " << shift << "; age of the set when there is one: 0 "
                                   << age_hist[0] << ", 1 " << age_hist[1] << ", 2 " << age_hist[2] << ", 3 " << age_hist[3] << ", 4 to 6 " << age_hist[4] << ", 7 to 20 " << age_hist[5] << ", over 20 " << age_hist[6]
                                   << "; walks of the emptied partitions skipped " << sPartSkipped << ", of them non empty " << sPartSkippedNonEmpty << LL_ENDL;
     }
@@ -12115,7 +12115,7 @@ static void rk_occluded_retest(LLCamera& camera)
         sum_asked += asked;
         if (frames % 600 == 0)
         {
-            LL_DIAG("VkOccRetest") << "groups held occluded (world) " << (F64)sum_all / 600.0 << " a frame, top-most inside the frustum " << (F64)sum_tops / 600.0 << ", asked for a verdict " << (F64)sum_asked / 600.0 << LL_ENDL;
+            RK_DIAG("VkOccRetest") << "groups held occluded (world) " << (F64)sum_all / 600.0 << " a frame, top-most inside the frustum " << (F64)sum_tops / 600.0 << ", asked for a verdict " << (F64)sum_asked / 600.0 << LL_ENDL;
             sum_all = sum_tops = sum_asked = 0;
         }
     }
@@ -12171,7 +12171,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     {
             // <FS> 2026-11-16 (the plan, stage 8 finished): the recent list is for every covered partition of the main view, not only the avatar ones: a group made or moved in the last frames is in the walk's list the frame it is made and in
         // the worker's set 1 to 3 frames later (the compare of the kept set has shown about 2 groups a frame the walk keeps and the set does not). LL_VK_KEPT_RECENT=0 turns it off (for the counters' before).
-        LL_CPU_ZONE("updateCull: kept pass recent groups");
+        RK_CPU_ZONE("updateCull: kept pass recent groups");
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 now = (U32)gFrameCount;
         const U32 n = (U32)sSlotGroup.size();
@@ -12218,7 +12218,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             static U32 passes = 0;
             if (++passes % 600 == 0)
             {
-                LL_DIAG("VkRecentOcc") << "recent list, a frame over 600: groups added " << (F64)sRecentAdded / 600.0 << ", skipped as occluded " << (F64)sRecentOccSkipped / 600.0 << ", rows whose occluded flag cleared " << (F64)sRecentOccCleared / 600.0 << LL_ENDL;
+                RK_DIAG("VkRecentOcc") << "recent list, a frame over 600: groups added " << (F64)sRecentAdded / 600.0 << ", skipped as occluded " << (F64)sRecentOccSkipped / 600.0 << ", rows whose occluded flag cleared " << (F64)sRecentOccCleared / 600.0 << LL_ENDL;
                 sRecentAdded = sRecentOccSkipped = sRecentOccCleared = 0;
             }
         }
@@ -12274,7 +12274,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         }
     };
     {
-        LL_CPU_ZONE("updateCull: kept groups (wait for the pool)");
+        RK_CPU_ZONE("updateCull: kept groups (wait for the pool)");
         pool->runLabeled("updateCull: kept groups", chunks.size(), job);
     }
     std::vector<LLPipeline::SortDelta> ledger;
@@ -12339,7 +12339,7 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
     {
         return;
     }
-    LL_CPU_ZONE("render lists: alpha set");
+    RK_CPU_ZONE("render lists: alpha set");
     const bool alpha_pool = gPipeline.hasRenderType(LLDrawPool::POOL_ALPHA);
     static std::vector<LLSpatialGroup*> cands;
     static std::vector<U32> seen;
@@ -12859,7 +12859,7 @@ static void scene_gather(LLCullResult& result, bool send, SceneGather& g, bool r
         {
             causes += std::string(c ? ", " : "") + kFragmentCauseNames[c] + " " + std::to_string(s.mMismatch[c]);
         }
-        LL_DIAG("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
+        RK_DIAG("VkScene") << "fragments (shadow kind 0), totals: " << s.mPasses << " passes, " << s.mGroups << " group visits (" << s.mReused << " reused, " << s.mBuilt << " built, " << s.mBufferChanged
             << " rebuilt because a buffer id changed under the same serial), " << s.mRetains << " retained, " << s.mReleases << " released, " << s.mEntries << " entries and " << s.mFallback
             << " fallback draws served | verify: " << s.mChecked << " fragments checked, mismatches by cause (" << causes << "); " << s.mViewsChecked
             << " cascade lists compared with the builder's: " << s.mViewCount << " differ in count, " << s.mViewContent << " in content, " << s.mViewFallback << " in fallback draws"
@@ -13104,7 +13104,7 @@ void rk_scene_geo_palette_kick(LLCullResult* cull)
 // a group the main view lists belongs to a marked bridge. Compared with the walk of the bridges' octrees over 35,400 records (lap lh1-def1): 0 differences; the walk equalled the old preparation (a byte a fragment, the visible groups, every slot) for the bridge groups over 42,000 records (rh1).
 static void rk_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window)
 {
-    LL_CPU_ZONE("geo frame: the record's extra handles");
+    RK_CPU_ZONE("geo frame: the record's extra handles");
     static std::vector<U32> seen;
     static U32 stamp = 0;
     if (seen.size() < sGeoFragByHandle.size() + 1)
@@ -13194,7 +13194,7 @@ void rk_scene_geo_frame(LLCullResult* cull)
     const RKConsumerKinds& kinds = rk_scene_consumer_kinds(cull);             // T7: what the CPU's consumers serve, by kind (the late list classified once; the exact list in a view that is not the main view)
     {
         // J1 K4: the bump images of the listed fragments' bump items are made current here (a render pass inside, before the passes), as the old pass did for each draw it drew
-        LL_CPU_ZONE("deferred: bump images");
+        RK_CPU_ZONE("deferred: bump images");
         for (U32 handle : kinds.mBump)
         {
             for (const RKSceneFragment::BumpSource& b : sGeoFragByHandle[handle]->mBump)
@@ -13443,7 +13443,7 @@ void rk_scene_geo_frame(LLCullResult* cull)
             }
             if (asked >= 20000)
             {
-                LL_DIAG("ShadowLod") << "opaque rigged LOD: " << asked << " items asked, " << chosen << " got a simplified list, triangles " << tris_all << " -> " << tris_lod << ", binding order mismatches " << mismatch << LL_ENDL;
+                RK_DIAG("ShadowLod") << "opaque rigged LOD: " << asked << " items asked, " << chosen << " got a simplified list, triangles " << tris_all << " -> " << tris_lod << ", binding order mismatches " << mismatch << LL_ENDL;
                 asked = chosen = mismatch = tris_all = tris_lod = 0;
             }
         }
@@ -13539,7 +13539,7 @@ void rk_scene_geo_frame(LLCullResult* cull)
             geo_users += kv.second.mGeoUsers.size();
         }
         const GeoRegStats& r = sGeoReg;
-        LL_DIAG("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
+        RK_DIAG("VkScene") << "scene geometry, viewer side per frame over " << s.mFrames << " frames serving (" << s.mOff << " frames with the table off): " << (double)s.mHandles / n << " fragments listed, "
             << (double)s.mMatrices / n << " matrices, " << (double)s.mBytes / n << " bytes; builder draws left out " << (double)sGeoCounts[0] / n << ", table draw records " << (double)sGeoCounts[1] / n
             << ", builds made again for want of a prepare " << sGeoCounts[2] << " | postSort left out (per frame) " << (double)sGeoElideGroups / n << " groups, " << (double)sGeoElideTypes / n
             << " type lists (" << (double)sGeoElideWhole / n << " whole groups not walked), " << (double)sGeoElideTris / n / 3.0 << " triangles; passes elided but not prepared " << sGeoCounts[3] << " | pools: rigged material passes skipped " << (double)sGeoCounts[4] / n
@@ -13767,7 +13767,7 @@ static void scene_alpha_frame(U64 frame)
         // registry textures lose their name or readiness at once would take their shadows away together. Logged when 8 or more do in one frame (the time says which blink it was)
         if (lost_now >= 8)
         {
-            LL_DIAG("VkScene") << "alpha textures that lost their picture or readiness in one frame: " << lost_now << " of " << ids.size() << " name events (frame " << frame << ", " << changed.size() << " changed in all)" << LL_ENDL;
+            RK_DIAG("VkScene") << "alpha textures that lost their picture or readiness in one frame: " << lost_now << " of " << ids.size() << " name events (frame " << frame << ", " << changed.size() << " changed in all)" << LL_ENDL;
         }
     }
     // the safety net: every 256th frame every registry entry is compared with its texture as it is now; a difference is an event that did not reach us (counted)
@@ -13831,7 +13831,7 @@ static void scene_alpha_frame(U64 frame)
                 }
                 small32 += (info.mTex->getFullWidth() <= 32) ? 1 : 0;
             }
-            LL_DIAG("VkScene") << "alpha texture registry: " << sAlphaTex.size() << " textures (" << users_all << " users): GL texture " << real << ", on the default image " << on_default << " with " << users_default
+            RK_DIAG("VkScene") << "alpha texture registry: " << sAlphaTex.size() << " textures (" << users_all << " users): GL texture " << real << ", on the default image " << on_default << " with " << users_default
                                 << " users (data already decoded " << has_data << ", being fetched " << fetching << ", refused by the server " << missing << ", full size 32 or less " << small32 << ", highest discard " << worst_discard
                                 << "), no image object " << no_gl << ", not ready for the ray tests " << not_ready << LL_ENDL;
             // the textures with the most users, named: what they are, so a 32 x 32 one with hundreds of users can be told from the default image
@@ -13865,7 +13865,7 @@ static void scene_alpha_frame(U64 frame)
                     }
                     text += "]";
                 }
-                LL_DIAG("VkScene") << "alpha texture registry, most used:" << text << LL_ENDL;
+                RK_DIAG("VkScene") << "alpha texture registry, most used:" << text << LL_ENDL;
             }
             // animated objects (control avatars) go through the avatar path of the ray scene, with its loading gate and its distance throttles: how many there are and what state they are in, and
             // the ones near the agent (within 15 m, nearest first, 12 at most) with where they stand in the region and the textures of their faces (root and linked prims)
@@ -13894,7 +13894,7 @@ static void scene_alpha_frame(U64 frame)
                         }
                     }
                 }
-                LL_DIAG("VkScene") << "animated objects (control avatars): " << total << ", fully loaded " << loaded << ", impostors " << impostors << ", too slow " << slow << ", invisible " << invisible
+                RK_DIAG("VkScene") << "animated objects (control avatars): " << total << ", fully loaded " << loaded << ", impostors " << impostors << ", too slow " << slow << ", invisible " << invisible
                                     << ", within 15 m of the agent " << near_ones.size() << LL_ENDL;
                 std::sort(near_ones.begin(), near_ones.end(), [](const std::pair<F32, LLControlAvatar*>& x, const std::pair<F32, LLControlAvatar*>& y) { return x.first < y.first; });
                 for (size_t n = 0; n < near_ones.size() && n < 12; ++n)
@@ -13921,7 +13921,7 @@ static void scene_alpha_frame(U64 frame)
                     {
                         text += " " + id;
                     }
-                    LL_DIAG("VkScene") << "animated object " << (n + 1) << " (" << (S32)near_ones[n].first << " m from the agent) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
+                    RK_DIAG("VkScene") << "animated object " << (n + 1) << " (" << (S32)near_ones[n].first << " m from the agent) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
                                         << ", loaded " << ctrl->isFullyLoaded() << ", impostor " << ctrl->isImpostor() << ", textures:" << text << LL_ENDL;
                 }
             }
@@ -13943,7 +13943,7 @@ static void scene_alpha_frame(U64 frame)
                     }
                 }
                 std::sort(near_prims.begin(), near_prims.end(), [](const std::pair<F32, LLVOVolume*>& x, const std::pair<F32, LLVOVolume*>& y) { return x.first < y.first; });
-                LL_DIAG("VkScene") << "prims within 10 m of the agent: " << near_prims.size() << " (the nearest 12 follow)" << LL_ENDL;
+                RK_DIAG("VkScene") << "prims within 10 m of the agent: " << near_prims.size() << " (the nearest 12 follow)" << LL_ENDL;
                 for (size_t n = 0; n < near_prims.size() && n < 12; ++n)
                 {
                     LLVOVolume* vol = near_prims[n].second;
@@ -13962,7 +13962,7 @@ static void scene_alpha_frame(U64 frame)
                         text += " [" + std::to_string(te) + ": " + entry->getID().asString().substr(0, 8) + ", GL " + std::to_string(gl ? gl->getTexName() : 0) + ", " + std::to_string(tex->getComponents()) + " ch"
                             + (vol->mTextureAnimp ? ", texture animation" : "") + (reg != sAlphaTex.end() ? ", registry users " + std::to_string(reg->second.mUsers.size() + reg->second.mGeoUsers.size()) : std::string(", not in the registry")) + "]";
                     }
-                    LL_DIAG("VkScene") << "prim " << (n + 1) << " (" << (S32)near_prims[n].first << " m) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
+                    RK_DIAG("VkScene") << "prim " << (n + 1) << " (" << (S32)near_prims[n].first << " m) at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2]
                                         << (vol->isRoot() ? ", root" : ", linked") << (vol->isAttachment() ? ", attachment" : "") << ", faces:" << text << LL_ENDL;
                 }
             }
@@ -13979,12 +13979,12 @@ static void scene_alpha_frame(U64 frame)
                     }
                     ++found;
                     RKImageTex* gl = ft->getImageTexture();
-                    LL_DIAG("VkScene") << "leaf texture fa39d3ce: GL " << (gl ? gl->getTexName() : 0) << ", " << ft->getFullWidth() << "x" << ft->getFullHeight() << ", discard " << ft->getDiscardLevel()
+                    RK_DIAG("VkScene") << "leaf texture fa39d3ce: GL " << (gl ? gl->getTexName() : 0) << ", " << ft->getFullWidth() << "x" << ft->getFullHeight() << ", discard " << ft->getDiscardLevel()
                                         << (ft->isFetching() ? ", fetching" : "") << ", registry users " << kv.second.mUsers.size() + kv.second.mGeoUsers.size() << ", ready " << (kv.second.mReady ? 1 : 0) << ", registry name " << kv.second.mName << LL_ENDL;
                 }
                 if (!found)
                 {
-                    LL_DIAG("VkScene") << "leaf texture fa39d3ce: not in the alpha registry" << LL_ENDL;
+                    RK_DIAG("VkScene") << "leaf texture fa39d3ce: not in the alpha registry" << LL_ENDL;
                 }
             }
             // the objects the user has selected (a prim of a tree, say): the name the simulator sent, where it stands and the textures of its faces, as the prims above are described. The way to ask
@@ -14021,14 +14021,14 @@ static void scene_alpha_frame(U64 frame)
                                 + ((dynamic_cast<LLVOVolume*>(obj) && dynamic_cast<LLVOVolume*>(obj)->mTextureAnimp) ? ", texture animation" : "")
                                 + (reg != sAlphaTex.end() ? ", registry users " + std::to_string(reg->second.mUsers.size() + reg->second.mGeoUsers.size()) : std::string(", not in the registry")) + "]";
                         }
-                        LL_DIAG("VkScene") << "selected object \"" << node->mName << "\" at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2] << " ("
+                        RK_DIAG("VkScene") << "selected object \"" << node->mName << "\" at region " << (S32)pos.mV[0] << "," << (S32)pos.mV[1] << "," << (S32)pos.mV[2] << " ("
                                             << (S32)(obj->getPositionAgent() - gAgent.getPositionAgent()).length() << " m), " << (obj->isRoot() ? "root" : "linked") << ", animated object " << (obj->isAnimatedObject() ? 1 : 0)
                                             << ", faces:" << text << LL_ENDL;
                     }
                 }
                 if (!listed)
                 {
-                    LL_DIAG("VkScene") << "selected objects: none" << LL_ENDL;
+                    RK_DIAG("VkScene") << "selected objects: none" << LL_ENDL;
                 }
             }
         }
@@ -14718,7 +14718,7 @@ static void shadow_lod_pump()
             static U32 sweeps = 0;
             if (++sweeps % 10 == 1 || gone_last_holder + gone_unused > 500)
             {
-                LL_DIAG("ShadowLod") << "shadow caster LOD cache sweep: " << gone_unused << " entries unused for 20 s and " << gone_last_holder << " whose buffer only the cache still held went (about " << (freed_bytes >> 20)
+                RK_DIAG("ShadowLod") << "shadow caster LOD cache sweep: " << gone_unused << " entries unused for 20 s and " << gone_last_holder << " whose buffer only the cache still held went (about " << (freed_bytes >> 20)
                                       << " MB of buffers released), " << sSlCache.size() << " entries stay" << LL_ENDL;
             }
         }
@@ -14904,7 +14904,7 @@ bool rk_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& cou
     }
     if (asked % 20000 == 0)
     {
-        LL_DIAG("ShadowLod") << "main view rigged LOD: " << asked << " lookups (error levels mm 2/4/8/16/32/64/128: " << levels[1] << "/" << levels[2] << "/" << levels[3] << "/" << levels[4] << "/" << levels[5] << "/" << levels[6]
+        RK_DIAG("ShadowLod") << "main view rigged LOD: " << asked << " lookups (error levels mm 2/4/8/16/32/64/128: " << levels[1] << "/" << levels[2] << "/" << levels[3] << "/" << levels[4] << "/" << levels[5] << "/" << levels[6]
             << "/" << levels[7] << "), " << ready << " ready; triangles asked " << tris_asked << ", of the ready ones " << tris_before << " -> " << tris_after << LL_ENDL;
         asked = ready = tris_asked = tris_before = tris_after = 0;
         for (U64& l : levels) l = 0;
@@ -14937,11 +14937,11 @@ static bool shadow_lod_patches(U32 pass, const std::vector<GeoRange>& draws, siz
     const F32 error = 0.001f * (F32)(1 << lvl);
 
     static U64 calls = 0, patched = 0, tris_before = 0, tris_after = 0;
-    { LL_CPU_ZONE("shadow LOD: pump"); shadow_lod_pump(); }
+    { RK_CPU_ZONE("shadow LOD: pump"); shadow_lod_pump(); }
 
     bool any = false;
     int snapshots = 3;      // a snapshot copies the draw's vertex data (about 100 us for a big one): a few a frame
-    LL_CPU_ZONE("shadow LOD: entries");
+    RK_CPU_ZONE("shadow LOD: entries");
     for (size_t i = 0; i < draws.size(); ++i)
     {
         U32 ib_name = 0, count = 0;
@@ -14959,7 +14959,7 @@ static bool shadow_lod_patches(U32 pass, const std::vector<GeoRange>& draws, siz
     if (++calls % 2400 == 0)
     {
         // (the cache's sweep is in shadow_lod_pump now: it has to run with ray traced shadows too, which never come here)
-        LL_DIAG("ShadowLod") << "shadow caster LOD: " << calls << " cascade passes, entries patched " << patched << " (triangles " << tris_before << " -> " << tris_after << "), queued " << sSlQueued
+        RK_DIAG("ShadowLod") << "shadow caster LOD: " << calls << " cascade passes, entries patched " << patched << " (triangles " << tris_before << " -> " << tris_after << "), queued " << sSlQueued
             << ", waiting for a snapshot slot " << sSlUnready << ", not worth it " << sSlNotWorth << ", cache " << sSlCache.size() << ", pending buffers " << sSlPending.size() << LL_ENDL;
         patched = tris_before = tris_after = 0;
         sSlQueued = sSlUnready = sSlNotWorth = 0;
@@ -15032,7 +15032,7 @@ struct ShadowServed
             // logged every 20000 groups (counted over all jobs): 0 from the fragment, 2 no current fragment (an empty draw map has none: ", with draws" counts the others), 3 a rendered pass type nothing names
             std::string text;
             for (U32 t = 0; t < 128; ++t) { const U64 n = sShadowServed.mByType[t].load(std::memory_order_relaxed); if (n) { text += " " + std::to_string(t) + ":" + std::to_string(n); } }
-            LL_DIAG("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << sShadowServed.mWhy[0].load() << ", no current fragment " << sShadowServed.mWhy[2].load() << " (with draws " << sShadowServed.mOrphans.load()
+            RK_DIAG("ShadowPrep") << "shadow render map job: groups over the run: from the fragment " << sShadowServed.mWhy[0].load() << ", no current fragment " << sShadowServed.mWhy[2].load() << " (with draws " << sShadowServed.mOrphans.load()
                                    << "), unnamed rendered type " << sShadowServed.mWhy[3].load() << " (types:" << text << ")" << LL_ENDL;
         }
     }
@@ -15209,7 +15209,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         gPipeline.resetDrawOrders();
     }
 
-    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+    { RK_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     PhaseLap lap;
 
@@ -15219,7 +15219,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
         LLVOCachePartition* vo_part = region->getVOCachePartition();
         if (vo_part)
         {
-            { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
+            { RK_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
     lap.mark(PH_FIN_VOCACHE);
@@ -15311,7 +15311,7 @@ void LLPipeline::shadowPrepCompare(const ShadowCascadePrep& prep, LLCullResult& 
     }
     if (sChecks % 1200 == 0)
     {
-        LL_DIAG("ShadowPrep") << "check: " << sMismatches << " of " << sChecks << " cascades lacked entries of the serial result; "
+        RK_DIAG("ShadowPrep") << "check: " << sMismatches << " of " << sChecks << " cascades lacked entries of the serial result; "
             << sExtras << " extra entries in total (marks made by the workers)" << LL_ENDL;
     }
 }
@@ -15513,14 +15513,14 @@ static void report_pool_draws()
             }
             if (total > 0.0)
             {
-                LL_DIAG("DeferredDraws") << (cube ? "probe " : "main view ") << (post ? "post-deferred" : "deferred") << " draws per frame " << total << ":" << text << LL_ENDL;
+                RK_DIAG("DeferredDraws") << (cube ? "probe " : "main view ") << (post ? "post-deferred" : "deferred") << " draws per frame " << total << ":" << text << LL_ENDL;
             }
         }
     }
     if (gGeometryPacketStats.mRecords)
     {
         const RKGeometryPacketStats& g = gGeometryPacketStats;
-        LL_DIAG("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
+        RK_DIAG("DeferredDraws") << "geometry packets per frame: " << g.mRecords / frames << " records, " << g.mEntries / frames << " draws in them, " << g.mFallback / frames
             << " draws a record cannot carry (not drawn), " << g.mMatrices / frames << " matrices, " << g.mTextures / frames << " textures bound" << LL_ENDL;
     }
     gGeometryPacketStats = RKGeometryPacketStats();
@@ -15583,11 +15583,11 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 handles[kind] += getCull() ? getCull()->mGeoHandles.size() : 0;
                 if (++prepares[kind] % 3000 == 0)
                 {
-                    LL_DIAG("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << "; fragments listed per prepare: main " << (double)handles[0] / std::max<U64>(prepares[0], 1)
+                    RK_DIAG("ViewTable") << "scene table prepares by view: main " << prepares[0] << ", probe cube faces " << prepares[1] << ", avatar impostor images " << prepares[2] << "; fragments listed per prepare: main " << (double)handles[0] / std::max<U64>(prepares[0], 1)
                         << ", probe " << (double)handles[1] / std::max<U64>(prepares[1], 1) << ", impostor " << (double)handles[2] / std::max<U64>(prepares[2], 1) << LL_ENDL;
                 }
             }
-            LL_CPU_ZONE("deferred: scene geometry prepare");
+            RK_CPU_ZONE("deferred: scene geometry prepare");
             rk_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
         }
 
@@ -15597,7 +15597,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         if (LLViewerShaderMgr::instance()->mShaderLevel[LLViewerShaderMgr::SHADER_DEFERRED] > 1)
         {
             //update reflection probe uniform
-            LL_CPU_ZONE("probes: updateUniforms (cpu)");
+            RK_CPU_ZONE("probes: updateUniforms (cpu)");
             mReflectionMapManager.updateUniforms();
             if (!LLPipeline::sReflectionProbesEnabled)
             {
@@ -15650,8 +15650,8 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
                 for( S32 i = 0; i < poolp->getNumDeferredPasses(); i++ )
                 {
-                    LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, false));
-                    LL_CPU_ZONE(pool_gpu_zone_name(cur_type, false));
+                    RK_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, false));
+                    RK_CPU_ZONE(pool_gpu_zone_name(cur_type, false));
                     const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                     LLVertexBuffer::unbind();
                     poolp->beginDeferredPass(i);
@@ -15704,8 +15704,8 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
                 for (S32 i = 0; i < sky_pool->getNumDeferredPasses(); i++)
                 {
-                    LL_GPU_TIMER_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
-                    LL_CPU_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
+                    RK_GPU_TIMER_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
+                    RK_CPU_ZONE(pool_gpu_zone_name(LLDrawPool::POOL_WL_SKY, false));
                     LLVertexBuffer::unbind();
                     sky_pool->beginDeferredPass(i);
                     if (!sky_pool->getSkipRenderFlag())
@@ -15811,7 +15811,7 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
     if (LLPipeline::sRenderingHUDs && rk_scene_geo_hud_view() && rk_scene_geo_hud_any() && getCull() && getCull()->mGeoElided)
     {
-        LL_CPU_ZONE("HUD: scene geometry prepare");
+        RK_CPU_ZONE("HUD: scene geometry prepare");
         rk_scene_geo_frame(getCull());       // J1 K6 S1: the HUD's visible fragments, named to the worker's table (the HUD pools draw the types in rk_scene_geo_hud_type from it)
     }
 
@@ -15895,8 +15895,8 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
 
             for( S32 i = 0; i < poolp->getNumPostDeferredPasses(); i++ )
             {
-                LL_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, true));
-                LL_CPU_ZONE(pool_gpu_zone_name(cur_type, true));
+                RK_GPU_TIMER_ZONE(pool_gpu_zone_name(cur_type, true));
+                RK_CPU_ZONE(pool_gpu_zone_name(cur_type, true));
                 const U64 pool_draws_before = LLVertexBuffer::sDrawCalls;
                 LLVertexBuffer::unbind();
                 poolp->beginPostDeferredPass(i);
@@ -18964,7 +18964,7 @@ static void rt_uv_transform(const LLMatrix4* anim_in, const LLGLTFMaterial::Text
         if (seen++ < 8 || seen % 20000 == 0)
         {
             const F32* r = (const F32*)anim_in->mMatrix;
-            LL_DIAG("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
+            RK_DIAG("VkScene") << "ray scene texture animation: parameters read as a matrix by the old code would be scale " << r[0] << "," << r[5] << " offset " << r[12] << "," << r[13] << " (rate " << r[1] << ", origin "
                                 << r[4] << "," << r[5] << "); " << (fix ? "the matrix of this moment is used: scale " : "kept as is: scale ") << anim->mMatrix[0][0] << "," << anim->mMatrix[1][1] << " offset " << anim->mMatrix[3][0] << ","
                                 << anim->mMatrix[3][1] << " (" << seen << " uses)" << LL_ENDL;
         }
@@ -19035,7 +19035,7 @@ static void shadow_alpha_push_windows(std::vector<RKVkBridge::ShadowAlphaEntry>&
     sWindowEntries += windows;
     if (++sWindowBatches % 2000 == 1)
     {
-        LL_DIAG("ShadowDraws") << "texture windows: batches of more than " << width << " textures made as one entry for each window, so far " << sWindowBatches.load() << " batches, " << sWindowEntries.load() << " entries" << LL_ENDL;
+        RK_DIAG("ShadowDraws") << "texture windows: batches of more than " << width << " textures made as one entry for each window, so far " << sWindowBatches.load() << " batches, " << sWindowEntries.load() << " entries" << LL_ENDL;
     }
 }
 
@@ -19215,7 +19215,7 @@ static LLViewerTexture* shadow_gltf_entry_parts(const LLVertexBuffer* vb, const 
     e.mFlags = flags;
     if (++sGltfCalls % 200000 == 0)
     {
-        LL_DIAG("ShadowDraws") << "glTF casters made as alpha entries, so far: opaque " << sGltfOpaque.load() << ", mask " << sGltfMask.load() << ", blend " << sGltfBlend.load() << " (double sided " << sGltfDouble.load()
+        RK_DIAG("ShadowDraws") << "glTF casters made as alpha entries, so far: opaque " << sGltfOpaque.load() << ", mask " << sGltfMask.load() << ", blend " << sGltfBlend.load() << " (double sided " << sGltfDouble.load()
             << ", with a base colour transform " << sGltfTexmat.load() << ")" << LL_ENDL;
     }
     return tex;
@@ -22497,7 +22497,7 @@ void LLPipeline::bindDeferredFill(RKShaderProgram& shader)
 
 void LLPipeline::bindDeferredShaderFast(RKShaderProgram& shader)
 {
-    LL_CPU_ZONE("bindDeferredShaderFast");
+    RK_CPU_ZONE("bindDeferredShaderFast");
     if (shader.mCanBindFast)
     { // was previously fully bound, use fast path
         bindDeferredFill(shader);
@@ -22524,7 +22524,7 @@ void LLPipeline::bindDeferredShader(RKShaderProgram& shader, LLRenderTarget* lig
     LLRenderTarget* deferred_target       = &mRT->deferredScreen;
     LLRenderTarget* deferred_light_target = &mRT->deferredLight;
 
-    LL_CPU_ZONE("bindDeferredShader");
+    RK_CPU_ZONE("bindDeferredShader");
     RKUniCensus::Lap lap(shader.mCensus);       // <FS> U0: the sections of this bind, per program (LL_VK_UNICENSUS=1)
     shader.bind();
     lap(0);
@@ -22937,7 +22937,7 @@ static void rt_name_rigged_main_view()
     U32 cs_opaque_entries = 0;
     if (RKVkBridge::rtBodyRename())
     {
-        LL_CPU_ZONE("rt name: body meshes");
+        RK_CPU_ZONE("rt name: body meshes");
         LLViewerJointMesh::noteRecentBodyMeshes();      // the body meshes drawn after the lighting (hair, skirt, eyelashes) would be named a frame late otherwise
     }
     static const U32 types[] = {
@@ -23024,7 +23024,7 @@ static void rt_name_rigged_main_view()
         cs_opaque_entries = (U32)entries.size();
         if (scene_geo_rigged_on() && rk_scene_geo_serving())
         {
-            LL_CPU_ZONE("rt name: fragments");
+            RK_CPU_ZONE("rt name: fragments");
             // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
             if (LLCullResult* cull = gPipeline.getCull())
             {
@@ -23048,7 +23048,7 @@ static void rt_name_rigged_main_view()
         }
         if (!entries.empty())
         {
-            LL_CPU_ZONE("rt name: opaque blob + shadowPackets");
+            RK_CPU_ZONE("rt name: opaque blob + shadowPackets");
             cs_frag += entries.size() - cs_opaque_entries;
             cs_opaque += cs_opaque_entries;
             cs_matrices += matrices.size() / 16;
@@ -23204,7 +23204,7 @@ static void rt_name_rigged_main_view()
         };
         // (the rigged alpha casters are the items' sources: the draw info paths and LL_VK_RT_RIGALPHA are gone, 2026-11-12)
         {
-            LL_CPU_ZONE("rt name: alpha sources");
+            RK_CPU_ZONE("rt name: alpha sources");
             for (const Source& source : sources)
             {
                 if (source.kind == KIND_ALPHA)
@@ -23223,7 +23223,7 @@ static void rt_name_rigged_main_view()
         // so the ray scene never saw them: the reflection showed the opaque layer under the hair only
         {
             // J1 K6 R2: the blended rigged draws (the hair layer of a mesh head, clothes) are the items of the groups' rigged alpha plans: the sources they kept, each group once
-            LL_CPU_ZONE("rt name: blended groups");
+            RK_CPU_ZONE("rt name: blended groups");
             static const Source blended = { LLRenderPass::PASS_ALPHA, KIND_ALPHA };
             static std::unordered_set<const LLSpatialGroup*> seen;
             seen.clear();
@@ -23252,7 +23252,7 @@ static void rt_name_rigged_main_view()
         }
         if (!entries.empty())
         {
-            LL_CPU_ZONE("rt name: alpha blob + shadowPackets");
+            RK_CPU_ZONE("rt name: alpha blob + shadowPackets");
             cs_alpha += entries.size();
             cs_matrices += matrices.size() / 16;
             RKVkBridge::ShadowPacketsHeader header;
@@ -23364,7 +23364,7 @@ void LLPipeline::rtSceneEarly(int where)
     scene.mAsync = async ? 1u : 0u;
     memcpy(mRtEarlyView, scene.mView, sizeof(mRtEarlyView));
     mRtEarlyScale = scene.mDistanceScale;
-    { LL_CPU_ZONE("rt scene early: call"); RKVkBridge::rtScene(scene); }
+    { RK_CPU_ZONE("rt scene early: call"); RKVkBridge::rtScene(scene); }
     mRtSceneEarly = true;
 }
 
@@ -23420,7 +23420,7 @@ void LLPipeline::renderDeferredLighting()
 
         glm::mat4 mat = get_current_modelview();
 
-        { LL_CPU_ZONE("lighting: setupHWLights"); setupHWLights(); }  // to set mSun/MoonDir;
+        { RK_CPU_ZONE("lighting: setupHWLights"); setupHWLights(); }  // to set mSun/MoonDir;
 
         // <FS> ray query shadows: the casters the shadow passes named become this frame's scene (acceleration structures), traced by the lighting below
         if (RenderShadowDetail > 0 && RKVkBridge::rtShadowMode() && mRtSceneEarly)
@@ -23452,21 +23452,21 @@ void LLPipeline::renderDeferredLighting()
             }
             RKVkBridge::RtSceneArgs scene;
             scene.mPhase = 2;
-            { LL_CPU_ZONE("lighting: rtScene ready"); RKVkBridge::rtScene(scene); }
+            { RK_CPU_ZONE("lighting: rtScene ready"); RKVkBridge::rtScene(scene); }
         }
         else if (RenderShadowDetail > 0 && RKVkBridge::rtShadowMode())
         {
             if (!gCubeSnapshot)
             {
-                LL_CPU_ZONE("lighting: rt name rigged");
+                RK_CPU_ZONE("lighting: rt name rigged");
                 rt_name_rigged_main_view();         // the avatars of the main view, whatever the shadow passes did this frame
             }
-            { LL_CPU_ZONE("lighting: rt flush materials"); rt_flush_materials(); }
+            { RK_CPU_ZONE("lighting: rt flush materials"); rt_flush_materials(); }
             RKVkBridge::RtSceneArgs scene;
             memcpy(scene.mView, glm::value_ptr(mat), sizeof(scene.mView));
             scene.mDistanceScale = farDistanceScale();
             scene.mSnapshot = gSnapshot ? 1u : 0u;
-            { LL_CPU_ZONE("lighting: rtScene call"); RKVkBridge::rtScene(scene); }
+            { RK_CPU_ZONE("lighting: rtScene call"); RKVkBridge::rtScene(scene); }
         }
 
         if (pose_probe_on() && !gCubeSnapshot)
@@ -23513,7 +23513,7 @@ void LLPipeline::renderDeferredLighting()
             RenderPassScope pass(lightmap_half ? mLightMapHalf : *deferred_light_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
             {  // paint shadow/SSAO light map (direct lighting lightmap)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - sun shadow");
-                LL_CPU_ZONE("lighting: sun shadow");
+                RK_CPU_ZONE("lighting: sun shadow");
 
                 RKShaderProgram& sun_shader = lightmap_half ? gNativeSunHalfProgram : (gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram);
                 bindDeferredShader(sun_shader, deferred_light_target);
@@ -23731,7 +23731,7 @@ void LLPipeline::renderDeferredLighting()
         {
             // soften direct lighting lightmap
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - soften shadow");
-            LL_CPU_ZONE("lighting: soften shadow");
+            RK_CPU_ZONE("lighting: soften shadow");
             LL_PROFILE_GPU_ZONE("soften shadow");
             // blur lightmap
             RenderPassScope pass_12784(*screen_target, RenderPass::Clear(1, 1, 1, 1, ClearBits::Color));
@@ -23822,7 +23822,7 @@ void LLPipeline::renderDeferredLighting()
         {
             RKShaderProgram& rt_shader = gDeferredRtReflectionProgram;
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - rt reflection");
-            LL_CPU_ZONE("lighting: rt reflection");
+            RK_CPU_ZONE("lighting: rt reflection");
             LL_PROFILE_GPU_ZONE("rt reflection");
             RenderPassScope pass_rt_refl(*rt_refl_target, RenderPass::Clear(0, 0, 0, 0, ClearBits::Color));
             bindDeferredShader(rt_shader);
@@ -24017,7 +24017,7 @@ void LLPipeline::renderDeferredLighting()
             RKShaderProgram &soften_shader = gDeferredSoftenProgram;
 
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - atmospherics");
-            LL_CPU_ZONE("lighting: atmospherics");
+            RK_CPU_ZONE("lighting: atmospherics");
             LL_PROFILE_GPU_ZONE("atmospherics");
             bindDeferredShader(soften_shader);
 
@@ -24089,7 +24089,7 @@ void LLPipeline::renderDeferredLighting()
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - local lights");
-                LL_CPU_ZONE("lighting: local lights (boxes)");
+                RK_CPU_ZONE("lighting: local lights (boxes)");
                 LL_PROFILE_GPU_ZONE("local lights");
                 // <FS> S6 LV1: the boxes of the lights that are not projectors go into one record (the light of each in a table, the fan of the box made in the vertex shader). The per light draws (five uniform
                 // writes, a matrix sync and a draw each) are gone with the old program: the device requirements (the scene table) are the viewer's floor.
@@ -24283,7 +24283,7 @@ void LLPipeline::renderDeferredLighting()
             if (!spot_lights.empty())
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - projectors");
-                LL_CPU_ZONE("lighting: projectors");
+                RK_CPU_ZONE("lighting: projectors");
                 LL_PROFILE_GPU_ZONE("projectors");
                 RKRenderState::DepthScope depth(true, false);
                 // <FS> S6 LV2: the projectors in one record (each one's matrix, values and image in a row), the box fan made in the vertex shader
@@ -24335,7 +24335,7 @@ void LLPipeline::renderDeferredLighting()
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("renderDeferredLighting - fullscreen lights");
-                LL_CPU_ZONE("lighting: fullscreen lights");
+                RK_CPU_ZONE("lighting: fullscreen lights");
                 RKRenderState::DepthScope depth(false);
                 LL_PROFILE_GPU_ZONE("fullscreen lights");
 
@@ -24456,7 +24456,7 @@ void LLPipeline::renderDeferredLighting()
                           LLPipeline::RENDER_TYPE_WATEREXCLUSION,
                           END_RENDER_TYPES);
 
-        { LL_CPU_ZONE("lighting: post-deferred geometry"); renderGeomPostDeferred(*LLViewerCamera::getInstance()); }
+        { RK_CPU_ZONE("lighting: post-deferred geometry"); renderGeomPostDeferred(*LLViewerCamera::getInstance()); }
         popRenderTypeMask();
     }
     gRender.setAlphaLights(nullptr, -1);       // (the list is in the view space of this view only)
@@ -25332,7 +25332,7 @@ void LLPipeline::setShadowJobFlags(bool rt_raster)
 
 void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCamera& shadow_cam, LLCullResult& result, bool depth_clamp, ShadowCascadePrep* prepared)
 {
-    LL_CPU_ZONE("renderShadow (all passes)");
+    RK_CPU_ZONE("renderShadow (all passes)");
     struct PassKindScope
     {
         const bool mOn = shadow_census_on();
@@ -25356,7 +25356,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> which shadow pass of the frame is this (for the GPU timer log)
     sCurrentShadowPass = sShadowPassIndex++;
     sCurrentShadowPassIsCube = gCubeSnapshot;
-    LL_GPU_TIMER_ZONE(shadow_pass_zone_name(sCurrentShadowPass, sCurrentShadowPassIsCube));
+    RK_GPU_TIMER_ZONE(shadow_pass_zone_name(sCurrentShadowPass, sCurrentShadowPassIsCube));
     // </FS>
 
     // disable occlusion culling during shadow render
@@ -25384,7 +25384,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (prepared)
         {
             static LLCachedControl<bool> check_prep(gSavedSettings, "FSParallelShadowPrepCheck", false);
-            { LL_CPU_ZONE("renderShadow: prep finish"); shadowPrepFinish(*prepared); }
+            { RK_CPU_ZONE("renderShadow: prep finish"); shadowPrepFinish(*prepared); }
             if (check_prep && prepared->mIndex < 4)
             {
                 shadowPrepCompare(*prepared, sShadowPrepReference[prepared->mIndex & 3]);
@@ -25410,7 +25410,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // the old path's lists; the render map job makes the fragments' answer instead (LL_VK_SHADOW_SERIAL=0 keeps the lists)
             // every serial pass takes its casters from the fragments, in every mode (2026-11-12: the ray tracing modes' sun cascades too, which used to keep the lists of the sort; postSort pushes no draw info for a shadow view any more)
             {
-                LL_CPU_ZONE("renderShadow: serial pass render map job");
+                RK_CPU_ZONE("renderShadow: serial pass render map job");
                 static ShadowCascadePrep serial_prep;
                 static LLCullResult serial_local;
                 serial_prep = ShadowCascadePrep();
@@ -25453,7 +25453,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> Render packets: every draw of the static, untextured types becomes one entry of a record (buffer names, index range, model matrix number)
     auto render_shadow_packets = [this, rt_skip, rt_raster, prepared, &result](const U32* list, size_t count)
     {
-        LL_CPU_ZONE("packets: shadow static (build + record)");
+        RK_CPU_ZONE("packets: shadow static (build + record)");
         sResidentPassRan = false;
         if (!shadow_static_casters_on())
         {
@@ -25467,7 +25467,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         if (prepared && count == kShadowStaticTypeCount && memcmp(list, kShadowStaticTypes, sizeof(kShadowStaticTypes)) == 0)
         {
             {
-                LL_CPU_ZONE("packets: shadow static (fragments)");
+                RK_CPU_ZONE("packets: shadow static (fragments)");
                 SceneGather gather;
                 scene_gather(result, true, gather, !rt_skip);
                 {
@@ -25592,12 +25592,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // <FS> Render packets for the rigged untextured casters: one entry per draw, with the weight4 array and the draw's matrix palette (sent with the record, once per distinct palette)
     auto render_skin_packets = [this, rt_skip, prepared, &result](const U32* list, size_t count)
     {
-        LL_CPU_ZONE("packets: shadow rigged (build + record)");
+        RK_CPU_ZONE("packets: shadow rigged (build + record)");
         // as the static packets: built by the cascade's preparation job when there was one
         ShadowSkinBuild built;
         if (prepared && prepared->mSkinJob)
         {
-            LL_CPU_ZONE("packets: wait for the rigged builder");
+            RK_CPU_ZONE("packets: wait for the rigged builder");
             prepared->mSkinJob->wait();
         }
         const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
@@ -25622,7 +25622,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         lod_patches.clear();
         if (!rt_skip && !source->mEntries.empty())
         {
-            LL_CPU_ZONE("packets: shadow rigged: LOD");
+            RK_CPU_ZONE("packets: shadow rigged: LOD");
             if (slim)
             {
                 shadow_lod_patches(shadow_pass_index(), source->mDraws, source->mEntries.size(), lod_patches);
@@ -25649,10 +25649,10 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
             {
-                LL_CPU_ZONE("packets: shadow rigged: palette flush");
+                RK_CPU_ZONE("packets: shadow rigged: palette flush");
                 rk_frame_palette_flush();
             }
-            LL_CPU_ZONE("packets: shadow rigged: record");
+            RK_CPU_ZONE("packets: shadow rigged: record");
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
             memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
             if (slim)
@@ -25964,14 +25964,14 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     // as one record. Every entry names its texture(s) by GL name; the worker gives them slots in a bindless table and the fragment shader does the alpha test.
     auto render_alpha_packets = [this, rt_skip, rt_raster, prepared, &result](S32 sun_up, U32 target_width, bool rigged)
     {
-        LL_CPU_ZONE("packets: shadow alpha (build + record)");
+        RK_CPU_ZONE("packets: shadow alpha (build + record)");
         // the entries come from the cascade's builder job when there was one, else they are built here
         std::shared_ptr<ShadowAlphaBuild> build_owned;
         const int slot = rigged ? 1 : 0;
         if (prepared && prepared->mAlphaJob[slot])
         {
             {
-                LL_CPU_ZONE("packets: wait for the alpha builder");
+                RK_CPU_ZONE("packets: wait for the alpha builder");
                 prepared->mAlphaJob[slot]->wait();
             }
             build_owned = prepared->mAlphaBuild[slot];
@@ -25989,7 +25989,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         }
         if (!rigged && !result.mAlphaFragGroups.empty())
         {
-            LL_CPU_ZONE("packets: shadow alpha: fragment entries");
+            RK_CPU_ZONE("packets: shadow alpha: fragment entries");
             append_fragment_alpha(*build_owned, result.mAlphaFragGroups, rt_raster);
         }
         if (!rigged && !rt_skip && !build_owned->mTreesAdded)
@@ -25997,7 +25997,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             // <FS> the Linden tree faces (LLDrawPoolTree: one vertex buffer a face, drawn whole under the region's render matrix, the alpha tested at 0.5 on the pool's texture, no vertex alpha, no dithering: the
             // shadow alpha pull program's tree style entries) leave in the static record of the pass. The pool's own shadow pass, which drew them one at a time with a program of its own, is gone. The pass of the
             // ray scene (rt_skip) names them in render_rt_extra_packets
-            LL_CPU_ZONE("packets: shadow alpha: Linden tree entries");
+            RK_CPU_ZONE("packets: shadow alpha: Linden tree entries");
             ShadowAlphaBuild& tb = *build_owned;
             tb.mTreesAdded = true;
             std::vector<std::pair<const LLMatrix4*, U32>> tree_matrices;
@@ -26071,7 +26071,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 LL_INFOS("VkShadow") << "Linden tree faces in the static shadow records per pass: " << (F32)tree_faces_total / tree_calls << " (over " << tree_calls << " passes)" << LL_ENDL;
             }
         }
-        { LL_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
+        { RK_CPU_ZONE("packets: shadow alpha: finish"); finish_shadow_alpha(*build_owned); }
         // item B: the worker holds the alpha masked casters of resident fragments and draws them itself (kind 37, below): the builder's entries for them are not sent
         const bool res_raster = !rt_skip && !rigged && alpha_res_wanted() && sResidentPassRan;
         // J1 K3c: when the render map job left the resident casters out itself (result.mAlphaResSkipped), the builder's list holds none the worker has (a check lap made the filter anyway: 0 drops in a lap, the
@@ -26079,7 +26079,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         const bool filter_needed = !result.mAlphaResSkipped;
         if (((rt_skip && !rigged && scene_alpha_on() && sResidentPassRan) || res_raster) && filter_needed)
         {
-            LL_CPU_ZONE("packets: shadow alpha: resident filter");
+            RK_CPU_ZONE("packets: shadow alpha: resident filter");
             // S2 alpha: the casters the worker holds as resident fragments are not named again. With LL_VK_SCENE_VERIFY=1 every builder entry must be one the worker holds (the fragment is in
             // range of the cascades' frusta) with the textures the builder resolved (a stale name would be a missed update)
             std::vector<RKVkBridge::ShadowAlphaEntry>& list = build_owned->mEntries;
@@ -26134,7 +26134,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             auto send_record = [&](const RKVkBridge::ShadowAlphaEntry* first, size_t count)
             {
-                LL_CPU_ZONE("packets: shadow alpha: record");
+                RK_CPU_ZONE("packets: shadow alpha: record");
                 RKVkBridge::ShadowPacketsHeader header;
                 header.mKind = rt_skip ? (rigged ? 7 : 5) : 1;       // 5 and 7: the same record, only named to the ray scene
                 header.mTargetWidth = (F32)target_width;
@@ -26178,7 +26178,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             const size_t extra_single = (size_t)(std::stable_partition(extra.begin(), extra.end(), [](const RKVkBridge::ShadowAlphaEntry& e) { return !(e.mFlags & RKVkBridge::ALPHA_DOUBLE_SIDED); }) - extra.begin());
             auto send_extra = [&](const RKVkBridge::ShadowAlphaEntry* first, size_t count)
             {
-                LL_CPU_ZONE("packets: shadow alpha: record (raster form of the ray scene's extra casters)");
+                RK_CPU_ZONE("packets: shadow alpha: record (raster form of the ray scene's extra casters)");
                 RKVkBridge::ShadowPacketsHeader header;
                 header.mKind = 1;
                 header.mDrawOnly = 1;
@@ -26225,9 +26225,9 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             RKVkBridge::shadowPackets(res_header, res_planes, sizeof(res_planes));
             if (++sAlphaResCalls % 2400 == 0)
             {
-                LL_DIAG("VkScene") << "resident alpha casters, viewer: per cascade pass " << (double)sAlphaResKept[2] / 2400.0 << " builder entries left to the worker, " << (double)sAlphaResKept[0] / 2400.0
+                RK_DIAG("VkScene") << "resident alpha casters, viewer: per cascade pass " << (double)sAlphaResKept[2] / 2400.0 << " builder entries left to the worker, " << (double)sAlphaResKept[0] / 2400.0
                     << " kept (no resident fragment has the entry), " << (double)sAlphaResKept[1] / 2400.0 << " kept (its fragment has no rows yet)" << LL_ENDL;
-                LL_DIAG("VkScene") << "resident alpha casters, why not resident (a pass): unknown (no fragment has the vertex buffer) " << (double)sAlphaResWhy[0] / 2400.0 << ", fragment has a fallback draw " << (double)sAlphaResWhy[1] / 2400.0
+                RK_DIAG("VkScene") << "resident alpha casters, why not resident (a pass): unknown (no fragment has the vertex buffer) " << (double)sAlphaResWhy[0] / 2400.0 << ", fragment has a fallback draw " << (double)sAlphaResWhy[1] / 2400.0
                     << ", matrix is not a region's " << (double)sAlphaResWhy[2] / 2400.0 << ", bounds " << (double)sAlphaResWhy[3] / 2400.0 << ", other " << (double)sAlphaResWhy[4] / 2400.0 << LL_ENDL;
                 for (U64& w : sAlphaResWhy) w = 0;
                 sAlphaResKept[0] = sAlphaResKept[1] = sAlphaResKept[2] = 0;
@@ -26251,7 +26251,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     for (int j = 0; j < 2; ++j) // 0 -- static, 1 -- rigged
     {
         bool rigged = j == 1;
-        LL_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
+        RK_GPU_TIMER_ZONE(rigged ? "shadow simple: rigged" : "shadow simple: static"); // <FS>
         // <FS> the shadow pull programs are required (the manager fails to load the shaders without them): the static casters leave as one record, the rigged ones as another
         (rigged ? gDeferredShadowSkinPullProgram : gDeferredShadowPullProgram).bind();
 
@@ -26294,7 +26294,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow geom");
-        LL_CPU_ZONE("renderShadow: geom");
+        RK_CPU_ZONE("renderShadow: geom");
         renderGeomShadow(shadow_cam);
     }
 
@@ -26307,7 +26307,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         for (int i = 0; i < 2; ++i)
         {
             bool rigged = i == 1;
-            LL_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
+            RK_GPU_TIMER_ZONE(rigged ? "shadow alpha: rigged" : "shadow alpha: static"); // <FS>
 
             // <FS> render packets with textures: one record for the static casters, then the draws it could not carry (the glTF ones among them). K6 group C: the per draw loops this chose between (the alpha mask,
             // fullbright mask, grass and material mask passes, drawn from the render map one draw at a time) are deleted with the switches
@@ -26350,37 +26350,37 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
         {
             const double frames = (double)(frame - st.mLastReport);
             const U64 classified = st.mStaticUntex + st.mRiggedUntex + st.mTextured + st.mGLTF;
-            LL_DIAG("ShadowDraws") << "per frame over " << (U32)frames << " frames: " << st.mPasses / frames << " shadow passes, " << st.mTotalDraws / frames << " draws; static untextured "
+            RK_DIAG("ShadowDraws") << "per frame over " << (U32)frames << " frames: " << st.mPasses / frames << " shadow passes, " << st.mTotalDraws / frames << " draws; static untextured "
                 << st.mStaticUntex / frames << " (vertex buffer changes " << st.mStaticVBChanges / frames << ", distinct vertex buffers summed over passes " << st.mStaticDistinctVB / frames
                 << ", model matrix changes " << st.mStaticMatrixChanges / frames << "), rigged untextured " << st.mRiggedUntex / frames << ", textured " << st.mTextured / frames
                 << ", glTF " << st.mGLTF / frames << ", other " << ((double)st.mTotalDraws - (double)classified) / frames << LL_ENDL;
-            LL_DIAG("ShadowDraws") << "packet table check per frame: " << st.mTablePasses / frames << " static passes, " << st.mTableEntries / frames << " entries (largest pass "
+            RK_DIAG("ShadowDraws") << "packet table check per frame: " << st.mTablePasses / frames << " static passes, " << st.mTableEntries / frames << " entries (largest pass "
                 << st.mTableMax << ", " << (st.mTableMax * 32) / 1024 << " KB at 32 bytes each), distinct buffer pairs " << st.mDistinctPairs / frames << "; entries with: unnamed buffer "
                 << st.mBadNames / frames << ", 32-bit indices " << st.mWideIndices / frames << ", no position " << st.mNoPosition / frames << ", position not first " << st.mPositionNotFirst / frames
                 << ", index range outside the index buffer " << st.mBadRange / frames << ", vertex range outside the vertex buffer " << st.mBadIndexRange / frames
                 << ", no model matrix " << st.mNullMatrix / frames << LL_ENDL;
             if (st.mPacketRecords)
             {
-                LL_DIAG("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
+                RK_DIAG("ShadowDraws") << "shadow packets per frame: " << st.mPacketRecords / frames << " records, " << st.mPacketEntries / frames << " draws in them, "
                     << st.mPacketFallback / frames << " draws a record cannot carry (not drawn)" << LL_ENDL;
             }
             if (st.mSkinRecords)
             {
-                LL_DIAG("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
+                RK_DIAG("ShadowDraws") << "shadow rigged packets per frame: " << st.mSkinRecords / frames << " records, " << st.mSkinEntries / frames << " draws in them, "
                     << st.mSkinFallback / frames << " draws a record cannot carry (not drawn), " << st.mSkinPalettes / frames << " palettes sent" << LL_ENDL;
             }
-            LL_DIAG("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
+            RK_DIAG("ShadowDraws") << "sun elevation " << asinf(llclamp(mSunDir.mV[VZ], -1.f, 1.f)) * RAD_TO_DEG << " degrees, sun up " << (LLEnvironment::instance().getIsSunUp() ? 1 : 0) << LL_ENDL;
             st.mSkinEntries = st.mSkinFallback = st.mSkinRecords = st.mSkinPalettes = 0;
             if (st.mAlphaRecords)
             {
-                LL_DIAG("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
+                RK_DIAG("ShadowDraws") << "shadow alpha packets per frame: " << st.mAlphaRecords / frames << " records, " << st.mAlphaEntries / frames << " draws in them, "
                     << st.mAlphaFallback / frames << " draws a record cannot carry (not drawn), " << st.mAlphaTextures / frames << " textures bound; made from fragments " << st.mAlphaFragEntries / frames << " entries of "
                     << st.mAlphaFragGroups / frames << " groups" << LL_ENDL;
             }
-            LL_DIAG("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
+            RK_DIAG("ShadowDraws") << "alpha casters left to the old path per frame, by reason: glTF material " << st.mFbGLTF / frames << ", buffer layout " << st.mFbLayout / frames << ", rigged without weights or skin "
                 << st.mFbRigged / frames << ", more than 4 textures " << st.mFbManyTextures / frames << ", texture matrix " << st.mFbTextureMatrix / frames << "; named to the ray scene instead: glTF opaque "
                 << st.mRtOpaque / frames << ", glTF mask " << st.mRtMask / frames << ", glTF blend " << st.mRtBlend / frames << ", texture matrix " << st.mRtTextureMatrix / frames << " (" << st.mRtRecords / frames << " records)" << LL_ENDL;
-            LL_DIAG("ShadowDraws") << "rigged glTF casters made as record entries per frame: opaque " << (double)sRigGltfEntries[0].exchange(0) / frames << ", mask " << (double)sRigGltfEntries[1].exchange(0) / frames
+            RK_DIAG("ShadowDraws") << "rigged glTF casters made as record entries per frame: opaque " << (double)sRigGltfEntries[0].exchange(0) / frames << ", mask " << (double)sRigGltfEntries[1].exchange(0) / frames
                 << ", blend " << (double)sRigGltfEntries[2].exchange(0) / frames << LL_ENDL;
             st.mFbGLTF = st.mFbLayout = st.mFbRigged = st.mFbManyTextures = st.mFbTextureMatrix = st.mRtOpaque = st.mRtMask = st.mRtBlend = st.mRtTextureMatrix = st.mRtRecords = 0;
             st.mPacketEntries = st.mPacketFallback = st.mPacketRecords = 0;
@@ -26759,7 +26759,7 @@ void pc_signature(LLCamera& cam, F32* out)
 
 static void visible_extents_split(RKForkJoinPool* pool, LLCamera* const* cams, S32 count, LLVector3* mins, LLVector3* maxs, bool* empty)
 {
-    LL_CPU_ZONE("shadow prep: point cloud split");
+    RK_CPU_ZONE("shadow prep: point cloud split");
     const F32 X = 65536.f;
     LLVector4a cmin[4], cmax[4];
     bool cempty[4];
@@ -26924,7 +26924,7 @@ static void visible_extents_split(RKForkJoinPool* pool, LLCamera* const* cams, S
     };
     if (!sPcUnits.empty())
     {
-        LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)");
+        RK_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)");
         pool->runLabeled("shadow prep: point cloud units", sPcUnits.size(), job);
     }
     for (const PcUnit& unit : sPcUnits)
@@ -27003,7 +27003,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         static U32 reuse_log_frames = 0;
         if (++reuse_log_frames >= 300)
         {
-            LL_DIAG("ShadowReuse") << "far sun shadow cascades: " << sShadowPassesReused << " shadow-map reuses in the last 300 frames" << LL_ENDL;
+            RK_DIAG("ShadowReuse") << "far sun shadow cascades: " << sShadowPassesReused << " shadow-map reuses in the last 300 frames" << LL_ENDL;
             sShadowPassesReused = 0;
             reuse_log_frames = 0;
         }
@@ -27115,7 +27115,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         if (!logged_fit && !gCubeSnapshot && fit_proj != saved_proj)
         {
             logged_fit = true;
-            LL_DIAG("ShadowPrep") << "sun shadow cascades: fitted to the unjittered camera projection (the scene's projection carries the upscaler's jitter)" << LL_ENDL;
+            RK_DIAG("ShadowPrep") << "sun shadow cascades: fitted to the unjittered camera projection (the scene's projection carries the upscaler's jitter)" << LL_ENDL;
         }
     }
 
@@ -27189,7 +27189,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 sum += d;
                 if (++checks % 600 == 0)
                 {
-                    LL_DIAG("ShadowPrep") << "shadow fit check: the box from the cull differs from the walk's by " << sum / 600.f << " m on average, " << worst << " m at most (over 600 frames); walk box " << wmin << " .. " << wmax
+                    RK_DIAG("ShadowPrep") << "shadow fit check: the box from the cull differs from the walk's by " << sum / 600.f << " m on average, " << worst << " m at most (over 600 frames); walk box " << wmin << " .. " << wmax
                         << ", cull box " << min << " .. " << max << LL_ENDL;
                     worst = sum = 0.f;
                 }
@@ -27452,7 +27452,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     differs += same ? 0 : 1;
                     if (!same || checks % 1800 == 0)
                     {
-                        LL_DIAG("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
+                        RK_DIAG("ShadowPrep") << "cascade cull split check: " << differs << " of " << checks << " cascades differ from the serial cull (lists and their order)"
                             << (same ? "" : " (this one: cascade " + std::to_string(prep.mIndex) + ", visible groups " + std::to_string(vg.size()) + " against " + std::to_string((size_t)(s.endVisibleGroups() - s.beginVisibleGroups()))
                                 + ", drawable groups " + std::to_string(dg.size()) + " against " + std::to_string((size_t)(s.endDrawableGroups() - s.beginDrawableGroups())) + ")") << LL_ENDL;
                     }
@@ -27461,7 +27461,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         }
         else
         {
-            LL_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->runLabeled("shadow prep: cull job", pending.size(), cull_job);
+            RK_CPU_ZONE("shadow prep: cull job (wait for the pool)"); prep_pool->runLabeled("shadow prep: cull job", pending.size(), cull_job);
         }
         {
             // the marking of the found groups, in chunks over the pool (LL_VK_PREP_CHUNK = groups a chunk, default 128, 0: one chunk a list as before)
@@ -27532,8 +27532,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
             const std::function<void(size_t)> mark_job = [&](size_t c) { shadowPrepMark(pending[chunks[c].mPrep], chunks[c].mKind, chunks[c].mBegin, chunks[c].mEnd, chunks[c].mDeferred, *chunks[c].mLocal); };
             const auto mark_wall0 = std::chrono::steady_clock::now();
-            if (!chunks.empty()) { LL_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->runLabeled("shadow prep: mark job", chunks.size(), mark_job); }
-            LL_CPU_ZONE("shadow prep: merge mark chunks");
+            if (!chunks.empty()) { RK_CPU_ZONE("shadow prep: mark job (wait for the pool)"); prep_pool->runLabeled("shadow prep: mark job", chunks.size(), mark_job); }
+            RK_CPU_ZONE("shadow prep: merge mark chunks");
             for (MarkChunk& c : chunks)
             {
                 pending[c.mPrep].mDeferred.insert(pending[c.mPrep].mDeferred.end(), c.mDeferred.begin(), c.mDeferred.end());      // (chunk order is list order)
@@ -27594,7 +27594,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         }
         lap.mark(PH_CULL);
 
-        { LL_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
+        { RK_CPU_ZONE("shadow prep: rebuild"); shadowPrepRebuild(pending); }
         lap.reset();
 
         {
@@ -27634,8 +27634,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             merge_render_lists(*pending[c.mPrep].mResult, *c.mLocal);
         };
-        { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
-        { LL_CPU_ZONE("shadow prep: merge render map chunks");
+        { RK_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
+        { RK_CPU_ZONE("shadow prep: merge render map chunks");
         for (MapChunk& c : map_chunks)
         {
             merge_map_chunk(c);
@@ -27883,7 +27883,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 {
                     clouds[j].mHave = getVisiblePointCloud(clouds[j].mCam, clouds[j].mMin, clouds[j].mMax, clouds[j].mFp, lightDir);
                 };
-                { LL_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->runLabeled("shadow prep: point cloud jobs", (size_t)cloud_count, cloud_job); }
+                { RK_CPU_ZONE("shadow prep: point cloud jobs (wait for the pool)"); prep_pool->runLabeled("shadow prep: point cloud jobs", (size_t)cloud_count, cloud_job); }
             }
             }
             cloud_lap.mark(PH_POINT_CLOUD);
@@ -27937,7 +27937,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
         for (S32 j = 0; j < (gCubeSnapshot ? 2 : 4); j++)
         {
-            LL_CPU_ZONE("generateSunShadow: cascade setup (a cascade, no render)");
+            RK_CPU_ZONE("generateSunShadow: cascade setup (a cascade, no render)");
             if (!hasRenderDebugMask(RENDER_DEBUG_SHADOW_FRUSTA) && !gCubeSnapshot)
             {
                 mShadowFrustPoints[j].clear();
@@ -28020,7 +28020,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         wrong += same ? 0 : 1;
                         if (!same || checks % 1800 == 0)
                         {
-                            LL_DIAG("ShadowPrep") << "point cloud check: " << wrong << " of " << checks << " cascades differ from the serial walk" << (same ? "" : " (this one: cascade " + std::to_string(j) + ")") << LL_ENDL;
+                            RK_DIAG("ShadowPrep") << "point cloud check: " << wrong << " of " << checks << " cascades differ from the serial walk" << (same ? "" : " (this one: cascade " + std::to_string(j) + ")") << LL_ENDL;
                         }
                     }
                 }
@@ -28508,7 +28508,7 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
 
     if (gen_shadow)
     {
-        LL_CPU_ZONE("generateSunShadow: spot/projector shadows");
+        RK_CPU_ZONE("generateSunShadow: spot/projector shadows");
         if (!gCubeSnapshot) //skip updating spot shadow maps during cubemap updates
         {
             LLTrace::CountStatHandle<>* velocity_stat = LLViewerCamera::getVelocityStat();
@@ -28812,7 +28812,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
     static LLCullResult result;
     result.clear();
-    { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
+    { RK_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     if (!avatar || avatar->isDead() || !avatar->mDrawable)
     {

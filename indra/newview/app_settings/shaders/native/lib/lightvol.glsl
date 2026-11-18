@@ -4,7 +4,7 @@
 // surface takes its diffuse by the angle of its normal and its highlight by the lookup of the gloss (lightFunc). What is different from the viewer's programs is the order: the position comes from the depth
 // first, the pixels the light does not reach leave before anything else is read, the normal comes next (the facing test needs nothing more), and the albedo and the material only for the pixels that are lit.
 
-#define LV_TAP(slot) rk_tbl2d[LL_HM(slot)]
+#define LV_TAP(slot) rk_tbl2d[RK_HM(slot)]
 
 // the legacy distance attenuation of the viewer's lights: 2 * (1 - clamp((d + falloff) / (1 + falloff), 0, 1))^2, d = the distance over the light's size
 float light_attenuation(float dist, float falloff)

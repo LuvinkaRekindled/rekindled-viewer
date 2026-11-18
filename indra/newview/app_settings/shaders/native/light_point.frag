@@ -1,4 +1,4 @@
-// light_point.frag: the volume of one point light (the box light_volume.vert makes), lit onto what is behind it. A translation of "Deferred Light Pull Shader" (deferred/pointLightF.glsl with LL_LIGHT_PULL); pairs with
+// light_point.frag: the volume of one point light (the box light_volume.vert makes), lit onto what is behind it. A translation of "Deferred Light Pull Shader" (deferred/pointLightF.glsl with RK_LIGHT_PULL); pairs with
 // light_volume.vert (LIGHT_VOLUME). Added to the lit picture by the pass's blending: the alpha is 0.
 // What is different: the position comes from the depth with the few multiplications the projection leaves (lib/viewpos.glsl) and the pixel's place from gl_FragCoord (no varying and no division); a pixel outside
 // the light's sphere (the box has its corners) leaves before the G-buffer is read, a legacy surface that faces away from the light before its albedo is; a pixel that is not a glTF one skips the PBR terms and the

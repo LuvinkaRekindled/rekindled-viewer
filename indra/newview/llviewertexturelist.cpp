@@ -80,7 +80,7 @@
 #include "llspatialpartition.h"
 #include "rkviewertexturerecs.h"
 #include <algorithm>
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 namespace
 {
@@ -1077,7 +1077,7 @@ void LLViewerTextureList::logSummary()
             }
         }
     }
-    LL_DIAG("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
+    RK_DIAG("VkTex") << "texture list: " << total << " images, " << with_gl << " with a GL texture, " << no_data << " with no data yet (" << fetching << " being fetched), " << missing
         << " refused by the server (missing), " << mCreateTextureList.size() << " decoded and waiting to become GL textures, " << mDownScaleQueue.size() << " to downscale; discard bias "
         << LLViewerTexture::sDesiredDiscardBias << "; the viewer counts " << RKImageTex::getTextureBytesAllocated() / (1024 * 1024) << " MB of textures and "
         << LLVertexBuffer::getBytesAllocated() / (1024 * 1024) << " MB of vertex buffers against a free budget of " << LLViewerTexture::sFreeVRAMMegabytes << " MB";
@@ -1157,7 +1157,7 @@ void LLViewerTextureList::logSummary()
         {
             text += llformat(" [%s: %u textures, %.0f MB]", names[k], count[k], (double)bytes[k] / 1048576.0);
         }
-        LL_DIAG("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
+        RK_DIAG("VkTex") << "texture memory by time since a group of its faces was accepted by a camera:" << text << "; of all of them on the dormant list: " << dormant_count << " textures, " << (dormant_bytes >> 20) << " MB" << LL_ENDL;
         {
             U64 vk_used2 = 0, vk_budget2 = 0;
             U64 texture_total = 0;
@@ -1165,9 +1165,9 @@ void LLViewerTextureList::logSummary()
             if (RKVkBridge::videoMemory(vk_used2, vk_budget2))
             {
                 const std::string by_consumer = memory_by_consumer_text(texture_total, vk_used2);
-                if (!by_consumer.empty()) LL_DIAG("VkTex") << by_consumer << LL_ENDL;
+                if (!by_consumer.empty()) RK_DIAG("VkTex") << by_consumer << LL_ENDL;
                 const std::string census = RKVkBridge::accelCensus();
-                if (!census.empty()) LL_DIAG("VkTex") << census << LL_ENDL;
+                if (!census.empty()) RK_DIAG("VkTex") << census << LL_ENDL;
             }
         }
     }
@@ -1219,11 +1219,11 @@ void LLViewerTextureList::logSummary()
         std::string boost_text, ft_text;
         for (const auto& kv : by_boost) boost_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
         for (const auto& kv : by_ft) ft_text += " " + std::to_string(kv.first) + ":" + std::to_string(kv.second);
-        LL_DIAG("VkTex") << "images with no data and not fetching: " << listed << " (virtual size 0: " << vsize_zero << ", above 0: " << vsize_pos << "; with faces on a diffuse map: " << with_faces << "; a desired discard level set: "
+        RK_DIAG("VkTex") << "images with no data and not fetching: " << listed << " (virtual size 0: " << vsize_zero << ", above 0: " << vsize_pos << "; with faces on a diffuse map: " << with_faces << "; a desired discard level set: "
             << wants_data << "; deleted: " << deleted << "); by boost level" << boost_text << "; by fetched texture type" << ft_text << "; first ones:" << samples << LL_ENDL;
     }
     extern U32 gEarlySortResorts;
-    LL_DIAG("VkTex") << "the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
+    RK_DIAG("VkTex") << "the early sort was redone in " << gEarlySortResorts << " frames since the start" << LL_ENDL;
 }
 
 // <FS> doc/vulkan/EXPIRY-design.md: where the video memory the OS reports goes. Textures are the per-texture sums of the images with a GL texture; the rest are the arena blocks (bytes alive, bytes in use), the
@@ -1269,14 +1269,14 @@ void LLViewerTextureList::updateImages(F32 max_time)
                 LLTextureFetch* fetch = LLAppViewer::getTextureFetch();
                 U64 host_used = 0, host_ours = 0;
                 RKVkBridge::hostMemory(host_used, host_ours);
-                LL_DIAG("ImgMem") << "Vulkan host heap " << host_used / (1024 * 1024) << " MB used by this process (ours " << host_ours / (1024 * 1024) << " MB) | image data " << total / mb << " MB (compressed " << formatted / mb << " MB, raw about " << (total - formatted) / mb << " MB), decode queue " << (decode ? decode->getPending() : 0)
+                RK_DIAG("ImgMem") << "Vulkan host heap " << host_used / (1024 * 1024) << " MB used by this process (ours " << host_ours / (1024 * 1024) << " MB) | image data " << total / mb << " MB (compressed " << formatted / mb << " MB, raw about " << (total - formatted) / mb << " MB), decode queue " << (decode ? decode->getPending() : 0)
                     << ", decoded and waiting to become textures " << mCreateTextureList.size() << ", fetch requests " << (fetch ? fetch->getNumRequests() : 0) << ", textures counted " << RKImageTex::getTextureBytesAllocated() / mb << " MB" << LL_ENDL;
             }
         }
     }
     {
         static U32 calls = 0;
-        if (++calls >= 1800 && rk_diag_on())     // (the summary only prints through LL_DIAG: no scan of the image list when diagnostics are off)
+        if (++calls >= 1800 && rk_diag_on())     // (the summary only prints through RK_DIAG: no scan of the image list when diagnostics are off)
         {
             calls = 0;
             logSummary();
@@ -1318,17 +1318,17 @@ void LLViewerTextureList::updateImages(F32 max_time)
     F32 remaining_time = max_time;
 
     //loading from fast cache
-    { LL_CPU_ZONE("textures: fast cache"); remaining_time -= updateImagesLoadingFastCache(remaining_time); }
+    { RK_CPU_ZONE("textures: fast cache"); remaining_time -= updateImagesLoadingFastCache(remaining_time); }
     remaining_time = llmax(remaining_time, min_time);
 
     //dispatch to texture fetch threads
-    { LL_CPU_ZONE("textures: fetch dispatch"); remaining_time -= updateImagesFetchTextures(remaining_time); }
+    { RK_CPU_ZONE("textures: fetch dispatch"); remaining_time -= updateImagesFetchTextures(remaining_time); }
     remaining_time = llmax(remaining_time, min_time);
 
     //handle results from decode threads
-    { LL_CPU_ZONE("textures: create from decoded"); updateImagesCreateTextures(remaining_time); }
+    { RK_CPU_ZONE("textures: create from decoded"); updateImagesCreateTextures(remaining_time); }
 
-    LL_CPU_ZONE("textures: loaded callbacks + stats");
+    RK_CPU_ZONE("textures: loaded callbacks + stats");
     bool didone = false;
     for (image_list_t::iterator iter = mCallbackList.begin();
         iter != mCallbackList.end(); )
@@ -1516,7 +1516,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             ++sPreUsed;
         }
         else
-        { LL_CPU_ZONE("textures: decode priority: face loop");
+        { RK_CPU_ZONE("textures: decode priority: face loop");
         for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
         {
             face_count += imagep->getNumFaces(i);
@@ -1674,7 +1674,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 #endif
 
     // make sure to addTextureStats for any spotlights that are using this texture
-    LL_CPU_ZONE("textures: decode priority: spotlights, refs, flush checks");
+    RK_CPU_ZONE("textures: decode priority: spotlights, refs, flush checks");
     for (S32 vi = 0; vi < imagep->getNumVolumes(LLRender::LIGHT_TEX); ++vi)
     {
         LLVOVolume* volume = (*imagep->getVolumeList(LLRender::LIGHT_TEX))[vi];
@@ -1727,7 +1727,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         return; //wait for loading from the fast cache.
     }
 
-    LL_CPU_ZONE("textures: decode priority: processTextureStats");
+    RK_CPU_ZONE("textures: decode priority: processTextureStats");
     const S32 desired_before = imagep->getDesiredDiscardLevel();
     imagep->processTextureStats();
     {
@@ -2097,7 +2097,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     RKForkJoinPool* pre_pool = (!gCubeSnapshot && entries.size() >= 96 && !RKGpuZoneTimer::isActive()) ? RKForkJoinPool::shared() : nullptr;
     if (pre_pool)
     {
-        LL_CPU_ZONE("textures: decode priority: face loops on the pool");
+        RK_CPU_ZONE("textures: decode priority: face loops on the pool");
         pres.assign(entries.size(), FaceLoopPre());
         static LLCachedControl<F32> pre_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.0095f);
         static LLCachedControl<F32> pre_scale_max(gSavedSettings, "TextureScaleMaxAreaFactor", 25.f);
@@ -2275,9 +2275,9 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
         {
             sCurrentPre = pres.empty() ? nullptr : &pres[entry_index];
-            { LL_CPU_ZONE("textures: decode priority (per texture)"); updateImageDecodePriority(imagep); }
+            { RK_CPU_ZONE("textures: decode priority (per texture)"); updateImageDecodePriority(imagep); }
             sCurrentPre = nullptr;
-            { LL_CPU_ZONE("textures: updateFetch (per texture)"); imagep->updateFetch(); }
+            { RK_CPU_ZONE("textures: updateFetch (per texture)"); imagep->updateFetch(); }
         }
 
         if (timer.getElapsedTimeF32() > max_time)

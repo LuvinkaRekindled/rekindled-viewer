@@ -728,7 +728,7 @@ void renderFace(LLDrawable* drawable, LLFace *face)
                     wire_count += !w.mBuf.isNull() && (w.mVerts != vol_face.mNumVertices || w.mIndices != vol_face.mNumIndices);
                     wire_serial += !w.mBuf.isNull() && w.mSerial != serial;
                     wire_verts += vol_face.mNumVertices;
-                    LL_CPU_ZONE("selection: wireframe buffer build");
+                    RK_CPU_ZONE("selection: wireframe buffer build");
                     w.mBuf = nullptr;
                     LLPointer<LLVertexBuffer> buf = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX);
                     LLStrider<LLVector3> verts;
@@ -758,7 +758,7 @@ void renderFace(LLDrawable* drawable, LLFace *face)
                 }
                 if (w.mBuf.notNull())
                 {
-                    LL_CPU_ZONE("selection: wireframe buffer draw");
+                    RK_CPU_ZONE("selection: wireframe buffer draw");
                     gRender.syncMatrices();
                     w.mBuf->setBuffer();
                     w.mBuf->drawRange(LLRender::TRIANGLES, 0, vol_face.mNumVertices - 1, vol_face.mNumIndices, 0);

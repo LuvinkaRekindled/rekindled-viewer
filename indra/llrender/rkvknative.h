@@ -8,7 +8,7 @@
  *   set 0, binding 0   `layout(std140, set = 0, binding = 0) uniform RKLooseUniforms { ... };`   per pass values (the renderer's uniform class UC_PASS)
  *   set 0, binding 5   `layout(std140, set = 0, binding = 5) uniform RKLooseDraw { ... };`       per draw values (UC_DRAW); a member `uint rk_ti_<name>` is the texture slot of a sampler `<name>`
  *                                                                                                 (`rk_ti_cube_<name>`: a cube map). Bindings 6-8: RKLooseMaterial / RKLooseLight / RKLooseSkin.
- *   set 2              the bindless tables (rk_tbl2d, rk_tblcube, rk_tblcubearray, rk_tbl2dshadow) and the handle map: `texture(rk_tbl2d[LL_HM(rk_ti_name)], uv)`
+ *   set 2              the bindless tables (rk_tbl2d, rk_tblcube, rk_tblcubearray, rk_tbl2dshadow) and the handle map: `texture(rk_tbl2d[RK_HM(rk_ti_name)], uv)`
  *   vertex inputs      explicit `layout(location = n)`, n = index in the viewer's reserved attribute list (position 0)
  *   outputs            explicit locations
  *   depth              Vulkan clip space (z in [0, w]); no GL remap
@@ -18,10 +18,10 @@
  * LL_VK_NATIVE_DIR points the loader at the source directory. A compile is kept on disk between runs (the compile cache of rkvknative.cpp, LL_VK_NATIVE_CACHE=0 turns it off).
  */
 
-#ifndef LL_LLVKNATIVE_H
-#define LL_LLVKNATIVE_H
+#ifndef RK_RKVKNATIVE_H
+#define RK_RKVKNATIVE_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkshader.h"
 
@@ -31,7 +31,7 @@ class Program;
 
 // Compile one native program from the files under 'root' (vertex or fragment may be empty for a one stage program). 'defines' become `#define NAME VALUE` before the prelude. Fills 'out'
 // (SPIR-V, the loose uniform blocks as reflected, the texture slots, the vertex inputs and the outputs). 'files' lists every file read (the shader files and their includes) for hot reload.
-// 'geometry_file' (optional, needs both the vertex and the fragment stage): a geometry stage between them (the manifest option `geometry <file>`; the stage macro is LL_GEOMETRY_STAGE; the outputs of the vertex
+// 'geometry_file' (optional, needs both the vertex and the fragment stage): a geometry stage between them (the manifest option `geometry <file>`; the stage macro is RK_GEOMETRY_STAGE; the outputs of the vertex
 // stage and the inputs of the geometry stage have explicit locations as everywhere else).
 bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
                           const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error, const std::string& geometry_file = std::string());
@@ -52,12 +52,12 @@ void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string
 bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string& fragment, std::vector<std::pair<std::string, std::string>>& defines, std::string& geometry);
 std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
 
-// <FS> stage 4 step 4: whether this session's stock programs carry ray query code (the global define LL_RT_SHADOWS is set). A manifest line with the option `rt` is native only while it is not: with ray traced
+// <FS> stage 4 step 4: whether this session's stock programs carry ray query code (the global define RK_RT_SHADOWS is set). A manifest line with the option `rt` is native only while it is not: with ray traced
 // shadows on, the stock program with its ray query code stays and the line is swapped in at the draw. Set with the global defines each time the viewer's shaders are set up (main thread).
 void nativeSetRtSession(bool on);
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKNATIVE_H
+#endif // RK_RKVKNATIVE_H

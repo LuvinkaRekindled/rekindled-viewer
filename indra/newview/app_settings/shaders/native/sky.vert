@@ -1,5 +1,5 @@
 // sky.vert: the sky dome: the haze colour of each vertex from the sky of the pass (rayleigh and mie terms, the sun's light attenuated by the air, the glow around the sun, the colour below the clouds blended
-// in at the horizon) and the dot product with the light for the rainbow. A line for line translation of "Deferred Windlight Sky Shader pull" (deferred/skyV.glsl with LL_VERTEX_PULL; HAS_HDRI is not set for
+// in at the horizon) and the dot product with the light for the rainbow. A line for line translation of "Deferred Windlight Sky Shader pull" (deferred/skyV.glsl with RK_VERTEX_PULL; HAS_HDRI is not set for
 // this program). With HDRI (the manifest line "Environment Map Program pull") the same vertex shader also passes on the clip position and the position relative to the camera (the HAS_HDRI part of the old
 // shader, deferred/skyV.glsl). Pairs with sky.frag.
 

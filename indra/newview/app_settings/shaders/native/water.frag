@@ -19,7 +19,7 @@
 #include "lib/pbr_core.glsl"
 #include "lib/shadow.glsl"
 #include "lib/probe.glsl"
-#ifdef LL_RT_QUERY
+#ifdef RK_RT_QUERY
 #include "lib/rt_scene.glsl"
 // the water pass sets none of the ray query code's other uniforms (the `uniform` lines of lib/rt.glsl): in the stock water they were 0 for every pixel (one hard sun ray, no avatar self shadow work, no alpha pass limits, no soft hit shadows).
 // As constants the code behind them is not in the program (the soft ray loops, the receiver probe, the hair walk): the same picture, a smaller program
@@ -60,14 +60,14 @@ vec3 transform_normal(vec3 n)
 void generate_waves(out vec3 wave1, out vec3 wave2, out vec3 wave3)
 {
     const vec2 big_wave = vec2(refCoord.w, view.w);
-    vec3 a1 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], big_wave).xyz;
-    vec3 a2 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], littleWave.xy).xyz;
-    vec3 a3 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], littleWave.zw).xyz;
+    vec3 a1 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], big_wave).xyz;
+    vec3 a2 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], littleWave.xy).xyz;
+    vec3 a3 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], littleWave.zw).xyz;
     if (blend_factor > 0.0)
     {
-        a1 = mix(a1, texture(rk_tbl2d[LL_HM(rk_ti_bumpMap2)], big_wave).xyz, blend_factor);
-        a2 = mix(a2, texture(rk_tbl2d[LL_HM(rk_ti_bumpMap2)], littleWave.xy).xyz, blend_factor);
-        a3 = mix(a3, texture(rk_tbl2d[LL_HM(rk_ti_bumpMap2)], littleWave.zw).xyz, blend_factor);
+        a1 = mix(a1, texture(rk_tbl2d[RK_HM(rk_ti_bumpMap2)], big_wave).xyz, blend_factor);
+        a2 = mix(a2, texture(rk_tbl2d[RK_HM(rk_ti_bumpMap2)], littleWave.xy).xyz, blend_factor);
+        a3 = mix(a3, texture(rk_tbl2d[RK_HM(rk_ti_bumpMap2)], littleWave.zw).xyz, blend_factor);
     }
     wave1 = a1 * 2.0 - 1.0;
     wave2 = a2 * 2.0 - 1.0;
@@ -99,7 +99,7 @@ void main()
     generate_waves(wave1, wave2, wave3);
 
     const vec2 distort = (refCoord.xy / refCoord.z) * 0.5 + 0.5;
-    const float water_mask = textureLod(rk_tbl2d[LL_HM(rk_ti_exclusionTex)], distort, 0.0).r;
+    const float water_mask = textureLod(rk_tbl2d[RK_HM(rk_ti_exclusionTex)], distort, 0.0).r;
 
     if (mirror_flag > 0.0 && dot(vary_position, clipPlane.xyz) + clipPlane.w < 0.0)
     {
@@ -155,12 +155,12 @@ void main()
     // the picture below: where the water is cut out (exclusion mask) the ripples do not push it; where the surface under the water is nearer than the water, they do not either
     float fade = water_mask;
     distort2 = mix(distort, distort2, min(1.0, fade * 10.0));
-    const float depth = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], distort2, 0.0).r;
+    const float depth = textureLod(rk_tbl2d[RK_HM(rk_ti_depthMap)], distort2, 0.0).r;
     if (pos.z < rk_view_pos(inv_proj, distort2, depth).z - 0.05)
     {
         distort2 = distort;
     }
-    const vec4 fb = textureLod(rk_tbl2d[LL_HM(rk_ti_screenTex)], distort2, 0.0);
+    const vec4 fb = textureLod(rk_tbl2d[RK_HM(rk_ti_screenTex)], distort2, 0.0);
 #else
     const float fade = 1.0;
     const vec4 fb = applyWaterFogViewLinear(viewVec * 2048.0, vec4(1.0));
@@ -169,8 +169,8 @@ void main()
     const float perceptualRoughness = blurMultiplier;
     vec3 radiance = water_reflection(distort2, pos, wave_ibl, 1.0 - perceptualRoughness);
 
-// the reflection is a variant of its own (the manifest define LL_RT_WATER_REFLECTION): the water without it is the sun shadow ray alone, a much smaller program (the setting FSVkRTWater is off by default)
-#if defined(LL_RT_QUERY) && defined(SUN_SHADOW) && defined(LL_RT_WATER_REFLECTION)
+// the reflection is a variant of its own (the manifest define RK_RT_WATER_REFLECTION): the water without it is the sun shadow ray alone, a much smaller program (the setting FSVkRTWater is off by default)
+#if defined(RK_RT_QUERY) && defined(SUN_SHADOW) && defined(RK_RT_WATER_REFLECTION)
     if (rt_water_reflections == 2)
     {
         radiance = vec3(1.0, 0.0, 1.0);        // plumbing check: the code runs
@@ -210,7 +210,7 @@ void main()
     vec3 punctual = clamp(nl * lobe, vec3(0.0), vec3(10.0)) * sunlit * atten;
     if (max(punctual.r, max(punctual.g, punctual.b)) > (1.0 / 1024.0))
     {
-#if defined(LL_RT_QUERY) && defined(SUN_SHADOW)
+#if defined(RK_RT_QUERY) && defined(SUN_SHADOW)
         const float shadow = rt_sun_shadow(pos, norm, distort);       // (a session with ray queries: the sun shadow of the stock water is a ray, sampleDirectionalShadow of shadowUtil.glsl)
 #else
         const float shadow = sun_shadow(pos, norm, distort.y);

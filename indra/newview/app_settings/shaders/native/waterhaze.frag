@@ -32,7 +32,7 @@ layout(location = 0) out vec4 frag_color;
 
 float getDepth(vec2 pos_screen)
 {
-    float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
+    float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], pos_screen).r;
     return depth;
 }
 
@@ -40,7 +40,7 @@ void main()
 {
     vec2  tc           = vary_fragcoord.xy / vary_fragcoord.w * 0.5 + 0.5;
     float depth        = getDepth(tc.xy);
-    float mask = texture(rk_tbl2d[LL_HM(rk_ti_exclusionTex)], tc.xy).r;
+    float mask = texture(rk_tbl2d[RK_HM(rk_ti_exclusionTex)], tc.xy).r;
 
     if (above_water > 0)
     {

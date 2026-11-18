@@ -1,14 +1,14 @@
 /**
  * @file rkvkfsr.h
  * @brief AMD FSR 3.1 upscaler for the Vulkan mirror, from the FidelityFX SDK v1.1.4 source (MIT) built into static libraries, no DLL. The second backend of
- *        rkvkupscale.h: the upscaler of the viewer (rkvkupscale.h), it works on any GPU. Compiled in when the SDK headers were found at configure time (LL_FSR); stubs otherwise.
+ *        rkvkupscale.h: the upscaler of the viewer (rkvkupscale.h), it works on any GPU. Compiled in when the SDK headers were found at configure time (RK_FSR); stubs otherwise.
  *        doc/vulkan/PLAN-fsr-upscaler.md
  */
 
-#ifndef LL_LLVKFSR_H
-#define LL_LLVKFSR_H
+#ifndef RK_RKVKFSR_H
+#define RK_RKVKFSR_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkupscale.h"    // Params
 
@@ -31,5 +31,5 @@ namespace RKVkFsr
     VkImageLayout outputLayout();
 }
 
-#endif // LL_VULKAN
-#endif // LL_LLVKFSR_H
+#endif // RK_VULKAN
+#endif // RK_RKVKFSR_H

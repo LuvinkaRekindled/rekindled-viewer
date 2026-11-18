@@ -1,4 +1,4 @@
-// stars.vert: the stars: smashed to the far clip plane, the twinkle coordinate from the time. A line for line translation of "Deferred Star Program pull" (deferred/starsV.glsl with LL_VERTEX_PULL);
+// stars.vert: the stars: smashed to the far clip plane, the twinkle coordinate from the time. A line for line translation of "Deferred Star Program pull" (deferred/starsV.glsl with RK_VERTEX_PULL);
 // pairs with stars.frag.
 
 #include "sky_pass.inc"

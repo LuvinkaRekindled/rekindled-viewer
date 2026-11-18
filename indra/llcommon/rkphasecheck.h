@@ -13,8 +13,8 @@
  *
  * Writers that are made thread safe on purpose (wakeRequest has its own lock) or that a job owns (a pose job's joint arrays) do not call it.
  */
-#ifndef LL_LLPHASECHECK_H
-#define LL_LLPHASECHECK_H
+#ifndef RK_RKPHASECHECK_H
+#define RK_RKPHASECHECK_H
 
 #include <atomic>
 #include <cstring>
@@ -99,4 +99,4 @@ inline void rk_phase_check(const char* writer)
     RKPhaseCheck::report(writer, !main_thread);
 }
 
-#endif // LL_LLPHASECHECK_H
+#endif // RK_RKPHASECHECK_H

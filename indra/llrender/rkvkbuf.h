@@ -8,10 +8,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKBUF_H
-#define LL_LLVKBUF_H
+#ifndef RK_RKVKBUF_H
+#define RK_RKVKBUF_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkvkasync.h"
@@ -45,6 +45,6 @@ namespace RKVkWorker
     void slot_set(unsigned unit, unsigned name);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKBUF_H
+#endif // RK_RKVKBUF_H

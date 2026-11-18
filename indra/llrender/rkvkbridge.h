@@ -8,12 +8,12 @@
  * switches the mirror off without affecting the OpenGL viewer.
  */
 
-#ifndef LL_LLVKMIRROR_H
-#define LL_LLVKMIRROR_H
+#ifndef RK_RKVKMIRROR_H
+#define RK_RKVKMIRROR_H
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include <mutex>
 #include <atomic>
 #include <vector>
@@ -396,7 +396,7 @@ namespace RKVkBridge
     S32 rtTexAnim();               // rt-debug.txt texanim=0/1/2 (-1 = not set: the setting FSTexAnimOnGPU decides), a same-lap A/B of the texture animation by the CPU against the vertex shader
     S32 rtSunNoise();              // rt-debug.txt sunnoise=0/1/2 (default 1): how the noise of the ray traced sun shadow moves with the jitter: 1 every frame, 2 every 4th frame, 0 not at all
     S32 rtEarly();                 // rt-debug.txt rtearly=0/1/3 (default -1: the environment variable LL_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
-    void nativeRtSession(bool on);   // <FS> whether this session's stock programs carry ray query code (the global define LL_RT_SHADOWS), pushed with the global defines (rkvknative.h)
+    void nativeRtSession(bool on);   // <FS> whether this session's stock programs carry ray query code (the global define RK_RT_SHADOWS), pushed with the global defines (rkvknative.h)
     void nativeGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines);     // <FS> the viewer's global shader defines (rkvknative.h), pushed each time the viewer's shaders are set up (main thread)
     S32 nativeKey(const char* key, S32 def);     // <FS> a live key of rt-debug.txt (native shaders, rkvknative.h): `key=N`, or 'def' when the line is missing; any thread
     S32 rtSunFilter();           // rt-debug.txt sunfilter=0/1 (default 1): the penumbra filter sized by the blocker distance runs on the centre ray's shadow (rtShadowFilterF.glsl)
@@ -446,7 +446,7 @@ namespace RKVkBridge
     // asks the worker to log what it holds for each GL texture name (labels say what each is): the viewer's Show Textures command for the agent's bake slots ("own avatar texture" lines of the VkTex log)
     void describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet);   // finest: the sampled hash of the finest BC7 level uploaded (0 = unknown); quiet: log only what is wrong
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     // the inline implementations of the frame calls (the worker thread runs these in async mode)
     void beginFrameImpl(S32 width, S32 height);
     void endFrameImpl();
@@ -564,7 +564,7 @@ namespace RKVkBridge
 #endif
 }
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 namespace RKVkWorker
 {
     // Arena phase 3: where a GL buffer name lives. The address stays valid while epoch is unchanged; version moves on every write. Worker thread only (it owns the buffer table).
@@ -601,4 +601,4 @@ namespace RKVkWorker
 }
 #endif
 
-#endif // LL_LLVKMIRROR_H
+#endif // RK_RKVKMIRROR_H

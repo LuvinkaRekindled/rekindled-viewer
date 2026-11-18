@@ -1,10 +1,10 @@
 /**
  * @file rkvkzones.h
- * @brief GPU timing zones on the Vulkan timeline, for code outside the render library (no LL_VULKAN needed to include this).
+ * @brief GPU timing zones on the Vulkan timeline, for code outside the render library (no RK_VULKAN needed to include this).
  */
 
-#ifndef LL_LLVKZONES_H
-#define LL_LLVKZONES_H
+#ifndef RK_RKVKZONES_H
+#define RK_RKVKZONES_H
 
 namespace RKVkZones
 {
@@ -14,4 +14,4 @@ namespace RKVkZones
     void zone(const char* name, bool begin);
 }
 
-#endif // LL_LLVKZONES_H
+#endif // RK_RKVKZONES_H

@@ -12,8 +12,8 @@
  * Copyright (c) 2026, Firestorm native Vulkan renderer. Licensed under the same terms as the rest of the viewer (LGPL 2.1).
  */
 
-#ifndef LL_LLVKHANDLES_H
-#define LL_LLVKHANDLES_H
+#ifndef RK_RKVKHANDLES_H
+#define RK_RKVKHANDLES_H
 
 #include <cstdint>
 #include <deque>

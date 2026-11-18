@@ -45,14 +45,14 @@ layout(location = 0) out vec4 frag_color;
 
 float getDepth(vec2 pos_screen)
 {
-    float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
+    float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], pos_screen).r;
     return depth;
 }
 
 vec4 getNorm(vec2 screenpos)
 {
     // (level 0 explicitly: the lookup now comes after the discard of the sky pixels, and an implicit level needs the neighbours of the quad; the G-buffer has no mip levels)
-    vec4 norm = decodeNormal(textureLod(rk_tbl2d[LL_HM(rk_ti_normalMap)], screenpos.xy, 0.0));
+    vec4 norm = decodeNormal(textureLod(rk_tbl2d[RK_HM(rk_ti_normalMap)], screenpos.xy, 0.0));
     return norm;
 }
 

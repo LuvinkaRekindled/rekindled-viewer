@@ -7,7 +7,7 @@
 
 #include "rkrenderheaders.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkstate.h"
 #include "llframetimer.h"
@@ -804,4 +804,4 @@ void leave(Kind kind, U32 saved, U32 set, const char* file, int line)
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

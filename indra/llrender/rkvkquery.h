@@ -9,10 +9,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKQUERY_H
-#define LL_LLVKQUERY_H
+#ifndef RK_RKVKQUERY_H
+#define RK_RKVKQUERY_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 
@@ -44,6 +44,6 @@ namespace RKVkWorker
     bool query_value(unsigned id, bool want_result, unsigned long long& value);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKQUERY_H
+#endif // RK_RKVKQUERY_H

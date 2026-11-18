@@ -17,8 +17,8 @@
  * decides whether BC7 chains are produced and may be served (off: a BC7 file is a miss, and a raw decode replaces it).
  */
 
-#ifndef FS_DECODEDTEXTURECACHE_H
-#define FS_DECODEDTEXTURECACHE_H
+#ifndef RK_DECODEDTEXTURECACHE_H
+#define RK_DECODEDTEXTURECACHE_H
 
 #include "llimageworker.h"
 #include "lldir.h"
@@ -102,4 +102,4 @@ private:
     F64 mLastReport = 0.0;
 };
 
-#endif // FS_DECODEDTEXTURECACHE_H
+#endif // RK_DECODEDTEXTURECACHE_H

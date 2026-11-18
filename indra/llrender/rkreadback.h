@@ -7,8 +7,8 @@
  * fills the ticket's data and sets mDone. The caller looks at mDone in a later frame (never waits) and keeps the ticket alive as long as it wants (the worker holds a reference too).
  */
 
-#ifndef LL_LLREADBACK_H
-#define LL_LLREADBACK_H
+#ifndef RK_RKREADBACK_H
+#define RK_RKREADBACK_H
 
 #include "stdtypes.h"
 #include "rkrenderformat.h"
@@ -26,4 +26,4 @@ struct RKReadbackTicket
 // reads a rectangle of the colour attachment of the render target that is current now; `bytes` is the size of the ticket's data (rows * stride)
 std::shared_ptr<RKReadbackTicket> rk_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes);
 
-#endif // LL_LLREADBACK_H
+#endif // RK_RKREADBACK_H

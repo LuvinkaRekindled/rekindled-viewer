@@ -4,8 +4,8 @@
  *        "does this avatar need work this frame" gates of the update loop used to derive from the object graph, one after the other: the importance class, and the frame's mode.
  *        The loop reads the row (an avatar without a row this frame keeps the old gates).
  */
-#ifndef LL_LLAVATARTABLE_H
-#define LL_LLAVATARTABLE_H
+#ifndef RK_RKAVATARTABLE_H
+#define RK_RKAVATARTABLE_H
 
 #include "stdtypes.h"
 #include <vector>

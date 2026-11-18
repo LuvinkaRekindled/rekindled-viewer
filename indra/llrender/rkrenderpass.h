@@ -23,8 +23,8 @@
  * released while bound, and a target still bound at the end of the frame (a missing flush; the message names the bind site).
  */
 
-#ifndef LL_LLRENDERPASS_H
-#define LL_LLRENDERPASS_H
+#ifndef RK_RKRENDERPASS_H
+#define RK_RKRENDERPASS_H
 
 #include "stdtypes.h"
 #include "rkrenderformat.h"

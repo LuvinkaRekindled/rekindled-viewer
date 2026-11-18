@@ -88,7 +88,7 @@ vec4 prefilterEnvMap(vec3 R)
     vec3 V = R;
     vec4 color = vec4(0.0);
     float totalWeight = 0.0;
-    float envMapDim = float(textureSize(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_reflectionProbes))], 0).s);
+    float envMapDim = float(textureSize(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], 0).s);
     float roughness = mipLevel / max_probe_lod;
     uint numSamples = uint(max(PROBE_FILTER_SAMPLES * roughness, 1.0));
     float numMips = max_probe_lod + 1;
@@ -113,7 +113,7 @@ vec4 prefilterEnvMap(vec3 R)
             float omegaP = 4.0 * PI / (6.0 * envMapDim * envMapDim);
             // Biased (+1.0) mip level for better result
             float mipLevel = roughness == 0.0 ? 0.0 : clamp(0.5 * log2(omegaS / omegaP) + 1.0, 0.0f, max_probe_lod);
-            color += textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_reflectionProbes))], vec4(L, sourceIdx), mipLevel) * dotNL;
+            color += textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(L, sourceIdx), mipLevel) * dotNL;
             totalWeight += dotNL;
         }
     }

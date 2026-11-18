@@ -40,14 +40,14 @@
 #include "SDL2/SDL_syswm.h"
 
 // <FS> native-vk: Xlib defines None (and more) as macros, and the renderer headers use None as an enumerator (TexelFormat::None, ClearBits::None ...). The X11 code of the
-// window class spells the X value LL_X11_NONE.
+// window class spells the X value RK_X11_NONE.
 #ifdef None
 #undef None
 #endif
 #ifdef Always
 #undef Always
 #endif
-constexpr unsigned long LL_X11_NONE = 0;
+constexpr unsigned long RK_X11_NONE = 0;
 #endif
 
 // AssertMacros.h does bad things.

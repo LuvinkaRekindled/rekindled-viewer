@@ -192,12 +192,12 @@ inline void intrusive_ptr_release(LLRefCount* p)
     p->unref();
 }
 
-// <FS> group rebuild R3, level 2: the reference count of the assets that the faces and draw infos of many groups share (materials, textures). With LL_FS_ATOMIC_ASSET_REFS 1 they count atomically, so the rebuilds
+// <FS> group rebuild R3, level 2: the reference count of the assets that the faces and draw infos of many groups share (materials, textures). With RK_FS_ATOMIC_ASSET_REFS 1 they count atomically, so the rebuilds
 // of two groups can copy the same material or texture pointer at once; 0 is the plain count as before.
-#ifndef LL_FS_ATOMIC_ASSET_REFS
-#define LL_FS_ATOMIC_ASSET_REFS 1
+#ifndef RK_FS_ATOMIC_ASSET_REFS
+#define RK_FS_ATOMIC_ASSET_REFS 1
 #endif
-#if LL_FS_ATOMIC_ASSET_REFS
+#if RK_FS_ATOMIC_ASSET_REFS
 typedef LLThreadSafeRefCount RKAssetRefCount;
 #else
 typedef LLRefCount RKAssetRefCount;

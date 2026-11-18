@@ -13,7 +13,7 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
-    vec4 refl = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], tc);
-    float dist = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], tc).r;
+    vec4 refl = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], tc);
+    float dist = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], tc).r;
     frag_color = vec4(refl.a > 0.0 ? refl.rgb : vec3(0.0), refl.a > 0.0 ? dist : 0.0);
 }

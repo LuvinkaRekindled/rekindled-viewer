@@ -17,7 +17,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    frag_color = texture(rk_tbl2d[LL_HM(rk_ti_tex0)], vary_texcoord0.xy);
+    frag_color = texture(rk_tbl2d[RK_HM(rk_ti_tex0)], vary_texcoord0.xy);
     if (frag_color[0] + frag_color[1] + frag_color[2] < tolerance)
     {
         discard;

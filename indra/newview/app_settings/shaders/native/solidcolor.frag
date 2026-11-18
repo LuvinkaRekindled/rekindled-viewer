@@ -16,6 +16,6 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    float alpha = texture(rk_tbl2d[LL_HM(rk_ti_tex0)], vary_texcoord0.xy).a * color.a;
+    float alpha = texture(rk_tbl2d[RK_HM(rk_ti_tex0)], vary_texcoord0.xy).a * color.a;
     frag_color = vec4(color.rgb, alpha);
 }

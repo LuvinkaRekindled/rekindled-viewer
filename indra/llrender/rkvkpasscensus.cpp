@@ -5,7 +5,7 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkpasscensus.h"
 #include "rkvkasync.h"
@@ -534,4 +534,4 @@ void geoDrawSeen()
 
 } // namespace RKVkPassCensus
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

@@ -926,7 +926,7 @@ void LLDrawable::moveUpdatePipeline(bool moved)
 
 void LLDrawable::movePartition()
 {
-    LL_CPU_ZONE("octree: drawable movePartition");
+    RK_CPU_ZONE("octree: drawable movePartition");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     if (isSpatialBridge())
@@ -961,7 +961,7 @@ void LLDrawable::movePartition()
 
 bool LLDrawable::updateMove()
 {
-    LL_CPU_ZONE("drawable: updateMove");
+    RK_CPU_ZONE("drawable: updateMove");
     RKAttCensus::Scope att_census(RKAttCensus::sDrawableMove, this);
     if (isDead())
     {
@@ -1308,7 +1308,7 @@ const LLVector3& LLDrawable::getBounds(LLVector3& min, LLVector3& max) const
 
 void LLDrawable::updateSpatialExtents()
 {
-    LL_CPU_ZONE("drawable: updateSpatialExtents");
+    RK_CPU_ZONE("drawable: updateSpatialExtents");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     if (mVObjp)
@@ -1573,7 +1573,7 @@ void LLSpatialBridge::destroyTree()
 
 void LLSpatialBridge::updateSpatialExtents()
 {
-    LL_CPU_ZONE("bridge: updateSpatialExtents");
+    RK_CPU_ZONE("bridge: updateSpatialExtents");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWABLE;
 
     LLVector4a newMin;
@@ -2034,7 +2034,7 @@ void LLSpatialBridge::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool imm
 
 bool LLSpatialBridge::updateMove()
 {
-    LL_CPU_ZONE("bridge: updateMove");
+    RK_CPU_ZONE("bridge: updateMove");
     RKAttCensus::Scope att_census(RKAttCensus::sBridgeMove, mDrawable);
     llassert_always(mDrawable);
     llassert_always(mDrawable->mVObjp);

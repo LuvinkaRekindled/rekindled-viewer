@@ -1,5 +1,5 @@
 // moon.vert: the moon's quad, pushed to just in front of the stars (between the clouds and the stars). A line for line translation of "Deferred Windlight Moon Program pull" (deferred/moonV.glsl with
-// LL_VERTEX_PULL); pairs with moon.frag.
+// RK_VERTEX_PULL); pairs with moon.frag.
 
 #include "sky_pass.inc"
 #include "lib/rows.glsl"

@@ -2,7 +2,7 @@
 // The includer declares: shadow_matrix[6], shadow_clip, shadow_res, shadow_bias, shadow_offset, sun_dir, moon_dir, sun_up_factor, and the shadow samplers rk_ti_shadow_shadowMap0 .. 3 (sampler2DShadow slots).
 // jitter is a number that changes from row to row of the screen (the sample column is snapped to the shadow texels with a jitter that follows it, so the snapping does not show as lines).
 
-#define SHADOW_MAP(slot) rk_tbl2dshadow[LL_HM(slot)]
+#define SHADOW_MAP(slot) rk_tbl2dshadow[RK_HM(slot)]
 
 #ifdef SUN_SHADOW
 // one cascade: five taps with the weights 4 + 1 + 1 + 1 + 1 over 8

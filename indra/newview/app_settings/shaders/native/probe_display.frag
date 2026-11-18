@@ -159,7 +159,7 @@ vec4 sampleReflectionProbesDebug(vec3 pos)
 void main()
 {
     vec2  tc           = vary_fragcoord.xy;
-    float depth        = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc.xy).r;
+    float depth        = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tc.xy).r;
     vec4  pos          = vec4(rk_view_pos(inv_proj, tc, depth), 1.0);
 
     frag_color = max(sampleReflectionProbesDebug(pos.xyz), vec4(0));

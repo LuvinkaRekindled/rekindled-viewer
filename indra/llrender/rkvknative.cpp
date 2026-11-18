@@ -3,7 +3,7 @@
  * @brief The native shader path: compile Vulkan GLSL written from scratch, and stand in for the viewer's translated programs at the draw. See rkvknative.h.
  */
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 
@@ -470,13 +470,13 @@ void native_cache_store(const std::string& path, U64 key, const std::string& roo
 std::string stage_head(int stage, const std::vector<std::pair<std::string, std::string>>& defines)
 {
     std::string head = "#version 460\n#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : require\n";
-    head += stage == 0 ? "#define LL_VERTEX_STAGE 1\n" : (stage == 1 ? "#define LL_FRAGMENT_STAGE 1\n" : "#define LL_GEOMETRY_STAGE 1\n");
+    head += stage == 0 ? "#define RK_VERTEX_STAGE 1\n" : (stage == 1 ? "#define RK_FRAGMENT_STAGE 1\n" : "#define RK_GEOMETRY_STAGE 1\n");
     for (const auto& d : defines)
     {
         head += "#define " + d.first + " " + d.second + "\n";
-        if (d.first == "LL_RT_QUERY")
+        if (d.first == "RK_RT_QUERY")
         {
-            // a program that traces rays against the frame's scene (the manifest define LL_RT_QUERY; native/lib/rt_scene.glsl declares set 3): the extension has to come before any code, so the head has it
+            // a program that traces rays against the frame's scene (the manifest define RK_RT_QUERY; native/lib/rt_scene.glsl declares set 3): the extension has to come before any code, so the head has it
             head += "#extension GL_EXT_ray_query : require\n";
         }
     }
@@ -751,7 +751,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     }
     for (const auto& d : defines)
     {
-        out.mUsesRt = out.mUsesRt || d.first == "LL_RT_QUERY";       // (the draw binds the ray tracing descriptor set 3: the frame's scene)
+        out.mUsesRt = out.mUsesRt || d.first == "RK_RT_QUERY";       // (the draw binds the ray tracing descriptor set 3: the frame's scene)
     }
     if (files)
     {
@@ -816,7 +816,7 @@ struct Def
     std::string mTarget, mVertex, mFragment, mFamily, mGeometry;       // mGeometry: the option `geometry <file>` (a third stage, optional)
     std::vector<std::pair<std::string, std::string>> mDefines;
     bool mDefaultOn = false;                                // `default on` in the manifest
-    bool mRtQuery = false;                                  // `rtquery` in the manifest: in a session with ray queries the program is built with LL_RT_QUERY (the ray query code of lib/rt.glsl, the extension and the draw's set 3: PLAN-native-only-end-state.md, A3)
+    bool mRtQuery = false;                                  // `rtquery` in the manifest: in a session with ray queries the program is built with RK_RT_QUERY (the ray query code of lib/rt.glsl, the extension and the draw's set 3: PLAN-native-only-end-state.md, A3)
     bool mNativeOnly = false;                               // set by load_manifest: a converted family, the only line of its program, default on
 };
 
@@ -1001,7 +1001,7 @@ bool nativeOnlyLine(const std::string& program, std::string& vertex, std::string
     defines = line->mDefines;
     if (line->mRtQuery && gRtSession.load())
     {
-        defines.push_back({ "LL_RT_QUERY", "1" });      // a session with ray queries (the manifest option rtquery): the program traces its sun shadow (compileNativeProgram adds the extension and sets mUsesRt)
+        defines.push_back({ "RK_RT_QUERY", "1" });      // a session with ray queries (the manifest option rtquery): the program traces its sun shadow (compileNativeProgram adds the extension and sets mUsesRt)
     }
     return true;
 }
@@ -1024,4 +1024,4 @@ int nativeKey(const std::string& key, int def)
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

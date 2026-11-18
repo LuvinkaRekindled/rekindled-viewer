@@ -15,7 +15,7 @@
 #include <deque>
 #include <mutex>
 #include <unordered_map>
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 namespace
 {
@@ -340,7 +340,7 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
                     static std::atomic<U32> logged { 0 };
                     if (logged++ < 200)
                     {
-                        LL_DIAG("BC7") << "BC7 encode off its source: " << width << "x" << height << " x" << components << ", source hash " << std::hex << rk_sparse_hash(levels[0].data(), levels[0].size()) << std::dec
+                        RK_DIAG("BC7") << "BC7 encode off its source: " << width << "x" << height << " x" << components << ", source hash " << std::hex << rk_sparse_hash(levels[0].data(), levels[0].size()) << std::dec
                                         << ", harmed blocks " << harmed_percent << "%, mean error r " << mean_r << " g " << mean_g << " b " << mean_b << " a " << mean_a << ", largest r " << err_max[0] << " g " << err_max[1]
                                         << " b " << err_max[2] << " a " << err_max[3] << ", blocks with an alpha moved by more than 64: " << alpha_far_blocks << " of " << blocks_finest << LL_ENDL;
                     }
@@ -365,7 +365,7 @@ LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 w
             static std::atomic<U32> logged { 0 };
             if (logged++ < 300)
             {
-                LL_DIAG("BC7") << "BC7 encoded " << width << "x" << height << " x" << components << ": source hash " << std::hex << rk_sparse_hash(levels[0].data(), levels[0].size()) << ", chain hash "
+                RK_DIAG("BC7") << "BC7 encoded " << width << "x" << height << " x" << components << ": source hash " << std::hex << rk_sparse_hash(levels[0].data(), levels[0].size()) << ", chain hash "
                                 << rk_sparse_hash(result->getData(), (size_t)result->getDataSize()) << std::dec << ", harmed blocks " << harmed_percent << "%" << LL_ENDL;
             }
         }

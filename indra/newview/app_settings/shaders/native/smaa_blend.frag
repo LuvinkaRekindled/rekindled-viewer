@@ -23,10 +23,10 @@ layout(location = 0) out vec4 frag_color;
 #include "lib/smaa.glsl"
 
 // (after the library: its functions have parameters of these names)
-#define diffuseRect rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
-#define blendTex rk_tbl2d[LL_HM(rk_ti_blendTex)]
+#define diffuseRect rk_tbl2d[RK_HM(rk_ti_diffuseRect)]
+#define blendTex rk_tbl2d[RK_HM(rk_ti_blendTex)]
 #if SMAA_REPROJECTION
-#define velocityTex rk_tbl2d[LL_HM(rk_ti_velocityTex)]
+#define velocityTex rk_tbl2d[RK_HM(rk_ti_velocityTex)]
 #endif
 
 void main()

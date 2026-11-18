@@ -1,11 +1,11 @@
 /**
  * @file rkuniformcensus.h
  * @brief U0 (doc/vulkan/U-pass-uniforms-design.md): counters for where the uniform / shader bind / texture bind work of the main thread goes. Off unless LL_VK_UNICENSUS=1
- *        (every hook is one branch on a constant). Header only. Calls are attributed to the innermost CPU zone (LL_CPU_ZONE, FS_CPU_ZONES=1 is needed for that part) and to the program.
+ *        (every hook is one branch on a constant). Header only. Calls are attributed to the innermost CPU zone (RK_CPU_ZONE, FS_CPU_ZONES=1 is needed for that part) and to the program.
  *        The log lines (tag UniCensus) are written by RKCpuZoneScope::frame() every 600 frames.
  */
-#ifndef LL_LLUNIFORMCENSUS_H
-#define LL_LLUNIFORMCENSUS_H
+#ifndef RK_RKUNIFORMCENSUS_H
+#define RK_RKUNIFORMCENSUS_H
 
 #include "stdtypes.h"
 #include <chrono>
@@ -123,4 +123,4 @@ namespace RKUniCensus
     };
 }
 
-#endif // LL_LLUNIFORMCENSUS_H
+#endif // RK_RKUNIFORMCENSUS_H

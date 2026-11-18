@@ -3,15 +3,15 @@
  * @brief Vulkan device layer for the experimental Vulkan backend: loader, instance, device, memory
  *        allocator, per-frame command recording, deferred destruction, staging memory and a swapchain.
  *
- * Compiled only with -DUSE_VULKAN=ON (LL_VULKAN defined). Requires Vulkan 1.3 plus dynamic rendering,
+ * Compiled only with -DUSE_VULKAN=ON (RK_VULKAN defined). Requires Vulkan 1.3 plus dynamic rendering,
  * synchronization2, extended dynamic state 3 (polygon mode and blend state), vertex input dynamic state and
  * push descriptors, so pipelines only need to be keyed by shader program and attachment formats.
  */
 
-#ifndef LL_LLVKCONTEXT_H
-#define LL_LLVKCONTEXT_H
+#ifndef RK_RKVKCONTEXT_H
+#define RK_RKVKCONTEXT_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 
@@ -603,6 +603,6 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKCONTEXT_H
+#endif // RK_RKVKCONTEXT_H

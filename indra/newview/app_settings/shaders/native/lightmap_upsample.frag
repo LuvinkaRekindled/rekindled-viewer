@@ -1,6 +1,6 @@
 // lightmap_upsample.frag: the half resolution lightmap (sun shadow, occlusion, projector shadows) back to full resolution, joint bilateral: the four nearest half resolution pixels are weighted by the bilinear
 // weights and kept only when their surface lies in the tangent plane of this pixel (the rule the old blur used for its taps), so shadows and occlusion do not bleed over silhouettes.
-// A half resolution pixel was computed at the full resolution pixel (2i + 1) of its block (sun_lightmap.frag, LL_HALF): its depth is read from there.
+// A half resolution pixel was computed at the full resolution pixel (2i + 1) of its block (sun_lightmap.frag, RK_HALF): its depth is read from there.
 // The plane test goes both ways: the tap must lie in the plane of this pixel's surface AND this pixel must lie in the plane of the tap's surface. One way alone lets a tap across a silhouette through when the pixel's
 // own surface is seen edge on (an arm against the ground: the arm's normal is across the view, the ground tap's depth gap does not show along it), and the ground's leaf shadows then bleed onto the arm's edge as a
 // stepped line (Adam, 2026-11-09). The ground tap's normal points up: the arm pixel is far off its plane, so it is refused.
@@ -30,13 +30,13 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     const vec2 uv = vary_fragcoord;
-    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv).r;
+    const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], uv).r;
     if (depth >= 1.0)
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
         return;
     }
-    const vec3 norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], uv).xy);
+    const vec3 norm = rk_decode_normal(texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], uv).xy);
     const vec3 pos = rk_view_pos(inv_proj, uv, depth);
     const float tolerance2 = pos.z * pos.z * 0.00005;
 
@@ -54,15 +54,15 @@ void main()
         const vec2 off = vec2(float(k & 1), float(k >> 1));
         const vec2 idx = clamp(base + off, vec2(0.0), half_res - 1.0);
         const float w = (off.x > 0.5 ? frac.x : 1.0 - frac.x) * (off.y > 0.5 ? frac.y : 1.0 - frac.y);
-        const vec4 col = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], (idx + 0.5) / half_res);
+        const vec4 col = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], (idx + 0.5) / half_res);
         const vec2 tap_uv = (min(idx * 2.0 + half_offset, screen_res - 1.0) + 0.5) / screen_res;
-        const float tap_depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tap_uv).r;
+        const float tap_depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tap_uv).r;
         if (tap_depth >= 1.0)
         {
             continue;                   // a sky pixel's lightmap value (1.0) is not a lighting value of this surface
         }
         const vec3 tap_pos = rk_view_pos(inv_proj, tap_uv, tap_depth);
-        const vec3 tap_norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], tap_uv).xy);
+        const vec3 tap_norm = rk_decode_normal(texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], tap_uv).xy);
         const float d = dot(norm, tap_pos - pos);
         const float d_back = dot(tap_norm, pos - tap_pos);
         const float off_plane = d * d + d_back * d_back;        // how far the two surfaces are from each other, both ways (the fallback takes the tap with the least)

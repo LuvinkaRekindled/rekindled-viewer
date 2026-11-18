@@ -5,8 +5,8 @@
  *        Measurement only: nothing here changes what is updated. Off unless LL_VK_ATTCENSUS=1 (every hook is one branch on a constant). Log tag AttCensus every 600 frames
  *        (RKAttCensus::frame() is called from LLViewerObjectList::update). Times are rdtsc ticks converted against the performance counter at the report.
  */
-#ifndef LL_LLATTCENSUS_H
-#define LL_LLATTCENSUS_H
+#ifndef RK_RKATTCENSUS_H
+#define RK_RKATTCENSUS_H
 
 #include "stdtypes.h"
 #include <cstdlib>
@@ -74,4 +74,4 @@ namespace RKAttCensus
     void frame();                           // llviewerobjectlist.cpp, once a frame: the report every 600 frames
 }
 
-#endif // LL_LLATTCENSUS_H
+#endif // RK_RKATTCENSUS_H

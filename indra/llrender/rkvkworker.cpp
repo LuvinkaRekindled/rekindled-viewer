@@ -12,7 +12,7 @@
 
 #include "rkrenderheaders.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkbridge.h"
 #include "llimage.h"            // <FS> rk_sparse_hash (describe_textures)
@@ -59,7 +59,7 @@
 #include <cmath>
 #include <algorithm>
 #include <string>
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 std::atomic<int> gRkWorkerCpu{ -1 };
 std::atomic<unsigned> gRkWorkerTid{ 0 };
@@ -710,7 +710,7 @@ static U32 tex_gl_name(Tex& t)
     static U64 scans = 0;
     if (++scans % 1000 == 1)
     {
-        LL_DIAG("VkTex") << "a texture entry without its GL name: found by a walk of the table (" << scans << " so far)" << LL_ENDL;
+        RK_DIAG("VkTex") << "a texture entry without its GL name: found by a walk of the table (" << scans << " so far)" << LL_ENDL;
     }
     for (auto& kv : sGL.mTextures)
     {
@@ -769,7 +769,7 @@ bool ensure_image(Tex& t, RKVkFormat::Target tg, RKVkFormat::Store st, U32 w, U3
             worst_ms = std::max(worst_ms, ms);
             if (++n % 1000 == 0)
             {
-                LL_DIAG("VkTexCreate") << "ensure_image creates: " << n << " in all, the last 1000 took " << window_ms << " ms (" << window_ms / 1000.0 << " ms each), the worst of all " << worst_ms << " ms" << LL_ENDL;
+                RK_DIAG("VkTexCreate") << "ensure_image creates: " << n << " in all, the last 1000 took " << window_ms << " ms (" << window_ms / 1000.0 << " ms each), the worst of all " << worst_ms << " ms" << LL_ENDL;
                 window_ms = 0.0;
             }
         }
@@ -796,7 +796,7 @@ bool ensure_image(Tex& t, RKVkFormat::Target tg, RKVkFormat::Store st, U32 w, U3
             static U64 dropped = 0;
             if (++dropped <= 20)
             {
-                LL_DIAG("VkTex") << "texture " << (S32)t.mStore << " -> " << (S32)st << ": its alpha / luminance swizzle was left from the old image, reset for the colour format (" << dropped << " so far)" << LL_ENDL;
+                RK_DIAG("VkTex") << "texture " << (S32)t.mStore << " -> " << (S32)st << ": its alpha / luminance swizzle was left from the old image, reset for the colour format (" << dropped << " so far)" << LL_ENDL;
             }
             t.mSwizzle[0] = SW_R; t.mSwizzle[1] = SW_G; t.mSwizzle[2] = SW_B; t.mSwizzle[3] = SW_A;
             t.mSwizzleSet = false;
@@ -3939,7 +3939,7 @@ bool bindless_probe_init()
         sBindlessProbe.mPipe = VK_NULL_HANDLE;
         return false;
     }
-    LL_DIAG("VkTex") << "bindless probe ready" << LL_ENDL;
+    RK_DIAG("VkTex") << "bindless probe ready" << LL_ENDL;
     return true;
 }
 
@@ -4152,7 +4152,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
         {
             continue;
         }
-        LL_DIAG("VkTex") << (quiet ? "own avatar texture CHECK " : "own avatar texture ") << (i < labels.size() ? labels[i] : std::string("?")) << " (GL name " << names[i] << "): " << text << LL_ENDL;
+        RK_DIAG("VkTex") << (quiet ? "own avatar texture CHECK " : "own avatar texture ") << (i < labels.size() ? labels[i] : std::string("?")) << " (GL name " << names[i] << "): " << text << LL_ENDL;
     }
 }
 
@@ -5485,7 +5485,7 @@ static void on_geometry_packets(const RKVkBridge::ShadowPacketsHeader& h, const 
             entries_total += mEntries;
             if (++records % 3000 == 0)
             {
-                LL_DIAG("VkScene") << (mRigged ? "rigged " : "") << "geometry packets, worker time per record: table build " << (double)ns_table / 1000.0 / records << " us, matrices + state + draw " << (double)ns_rest / 1000.0 / records
+                RK_DIAG("VkScene") << (mRigged ? "rigged " : "") << "geometry packets, worker time per record: table build " << (double)ns_table / 1000.0 / records << " us, matrices + state + draw " << (double)ns_rest / 1000.0 / records
                     << " us, " << (double)entries_total / records << " entries a record (" << records << " records)" << LL_ENDL;
             }
         }
@@ -6065,7 +6065,7 @@ static bool res_init()
     }
     sRes.mFailed = false;
     sRes.mReady = true;
-    LL_DIAG("VkScene") << "resident shadow entries: tables ready (" << kResCapacity << " entries)" << LL_ENDL;
+    RK_DIAG("VkScene") << "resident shadow entries: tables ready (" << kResCapacity << " entries)" << LL_ENDL;
     return true;
 }
 
@@ -6791,7 +6791,7 @@ bool alpha_res_init()
     sAR.mBounds.assign(4ull * kAlphaRowCapacity, 0.f);
     sAR.mFailed = false;
     sAR.mReady = true;
-    LL_DIAG("VkScene") << "resident alpha casters: ready (" << kAlphaRowCapacity << " rows, an index pool of " << kAlphaPoolIndices << " indices)" << LL_ENDL;
+    RK_DIAG("VkScene") << "resident alpha casters: ready (" << kAlphaRowCapacity << " rows, an index pool of " << kAlphaPoolIndices << " indices)" << LL_ENDL;
     return true;
 }
 
@@ -6835,7 +6835,7 @@ void alpha_res_reclaim(U64 frame)
         static U32 audits = 0;
         if (released + destroyed || (audits++ % 10) == 0)
         {
-            LL_DIAG("VkScene") << "resident alpha audit (frame " << frame << "): " << rows << " live rows, " << shown << " texture handles, " << released << " released, " << destroyed << " with a destroyed view" << LL_ENDL;
+            RK_DIAG("VkScene") << "resident alpha audit (frame " << frame << "): " << rows << " live rows, " << shown << " texture handles, " << released << " released, " << destroyed << " with a destroyed view" << LL_ENDL;
         }
     }
     Context& ctx = Context::instance();       // (GPU-LIFETIMES.md 5.2: a range or slot given up in frame r comes back when frame r is finished)
@@ -7262,7 +7262,7 @@ bool alpha_cull_pipeline()
         sAlphaCullPipe.mPipe = VK_NULL_HANDLE;
         return false;
     }
-    LL_DIAG("VkScene") << "resident alpha cull pipeline ready" << LL_ENDL;
+    RK_DIAG("VkScene") << "resident alpha cull pipeline ready" << LL_ENDL;
     return true;
 }
 } // namespace
@@ -7386,7 +7386,7 @@ static void alpha_res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* b
     if (sAR.mPasses - sAR.mReport >= 2400)
     {
         sAR.mReport = sAR.mPasses;
-        LL_DIAG("VkScene") << "resident alpha casters: " << n << " rows, " << sAR.mPasses << " passes drawn, row writes " << sAR.mRowWrites << " (calls: pair " << sAlphaRowCauses[0] << ", pin epoch " << sAlphaRowCauses[1]
+        RK_DIAG("VkScene") << "resident alpha casters: " << n << " rows, " << sAR.mPasses << " passes drawn, row writes " << sAR.mRowWrites << " (calls: pair " << sAlphaRowCauses[0] << ", pin epoch " << sAlphaRowCauses[1]
             << ", texture event " << sAlphaRowCauses[2] << "), pool full " << sAR.mPoolFull << ", rows full " << sAR.mRowsFull << LL_ENDL;
     }
 }
@@ -7514,7 +7514,7 @@ static bool res_cull_pipeline()
         sCullPipe.mPipe = VK_NULL_HANDLE;
         return false;
     }
-    LL_DIAG("VkScene") << "resident cull pipeline ready" << LL_ENDL;
+    RK_DIAG("VkScene") << "resident cull pipeline ready" << LL_ENDL;
     return true;
 }
 
@@ -7577,11 +7577,11 @@ static void res_note(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     if (++passes % 600 == 0 && timed)
     {
-        LL_DIAG("VkScene") << "resident ray notes, worker time per pass: sweep + notes " << (double)ns_notes / 1000.0 / passes << " us, refresh " << (double)sRes.mRefreshNs / 1000.0 / passes << " us (once a frame)" << LL_ENDL;
+        RK_DIAG("VkScene") << "resident ray notes, worker time per pass: sweep + notes " << (double)ns_notes / 1000.0 / passes << " us, refresh " << (double)sRes.mRefreshNs / 1000.0 / passes << " us (once a frame)" << LL_ENDL;
     }
     if (passes % 2400 == 0)
     {
-        LL_DIAG("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named, " << fragments_in << " fragments inside the frustum" << LL_ENDL;
+        RK_DIAG("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named, " << fragments_in << " fragments inside the frustum" << LL_ENDL;
     }
 }
 
@@ -7759,7 +7759,7 @@ static void res_ray_membership(U64 frame)
     sRes.mMembershipNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
     if (++sRes.mMembershipFrames % 600 == 0)
     {
-        LL_DIAG("VkScene") << "resident ray membership: " << sRes.mHeldNow << " of " << sRes.mCull.size() << " fragments in the scene, " << sRes.mEntered << " entered and " << sRes.mLeft << " left in total, "
+        RK_DIAG("VkScene") << "resident ray membership: " << sRes.mHeldNow << " of " << sRes.mCull.size() << " fragments in the scene, " << sRes.mEntered << " entered and " << sRes.mLeft << " left in total, "
             << "full notes (kind 0 / alpha): first " << sRes.mHandleFirst[0] << " / " << sRes.mHandleFirst[1] << ", group gone and made again " << sRes.mHandleReplaced[0] << " / " << sRes.mHandleReplaced[1] << ", same group " << sRes.mHandleSame[0] << " / " << sRes.mHandleSame[1] << "; " << sRes.mEventNotes << " event notes (" << sRes.mEvBufNotes << " from " << sRes.mEvBufNames << " changed buffer names; writes of watched buffers: " << sResCause[1] << " data, " << sResCause[0] << " storage made again, " << sResCause[2] << " moved, " << sRes.mEvMatNotes << " from matrix changes in " << sRes.mEvMatFrames << " frames), " << (double)sRes.mMembershipNs / 1000.0 / sRes.mMembershipFrames << " us a frame" << LL_ENDL;
     }
 }
@@ -7871,7 +7871,7 @@ static void res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (sRes.mPasses - sRes.mReport >= 2400)
     {
         sRes.mReport = sRes.mPasses;
-        LL_DIAG("VkScene") << "resident shadow entries: " << sRes.mFrags.size() << " fragments, " << n << " table slots (" << sRes.mFree.size() << " free, " << sRes.mRetired.size() << " retired), "
+        RK_DIAG("VkScene") << "resident shadow entries: " << sRes.mFrags.size() << " fragments, " << n << " table slots (" << sRes.mFree.size() << " free, " << sRes.mRetired.size() << " retired), "
             << sRes.mUnresolved << " buffer pairs unresolved, " << sRes.mRecheck << " pair re-resolves, " << sRes.mPasses << " passes drawn, " << sRes.mOverflow << " overflows, res_refresh " << (double)sRes.mRefreshNs / 1000.0 / (double)std::max<U64>(sRes.mPasses, 1) << " us a pass (once a frame)" << LL_ENDL;
     }
 }
@@ -8097,7 +8097,7 @@ bool geo_init()
     }
     sGeo.mFailed = false;
     sGeo.mReady = true;
-    LL_DIAG("VkScene") << "scene geometry table ready (" << kGeoCapacity << " entries, " << sizeof(GeoGpuG) * kGeoCapacity / (1024 * 1024) << " MB of CPU memory and the same in device visible memory: the draws of the static items read the device copy of a row, the rigged ones rows copied for their frame)" << LL_ENDL;
+    RK_DIAG("VkScene") << "scene geometry table ready (" << kGeoCapacity << " entries, " << sizeof(GeoGpuG) * kGeoCapacity / (1024 * 1024) << " MB of CPU memory and the same in device visible memory: the draws of the static items read the device copy of a row, the rigged ones rows copied for their frame)" << LL_ENDL;
     return true;
 }
 
@@ -9260,7 +9260,7 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         U64 pins = 0, resolves = 0, events = 0;
         RKVkWorker::rtPinCounts(pins, resolves, events);
-        LL_DIAG("VkScene") << "scene geometry table, per frame over " << s.mPrepares << " prepares: " << (double)s.mFragsListed / n << " fragments listed (" << s.mFragsUnknown << " unknown handles in total, max "
+        RK_DIAG("VkScene") << "scene geometry table, per frame over " << s.mPrepares << " prepares: " << (double)s.mFragsListed / n << " fragments listed (" << s.mFragsUnknown << " unknown handles in total, max "
             << s.mMaxFragsFrame << "), " << (double)s.mItemsListed / n << " entries (max " << s.mMaxItemsFrame << "), " << (double)s.mCommandsTotal / n << " commands (" << (double)s.mItemsSkippedPair / n
             << " entries without usable buffers), rebuilds " << (double)s.mRebuilds / n << " (first " << (double)s.mRebuildFirst / n << ", buffers changed " << (double)s.mRebuildPairs / n << ", texture slots changed "
             << (double)s.mRebuildTex / n << ", entries written " << (double)s.mItemsRewritten / n << "), pin epoch bumps " << sGeoPinEpoch << ", buffer events " << (double)s.mBufEvents / n << " naming "
@@ -9272,12 +9272,12 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             << s.mStaleSlot << " stale texture slots, " << s.mStaleCmd << " stale command lists | table: " << sGeo.mHigh << " slots used, " << sGeo.mFree.size() << " free, " << sGeo.mRetired.size()
             << " retired, " << sGeo.mFragCount << " fragments, " << s.mRetains << " retains, " << s.mReleases << " releases (" << s.mReleaseUnknown << " unknown), " << s.mOverflow << " overflows, "
             << s.mScratchFail << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
-        LL_DIAG("VkScene") << "scene geometry table, opaque rigged commands a frame " << (double)sGeo.mRCmdsFrame / n << ", of them drawing a simplified list " << (double)sGeo.mRLodCmds / n << " (triangles " << (double)sGeo.mRLodTrisFull / n
+        RK_DIAG("VkScene") << "scene geometry table, opaque rigged commands a frame " << (double)sGeo.mRCmdsFrame / n << ", of them drawing a simplified list " << (double)sGeo.mRLodCmds / n << " (triangles " << (double)sGeo.mRLodTrisFull / n
             << " -> " << (double)sGeo.mRLodTris / n << " a frame)" << LL_ENDL;
         sGeo.mRCmdsFrame = sGeo.mRLodCmds = sGeo.mRLodTris = sGeo.mRLodTrisFull = 0;
         if (timed)
         {
-            LL_DIAG("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
+            RK_DIAG("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
                 << (double)s.mNsMatrices / 1000.0 / n << " + buffer events " << (double)s.mNsEvents / 1000.0 / n << " + listing " << (double)s.mNsList / 1000.0 / n << " (of it rebuilds "
                 << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << " (static commands " << (double)s.mNsStatic / 1000.0 / n << "), reclaim and derived list " << (double)s.mNsDerive / 1000.0 / n << ", rigged bindings and palettes "
                 << (double)s.mNsRigged / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
@@ -10113,7 +10113,7 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 + " (program check " + std::to_string((double)a.mNsProgram / 1000.0 / n) + ", ranges loop " + std::to_string((double)a.mNsRanges / 1000.0 / n) + ", stamp+flight " + std::to_string((double)a.mNsStamp / 1000.0 / n)
                 + ", uniforms " + std::to_string((double)a.mNsUniforms / 1000.0 / n) + ", prepare_draw+vertex input " + std::to_string((double)a.mNsPrepare / 1000.0 / n) + ", bindless flush " + std::to_string((double)a.mNsBindless / 1000.0 / n) + ")";
         }
-        LL_DIAG("VkScene") << "alpha runs (S5a), worker, over " << a.mRecords << " records: " << (double)a.mRanges / n << " ranges and " << (double)a.mCmds / n << " draws a record; pass tables made " << a.mTables
+        RK_DIAG("VkScene") << "alpha runs (S5a), worker, over " << a.mRecords << " records: " << (double)a.mRanges / n << " ranges and " << (double)a.mCmds / n << " draws a record; pass tables made " << a.mTables
             << " times; stale (no prepare this frame) " << a.mStale << ", no program " << a.mNoProgram << ", scratch failures " << a.mScratchFail << ", unknown handles " << a.mUnknown << ", bad ranges " << a.mBadRange
             << ", refused " << a.mRefused << "; safety: " << a.mSafetyChecks << " fragment checks, " << a.mSafetyHits << " found a buffer moved or gone; items sent that draw nothing: " << a.mZeroStatic << " static (buffers not usable), " << a.mZeroRigged << " rigged (no palette or buffers not usable)" << tail << LL_ENDL;
     }
@@ -11503,7 +11503,7 @@ bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* v
     d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (d.mViews % 600 == 0)
     {
-        LL_DIAG("VkCullDerive") << "main view derive, over " << d.mViews << " views: " << d.mMs / (double)d.mViews << " ms each, " << (double)d.mDerived / (double)d.mViews << " groups derived a view, no table " << d.mNoTable << ", drawn from the derive " << d.mOwnUsed << LL_ENDL;
+        RK_DIAG("VkCullDerive") << "main view derive, over " << d.mViews << " views: " << d.mMs / (double)d.mViews << " ms each, " << (double)d.mDerived / (double)d.mViews << " groups derived a view, no table " << d.mNoTable << ", drawn from the derive " << d.mOwnUsed << LL_ENDL;
     }
     if (own_out)
     {
@@ -12037,7 +12037,7 @@ bool part_sort_init()
         return false;
     }
     s.mReady = true;
-    LL_DIAG("VkScene") << "particle sort pipeline ready" << LL_ENDL;
+    RK_DIAG("VkScene") << "particle sort pipeline ready" << LL_ENDL;
     return true;
 }
 
@@ -12136,7 +12136,7 @@ void on_particle_sort(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (s.mRecords - s.mLast >= 600)
     {
         s.mLast = s.mRecords;
-        LL_DIAG("VkScene") << "particle sort over " << s.mRecords << " records: " << (double)s.mJobs / (double)s.mRecords << " stores a record, " << s.mBad << " refused" << LL_ENDL;
+        RK_DIAG("VkScene") << "particle sort over " << s.mRecords << " records: " << (double)s.mJobs / (double)s.mRecords << " stores a record, " << s.mBad << " refused" << LL_ENDL;
     }
 }
 
@@ -12168,7 +12168,7 @@ static void on_shadow_fragments(const RKVkBridge::ShadowPacketsHeader& h, const 
             if (now >= last_log + 300)
             {
                 last_log = now;
-                LL_DIAG("VkScene") << "resident records, worker time: retain " << ns[0] / 1000000 << " ms in " << calls[0] << " calls, matrices " << ns[1] / 1000000 << " ms in " << calls[1] << ", draw "
+                RK_DIAG("VkScene") << "resident records, worker time: retain " << ns[0] / 1000000 << " ms in " << calls[0] << " calls, matrices " << ns[1] / 1000000 << " ms in " << calls[1] << ", draw "
                     << ns[2] / 1000000 << " ms in " << calls[2] << ", note " << ns[3] / 1000000 << " ms in " << calls[3] << " (totals)" << LL_ENDL;
             }
         }
@@ -12904,8 +12904,8 @@ void after_frame()
                     {
                         os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
                     }
-                    LL_DIAG("VkTexCopy") << os.str() << LL_ENDL;
-                    LL_DIAG("VkTexCopy") << "level drops refused by reason: no image " << sDropWhy[1] << ", not 2D " << sDropWhy[2] << ", depth " << sDropWhy[3] << ", levels incomplete " << sDropWhy[4]
+                    RK_DIAG("VkTexCopy") << os.str() << LL_ENDL;
+                    RK_DIAG("VkTexCopy") << "level drops refused by reason: no image " << sDropWhy[1] << ", not 2D " << sDropWhy[2] << ", depth " << sDropWhy[3] << ", levels incomplete " << sDropWhy[4]
                                           << ", fewer levels than the drop " << sDropWhy[5] << ", no new image " << sDropWhy[6] << ", copy failed " << sDropWhy[7] << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
@@ -12916,11 +12916,11 @@ void after_frame()
         {
             frames = 0;
             const Renderer::TexStats ts = Renderer::instance().takeTexStats();
-            LL_DIAG("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots in use at most " << ts.mBindlessPeak << " of "
+            RK_DIAG("VkTex") << "textures: " << resource_summary() << " | " << Context::instance().memoryBudgetText() << "| bindless slots in use at most " << ts.mBindlessPeak << " of "
                 << Renderer::instance().bindlessCapacity() << ", " << ts.mBindlessWrites / 1800.0 << " descriptors written per frame, refused " << ts.mBindlessRefused << " | texture images that could not be allocated " << ts.mAllocFailed << " ("
                 << ts.mAllocFailedBytes / (1024 * 1024) << " MB, last " << ts.mAllocFailedLast[0] << "x" << ts.mAllocFailedLast[1] << ")" << LL_ENDL;
             const Renderer::OccStats os = Renderer::instance().takeOccStats();
-            LL_DIAG("VkTex") << "occlusion queries in this period: " << os.mPassed << " with samples, " << os.mNone << " with none (the box was hidden), " << os.mNeverDrawn
+            RK_DIAG("VkTex") << "occlusion queries in this period: " << os.mPassed << " with samples, " << os.mNone << " with none (the box was hidden), " << os.mNeverDrawn
                 << " whose box draw never reached the GPU (counted as hidden)" << LL_ENDL;
         }
     }
@@ -14108,5 +14108,5 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
 
 } // namespace RKVkWorker
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 

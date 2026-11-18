@@ -7,8 +7,8 @@
  * Design and steps: doc/vulkan/F3-6-gltypes-design.md.
  */
 
-#ifndef LL_LLRENDERFORMAT_H
-#define LL_LLRENDERFORMAT_H
+#ifndef RK_RKRENDERFORMAT_H
+#define RK_RKRENDERFORMAT_H
 
 #include "stdtypes.h"
 

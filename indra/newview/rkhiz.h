@@ -2,8 +2,8 @@
  * @file rkhiz.h
  * @brief S7 H3: the targets of the Hi-Z occlusion pass and the batch they are tested in. See doc/vulkan/S7-design.md.
  */
-#ifndef LL_LLHIZ_H
-#define LL_LLHIZ_H
+#ifndef RK_RKHIZ_H
+#define RK_RKHIZ_H
 
 #include "stdtypes.h"
 #include "llvector4a.h"
@@ -35,4 +35,4 @@ public:
     static bool lastVerdict(const RKHizTarget* target, U32* out5);
 };
 
-#endif // LL_LLHIZ_H
+#endif // RK_RKHIZ_H

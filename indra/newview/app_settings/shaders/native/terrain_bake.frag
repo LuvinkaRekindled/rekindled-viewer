@@ -44,9 +44,9 @@ TerrainMix get_terrain_mix_weights(float alpha1, float alpha2, float alphaFinal)
 void main()
 {
     TerrainMix tm;
-    float alpha1 = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_texcoord0.zw).a;
-    float alpha2 = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_texcoord1.xy).a;
-    float alphaFinal = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_texcoord1.zw).a;
+    float alpha1 = texture(rk_tbl2d[RK_HM(rk_ti_alpha_ramp)], vary_texcoord0.zw).a;
+    float alpha2 = texture(rk_tbl2d[RK_HM(rk_ti_alpha_ramp)], vary_texcoord1.xy).a;
+    float alphaFinal = texture(rk_tbl2d[RK_HM(rk_ti_alpha_ramp)], vary_texcoord1.zw).a;
     tm = get_terrain_mix_weights(alpha1, alpha2, alphaFinal);
 
     // tm.weight.x can be ignored. The paintmap saves a channel by not storing

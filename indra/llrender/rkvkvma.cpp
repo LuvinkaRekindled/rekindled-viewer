@@ -5,9 +5,9 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #define VMA_IMPLEMENTATION
 #include "rkvkcontext.h"
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

@@ -9,10 +9,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKPASSCENSUS_H
-#define LL_LLVKPASSCENSUS_H
+#ifndef RK_RKVKPASSCENSUS_H
+#define RK_RKVKPASSCENSUS_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 
@@ -78,6 +78,6 @@ namespace RKVkPassCensus
     void geoDrawSeen();                     // kinds that read the prepare output: counts the ones from another frame
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKPASSCENSUS_H
+#endif // RK_RKVKPASSCENSUS_H

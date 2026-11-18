@@ -31,26 +31,26 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     const vec2 tc = vary_fragcoord;
-    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tc).r;
+    const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tc).r;
     if (depth >= 1.0)
     {
         frag_color = vec4(0.0);         // a sky pixel: no surface, no blocker
         return;
     }
-    const float sun = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], tc).r;
+    const float sun = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], tc).r;
     const vec3 pos = rk_view_pos(inv_proj, tc, depth);
 
     // an island: two or more of the four neighbours are sky or off this pixel's tangent plane (the plane distance tolerance of the lightmap blur and of the filter)
     float valid = 1.0;
     {
-        const vec3 n = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], tc).xy);
+        const vec3 n = rk_decode_normal(texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], tc).xy);
         const float tol = pos.z * pos.z * 0.00005;
         const vec2 px = 1.0 / screen_res;
         int off = 0;
         for (int i = 0; i < 4; ++i)
         {
             const vec2 s = tc + vec2((i == 0 ? px.x : (i == 1 ? -px.x : 0.0)), (i == 2 ? px.y : (i == 3 ? -px.y : 0.0)));
-            const float sd = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], s).r;
+            const float sd = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], s).r;
             if (sd >= 1.0)
             {
                 ++off;
@@ -67,7 +67,7 @@ void main()
             valid = 0.0;
         }
     }
-    const float blocker_t = texture(rk_tbl2d[LL_HM(rk_ti_emissiveRect)], tc).r;
+    const float blocker_t = texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], tc).r;
     const float r = blocker_t > 0.0 ? min(blocker_t * pen_tan * pen_focal / max(-pos.z, 0.05), pen_max) : 0.0;
     frag_color = vec4(sun * valid, r, blocker_t > 0.0 ? 1.0 : 0.0, valid);
 }

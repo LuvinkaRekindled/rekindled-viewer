@@ -63,7 +63,7 @@ Cross-vendor since 2022-08. Hardware: NVIDIA Turing and newer, AMD RDNA2 and new
 
 ### What it would cost
 - A meshlet build for every mesh the viewer creates. Prims and meshes are made at runtime from LLVolume in the pull-ready layout; avatar meshes are static in bind pose, so they are the easy part, but their culling bounds would have to hold under skinning (bind-pose bounds plus the joints' reach), or be recomputed.
-- A mesh shader variant of every vertex shader: the `LL_VERTEX_PULL` text rewrite in `llshadermgr.cpp` already turns vertex shaders into pull form, so a task+mesh rewrite is another transform of the same kind, but the viewer has hundreds of program permutations.
+- A mesh shader variant of every vertex shader: the `RK_VERTEX_PULL` text rewrite in `llshadermgr.cpp` already turns vertex shaders into pull form, so a task+mesh rewrite is another transform of the same kind, but the viewer has hundreds of program permutations.
 - A second geometry path to keep in step with the classic one, and the ray scene (which skins on the GPU for its own structures) is unaffected.
 
 ### Where the time is, in our own numbers

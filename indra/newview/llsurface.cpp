@@ -858,7 +858,7 @@ bool LLSurface::idleUpdate(F32 max_update_time)
     }
 
     // some patches changed, update region reflection probes
-    { LL_CPU_ZONE("idle: region probe grid"); mRegionp->updateReflectionProbes(did_update); }
+    { RK_CPU_ZONE("idle: region probe grid"); mRegionp->updateReflectionProbes(did_update); }
 
     return did_update;
 }

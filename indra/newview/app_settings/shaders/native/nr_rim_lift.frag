@@ -20,9 +20,9 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 0) out vec4 frag_color;
 
-#define DIFFUSE rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
-#define EMISSIVE rk_tbl2d[LL_HM(rk_ti_emissiveRect)]
-#define DEPTH rk_tbl2d[LL_HM(rk_ti_depthMap)]
+#define DIFFUSE rk_tbl2d[RK_HM(rk_ti_diffuseRect)]
+#define EMISSIVE rk_tbl2d[RK_HM(rk_ti_emissiveRect)]
+#define DEPTH rk_tbl2d[RK_HM(rk_ti_depthMap)]
 
 float lin(float d)
 {

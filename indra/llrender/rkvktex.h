@@ -10,10 +10,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKTEX_H
-#define LL_LLVKTEX_H
+#ifndef RK_RKVKTEX_H
+#define RK_RKVKTEX_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkvkasync.h"
@@ -89,6 +89,6 @@ namespace RKVkWorker
     void tex_get_compressed_image(unsigned id, RKVkFormat::Target tg, int level, void* out);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKTEX_H
+#endif // RK_RKVKTEX_H

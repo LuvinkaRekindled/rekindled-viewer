@@ -1,5 +1,5 @@
 // light_spot.frag: a projector (a spot light with an image and an ambiance), lit onto what is behind its volume. Two programs from one source, matching the viewer's:
-//   LIGHT_VOLUME + LIGHT_SPOT   "Deferred SpotLight Pull Shader" (deferred/spotLightF.glsl with LL_PROJECTOR_PULL): the projectors of a pass from one record, the box light_volume.vert makes, the projector's row
+//   LIGHT_VOLUME + LIGHT_SPOT   "Deferred SpotLight Pull Shader" (deferred/spotLightF.glsl with RK_PROJECTOR_PULL): the projectors of a pass from one record, the box light_volume.vert makes, the projector's row
 //                               (matrix, plane, range, focus, shadow index and fade, the image's bindless slot) read from the table by the instance
 //   LIGHT_MULTI_SPOT            "Deferred MultiSpotLight Shader": the projector that has the camera inside its box, drawn on the full screen triangle (fullscreen.vert), its values in uniforms, its image bound by name
 // The shading is the viewer's, term for term: the projected image's diffuse colour and its ambiance, the shadow of the spot shadow maps, the legacy highlight and the image's reflection in a shiny legacy surface
@@ -81,7 +81,7 @@ Projector load_projector()
 vec4 proj_image(Projector pr, vec2 tc, float lod)
 {
 #ifdef LIGHT_VOLUME
-    return textureLod(rk_tbl2d[nonuniformEXT(LL_HM(pr.slot))], tc, lod);
+    return textureLod(rk_tbl2d[nonuniformEXT(RK_HM(pr.slot))], tc, lod);
 #else
     return textureLod(LV_TAP(rk_ti_projectionMap), tc, lod);
 #endif

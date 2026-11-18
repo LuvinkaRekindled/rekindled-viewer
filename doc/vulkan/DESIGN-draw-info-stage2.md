@@ -34,7 +34,7 @@ So after stage 1 a draw info is only needed from `registerFace` until the end of
 ## 4. Risks and what I do not know yet
 
 - **The batched rebuild** (`RKRebuildBatch`, `fragmentLater`): between the task merge and the flush the group has draws and no fresh fragment; today it works because the group is not drawn then. 2.0 must confirm it for every view (probe faces, the HUD, snapshots) because 2.4 turns a mistake there into a missing group, not a stale one.
-- **Release and wake** (cold mode, `FS_RELEASED`): `clearDrawMap` already frees the draw map and the fragment together; a woken group is rebuilt. Not read yet in detail.
+- **Release and wake** (cold mode, `RK_RELEASED`): `clearDrawMap` already frees the draw map and the fragment together; a woken group is rebuilt. Not read yet in detail.
 - **The texture change check** (2.2) is the only reader that lives outside a view; it decides a rebuild. Getting it wrong shows as a texture that does not change, or a group that rebuilds every frame.
 - **Cost:** none expected (the builders run the same work; one clear of the map after it).
 - **Size:** 2.1 and 2.3 are mechanical (about 15 functions), 2.2 and 2.4 are small, 2.0 is reading. No shader or Vulkan code is touched.

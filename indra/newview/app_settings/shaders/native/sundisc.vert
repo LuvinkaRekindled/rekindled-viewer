@@ -1,4 +1,4 @@
-// sundisc.vert: the sun's quad, pushed to just in front of the stars and behind the clouds. A line for line translation of "Deferred Windlight Sun Program pull" (deferred/sunDiscV.glsl with LL_VERTEX_PULL; its
+// sundisc.vert: the sun's quad, pushed to just in front of the stars and behind the clouds. A line for line translation of "Deferred Windlight Sun Program pull" (deferred/sunDiscV.glsl with RK_VERTEX_PULL; its
 // call of calcAtmospherics only wrote varyings the fragment shader never reads); pairs with sundisc.frag.
 
 #include "sky_pass.inc"

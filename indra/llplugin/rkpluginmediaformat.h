@@ -7,8 +7,8 @@
  * componentTypeFromGL, rkvkformat.cpp, used by llviewermedia.cpp). Changing a value here changes the protocol.
  */
 
-#ifndef LL_LLPLUGINMEDIAFORMAT_H
-#define LL_LLPLUGINMEDIAFORMAT_H
+#ifndef RK_RKPLUGINMEDIAFORMAT_H
+#define RK_RKPLUGINMEDIAFORMAT_H
 
     // pixel data layout ("format") and storage ("internalformat")
 constexpr unsigned WIRE_RGB = 0x1907;

@@ -4,10 +4,10 @@ Adam's goal: move away from NVIDIA proprietary libraries while keeping equivalen
 
 ## What depends on the NVIDIA SDK today (read from the code, 2026-11-10)
 
-- `indra/llrender/CMakeLists.txt` (line ~173): `DLSS_SDK_DIR` (default `<work>/DLSS/DLSS`); when `include/nvsdk_ngx_vk.h` and `lib/Windows_x86_64/x64/nvsdk_ngx_d.lib` exist, it adds the include path, defines `LL_DLSS=1` and **links `nvsdk_ngx_d.lib` statically into the viewer**. Without them `LL_DLSS` is undefined and `rkvkdlss.cpp` / `rkvkdlssnr.cpp` compile to stubs that report "not available".
+- `indra/llrender/CMakeLists.txt` (line ~173): `DLSS_SDK_DIR` (default `<work>/DLSS/DLSS`); when `include/nvsdk_ngx_vk.h` and `lib/Windows_x86_64/x64/nvsdk_ngx_d.lib` exist, it adds the include path, defines `RK_DLSS=1` and **links `nvsdk_ngx_d.lib` statically into the viewer**. Without them `RK_DLSS` is undefined and `rkvkdlss.cpp` / `rkvkdlssnr.cpp` compile to stubs that report "not available".
 - DLSS super resolution, DLAA and ray reconstruction use `nvngx_dlss.dll` and `nvngx_dlssd.dll` (loaded at run time through the NGX library, not shipped by any packaging step yet).
-- **DLSS-NR is inside the same `#if defined(LL_DLSS)`** and includes the NGX headers (`rkvkdlssnr.cpp`). So NR is not independent of the SDK: no SDK at build time means no NR code at all.
-- FSR 3.1 (`rkvkfsr.cpp`, `LL_FSR`) needs only AMD's ffx-api headers; `amd_fidelityfx_vk.dll` is loaded at run time, nothing linked. Vulkan device extensions with NVIDIA names (`VK_NV_ray_tracing_invocation_reorder`, cluster acceleration, diagnostics) are optional driver features in `rkvkcontext.cpp`, not libraries.
+- **DLSS-NR is inside the same `#if defined(RK_DLSS)`** and includes the NGX headers (`rkvkdlssnr.cpp`). So NR is not independent of the SDK: no SDK at build time means no NR code at all.
+- FSR 3.1 (`rkvkfsr.cpp`, `RK_FSR`) needs only AMD's ffx-api headers; `amd_fidelityfx_vk.dll` is loaded at run time, nothing linked. Vulkan device extensions with NVIDIA names (`VK_NV_ray_tracing_invocation_reorder`, cluster acceleration, diagnostics) are optional driver features in `rkvkcontext.cpp`, not libraries.
 
 ## Replacements (equivalent features)
 
@@ -21,16 +21,16 @@ Adam's goal: move away from NVIDIA proprietary libraries while keeping equivalen
 
 ## Build variants (switches, decide later)
 
-- **A. No NVIDIA SDK in the build** (`LL_DLSS` undefined). FSR 3.1 + our own RT shadow accumulation. No NVIDIA code in the executable, no NVIDIA DLLs, no NVIDIA licence duties; no DLSS, no RR, **no NR code**. Needs only the configure step without `DLSS_SDK_DIR` content (or an explicit option, below). Not built or tested yet.
-- **B. SDK linked, no NVIDIA DLLs shipped.** `LL_DLSS` defined, `nvsdk_ngx_d.lib` in the executable; the installer ships none of `nvngx_dlss.dll`, `nvngx_dlssd.dll`, `nvngx_dlssnr.dll`. Users who drop in their own DLLs get DLSS and NR (NR stays grayed out until its DLL is beside the viewer, already coded). **This does not remove the licence duties:** the SDK's static library is object code inside the executable, so section 1(c)/2 of the licence still applies (credit, the marks in the About box, end-user terms, the notification, the open-source clause 4(e)). It only avoids redistributing the DLLs. Reading of the licence, not legal advice.
+- **A. No NVIDIA SDK in the build** (`RK_DLSS` undefined). FSR 3.1 + our own RT shadow accumulation. No NVIDIA code in the executable, no NVIDIA DLLs, no NVIDIA licence duties; no DLSS, no RR, **no NR code**. Needs only the configure step without `DLSS_SDK_DIR` content (or an explicit option, below). Not built or tested yet.
+- **B. SDK linked, no NVIDIA DLLs shipped.** `RK_DLSS` defined, `nvsdk_ngx_d.lib` in the executable; the installer ships none of `nvngx_dlss.dll`, `nvngx_dlssd.dll`, `nvngx_dlssnr.dll`. Users who drop in their own DLLs get DLSS and NR (NR stays grayed out until its DLL is beside the viewer, already coded). **This does not remove the licence duties:** the SDK's static library is object code inside the executable, so section 1(c)/2 of the licence still applies (credit, the marks in the About box, end-user terms, the notification, the open-source clause 4(e)). It only avoids redistributing the DLLs. Reading of the licence, not legal advice.
 - **C. SDK linked and the DLLs shipped** (`nvngx_dlss.dll`, `nvngx_dlssd.dll`, never the NR one). Full DLSS out of the box; all the NVIDIA steps in `NVIDIA-EMAIL-DRAFT.md` apply.
 
 ## The switches (small; not built yet)
 
-1. CMake: an explicit `USE_NVIDIA_NGX` option (ON/OFF) instead of "the directory happens to exist", so a build says what it is; OFF skips the SDK lookup and never defines `LL_DLSS`. Keep `DLSS_SDK_DIR` for ON and document that source builders download the SDK from NVIDIA's public repository (the repository must never contain it).
+1. CMake: an explicit `USE_NVIDIA_NGX` option (ON/OFF) instead of "the directory happens to exist", so a build says what it is; OFF skips the SDK lookup and never defines `RK_DLSS`. Keep `DLSS_SDK_DIR` for ON and document that source builders download the SDK from NVIDIA's public repository (the repository must never contain it).
 2. Packaging: `viewer_manifest.py` ships `nvngx_dlss.dll` and `nvngx_dlssd.dll` (the SDK's `rel` folder, unmodified) only for variant C, and never `nvngx_dlssnr.dll`.
 3. About / Licenses: the NVIDIA credit and user terms (`rekindled-licenses.txt`) are present for B and C, left out for A.
-4. UI: with `LL_DLSS` undefined the DLSS entries and the ray reconstruction box must be hidden or grayed and the neural rendering row absent (check: the stubs report "not available"; the Vulkan panel's labels are static XML today).
+4. UI: with `RK_DLSS` undefined the DLSS entries and the ray reconstruction box must be hidden or grayed and the neural rendering row absent (check: the stubs report "not available"; the Vulkan panel's labels are static XML today).
 5. DLAA through FSR: make the "100%" mode work with the FSR backend (render size = output size) so FSR users have the equivalent.
 
 ## Ray tracing must not need an NVIDIA card (Adam, 2026-11-10: remove the RTX requirement)

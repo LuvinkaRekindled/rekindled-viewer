@@ -14,8 +14,8 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    const vec4 base = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.x))], vary_tc_base);
-    const vec3 emissive = vary_emissive * srgb_to_linear(texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive).rgb);
+    const vec4 base = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.x))], vary_tc_base);
+    const vec3 emissive = vary_emissive * srgb_to_linear(texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.w))], vary_tc_emissive).rgb);
     const vec3 color = vertex_color.rgb * srgb_to_linear(base.rgb) + emissive;
     frag_color = max(vec4(linear_to_srgb(color), base.a * vertex_color.a), vec4(0.0));
 }

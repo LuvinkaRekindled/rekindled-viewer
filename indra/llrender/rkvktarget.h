@@ -8,10 +8,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKTARGET_H
-#define LL_LLVKTARGET_H
+#ifndef RK_RKVKTARGET_H
+#define RK_RKVKTARGET_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkvkformat.h"
@@ -42,6 +42,6 @@ namespace RKVkWorker
     void read_pixels(unsigned fbo, int x, int y, int width, int height, RKVkFormat::Transfer tr, void* dst);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKTARGET_H
+#endif // RK_RKVKTARGET_H

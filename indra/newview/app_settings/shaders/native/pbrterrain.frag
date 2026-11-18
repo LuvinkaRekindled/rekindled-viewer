@@ -151,22 +151,22 @@ uint slot_emissive(int m) { return m == 0 ? rk_ti_detail_0_emissive : (m == 1 ? 
 PBRMix sample_pbr(int m, vec2 uv, vec2 duvdx, vec2 duvdy)
 {
     PBRMix mix;
-    mix.col = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_base_color(m)))], uv, duvdx, duvdy);
+    mix.col = textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(slot_base_color(m)))], uv, duvdx, duvdy);
     mix.col.rgb = srgb_to_linear(mix.col.rgb);
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_OCCLUSION)
-    mix.orm = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).xyz;
+    mix.orm = textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(slot_orm(m)))], uv, duvdx, duvdy).xyz;
 #elif (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
-    mix.rm = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).yz;
+    mix.rm = textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(slot_orm(m)))], uv, duvdx, duvdy).yz;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_NORMAL)
-    mix.vNt = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_normal(m)))], uv, duvdx, duvdy).xyz * 2.0 - 1.0;
+    mix.vNt = textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(slot_normal(m)))], uv, duvdx, duvdy).xyz * 2.0 - 1.0;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_EMISSIVE)
     // (the caller multiplies it by the material's emissive colour, which is black for almost every terrain material: the map is not read then; explicit derivatives, so a branch is fine)
     mix.emissive = vec3(0.0);
     if (emissiveColors[m] != vec3(0.0))
     {
-        mix.emissive = srgb_to_linear(textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
+        mix.emissive = srgb_to_linear(textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
     }
 #endif
     return mix;
@@ -353,12 +353,12 @@ void main()
 
     TerrainMix tm;
 #if TERRAIN_PAINT_TYPE == TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE
-    const float alpha1 = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc).a;
-    const float alpha2 = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc - vec2(2.0, 0.0)).a;
-    const float alphaFinal = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc - vec2(1.0, 0.0)).a;
+    const float alpha1 = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_alpha_ramp))], vary_tc).a;
+    const float alpha2 = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_alpha_ramp))], vary_tc - vec2(2.0, 0.0)).a;
+    const float alphaFinal = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_alpha_ramp))], vary_tc - vec2(1.0, 0.0)).a;
     tm = get_terrain_mix_weights(alpha1, alpha2, alphaFinal);
 #else
-    tm = get_terrain_usage_from_weight3(texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_paint_map))], vary_object.xy / region_scale).xyz);
+    tm = get_terrain_usage_from_weight3(texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_paint_map))], vary_object.xy / region_scale).xyz);
 #endif
 
     PBRMix pbr_mix = init_pbr_mix();

@@ -5,8 +5,8 @@
  *        so the renderer sources keep one spelling. Linux build: doc/vulkan/PLAN-linux-build.md
  */
 
-#ifndef LL_LLVKPLATFORM_H
-#define LL_LLVKPLATFORM_H
+#ifndef RK_RKVKPLATFORM_H
+#define RK_RKVKPLATFORM_H
 
 #if LL_WINDOWS
 
@@ -227,4 +227,4 @@ inline unsigned char _BitScanForward(unsigned long* index, unsigned long mask)
 
 #endif // LL_WINDOWS
 
-#endif // LL_LLVKPLATFORM_H
+#endif // RK_RKVKPLATFORM_H

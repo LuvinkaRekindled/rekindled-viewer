@@ -19,8 +19,8 @@ layout(location = 4) out vec2 frag_velocity;
 void main()
 {
     frag_velocity = vec2(1.0, 0.0);
-    vec4 sunDiscA = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
-    vec4 sunDiscB = texture(rk_tbl2d[LL_HM(rk_ti_altDiffuseMap)], vary_texcoord0.xy);
+    vec4 sunDiscA = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
+    vec4 sunDiscB = texture(rk_tbl2d[RK_HM(rk_ti_altDiffuseMap)], vary_texcoord0.xy);
     vec4 c     = mix(sunDiscA, sunDiscB, blend_factor);
 
     // SL-9806 stars poke through

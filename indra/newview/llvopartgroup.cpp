@@ -43,7 +43,7 @@
 #include "llviewerregion.h"
 #include "pipeline.h"
 #include "llspatialpartition.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern U64MicrosecondsImplicit gFrameTime;
 
@@ -293,18 +293,18 @@ static void rk_particle_stats_log()
     const double rr = std::max<double>(1.0, (double)sPartStats.mRows);
     if (sPartStats.mGpuGroups)
     {
-        LL_DIAG("Q1Census") << "particle groups drawn from rows the sort pass wrote (nothing evaluated on the CPU): " << sPartStats.mFastGroups << " of " << sPartStats.mRows << " rebuilds" << LL_ENDL;
+        RK_DIAG("Q1Census") << "particle groups drawn from rows the sort pass wrote (nothing evaluated on the CPU): " << sPartStats.mFastGroups << " of " << sPartStats.mRows << " rebuilds" << LL_ENDL;
     }
     if (sPartStats.mCGroups)
     {
         const double g = (double)sPartStats.mCGroups;
-        LL_DIAG("Q1Census") << "particle groups as the GPU sort would see them (" << sPartStats.mCGroups << " rebuilds): draw states (blend pair + fullbright) a group " << sPartStats.mCClasses / g << ", groups with more than one " << 100.0 * sPartStats.mCMulti / g
+        RK_DIAG("Q1Census") << "particle groups as the GPU sort would see them (" << sPartStats.mCGroups << " rebuilds): draw states (blend pair + fullbright) a group " << sPartStats.mCClasses / g << ", groups with more than one " << 100.0 * sPartStats.mCMulti / g
             << "%, textures a group " << sPartStats.mCTextures / g << ", draw infos (runs of one texture and state in the sorted order) a group " << sPartStats.mCRuns / g << " for " << sPartStats.mCParts / g << " particles, runs of one state (textures ignored) a group "
             << sPartStats.mCClassRuns / g << LL_ENDL;
     }
-    LL_DIAG("Q1Census") << "rows path kcycles a rebuild: gather " << sPartStats.mRGather / rr / k << ", clearDrawMap " << sPartStats.mRClear / rr / k << ", sort " << sPartStats.mRSort / rr / k << ", buffer " << sPartStats.mRBuffer / rr / k
+    RK_DIAG("Q1Census") << "rows path kcycles a rebuild: gather " << sPartStats.mRGather / rr / k << ", clearDrawMap " << sPartStats.mRClear / rr / k << ", sort " << sPartStats.mRSort / rr / k << ", buffer " << sPartStats.mRBuffer / rr / k
         << ", rows + draw infos " << sPartStats.mRWrite / rr / k << " (ribbon particles a rebuild " << sPartStats.mRRibbons / rr << ")" << LL_ENDL;
-    LL_DIAG("Q1Census") << "particle group rebuild, kcycles a rebuild over 3000 (" << sPartStats.mRows << " as rows for the GPU, " << (U64)legacy << " as quads): rows " << (sPartStats.mRows ? sPartStats.mRowsCycles / (double)sPartStats.mRows / k : 0.0)
+    RK_DIAG("Q1Census") << "particle group rebuild, kcycles a rebuild over 3000 (" << sPartStats.mRows << " as rows for the GPU, " << (U64)legacy << " as quads): rows " << (sPartStats.mRows ? sPartStats.mRowsCycles / (double)sPartStats.mRows / k : 0.0)
         << " (" << (sPartStats.mRows ? sPartStats.mRowsParticles / (double)sPartStats.mRows : 0.0) << " particles) | quads: total " << sPartStats.mTotal / legacy / k << " = face count " << sPartStats.mCount / legacy / k << " + sort " << sPartStats.mSort / legacy / k
         << " + corner math " << sPartStats.mCorners / legacy / k << " + the rest " << (sPartStats.mTotal - sPartStats.mCount - sPartStats.mSort - sPartStats.mCorners) / legacy / k
         << " (" << sPartStats.mParticles / legacy << " particles); of the quads: " << sPartStats.mBailRibbon << " groups left with a ribbon particle (" << (sPartStats.mBailRibbon ? sPartStats.mBailRibbonParts / (double)sPartStats.mBailRibbon : 0.0) << " particles each), "

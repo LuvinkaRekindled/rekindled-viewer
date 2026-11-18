@@ -333,7 +333,7 @@ void LLFacePool::addFaceReference(LLFace *facep)
     }
 }
 
-// S6.6: entries made from faces or draw infos for the pull programs (the generic LL_VERTEX_PULL rewrite): the arrays the buffer has are named, the model matrices are numbered in a table (0: the view alone)
+// S6.6: entries made from faces or draw infos for the pull programs (the generic RK_VERTEX_PULL rewrite): the arrays the buffer has are named, the model matrices are numbered in a table (0: the view alone)
 namespace
 {
 struct RKPullBatch
@@ -1208,33 +1208,33 @@ U32 rk_pass_arrays(U32 type)
         return 0;
     case LLRenderPass::PASS_GLOW:
     case LLRenderPass::PASS_GLOW_RIGGED:
-        return LL_PASS_ARRAY_EMISSIVE;
+        return RK_PASS_ARRAY_EMISSIVE;
     case LLRenderPass::PASS_BUMP:
     case LLRenderPass::PASS_BUMP_RIGGED:
-        return LL_PASS_ARRAY_NORMALS | LL_PASS_ARRAY_BUMP;
+        return RK_PASS_ARRAY_NORMALS | RK_PASS_ARRAY_BUMP;
     case LLRenderPass::PASS_POST_BUMP:
     case LLRenderPass::PASS_POST_BUMP_RIGGED:
-        return LL_PASS_ARRAY_EMBOSS;       // (J1 K4: positions, both texture coordinate sets and the bump image: no normals)
+        return RK_PASS_ARRAY_EMBOSS;       // (J1 K4: positions, both texture coordinate sets and the bump image: no normals)
     default:
-        return LL_PASS_ARRAY_NORMALS;
+        return RK_PASS_ARRAY_NORMALS;
     }
 }
 
-static bool geometry_packet_ok(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
+static bool geometry_packet_ok(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = RK_PASS_ARRAY_NORMALS)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
         || !vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0
-        || ((arrays & LL_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) || ((arrays & LL_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+        || ((arrays & RK_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) || ((arrays & RK_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
         || !vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0) || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
     {
         return false;
     }
-    if ((arrays & LL_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1))
+    if ((arrays & RK_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1))
     {
         return false;       // (J1 K4: the bump pass needs the tangents and draws one texture)
     }
-    if ((arrays & LL_PASS_ARRAY_EMBOSS) && (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1) || p.mTextureList.size() > 1))
+    if ((arrays & RK_PASS_ARRAY_EMBOSS) && (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1) || p.mTextureList.size() > 1))
     {
         return false;       // (J1 K4: the emboss pass needs the second texture coordinate set and draws one image)
     }
@@ -1276,10 +1276,10 @@ int rk_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const R
     if (!vb || !vb->getVertexBufferId() || !vb->getIndexBufferId()) return 4;
     if (vb->getIndicesType() != ComponentType::U16) return 5;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_VERTEX) || vb->getOffset(LLVertexBuffer::TYPE_VERTEX) != 0) return 6;
-    if ((arrays & LL_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
-    if ((arrays & LL_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) return 14;
-    if ((arrays & LL_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1)) return 15;
-    if ((arrays & LL_PASS_ARRAY_EMBOSS) && (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1) || p.mTextureList.size() > 1)) return 15;
+    if ((arrays & RK_PASS_ARRAY_NORMALS) && !vb->hasDataType(LLVertexBuffer::TYPE_NORMAL)) return 7;
+    if ((arrays & RK_PASS_ARRAY_EMISSIVE) && !vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE)) return 14;
+    if ((arrays & RK_PASS_ARRAY_BUMP) && (!vb->hasDataType(LLVertexBuffer::TYPE_TANGENT) || p.mTextureList.size() > 1)) return 15;
+    if ((arrays & RK_PASS_ARRAY_EMBOSS) && (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD1) || p.mTextureList.size() > 1)) return 15;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_TEXCOORD0)) return 8;
     if (!vb->hasDataType(LLVertexBuffer::TYPE_COLOR)) return 9;
     if (rigged && (p.mSkinInfo.isNull() || !vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))) return 10;
@@ -1341,7 +1341,7 @@ bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPass
     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
-    if ((texture_matrix || (arrays & LL_PASS_ARRAY_EMISSIVE)) && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+    if ((texture_matrix || (arrays & RK_PASS_ARRAY_EMISSIVE)) && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
     {
         e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);       // S5e: (the alpha items) the glow draw
     }
@@ -1400,13 +1400,13 @@ bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPass
         }
     }
     e.mCutoff = params.mAlphaMaskCutoff;        // S6 X3: (the alpha masked passes without materials read it from the row too)
-    if (arrays & LL_PASS_ARRAY_BUMP)
+    if (arrays & RK_PASS_ARRAY_BUMP)
     {
         // J1 K4: the deferred bump pass: the tangent array and the bump image of the draw (made when the pass draws: LLDrawPoolBump::refreshBumpImage; here only the entry of it, a null one is the stand-in)
         e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
         textures[4] = LLDrawPoolBump::bumpImageFor(params.mBump, params.mTexture.get(), false);
     }
-    if (arrays & LL_PASS_ARRAY_EMBOSS)
+    if (arrays & RK_PASS_ARRAY_EMBOSS)
     {
         // J1 K4: the post deferred emboss pass: the draw's bump image is the one texture of the row (the pass samples it twice), the second coordinate set's array is named; a draw with no image is not drawn (the old
         // pass skips it): no row, the old pass decides
@@ -1440,7 +1440,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
         }
         return;
     }
-    LL_CPU_ZONE("packets: scene table draw record");
+    RK_CPU_ZONE("packets: scene table draw record");
     {
         // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
         extern bool rk_motion_fold_uniforms(RKShaderProgram* program);

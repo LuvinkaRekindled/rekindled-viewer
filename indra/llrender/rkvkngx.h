@@ -1,14 +1,14 @@
 /**
  * @file rkvkngx.h
  * @brief The NVIDIA NGX bootstrap for DLSS-NR (rkvkdlssnr.h), the one NVIDIA feature that is left, for LOCAL builds only (doc/vulkan/PLAN-remove-nvidia.md).
- *        Compiled in only when the CMake option REKINDLED_LOCAL_NR is ON and the DLSS SDK was found at configure time (LL_NGX_NR); a release build has none of it, and every call here
+ *        Compiled in only when the CMake option REKINDLED_LOCAL_NR is ON and the DLSS SDK was found at configure time (RK_NGX_NR); a release build has none of it, and every call here
  *        is a stub that says "not available". There is no DLSS super resolution or ray reconstruction in the viewer any more: the upscaler is AMD FSR (rkvkfsr.h).
  */
 
-#ifndef LL_LLVKNGX_H
-#define LL_LLVKNGX_H
+#ifndef RK_RKVKNGX_H
+#define RK_RKVKNGX_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkcontext.h"
 
@@ -30,5 +30,5 @@ namespace RKVkNgx
     VkImageLayout outputLayout();
 }
 
-#endif // LL_VULKAN
-#endif // LL_LLVKNGX_H
+#endif // RK_VULKAN
+#endif // RK_RKVKNGX_H

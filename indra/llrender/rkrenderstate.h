@@ -18,8 +18,8 @@
  * (The old LLGLState / LLGLEnable / LLGLDisable / LLGLDepthTest classes and their GL-number setters are gone: F3.2e.)
  */
 
-#ifndef LL_LLRENDERSTATE_H
-#define LL_LLRENDERSTATE_H
+#ifndef RK_RKRENDERSTATE_H
+#define RK_RKRENDERSTATE_H
 
 #include "stdtypes.h"
 #include <string>
@@ -190,4 +190,4 @@ private:
 
 }
 
-#endif // LL_LLRENDERSTATE_H
+#endif // RK_RKRENDERSTATE_H
