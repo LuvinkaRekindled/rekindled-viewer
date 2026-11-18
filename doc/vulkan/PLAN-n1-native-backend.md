@@ -17,7 +17,7 @@ Raw GL calls left in the tree: about 440 in 8 files plus the Win32 context code.
 | llshadermgr.cpp | 32 | text assembly stays, GL link/compile calls go |
 | llpostprocess.cpp, cubemaps, misc | about 30 | follow the above |
 | llwindowwin32.cpp | 25 | window without WGL |
-Deleted at the end: `rkvkgl*`, `rkvkasync*`, the GL parts of `rkvkmirror*`, `gen_llvkgl.py`, GL headers and the loader (about 10.2k lines).
+Deleted at the end: `rkvkgl*`, `rkvkasync*`, the GL parts of `rkvkmirror*`, `gen_rkvkgl.py`, GL headers and the loader (about 10.2k lines).
 Kept: `rkvkcontext`, `rkvkrenderer` (revised), `rkvkshader`, `rkvkdlss`, VMA.
 
 ## The one architectural rule: the main thread writes small typed records

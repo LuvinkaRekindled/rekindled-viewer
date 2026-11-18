@@ -51,7 +51,7 @@ Findings that cost nothing to act on:
 - Switches that share one variable, so deleting one needs the other: STATS + DEBUG_SHADERS + VALIDATION (sStatsEnabled, rkvkworker.cpp:653); UPLOADLOG + HITCHWATCH (rkvkrenderer.cpp:5024, 5301); TEXFB + FB_OFF (llshadermgr.cpp:41, rkvkrenderer.cpp:3145); GPU_PARTICLES + GPU_PARTICLE_SIM (llviewerpartsim.cpp:1230); RT + RT_SHADOWS (rkvkcontext.cpp:359).
 - Default-on diagnostics are in E (DRAWABLE_RING, DRAWABLE_TRACE, DRAW_RING, GEOMCHECK, ADDR_LOG, SYNC_LOG, PIN_SWEEP_LOG, RES_EPOCH_LOG): they run in every default run; the switch only turns them off.
 
-Row format: name (RK_VK_ prefix on all except the FS_ and stock LL_ names) | file:line (first reader) | default | what it guards | guarded lines | notes. Sorted by guarded size, largest first, inside each category. B and C come first.
+Row format: name (RK_VK_ prefix on all except the other RK_ names (formerly FS_) and the stock LL_ names) | file:line (first reader) | default | what it guards | guarded lines | notes. Sorted by guarded size, largest first, inside each category. B and C come first.
 
 ## B  DEFAULT-OFF ALTERNATE PATH (dead: the default never runs it)
 

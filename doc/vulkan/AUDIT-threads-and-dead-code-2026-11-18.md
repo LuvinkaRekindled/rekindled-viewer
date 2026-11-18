@@ -128,7 +128,7 @@ Compiled, never called (V):
 - The render worker's dead kinds of section 3.
 - Stale header: `rkcullshadow.h` says "Measurement only... Off unless RK_VK_CULL_SHADOW=1"; `RKCullShadow::build` runs at the end of every world cull (pipeline.cpp:3852).
 
-Switches: 292 `getenv("RK_VK_` / `"FS_` sites (pipeline.cpp 67, rkvkworker.cpp 30, llviewershadermgr.cpp 24, rkvkrenderer.cpp 23, llvoavatar.cpp 18), plus 43 `GetEnvironmentVariableA` and about 22 `env_u64`. No uncached per frame read was found; no compare mode is on by default; not all 292 were opened.
+Switches: 292 `getenv("RK_VK_` / `"RK_` sites (the former FS_ names) (pipeline.cpp 67, rkvkworker.cpp 30, llviewershadermgr.cpp 24, rkvkrenderer.cpp 23, llvoavatar.cpp 18), plus 43 `GetEnvironmentVariableA` and about 22 `env_u64`. No uncached per frame read was found; no compare mode is on by default; not all 292 were opened.
 
 The octrees: all 13 partition types are still created. The seven covered types are not walked by the main view but are still kept up to date on the main thread on every object move (`markPartitionMove`, `processPartitionQ`, llviewerdisplay.cpp:946) for their other readers: the cascades' cull, every other view (probe faces, impostors, mirrors, snapshots, HUD), picking, rectangle select, and the group to slot table.
 

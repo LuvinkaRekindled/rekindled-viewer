@@ -5,7 +5,7 @@ F2 turns the worker (`rkvkgl.cpp`, `rkvkasync.cpp`) from "the GL mirror" into th
 ## F2.1 done: no hook layer (2026-10-10)
 - Resource lifetime is two typed records: `CMD_RESOURCE_CREATE/DESTROY` (`RKVkAsync::resourceCreate/resourceDestroy(kind, n, ids)`, kinds texture / target / buffer / query; the names are handed out on the producing thread, the objects made / released in stream order; inline mode before the queue starts runs them under the lock). `RKVkTex/RKVkTarget/RKVkBuf/RKVkQuery::create/destroy` call them.
 - The 9 GL texture-edit hooks and their encoders are gone; the worker's handlers keep their bodies as plain functions (`edit_image2D/3D`, `edit_subimage2D/3D`, `edit_compressed2D`, `edit_param_i/f/iv`, `edit_mipmap`; `create_*/destroy_*` for the lifetime), reached only from the typed `tex_*` entry points and `resource_create/destroy`.
-- Deleted: `gen_llvkgl.py`, `rkvkgl_hooks.inc`, `rkvkgl_async_dispatch.inc`, the generated `rkvkgl.h` (now a short hand-written header), `dispatch_gl`, `run_tex`, the `OP_gl*` numbering (command numbers are `CMD_*` only), the per-hook statistics, the `RK_VK_NO_INTERCEPT` markers.
+- Deleted: `gen_rkvkgl.py`, `rkvkgl_hooks.inc`, `rkvkgl_async_dispatch.inc`, the generated `rkvkgl.h` (now a short hand-written header), `dispatch_gl`, `run_tex`, the `OP_gl*` numbering (command numbers are `CMD_*` only), the per-hook statistics, the `RK_VK_NO_INTERCEPT` markers.
 - Plaza: same picture, 15.7k records/frame (scene dependent), main thread queue cost 0.81 ms/frame.
 
 ## F2.2a done: typed texture descriptions (2026-10-10)
