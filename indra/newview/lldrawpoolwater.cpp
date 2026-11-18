@@ -97,9 +97,33 @@ void LLDrawPoolWater::prerender()
     mShaderLevel = LLCubeMap::sUseCubeMaps ? LLViewerShaderMgr::instance()->getShaderLevel(LLViewerShaderMgr::SHADER_WATER) : 0;
 }
 
+// <FS> false when no part of the view frustum reaches the highest water surface of the regions around: the water cannot be seen in this view (the camera is above the water and the frustum is wholly above it:
+// looking up, or high), so the water's passes, the screen and depth copy for it, the water haze and the exclusion mask have nothing to draw (AUDIT-shaders-2026-11-18.md section 4 items 4 and 5).
+// The frustum is convex, so a horizontal plane meets it exactly when the lowest corner is at or below the plane. Regions can have different water heights: the highest of the active regions counts.
+bool ll_water_plane_in_view()
+{
+    const LLCamera* camera = LLViewerCamera::getInstance();
+    F32 top = LLEnvironment::instance().getWaterHeight();
+    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    {
+        if (region)
+        {
+            top = llmax(top, region->getWaterHeight());
+        }
+    }
+    for (U32 i = 0; i < LLCamera::AGENT_FRUSTRUM_NUM; ++i)
+    {
+        if (camera->mAgentFrustum[i].mV[VZ] <= top)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 S32 LLDrawPoolWater::getNumPostDeferredPasses()
 {
-    if (LLViewerCamera::getInstance()->getOrigin().mV[2] < 1024.f)
+    if (LLViewerCamera::getInstance()->getOrigin().mV[2] < 1024.f && ll_water_plane_in_view())
     {
         return 1;
     }
