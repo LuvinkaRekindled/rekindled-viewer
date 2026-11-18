@@ -26,6 +26,9 @@
 
 #include <windows.h>
 
+#include "lldir.h"
+#include "llfile.h"
+
 namespace LLVk
 {
 
@@ -124,6 +127,346 @@ U32 std140_bytes(const std::string& type, U32 array_size)
     return elem;
 }
 
+// ---- the compile cache: a native program's SPIR-V and its reflection, kept on disk between runs ------------------------------------------------
+// Compiling the 196 programs of a run with glslang took 720 to 750 ms on the render thread with the main thread blocked, at every start and at every shader setting change (AUDIT-shaders-2026-11-18.md
+// section 1 items 2 and 3). A program's result depends on its stage files, their includes and the defines; the cache entry records the content hash of every file the build read and is used only when
+// every one of them is the same as now. One file a program under <cache>/native_spirv/, written after a successful compile. LL_VK_NATIVE_CACHE=0 turns it off.
+
+constexpr U32 kNativeCacheVersion = 1;
+// (the build of this file: a change of the reflection code in it drops every entry)
+const char* const kNativeCacheTag = __DATE__ " " __TIME__;
+
+struct FileMemo { U64 mStamp = 0, mSize = 0, mHash = 0; };
+std::mutex gFileMemoLock;
+std::unordered_map<std::string, FileMemo> gFileMemo;
+
+U64 fnv1a(const void* data, size_t n, U64 h = 1469598103934665603ull)
+{
+    const U8* p = (const U8*)data;
+    for (size_t i = 0; i < n; ++i)
+    {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// the content hash of a file, remembered for the time stamp and size it was made at (the includes of the programs are read by hundreds of them)
+bool file_content_hash(const std::string& path, U64& hash)
+{
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &d))
+    {
+        return false;
+    }
+    const U64 stamp = ((U64)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
+    const U64 size = ((U64)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+    {
+        std::lock_guard<std::mutex> lock(gFileMemoLock);
+        auto it = gFileMemo.find(path);
+        if (it != gFileMemo.end() && it->second.mStamp == stamp && it->second.mSize == size)
+        {
+            hash = it->second.mHash;
+            return true;
+        }
+    }
+    std::string text;
+    if (!read_file(path, text))
+    {
+        return false;
+    }
+    hash = fnv1a(text.data(), text.size());
+    std::lock_guard<std::mutex> lock(gFileMemoLock);
+    gFileMemo[path] = { stamp, size, hash };
+    return true;
+}
+
+struct CacheWriter
+{
+    std::string mBytes;
+    void u32(U32 v) { mBytes.append((const char*)&v, 4); }
+    void u64(U64 v) { mBytes.append((const char*)&v, 8); }
+    void str(const std::string& s) { u32((U32)s.size()); mBytes.append(s); }
+    void words(const std::vector<U32>& w) { u32((U32)w.size()); mBytes.append((const char*)w.data(), w.size() * 4); }
+};
+
+struct CacheReader
+{
+    const char* mP;
+    const char* mEnd;
+    bool mOk = true;
+    CacheReader(const std::string& s) : mP(s.data()), mEnd(s.data() + s.size()) {}
+    bool take(void* dst, size_t n)
+    {
+        if (!mOk || (size_t)(mEnd - mP) < n)
+        {
+            mOk = false;
+            return false;
+        }
+        memcpy(dst, mP, n);
+        mP += n;
+        return true;
+    }
+    U32 u32() { U32 v = 0; take(&v, 4); return v; }
+    U64 u64() { U64 v = 0; take(&v, 8); return v; }
+    std::string str()
+    {
+        const U32 n = u32();
+        if (!mOk || (size_t)(mEnd - mP) < n)
+        {
+            mOk = false;
+            return std::string();
+        }
+        std::string s(mP, n);
+        mP += n;
+        return s;
+    }
+    std::vector<U32> words()
+    {
+        const U32 n = u32();
+        if (!mOk || (size_t)(mEnd - mP) < (size_t)n * 4)
+        {
+            mOk = false;
+            return {};
+        }
+        std::vector<U32> w(n);
+        memcpy(w.data(), mP, (size_t)n * 4);
+        mP += (size_t)n * 4;
+        return w;
+    }
+    std::vector<std::string> strs()
+    {
+        std::vector<std::string> v;
+        const U32 n = u32();
+        for (U32 i = 0; i < n && mOk; ++i)
+        {
+            v.push_back(str());
+        }
+        return v;
+    }
+};
+
+bool native_cache_on()
+{
+    static const bool on = !(getenv("LL_VK_NATIVE_CACHE") && getenv("LL_VK_NATIVE_CACHE")[0] == '0');
+    return on;
+}
+
+// what the entry of a program is named after: its name, its stage files and the defines it is built with (the files' contents are checked when the entry is read)
+std::string native_cache_path(const std::string& name, const std::string stage_files[3], const std::vector<std::pair<std::string, std::string>>& defines, U64& key)
+{
+    std::string text = name;
+    for (int s = 0; s < 3; ++s)
+    {
+        text += '\n';
+        text += stage_files[s];
+    }
+    for (const auto& d : defines)
+    {
+        text += '\n';
+        text += d.first + "=" + d.second;
+    }
+    key = fnv1a(text.data(), text.size());
+    static const std::string dir = []() {
+        const std::string d = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "native_spirv");
+        LLFile::mkdir(d);
+        return d;
+    }();
+    char hex[32];
+    snprintf(hex, sizeof(hex), "%016llx.bin", (unsigned long long)key);
+    return dir + gDirUtilp->getDirDelimiter() + hex;
+}
+
+std::atomic<U32> gNativeCacheHits{ 0 }, gNativeCacheMisses{ 0 };
+
+bool native_cache_load(const std::string& path, U64 key, const std::string& root, ProgramInfo& out, std::vector<std::string>* files)
+{
+    std::string bytes;
+    if (!read_file(path, bytes))
+    {
+        return false;
+    }
+    CacheReader r(bytes);
+    if (r.u32() != 0x534e4c4cu || r.u32() != kNativeCacheVersion || r.str() != kNativeCacheTag || r.u64() != key)
+    {
+        return false;
+    }
+    std::vector<std::string> read_files;
+    const U32 nfiles = r.u32();
+    for (U32 i = 0; i < nfiles && r.mOk; ++i)
+    {
+        const std::string rel = r.str();
+        const U64 want = r.u64();
+        U64 have = 0;
+        if (!r.mOk || !file_content_hash(root + "/" + rel, have) || have != want)
+        {
+            return false;
+        }
+        read_files.push_back(root + "/" + rel);
+    }
+    ProgramInfo info;
+    const U32 nu = r.u32();
+    for (U32 i = 0; i < nu && r.mOk; ++i)
+    {
+        LooseUniform u;
+        u.mName = r.str();
+        u.mType = r.str();
+        u.mArraySize = r.u32();
+        u.mOffset = r.u32();
+        u.mClass = (U8)r.u32();
+        u.mSize = r.u32();
+        u.mInit = r.str();
+        info.mUniforms.push_back(u);
+    }
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        info.mBlockSizes[k] = r.u32();
+    }
+    const U32 ns = r.u32();
+    for (U32 i = 0; i < ns && r.mOk; ++i)
+    {
+        SamplerInfo s;
+        s.mName = r.str();
+        s.mType = r.str();
+        s.mBinding = r.u32();
+        s.mIndexUniform = (S32)r.u32();
+        info.mSamplers.push_back(s);
+    }
+    info.mBindless = r.u32() != 0;
+    info.mUsesRt = r.u32() != 0;
+    info.mAttributes = r.strs();
+    {
+        const U32 n = r.u32();
+        for (U32 i = 0; i < n && r.mOk; ++i)
+        {
+            info.mAttributeLocations.push_back(r.u32());
+        }
+    }
+    info.mAttributeTypes = r.strs();
+    info.mOutputs = r.strs();
+    for (int s = 0; s < 3; ++s)
+    {
+        info.mSpirv[s] = r.words();
+    }
+    {
+        const U32 n = r.u32();
+        for (U32 i = 0; i < n && r.mOk; ++i)
+        {
+            const U32 id = r.u32();
+            const U32 value = r.u32();
+            info.mSpec.push_back({ id, value });
+        }
+    }
+    info.mError = r.str();
+    if (!r.mOk || r.mP != r.mEnd || (info.mSpirv[0].empty() && info.mSpirv[1].empty()))
+    {
+        return false;
+    }
+    out = std::move(info);
+    if (files)
+    {
+        *files = read_files;
+    }
+    return true;
+}
+
+void native_cache_store(const std::string& path, U64 key, const std::string& root, const std::vector<std::string>& read_files, const ProgramInfo& info)
+{
+    CacheWriter w;
+    w.u32(0x534e4c4cu);
+    w.u32(kNativeCacheVersion);
+    w.str(kNativeCacheTag);
+    w.u64(key);
+    std::vector<std::pair<std::string, U64>> hashes;
+    const std::string prefix = root + "/";
+    for (const std::string& f : read_files)
+    {
+        if (f.compare(0, prefix.size(), prefix) != 0)
+        {
+            return;         // (a file outside the native directory: not cached)
+        }
+        bool dup = false;
+        for (const auto& h : hashes)
+        {
+            dup = dup || h.first == f;
+        }
+        U64 hash = 0;
+        if (!dup && !file_content_hash(f, hash))
+        {
+            return;
+        }
+        if (!dup)
+        {
+            hashes.push_back({ f, hash });
+        }
+    }
+    w.u32((U32)hashes.size());
+    for (const auto& h : hashes)
+    {
+        w.str(h.first.substr(prefix.size()));
+        w.u64(h.second);
+    }
+    w.u32((U32)info.mUniforms.size());
+    for (const LooseUniform& u : info.mUniforms)
+    {
+        w.str(u.mName);
+        w.str(u.mType);
+        w.u32(u.mArraySize);
+        w.u32(u.mOffset);
+        w.u32(u.mClass);
+        w.u32(u.mSize);
+        w.str(u.mInit);
+    }
+    for (U32 k = 0; k < UC_COUNT; ++k)
+    {
+        w.u32(info.mBlockSizes[k]);
+    }
+    w.u32((U32)info.mSamplers.size());
+    for (const SamplerInfo& s : info.mSamplers)
+    {
+        w.str(s.mName);
+        w.str(s.mType);
+        w.u32(s.mBinding);
+        w.u32((U32)s.mIndexUniform);
+    }
+    w.u32(info.mBindless ? 1u : 0u);
+    w.u32(info.mUsesRt ? 1u : 0u);
+    w.u32((U32)info.mAttributes.size());
+    for (const std::string& s : info.mAttributes) { w.str(s); }
+    w.u32((U32)info.mAttributeLocations.size());
+    for (U32 l : info.mAttributeLocations) { w.u32(l); }
+    w.u32((U32)info.mAttributeTypes.size());
+    for (const std::string& s : info.mAttributeTypes) { w.str(s); }
+    w.u32((U32)info.mOutputs.size());
+    for (const std::string& s : info.mOutputs) { w.str(s); }
+    for (int s = 0; s < 3; ++s)
+    {
+        w.words(info.mSpirv[s]);
+    }
+    w.u32((U32)info.mSpec.size());
+    for (const auto& sp : info.mSpec)
+    {
+        w.u32(sp.first);
+        w.u32(sp.second);
+    }
+    w.str(info.mError);
+    const std::string tmp = path + ".tmp";
+    if (FILE* f = fopen(tmp.c_str(), "wb"))
+    {
+        const bool ok = fwrite(w.mBytes.data(), 1, w.mBytes.size(), f) == w.mBytes.size();
+        fclose(f);
+        if (ok)
+        {
+            remove(path.c_str());
+            rename(tmp.c_str(), path.c_str());
+        }
+        else
+        {
+            remove(tmp.c_str());
+        }
+    }
+}
+
 std::string stage_head(int stage, const std::vector<std::pair<std::string, std::string>>& defines)
 {
     std::string head = "#version 460\n#extension GL_GOOGLE_cpp_style_line_directive : enable\n#extension GL_GOOGLE_include_directive : require\n";
@@ -157,6 +500,24 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
         LL_WARNS("VkNative") << "native program '" << name << "': " << why << LL_ENDL;
         return false;
     };
+    // the compile cache: an entry whose every file is as it was is the answer (no glslang, no parse)
+    const std::string cache_stage_files[3] = { vertex_file, fragment_file, geometry_file };
+    std::string cache_path;
+    U64 cache_key = 0;
+    if (native_cache_on())
+    {
+        cache_path = native_cache_path(name, cache_stage_files, defines, cache_key);
+        if (native_cache_load(cache_path, cache_key, root, out, files))
+        {
+            const U32 hits = ++gNativeCacheHits;
+            if (hits % 100 == 0)
+            {
+                LL_INFOS("VkNative") << "native compile cache: " << hits << " programs from the cache, " << gNativeCacheMisses.load() << " compiled" << LL_ENDL;
+            }
+            return true;
+        }
+        ++gNativeCacheMisses;
+    }
     static const bool glslang_ready = glslang::InitializeProcess();
     if (!glslang_ready)
     {
@@ -403,6 +764,10 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
     if (words > 40000 || ms > 150.0)
     {
         LL_WARNS("VkNative") << "native program '" << name << "' is over the size budget (40000 SPIR-V words, 150 ms): split it" << LL_ENDL;
+    }
+    if (native_cache_on())
+    {
+        native_cache_store(cache_path, cache_key, root, read_files, out);
     }
     return true;
 }
