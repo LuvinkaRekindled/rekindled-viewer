@@ -12866,6 +12866,7 @@ std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map
 struct RecentSlot { U32 mFrame; U32 mSlot; U8 mWhat; };
 enum : U8 { RECENT_BOX = 1, RECENT_MAP = 2 };
 std::deque<RecentSlot> sRecent;
+U64 sRecentOccCleared = 0, sRecentOccSkipped = 0, sRecentAdded = 0;      // (2026-11-17, proof counters of the recent list and occlusion: LL_DIAG VkRecentOcc)
 static void recent_note(U32 slot, U8 what)
 {
     sRecent.push_back({ (U32)gFrameCount, slot, what });
@@ -13236,7 +13237,14 @@ void cull_process()
             {
                 sRowChangeFrame[slot] = (U32)gFrameCount;
                 // (only a row that is new, or whose box or kind of group changed: an occlusion flag the Hi-Z verdicts change every frame does not make a group missing from a set that asks for no occlusion)
-                if (((old_cull.mFlags ^ sMirror[slot].mFlags) & (16u | 32u | 64u)) || memcmp(old_cull.mCenter, sMirror[slot].mCenter, 12) || memcmp(old_cull.mHalf, sMirror[slot].mHalf, 12))
+                // 2026-11-17: the main view's set DOES ask for occlusion (the record's mPad[0]): a group whose occluded flag CLEARS is not in the set for the 1 to 3 frames it is made from rows of, and the walk would have handled it the
+                // frame the state cleared: it is a recent group for those frames (the pass's loop tests its box against the frustum). A flag that is set needs nothing: the set drops the group, and so does the viewer's retest.
+                const bool occ_cleared = (old_cull.mFlags & 4u) && !(sMirror[slot].mFlags & 4u);
+                if (occ_cleared)
+                {
+                    ++sRecentOccCleared;
+                }
+                if (occ_cleared || ((old_cull.mFlags ^ sMirror[slot].mFlags) & (16u | 32u | 64u)) || memcmp(old_cull.mCenter, sMirror[slot].mCenter, 12) || memcmp(old_cull.mHalf, sMirror[slot].mHalf, 12))
                 {
                     recent_note(slot, RECENT_BOX);
                 }
@@ -13831,8 +13839,28 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                 {
                     continue;       // (the row is the group's of this frame: the walk's own box test, so a group outside the frustum is not marked: 144 a pass without the test, about 19 with it)
                 }
+                {
+                    // 2026-11-17: the walk dropped a group that is occluded, or under an occluded parent, in earlyFail: a group made this frame has the state it inherited (its parent's), and the ones that cleared are not occluded. The
+                    // viewer's retest asks the Hi-Z about the occluded ones.
+                    LLSpatialGroup* gparent = g->getParent();
+                    if (g->isOcclusionState(LLSpatialGroup::OCCLUDED) || (gparent && gparent->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+                    {
+                        ++sRecentOccSkipped;
+                        continue;
+                    }
+                }
+                ++sRecentAdded;
                 added.insert(slot);
                 groups.push_back(g);
+            }
+        }
+        if (ll_diag_on())
+        {
+            static U32 passes = 0;
+            if (++passes % 600 == 0)
+            {
+                LL_DIAG("VkRecentOcc") << "recent list, a frame over 600: groups added " << (F64)sRecentAdded / 600.0 << ", skipped as occluded " << (F64)sRecentOccSkipped / 600.0 << ", rows whose occluded flag cleared " << (F64)sRecentOccCleared / 600.0 << LL_ENDL;
+                sRecentAdded = sRecentOccSkipped = sRecentOccCleared = 0;
             }
         }
     }

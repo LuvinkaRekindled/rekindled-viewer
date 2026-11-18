@@ -11732,7 +11732,9 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
 // (memo: the chain states of this view, zeroed by the caller for a view of its own; stage 10a uses it for the views that ask by id)
-void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out, F32 factor = 0.f)
+// (type_mask: the main view's render type filter, as cull_late_pass applies it: a group of a type the view does not render is not kept (2026-11-17: the walk never visited it, and the stamps of the kept set are written for
+// every bit of it). Null for the views that ask by their own parameters.)
+void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out, F32 factor = 0.f, const U32* type_mask = nullptr)
 {
     const U32 table = (U32)s.mTable.size();
     out.assign((table + 31) / 32, 0u);
@@ -11743,6 +11745,15 @@ void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, b
         if ((flags & (32u | 64u | 16u)) || (!(flags & 1u) && row.mParent >= table))
         {
             continue;
+        }
+        if (type_mask)
+        {
+            U32 type;
+            memcpy(&type, &row.mPad0, 4);
+            if (type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
+            {
+                continue;
+            }
         }
         const U8 st = cull_chain_state(s, P, occlusion, slot, memo, 0, factor);
         if (st == ST_OCC || st == ST_OUT)
@@ -11871,7 +11882,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             {
                 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
                 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
-                cull_kept_bits(s, P, occlusion, memo, list->mKept);
+                cull_kept_bits(s, P, occlusion, memo, list->mKept, 0.f, type_mask);
             }
             LLVkBridge::consumerListPublish(std::move(list));
         }
