@@ -31,10 +31,10 @@
 
 #include "llviewerjoint.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 #include "llmath.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llvoavatar.h"
 #include "pipeline.h"
 

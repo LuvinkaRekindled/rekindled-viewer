@@ -36,10 +36,10 @@
 #include "m4math.h"
 
 #include "llrender.h"
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 
-#include "llrenderheaders.h"
-#include "llvktex.h"
+#include "rkrenderheaders.h"
+#include "rkvktex.h"
 
 //#pragma optimize("", off)
 

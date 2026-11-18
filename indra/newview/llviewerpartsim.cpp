@@ -36,7 +36,7 @@
 #include "llviewerpartsource.h"
 #include "llviewerregion.h"
 #include "llvopartgroup.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llworld.h"
 #include "llmutelist.h"
 #include "pipeline.h"
@@ -46,7 +46,7 @@
 #include "llviewertexture.h"
 #include "llvertexbuffer.h"
 #include "llvopartgroup.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 const F32 PART_SIM_BOX_SIDE = 16.f;
 

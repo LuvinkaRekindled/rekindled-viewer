@@ -30,7 +30,7 @@
 #include "lltoolselectland.h"
 
 // library headers
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llnotificationsutil.h"
 #include "llrender.h"
 #include "message.h"
@@ -53,7 +53,7 @@
 #include "llappviewer.h"
 #include "llparcel.h"
 #include "roles_constants.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 
 const std::string REGION_BLOCKS_TERRAFORM_MSG = "This region does not allow terraforming.\n"
                 "You will need to buy land in another part of the world to terraform it.";

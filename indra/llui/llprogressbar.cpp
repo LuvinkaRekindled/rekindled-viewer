@@ -30,11 +30,11 @@
 
 #include "indra_constants.h"
 #include "llmath.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 #include "llfontgl.h"
 #include "lltimer.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 
 #include "llfocusmgr.h"
 #include "lluictrlfactory.h"

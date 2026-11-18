@@ -105,7 +105,7 @@
 #include "llcleanup.h"
 #include "llmeshrepository.h"
 #include "llgltfmateriallist.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "gltf/asset.h"
 // [RLVa:KB] - Checked: 2011-05-22 (RLVa-1.3.1a)
 #include "rlvactions.h"

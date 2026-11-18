@@ -27,7 +27,7 @@
 #include "linden_common.h"
 
 #include "llmodel.h"
-#include "llretirelist.h"
+#include "rkretirelist.h"
 #include "llmemory.h"
 #include "llconvexdecomposition.h"
 #include "llsdserialize.h"
@@ -1706,7 +1706,7 @@ static bool fs_bind_matrix_sane(const LLMatrix4& m, const char** why)
         return false;
     }
     // NOT a shape test: a 2026-11-04 attempt (rows of about one length, near perpendicular) flagged 3261 meshes of one crowd and deformed avatars; bind matrices legitimately carry
-    // non-uniform scale and shear. Only values no skinning can use are caught here (above); plausible-size garbage in an asset is left to the skin catchers (llvkrt.cpp, llvoavatar.cpp).
+    // non-uniform scale and shear. Only values no skinning can use are caught here (above); plausible-size garbage in an asset is left to the skin catchers (rkvkrt.cpp, llvoavatar.cpp).
     return true;
 }
 

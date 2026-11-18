@@ -31,7 +31,7 @@
 
 #include "llmath.h"
 #include "llui.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llfontgl.h"
 
 #include "lluictrlfactory.h"

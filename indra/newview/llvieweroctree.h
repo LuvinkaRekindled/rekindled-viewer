@@ -40,9 +40,9 @@
 #include "llquaternion.h"
 #include "lloctree.h"
 #include "llviewercamera.h"
-#include "llgrouptable.h"       // <FS> C1b: the group's boxes, state word and per-camera stamps are one row of the group table
-#include "llhiz.h"
-#include "llvkbridge.h"
+#include "rkgrouptable.h"       // <FS> C1b: the group's boxes, state word and per-camera stamps are one row of the group table
+#include "rkhiz.h"
+#include "rkvkbridge.h"
 
 class LLViewerRegion;
 class LLViewerOctreeEntryData;
@@ -297,7 +297,7 @@ protected:
     OctreeNode* mOctreeNode;
 
 public:
-    // <FS> S7 C1 (LL_VK_CULL_SHADOW, llcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
+    // <FS> S7 C1 (LL_VK_CULL_SHADOW, rkcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
     U32         mCullId = 0;                // slot + 1 in the table (0: none)
     bool        mCullDirty = false;         // in the list of rows to refresh
     U32         mCullFirstSerial = 0;

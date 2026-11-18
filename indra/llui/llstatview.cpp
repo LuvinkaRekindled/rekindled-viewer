@@ -31,7 +31,7 @@
 #include "llerror.h"
 #include "llstatbar.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 
 #include "llstatbar.h"

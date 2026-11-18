@@ -32,7 +32,7 @@
 #include "llimagej2c.h"
 #include "llnotificationsutil.h"
 #include "llviewerregion.h"
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 #include "llvoavatarself.h"
 #include "pipeline.h"
 #include "llviewercontrol.h"

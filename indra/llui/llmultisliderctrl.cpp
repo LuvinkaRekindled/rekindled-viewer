@@ -30,7 +30,7 @@
 
 #include "llmath.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llkeyboard.h"
 #include "lllineeditor.h"
 #include "llmultislider.h"

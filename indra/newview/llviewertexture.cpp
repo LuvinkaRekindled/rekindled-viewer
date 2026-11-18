@@ -28,23 +28,23 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewertexture.h"
-#include "llretirelist.h"
-#include "llforkjoinpool.h"
+#include "rkretirelist.h"
+#include "rkforkjoinpool.h"
 #include "llfetchedgltfmaterial.h"
-#include "llinstancetable.h"
-#include "llavatarref.h"
-#include "llgrouptable.h"
-#include "llfacetable.h"
-#include "llmatrixtable.h"
+#include "rkinstancetable.h"
+#include "rkavatarref.h"
+#include "rkgrouptable.h"
+#include "rkfacetable.h"
+#include "rkmatrixtable.h"
 
 // Library includes
 #include "llmath.h"
 #include "llerror.h"
-#include "lldevicecaps.h"
-#include "llrenderheaders.h"
+#include "rkdevicecaps.h"
+#include "rkrenderheaders.h"
 #include "llhost.h"
 #include "llimage.h"
-#include "llimagebc7.h"         // <FS> blockBytes (the upload hash of a server bake's finest BC7 level)
+#include "rkimagebc7.h"         // <FS> blockBytes (the upload hash of a server bake's finest BC7 level)
 #include "llimagebmp.h"
 #include "llimagej2c.h"
 #include "llimagetga.h"
@@ -55,11 +55,11 @@
 #include "llnotificationsutil.h"
 
 // viewer includes
-#include "llimagetex.h"
+#include "rkimagetex.h"
 #include "lldrawpool.h"
 #include "lltexturefetch.h"
 #include "llviewertexturelist.h"
-#include "llviewertexturerecs.h"
+#include "rkviewertexturerecs.h"
 #include "llviewercontrol.h"
 #include "pipeline.h"
 #include "llappviewer.h"
@@ -76,12 +76,12 @@
 #include "lltexturecache.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
-#include "llvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
-#include "fstexturearrivaltrace.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
+#include "rktexturearrivaltrace.h"
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include <unordered_map>
 
-std::string fs_stack_here(int skip, int max_frames);       // (llgpuzonetimer.cpp)
+std::string fs_stack_here(int skip, int max_frames);       // (rkgpuzonetimer.cpp)
 namespace
 {
 // <FS> 2026-11-16 (LL_VK_DIAG=1): the discard level and the size of the last image a texture was created with, to see a texture created again for the same data (createTexture, scheduleCreateTexture)
@@ -930,7 +930,7 @@ LLViewerTexture* LLTexRef::deadTexture()
     return tex ? tex : LLViewerFetchedTexture::sWhiteImagep.get();
 }
 
-// ---- <FS> C2.2 / C2.4: the retire list is LLRetireList (llcommon/llretirelist.h); what is texture specific is here
+// ---- <FS> C2.2 / C2.4: the retire list is LLRetireList (llcommon/rkretirelist.h); what is texture specific is here
 std::atomic<U64> LLTexRetire::sResolvedParked{0};
 
 bool LLViewerTexture::retireOnLastRef() const
@@ -942,7 +942,7 @@ bool LLViewerTexture::retireOnLastRef() const
 void LLTexRetire::pump()
 {
     LLRetireList::pump();
-    LLForkJoinPool::reportLabels(LLFrameTimer::getFrameCount());       // <FS> LL_VK_POOL_LABELS: the pool job time a frame by family (llforkjoinpool.h)
+    LLForkJoinPool::reportLabels(LLFrameTimer::getFrameCount());       // <FS> LL_VK_POOL_LABELS: the pool job time a frame by family (rkforkjoinpool.h)
     static U64 sLastLog = 0;
     const U64 now = LLFrameTimer::getFrameCount();
     if (now - sLastLog >= 3600)
@@ -3251,7 +3251,7 @@ bool LLViewerFetchedTexture::needsToSaveRawImage()
     return mForceToSaveRawImage || mSaveRawImage;
 }
 
-// <FS> BC7 at decode (llimagebc7.h): everything that reads texels on the CPU asks for raw; the rest may arrive as a BC7 chain the GPU takes as is
+// <FS> BC7 at decode (rkimagebc7.h): everything that reads texels on the CPU asks for raw; the rest may arrive as a BC7 chain the GPU takes as is
 bool LLViewerFetchedTexture::needsRawPixels()
 {
     // (a server bake has a url but is drawn like any texture: it may compress; the own avatar's bakes ask for aux or raw through their callbacks and stay texels)

@@ -35,7 +35,7 @@
 #include "llviewercontrol.h"
 #include "llviewertexturelist.h"
 #include "lltrans.h"
-#include "llbasetexture.h"
+#include "rkbasetexture.h"
 
 // <FS:CR> Aurora Sim
 #include "llappviewer.h"

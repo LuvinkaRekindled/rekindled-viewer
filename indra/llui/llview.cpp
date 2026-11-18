@@ -56,7 +56,7 @@
 #include "lllineeditor.h"
 #include "lltexteditor.h"
 #include "lltextbox.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 static const S32 LINE_HEIGHT = 15;
 
@@ -1322,8 +1322,8 @@ static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 // the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and LL_VK_UI_CACHE hz), staggered between the units.
 // LL_VK_UI_CACHE=<mode> [<hz>]: 0 off (default), 1 record only (named units: LL_VK_UI_CACHE_UNITS=a,b: drawn live and recorded every frame, nothing replayed), 2 sliced replay. LL_VK_UI_CACHE_VERIFY=1:
 // on a replay frame the live draw is recorded too (not spliced) and compared with the saved bytes.
-#include "llvksubstream.h"
-#include "llrendermatrix.h"
+#include "rkvksubstream.h"
+#include "rkrendermatrix.h"
 #include <chrono>
 #include <typeinfo>
 #include <glm/gtc/type_ptr.hpp>

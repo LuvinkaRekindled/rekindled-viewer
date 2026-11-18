@@ -44,7 +44,7 @@
 
 #include "llfile.h"
 #include "llviewerwindow.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llwindow.h"
 
 #include "lljoint.h"
@@ -838,7 +838,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     }
 
     LLShaderProgram::sGlobalDefines = attribs;
-    {   // <FS> the native shaders (llvknative.h) are built with the defines the graphics settings decide, like the viewer's own shaders
+    {   // <FS> the native shaders (rkvknative.h) are built with the defines the graphics settings decide, like the viewer's own shaders
         static const char* const native_keys[] = { "SSR", "REFMAP_LEVEL", "REF_SAMPLE_COUNT", "HERO_PROBES", "SUN_SHADOW", "HAS_EMISSIVE", "TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", "TERRAIN_TRIPLANAR_BLEND_FACTOR", "TERRAIN_PBR_DETAIL" };
         std::vector<std::pair<std::string, std::string>> native_defines;
         for (const char* k : native_keys)

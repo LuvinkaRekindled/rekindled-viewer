@@ -28,7 +28,7 @@
 #define LL_TEXTUREMANAGERBRIDGE_H
 
 #include "llpointer.h"
-#include "llbasetexture.h"
+#include "rkbasetexture.h"
 
 // Abstract bridge interface
 class LLTextureManagerBridge

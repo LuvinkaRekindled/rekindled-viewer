@@ -37,7 +37,7 @@
 #include "llfasttimer.h"
 #include "v3colorutil.h"
 
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 #include "llviewershadermgr.h"
 
 #include "llagent.h"

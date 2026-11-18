@@ -18,10 +18,10 @@ set(llrender_SOURCE_FILES
     llfontgl.cpp
     llfontvertexbuffer.cpp
     llfontregistry.cpp
-    lldevicecaps.cpp
-    llshaderprogram.cpp
-    llbasetexture.cpp
-    llimagetex.cpp
+    rkdevicecaps.cpp
+    rkshaderprogram.cpp
+    rkbasetexture.cpp
+    rkimagetex.cpp
     llrender.cpp
     llrender2dutils.cpp
     llrendersphere.cpp
@@ -31,23 +31,23 @@ set(llrender_SOURCE_FILES
     lltexturemanagerbridge.cpp
     lluiimage.cpp
     llvertexbuffer.cpp
-    llvkcontext.cpp
-    llvkngx.cpp
-    llvkdlssnr.cpp
-    llvkdenoise.cpp
-    llvkfsr.cpp
-    llvkupscale.cpp
-    llvkasync.cpp
-    llvkpasscensus.cpp
-    llvkbridge.cpp
-    llvkworker.cpp
-    llvkformat.cpp
-    llvkrenderer.cpp
-    llvkrt.cpp
-    llvknative.cpp
-    llvkstate.cpp
-    llvkvma.cpp
-    llrendercommonfunc.cpp
+    rkvkcontext.cpp
+    rkvkngx.cpp
+    rkvkdlssnr.cpp
+    rkvkdenoise.cpp
+    rkvkfsr.cpp
+    rkvkupscale.cpp
+    rkvkasync.cpp
+    rkvkpasscensus.cpp
+    rkvkbridge.cpp
+    rkvkworker.cpp
+    rkvkformat.cpp
+    rkvkrenderer.cpp
+    rkvkrt.cpp
+    rkvknative.cpp
+    rkvkstate.cpp
+    rkvkvma.cpp
+    rkrendercommonfunc.cpp
     )
     
 set(llrender_HEADER_FILES
@@ -61,18 +61,18 @@ set(llrender_HEADER_FILES
     llfontfreetypesvg.h
     llfontbitmapcache.h
     llfontregistry.h
-    lldevicecaps.h
-    llrenderheaders.h
-    llshaderprogram.h
-    llrenderpresets.h
-    llbasetexture.h
+    rkdevicecaps.h
+    rkrenderheaders.h
+    rkshaderprogram.h
+    rkrenderpresets.h
+    rkbasetexture.h
     llgltypes.h
-    llimagetex.h
+    rkimagetex.h
     llrender.h
-    llrendermatrix.h
-    llrenderformat.h
-    llrenderpass.h
-    llrenderstate.h
+    rkrendermatrix.h
+    rkrenderformat.h
+    rkrenderpass.h
+    rkrenderstate.h
     llrender2dutils.h
     llrendersphere.h
     llshadermgr.h
@@ -81,28 +81,28 @@ set(llrender_HEADER_FILES
     lluiimage.h
     lluiimage.inl
     llvertexbuffer.h
-    llvkcontext.h
-    llvkngx.h
-    llreadback.h
-    llvkdlssnr.h
-    llvkdenoise.h
-    llvkfsr.h
-    llvkupscale.h
-    llvkfunctions.inl
-    llvkasync.h
-    llvkpasscensus.h
-    llvkzones.h
-    llvksubstream.h
-    llvkbridge.h
-    llvkworker.h
-    llvkrenderer.h
-    llvkrt.h
-    llvkshader.h
-    llvknative.h
-    llvkstate.h
-    llvktex.h
-    llvkformat.h
-    llrendercommonfunc.h
+    rkvkcontext.h
+    rkvkngx.h
+    rkreadback.h
+    rkvkdlssnr.h
+    rkvkdenoise.h
+    rkvkfsr.h
+    rkvkupscale.h
+    rkvkfunctions.inl
+    rkvkasync.h
+    rkvkpasscensus.h
+    rkvkzones.h
+    rkvksubstream.h
+    rkvkbridge.h
+    rkvkworker.h
+    rkvkrenderer.h
+    rkvkrt.h
+    rkvkshader.h
+    rkvknative.h
+    rkvkstate.h
+    rkvktex.h
+    rkvkformat.h
+    rkrendercommonfunc.h
     )
 
 list(APPEND llrender_SOURCE_FILES ${llrender_HEADER_FILES})
@@ -129,7 +129,7 @@ endif (BUILD_HEADLESS)
 add_library (llrender ${llrender_SOURCE_FILES})
 target_include_directories( llrender  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})
 
-# <FS> Experimental Vulkan backend (see llvkprobe.h). Needs the Vulkan SDK headers; the loader is loaded at runtime.
+# <FS> Experimental Vulkan backend (see rkvkprobe.h). Needs the Vulkan SDK headers; the loader is loaded at runtime.
 option(USE_VULKAN "Build the experimental Vulkan backend" OFF)
 set(VULKAN_SDK_DIR "" CACHE PATH "Vulkan SDK root (headers are in Include/)")
 if (USE_VULKAN)
@@ -169,8 +169,8 @@ if (USE_VULKAN)
     target_link_libraries(llrender ${llrender_glslang_libs} ${CMAKE_DL_LIBS})
   endif ()
   # NVIDIA, LOCAL builds only (doc/vulkan/PLAN-remove-nvidia.md): the viewer has no NVIDIA code in a release. With REKINDLED_LOCAL_NVIDIA=ON (never the default, never the package script) the
-  # DLSS SDK's NGX is linked for DLSS-NR (the neural renderer, llvkngx.cpp / llvkdlssnr.cpp) when it is found at DLSS_SDK_DIR (a clone of github.com/NVIDIA/DLSS, its DLSS folder), and the
-  # device asks the driver for VK_NV_device_diagnostics_config (resource tracking for the Aftermath decode of a device lost, llvkcontext.cpp: LL_LOCAL_NV_DIAG).
+  # DLSS SDK's NGX is linked for DLSS-NR (the neural renderer, rkvkngx.cpp / rkvkdlssnr.cpp) when it is found at DLSS_SDK_DIR (a clone of github.com/NVIDIA/DLSS, its DLSS folder), and the
+  # device asks the driver for VK_NV_device_diagnostics_config (resource tracking for the Aftermath decode of a device lost, rkvkcontext.cpp: LL_LOCAL_NV_DIAG).
   option(REKINDLED_LOCAL_NVIDIA "Local build: DLSS-NR through NGX and the NVIDIA device diagnostics (never for a release)" OFF)
   if (REKINDLED_LOCAL_NVIDIA)
     message(STATUS "REKINDLED_LOCAL_NVIDIA is ON: this build is for local use, not for a release")

@@ -27,31 +27,31 @@
 #include "linden_common.h"
 
 #include "llrender.h"
-#include "llvktexanim.h"
+#include "rkvktexanim.h"
 
 #include "llvertexbuffer.h"
 #include "llcubemap.h"
-#include "llshaderprogram.h"
-#include "llimagetex.h"
+#include "rkshaderprogram.h"
+#include "rkimagetex.h"
 #include "llrendertarget.h"
 #include "lltexture.h"
 #include "llshadermgr.h"
 #if defined(LL_VULKAN)
-#include "llvkasync.h"
+#include "rkvkasync.h"
 #endif
 #include "glm/gtc/type_ptr.hpp"
-#include "llvkplatform.h"
-#include "llvkstate.h"
-#include "llrendermatrix.h"
+#include "rkvkplatform.h"
+#include "rkvkstate.h"
+#include "rkrendermatrix.h"
 #include "llframetimer.h"
 #include <algorithm>
 #include <map>
 #include <vector>
-#include "llvktex.h"
-#include "llvkquery.h"
-#include "llvkcontext.h"
-#include "llvkbuf.h"
-#include "llvktarget.h"
+#include "rkvktex.h"
+#include "rkvkquery.h"
+#include "rkvkcontext.h"
+#include "rkvkbuf.h"
+#include "rkvktarget.h"
 
 thread_local LLRender gRender;
 
@@ -1242,7 +1242,7 @@ void LLRender::syncMatrices()
                 const F32* texture_matrix = glm::value_ptr(mMatrix[i][mMatIdx[i]]);
                 if (LLVkTexAnim::isParams(texture_matrix))
                 {
-                    // <FS> a texture animation's matrix slot holds its parameters (llvktexanim.h): a program that is not a pull program gets the matrix they give now
+                    // <FS> a texture animation's matrix slot holds its parameters (rkvktexanim.h): a program that is not a pull program gets the matrix they give now
                     F32 evaluated[16];
                     LLVkTexAnim::evaluateNow(texture_matrix, evaluated);
                     shader->uniformMatrix4fv(name[i], 1, false, evaluated);
@@ -2494,7 +2494,7 @@ glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)
 }
 
 
-// ---- F3.3: the named-matrix operations of llrendermatrix.h ----
+// ---- F3.3: the named-matrix operations of rkrendermatrix.h ----
 namespace LLRenderMatrix
 {
 

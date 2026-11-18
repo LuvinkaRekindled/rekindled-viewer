@@ -1,5 +1,5 @@
 // rows.glsl: the scene table the alpha vertex shaders read (the worker's 160 byte row of a draw and the 176 byte matrix block of a model), by buffer address, and the pieces of a row a vertex shader needs.
-// The layouts are the renderer's (llvkworker.cpp, GeoGpu); everything below the structs is this shader set's own code.
+// The layouts are the renderer's (rkvkworker.cpp, GeoGpu); everything below the structs is this shader set's own code.
 // Needs the uniform addresses of alpha_pass.inc and color-free math only.
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer RowVec4 { vec4 v[]; };
@@ -67,7 +67,7 @@ uint row_clamp_index(Row row, uint index)
     return row.skinPad1 != 0u ? min(index, row.skinPad1 - 1u) : index;
 }
 
-// ---- texture animation: a texture matrix slot may hold the PARAMETERS of an animation (a 0 in its last float) and the clock sits in slot 0 (llvktexanim.h is the CPU twin of this function) ----
+// ---- texture animation: a texture matrix slot may hold the PARAMETERS of an animation (a 0 in its last float) and the clock sits in slot 0 (rkvktexanim.h is the CPU twin of this function) ----
 mat4 texanim_matrix(mat4 m, vec2 clock)
 {
     const uint bits = floatBitsToUint(m[0][0]);

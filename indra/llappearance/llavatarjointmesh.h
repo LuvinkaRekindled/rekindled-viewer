@@ -28,7 +28,7 @@
 #define LL_LLAVATARJOINTMESH_H
 
 #include "llavatarjoint.h"
-#include "llbasetexture.h"
+#include "rkbasetexture.h"
 #include "llpolymesh.h"
 #include "v4color.h"
 

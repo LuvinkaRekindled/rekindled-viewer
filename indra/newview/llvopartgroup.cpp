@@ -43,7 +43,7 @@
 #include "llviewerregion.h"
 #include "pipeline.h"
 #include "llspatialpartition.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern U64MicrosecondsImplicit gFrameTime;
 

@@ -36,7 +36,7 @@
 
 #include "llappviewerwin32.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "res/resource.h" // *FIX: for setting gIconResource.
 
 #include <fcntl.h>      //_O_APPEND

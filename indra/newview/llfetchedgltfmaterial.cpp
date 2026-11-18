@@ -26,7 +26,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llfetchedgltfmaterial.h"
-#include "llretirelist.h"
+#include "rkretirelist.h"
 
 #include "llviewertexturelist.h"
 #include "llavatarappearancedefines.h"

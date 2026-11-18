@@ -28,7 +28,7 @@
 
 #include "linden_common.h"
 
-#include "llpluginmediaformat.h"      // the numbers of the texture format messages
+#include "rkpluginmediaformat.h"      // the numbers of the texture format messages
 #include "llplugininstance.h"
 #include "llpluginmessage.h"
 #include "llpluginmessageclasses.h"

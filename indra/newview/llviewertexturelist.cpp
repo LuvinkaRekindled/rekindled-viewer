@@ -25,22 +25,22 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 #include <sys/stat.h>
 
 #include <atomic>
 #include "llcharacter.h"    // <FS> the skeletons are cleaned before the texture priority jobs
 #include "llvoavatar.h"
-#include "llforkjoinpool.h"
-#include "llgpuzonetimer.h"
+#include "rkforkjoinpool.h"
+#include "rkgpuzonetimer.h"
 #include "llviewertexturelist.h"
-#include "fstexturearrivaltrace.h"     // <FS> the arrival trace
+#include "rktexturearrivaltrace.h"     // <FS> the arrival trace
 #include "lldrawpool.h"
 
 #include "llagent.h"
-#include "lldevicecaps.h" // fot gathering stats from GL
-#include "llimagetex.h"
+#include "rkdevicecaps.h" // fot gathering stats from GL
+#include "rkimagetex.h"
 #include "llimagebmp.h"
 #include "llimagej2c.h"
 #include "llimagetga.h"
@@ -73,14 +73,14 @@
 #include "llviewerwindow.h"
 #include "llwindow.h"
 #include "llprogressview.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llface.h"
 #include "lldrawable.h"
 #include "llviewerobject.h"
 #include "llspatialpartition.h"
-#include "llviewertexturerecs.h"
+#include "rkviewertexturerecs.h"
 #include <algorithm>
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 namespace
 {

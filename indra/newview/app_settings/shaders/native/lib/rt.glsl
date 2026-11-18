@@ -13,7 +13,7 @@ float rtSunBlockerT()
 {
     return rt_sun_blocker_t;
 }
-// <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (llvkrt.cpp), in eye space like everything here.
+// <FS> Ray query sun shadow (LL_VK_RT_SHADOWS): one ray from the surface towards the sun against the frame's scene (rkvkrt.cpp), in eye space like everything here.
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
 // <FS> a translucent glTF mesh (an avatar's shell: base colour alpha blended) is a layer for the traced reflection only (rtTraceHitEx); a sun ray goes through it, as it did before such draws were named to the ray scene

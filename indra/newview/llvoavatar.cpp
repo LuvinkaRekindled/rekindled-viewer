@@ -29,14 +29,14 @@
 #include <atomic>
 #include "llthread.h"            // <FS> on_main_thread() (the palette catcher)
 #include <sstream>
-#include "llvkplatform.h"
-#include "llgpuzonetimer.h"
+#include "rkvkplatform.h"
+#include "rkgpuzonetimer.h"
 #include <chrono>
 
 #include "llvoavatar.h"
-#include "llavatartable.h"
-#include "llretirelist.h"
-#include "llavatarref.h"
+#include "rkavatartable.h"
+#include "rkretirelist.h"
+#include "rkavatarref.h"
 #include <map>      // <FS> LL_VK_PALSTATS
 
 #include <stdio.h>
@@ -109,7 +109,7 @@
 #include "llvovolume.h"
 #include "llworld.h"
 #include "pipeline.h"
-#include "llattcensus.h"
+#include "rkattcensus.h"
 #include "llviewershadermgr.h"
 #include "llsky.h"
 #include "llanimstatelabels.h"
@@ -148,7 +148,7 @@
 #include "llhudeffectresetskeleton.h"
 #include "llnetmap.h"
 #include "llsidepanelappearance.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include "llviewermenufile.h"
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
 
@@ -7296,7 +7296,7 @@ static void fs_av_importance_ran(int ran)
 
 
 //------------------------------------------------------------------------
-// <FS> PLAN-avatars.md stage A: the avatar table (llavatartable.h)
+// <FS> PLAN-avatars.md stage A: the avatar table (rkavatartable.h)
 //------------------------------------------------------------------------
 bool LLVOAvatar::reducedHiddenSkip()
 {
@@ -14364,7 +14364,7 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
         // <FS> the palette catcher (2026-11-04: spike shadows from random avatars with ray traced shadows, and the jumping triangles of an animated attachment): the draw and the ray scene's
         // skinning both read this palette, so a joint matrix that is not finite, or whose translation lies farther than kPaletteReach from the avatar, is logged with what says where it came
         // from (the avatar, whether it is an animated object, whether it sits, the thread, the joint, the frame). Nothing is changed here: what the picture shows lines up with the line.
-        // The ray scene has its own catcher over the skinned vertices (llvkrt.cpp, "skin catcher").
+        // The ray scene has its own catcher over the skinned vertices (rkvkrt.cpp, "skin catcher").
         static std::atomic<U32> palette_flagged{0};
         if ((gFrameCount & 3u) == 0u)       // every fourth frame: a persistent fault is caught all the same, and the scan of every joint of every palette stays off the frame's budget
         {
@@ -16974,7 +16974,7 @@ void LLVOAvatar::setIsUsingServerBakes(bool newval)
 // </FS:Ansariel> [Legacy Bake]
 
 
-// ---- <FS> C2.4d: the handle and the retire hook of the avatar (llavatarref.h)
+// ---- <FS> C2.4d: the handle and the retire hook of the avatar (rkavatarref.h)
 U32 LLVOAvatar::getRenderHandle()
 {
     U32 handle = mRenderHandle.v.load(std::memory_order_acquire);

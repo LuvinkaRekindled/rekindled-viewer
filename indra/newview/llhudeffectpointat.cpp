@@ -28,7 +28,7 @@
 
 #include "llhudeffectpointat.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 
 #include "llagent.h"

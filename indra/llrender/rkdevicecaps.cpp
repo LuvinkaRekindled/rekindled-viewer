@@ -1,0 +1,682 @@
+/**
+ * @file rkdevicecaps.cpp
+ * @brief LLGL implementation
+ *
+ * $LicenseInfo:firstyear=2001&license=viewerlgpl$
+ * Second Life Viewer Source Code
+ * Copyright (C) 2010, Linden Research, Inc.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
+ * $/LicenseInfo$
+ */
+
+// This file sets some global GL parameters, and implements some
+// useful functions for GL operations.
+
+#include "linden_common.h"
+#include "rkvkbridge.h"
+#include "rkvkasync.h"
+#include <atomic>
+
+#include "boost/tokenizer.hpp"
+
+#include "llsys.h"
+
+#include "rkdevicecaps.h"
+#include "rkrenderpresets.h"
+#include "llrender.h"
+
+#include "llerror.h"
+#include "llerrorcontrol.h"
+#include "llquaternion.h"
+#include "llmath.h"
+#include "m4math.h"
+#include "llstring.h"
+#include "llstacktrace.h"
+
+#include "rkrenderheaders.h"
+#include "rkshaderprogram.h"
+
+#include "glm/glm.hpp"
+#include <glm/gtc/matrix_access.hpp>
+#include "glm/gtc/type_ptr.hpp"
+
+#if LL_WINDOWS
+#include "lldxhardware.h"
+#endif
+
+#if LL_SDL
+#include "SDL2/SDL_video.h"
+
+#define GLH_EXT_GET_PROC_ADDRESS SDL_GL_GetProcAddress
+#define ExtensionExists(exten, unused) SDL_GL_ExtensionSupported(exten);
+#endif
+
+#ifdef _DEBUG
+//#define GL_STATE_VERIFY
+#endif
+
+
+bool gDebugSession = false;
+bool gDebugRenderSession = false;
+bool gClothRipple = false;
+bool gHeadlessClient = false;
+bool gNonInteractive = false;
+bool gRenderActive = false;
+
+static const std::string HEADLESS_VENDOR_STRING("Linden Lab");
+static const std::string HEADLESS_RENDERER_STRING("Headless");
+static const std::string HEADLESS_VERSION_STRING("1.0");
+
+llofstream gFailLog;
+
+
+void parse_glsl_version(S32& major, S32& minor);
+
+void ll_init_fail_log(std::string filename)
+{
+    gFailLog.open(filename.c_str());
+}
+
+
+void ll_fail(std::string msg)
+{
+
+    if (gDebugSession)
+    {
+        std::vector<std::string> lines;
+
+        gFailLog << LLError::utcTime() << " " << msg << std::endl;
+
+        gFailLog << "Stack Trace:" << std::endl;
+
+        ll_get_stack_trace(lines);
+
+        for(size_t i = 0; i < lines.size(); ++i)
+        {
+            gFailLog << lines[i] << std::endl;
+        }
+
+        gFailLog << "End of Stack Trace." << std::endl << std::endl;
+
+        gFailLog.flush();
+    }
+};
+
+void ll_close_fail_log()
+{
+    gFailLog.close();
+}
+
+LLMatrix4 gRenderObliqueProjectionInverse;
+
+#define LL_GL_NAME_POOLING 0
+
+std::list<LLRenderUpdate*> LLRenderUpdate::sUpdateQueue;
+
+// <FS:Zi> Linux support
+// #if (LL_WINDOWS || LL_LINUX)  && !LL_MESA_HEADLESS
+
+LLDeviceCaps gDeviceCaps;
+
+LLDeviceCaps::LLDeviceCaps() :
+    mInited(false),
+    mIsDisabled(false),
+    mMaxSamples(0),
+    mNumTextureImageUnits(1),
+    mMaxSampleMaskWords(0),
+    mMaxColorTextureSamples(0),
+    mMaxDepthTextureSamples(0),
+    mMaxIntegerSamples(0),
+    mIsAMD(false),
+    mIsNVIDIA(false),
+    mIsIntel(false),
+#if LL_DARWIN
+    mIsMobileGF(false),
+#endif
+    mHasRequirements(true),
+    mDriverVersionMajor(1),
+    mDriverVersionMinor(0),
+    mDriverVersionRelease(0),
+    mApiVersionNumber(1.0f),
+    mShaderLangMajor(0),
+    mShaderLangMinor(0),
+    mVRAM(0),
+    mVRAMDetected(0), // <FS:Beq/> add override support
+    mVertexRangeLimit(0),
+    mIndexRangeLimit(0)
+{
+}
+
+// <FS> there is no OpenGL context at all. The strings the viewer reads with glGetString are the ones made from the Vulkan device in initFromDevice.
+
+static std::string sDeviceVendor, sDeviceRenderer, sDeviceVersion, sDeviceGlsl, sDeviceExtensions;
+
+// F3.6g: the capability strings the viewer reports (F3.6: typed, no GL enum numbers)
+enum class InfoString : U8 { Vendor, Renderer, Version, ShadingLanguage, Extensions };
+
+static const char* gl_info_string(InfoString which)
+{
+    switch (which)
+    {
+    case InfoString::Vendor: return sDeviceVendor.c_str();
+    case InfoString::Renderer: return sDeviceRenderer.c_str();
+    case InfoString::Version: return sDeviceVersion.c_str();
+    case InfoString::ShadingLanguage: return sDeviceGlsl.c_str();
+    case InfoString::Extensions: return sDeviceExtensions.c_str();
+    default: return "";
+    }
+}
+
+//---------------------------------------------------------------------
+// Global initialization for GL
+//---------------------------------------------------------------------
+// return false if unable (or unwilling due to old drivers) to init GL
+bool LLDeviceCaps::initRenderDevice()
+{
+    LL_INFOS("RenderInit") << "Initializing the graphics device (Vulkan, no OpenGL)" << LL_ENDL;
+    if (mInited)
+    {
+        LL_ERRS("RenderInit") << "Calling init on LLDeviceCaps after already initialized!" << LL_ENDL;
+    }
+    return initFromDevice();
+}
+
+void LLDeviceCaps::getGLInfo(LLSD& info)
+{
+    if (gHeadlessClient)
+    {
+        info["GLInfo"]["GLVendor"] = HEADLESS_VENDOR_STRING;
+        info["GLInfo"]["GLRenderer"] = HEADLESS_RENDERER_STRING;
+        info["GLInfo"]["GLVersion"] = HEADLESS_VERSION_STRING;
+        return;
+    }
+    else
+    {
+        info["GLInfo"]["GLVendor"] = ll_safe_string(gl_info_string(InfoString::Vendor));
+        info["GLInfo"]["GLRenderer"] = ll_safe_string(gl_info_string(InfoString::Renderer));
+        info["GLInfo"]["GLVersion"] = ll_safe_string(gl_info_string(InfoString::Version));
+    }
+
+#if !LL_MESA_HEADLESS
+    std::string all_exts = sDeviceExtensions;
+    boost::char_separator<char> sep(" ");
+    boost::tokenizer<boost::char_separator<char> > tok(all_exts, sep);
+    for(boost::tokenizer<boost::char_separator<char> >::iterator i = tok.begin(); i != tok.end(); ++i)
+    {
+        info["GLInfo"]["GLExtensions"].append(*i);
+    }
+#endif
+}
+
+std::string LLDeviceCaps::getGLInfoString()
+{
+    std::string info_str;
+
+    if (gHeadlessClient)
+    {
+        info_str += std::string("GL_VENDOR      ") + HEADLESS_VENDOR_STRING + std::string("\n");
+        info_str += std::string("GL_RENDERER    ") + HEADLESS_RENDERER_STRING + std::string("\n");
+        info_str += std::string("GL_VERSION     ") + HEADLESS_VERSION_STRING + std::string("\n");
+    }
+    else
+    {
+        info_str += std::string("GL_VENDOR      ") + ll_safe_string(gl_info_string(InfoString::Vendor)) + std::string("\n");
+        info_str += std::string("GL_RENDERER    ") + ll_safe_string(gl_info_string(InfoString::Renderer)) + std::string("\n");
+        info_str += std::string("GL_VERSION     ") + ll_safe_string(gl_info_string(InfoString::Version)) + std::string("\n");
+    }
+
+#if !LL_MESA_HEADLESS
+    std::string all_exts= sDeviceExtensions;
+    LLStringUtil::replaceChar(all_exts, ' ', '\n');
+    info_str += std::string("GL_EXTENSIONS:\n") + all_exts + std::string("\n");
+#endif
+
+    return info_str;
+}
+
+void LLDeviceCaps::printDeviceInfoString()
+{
+    if (gHeadlessClient)
+    {
+        LL_INFOS("RenderInit") << "GL_VENDOR:     " << HEADLESS_VENDOR_STRING << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_RENDERER:   " << HEADLESS_RENDERER_STRING << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VERSION:    " << HEADLESS_VERSION_STRING << LL_ENDL;
+    }
+    else
+    {
+        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string(gl_info_string(InfoString::Vendor)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string(gl_info_string(InfoString::Renderer)) << LL_ENDL;
+        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string(gl_info_string(InfoString::Version)) << LL_ENDL;
+    }
+
+#if !LL_MESA_HEADLESS
+    std::string all_exts= sDeviceExtensions;
+    LLStringUtil::replaceChar(all_exts, ' ', '\n');
+    LL_DEBUGS("RenderInit") << "GL_EXTENSIONS:\n" << all_exts << LL_ENDL;
+#endif
+}
+
+std::string LLDeviceCaps::getRawDeviceString()
+{
+    std::string gl_string;
+    if (gHeadlessClient)
+    {
+        gl_string = HEADLESS_VENDOR_STRING + " " + HEADLESS_RENDERER_STRING;
+    }
+    else
+    {
+        gl_string = ll_safe_string(gl_info_string(InfoString::Vendor)) + " " + ll_safe_string(gl_info_string(InfoString::Renderer));
+    }
+    return gl_string;
+}
+
+void LLDeviceCaps::asLLSD(LLSD& info)
+{
+    // Currently these are duplicates of fields in "system".
+    info["gpu_vendor"] = mVendorShort;
+    info["gpu_version"] = mDriverVersionVendorString;
+    info["opengl_version"] = mApiVersionString;
+
+    info["vram"] = LLSD::Integer(mVRAM);
+
+    // OpenGL limits
+    info["max_samples"] = mMaxSamples;
+    info["num_texture_image_units"] =  mNumTextureImageUnits;
+    info["max_sample_mask_words"] = mMaxSampleMaskWords;
+    info["max_color_texture_samples"] = mMaxColorTextureSamples;
+    info["max_depth_texture_samples"] = mMaxDepthTextureSamples;
+    info["max_integer_samples"] = mMaxIntegerSamples;
+    info["max_vertex_range"] = mVertexRangeLimit;
+    info["max_index_range"] = mIndexRangeLimit;
+    info["max_texture_size"] = mTextureSizeLimit;
+
+    // Which vendor
+    info["is_ati"] = mIsAMD;  // note, do not rename is_ati to is_amd without coordinating with DW
+    info["is_nvidia"] = mIsNVIDIA;
+    info["is_intel"] = mIsIntel;
+
+    info["gl_renderer"] = mDeviceString;
+}
+
+void LLDeviceCaps::shutdownRenderDevice()
+{
+    if (mInited)
+    {
+        mInited = false;
+    }
+}
+
+#if defined(LL_VULKAN)
+#include "rkvkworker.h"
+#include "rkvkstate.h"
+#endif
+
+// <FS> LL_VK_NOGL start-up: what initRenderDevice and initExtensions work out from a GL context, worked out from the Vulkan device instead
+bool LLDeviceCaps::initFromDevice()
+{
+    LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
+
+    LLVkBridge::DeviceInfo dev;
+    if (!LLVkBridge::describeDevice(dev))
+    {
+        LL_WARNS("RenderInit") << "Vulkan could not be started: there is no OpenGL to fall back on" << LL_ENDL;
+        return false;
+    }
+    const std::string& vendor = dev.mVendor;
+    const std::string& renderer = dev.mRenderer;
+    sDeviceVendor = vendor;
+    sDeviceRenderer = renderer;
+    sDeviceVersion = dev.mVersion;
+    sDeviceGlsl = "4.60";
+    sDeviceExtensions = "GL_EXT_texture_filter_anisotropic GL_ARB_texture_cube_map_array GL_ARB_buffer_storage GL_ARB_multi_draw_indirect";
+
+    mVendorString = vendor;
+    LLStringUtil::toUpper(mVendorString);
+    mDeviceString = renderer;
+    LLStringUtil::toUpper(mDeviceString);
+
+    parse_gl_version(&mDriverVersionMajor, &mDriverVersionMinor, &mDriverVersionRelease, &mDriverVersionVendorString, &mApiVersionString);
+    mApiVersionNumber = mDriverVersionMajor + mDriverVersionMinor * .1f;
+    parse_glsl_version(mShaderLangMajor, mShaderLangMinor);
+
+    if (mVendorString.find("AMD") != std::string::npos || mVendorString.substr(0, 4) == "ATI ")
+    {
+        mVendorShort = "AMD";
+        mIsAMD = true;
+    }
+    else if (mVendorString.find("NVIDIA") != std::string::npos)
+    {
+        mVendorShort = "NVIDIA";
+        mIsNVIDIA = true;
+    }
+    else if (mVendorString.find("INTEL") != std::string::npos)
+    {
+        mVendorShort = "INTEL";
+        mIsIntel = true;
+    }
+    else
+    {
+        mVendorShort = "MISC";
+    }
+
+    // what initExtensions sets from the version and the extension list
+    mHasCubeMapArray = true;
+    mHasTransformFeedback = false;
+    mHasDebugOutput = false;
+    mHasAnisotropic = true;
+    mHasNVXGpuMemoryInfo = false;
+    mHasATIMemInfo = false;
+    mHasAMDAssociations = false;
+    // the limits come straight from the device (C6); nothing here asks a GL context any more
+    mVertexRangeLimit = dev.mMaxVertexRange;
+    mIndexRangeLimit = dev.mMaxIndexRange;
+    mTextureSizeLimit = dev.mMaxTextureSize > 0 ? dev.mMaxTextureSize : 16384;
+    mVRAM = (S32)dev.mVramMb;
+    mInited = true;
+
+    mNumTextureImageUnits = dev.mTextureImageUnits > 0 ? dev.mTextureImageUnits : 32;
+    mMaxColorTextureSamples = dev.mMaxColorTextureSamples;
+    mMaxDepthTextureSamples = dev.mMaxDepthTextureSamples;
+    mMaxIntegerSamples = dev.mMaxIntegerSamples;
+    mMaxSampleMaskWords = dev.mMaxSampleMaskWords;
+    mMaxSamples = dev.mMaxSamples;
+    mMaxVaryingVectors = dev.mMaxVaryingVectors > 0 ? dev.mMaxVaryingVectors : 31;
+    mMaxUniformBlockSize = llclamp(dev.mMaxUniformBlockSize, 16384, 65536);
+    mMaxAnisotropy = dev.mMaxAnisotropy >= 1.f ? dev.mMaxAnisotropy : 16.f;
+
+    mMemoryBandwidthGBps = dev.mMemoryBandwidthGBps;
+    mHasAccelStructure = dev.mAccelStruct;
+    mHasRayQuery = dev.mRayQuery;
+    mHasRayTracingPipeline = dev.mRayTracingPipeline;
+    mHasRayTracing = dev.mRayTracingUsable;
+    mRayTracingEnabled = dev.mRayTracingEnabled;
+    mHasNeuralRender = dev.mNeuralRender;
+
+    LL_INFOS("RenderInit") << "GL_VENDOR:     " << sDeviceVendor << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_RENDERER:   " << sDeviceRenderer << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_VERSION:    " << sDeviceVersion << " (reported to the viewer)" << LL_ENDL;
+    LL_INFOS("RenderInit") << "VRAM:          " << mVRAM << " MB" << LL_ENDL;
+    LL_INFOS("RenderInit") << "limits:        texture " << mTextureSizeLimit << ", units " << mNumTextureImageUnits << ", samples " << mMaxSamples << " (color texture " << mMaxColorTextureSamples
+        << ", depth texture " << mMaxDepthTextureSamples << ", integer " << mMaxIntegerSamples << "), sample mask words " << mMaxSampleMaskWords << ", varying vectors " << mMaxVaryingVectors
+        << ", uniform block " << mMaxUniformBlockSize << ", draw range vertices " << mVertexRangeLimit << " indices " << mIndexRangeLimit << ", anisotropy " << mMaxAnisotropy << LL_ENDL;
+    LL_INFOS("RenderInit") << "capabilities:  memory bandwidth " << mMemoryBandwidthGBps << " GB/s, ray tracing " << (mHasRayTracing ? "yes" : "no") << " (acceleration structure " << mHasAccelStructure
+        << ", ray query " << mHasRayQuery << ", pipeline " << mHasRayTracingPipeline << ", enabled " << mRayTracingEnabled << "), DLSS-NR " << mHasNeuralRender << LL_ENDL;
+
+    return true;
+}
+
+void rotate_quat(LLQuaternion& rotation)
+{
+    F32 angle_radians, x, y, z;
+    rotation.getAngleAxis(&angle_radians, &x, &y, &z);
+    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+}
+
+// <FS> native-vk: there is no OpenGL error state; these stay as the viewer's error-check points
+////////////////////////////////////////////////////////////////////////////////
+
+void parse_gl_version( S32* major, S32* minor, S32* release, std::string* vendor_specific, std::string* version_string )
+{
+    // GL_VERSION returns a null-terminated string with the format:
+    // <major>.<minor>[.<release>] [<vendor specific>]
+
+    const char* version = gl_info_string(InfoString::Version);
+    *major = 0;
+    *minor = 0;
+    *release = 0;
+    vendor_specific->assign("");
+
+    if( !version )
+    {
+        return;
+    }
+
+    version_string->assign(version);
+
+    std::string ver_copy( version );
+    S32 len = (S32)strlen( version );   /* Flawfinder: ignore */
+    S32 i = 0;
+    S32 start;
+    // Find the major version
+    start = i;
+    for( ; i < len; i++ )
+    {
+        if( '.' == version[i] )
+        {
+            break;
+        }
+    }
+    std::string major_str = ver_copy.substr(start,i-start);
+    LLStringUtil::convertToS32(major_str, *major);
+
+    if( '.' == version[i] )
+    {
+        i++;
+    }
+
+    // Find the minor version
+    start = i;
+    for( ; i < len; i++ )
+    {
+        if( ('.' == version[i]) || isspace(version[i]) )
+        {
+            break;
+        }
+    }
+    std::string minor_str = ver_copy.substr(start,i-start);
+    LLStringUtil::convertToS32(minor_str, *minor);
+
+    // Find the release number (optional)
+    if( '.' == version[i] )
+    {
+        i++;
+
+        start = i;
+        for( ; i < len; i++ )
+        {
+            if( isspace(version[i]) )
+            {
+                break;
+            }
+        }
+
+        std::string release_str = ver_copy.substr(start,i-start);
+        LLStringUtil::convertToS32(release_str, *release);
+    }
+
+    // Skip over any white space
+    while( version[i] && isspace( version[i] ) )
+    {
+        i++;
+    }
+
+    // Copy the vendor-specific string (optional)
+    if( version[i] )
+    {
+        vendor_specific->assign( version + i );
+    }
+}
+
+
+void parse_glsl_version(S32& major, S32& minor)
+{
+    // GL_SHADING_LANGUAGE_VERSION returns a null-terminated string with the format:
+    // <major>.<minor>[.<release>] [<vendor specific>]
+
+    const char* version = gl_info_string(InfoString::ShadingLanguage);
+    major = 0;
+    minor = 0;
+
+    if( !version )
+    {
+        return;
+    }
+
+    std::string ver_copy( version );
+    S32 len = (S32)strlen( version );   /* Flawfinder: ignore */
+    S32 i = 0;
+    S32 start;
+    // Find the major version
+    start = i;
+    for( ; i < len; i++ )
+    {
+        if( '.' == version[i] )
+        {
+            break;
+        }
+    }
+    std::string major_str = ver_copy.substr(start,i-start);
+    LLStringUtil::convertToS32(major_str, major);
+
+    if( '.' == version[i] )
+    {
+        i++;
+    }
+
+    // Find the minor version
+    start = i;
+    for( ; i < len; i++ )
+    {
+        if( ('.' == version[i]) || isspace(version[i]) )
+        {
+            break;
+        }
+    }
+    std::string minor_str = ver_copy.substr(start,i-start);
+    LLStringUtil::convertToS32(minor_str, minor);
+}
+
+LLRenderUserClipPlane::LLRenderUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
+{
+    mApply = apply;
+
+    if (mApply)
+    {
+        mModelview = modelview;
+        mProjection = projection;
+
+        //flip incoming LLPlane to get consistent behavior compared to frustum culling
+        setPlane(-p[0], -p[1], -p[2], -p[3]);
+    }
+}
+
+void LLRenderUserClipPlane::disable()
+{
+    if (mApply)
+    {
+        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    }
+    mApply = false;
+}
+
+void LLRenderUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
+{
+    const glm::mat4& P = mProjection;
+    const glm::mat4& M = mModelview;
+
+    glm::mat4 invtrans_MVP = glm::transpose(glm::inverse(P*M));
+    glm::vec4 oplane(a,b,c,d);
+    glm::vec4 cplane = invtrans_MVP * oplane;
+
+    cplane /= fabs(cplane[2]); // normalize such that depth is not scaled
+    cplane[3] -= 1;
+
+    if(cplane[2] < 0)
+        cplane *= -1;
+
+    glm::mat4 suffix = glm::identity<glm::mat4>();
+    suffix = glm::row(suffix, 2, cplane);
+    glm::mat4 newP = suffix * P;
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(newP));
+    gRenderObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
+}
+
+LLRenderUserClipPlane::~LLRenderUserClipPlane()
+{
+    disable();
+}
+
+LLRenderSquashToFarClip::LLRenderSquashToFarClip()
+{
+    glm::mat4 proj = get_current_projection();
+    setProjectionMatrix(proj, 0);
+}
+
+LLRenderSquashToFarClip::LLRenderSquashToFarClip(const glm::mat4& P, U32 layer)
+{
+    setProjectionMatrix(P, layer);
+}
+
+void LLRenderSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
+{
+    F32 depth = 0.99999f - 0.0001f * layer;
+
+    glm::vec4 P_row_3 = glm::row(projection, 3) * depth;
+    projection = glm::row(projection, 2, P_row_3);
+
+
+    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(projection));
+
+}
+
+LLRenderSquashToFarClip::~LLRenderSquashToFarClip()
+{
+
+    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+
+}
+
+
+
+LLRenderPresetPipelineSkyBox::LLRenderPresetPipelineSkyBox()
+: mCullFace(false)
+, mSquashClip()
+{
+}
+
+LLRenderPresetPipelineSkyBox::~LLRenderPresetPipelineSkyBox()
+{
+}
+
+LLRenderPresetPipelineDepthTestSkyBox::LLRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
+: LLRenderPresetPipelineSkyBox()
+, mDepth(depth_test, depth_write, LLRenderState::CompareOp::LessEqual)
+{
+
+}
+
+LLRenderPresetPipelineBlendSkyBox::LLRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write)
+: LLRenderPresetPipelineDepthTestSkyBox(depth_test, depth_write)
+, mBlend(true)
+{
+    gRender.setSceneBlendType(LLRender::BT_ALPHA);
+}
+
+#if LL_WINDOWS
+// Expose desired use of high-performance graphics processor to Optimus driver and to AMD driver
+// https://docs.nvidia.com/gameworks/content/technologies/desktop/optimus.htm
+extern "C"
+{
+    __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+    __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
+

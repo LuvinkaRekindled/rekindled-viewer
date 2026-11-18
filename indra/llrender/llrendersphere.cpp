@@ -33,9 +33,9 @@
 #include "llrendersphere.h"
 #include "llerror.h"
 
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llvertexbuffer.h"
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 
 LLRenderSphere gSphere;
 

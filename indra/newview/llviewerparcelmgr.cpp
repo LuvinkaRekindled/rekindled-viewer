@@ -32,7 +32,7 @@
 #include "llaudioengine.h"
 #include "indra_constants.h"
 #include "llcachename.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llnotifications.h"
 #include "llnotificationsutil.h"
 #include "llparcel.h"

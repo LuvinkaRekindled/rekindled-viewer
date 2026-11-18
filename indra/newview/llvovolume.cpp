@@ -27,10 +27,10 @@
 // A "volume" is a box, cylinder, sphere, or other primitive shape.
 
 #include "llviewerprecompiledheaders.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 #include "llvovolume.h"
-#include "llmatrixtable.h"
+#include "rkmatrixtable.h"
 
 #include <sstream>
 
@@ -65,12 +65,12 @@
 #include "llviewerobjectlist.h"
 #include "llviewerregion.h"
 #include "llviewertextureanim.h"
-#include "llvktexanim.h"
+#include "rkvktexanim.h"
 #include "llworld.h"
 #include "llselectmgr.h"
-#include "llforkjoinpool.h"
+#include "rkforkjoinpool.h"
 #include "pipeline.h"
-#include "llvkbridge.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
+#include "rkvkbridge.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -938,7 +938,7 @@ void LLVOVolume::animateTextures()
     }
 }
 
-// <FS> FSTexAnimOnGPU (llvktexanim.h). The sine's sign of texanim_matrix: found once by making a matrix with the products animateTextures used to build and seeing which closed form
+// <FS> FSTexAnimOnGPU (rkvktexanim.h). The sine's sign of texanim_matrix: found once by making a matrix with the products animateTextures used to build and seeing which closed form
 // it equals (the same test sTexAnimConvention does, on a fixed rotation)
 static F32 texanim_sine_sign()
 {
@@ -1117,7 +1117,7 @@ void LLVOVolume::animateTexturesGpu()
     }
 }
 
-// the compare mode (texanim=2): animateTextures has just made the matrices; the shader's formula (the C++ twin in llvktexanim.h) is evaluated for the same faces at the same clock
+// the compare mode (texanim=2): animateTextures has just made the matrices; the shader's formula (the C++ twin in rkvktexanim.h) is evaluated for the same faces at the same clock
 void LLVOVolume::compareTexAnimGpu()
 {
     if (mDead || !mDrawable || !mTextureAnimp || !mTexAnimMode)

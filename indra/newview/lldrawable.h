@@ -42,7 +42,7 @@
 #include "llrect.h"
 #include "llappviewer.h" // for gFrameTimeSeconds
 #include "llvieweroctree.h"
-#include "llinstancetable.h"   // <FS> C1a: the drawable's flag word, radius, scale and render type are columns of the instance table
+#include "rkinstancetable.h"   // <FS> C1a: the drawable's flag word, radius, scale and render type are columns of the instance table
 #include <unordered_set>
 
 class LLCamera;

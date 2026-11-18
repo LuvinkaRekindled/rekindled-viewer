@@ -34,7 +34,7 @@
 //#include "llviewercontrol.h"
 #include "llcriticaldamp.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 #include "lluiimage.h"
 //#include "llviewerimage.h"

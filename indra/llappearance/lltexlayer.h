@@ -28,8 +28,8 @@
 #define LL_LLTEXLAYER_H
 
 #include <deque>
-#include "llshaderprogram.h"
-#include "llbasetexture.h"
+#include "rkshaderprogram.h"
+#include "rkbasetexture.h"
 #include "llavatarappearancedefines.h"
 #include "lltexlayerparams.h"
 

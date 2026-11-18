@@ -29,7 +29,7 @@
 #include "linden_common.h"
 #include "indra_constants.h" // for indra keyboard codes
 
-#include "llpluginmediaformat.h"      // the numbers of the texture format messages
+#include "rkpluginmediaformat.h"      // the numbers of the texture format messages
 #include "llsdutil.h"
 #include "llplugininstance.h"
 #include "llpluginmessage.h"

@@ -67,7 +67,7 @@
 #include "llviewernetwork.h"    // <FS:CR> Aurora Sim
 #endif
 
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 
 // # Constants
 static constexpr F32 MAP_DEFAULT_SCALE = 128.f;

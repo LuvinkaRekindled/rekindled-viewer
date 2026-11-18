@@ -35,7 +35,7 @@
 #include "lldir.h"
 
 #include "llsys.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 
 #include "llappviewer.h"
 #include "llbufferstream.h"

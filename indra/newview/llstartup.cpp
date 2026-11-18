@@ -26,7 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 
-#include "llvkbridge.h"       // <FS> J1: the start-up waits for the GPU pipelines (LLVkBridge::pipelineBuilds)
+#include "rkvkbridge.h"       // <FS> J1: the start-up waits for the GPU pipelines (LLVkBridge::pipelineBuilds)
 
 #include "llappviewer.h"
 #include "llstartup.h"

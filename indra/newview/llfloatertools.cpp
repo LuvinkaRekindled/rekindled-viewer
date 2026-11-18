@@ -30,7 +30,7 @@
 
 #include "llfontgl.h"
 #include "llcoord.h"
-//#include "lldevicecaps.h"
+//#include "rkdevicecaps.h"
 
 #include "llagent.h"
 #include "llagentcamera.h"

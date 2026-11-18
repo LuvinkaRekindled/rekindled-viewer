@@ -26,7 +26,7 @@
 
 #include "linden_common.h"
 #include "llshadermgr.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llrender.h"
 #include "llfile.h"
 #include "lldir.h"

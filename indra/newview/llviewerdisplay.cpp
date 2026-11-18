@@ -26,7 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include <array>
-#include "llasyncpool.h"
+#include "rkasyncpool.h"
 #include "lltracethreadrecorder.h"
 #include "lldrawpoolmaterials.h"
 #include <chrono>
@@ -35,8 +35,8 @@
 
 #include "llviewerdisplay.h"
 #include "lltexlayer.h"
-#include "llgpuzonetimer.h"
-#include "llvkbridge.h"
+#include "rkgpuzonetimer.h"
+#include "rkvkbridge.h"
 
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -56,8 +56,8 @@
 #include "llfeaturemanager.h"
 #include "llfloatertools.h"
 #include "llfocusmgr.h"
-#include "lldevicecaps.h"
-#include "llrenderheaders.h"
+#include "rkdevicecaps.h"
+#include "rkrenderheaders.h"
 #include "llgltfmateriallist.h"
 #include "llhudmanager.h"
 #include "llimagepng.h"

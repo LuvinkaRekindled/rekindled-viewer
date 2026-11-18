@@ -27,7 +27,7 @@
 #ifndef LL_PIPELINE_H
 #define LL_PIPELINE_H
 
-#include "llasyncpool.h"
+#include "rkasyncpool.h"
 #include "llcamera.h"
 #include "llerror.h"
 #include "lldrawpool.h"
@@ -36,7 +36,7 @@
 #include "llpointer.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolmaterials.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "lldrawable.h"
 #include "llrendertarget.h"
 #include "llreflectionmapmanager.h"

@@ -44,7 +44,7 @@
 #include "llvowater.h"
 #include "llworld.h"
 #include "pipeline.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llviewershadermgr.h"
 #include "llenvironment.h"
 #include "llsettingssky.h"

@@ -27,7 +27,7 @@
 #ifndef LL_LLFACE_H
 #define LL_LLFACE_H
 
-#include "llfacetable.h"
+#include "rkfacetable.h"
 #include "llstrider.h"
 #include "llrender.h"
 #include "v2math.h"
@@ -85,7 +85,7 @@ public:
     LLFace(LLDrawable* drawablep, LLViewerObject* objp)
     {
         LL_PROFILE_ZONE_SCOPED;
-        mRowId = LLFaceRows::acquire(this);     // <FS> C3.1: a zeroed row: the geometry slice, the state, the colour ... (llfacetable.h)
+        mRowId = LLFaceRows::acquire(this);     // <FS> C3.1: a zeroed row: the geometry slice, the state, the colour ... (rkfacetable.h)
         if (!mRowId)
         {
             LL_ERRS() << "the face table is full (" << LLFaceRows::kCapacity << " faces)" << LL_ENDL;
@@ -284,7 +284,7 @@ public:
     F32 getBoundingSphereRadius() const { return row().boundingSphereRadius; }
 
 private:
-    // <FS> C3.1: this face's row in the face table (llfacetable.h): the geometry slice (geomCount, geomIndex, indicesCount, indicesIndex), textureIndex, referenceIndex, state, faceColor, teOffset, boundingSphereRadius
+    // <FS> C3.1: this face's row in the face table (rkfacetable.h): the geometry slice (geomCount, geomIndex, indicesCount, indicesIndex), textureIndex, referenceIndex, state, faceColor, teOffset, boundingSphereRadius
     U32 mRowId = 0;
 
     LLPointer<LLVertexBuffer> mVertexBuffer;

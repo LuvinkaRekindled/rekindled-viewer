@@ -28,7 +28,7 @@
 
 #include "llspinctrl.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 #include "lluiconstants.h"
 

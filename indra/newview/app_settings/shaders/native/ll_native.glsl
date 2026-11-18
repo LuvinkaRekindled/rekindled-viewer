@@ -1,4 +1,4 @@
-// ll_native.glsl: the prelude of every native program (see llrender/llvknative.h for the whole contract).
+// ll_native.glsl: the prelude of every native program (see llrender/rkvknative.h for the whole contract).
 // Vulkan GLSL 460, explicit layouts, no GL-era names. The loader puts `#version 460`, the include extension, the stage macro (LL_VERTEX_STAGE or LL_FRAGMENT_STAGE)
 // and the manifest's defines in front of this file.
 

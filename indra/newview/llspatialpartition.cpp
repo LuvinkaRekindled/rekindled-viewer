@@ -25,10 +25,10 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llcullshadow.h"
-#include "lldiag.h"
-#include "llgpuzonetimer.h"
-#include "llasyncpool.h"
+#include "rkcullshadow.h"
+#include "rkdiag.h"
+#include "rkgpuzonetimer.h"
+#include "rkasyncpool.h"
 
 #include "llspatialpartition.h"
 #include "llviewerpartsource.h"
@@ -49,7 +49,7 @@
 #include "llviewerregion.h"
 #include "llcamera.h"
 #include "pipeline.h"
-#include "llattcensus.h"
+#include "rkattcensus.h"
 #include "llmeshrepository.h"
 #include "llrender.h"
 #include "lldrawpool.h"

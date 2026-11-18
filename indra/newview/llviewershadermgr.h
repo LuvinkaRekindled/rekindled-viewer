@@ -161,7 +161,7 @@ extern LLShaderProgram         gDeferredSunProbeProgram;
 extern LLShaderProgram         gHazeProgram;
 extern LLShaderProgram         gWaterHazePullProgram;       // <FS> the table form of the water patches of the haze
 extern LLShaderProgram         gDeferredBlurLightProgram;
-extern LLShaderProgram         gNativeSunHalfProgram;           // <FS> native only (llvknative.h): the sun lightmap at half resolution
+extern LLShaderProgram         gNativeSunHalfProgram;           // <FS> native only (rkvknative.h): the sun lightmap at half resolution
 extern LLShaderProgram         gNativeLightUpsampleProgram;     // <FS> native only: the depth aware upsample of the half resolution lightmap
 extern LLShaderProgram         gDeferredAvatarProgram;
 extern LLShaderProgram         gDeferredSoftenProgram;

@@ -32,7 +32,7 @@
 // Library includes
 #include "llfloaterreg.h"
 #include "llfontgl.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 
 // Viewer includes
 #include "llagentcamera.h"

@@ -27,8 +27,8 @@
 #ifndef LL_SHADERMGR_H
 #define LL_SHADERMGR_H
 
-#include "lldevicecaps.h"
-#include "llshaderprogram.h"
+#include "rkdevicecaps.h"
+#include "rkshaderprogram.h"
 
 class LLShaderMgr
 {

@@ -30,8 +30,8 @@
 #include "lldrawpoolmaterials.h"
 #include "llviewershadermgr.h"
 #include "pipeline.h"
-#include "llrendercommonfunc.h"
-#include "llgpuzonetimer.h"
+#include "rkrendercommonfunc.h"
+#include "rkgpuzonetimer.h"
 #include "llvoavatar.h"
 
 LLDrawPoolMaterials::LLDrawPoolMaterials()

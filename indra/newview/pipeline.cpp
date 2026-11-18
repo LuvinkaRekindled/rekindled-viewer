@@ -30,9 +30,9 @@
 #include <mutex>
 #include <unordered_set>
 
-#include "llvksubstream.h"
+#include "rkvksubstream.h"
 #include "pipeline.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 // library includes
 #include "llimagepng.h"
@@ -49,7 +49,7 @@
 #include "material_codes.h"
 #include "v3color.h"
 #include "llui.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llrender.h"
 #include "llstartup.h"
 #include "llwindow.h"   // swapBuffers()
@@ -62,7 +62,7 @@
 #include "lltexturefetch.h"
 #include "llimageworker.h"
 #include "lldrawable.h"
-#include "llattcensus.h"
+#include "rkattcensus.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolavatar.h"
 #include "lldrawpoolbump.h"
@@ -85,10 +85,10 @@
 #include "lltool.h"
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "lldrawpoolwlsky.h"
-#include "llalphatransient.h"
-#include "llvkasync.h"
+#include "rkalphatransient.h"
+#include "rkvkasync.h"
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"
 #include "llviewerobject.h"
@@ -98,7 +98,7 @@
 #include "llviewerwindow.h" // For getSpinAxis
 #include "llvoavatarself.h"
 #include "llcontrolavatar.h"
-#include "llvktexanim.h"
+#include "rkvktexanim.h"
 #include "llvocache.h"
 #include "llvosky.h"
 #include "llvowlsky.h"
@@ -141,13 +141,13 @@
 #include "llvisualeffect.h"
 #include "rlvactions.h"
 #include "rlvlocks.h"
-#include "llforkjoinpool.h" // <FS> parallel shadow cascade preparation
-#include "llphasecheck.h"   // <FS> GPU-LIFETIMES.md step 4: thread phase checks of the shared writers
+#include "rkforkjoinpool.h" // <FS> parallel shadow cascade preparation
+#include "rkphasecheck.h"   // <FS> GPU-LIFETIMES.md step 4: thread phase checks of the shared writers
 #include <chrono>
 // [/RLVa:KB]
 
 #include "llenvironment.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 #include "llenvironment.h"
 #include "llsettingsvo.h"
@@ -155,7 +155,7 @@
 #include "SMAAAreaTex.h"
 #include "SMAASearchTex.h"
 #include "llerror.h"
-#include "llcullshadow.h"
+#include "rkcullshadow.h"
 #include <deque>
 #include <chrono>
 #include <mutex>
@@ -173,7 +173,7 @@
 #endif
 #define A_CPU 1
 #include "ffxcas.h" // AMD FidelityFX CAS: the CPU side (setup of the constants); the GPU side is native/cas.frag
-#include "llitemcensus.h"
+#include "rkitemcensus.h"
 
 extern bool gSnapshot;
 bool gShiftFrame = false;
@@ -4127,7 +4127,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     }
 }
 
-extern std::string fs_describe_address(const void* pc);       // (llgpuzonetimer.cpp)
+extern std::string fs_describe_address(const void* pc);       // (rkgpuzonetimer.cpp)
 
 // <FS> LL_VK_CHURNCENSUS=1 (doc/vulkan/PLAN-hitchless-loading.md, Sirens Beach): who keeps drawables rebuilding. Counts, over 600 frames, the asks of markRebuild (by the rebuild flags: V volume,
 // T texture coordinates, C colour, P positions, and by what the object is: avatar, attachment, animated object, flexi, mesh, sculpt, prim, other) and by caller; the asks of markMoved by class and
@@ -8369,7 +8369,7 @@ static U32 rt_matrix_id(const LLMatrix4* m);
 // Rows not named for a long time are released. Texture animation matrices are ignored (a scrolling texture would make a material per frame): legacy draws use the identity transform.
 namespace
 {
-constexpr U32 kRtMatCap = 32768;       // (J1 K5b: the retained entries pin their rows: about 14,600 in London City; the same capacity as the worker's table, llvkrt.cpp kMatCap)
+constexpr U32 kRtMatCap = 32768;       // (J1 K5b: the retained entries pin their rows: about 14,600 in London City; the same capacity as the worker's table, rkvkrt.cpp kMatCap)
 constexpr U64 kRtMatIdleFrames = 900;
 struct RtMatRow
 {
@@ -9359,7 +9359,7 @@ static const GeoType kGeoTypes[] =
     { LLRenderPass::PASS_ALPHA_INVISIBLE, -1 },     // J1 K6 B1: the alpha draws of an invisible texture, positions only (nothing draws them but the Highlight Transparent view, with the colour program's pull twin, as PASS_INVISIBLE)
 };
 static const size_t kGeoTypeCount = sizeof(kGeoTypes) / sizeof(kGeoTypes[0]);
-static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (llvkbridge.h)");
+static_assert(kGeoTypeCount == LLVkBridge::kGeoPassTypes, "the viewer's list of table pass types and the worker's count must agree (rkvkbridge.h)");
 // J1 K3d: the rigged variants of the alpha masked pass types whose shadow casters the cascades' alpha builder can make from a fragment item (not the glTF ones, not blended alpha)
 static bool shadow_rigalpha_type(U32 rigged_type)
 {
@@ -13615,7 +13615,7 @@ static bool alpha_tex_ready(LLViewerTexture* tex)
     return LLVkBridge::rtShadowMode() != 1 || !LLVkBridge::rtLoadingGates() || rt_texture_ready(tex);
 }
 
-// S2 alpha, once a frame: texture identity (llimagetex.h getTexId / takeNameEvents). The registry of the textures resident alpha entries use is kept by EVENTS: a texture object reports when its GL
+// S2 alpha, once a frame: texture identity (rkimagetex.h getTexId / takeNameEvents). The registry of the textures resident alpha entries use is kept by EVENTS: a texture object reports when its GL
 // name changes (made, deleted, another discard level), so only those textures are looked at again (name and readiness), and the entries the worker holds with other names or another readiness are
 // told as updates (kind 19). Nothing asks every texture every frame. The textures are kept active (setActive: what the builder's finish step did for the visible draws) in a slow round robin, and
 // one that has no GL texture gets it made (prepareFast) at most a few a frame: the old path made them for the casters it named, the visible ones, at the pace the pass drew them.
@@ -18947,7 +18947,7 @@ void LLPipeline::resetVertexBuffers(LLDrawable* drawable)
 // transform in its left-handed coordinates; as textureUtilV.glsl texture_transform. Made at the moment of the call (a GPU texture animation holds parameters: evaluated now)
 static void rt_uv_transform(const LLMatrix4* anim_in, const LLGLTFMaterial::TextureTransform* khr, F32* out)
 {
-    // <FS> with FSTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, llvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
+    // <FS> with FSTexAnimOnGPU a face's texture matrix holds the animation's PARAMETERS (a 0 in float 15, rkvktexanim.h), not a matrix: the raster passes make the matrix in the vertex shader,
     // and this transform read the parameters as a matrix (the rate and the timer origin as scales and offsets), so the alpha test of an animated leaf looked up a texture at coordinates that
     // depended on when the animation started. The matrix the parameters give at this moment is used (LL_VK_RT_TEXANIM_FIX=0: the old reading, to compare)
     LLMatrix4 baked;
@@ -25158,7 +25158,7 @@ static U32 rt_matrix_id(const LLMatrix4* m)
 // <FS> ray query shadows: which shadow pass is rendering (0-3 sun cascades, 4-5 spot / projector shadows, 6 anything else)
 // <FS> Ray tracing: in the modes that trace the sun shadow with rays only (1, and the debug views 4 and 5) the sun cascades' shadow maps are never read. Their passes still run on the
 // CPU (the cull and the caster lists are what the ray scene is made from) but draw nothing: note-only records, no target, no old path draws. LL_VK_RT_KEEP_CASCADES=1 draws them anyway.
-// Every ray tracing mode is such a mode since 2026-11-12: the split screen and the disagreement map (2, 3: the cascades drawn next to the rays) are retired (llvkrt.cpp shadowMode)
+// Every ray tracing mode is such a mode since 2026-11-12: the split screen and the disagreement map (2, 3: the cascades drawn next to the rays) are retired (rkvkrt.cpp shadowMode)
 static bool rt_sun_cascades_unused()
 {
     return LLVkBridge::rtShadowMode() != 0;       // (LL_VK_RT_KEEP_CASCADES is gone)

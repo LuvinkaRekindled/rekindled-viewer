@@ -128,7 +128,7 @@
 #include "lldrawpoolbump.h"
 
 /////////////////// From llface.cpp
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llviewerimage.h"
 #include "llsky.h"
 #include "llvosky.h"

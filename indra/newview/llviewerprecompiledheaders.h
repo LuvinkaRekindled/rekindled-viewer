@@ -114,7 +114,7 @@
 #include "llcorehttputil.h"
 
 // Library includes from llrender project
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 
 // Library includes from llrender project

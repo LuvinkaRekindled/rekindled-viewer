@@ -37,7 +37,7 @@
 #include "lluiimage.h"
 #include "llwindow.h"
 
-#include "llbasetexture.h"
+#include "rkbasetexture.h"
 
 static LLDefaultChildRegistry::Register<LLIconCtrl> r("icon");
 

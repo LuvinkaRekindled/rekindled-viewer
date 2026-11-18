@@ -111,8 +111,8 @@ set(viewer_SOURCE_FILES
     fsconsoleutils.cpp
     fscontactsfriendsmenu.cpp
     fsdata.cpp
-    fsdecodedtexturecache.cpp
-    fstexturearrivaltrace.cpp
+    rkdecodedtexturecache.cpp
+    rktexturearrivaltrace.cpp
     fsdroptarget.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
@@ -720,7 +720,7 @@ set(viewer_SOURCE_FILES
     llsidepaneltaskinfo.cpp
     llsidetraypanelcontainer.cpp
     llskinningutil.cpp
-    llgpuzonetimer.cpp
+    rkgpuzonetimer.cpp
     llsky.cpp
     #llslurl.cpp #<FS:AW optional opensim support>
     llsnapshotlivepreview.cpp
@@ -848,7 +848,7 @@ set(viewer_SOURCE_FILES
     llviewertexture.cpp
     llviewertextureanim.cpp
     llviewertexturelist.cpp
-    llviewertexturerecs.cpp
+    rkviewertexturerecs.cpp
     llviewerthrottle.cpp
     llviewerwearable.cpp
     llviewerwindow.cpp
@@ -983,8 +983,8 @@ set(viewer_HEADER_FILES
     fsconsoleutils.h
     fscontactsfriendsmenu.h
     fsdata.h
-    fsdecodedtexturecache.h
-    fstexturearrivaltrace.h
+    rkdecodedtexturecache.h
+    rktexturearrivaltrace.h
     fsdroptarget.h
     fsexportperms.h
     fsfloateraddtocontactset.h
@@ -1585,7 +1585,7 @@ set(viewer_HEADER_FILES
     llsidepaneltaskinfo.h
     llsidetraypanelcontainer.h
     llskinningutil.h
-    llgpuzonetimer.h
+    rkgpuzonetimer.h
     llsky.h
     llslurl.h
     llsnapshotlivepreview.h
@@ -1717,7 +1717,7 @@ set(viewer_HEADER_FILES
     llviewertexture.h
     llviewertextureanim.h
     llviewertexturelist.h
-    llviewertexturerecs.h
+    rkviewertexturerecs.h
     llviewerthrottle.h
     llviewerwearable.h
     llviewerwindow.h

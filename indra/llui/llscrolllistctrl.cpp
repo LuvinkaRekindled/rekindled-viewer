@@ -39,7 +39,7 @@
 #include "llcheckboxctrl.h"
 #include "llclipboard.h"
 #include "llfocusmgr.h"
-#include "lldevicecaps.h"               // LLRenderPresetUIDefault()
+#include "rkdevicecaps.h"               // LLRenderPresetUIDefault()
 #include "lllocalcliprect.h"
 //#include "llrender.h"
 #include "llresmgr.h"

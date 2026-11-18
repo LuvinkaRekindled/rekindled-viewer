@@ -25,14 +25,14 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 #include <chrono>
 
 #include "llviewerobjectlist.h"
 #include "llcontrolavatar.h"   // <FS> stage C5d
 #include "lldrawpool.h"      // <FS> P1 step 2: the palette list of the coming frame
-#include "llavatartable.h"
-#include "llforkjoinpool.h"
+#include "rkavatartable.h"
+#include "rkforkjoinpool.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -94,7 +94,7 @@
 #include "object_flags.h"
 
 #include "llappviewer.h"
-#include "llattcensus.h"
+#include "rkattcensus.h"
 #include "llfloaterperms.h"
 #include "llvocache.h"
 #include "llcorehttputil.h"
@@ -110,8 +110,8 @@
 
 #include "fsareasearch.h" // <FS:Cron> Added to provide the ability to update the impact costs in area search. </FS:Cron>
 #include "llavataractions.h"
-#include "llitemcensus.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkitemcensus.h"
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern F32 gMinObjectDistance;
 extern bool gAnimateTextures;
