@@ -34,14 +34,6 @@
 #include "llsdserialize.h"
 #include "hbxxh.h"
 
-// H6: the pull shaders have exactly the text they had before the texture need was measured (llFbTex is the plain table sample, no llFbNote) unless LL_VK_TEXFB is set to something but 0
-// (the measurement costs about a quarter of the frame rate: stores in the shaders cost them the early depth test; see doc/vulkan/PLAN-texture-handles.md section 17)
-static bool fbPlainShaders()
-{
-    static const bool plain = []{ const char* e = getenv("LL_VK_TEXFB"); return !e || atoi(e) == 0 || getenv("LL_VK_FB_OFF"); }();
-    return plain;
-}
-
 #if LL_DARWIN
 #include "OpenGL/OpenGL.h"
 #endif

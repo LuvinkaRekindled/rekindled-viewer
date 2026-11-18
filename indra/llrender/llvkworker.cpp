@@ -2317,8 +2317,6 @@ static U64 sPacketTextureGeneration = 0;     // <FS> bumped when a texture entry
 
 namespace { void pin_lost(Tex& t, U32 name); }
 
-static std::vector<U32> sHandleName;       // H6: the name of the texture of each handle of the 2D table (0: none), to give the readings of the draws to the texture
-
 void destroy_textures(S32 n, const U32* textures)
 {
     for (S32 i = 0; i < n; ++i)
@@ -2330,13 +2328,8 @@ void destroy_textures(S32 n, const U32* textures)
             if (it->second.mHandle)
             {
                 Renderer::instance().handleRelease(0, it->second.mHandle);      // (rows that still name it see the placeholder; the number comes back when the frames that may read it have finished)
-                if (it->second.mHandle < sHandleName.size())
-                {
-                    sHandleName[it->second.mHandle] = 0;
-                }
                 it->second.mHandle = 0;
             }
-            LLVkBridge::textureNeedForget(textures[i]);
             destroy_tex_images(it->second);
             tex_forget(it->first);
             sGL.mTextures.erase(it);
@@ -3607,11 +3600,6 @@ static U32 texture_handle(Renderer& r, Tex& t, bool force)
         {
             return 0;               // (the table is full: the texture shows the placeholder, counted as refused)
         }
-        if (sHandleName.size() <= t.mHandle)
-        {
-            sHandleName.resize(t.mHandle + 1024, 0);
-        }
-        sHandleName[t.mHandle] = t.mName;
     }
     if (!shows)
     {
@@ -10979,226 +10967,6 @@ bool hiz_pyramid(U32 w, U32 h)
 }
 
 // kind 34
-// <FS> idea 3 (doc/vulkan/PLAN-velocity-fold-and-skin-once.md): kind 42, once a frame after the world pass: the smallest area of texture coordinates one pixel covers, per texture handle, from the world pass's
-// sixth attachment (the G-buffer shaders write the handle and log2 of the area, lib/texneed.glsl) into the renderer's need buffer (H6: cleared at the frame's start, copied out at its end, harvested a few frames later).
-// A block of 4x4 pixels is reduced in registers first (few distinct handles in it), then one atomicMin a distinct handle. Only with LL_VK_TEXFB set (the attachment exists then).
-struct TexNeedState
-{
-    bool mTried = false, mReady = false;
-    VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
-    VkPipelineLayout mLayout = VK_NULL_HANDLE;
-    VkPipeline mPipe = VK_NULL_HANDLE;
-    VkSampler mSampler = VK_NULL_HANDLE;
-    U64 mRecords = 0, mDispatches = 0, mNoTarget = 0, mNoPipeline = 0, mWrongFormat = 0;
-};
-TexNeedState sTexNeed;
-
-const char* kTexNeedShader = R"GLSL(#version 450
-layout(local_size_x = 8, local_size_y = 8) in;
-layout(set = 0, binding = 0) uniform sampler2D uNeed;
-layout(set = 0, binding = 1, std430) buffer Need { uint need[]; };
-layout(push_constant) uniform Push { uvec2 size; } pc;
-void main()
-{
-    const uvec2 block = gl_GlobalInvocationID.xy * 4u;
-    if (block.x >= pc.size.x || block.y >= pc.size.y)
-    {
-        return;
-    }
-    uint handles[4];
-    float areas[4];
-    uint count = 0u;
-    for (uint y = 0u; y < 4u; ++y)
-    {
-        for (uint x = 0u; x < 4u; ++x)
-        {
-            const uvec2 p = block + uvec2(x, y);
-            if (p.x >= pc.size.x || p.y >= pc.size.y)
-            {
-                continue;
-            }
-            const vec2 v = texelFetch(uNeed, ivec2(p), 0).rg;
-            const uint handle = uint(v.x * 65535.0 + 0.5);
-            if (handle == 0u)
-            {
-                continue;
-            }
-            const float area = exp2(v.y * 40.0 - 40.0);
-            bool found = false;
-            for (uint k = 0u; k < count; ++k)
-            {
-                if (handles[k] == handle)
-                {
-                    areas[k] = min(areas[k], area);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                if (count < 4u)
-                {
-                    handles[count] = handle;
-                    areas[count] = area;
-                    ++count;
-                }
-                else
-                {
-                    atomicMin(need[handle], floatBitsToUint(area));
-                }
-            }
-        }
-    }
-    for (uint k = 0u; k < count; ++k)
-    {
-        atomicMin(need[handles[k]], floatBitsToUint(areas[k]));
-    }
-}
-)GLSL";
-
-bool texneed_init()
-{
-    TexNeedState& s = sTexNeed;
-    if (s.mReady)
-    {
-        return true;
-    }
-    if (s.mTried)
-    {
-        return false;
-    }
-    s.mTried = true;
-    Context& ctx = Context::instance();
-    VkDevice dev = ctx.getDevice();
-    VkShaderModule module = hiz_compile(kTexNeedShader, "texture need");
-    if (module == VK_NULL_HANDLE)
-    {
-        return false;
-    }
-    VkDescriptorSetLayoutBinding b[2] = {};
-    b[0].binding = 0;
-    b[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    b[0].descriptorCount = 1;
-    b[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    b[1].binding = 1;
-    b[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    b[1].descriptorCount = 1;
-    b[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    VkDescriptorSetLayoutCreateInfo sl = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    sl.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    sl.bindingCount = 2;
-    sl.pBindings = b;
-    if (vkCreateDescriptorSetLayout(dev, &sl, nullptr, &s.mSetLayout) != VK_SUCCESS)
-    {
-        return false;
-    }
-    VkPushConstantRange pc = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 8 };
-    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-    li.setLayoutCount = 1;
-    li.pSetLayouts = &s.mSetLayout;
-    li.pushConstantRangeCount = 1;
-    li.pPushConstantRanges = &pc;
-    if (vkCreatePipelineLayout(dev, &li, nullptr, &s.mLayout) != VK_SUCCESS)
-    {
-        return false;
-    }
-    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
-    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
-    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    pi.stage.pName = "main";
-    pi.stage.module = module;
-    pi.layout = s.mLayout;
-    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &s.mPipe) != VK_SUCCESS)
-    {
-        return false;
-    }
-    VkSamplerCreateInfo sci = { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-    sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
-    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    if (vkCreateSampler(dev, &sci, nullptr, &s.mSampler) != VK_SUCCESS)
-    {
-        return false;
-    }
-    s.mReady = true;
-    LL_INFOS("VkTexNeed") << "texture need reduce pass ready (compute, 4x4 pixels a thread)" << LL_ENDL;
-    return true;
-}
-
-void on_texneed(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
-{
-    (void)h;
-    (void)blob;
-    TexNeedState& s = sTexNeed;
-    ++s.mRecords;
-    Renderer& r = Renderer::instance();
-    Context& ctx = Context::instance();
-    if (!r.feedbackWanted() || !texneed_init())
-    {
-        ++s.mNoPipeline;
-        return;
-    }
-    Image* att = r.currentColorTarget(5);
-    if (!att || !att->valid())
-    {
-        ++s.mNoTarget;
-        return;
-    }
-    if (att->mFormat != VK_FORMAT_R16G16_UNORM)
-    {
-        ++s.mWrongFormat;
-        return;
-    }
-    Image* root = att->mOwner ? att->mOwner : att;
-    const U32 w = att->mExtent.width, hgt = att->mExtent.height;
-    VkImageView view = att->mView;
-    VkBuffer need = r.feedbackBufferHandle();
-    const VkDeviceSize need_bytes = r.feedbackBufferBytes();
-    const VkPipeline pipe = s.mPipe;
-    const VkPipelineLayout layout = s.mLayout;
-    const VkSampler sampler = s.mSampler;
-    U64 dispatched = 0;
-    const bool recorded = r.recordExternal({ { root, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } }, [&](VkCommandBuffer cmd) {
-        if (LLVkBridge::gPhaseTiming)
-        {
-            ctx.gpuStamp(Context::stampTag("texture need reduce"));
-        }
-        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-        mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        mb.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
-        mb.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
-        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        di.memoryBarrierCount = 1;
-        di.pMemoryBarriers = &mb;
-        vkCmdPipelineBarrier2(cmd, &di);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
-        VkDescriptorImageInfo image_info = { sampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkDescriptorBufferInfo buffer_info = { need, 0, need_bytes };
-        VkWriteDescriptorSet wr[2] = {};
-        wr[0].sType = wr[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        wr[0].dstBinding = 0;
-        wr[0].descriptorCount = 1;
-        wr[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        wr[0].pImageInfo = &image_info;
-        wr[1].dstBinding = 1;
-        wr[1].descriptorCount = 1;
-        wr[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        wr[1].pBufferInfo = &buffer_info;
-        vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 2, wr);
-        const U32 size[2] = { w, hgt };
-        vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(size), size);
-        const U32 blocks_x = (w + 3) / 4, blocks_y = (hgt + 3) / 4;
-        vkCmdDispatch(cmd, (blocks_x + 7) / 8, (blocks_y + 7) / 8, 1);
-        ++dispatched;
-    });
-    s.mDispatches += recorded ? dispatched : 0;
-    if (s.mRecords % 600 == 1)
-    {
-        LL_INFOS("VkTexNeed") << "texture need reduce: " << s.mRecords << " records, " << s.mDispatches << " dispatches, no target " << s.mNoTarget << ", no pipeline or not wanted " << s.mNoPipeline << ", wrong format " << s.mWrongFormat << LL_ENDL;
-    }
-}
-
 void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     HizState& s = sHiz;
@@ -12896,11 +12664,6 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         on_hiz_boxes(h, blob);       // <FS> S7 H1
         return;
     }
-    if (h.mKind == 42)
-    {
-        on_texneed(h, blob);         // <FS> idea 3: the texture need reduce pass
-        return;
-    }
     if (h.mKind == 35)
     {
         on_cull_rows(h, blob);       // <FS> S7 C1
@@ -13396,23 +13159,6 @@ void after_frame()
         drain_query_results();
     }
     hiz_poll();     // <FS> S7 H1: publish the Hi-Z results of the frames the GPU has finished
-    {
-        // <FS> H6: what the draws measured of the textures' need in the frames the GPU has finished, given to the textures by id
-        static std::vector<Renderer::FbBatch> batches;
-        Renderer::instance().feedbackTake(batches);
-        for (const Renderer::FbBatch& b : batches)
-        {
-            for (const Renderer::FbReading& r : b.mReadings)
-            {
-                const U32 name = r.mHandle < sHandleName.size() ? sHandleName[r.mHandle] : 0;
-                if (name)
-                {
-                    LLVkBridge::textureNeedReading(name, r.mArea);
-                }
-            }
-        }
-        batches.clear();
-    }
     handles_refresh();      // the handles of the textures that changed in this frame show their new image from the next frame on
     {
         // <FS> the video memory and what the textures take of it, every 1800 frames (about 30 seconds): after a teleport this shows where the memory went and whether a texture was refused

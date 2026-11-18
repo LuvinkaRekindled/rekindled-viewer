@@ -3653,9 +3653,9 @@ bool LLViewerLODTexture::scaleDown()
     // reach for one frame (a group out of the walk, a face not updated yet, an object not rezzed) is created at full size and shrunk in the same frame (LLViewerTextureList::updateImages: "Texture will be downscaled
     // immediately after loading"), and created again at full size when a face asks for it (lap tr2: 5 percent of the creations repeat the level and size of the last one, the GPU image reading a level of 5 a median 68 ms
     // after the creation at 0). Each step is a new GPU image under the handle. A texture is now shrunk when memory is short (the budget logic's bias is up: the stock reason for shrinking) or when it has wanted to be
-    // smaller without a break for LL_VK_SHRINK_HOLD seconds (30; 0 = as before); an expired texture (the eviction of LL_VK_TEX_EXPIRY) is released at once.
+    // smaller without a break for LL_VK_SHRINK_HOLD seconds (30; 0 = as before).
     static const F32 hold = getenv("LL_VK_SHRINK_HOLD") ? (F32)atof(getenv("LL_VK_SHRINK_HOLD")) : 30.f;
-    if (hold > 0.f && !mExpired && sDesiredDiscardBias <= 1.05f)
+    if (hold > 0.f && sDesiredDiscardBias <= 1.05f)
     {
         const F32 now = llmax(sCurrentTime, 0.001f);
         if (mShrinkWantedSince <= 0.f)

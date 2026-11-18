@@ -413,20 +413,9 @@ public:
     struct ShadowStaticBuild;
     struct ShadowSkinBuild;
     struct ShadowAlphaBuild;
-    // <FS> LL_VK_SHADOW_HULL: the part of the world that can put a shadow on the camera's view slice of one cascade: the slice (a truncated pyramid) pushed toward the sun without end.
-    // A convex solid: the slice's faces that face away from the sun, and one plane through each silhouette edge along the sun direction. A group outside any plane cannot shadow the slice.
-    struct ShadowSliceHull
-    {
-        bool mValid = false;
-        S32 mCount = 0;
-        F32 mPlane[24][4] = {};                 // outward normal and offset: a point p is inside a plane when n.p <= offset
-        LLVector3 mCorners[8] = {};             // the slice's corners (near: left-up, right-up, right-down, left-down, then the far four): the verify rays start inside it
-        LLVector3 mToSun;
-    };
     struct ShadowCascadePrep
     {
         S32 mIndex = 0;                         // cascade number
-        ShadowSliceHull mHull;                  // LL_VK_SHADOW_HULL
         LLCamera mCamera;                       // the cascade's shadow camera, frustum planes set
         LLCullResult* mResult = nullptr;
         glm::mat4 mView;                        // the cascade's matrices, and the ones it had the frame before
@@ -450,7 +439,6 @@ public:
         LLAsyncPool::JobPtr mAlphaJob[2];
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
-    void shadowPrepHull(ShadowCascadePrep& prep);      // <FS> the second half of shadowPrepCull: the groups the slice cannot see a shadow from (LL_VK_SHADOW_HULL)
     // <FS> LL_VK_SC_SPLIT: the cull of all the pending cascades as pool jobs by partition and subtree (what a serial shadowPrepCull per cascade finds, in the same order)
     void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class LLForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
