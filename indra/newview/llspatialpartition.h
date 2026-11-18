@@ -479,7 +479,6 @@ public:
     struct LLSceneFragment* mSceneFragment = nullptr;
     U64 mGeoServedMask = 0;             // <FS> S3 G4 (S4 B: the bits after the static types are the rigged variants): the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
     U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)
-    U8 mGeoAlphaBits = 0;               // <FS> J1 K6 S5a: 1 = the draw map has PASS_ALPHA draws, 2 = PASS_ALPHA_RIGGED (set with mGeoAllServed: the alpha group lists are all postSort takes from an all-served group)
     bool mGeoAllServed = false;         // <FS> R2 (S-retire-views-design.md): every non-empty draw map type of the group is served by the table: postSort has nothing to put in the render map for it
     // <FS> C4.1: the sun cascades' render map job asks this before it walks the group's draw map: bits 0-3 the answer (1 nothing to push, 2 the group has an alpha draw map entry, 4 a rigged alpha one, 8 resident), the rest a key of what the
     // answer was made from (draw map serial, fragment state, render type mask, the job's switches). Written by the jobs of several cascades at once: one atomic word.
