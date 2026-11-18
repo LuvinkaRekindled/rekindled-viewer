@@ -1,5 +1,5 @@
 // alpha_pass.inc: the loose uniform blocks of the native alpha programs (alpha.vert and the alpha fragment shaders include this file, so both stages declare the same blocks).
-// Every name and type is the one the viewer's alpha programs use: the renderer copies the values by name when the native program stands in (Program::adoptFrom).
+// Every name and type is the one the viewer's alpha programs use: the viewer's C++ callers set them by name (a member they do not set stays zero).
 // ALPHA_LIT (a define of the manifest line) adds what a lit surface needs: the sun, the shadow cascades, the lights.
 
 // ALPHA_PBR (a glTF blend surface: alpha_pbr.vert / alpha_pbr.frag) uses the same probes and screen space reflections as a material one
