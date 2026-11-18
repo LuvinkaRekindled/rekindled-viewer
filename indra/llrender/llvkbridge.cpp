@@ -37,7 +37,7 @@ void LLVkBridge::pipelineBuilds(U64& pending, U64& total) { pending = 0; total =
 bool LLVkBridge::sceneGeoAvailable() { return false; }
 bool LLVkBridge::hizAvailable() { return false; }
 U32 LLVkBridge::hizSend(const HizBox*, U32, const F32*, const F32*, U32) { return 0; }
-S32 LLVkBridge::hizRead(U32, U32, U32*, bool) { return -1; }
+S32 LLVkBridge::hizRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::hizDone(U32) {}
 void LLVkBridge::hizSetResults(const U32*, U32) {}
 void LLVkBridge::hizPublish(U32, U32) {}
@@ -1627,7 +1627,7 @@ bool LLVkBridge::hizAvailable()
     return LLVkBridge::sceneGeoAvailable();
 }
 
-U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj, const F32* prev_view_proj, U32 census_first)
+U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj)
 {
     if (!count || count > 32768 || !hizAvailable())
     {
@@ -1645,21 +1645,11 @@ U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj, co
     header.mPass = serial % 8;
     header.mFragment = serial;
     memcpy(header.mViewProj, view_proj, sizeof(header.mViewProj));
-    if (prev_view_proj && census_first < count)
-    {
-        header.mMatrices = 1;                   // 64 bytes after the boxes: the previous view-projection
-        header.mPaletteFloats = census_first;
-        std::vector<U8> blob((size_t)count * sizeof(HizBox) + 64);
-        memcpy(blob.data(), boxes, (size_t)count * sizeof(HizBox));
-        memcpy(blob.data() + (size_t)count * sizeof(HizBox), prev_view_proj, 64);
-        shadowPackets(header, blob.data(), blob.size());
-        return serial;
-    }
     shadowPackets(header, boxes, (size_t)count * sizeof(HizBox));
     return serial;
 }
 
-S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out, bool census_half)
+S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out)
 {
     const U32* results = gHizResults.load(std::memory_order_acquire);
     const U32 capacity = gHizCapacity.load(std::memory_order_relaxed);
@@ -1672,7 +1662,7 @@ S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out, bool census_half)
     const U32 published = gHizPublished[slot].load(std::memory_order_acquire);
     if (published == serial)
     {
-        memcpy(out, results + ((size_t)slot + (census_half ? 8 : 0)) * capacity * 3, (size_t)count * 12);
+        memcpy(out, results + (size_t)slot * capacity * 3, (size_t)count * 12);
         std::atomic_thread_fence(std::memory_order_acquire);
         return gHizPublished[slot].load(std::memory_order_relaxed) == serial ? 1 : -1;
     }

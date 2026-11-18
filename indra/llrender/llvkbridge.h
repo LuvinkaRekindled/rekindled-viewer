@@ -335,9 +335,8 @@ namespace LLVkBridge
     // finished the frame. hizRead copies the 3 words a box (result bits, nearest depth, largest depth under it; out holds 3 * count) of a serial: 1 = copied, 0 = not published yet, -1 = lost (the slot holds a later serial). hizDone(serial) frees the serial's slot for reuse.
     struct HizBox { F32 mCenter[3]; U32 mFlags; F32 mHalf[3]; F32 mPad; };      // mFlags bit 0 = water (depth clamped: no near / far rejection)
     bool hizAvailable();
-    // S7 B0 (LL_VK_VISCENSUS): with prev_view_proj the boxes from census_first on are tested a second time against the pyramid of the previous record (with its view-projection); hizRead(.., true) copies those verdicts (bit 31 = valid)
-    U32 hizSend(const HizBox* boxes, U32 count, const F32* view_proj, const F32* prev_view_proj = nullptr, U32 census_first = 0);
-    S32 hizRead(U32 serial, U32 count, U32* out, bool census_half = false);
+    U32 hizSend(const HizBox* boxes, U32 count, const F32* view_proj);
+    S32 hizRead(U32 serial, U32 count, U32* out);
     void hizDone(U32 serial);
     void hizSetResults(const U32* results, U32 capacity);       // (worker) the mapped ring
     void hizPublish(U32 slot, U32 serial);                      // (worker) the frame of this serial has finished
