@@ -9,7 +9,7 @@ Nothing in it has been pushed anywhere. This note says what is in it, what usual
 |---|---|---|---|
 | A. OpenGL-side optimisations (work without Vulkan) | `1bac3132`, `557e1759`, `945fb6cb`, `66436408`, `19ef1a94`, `af505128` (the two shadow reuse default values only) | GPU zone timers, shadow cascade avatar cull, far shadow cascade reuse, texture priority divisor, cheaper `syncMatrices`, parallel avatar motion | medium (pipeline.cpp, llviewerobjectlist.cpp, llvoavatar.cpp, lldrawpoolterrain.cpp) |
 | B. Preparation in stock code | `32080045`, `bef42ad8` | every raw `gl*` call outside `llrender`/`llwindow` now goes through a `gGL` wrapper, so the mirror can see it | **high**: any new upstream code that calls GL directly must get the same treatment |
-| C. The Vulkan backend ("mirror") | `9d87e2ba`, `bbc091b8` .. `a48442a6` | `indra/llrender/llvk*` (new files), `llglslshader.cpp` hooks, settings, Preferences tab, SPIR-V and pipeline caches, async worker thread, device-local buffers | low for the new files, medium for `llglslshader.cpp`, `llrender.cpp`, `llappviewer.cpp`, `llviewerwindow.cpp` |
+| C. The Vulkan backend ("mirror") | `9d87e2ba`, `bbc091b8` .. `a48442a6` | `indra/llrender/rkvk*` (new files), `llglslshader.cpp` hooks, settings, Preferences tab, SPIR-V and pipeline caches, async worker thread, device-local buffers | low for the new files, medium for `llglslshader.cpp`, `llrender.cpp`, `llappviewer.cpp`, `llviewerwindow.cpp` |
 | D. DLSS upscaling | `b3c2c121`, `f28c5793`, `bc9ba461` | jitter, motion vectors, NGX call, Preferences checkbox + quality | medium (llviewercamera, pipeline.cpp, llviewerdisplay.cpp, llhudnametag/llhudtext/llhudrender) |
 | E. Measurement and tuning | `b01f35c4`, `2107733f`, and parts of `af505128` | `LL_VK_PHASES` statistics, pipeline cache, barriers, GPU timestamps | low |
 
@@ -20,20 +20,20 @@ The largest stock-file edits: `llglslshader.cpp` (~600 lines), `pipeline.cpp` (~
 ## Things that live outside the repository
 
 - **Vulkan SDK** (headers and the glslang / SPIRV-Tools libraries, which are linked statically): configure with `-DUSE_VULKAN=ON -DVULKAN_SDK_DIR=<sdk root>`. `USE_VULKAN` is OFF by default, so a checkout without the SDK still builds as plain OpenGL.
-- **NVIDIA DLSS SDK** (optional, not redistributable, read its licence): clone <https://github.com/NVIDIA/DLSS>, then `-DDLSS_SDK_DIR=<clone>/DLSS`. Without it `llvkdlss.cpp` compiles to stubs. `nvngx_dlss.dll` (from `lib/Windows_x86_64/rel/`) has to be copied next to `firestorm-bin.exe`.
+- **NVIDIA DLSS SDK** (optional, not redistributable, read its licence): clone <https://github.com/NVIDIA/DLSS>, then `-DDLSS_SDK_DIR=<clone>/DLSS`. Without it `rkvkdlss.cpp` compiles to stubs. `nvngx_dlss.dll` (from `lib/Windows_x86_64/rel/`) has to be copied next to `firestorm-bin.exe`.
 - **Build environment** (not in git): `fs-env.bat` (sets `AUTOBUILD_VSVER=170`, the variables file, the Python venv, `AUTOBUILD_CONFIG_FILE=my_autobuild.xml`), a local `my_autobuild.xml` that points at the FMOD 2.03.12 package, `build-run.bat`, `cmake-regen.bat`. Configure with `--fmodstudio --package --chan FSDev -DUSE_TRACY=ON` plus the two SDK options above, then `autobuild build -A 64 -c ReleaseFS_open --no-configure`.
 - **Test launchers and tools** in `<work>`: `run-viewer-vulkan*.bat`, `vk-stack-sample2.ps1` (call-stack sampler with module attribution), `resolve-addr.ps1`, `vk-burst.ps1`.
 
 ## The GL wrappers are gone
 
-Since F2.1 nothing is generated and no GL function is intercepted: the viewer writes typed records (`llvkstate.h`, `llvktex.h`, `llvkbuf.h`, `llvktarget.h`, `llvkquery.h`, `llvkasync.h`) and the worker plays them (`llvkgl.cpp`, `llvkasync.cpp`). `gen_llvkgl.py` and its `.inc` files were deleted. Raw `gl*` calls that upstream adds do not compile (there is no OpenGL); route them through the `gGL` wrappers / the `LLVk*` calls.
+Since F2.1 nothing is generated and no GL function is intercepted: the viewer writes typed records (`rkvkstate.h`, `rkvktex.h`, `rkvkbuf.h`, `rkvktarget.h`, `rkvkquery.h`, `rkvkasync.h`) and the worker plays them (`rkvkgl.cpp`, `rkvkasync.cpp`). `gen_llvkgl.py` and its `.inc` files were deleted. Raw `gl*` calls that upstream adds do not compile (there is no OpenGL); route them through the `gGL` wrappers / the `LLVk*` calls.
 
 ## Porting steps
 
 1. Fetch the new release tag. Create a branch from it: `git switch -c vulkan-port-<version> <tag>`.
 2. Bring the groups over in order with `git cherry-pick` (or `git rebase --onto <tag> 4ae31a7a vulkan-port`). A first, then B, C, D, E. Group B conflicts first: re-do it by searching the new code for raw `gl*` calls outside `llrender` (`grep -rn "\bgl[A-Z][A-Za-z0-9]*(" indra --include=*.cpp` and look at what is not in `llrender`/`llwindow`) and route them through the `gGL` wrappers.
 3. If upstream now calls a GL function, the build shows it (no GL headers link): give it a typed record like the existing families.
-4. Re-check the places where upstream often changes under us: render target formats (`llvkgl.cpp` format table), new shaders (they must compile through glslang: new GLSL features can fail), `LLVertexBuffer` and texture upload paths, new `settings.xml` defaults, and `LLPipeline::renderFinalize` (the DLSS call sits after the post chain).
+4. Re-check the places where upstream often changes under us: render target formats (`rkvkgl.cpp` format table), new shaders (they must compile through glslang: new GLSL features can fail), `LLVertexBuffer` and texture upload paths, new `settings.xml` defaults, and `LLPipeline::renderFinalize` (the DLSS call sits after the post chain).
 5. Build, then run the checklist below.
 
 ## Checklist after a port

@@ -379,7 +379,7 @@ protected:
     void setDataAndSize(U8 *data, S32 width, S32 height, S8 components) ;
 
 public:
-    // <FS> BC7 at decode (llimagebc7.h, doc/vulkan/PLAN-aurora-ideas.md section 2 stage b): a compressed image holds the whole mip chain, the smallest level first and the finest
+    // <FS> BC7 at decode (rkimagebc7.h, doc/vulkan/PLAN-aurora-ideas.md section 2 stage b): a compressed image holds the whole mip chain, the smallest level first and the finest
     // last; width, height and components are the finest level's, getDataSize() the chain's bytes. The pixel operations of this class refuse a compressed image with a warning:
     // the needs-raw policy of the texture fetch keeps them from ever meeting one.
     bool isCompressed() const { return mCompressedFormat != 0; }

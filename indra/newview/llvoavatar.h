@@ -28,7 +28,7 @@
 #ifndef LL_VOAVATAR_H
 #define LL_VOAVATAR_H
 
-#include "llhandletable.h"
+#include "rkhandletable.h"
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
@@ -48,7 +48,7 @@
 #include "llviewerjointmesh.h"
 #include "llviewerjointattachment.h"
 #include "llrendertarget.h"
-#include "llvkbridge.h"          // <FS> ImpostorQuadRow (fillImpostorQuad)
+#include "rkvkbridge.h"          // <FS> ImpostorQuadRow (fillImpostorQuad)
 #include "llavatarappearancedefines.h"
 #include "lltexglobalcolor.h"
 #include "lldriverparam.h"
@@ -93,7 +93,7 @@ extern U32 gFrameCount;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class LLVOAvatar;
 struct LLFlatSkeleton;      // <FS> stage B0 (llvoavatar.cpp): the avatar's world matrices as a flat array by joint number
-using LLAvatarHandles = LLHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (llhandletable.h)
+using LLAvatarHandles = LLHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (rkhandletable.h)
 
 class LLVOAvatar :
     public LLAvatarAppearance,
@@ -130,7 +130,7 @@ public:
 
 protected:
 public:
-    // <FS> C2.4d (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLAvatarRef, llavatarref.h) and the retire list (llcommon/llretirelist.h, kind 3): the last owner letting go
+    // <FS> C2.4d (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLAvatarRef, rkavatarref.h) and the retire list (llcommon/rkretirelist.h, kind 3): the last owner letting go
     // parks the avatar for a few frames, so a draw info that still reads it through its handle finds it intact
     U32 getRenderHandle();
     /*virtual*/ bool retireOnLastRef() const override;
@@ -312,7 +312,7 @@ public:
     virtual void    updateDebugText();
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
-    // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (llavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
+    // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (rkavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     std::shared_ptr<LLFlatSkeleton> mFlatSkel;          // <FS> stage B0

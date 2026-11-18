@@ -29,12 +29,12 @@
 #include "llgltfmaterial.h"
 #include "llpointer.h"
 #include "llviewertexture.h"
-#include "llhandletable.h"
+#include "rkhandletable.h"
 #include <atomic>
 #include <type_traits>
 
 class LLFetchedGLTFMaterial;
-using LLGLTFMatHandles = LLHandleTable<LLFetchedGLTFMaterial>;       // <FS> C2.4: the handles of fetched glTF materials (llhandletable.h)
+using LLGLTFMatHandles = LLHandleTable<LLFetchedGLTFMaterial>;       // <FS> C2.4: the handles of fetched glTF materials (rkhandletable.h)
 
 class LLShaderProgram;
 class LLGLTFMaterialList;
@@ -63,7 +63,7 @@ public:
     bool isFetching() const { return mFetching; }
     bool isLoaded() const { return !mFetching && mFetchSuccess; }
 
-    // <FS> C2.4 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLGLTFMatRef), and the retire list (llcommon/llretirelist.h): the last owner letting go parks the material for a
+    // <FS> C2.4 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLGLTFMatRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the material for a
     // few frames, so a draw info that still reads it through its handle finds it intact
     U32 getRenderHandle();
     static LLFetchedGLTFMaterial* fromRenderHandle(U32 handle) { return LLGLTFMatHandles::resolve(handle); }

@@ -33,7 +33,7 @@
 #include "llfontgl.h"
 #include "llrender.h"
 #include "llrect.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "lltexture.h"
 #include "llfasttimer.h"
 

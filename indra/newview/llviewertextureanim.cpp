@@ -33,8 +33,8 @@
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include <chrono>
-#include "llvkbridge.h"
-#include "llvktexanim.h"
+#include "rkvkbridge.h"
+#include "rkvktexanim.h"
 
 #include "llmath.h"
 #include "llerror.h"
@@ -118,7 +118,7 @@ void LLViewerTextureAnim::updateClass()
     static LLCachedControl<bool> skip_hidden(gSavedSettings, "FSSkipHiddenTextureAnim", true);
     static LLCachedControl<bool> on_gpu(gSavedSettings, "FSTexAnimOnGPU", true);
     const bool skip = skip_hidden;
-    // <FS> FSTexAnimOnGPU (llvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
+    // <FS> FSTexAnimOnGPU (rkvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
     // are made here; 2 = as 0, with the shader's formula compared against them. rt-debug.txt texanim=N decides while it is set (a same-lap A/B), the setting otherwise.
     LLVkTexAnim::setClock(LLFrameTimer::getElapsedSeconds());
     const S32 live = LLVkBridge::rtTexAnim();

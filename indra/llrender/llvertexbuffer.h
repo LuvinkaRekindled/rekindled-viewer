@@ -27,10 +27,10 @@
 #ifndef LL_LLVERTEXBUFFER_H
 #define LL_LLVERTEXBUFFER_H
 
-#include "llhandletable.h"
+#include "rkhandletable.h"
 #include <atomic>
 #include <type_traits>
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "v2math.h"
 #include "v3math.h"
 #include "v4math.h"
@@ -93,12 +93,12 @@ public:
 typedef std::list<LLVertexBufferData> buffer_data_list_t;
 
 class LLVertexBuffer;
-using LLVBHandles = LLHandleTable<LLVertexBuffer>;       // <FS> C3.5: the handles of vertex buffers (llhandletable.h)
+using LLVBHandles = LLHandleTable<LLVertexBuffer>;       // <FS> C3.5: the handles of vertex buffers (rkhandletable.h)
 
 class LLVertexBuffer final : public LLRefCount
 {
 public:
-    // <FS> C3.5 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLVBRef, below) and the retire list (llcommon/llretirelist.h, kind 4): the last owner letting go parks the buffer for
+    // <FS> C3.5 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLVBRef, below) and the retire list (llcommon/rkretirelist.h, kind 4): the last owner letting go parks the buffer for
     // a few frames, so a draw info that still reads it through its handle finds it intact. Only on the main thread: another thread's last unref deletes at once, as before.
     U32 getRenderHandle() const;
     /*virtual*/ bool retireOnLastRef() const override;

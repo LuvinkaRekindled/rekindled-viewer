@@ -27,7 +27,7 @@
 #include "linden_common.h"
 
 #include "llimageworker.h"
-#include "llimagebc7.h"
+#include "rkimagebc7.h"
 #include "llimagedxt.h"
 #include "threadpool.h"
 
@@ -93,7 +93,7 @@ size_t LLImageDecodeThread::getPending()
     return mThreadPool->getQueue().size();
 }
 
-// <FS> the decoded cache (fsdecodedtexturecache.cpp)
+// <FS> the decoded cache (rkdecodedtexturecache.cpp)
 static LLDecodedImageCache* sDecodedCache = nullptr;
 void LLImageDecodeThread::setDecodedCache(LLDecodedImageCache* cache) { sDecodedCache = cache; }
 LLDecodedImageCache* LLImageDecodeThread::getDecodedCache() { return sDecodedCache; }
@@ -169,7 +169,7 @@ ImageRequest::~ImageRequest()
 //----------------------------------------------------------------------------
 
 
-// <FS> BC7 at decode (RenderCompressTextures, llimagebc7.h): the texels of 'raw' become a BC7 mip chain when the policy allows it and the per-block check passes; a small image, one with
+// <FS> BC7 at decode (RenderCompressTextures, rkimagebc7.h): the texels of 'raw' become a BC7 mip chain when the policy allows it and the per-block check passes; a small image, one with
 // 1 or 2 components, or one the check rejects stays as it is. Runs on the decode pool.
 // returns true when the check ran and kept the texels (the caller may record that so the check is not run again on a cache hit)
 static bool compress_if_wanted(LLPointer<LLImageRaw>& raw)

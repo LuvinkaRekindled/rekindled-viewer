@@ -30,7 +30,7 @@
 
 #include "llerror.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 #include "llstring.h"
 #include "llscrollcontainer.h"

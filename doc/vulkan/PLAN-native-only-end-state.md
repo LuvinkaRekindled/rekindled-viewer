@@ -42,7 +42,7 @@ The only things that stop the work are a look decision that is Adam's (a program
   baseline. Not checked: a glTF scene drawn (needs a region with GLTFEnabled).
 - The old stock loader is GONE (2026-11-13, the end of A): `LLShaderProgram::createShader` / `link` build native programs only (a program without a native source is a visible warning and a failed program: the stock path, `mShaderFiles`,
   `attachObject` and friends are deleted); llshadermgr.cpp lost `attachShaderFeatures`, the pull rewriting and `loadShaderFile` (1,100 lines) and the dead GL shader binary cache (`initShaderCache`, the settings
-  RenderShaderCacheEnabled / Version and the menu toggle); the stock translator llvkshader.cpp (GL GLSL to Vulkan GLSL, 1,670 lines) is deleted, llvkshader.h keeps the program info types and `debugShadersEnabled`;
+  RenderShaderCacheEnabled / Version and the menu toggle); the stock translator rkvkshader.cpp (GL GLSL to Vulkan GLSL, 1,670 lines) is deleted, rkvkshader.h keeps the program info types and `debugShadersEnabled`;
   `loadBasicShaders` loads no library files; the directories class1, class2, class3 and the error fallbacks errorF / errorV are deleted (the frozen units, `freeze_stock.py` / `freeze_gltf.py`, were made from them: the generated
   files are the programs now). Three groups of stock programs the inventory had MISSED (it parsed `x.mName` and `x->mName`, not array elements or computed names) were found by the first lap after the sweep (the viewer
   stopped loading shaders at the first failed program and crashed in LLDrawPoolSimple::renderDeferred, ASSERT mProgramObject != 0): the old non-pull Material Shader programs (dead: the materials pool bound them only where

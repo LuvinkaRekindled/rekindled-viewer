@@ -44,7 +44,7 @@
 #include "lldbstrings.h"
 #include "llfocusmgr.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 
 // Third-party library includes

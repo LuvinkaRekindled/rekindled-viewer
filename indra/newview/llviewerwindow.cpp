@@ -57,7 +57,7 @@
 #include "llxmltree.h"
 #include "llslurl.h"
 #include "llrender.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llimagepng.h"
 
 #include "stringize.h"
@@ -123,7 +123,7 @@
 #include "llfocusmgr.h"
 #include "llfontfreetype.h"
 #include "llgesturemgr.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llhudmanager.h"
 #include "llhudobject.h"
 #include "llhudview.h"

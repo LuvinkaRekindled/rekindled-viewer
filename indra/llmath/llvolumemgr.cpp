@@ -26,7 +26,7 @@
 #include "linden_common.h"
 
 #include "llmutex.h"
-#include "lldiag.h"
+#include "rkdiag.h"
 #include <chrono>
 #include <mutex>
 #include "llvolumemgr.h"

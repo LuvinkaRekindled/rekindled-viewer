@@ -5,14 +5,14 @@ Status: PLAN ONLY. Written 2026-10-07. Numbers are measured in this tree unless 
 
 ## Scope decisions to make first (they remove most of the cost)
 - Windows only, Vulkan 1.3 minimum, NVIDIA RTX class as the target (bindless, buffer device address, EDS3 are required already; DLSS needs RTX). No OpenGL, macOS, Linux, or pre-RTX GPUs.
-- Keep: the sim protocol, asset formats, the object model (`LLViewerObject` and friends), the UI toolkit (`llui`), the GLSL shaders as a starting corpus (231 files, 209 programs already compile to SPIR-V through `llvkshader`).
+- Keep: the sim protocol, asset formats, the object model (`LLViewerObject` and friends), the UI toolkit (`llui`), the GLSL shaders as a starting corpus (231 files, 209 programs already compile to SPIR-V through `rkvkshader`).
 - Replace: everything that draws.
 
 ## What exists and what it is worth
 | Part | Size | Fate |
 |---|---|---|
-| Native Vulkan code: context, renderer (passes, barriers, sampler/pipeline caches, bindless set), shader compiler, SPIR-V and pipeline caches, DLSS | 7.5k lines (`llvkcontext/renderer/shader/dlss/probe`) | **kept, becomes the RHI** |
-| GL emulation: call interception, GL state tracking, the worker queue, verify tools | 10.2k lines (`llvkgl*`, `llvkasync*`, `llvkmirror*`, `llvkverify.h`) | **deleted** |
+| Native Vulkan code: context, renderer (passes, barriers, sampler/pipeline caches, bindless set), shader compiler, SPIR-V and pipeline caches, DLSS | 7.5k lines (`rkvkcontext/renderer/shader/dlss/probe`) | **kept, becomes the RHI** |
+| GL emulation: call interception, GL state tracking, the worker queue, verify tools | 10.2k lines (`rkvkgl*`, `rkvkasync*`, `rkvkmirror*`, `rkvkverify.h`) | **deleted** |
 | GL-shaped classes the viewer calls: `LLRender`, `LLVertexBuffer`, `LLImageGL`, `LLRenderTarget`, `LLGLSLShader`, `LLGLState`, `LLTexUnit`, `LLGL*` | about 30k lines in `llrender` | **replaced, in two steps (below)** |
 | Callers of those classes | `gGL.` 4,743 call sites in 145 files; `LLVertexBuffer` 83 files; `LLGLSLShader` 72; `LLTexUnit` 114; `LLGLState` 60; `LLImageGL` 44; `LLRenderTarget` 36 | **migrated progressively** |
 | The renderer proper: draw pools (13 files, 6.8k lines), `pipeline.cpp` (14.4k lines), spatial groups/draw infos, the octree as a render structure | about 40k lines | **replaced by the new frame and scene code** |

@@ -114,7 +114,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | HUD PBR Alpha Pull Shader | ? | no global found (name built in code) | REVIEW |
 | HUD PBR Alpha Shader | ? | no global found (name built in code) | REVIEW |
 | Highlight Normals Shader | gHighlightNormalProgram | 2 sites: indra/newview/pipeline.cpp:15918, indra/newview/pipeline.cpp:15920 | REACHABLE |
-| Highlight Pull Skin Shader | pull | 113 sites: indra/llrender/llshaderprogram.cpp:1079, indra/llrender/llvertexbuffer.cpp:888, indra/llrender/llvertexbuffer.h:301, indra/llrender/llvkbridge.h:151 ... | REACHABLE |
+| Highlight Pull Skin Shader | pull | 113 sites: indra/llrender/rkshaderprogram.cpp:1079, indra/llrender/llvertexbuffer.cpp:888, indra/llrender/llvertexbuffer.h:301, indra/llrender/rkvkbridge.h:151 ... | REACHABLE |
 | Highlight Spec Shader | gHighlightSpecularProgram | 2 sites: indra/newview/pipeline.cpp:15925, indra/newview/pipeline.cpp:15927 | REACHABLE |
 | Impostor Shader | gImpostorProgram | 4 sites: indra/newview/lldrawpoolavatar.cpp:513, indra/newview/lldrawpoolavatar.cpp:514, indra/newview/lldrawpoolavatar.cpp:524, indra/newview/llviewershadermgr.cpp:592 | REACHABLE |
 | Legacy Gamma Correction Post Process | gLegacyPostGammaCorrectProgram | 4 sites: indra/newview/llviewershadermgr.cpp:628, indra/newview/llviewershadermgr.cpp:4140, indra/newview/llviewershadermgr.cpp:4141, indra/newview/pipeline.cpp:20851 | REACHABLE |
@@ -163,7 +163,7 @@ Made by `doc/vulkan/inventory-shaders.py` from the program census of 2 laps (`in
 | SMAA Neighborhood Blending (Low) | ? | no global found (name built in code) | REVIEW |
 | SMAA Neighborhood Blending (Medium) | ? | no global found (name built in code) | REVIEW |
 | SMAA Neighborhood Blending (Ultra) | ? | no global found (name built in code) | REVIEW |
-| Skinned Debug Shader | gDebugProgram | 48 sites: indra/llrender/llvkcontext.cpp:37, indra/llrender/llvkcontext.cpp:185, indra/llrender/llvkcontext.cpp:189, indra/llrender/llvkrenderer.cpp:969 ... | REACHABLE |
+| Skinned Debug Shader | gDebugProgram | 48 sites: indra/llrender/rkvkcontext.cpp:37, indra/llrender/rkvkcontext.cpp:185, indra/llrender/rkvkcontext.cpp:189, indra/llrender/rkvkrenderer.cpp:969 ... | REACHABLE |
 | Skinned Deferred Alpha Impostor Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Alpha Shader | ? | no global found (name built in code) | REVIEW |
 | Skinned Deferred Bump Shader | gDeferredBumpProgram | 4 sites: indra/newview/llviewershadermgr.cpp:193, indra/newview/llviewershadermgr.cpp:629, indra/newview/llviewershadermgr.cpp:1682, indra/newview/llviewershadermgr.cpp:1683 | REACHABLE |

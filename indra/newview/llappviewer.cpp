@@ -25,11 +25,11 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 #include "llappviewer.h"
-#include "llforkjoinpool.h"
-#include "llretirelist.h"
+#include "rkforkjoinpool.h"
+#include "rkretirelist.h"
 
 // Viewer includes
 #include "llversioninfo.h"
@@ -76,7 +76,7 @@
 #include "lltracethreadrecorder.h"
 #include "llviewerwindow.h"
 #include "llviewerdisplay.h"
-#include "llvkbridge.h" // <FS> Vulkan mirror
+#include "rkvkbridge.h" // <FS> Vulkan mirror
 #include "llviewermedia.h"
 #include "llviewerparcelaskplay.h"
 #include "llviewerparcelmedia.h"
@@ -191,8 +191,8 @@
 #include "lllfsthread.h"
 #include "llworkerthread.h"
 #include "lltexturecache.h"
-#include "fsdecodedtexturecache.h"
-#include "fstexturearrivaltrace.h"
+#include "rkdecodedtexturecache.h"
+#include "rktexturearrivaltrace.h"
 #include "lltexturefetch.h"
 #include "llimageworker.h"
 #include "llevents.h"
@@ -207,7 +207,7 @@
 #include "llproxy.h"
 #include "llcachename.h"
 #include "llaudioengine.h"
-#include "llaudiostall.h"
+#include "rkaudiostall.h"
 #include "llstreamingaudio.h"
 #include "llviewermenu.h"
 #include "llselectmgr.h"
@@ -1268,7 +1268,7 @@ bool LLAppViewer::init()
     // Initialize the window
     //
     gRenderActive = true;
-    // <FS> when Vulkan cannot start the user is told why (llvkbridge.cpp ensureReady) and the viewer leaves without the old video driver text or the fatal error flow; the exec marker goes so that the
+    // <FS> when Vulkan cannot start the user is told why (rkvkbridge.cpp ensureReady) and the viewer leaves without the old video driver text or the fatal error flow; the exec marker goes so that the
     // next start is not taken for a crash
     LLVkBridge::setStartupFailureHandler([]()
     {
@@ -1960,7 +1960,7 @@ bool LLAppViewer::doFrame()
                     pingMainloopTimeout("Main:Snapshot");
                     LL_CPU_ZONE("main loop: probes + snapshots");
                     // <FS> no reflection probe is rendered while nothing can be shown: display() returns before it draws under the same condition, and the probe update went on behind it,
-                    // 260 probe faces a second for as long as the window was minimised (2026-11-09: each update made a new 48 KB uniform buffer that no frame gave back, see begin_stand_in_frame in llvkbridge.cpp)
+                    // 260 probe faces a second for as long as the window was minimised (2026-11-09: each update made a new 48 KB uniform buffer that no frame gave back, see begin_stand_in_frame in rkvkbridge.cpp)
                     if (gViewerWindow->getActive() && gViewerWindow->getWindow()->getVisible() && !gViewerWindow->getWindow()->getMinimized() && !gNonInteractive)
                     {
                         gPipeline.mReflectionMapManager.update();

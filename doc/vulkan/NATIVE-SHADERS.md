@@ -1,6 +1,6 @@
 # Native shaders: how to add and test one (slice 0 of PLAN-shaders-rewrite.md, 2026-11-08)
 
-Code: `indra/llrender/llvknative.h/.cpp` (the compile of a program with glslang, the manifest, the compile cache), `LLShaderProgram::link` (`llshaderprogram.cpp`: every program is built from its manifest line) and the specialization-constant support in `llvkrenderer.cpp`. Shaders: `indra/newview/app_settings/shaders/native/`. (2026-11-18: there is no stock program behind a native one and no swap at the draw any more; the override machinery, `Program::adoptFrom` and the hot reload are deleted.)
+Code: `indra/llrender/rkvknative.h/.cpp` (the compile of a program with glslang, the manifest, the compile cache), `LLShaderProgram::link` (`rkshaderprogram.cpp`: every program is built from its manifest line) and the specialization-constant support in `rkvkrenderer.cpp`. Shaders: `indra/newview/app_settings/shaders/native/`. (2026-11-18: there is no stock program behind a native one and no swap at the draw any more; the override machinery, `Program::adoptFrom` and the hot reload are deleted.)
 
 ## Writing a program
 - Plain Vulkan GLSL 460. The loader puts `#version 460`, the include extension, `LL_VERTEX_STAGE` / `LL_FRAGMENT_STAGE` and the manifest's defines in front of `native/ll_native.glsl` (the bindless tables and `LL_HM`), then your file. Do not write `#version`.

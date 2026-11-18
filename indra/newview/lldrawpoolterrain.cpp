@@ -49,7 +49,7 @@
 #include "llviewershadermgr.h"
 #include "llrender.h"
 #include "llenvironment.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 #include "llvertexbuffer.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_inverse.hpp>

@@ -32,9 +32,9 @@
 #include <chrono>
 #include <fstream>
 #include <unordered_set>
-#include "llvkplatform.h"
+#include "rkvkplatform.h"
 
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llviewercontrol.h"
 #include "llcriticaldamp.h"
 #include "llfasttimer.h"
@@ -48,21 +48,21 @@
 #include "llviewertexturelist.h"    // For debugging
 #include "llviewerobjectlist.h" // For debugging
 #include "llviewerwindow.h"
-#include "llitemcensus.h"
+#include "rkitemcensus.h"
 #include "pipeline.h"
-#include "llvkbridge.h"          // <FS> rtShadowMode()
-#include "llalphatransient.h"      // <FS> S5f F3
+#include "rkvkbridge.h"          // <FS> rtShadowMode()
+#include "rkalphatransient.h"      // <FS> S5f F3
 #include "llviewershadermgr.h"
 #include "llviewerregion.h"
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
-#include "llrendercommonfunc.h"
+#include "rkrendercommonfunc.h"
 #include "llvoavatar.h"
 #include "gltfscenemanager.h"
 
 #include "llenvironment.h"
 #include "glm/gtc/type_ptr.hpp"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;

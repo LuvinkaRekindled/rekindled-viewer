@@ -30,7 +30,7 @@
 #include "linden_common.h"
 
 // <FS> native-vk: the renderer headers first: the X11 headers that SDL pulls in define None, Always, Bool ... as macros, which the renderer enums use as names
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 #include "llwindowsdl.h"
 
@@ -38,8 +38,8 @@
 #include "llkeyboardsdl.h"
 
 #include "llerror.h"
-#include "lldevicecaps.h"
-#include "llvkbridge.h"      // <FS> native-vk: the main window is handed to Vulkan
+#include "rkdevicecaps.h"
+#include "rkvkbridge.h"      // <FS> native-vk: the main window is handed to Vulkan
 #include "llstring.h"
 #include "lldir.h"
 #include "llfindlocale.h"

@@ -2,7 +2,7 @@
 # S7 B0/C0 session notes (stopped by Adam mid-run; nothing committed)
 
 ## State
-- Uncommitted in the tree: llviscensus.h (new) + hooks in pipeline.cpp, llvieweroctree.cpp, llvovolume.cpp, llspatialpartition.h, llhiz.h, llvkbridge.h/.cpp, llvkworker.cpp (Hi-Z batch carries table-item boxes; second dispatch against the previous pyramid). Built OK (exe 09:48, snapshot 20261023-094844). All behind LL_VK_VISCENSUS=1 except: Hi-Z results buffer is now 2x32768 slots (6.3 MB instead of 0.4 MB) and the test shader has mode/first push constants (mode 0 = old behaviour).
+- Uncommitted in the tree: rkviscensus.h (new) + hooks in pipeline.cpp, llvieweroctree.cpp, llvovolume.cpp, llspatialpartition.h, rkhiz.h, rkvkbridge.h/.cpp, rkvkworker.cpp (Hi-Z batch carries table-item boxes; second dispatch against the previous pyramid). Built OK (exe 09:48, snapshot 20261023-094844). All behind LL_VK_VISCENSUS=1 except: Hi-Z results buffer is now 2x32768 slots (6.3 MB instead of 0.4 MB) and the test shader has mode/first push constants (mode 0 = old behaviour).
 - No viewer running at the stop.
 
 ## Runs (London City, automated login via rt-run-shot3.ps1, LL_VK_PRESENT=immediate from the wrapper)

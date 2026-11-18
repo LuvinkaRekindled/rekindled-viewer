@@ -28,7 +28,7 @@
 
 #include "llimageworker.h"
 #include "llimage.h"
-#include "llimagebc7.h"      // <FS> the compressed form
+#include "rkimagebc7.h"      // <FS> the compressed form
 
 #include "llmath.h"
 #include "v4coloru.h"
@@ -1548,7 +1548,7 @@ void LLImageRaw::tint( const LLColor3& color )
     }
 }
 
-// <FS> BC7 at decode: the compressed form (llimagebc7.h)
+// <FS> BC7 at decode: the compressed form (rkimagebc7.h)
 const U8* LLImageRaw::getFinestLevelData() const
 {
     if (!isCompressed() || !getData()) return getData();

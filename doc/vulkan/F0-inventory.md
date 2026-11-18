@@ -3,7 +3,7 @@
 Status: in progress, 2026-10-10. Part of `PLAN-gpu-scene.md`. Everything here is measured in this tree unless marked.
 
 ## 1. The GL-shaped surface (call sites, static count)
-About 400 raw GL call sites in 10 files of `llrender`, about 60 distinct functions, all routed through `llvkgl.h` wrappers into the async queue (`llvkasync`, 2440 lines), the GL state machine replayed on the worker (`llvkgl.cpp`, 6058 lines) and the mirror (`llvkmirror`, 1333 lines). Outside `llrender` only about 40 stray calls: pipeline.cpp 9, llspatialpartition.cpp 8, llviewerwindow.cpp 6, llmaniptranslate.cpp 6, llface.cpp 5, llui.cpp 4, llglsandbox.cpp 3, others 1-2 (and the window classes, which are Win32/SDL, not render calls).
+About 400 raw GL call sites in 10 files of `llrender`, about 60 distinct functions, all routed through `rkvkgl.h` wrappers into the async queue (`rkvkasync`, 2440 lines), the GL state machine replayed on the worker (`rkvkgl.cpp`, 6058 lines) and the mirror (`rkvkmirror`, 1333 lines). Outside `llrender` only about 40 stray calls: pipeline.cpp 9, llspatialpartition.cpp 8, llviewerwindow.cpp 6, llmaniptranslate.cpp 6, llface.cpp 5, llui.cpp 4, llglsandbox.cpp 3, others 1-2 (and the window classes, which are Win32/SDL, not render calls).
 
 | File | Calls | What they do (becomes) |
 |---|---|---|
@@ -11,7 +11,7 @@ About 400 raw GL call sites in 10 files of `llrender`, about 60 distinct functio
 | llimagegl.cpp | 72 | texture create/upload/params/mips/readback/fences (texture commands, completions) |
 | llrender.cpp | 60 | state setters (context state), texture unit bind, queries, target copies, immediate-mode buffers |
 | llgl.cpp | 37 | capability queries (already from `Capabilities`), enable/disable (context state), fences |
-| llshadermgr.cpp | 32 | compile/link/binary cache (llvkshader already does the real work; these calls go) |
+| llshadermgr.cpp | 32 | compile/link/binary cache (rkvkshader already does the real work; these calls go) |
 | llvertexbuffer.cpp | 27 | buffers, attribute arrays, draws (buffer ids, draw records) |
 | llrendertarget.cpp | 24 | framebuffers (target = images + attachment list) |
 | llpostprocess.cpp | 13, cubemaps 10 | follow the above |
@@ -56,7 +56,7 @@ Ambiguous names that need the program family as key: `color` (393 changes/frame:
 Consequence for the design: the per-draw part of a block (instance, material, light) is under 100 bytes in all programs except the palette and the light arrays; the other 2.2 KB average is per-pass data that can be written once per pass instead of per draw.
 
 ## 6. The GL surface to replace, complete
-The generator (`gen_llvkgl.py`) hooks **108 GL functions** (listed in its FUNCS table: textures 16, framebuffers 7, buffers 6, vertex arrays 8, draws 2, state 17, queries 11, readbacks 3, shader/program objects 30, fences 4, plus glUseProgram/glProgramBinary/glUniformBlockBinding). Uniform setters (`glUniform*`) do not go through the hook table: `LLGLSLShader` mirrors them into the program directly (`mirror*` methods, the `setFloatsAt`/`setMatricesAt` setters measured above). Unhooked calls (`glGetError`, `glGetString`, `glFlush`, ...) were given pass-through wrappers for the no-GL start-up; they disappear with the classes. This list is the exact checklist for F5 (the deletion): when no file includes `llvkgl.h`, none of the 108 hooks exists.
+The generator (`gen_llvkgl.py`) hooks **108 GL functions** (listed in its FUNCS table: textures 16, framebuffers 7, buffers 6, vertex arrays 8, draws 2, state 17, queries 11, readbacks 3, shader/program objects 30, fences 4, plus glUseProgram/glProgramBinary/glUniformBlockBinding). Uniform setters (`glUniform*`) do not go through the hook table: `LLGLSLShader` mirrors them into the program directly (`mirror*` methods, the `setFloatsAt`/`setMatricesAt` setters measured above). Unhooked calls (`glGetError`, `glGetString`, `glFlush`, ...) were given pass-through wrappers for the no-GL start-up; they disappear with the classes. This list is the exact checklist for F5 (the deletion): when no file includes `rkvkgl.h`, none of the 108 hooks exists.
 
 ## 7. The ambiguous names, settled (statistics keyed by program and uniform, `uniform-changes-by-program.tsv`)
 Measured in the plaza (login, load-in and steady state, 3827 program/uniform pairs seen, 129 of the 226 programs wrote anything, 103 had a value that changed at least once per frame; the other 123 programs were never drawn with):

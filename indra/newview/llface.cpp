@@ -28,9 +28,9 @@
 
 #include "lldrawable.h" // lldrawable needs to be included before llface
 #include "llface.h"
-#include "llmatrixtable.h"
+#include "rkmatrixtable.h"
 
-static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetable.h) has one slot per texture channel");   // <FS> C3.3
+static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (rkfacetable.h) has one slot per texture channel");   // <FS> C3.3
 #include "llviewertextureanim.h"
 
 #include "llviewercontrol.h"
@@ -48,13 +48,13 @@ static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetab
 
 #include "lldrawpoolavatar.h"
 #include "lldrawpoolbump.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 #include "lllightconstants.h"
 #include "llsky.h"
 #include "llviewercamera.h"
 #include "llviewertexturelist.h"
-#include "llviewertexturerecs.h"
+#include "rkviewertexturerecs.h"
 #include "llvopartgroup.h"
 #include "llvovolume.h"
 #include "pipeline.h"
@@ -70,8 +70,8 @@ static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (llfacetab
 #include "rlvhandler.h"
 // [/RLVa:KB]
 #include "llperfstats.h"
-#include "llvktexanim.h"
-#include "llgpuzonetimer.h"
+#include "rkvktexanim.h"
+#include "rkgpuzonetimer.h"
 
 #if LL_LINUX
 // Work-around spurious used before init warning on Vector4a
@@ -225,7 +225,7 @@ void LLFace::destroy()
 
     if (mTextureMatrix)
     {
-        LLMatrixTable::free(mTextureMatrix);       // <FS> C3.4: a matrix of the matrix table (llmatrixtable.h): its row is quarantined, a stale pointer still reads it
+        LLMatrixTable::free(mTextureMatrix);       // <FS> C3.4: a matrix of the matrix table (rkmatrixtable.h): its row is quarantined, a stale pointer still reads it
         mTextureMatrix = NULL;
 
         if (mDrawablep)
@@ -882,7 +882,7 @@ void LLFace::printDebugInfo() const
 }
 
 // Transform the texture coordinates for this face.
-// <FS> a face's texture matrix slot holds the parameters of its animation when FSTexAnimOnGPU is on (llvktexanim.h; the vertex shader makes the matrix): what is baked into texture
+// <FS> a face's texture matrix slot holds the parameters of its animation when FSTexAnimOnGPU is on (rkvktexanim.h; the vertex shader makes the matrix): what is baked into texture
 // coordinates (small faces, a rebuild before the face is in the animated state) is the matrix the parameters give at this moment
 static const LLMatrix4& bake_tex_matrix(const LLMatrix4* m, LLMatrix4& scratch)
 {

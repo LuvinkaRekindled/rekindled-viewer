@@ -33,7 +33,7 @@
 #include "m3math.h"
 #include "m4math.h"
 #include "v4color.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 
 void lat2xyz(LLVector3 * result, F32 lat, F32 lon);         // utility routine
 

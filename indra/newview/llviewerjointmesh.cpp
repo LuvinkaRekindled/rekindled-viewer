@@ -39,7 +39,7 @@
 #include "lldrawpoolbump.h"
 #include "lldynamictexture.h"
 #include "llface.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llviewertexlayer.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
@@ -55,7 +55,7 @@
 #include "m4math.h"
 #include "llmatrix4a.h"
 #include "llperfstats.h"
-#include "llvkbridge.h"
+#include "rkvkbridge.h"
 
 #include <sstream>
 #include <unordered_set>
@@ -63,7 +63,7 @@
 #include <array>
 #include <atomic>
 #include "llappviewer.h"
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern bool gCubeSnapshot;
 

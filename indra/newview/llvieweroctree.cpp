@@ -26,7 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
-#include "llcullshadow.h"
+#include "rkcullshadow.h"
 #include <deque>
 #include <intrin.h>
 #include <array>
@@ -35,12 +35,12 @@
 #include "pipeline.h"
 #include "llviewercontrol.h"
 #include "llappviewer.h"
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 #include "llviewershadermgr.h"
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
 #include "llviewertexturelist.h"
-#include "llviewertexturerecs.h"
+#include "rkviewertexturerecs.h"
 
 //-----------------------------------------------------------------------------------
 //static variables definitions

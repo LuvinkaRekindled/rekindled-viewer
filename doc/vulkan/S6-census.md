@@ -53,7 +53,7 @@ Draws still written the GL way (about 3,100):
 
 ## Note on the census counters
 
-`packet kinds, worker` (llvkworker.cpp, `on_shadow_packets`) counts per command buffer submit; the viewer's frame counter there is the submit count, 2 a presented frame. `LLUniCensus` now also counts records, draws, setBuffer and syncMatrices per zone (llgpuzonetimer.cpp, lluniformcensus.h, llvkasync.cpp `noteRecord` / `frontStart`).
+`packet kinds, worker` (rkvkworker.cpp, `on_shadow_packets`) counts per command buffer submit; the viewer's frame counter there is the submit count, 2 a presented frame. `LLUniCensus` now also counts records, draws, setBuffer and syncMatrices per zone (rkgpuzonetimer.cpp, rkuniformcensus.h, rkvkasync.cpp `noteRecord` / `frontStart`).
 
 ## 6. Alpha run cost on the worker: measured and cut (2026-10-22, runs s6f / s6g)
 
@@ -73,7 +73,7 @@ Left in the alpha record (2.24 us): the draw call itself 1.07 (`drawPackets`), t
 
 **The 434 draws left in `renderGeomDeferred` are occlusion query cubes** (`doOcclusion`: one cube draw per occlusion group, 377 queries a frame): not geometry, S7's (Hi-Z replaces them). Not served.
 
-**X0:** the table's pass type count is now one shared constant (`LLVkBridge::kGeoPassTypes`, llvkbridge.h; the viewer's `kGeoTypes` list is static_asserted to it), the alpha items' type numbers follow it (`2 * count`, `+ 1` rigged), the served masks are 64 bit. Adding a type = one entry in `kGeoTypes`, one pull program, the pool's call.
+**X0:** the table's pass type count is now one shared constant (`LLVkBridge::kGeoPassTypes`, rkvkbridge.h; the viewer's `kGeoTypes` list is static_asserted to it), the alpha items' type numbers follow it (`2 * count`, `+ 1` rigged), the served masks are 64 bit. Adding a type = one entry in `kGeoTypes`, one pull program, the pool's call.
 
 **X1: opaque fullbright** (`LLDrawPoolFullbright::renderPostDeferred`): `gDeferredFullbrightPullProgram` / `...SkinProgram` = `alphaPullV.glsl` (IS_FULLBRIGHT_PULL, same rows and matrices as the G-buffer table) + `fullbrightF.glsl` without IS_ALPHA. HUDs stay old (the HUD cull is not prepared; `geo_list` is false while `sRenderingHUDs`). A pass type is served only when the pool has its pull program (`geo_type_available`). The fullbright vertex buffers have **no normal array** (5,868 refusals, reason 7 in the new census `fallback draws by type and reason`), so the normal array is optional for these passes (`ll_pass_needs_normals`). London: post pool fullbright old-path draws 354 -> 29 a frame (the left ones have a texture matrix), 367 table commands a frame, picture the same.
 

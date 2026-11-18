@@ -27,21 +27,21 @@
 #include "linden_common.h"
 
 #include "llrendertarget.h"
-#include "llrenderpass.h"
+#include "rkrenderpass.h"
 #include "llrender.h"
-#include "llshaderprogram.h"
-#include "lldevicecaps.h"
+#include "rkshaderprogram.h"
+#include "rkdevicecaps.h"
 #include <atomic>
 #include <algorithm>
 #include <vector>
 #include <string>
 #include <cstring>
-#include "llvkplatform.h"
+#include "rkvkplatform.h"
 #if defined(LL_VULKAN)
-#include "llvkasync.h"
-#include "llvkstate.h"
-#include "llvktex.h"
-#include "llvktarget.h"
+#include "rkvkasync.h"
+#include "rkvkstate.h"
+#include "rkvktex.h"
+#include "rkvktarget.h"
 #endif
 
 // attaching a texture to a target: a slot (colour attachment index, or the depth slot) of the target names the texture
@@ -574,7 +574,7 @@ void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// F3.5a: the counters of the render target entry points (LL_VK_OPSTATS) and the pass check (LL_VK_PASS_CHECK=1); see llrenderpass.h.
+// F3.5a: the counters of the render target entry points (LL_VK_OPSTATS) and the pass check (LL_VK_PASS_CHECK=1); see rkrenderpass.h.
 // Both only look at the main thread's producer (the targets of the frame); a target bound on another thread is not counted.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 namespace

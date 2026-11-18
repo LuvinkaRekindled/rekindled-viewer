@@ -19,7 +19,7 @@ How a generation shows: `BufferInfo::mEpoch` (other contents altogether: respeci
 ## Second pass (same day)
 
 - **Textures: ok.** Textures are not remembered by name the way buffers are: a texture has a stable handle (`Tex::mHandle`, plan texture handles H3) that rows, pins and records carry; what it shows follows the image. Every change of a texture calls `pin_touch`, an entry that goes calls `pin_lost`, and a safety sweep looks at every pin again about every 32 frames. Measured (`LL_VK_PIN_SWEEP_LOG`): a lap rechecked 8010 pins about 245,000 times against 37,538 events and the sweep found no slot that differed from its pin's, so no change goes unreported.
-- **Sub-stream copies: ok.** A sub-stream (`llvkasync.h`) is spliced into the main queue in order, where the work would have run, so a buffer delete or respecify stays ordered against its commands; the buffer table is touched only by the worker. Nothing to check.
+- **Sub-stream copies: ok.** A sub-stream (`rkvkasync.h`) is spliced into the main queue in order, where the work would have run, so a buffer delete or respecify stays ordered against its commands; the buffer table is touched only by the worker. Nothing to check.
 
 ## Left for the next pass
 

@@ -27,7 +27,7 @@
 #ifndef LL_LLMODEL_H
 #define LL_LLMODEL_H
 
-#include "llhandletable.h"
+#include "rkhandletable.h"
 #include <atomic>
 #include <type_traits>
 #include "llpointer.h"
@@ -46,7 +46,7 @@ class domMesh;
 #define MAX_MODEL_FACES 8
 
 class LLMeshSkinInfo;
-using LLSkinHandles = LLHandleTable<LLMeshSkinInfo>;       // <FS> C2.4c: the handles of mesh skin infos (llhandletable.h)
+using LLSkinHandles = LLHandleTable<LLMeshSkinInfo>;       // <FS> C2.4c: the handles of mesh skin infos (rkhandletable.h)
 
 LL_ALIGN_PREFIX(16)
 class LLMeshSkinInfo : public LLAssetRefCount
@@ -57,7 +57,7 @@ public:
     LLMeshSkinInfo(LLSD& data);
     LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& data);
     virtual ~LLMeshSkinInfo();
-    // <FS> C2.4c (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLSkinRef), and the retire list (llcommon/llretirelist.h): the last owner letting go parks the skin info for a
+    // <FS> C2.4c (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLSkinRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the skin info for a
     // few frames, so a draw info that still reads it through its handle finds it intact (the LocalMesh use-after-free of earlier sessions was a draw info outliving its skin info)
     U32 getRenderHandle() const;
     /*virtual*/ bool retireOnLastRef() const override;

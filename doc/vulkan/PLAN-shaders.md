@@ -79,7 +79,7 @@ Reading: the two shadow-alpha rows (21%) plus the simple-shadow vertex (8.8%) pu
 
 ## 5. Shadow alpha casters taken apart (2026-11-08, lap gz11-phasesoff1, RT off, crowd spot)
 
-Temporary live key `shadowalphadbg` (rt-debug.txt; C++ in llvkworker.cpp next to `shadow_alpha_indexed`, shaders shadowAlphaPullV/F): 1 = no texture fetch and no discards, 2 = every triangle clipped after the vertex work. Windows of 25 s, 0,1,2 twice, zone timers on ("zone: shadow alpha" summed over all cascades, static + rigged); `<work>\keycycle.ps1` drives the key.
+Temporary live key `shadowalphadbg` (rt-debug.txt; C++ in rkvkworker.cpp next to `shadow_alpha_indexed`, shaders shadowAlphaPullV/F): 1 = no texture fetch and no discards, 2 = every triangle clipped after the vertex work. Windows of 25 s, 0,1,2 twice, zone timers on ("zone: shadow alpha" summed over all cascades, static + rigged); `<work>\keycycle.ps1` drives the key.
 
 | mode | shadow alpha ms | shadow simple ms |
 |---|---|---|

@@ -29,14 +29,14 @@
 // file include
 #define LLSELECTMGR_CPP
 #include "llselectmgr.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 #include "llmaterialmgr.h"
 
 // library includes
 #include "llcachename.h"
 #include "llavatarnamecache.h"
 #include "lldbstrings.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llmediaentry.h"
 #include "llrender.h"
 #include "llnotifications.h"
@@ -111,7 +111,7 @@
 #include "llworld.h"
 // </FS:CR> Aurora Sim
 #include "fsareasearch.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llinventoryobserver.h"
 #include "fscommon.h"
 

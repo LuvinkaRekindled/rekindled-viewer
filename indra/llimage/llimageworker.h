@@ -32,7 +32,7 @@
 #include "lluuid.h"
 #include "threadpool_fwd.h"
 
-// <FS> A cache of decoded images the decode pool asks before decoding (fsdecodedtexturecache.h implements it; doc/vulkan/PLAN-aurora-ideas.md section 2).
+// <FS> A cache of decoded images the decode pool asks before decoding (rkdecodedtexturecache.h implements it; doc/vulkan/PLAN-aurora-ideas.md section 2).
 // read: the image of 'id' at exactly 'discard', or null. write: the decode just produced this image at this discard level (the cache copies what it keeps). Both run on the decode
 // pool's threads and must not block for long.
 class LLDecodedImageCache
@@ -68,7 +68,7 @@ public:
                          S32 discard, bool needs_aux,
                          const LLPointer<Responder>& responder,
                          const LLUUID& cache_id = LLUUID::null,
-                         bool allow_compressed = false);     // <FS> BC7 at decode may replace the texels (RenderCompressTextures, llimagebc7.h) and the cache may answer with a chain
+                         bool allow_compressed = false);     // <FS> BC7 at decode may replace the texels (RenderCompressTextures, rkimagebc7.h) and the cache may answer with a chain
     // <FS> the decoded cache the pool asks (null: none); set before any decode runs and cleared after the pool has shut down
     static void setDecodedCache(LLDecodedImageCache* cache);
     static LLDecodedImageCache* getDecodedCache();

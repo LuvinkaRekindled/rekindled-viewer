@@ -25,7 +25,7 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 #include "llvoavatar.h"
 
 #include "llheroprobemanager.h"

@@ -29,9 +29,9 @@
 
 // LLRenderTarget is unavailible on the mapserver since it uses FBOs.
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
-#include "llrenderpass.h"        // F3.5a: RenderPassScope
+#include "rkrenderpass.h"        // F3.5a: RenderPassScope
 
 /*
  Wrapper around OpenGL framebuffer objects for use in render-to-texture
@@ -174,7 +174,7 @@ public:
     static U32 currentId(const char* file = __builtin_FILE(), int line = __builtin_LINE());
     static void checkSource(const LLRenderTarget* named, const char* file, int line);        // LL_VK_PASS_CHECK: a copy that names its source (it must be the frame buffer that is current)      // LL_VK_PASS_CHECK: warns when the stack of open passes and sCurFBO disagree
 
-    // F3.5a (llrenderpass.h): LL_VK_PASS_CHECK=1 reports a target that is still bound at the end of the frame
+    // F3.5a (rkrenderpass.h): LL_VK_PASS_CHECK=1 reports a target that is still bound at the end of the frame
     static void checkFrameEnd();
 
     // *HACK

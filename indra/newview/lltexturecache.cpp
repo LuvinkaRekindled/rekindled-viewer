@@ -27,7 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lltexturecache.h"
-#include "fsdecodedtexturecache.h"
+#include "rkdecodedtexturecache.h"
 
 #include "llapr.h"
 #include "lldir.h"

@@ -29,7 +29,7 @@
 #include "lldynamictexture.h"
 
 // Linden library includes
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llwindow.h"           // getPosition()
 
 // Viewer includes
@@ -41,7 +41,7 @@
 #include "llviewerdisplay.h"
 #include "llrender.h"
 #include "pipeline.h"
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 
 // static
 LLViewerDynamicTexture::instance_list_t LLViewerDynamicTexture::sInstances[ LLViewerDynamicTexture::ORDER_COUNT ];

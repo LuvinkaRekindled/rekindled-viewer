@@ -33,7 +33,7 @@
 
 #include "llviewerprecompiledheaders.h"
 
-#include <llrenderheaders.h>
+#include <rkrenderheaders.h>
 
 #include "llsprite.h"
 

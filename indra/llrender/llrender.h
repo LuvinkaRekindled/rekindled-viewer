@@ -40,10 +40,10 @@
 #include "v4math.h"
 #include "llstrider.h"
 #include "llpointer.h"
-#include "llrenderheaders.h"
-#include "llrenderstate.h"
-#include "llrenderformat.h"
-#include "llrendermatrix.h"
+#include "rkrenderheaders.h"
+#include "rkrenderstate.h"
+#include "rkrenderformat.h"
+#include "rkrendermatrix.h"
 #include "llmatrix4a.h"
 #include "glm/mat4x4.hpp"
 #include <boost/align/aligned_allocator.hpp>
@@ -396,7 +396,7 @@ public:
     void refreshState(void);
 
 
-    // F3.3 (llrendermatrix.h): the matrix operations name their matrix; there is no "current matrix mode" any more
+    // F3.3 (rkrendermatrix.h): the matrix operations name their matrix; there is no "current matrix mode" any more
     void pushMatrixOf(eMatrixMode mode);
     void popMatrixOf(eMatrixMode mode);
     void setMatrixOf(eMatrixMode mode, const glm::mat4& m);
@@ -477,7 +477,7 @@ public:
     void setClearColor(F32 r, F32 g, F32 b, F32 a);
     const F32* getClearColor() const { return mClearColor; }       // F3.5d: the pass scope clears to this unless it is given a colour
     void setViewport(S32 x, S32 y, S32 width, S32 height);
-    void setCullFace(LLRenderState::CullFace face);       // F3.2: typed (llrenderstate.h)
+    void setCullFace(LLRenderState::CullFace face);       // F3.2: typed (rkrenderstate.h)
     void setPolygonOffset(F32 factor, F32 units);
     void setPolygonMode(LLRenderState::PolygonMode mode);
     void setPointSize(F32 size);
@@ -486,7 +486,7 @@ public:
     void setStencilMask(U32 mask);
     // reads the colour attachment of the target of the innermost open pass (the back buffer when none is bound)
     void readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    // queries (llvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
+    // queries (rkvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
     enum QueryKind { QUERY_ANY_SAMPLES = 0, QUERY_SAMPLES_PASSED = 1, QUERY_TIME_ELAPSED = 2, QUERY_PRIMITIVES_GENERATED = 3 };
     void genQueries(S32 count, U32* ids);
     void deleteQueries(S32 count, const U32* ids);
@@ -548,7 +548,7 @@ public:
     static LLVector2 sUIGLScaleFactor;
     static bool sClassicMode; // classic sky mode active
 
-    // census only (newview/llitemcensus.h): a running hash of everything the UI emits (immediate batches and cached text buffers), to find the views whose output
+    // census only (newview/rkitemcensus.h): a running hash of everything the UI emits (immediate batches and cached text buffers), to find the views whose output
     // is the same as in the previous frame
     static bool sUiHashing;
     // <FS> UI record cache: the beliefs of the CPU side that a recorded or replayed stretch of records makes wrong. Calls LLVkAsync::segmentBoundary(), forgets which texture each unit holds and which

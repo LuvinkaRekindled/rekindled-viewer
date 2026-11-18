@@ -29,7 +29,7 @@
 #include "llviewerprecompiledheaders.h"
 
 // library includes
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 #include "llrendertarget.h"
 #include "llvertexbuffer.h"
 

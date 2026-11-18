@@ -51,7 +51,7 @@
 #include "llstring.h"
 //#include "imdebug.h"
 #include "llfontbitmapcache.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 
 #define ENABLE_OT_SVG_SUPPORT
 

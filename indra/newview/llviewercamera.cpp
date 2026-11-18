@@ -48,8 +48,8 @@
 // Linden library includes
 #include "lldrawable.h"
 #include "llface.h"
-#include "lldevicecaps.h"
-#include "llrenderheaders.h"
+#include "rkdevicecaps.h"
+#include "rkrenderheaders.h"
 #include "llquaternion.h"
 #include "llwindow.h"           // getPixelAspectRatio()
 #include "lltracerecording.h"

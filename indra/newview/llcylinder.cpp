@@ -34,8 +34,8 @@
 #include "noise.h"
 #include "v3math.h"
 #include "llvertexbuffer.h"
-#include "lldevicecaps.h"
-#include "llrenderheaders.h"
+#include "rkdevicecaps.h"
+#include "rkrenderheaders.h"
 
 LLCone      gCone;
 

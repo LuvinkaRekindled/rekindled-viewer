@@ -4,17 +4,17 @@ Adam's goal: move away from NVIDIA proprietary libraries while keeping equivalen
 
 ## What depends on the NVIDIA SDK today (read from the code, 2026-11-10)
 
-- `indra/llrender/CMakeLists.txt` (line ~173): `DLSS_SDK_DIR` (default `<work>/DLSS/DLSS`); when `include/nvsdk_ngx_vk.h` and `lib/Windows_x86_64/x64/nvsdk_ngx_d.lib` exist, it adds the include path, defines `LL_DLSS=1` and **links `nvsdk_ngx_d.lib` statically into the viewer**. Without them `LL_DLSS` is undefined and `llvkdlss.cpp` / `llvkdlssnr.cpp` compile to stubs that report "not available".
+- `indra/llrender/CMakeLists.txt` (line ~173): `DLSS_SDK_DIR` (default `<work>/DLSS/DLSS`); when `include/nvsdk_ngx_vk.h` and `lib/Windows_x86_64/x64/nvsdk_ngx_d.lib` exist, it adds the include path, defines `LL_DLSS=1` and **links `nvsdk_ngx_d.lib` statically into the viewer**. Without them `LL_DLSS` is undefined and `rkvkdlss.cpp` / `rkvkdlssnr.cpp` compile to stubs that report "not available".
 - DLSS super resolution, DLAA and ray reconstruction use `nvngx_dlss.dll` and `nvngx_dlssd.dll` (loaded at run time through the NGX library, not shipped by any packaging step yet).
-- **DLSS-NR is inside the same `#if defined(LL_DLSS)`** and includes the NGX headers (`llvkdlssnr.cpp`). So NR is not independent of the SDK: no SDK at build time means no NR code at all.
-- FSR 3.1 (`llvkfsr.cpp`, `LL_FSR`) needs only AMD's ffx-api headers; `amd_fidelityfx_vk.dll` is loaded at run time, nothing linked. Vulkan device extensions with NVIDIA names (`VK_NV_ray_tracing_invocation_reorder`, cluster acceleration, diagnostics) are optional driver features in `llvkcontext.cpp`, not libraries.
+- **DLSS-NR is inside the same `#if defined(LL_DLSS)`** and includes the NGX headers (`rkvkdlssnr.cpp`). So NR is not independent of the SDK: no SDK at build time means no NR code at all.
+- FSR 3.1 (`rkvkfsr.cpp`, `LL_FSR`) needs only AMD's ffx-api headers; `amd_fidelityfx_vk.dll` is loaded at run time, nothing linked. Vulkan device extensions with NVIDIA names (`VK_NV_ray_tracing_invocation_reorder`, cluster acceleration, diagnostics) are optional driver features in `rkvkcontext.cpp`, not libraries.
 
 ## Replacements (equivalent features)
 
 | NVIDIA feature | Replacement | State |
 | --- | --- | --- |
 | DLSS Super Resolution | FSR 3.1 (MIT SDK) | in, tested on the RTX card |
-| DLAA | FSR at a 1.0 ratio (FSR 3.1's API has a native-AA mode; our `llvkfsr` accepts any render and output size) | not checked that the "DLAA (100%)" entry of the mode combo reaches FSR |
+| DLAA | FSR at a 1.0 ratio (FSR 3.1's API has a native-AA mode; our `rkvkfsr` accepts any render and output size) | not checked that the "DLAA (100%)" entry of the mode combo reaches FSR |
 | Ray reconstruction | a vendor-neutral denoiser: the classic AMD FidelityFX Denoiser 1.3 shadow part first, or our own SVGF (`PLAN-amd-fsr-sdk2.md` stage E) | not started; unmeasured |
 | DLSS-NR | none; stays an optional, never-shipped extra | see variant B |
 | Frame generation | left out | - |
@@ -35,10 +35,10 @@ Adam's goal: move away from NVIDIA proprietary libraries while keeping equivalen
 
 ## Ray tracing must not need an NVIDIA card (Adam, 2026-11-10: remove the RTX requirement)
 
-Facts from the code: ray tracing is our own Vulkan ray query on the cross-vendor extensions (`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, buffer device address; `rt.mUsable` in `llvkcontext.cpp:865`). The NVIDIA ray tracing extensions (invocation reorder, cluster acceleration structures, opacity micromaps) are queried but forced off at device creation (`llvkcontext.cpp:932`) and used nowhere else. The vendor id (`llvkbridge.cpp:302-317`) only picks the strings of the GL-style vendor and version report. No code gates ray tracing on the vendor. It has only run on one GeForce RTX card.
+Facts from the code: ray tracing is our own Vulkan ray query on the cross-vendor extensions (`VK_KHR_acceleration_structure`, `VK_KHR_ray_query`, buffer device address; `rt.mUsable` in `rkvkcontext.cpp:865`). The NVIDIA ray tracing extensions (invocation reorder, cluster acceleration structures, opacity micromaps) are queried but forced off at device creation (`rkvkcontext.cpp:932`) and used nowhere else. The vendor id (`rkvkbridge.cpp:302-317`) only picks the strings of the GL-style vendor and version report. No code gates ray tracing on the vendor. It has only run on one GeForce RTX card.
 
 To do (not done):
-- DONE (2026-11-10): reworded the preference (`panel_preferences_graphics1.xml:2049, 2053`; now "Use ray tracing (needs ray tracing hardware, experimental)" and a tooltip that names Vulkan ray queries from any maker; the comment in `llappviewer.cpp` too). The checkbox is never grayed by hardware: the setting sets `LL_VK_RT`, and a device without ray queries logs a warning at device creation (`llvkcontext.cpp:937`) and runs without it. Original line: reword the preference (`panel_preferences_graphics1.xml:2049, 2053`): the label "Use ray tracing (RTX graphics cards, experimental)" and the tooltip "Needs an NVIDIA RTX graphics card" become "needs a graphics card with Vulkan ray tracing support" (any vendor).
+- DONE (2026-11-10): reworded the preference (`panel_preferences_graphics1.xml:2049, 2053`; now "Use ray tracing (needs ray tracing hardware, experimental)" and a tooltip that names Vulkan ray queries from any maker; the comment in `llappviewer.cpp` too). The checkbox is never grayed by hardware: the setting sets `LL_VK_RT`, and a device without ray queries logs a warning at device creation (`rkvkcontext.cpp:937`) and runs without it. Original line: reword the preference (`panel_preferences_graphics1.xml:2049, 2053`): the label "Use ray tracing (RTX graphics cards, experimental)" and the tooltip "Needs an NVIDIA RTX graphics card" become "needs a graphics card with Vulkan ray tracing support" (any vendor).
 - Reword the other text that implies it: the DLSS upscaler tooltip (line 1922) is correct as it stands (it says DLSS is for RTX cards and FSR for any), the neural rendering one stays NVIDIA-specific; the About page on the site and any release text say "ray tracing hardware", not "RTX".
 - Check, and let an AMD or Intel tester check (stage C of `PLAN-amd-fsr-sdk2.md`): the viewer must enable the setting on any device with `rt.mUsable`, whatever the vendor; look at the code that decides when the checkbox is enabled and at the device-creation path for the three vendor structs.
 - Keep it off the NVIDIA-only list in `BETA-FEATURES.md`: say "cards with ray tracing hardware" there (already the wording).
@@ -48,5 +48,5 @@ To do (not done):
 - Build variant A once and run it: FSR on, RT shadows on and off, snapshots, no NVIDIA strings in the log, the Vulkan panel readable.
 - Confirm DLAA-through-FSR looks right and costs what is expected.
 - Measure a denoiser candidate (stage E) against RR on the shadows before calling it equivalent.
-- Review `llvkdlssnr.*`, `NOTES-dlss-nr.md` and `PLAN-dlss-nr.md` before the repository goes public (they describe a non-public NVIDIA interface).
+- Review `rkvkdlssnr.*`, `NOTES-dlss-nr.md` and `PLAN-dlss-nr.md` before the repository goes public (they describe a non-public NVIDIA interface).
 - Ask a lawyer to read the licence for variant B (static library but no DLLs) if it is the one chosen.

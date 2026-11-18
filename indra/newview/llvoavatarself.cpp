@@ -30,7 +30,7 @@
 #include "llvoavatar.h"
 
 #include "pipeline.h"
-#include "llvkbridge.h"             // <FS> LLVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
+#include "rkvkbridge.h"             // <FS> LLVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
 #include "llviewertexturelist.h"    // <FS> TEX_LIST_STANDARD (monitorBakeSlots)
 
 #include "llagent.h" //  Get state values from here
@@ -82,7 +82,7 @@
 // </FS:Ansariel> [Legacy Bake]
 
 #include <boost/lexical_cast.hpp>
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 LLPointer<LLVOAvatarSelf> gAgentAvatarp = NULL;
 

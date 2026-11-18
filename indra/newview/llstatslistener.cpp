@@ -28,7 +28,7 @@
 
 #include "llinventorymodel.h"
 #include "llinventorymodelbackgroundfetch.h"
-#include "llimagetex.h"
+#include "rkimagetex.h"
 #include "llviewerstats.h"
 
 namespace

@@ -37,7 +37,7 @@
 #include "llcriticaldamp.h"
 #include "lldrawable.h"
 #include "llfontgl.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llhudrender.h"
 #include "llui.h"
 #include "llviewercamera.h"
@@ -48,7 +48,7 @@
 #include "llstatusbar.h"
 #include "llmenugl.h"
 #include "pipeline.h"
-#include "llitemcensus.h"
+#include "rkitemcensus.h"
 #include <boost/tokenizer.hpp>
 
 

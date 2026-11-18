@@ -1,7 +1,7 @@
 // impostor.vert: the quads of the avatar impostors in the G-buffer pass (the picture of a whole far avatar, made by LLVOAvatar::generateImpostor), all of a pass in one draw: a row of the impostor table
-// (3 vec4: the centre with the diffuse slot, the left half axis with the normal slot, the up half axis with the specular slot; llvkbridge.h ImpostorQuadRow) a draw instance, 6 vertices a row, the corners
+// (3 vec4: the centre with the diffuse slot, the left half axis with the normal slot, the up half axis with the specular slot; rkvkbridge.h ImpostorQuadRow) a draw instance, 6 vertices a row, the corners
 // in the order of the old immediate mode quad (LLVOAvatar::renderImpostor). Stands in for "Deferred Impostor Shader" (deferred/impostorV.glsl), which has no table: only this program draws (kind 41).
-// The matrices are the viewer's (GL clip space): the depth is remapped to Vulkan's as the old programs' is (llvkshader.cpp).
+// The matrices are the viewer's (GL clip space): the depth is remapped to Vulkan's as the old programs' is (rkvkshader.cpp).
 
 layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 {

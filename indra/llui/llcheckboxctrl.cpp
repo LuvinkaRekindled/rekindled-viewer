@@ -30,7 +30,7 @@
 #define LLCHECKBOXCTRL_CPP
 #include "llcheckboxctrl.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llui.h"
 #include "lluiconstants.h"
 #include "lluictrlfactory.h"

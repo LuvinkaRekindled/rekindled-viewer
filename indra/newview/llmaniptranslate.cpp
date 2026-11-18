@@ -32,7 +32,7 @@
 
 #include "llmaniptranslate.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrender.h"
 
 #include "llagent.h"
@@ -45,7 +45,7 @@
 #include "lldrawable.h"
 #include "llfloatertools.h"
 #include "llfontgl.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llhudrender.h"
 #include "llresmgr.h"
 #include "llselectmgr.h"

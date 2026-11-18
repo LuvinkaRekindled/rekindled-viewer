@@ -45,7 +45,7 @@
 #include "llviewerregion.h"
 #include "lldrawpoolterrain.h"
 #include "llworldmipmap.h"
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 extern LLPipeline gPipeline;
 extern bool gShiftFrame;

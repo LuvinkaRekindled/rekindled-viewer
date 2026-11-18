@@ -33,7 +33,7 @@
 #include "llfloaterconversationlog.h"
 #include "llfloaterreg.h"
 #include "llfontgl.h"
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llrect.h"
 #include "llerror.h"
 #include "llbutton.h"

@@ -26,7 +26,7 @@
 
 #include "linden_common.h"
 
-#include "lldevicecaps.h"
+#include "rkdevicecaps.h"
 #include "llfontbitmapcache.h"
 
 LLFontBitmapCache::LLFontBitmapCache()

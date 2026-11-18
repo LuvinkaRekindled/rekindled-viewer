@@ -42,7 +42,7 @@
 #include "llui.h"
 #include "lltooltip.h"
 
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 
 // Viewer includes
 #include "llagent.h"

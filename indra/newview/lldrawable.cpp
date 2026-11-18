@@ -25,16 +25,16 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "llcullshadow.h"
-#include "llgpuzonetimer.h"
+#include "rkcullshadow.h"
+#include "rkgpuzonetimer.h"
 
 #include "lldrawable.h"
 #if !LL_WINDOWS
 #include <sys/uio.h>
 #include <unistd.h>
 #endif
-#include "llattcensus.h"
-#include "llviewertexturerecs.h"
+#include "rkattcensus.h"
+#include "rkviewertexturerecs.h"
 #include <mutex>
 #include <atomic>
 

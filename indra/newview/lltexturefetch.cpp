@@ -43,8 +43,8 @@
 
 #include "llagent.h"
 #include "lltexturecache.h"
-#include "fsdecodedtexturecache.h"
-#include "fstexturearrivaltrace.h"
+#include "rkdecodedtexturecache.h"
+#include "rktexturearrivaltrace.h"
 #include "llviewercontrol.h"
 #include "llviewertexturelist.h"
 #include "llviewertexture.h"
@@ -68,7 +68,7 @@
 #include "fsassetblacklist.h" //For Asset blacklist
 #include "llviewermenu.h"
 #include "llviewernetwork.h" // <FS:Ansariel> OpenSim compatibility
-#include "lldiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 LLTrace::CountStatHandle<F64> LLTextureFetch::sCacheHit("texture_cache_hit");
 LLTrace::CountStatHandle<F64> LLTextureFetch::sCacheAttempt("texture_cache_attempt");

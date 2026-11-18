@@ -44,7 +44,7 @@
 #include "lltrans.h"
 #include "llstyle.h"
 
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llagent.h"
 #include "llavatariconctrl.h"
 #include "llinventorytype.h"

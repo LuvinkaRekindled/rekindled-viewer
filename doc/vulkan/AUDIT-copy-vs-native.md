@@ -2,8 +2,8 @@
 
 Asked for after the typed-record work: look back at everything built for the Vulkan-only path and check it for the same mistake (reproducing GL's behaviour
 instead of asking what is efficient). Read: the worker's draw path (`prepare_draw`, `sync_textures`, `build_vertex_input`, `on_glDraw*`), `Renderer::applyState`,
-`drawIndexed`, the buffer code (`on_bufferData`, `write_buffer`, renames), `initGLNoGL`, `llglstubs.cpp`. Not read in detail: texture upload/mip code, query code,
-shader translation, `llvkmirror.cpp` frame handling.
+`drawIndexed`, the buffer code (`on_bufferData`, `write_buffer`, renames), `initGLNoGL`, `rkglstubs.cpp`. Not read in detail: texture upload/mip code, query code,
+shader translation, `rkvkmirror.cpp` frame handling.
 
 ## Native in design already (keep)
 - `Renderer` state: extended dynamic state (cull, depth, blend, vertex input are dynamic commands set only when changed); a pipeline is keyed by program + target formats + topology, not by GL state. No pipeline explosion.
@@ -32,8 +32,8 @@ shader translation, `llvkmirror.cpp` frame handling.
 
 ## Scaffolding to delete (no design problem, but it is in the way and in the hot path)
 - The inline (non-async) mirror path in the generated wrappers: the hook timers, mutex and `HookStat` objects that run on every GL call that is not a typed record.
-- `LL_VK_VERIFY` (GL-versus-Vulkan comparison, dead without GL), `llvkverify.h`, remaining `ll_nogl()` guards, dead `mhRC` close code.
-- `llglstubs.cpp` (the `__imp_` stubs): needed only while dead GL names remain in viewer code; goes when those are removed.
+- `LL_VK_VERIFY` (GL-versus-Vulkan comparison, dead without GL), `rkvkverify.h`, remaining `ll_nogl()` guards, dead `mhRC` close code.
+- `rkglstubs.cpp` (the `__imp_` stubs): needed only while dead GL names remain in viewer code; goes when those are removed.
 - The 22-entry stats / debug-filter branches inside `prepare_draw`: keep behind one `if` for profiling builds, not on the normal path.
 
 ## Changes to the plan (PLAN-draw-records.md)

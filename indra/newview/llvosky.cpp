@@ -39,7 +39,7 @@
 #include "llcubemap.h"
 #include "lldrawpoolsky.h"
 #include "lldrawpoolwater.h"
-#include "llrenderheaders.h"
+#include "rkrenderheaders.h"
 #include "llsky.h"
 #include "llviewercamera.h"
 #include "llviewertexturelist.h"

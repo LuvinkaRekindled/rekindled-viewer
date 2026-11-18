@@ -4,7 +4,7 @@ Asked by Adam: "one more thing we need to look at is avatars. we've made big str
 
 Status: proposal. Nothing built, nothing measured for this note. Three read-only studies of the tree at 5a6425adb3 (the CPU path, the render path, the history and loading), the zone laps `j2-def1.log` (97.5 avatars in the region, 39 in the motion batch, loop 10.2 ms), `rf-def1.log` (69 to 77 avatars) and `zt-def1.log` (86 loaded, about 31 in the frustum, GPU 5.78 ms). V = read in the code, a log or a doc; U = inference. The targets in section 4 are estimates.
 
-Builds on `PLAN-avatars.md` (stages A to C, live), `PLAN-avatar-frame-record.md` (never built as a record), `PLAN-crowd-worker-and-gpu.md`, `PLAN-velocity-fold-and-skin-once.md`, `PLAN-thread-organization.md`, `PLAN-hitchless-loading.md`. Paths under `indra/`; "voav" = `newview/llvoavatar.cpp`, "vol" = `newview/llviewerobjectlist.cpp`, "pipe" = `newview/pipeline.cpp`, "worker" = `llrender/llvkworker.cpp`.
+Builds on `PLAN-avatars.md` (stages A to C, live), `PLAN-avatar-frame-record.md` (never built as a record), `PLAN-crowd-worker-and-gpu.md`, `PLAN-velocity-fold-and-skin-once.md`, `PLAN-thread-organization.md`, `PLAN-hitchless-loading.md`. Paths under `indra/`; "voav" = `newview/llvoavatar.cpp`, "vol" = `newview/llviewerobjectlist.cpp`, "pipe" = `newview/pipeline.cpp`, "worker" = `llrender/rkvkworker.cpp`.
 
 ## 1. The answer in short
 

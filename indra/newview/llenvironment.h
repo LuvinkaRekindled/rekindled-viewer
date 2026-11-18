@@ -36,7 +36,7 @@
 #include "llsettingswater.h"
 #include "llsettingsdaycycle.h"
 
-#include "llshaderprogram.h"
+#include "rkshaderprogram.h"
 
 #include <boost/signals2.hpp>
 

@@ -82,7 +82,7 @@
 // [/RLVa:KB]
 
 #include "llviewernetwork.h"    // <FS:CR> For prim equivilance hiding
-#include "llgpuzonetimer.h"
+#include "rkgpuzonetimer.h"
 
 extern bool gDebugClicks;
 
