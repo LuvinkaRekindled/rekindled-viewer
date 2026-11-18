@@ -21,7 +21,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    const vec4 shown = color * texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], vary_texcoord0);
+    const vec4 shown = color * texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0);
 #ifdef HL_GBUFFER
     frag_velocity = vec2(1.0, 0.0);
     frag_albedo = shown;

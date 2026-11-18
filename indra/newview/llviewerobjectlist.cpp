@@ -1159,15 +1159,15 @@ void RKAttCensus::frame()
 }
 
 // <FS> avatar update timing (see llvoavatar.cpp), logged every 300 frames
-extern U64 gFSAvStatNs[32];
-extern U32 gFSAvStatCount[32];
-extern bool gFSAvTimersOn;
-static U64 gFSAvBatchBlendNs = 0;
-static U64 gFSAvBatchCompleteNs = 0;
-static U32 gFSAvBatchSize = 0;
-static U32 gFSAvBatchCount = 0;
-static U64 gFSAvIdleLoopNs = 0;
-static U32 gFSAvFrames = 0;
+extern U64 gRKAvStatNs[32];
+extern U32 gRKAvStatCount[32];
+extern bool gRKAvTimersOn;
+static U64 gRKAvBatchBlendNs = 0;
+static U64 gRKAvBatchCompleteNs = 0;
+static U32 gRKAvBatchSize = 0;
+static U32 gRKAvBatchCount = 0;
+static U64 gRKAvIdleLoopNs = 0;
+static U32 gRKAvFrames = 0;
 
 namespace
 {
@@ -1186,7 +1186,7 @@ AvClassCensus gAvClass;
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
-    const auto batch_start = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    const auto batch_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
 
     static const bool av_class = getenv("LL_VK_AVCLASS") != nullptr;
     static std::vector<U8> av_cls;
@@ -1239,7 +1239,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 
         // <FS> view rework A2: the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
-        if (!gFSAvTimersOn && !RKAttCensus::sOn)
+        if (!gRKAvTimersOn && !RKAttCensus::sOn)
         {
             static std::vector<LLVOAvatar*> jobs;
             jobs.clear();
@@ -1301,7 +1301,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         }
     };
 
-    const auto blend_end = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+    const auto blend_end = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     if (av_class)
     {
         for (size_t i : phase1)
@@ -1353,7 +1353,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
     {
-        ll_frame_palette_prepare((U32)gFrameCount + 1);      // <FS> P1 step 2: the coming frame's palette list begins (and takes its arena) before the jobs write into it
+        rk_frame_palette_prepare((U32)gFrameCount + 1);      // <FS> P1 step 2: the coming frame's palette list begins (and takes its arena) before the jobs write into it
         static const bool pal_time = getenv("LL_VK_PALTIME") != nullptr;
         const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         if (pool && batch.size() >= MIN_PARALLEL_BATCH)
@@ -1375,13 +1375,13 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             LLVOAvatar::sPalJobWallNsAdd((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pal_t0).count());
         }
     }
-    if (gFSAvTimersOn)
+    if (gRKAvTimersOn)
     {
         const auto complete_end = std::chrono::steady_clock::now();
-        gFSAvBatchBlendNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(blend_end - batch_start).count();
-        gFSAvBatchCompleteNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(complete_end - blend_end).count();
-        gFSAvBatchSize += (U32)batch.size();
-        gFSAvBatchCount++;
+        gRKAvBatchBlendNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(blend_end - batch_start).count();
+        gRKAvBatchCompleteNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(complete_end - blend_end).count();
+        gRKAvBatchSize += (U32)batch.size();
+        gRKAvBatchCount++;
     }
 }
 }
@@ -1530,7 +1530,7 @@ void LLViewerObjectList::update(LLAgent &agent)
             LLVOAvatar::sMotionUpdateBatch = &motion_batch;
         }
 
-        const auto idle_loop_start = gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+        const auto idle_loop_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         for (std::vector<LLViewerObject*>::iterator idle_iter = idle_list.begin();
             idle_iter != idle_end; idle_iter++)
         {
@@ -1554,9 +1554,9 @@ void LLViewerObjectList::update(LLAgent &agent)
                 else
                 { LL_CPU_ZONE(objectp->isAvatar() ? "objectlist: idleUpdate (avatars)" : "objectlist: idleUpdate (other objects)"); objectp->idleUpdate(agent, frame_time); }
         }
-        if (gFSAvTimersOn)
+        if (gRKAvTimersOn)
         {
-            gFSAvIdleLoopNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_loop_start).count();
+            gRKAvIdleLoopNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_loop_start).count();
         }
 
         LLVOAvatar::sMotionUpdateBatch = nullptr;
@@ -1569,7 +1569,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         // </FS>
 
         // <FS> the avatar update timers
-        if (gFSAvTimersOn && ++gFSAvFrames >= 300)
+        if (gRKAvTimersOn && ++gRKAvFrames >= 300)
         {
             static const char* const names[12] = { "idleUpdate", "idleUpdate before updateCharacter", "updateCharacter", "  hidden (no update needed)",
                 "  root position+rotation", "  hidden update", "  motion begin (deferred)", "  motion update inline", "  post-motion inline",
@@ -1577,34 +1577,34 @@ void LLViewerObjectList::update(LLAgent &agent)
             std::string line;
             for (int i = 0; i < 11; ++i)
             {
-                if (gFSAvStatCount[i] > 0)
+                if (gRKAvStatCount[i] > 0)
                 {
-                    line += llformat(" [%s: %.3f ms/frame, %.1f avatars/frame, %.1f us each]", names[i], (double)gFSAvStatNs[i] / 1.0e6 / gFSAvFrames,
-                        (double)gFSAvStatCount[i] / gFSAvFrames, (double)gFSAvStatNs[i] / 1.0e3 / gFSAvStatCount[i]);
+                    line += llformat(" [%s: %.3f ms/frame, %.1f avatars/frame, %.1f us each]", names[i], (double)gRKAvStatNs[i] / 1.0e6 / gRKAvFrames,
+                        (double)gRKAvStatCount[i] / gRKAvFrames, (double)gRKAvStatNs[i] / 1.0e3 / gRKAvStatCount[i]);
                 }
             }
-            LL_INFOS("AvatarUpdate") << "per frame over " << gFSAvFrames << " frames:" << line << LL_ENDL;
+            LL_INFOS("AvatarUpdate") << "per frame over " << gRKAvFrames << " frames:" << line << LL_ENDL;
             {
                 static const char* const sub_names[] = { "voice visualizer", "name tag position", "idleUpdateMisc", "appearance animation", "lipsync+loading+water+wind",
                     "name tag", "render complexity", "debug info", "head offset", "footsteps", "joint matrices", "updateOrientation", "ground height", "orientation matrix+euler" };
                 std::string sub;
                 for (int i = 14; i < 28; ++i)
                 {
-                    sub += llformat(" [%s: %.3f ms/frame, %.1f us each over %.1f/frame]", sub_names[i - 14], (double)gFSAvStatNs[i] / 1.0e6 / gFSAvFrames,
-                        gFSAvStatCount[i] ? (double)gFSAvStatNs[i] / 1.0e3 / gFSAvStatCount[i] : 0.0, (double)gFSAvStatCount[i] / gFSAvFrames);
+                    sub += llformat(" [%s: %.3f ms/frame, %.1f us each over %.1f/frame]", sub_names[i - 14], (double)gRKAvStatNs[i] / 1.0e6 / gRKAvFrames,
+                        gRKAvStatCount[i] ? (double)gRKAvStatNs[i] / 1.0e3 / gRKAvStatCount[i] : 0.0, (double)gRKAvStatCount[i] / gRKAvFrames);
                 }
                 LL_INFOS("AvatarUpdate") << "pieces:" << sub << LL_ENDL;
             }
             LL_INFOS("AvatarUpdate") << llformat("inline normal updates per frame: self %.1f, animesh %.1f, other %.1f",
-                (double)gFSAvStatCount[11] / gFSAvFrames, (double)gFSAvStatCount[12] / gFSAvFrames, (double)gFSAvStatCount[13] / gFSAvFrames) << LL_ENDL;
+                (double)gRKAvStatCount[11] / gRKAvFrames, (double)gRKAvStatCount[12] / gRKAvFrames, (double)gRKAvStatCount[13] / gRKAvFrames) << LL_ENDL;
             LL_INFOS("AvatarUpdate") << llformat("idle loop total %.3f ms/frame; parallel blend wall %.3f ms/frame, completion loop %.3f ms/frame, %.1f avatars/batch",
-                (double)gFSAvIdleLoopNs / 1.0e6 / gFSAvFrames, (double)gFSAvBatchBlendNs / 1.0e6 / gFSAvFrames,
-                (double)gFSAvBatchCompleteNs / 1.0e6 / gFSAvFrames, gFSAvBatchCount ? (double)gFSAvBatchSize / gFSAvBatchCount : 0.0) << LL_ENDL;
-            memset(gFSAvStatNs, 0, sizeof(gFSAvStatNs));
-            memset(gFSAvStatCount, 0, sizeof(gFSAvStatCount));
-            gFSAvBatchBlendNs = gFSAvBatchCompleteNs = gFSAvIdleLoopNs = 0;
-            gFSAvBatchSize = gFSAvBatchCount = 0;
-            gFSAvFrames = 0;
+                (double)gRKAvIdleLoopNs / 1.0e6 / gRKAvFrames, (double)gRKAvBatchBlendNs / 1.0e6 / gRKAvFrames,
+                (double)gRKAvBatchCompleteNs / 1.0e6 / gRKAvFrames, gRKAvBatchCount ? (double)gRKAvBatchSize / gRKAvBatchCount : 0.0) << LL_ENDL;
+            memset(gRKAvStatNs, 0, sizeof(gRKAvStatNs));
+            memset(gRKAvStatCount, 0, sizeof(gRKAvStatCount));
+            gRKAvBatchBlendNs = gRKAvBatchCompleteNs = gRKAvIdleLoopNs = 0;
+            gRKAvBatchSize = gRKAvBatchCount = 0;
+            gRKAvFrames = 0;
         }
 
         //update flexible objects

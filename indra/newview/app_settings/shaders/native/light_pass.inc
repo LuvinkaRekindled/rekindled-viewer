@@ -1,6 +1,6 @@
 // light_pass.inc: the loose uniform blocks of the native deferred light programs (light_volume.vert, light_point.frag, light_multi.frag, light_spot.frag include this file, so both stages declare the same blocks).
 // Every name and type is the one the viewer's light programs use: the renderer copies the values by name (Program::adoptFrom / the uniform calls of the pipeline). Defines of the manifest lines:
-//   LIGHT_VOLUME      a light of the pass is a row of a table (ll_light_table, written by the draw record), drawn as the box of its volume: the vertex shader makes the box, the rows are read by instance
+//   LIGHT_VOLUME      a light of the pass is a row of a table (rk_light_table, written by the draw record), drawn as the box of its volume: the vertex shader makes the box, the rows are read by instance
 //   LIGHT_SPOT        (with LIGHT_VOLUME) the row is a projector's: 11 vec4 instead of 3
 //   LIGHT_MULTI       up to 16 point lights that cover the whole screen, in uniform arrays, one triangle
 //   LIGHT_MULTI_SPOT  one projector that covers the whole screen, its values in uniforms, one triangle
@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 #ifdef LIGHT_VOLUME
     mat4 modelview_projection_matrix;
     mat4 modelview_matrix;
-    uvec2 ll_light_table;           // the rows of the record (written by the worker when the draw runs)
+    uvec2 rk_light_table;           // the rows of the record (written by the worker when the draw runs)
 #endif
     mat4 inv_proj;
     vec2 screen_res;
@@ -53,15 +53,15 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_depthMap;
-    uint ll_ti_normalMap;
-    uint ll_ti_diffuseRect;
-    uint ll_ti_specularRect;
-    uint ll_ti_lightFunc;
+    uint rk_ti_depthMap;
+    uint rk_ti_normalMap;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_specularRect;
+    uint rk_ti_lightFunc;
 #if defined(LIGHT_SPOT) || defined(LIGHT_MULTI_SPOT)
-    uint ll_ti_lightMap;            // the spot shadows (b and a)
+    uint rk_ti_lightMap;            // the spot shadows (b and a)
 #endif
 #ifdef LIGHT_MULTI_SPOT
-    uint ll_ti_projectionMap;
+    uint rk_ti_projectionMap;
 #endif
 };

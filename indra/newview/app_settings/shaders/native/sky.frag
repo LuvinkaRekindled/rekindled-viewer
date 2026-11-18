@@ -39,14 +39,14 @@ vec3 rainbow(float d)
     d = clamp(d, 0.0, 0.25) + interior_coord;
 
     float rad = (droplet_radius - 5.0f) / 1024.0f;
-    return pow(texture(ll_tbl2d[LL_HM(ll_ti_rainbow_map)], vec2(rad + 0.5, d)).rgb, vec3(1.8)) * moisture_level;
+    return pow(texture(rk_tbl2d[LL_HM(rk_ti_rainbow_map)], vec2(rad + 0.5, d)).rgb, vec3(1.8)) * moisture_level;
 }
 
 vec3 halo22(float d)
 {
     d       = clamp(d, 0.1, 1.0);
     float v = sqrt(clamp(1 - (d * d), 0, 1));
-    return texture(ll_tbl2d[LL_HM(ll_ti_halo_map)], vec2(0, v)).rgb * ice_level;
+    return texture(rk_tbl2d[LL_HM(rk_ti_halo_map)], vec2(0, v)).rgb * ice_level;
 }
 
 void main()
@@ -61,7 +61,7 @@ void main()
         vec3 pos = normalize(vary_rel_pos);
         pos = env_mat * pos;
         const vec2 tex_coord = vec2(atan(pos.z, pos.x) + PI, acos(pos.y)) / vec2(2.0 * PI, PI);
-        sky_color = textureLod(ll_tbl2d[LL_HM(ll_ti_environmentMap)], tex_coord, 0.0).rgb * sky_hdr_scale;
+        sky_color = textureLod(rk_tbl2d[LL_HM(rk_ti_environmentMap)], tex_coord, 0.0).rgb * sky_hdr_scale;
         sky_color = min(sky_color, vec3(8192.0 * 8192.0 * 16.0));       // stupidly large value arrived at by binary search -- avoids framebuffer corruption from some HDRIs
         frag_normal = vec4(0.0, 0.0, 0.0, GBUFFER_FLAG_HAS_HDRI);
     }

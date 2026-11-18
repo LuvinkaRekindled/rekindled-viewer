@@ -66,7 +66,7 @@ void LLDrawPoolGLTFPBR::renderDeferred(S32 pass)
 
     LL::GLTFSceneManager::instance().render(true, true);
 
-    if (ll_rigged_packets_enabled())
+    if (rk_rigged_packets_enabled())
     {
         gDeferredPBROpaquePullSkinProgram.bind();
         pushGeometryPackets(mRenderType + 1, true);
@@ -83,7 +83,7 @@ void LLDrawPoolGLTFPBR::renderPostDeferred(S32 pass)
     if (LLPipeline::sRenderingHUDs)
     {
         // <FS> J1 K6 S1: the HUD's glTF opaque / mask draws from the scene table (the HUD's cull result was told to the worker before the passes)
-        if (ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(mRenderType)))
+        if (rk_scene_geo_hud_view() && rk_scene_geo_prepared(gPipeline.getCull()) && rk_scene_geo_hud_type(rk_scene_geo_type_number(mRenderType)))
         {
             gHUDPBROpaquePullProgram.bind();
             pushGeometryPackets(mRenderType);
@@ -94,13 +94,13 @@ void LLDrawPoolGLTFPBR::renderPostDeferred(S32 pass)
         gRender.setColorMask(false, true);
         {   // J1 K6 A3: the glTF glow from the scene table (the PBR glow pull programs of the alpha glow, the same rows)
             // <FS> Rekindled (2026-11-10): the glTF opaque glow writes the glow too: see LLDrawPoolGlow::renderPostDeferred
-            if (LLPipeline::sRenderGlow && (ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW) || (ll_rigged_packets_enabled() && ll_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW_RIGGED))))
+            if (LLPipeline::sRenderGlow && (rk_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW) || (rk_rigged_packets_enabled() && rk_scene_geo_cull_has_type(gPipeline.getCull(), LLRenderPass::PASS_GLTF_GLOW_RIGGED))))
             {
                 LLPipeline::sGlowDrawn = true;
             }
             gPBRGlowPullProgram.bind();
             pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW);
-            if (ll_rigged_packets_enabled())
+            if (rk_rigged_packets_enabled())
             {
                 gPBRGlowPullSkinProgram.bind();
                 pushGeometryPackets(LLRenderPass::PASS_GLTF_GLOW_RIGGED, true);

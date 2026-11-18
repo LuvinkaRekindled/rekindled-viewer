@@ -44,7 +44,7 @@ Projector load_projector()
 {
     Projector pr;
 #ifdef LIGHT_VOLUME
-    LightRows rows = LightRows(ll_light_table);
+    LightRows rows = LightRows(rk_light_table);
     const uint at = vary_light_row.x * LIGHT_ROW_STRIDE;
     const vec4 r2 = rows.v[at + 2u];
     const vec4 r3 = rows.v[at + 3u];
@@ -81,9 +81,9 @@ Projector load_projector()
 vec4 proj_image(Projector pr, vec2 tc, float lod)
 {
 #ifdef LIGHT_VOLUME
-    return textureLod(ll_tbl2d[nonuniformEXT(LL_HM(pr.slot))], tc, lod);
+    return textureLod(rk_tbl2d[nonuniformEXT(LL_HM(pr.slot))], tc, lod);
 #else
-    return textureLod(LV_TAP(ll_ti_projectionMap), tc, lod);
+    return textureLod(LV_TAP(rk_ti_projectionMap), tc, lod);
 #endif
 }
 
@@ -138,8 +138,8 @@ vec3 proj_light_ambiance(Projector pr, vec3 light_color, float amb_da, float att
 void main()
 {
     const vec2 uv = gl_FragCoord.xy / screen_res;
-    const float depth = textureLod(LV_TAP(ll_ti_depthMap), uv, 0.0).r;
-    const vec3 pos = ll_view_pos(inv_proj, uv, depth);
+    const float depth = textureLod(LV_TAP(rk_ti_depthMap), uv, 0.0).r;
+    const vec3 pos = rk_view_pos(inv_proj, uv, depth);
 
 #ifdef LIGHT_VOLUME
     const vec3 light_color = vary_light_a.rgb;
@@ -175,7 +175,7 @@ void main()
     proj_tc.xyz /= proj_tc.w;
     const bool in_frame = proj_tc.x > 0.0 && proj_tc.x < 1.0 && proj_tc.y > 0.0 && proj_tc.y < 1.0;
 
-    LightSurface s = light_surface_geometry(textureLod(LV_TAP(ll_ti_normalMap), uv, 0.0), pos);
+    LightSurface s = light_surface_geometry(textureLod(LV_TAP(rk_ti_normalMap), uv, 0.0), pos);
     // outside the frame a glTF surface gets nothing, and a legacy one only the image's reflection (a shiny surface's)
     if (!in_frame && (s.pbr || s.env <= 0.0))
     {
@@ -186,7 +186,7 @@ void main()
     float shadow = 1.0;
     if (pr.shadow_idx >= 0)
     {
-        const vec4 shd = textureLod(LV_TAP(ll_ti_lightMap), uv, 0.0);
+        const vec4 shd = textureLod(LV_TAP(rk_ti_lightMap), uv, 0.0);
         shadow = clamp((pr.shadow_idx == 0 ? shd.b : shd.a) + pr.shadow_fade, 0.0, 1.0);
     }
 
@@ -237,7 +237,7 @@ void main()
             const float fres = x * x * x * x * x * 0.4 + 0.5;
             const float gtdenom = 2.0 * nh;
             const float gt = max(0.0, min(gtdenom * s.nv / vh, gtdenom * nl / vh));
-            const float scol = fres * textureLod(LV_TAP(ll_ti_lightFunc), vec2(nh, s.spec.a), 0.0).r * gt / (nh * nl);
+            const float scol = fres * textureLod(LV_TAP(rk_ti_lightFunc), vec2(nh, s.spec.a), 0.0).r * gt / (nh * nl);
             final_color += clamp(dlit * scol * s.spec.rgb * shadow, vec3(0.0), vec3(1.0));
         }
 

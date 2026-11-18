@@ -1,4 +1,4 @@
-// gbuffer.vert: the vertex shader of the plain (legacy prim) G-buffer draws from the scene table: the diffuse family, opaque and alpha mask. A draw is one row of the table (alpha_pass.inc: ll_packet_table);
+// gbuffer.vert: the vertex shader of the plain (legacy prim) G-buffer draws from the scene table: the diffuse family, opaque and alpha mask. A draw is one row of the table (alpha_pass.inc: rk_packet_table);
 // the vertex reads its own data from the arrays the row names. Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw: the hardware reads the indices, the vertex number is the index), nothing (a static draw).
 // Outputs (gbuffer_diffuse.frag and gbuffer_diffuse_mask.frag read these): eye space position, eye space normal, vertex colour, texture coordinates, the texture slot and the mask cutoff (flat).
 
@@ -46,8 +46,8 @@ layout(location = 15) out vec4 vary_prev;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
 
 #ifdef HAS_SKIN
     const uint index = row_clamp_index(row, uint(gl_VertexIndex));
@@ -78,7 +78,7 @@ void main()
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
     {
         // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)
-        MotionTable motion_table = MotionTable(ll_packet_motion);
+        MotionTable motion_table = MotionTable(rk_packet_motion);
         const mat4 prev_model = motion_table.m[2u * row.model + 1u];
         if (prev_model[3][3] != 0.0)
         {
@@ -110,7 +110,7 @@ void main()
     }
 #endif
 
-    const mat4 texmat = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 texmat = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
     vary_texcoord0 = (texmat * vec4(RowVec2(row.texcoords).t[index], 0.0, 1.0)).xy;
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
 #ifdef GB_MATERIAL

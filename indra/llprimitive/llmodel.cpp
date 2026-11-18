@@ -1673,7 +1673,7 @@ LLMeshSkinInfo::LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& skin) :
 // rigs exported at centimetre or millimetre scale carry 100 or 1000 in these matrices and are fine (bounds of 100 and 0.01 flagged 407 meshes of a crowd and deformed their avatars, 2026-11-04). Some rigs ship
 // such matrices for joints the mesh hardly uses (2026-11-04: three meshes of one avatar, 1e20 and 1e34 and zeros for mWristLeft, mHipRight and mAnkleLeft); a vertex with a leftover weight
 // of a fraction of a percent on such a joint lands 1e17 metres away: in the draw a couple of thin triangles nobody sees, in a ray traced shadow a spike across the scene.
-static bool fs_bind_matrix_sane(const LLMatrix4& m, const char** why)
+static bool rk_bind_matrix_sane(const LLMatrix4& m, const char** why)
 {
     *why = "";
     F32 rot = 0.f;
@@ -1736,7 +1736,7 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                 }
             }
             const char* why = "";
-            if (!fs_bind_matrix_sane(mat, &why))
+            if (!rk_bind_matrix_sane(mat, &why))
             {
                 // the identity: the vertices weighted to this joint follow the joint from where they are (close to right for a joint the mesh hardly uses, and never a spike)
                 bad_inverse_binds += (bad_inverse_bind_count < 8 ? std::string(bad_inverse_binds.empty() ? "" : ", ") + (i < mJointNames.size() ? mJointNames[i] : std::to_string(i)) + " (" + why + ")" : std::string());
@@ -1788,7 +1788,7 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
                 }
             }
             const char* why = "";
-            if (!fs_bind_matrix_sane(mat, &why))
+            if (!rk_bind_matrix_sane(mat, &why))
             {
                 // an alternate bind matrix is a joint position override: one that cannot be used means the mesh's overrides are not trusted at all (none applied), not a joint at the origin
                 LL_WARNS("MeshSkin") << "mesh " << mMeshID << ": alternate bind matrix " << i << (i < mJointNames.size() ? " (" + mJointNames[i] + ")" : std::string()) << " in the asset cannot be used (" << why << "): the mesh's joint position overrides are dropped" << LL_ENDL;

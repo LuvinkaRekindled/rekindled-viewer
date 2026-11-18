@@ -16,8 +16,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_depthMap;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -32,7 +32,7 @@ layout(location = 0) out vec4 frag_color;
 #define SPHERE_PARAMS       rlvEffectParam4
 #define BLUR_DIRECTION      rlvEffectParam5.xy
 
-#define SOURCE ll_tbl2d[LL_HM(ll_ti_diffuseRect)]
+#define SOURCE rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
 
 vec3 getPositionWithNDC(vec3 ndc)
 {
@@ -49,7 +49,7 @@ vec4 getPositionWithDepth(vec2 pos_screen, float depth)
 
 float getDepth(vec2 pos_screen)
 {
-    return texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], pos_screen).r;
+    return texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
 }
 
 vec3 blur13(vec2 tc, vec2 direction)

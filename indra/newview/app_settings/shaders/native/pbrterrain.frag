@@ -25,31 +25,31 @@
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #if TERRAIN_PAINT_TYPE == TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE
-    uint ll_ti_alpha_ramp;
+    uint rk_ti_alpha_ramp;
 #else
-    uint ll_ti_paint_map;
+    uint rk_ti_paint_map;
 #endif
-    uint ll_ti_detail_0_base_color;
-    uint ll_ti_detail_1_base_color;
-    uint ll_ti_detail_2_base_color;
-    uint ll_ti_detail_3_base_color;
+    uint rk_ti_detail_0_base_color;
+    uint rk_ti_detail_1_base_color;
+    uint rk_ti_detail_2_base_color;
+    uint rk_ti_detail_3_base_color;
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_NORMAL)
-    uint ll_ti_detail_0_normal;
-    uint ll_ti_detail_1_normal;
-    uint ll_ti_detail_2_normal;
-    uint ll_ti_detail_3_normal;
+    uint rk_ti_detail_0_normal;
+    uint rk_ti_detail_1_normal;
+    uint rk_ti_detail_2_normal;
+    uint rk_ti_detail_3_normal;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
-    uint ll_ti_detail_0_metallic_roughness;
-    uint ll_ti_detail_1_metallic_roughness;
-    uint ll_ti_detail_2_metallic_roughness;
-    uint ll_ti_detail_3_metallic_roughness;
+    uint rk_ti_detail_0_metallic_roughness;
+    uint rk_ti_detail_1_metallic_roughness;
+    uint rk_ti_detail_2_metallic_roughness;
+    uint rk_ti_detail_3_metallic_roughness;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_EMISSIVE)
-    uint ll_ti_detail_0_emissive;
-    uint ll_ti_detail_1_emissive;
-    uint ll_ti_detail_2_emissive;
-    uint ll_ti_detail_3_emissive;
+    uint rk_ti_detail_0_emissive;
+    uint rk_ti_detail_1_emissive;
+    uint rk_ti_detail_2_emissive;
+    uint rk_ti_detail_3_emissive;
 #endif
 };
 
@@ -136,37 +136,37 @@ PBRMix mix_pbr(PBRMix mix1, PBRMix mix2, float mix2_weight)
 }
 
 // the texture slots of material m
-uint slot_base_color(int m) { return m == 0 ? ll_ti_detail_0_base_color : (m == 1 ? ll_ti_detail_1_base_color : (m == 2 ? ll_ti_detail_2_base_color : ll_ti_detail_3_base_color)); }
+uint slot_base_color(int m) { return m == 0 ? rk_ti_detail_0_base_color : (m == 1 ? rk_ti_detail_1_base_color : (m == 2 ? rk_ti_detail_2_base_color : rk_ti_detail_3_base_color)); }
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_NORMAL)
-uint slot_normal(int m) { return m == 0 ? ll_ti_detail_0_normal : (m == 1 ? ll_ti_detail_1_normal : (m == 2 ? ll_ti_detail_2_normal : ll_ti_detail_3_normal)); }
+uint slot_normal(int m) { return m == 0 ? rk_ti_detail_0_normal : (m == 1 ? rk_ti_detail_1_normal : (m == 2 ? rk_ti_detail_2_normal : rk_ti_detail_3_normal)); }
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
-uint slot_orm(int m) { return m == 0 ? ll_ti_detail_0_metallic_roughness : (m == 1 ? ll_ti_detail_1_metallic_roughness : (m == 2 ? ll_ti_detail_2_metallic_roughness : ll_ti_detail_3_metallic_roughness)); }
+uint slot_orm(int m) { return m == 0 ? rk_ti_detail_0_metallic_roughness : (m == 1 ? rk_ti_detail_1_metallic_roughness : (m == 2 ? rk_ti_detail_2_metallic_roughness : rk_ti_detail_3_metallic_roughness)); }
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_EMISSIVE)
-uint slot_emissive(int m) { return m == 0 ? ll_ti_detail_0_emissive : (m == 1 ? ll_ti_detail_1_emissive : (m == 2 ? ll_ti_detail_2_emissive : ll_ti_detail_3_emissive)); }
+uint slot_emissive(int m) { return m == 0 ? rk_ti_detail_0_emissive : (m == 1 ? rk_ti_detail_1_emissive : (m == 2 ? rk_ti_detail_2_emissive : rk_ti_detail_3_emissive)); }
 #endif
 
 // one sample of material m at uv with the given derivatives
 PBRMix sample_pbr(int m, vec2 uv, vec2 duvdx, vec2 duvdy)
 {
     PBRMix mix;
-    mix.col = textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_base_color(m)))], uv, duvdx, duvdy);
+    mix.col = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_base_color(m)))], uv, duvdx, duvdy);
     mix.col.rgb = srgb_to_linear(mix.col.rgb);
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_OCCLUSION)
-    mix.orm = textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).xyz;
+    mix.orm = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).xyz;
 #elif (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_METALLIC_ROUGHNESS)
-    mix.rm = textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).yz;
+    mix.rm = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_orm(m)))], uv, duvdx, duvdy).yz;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_NORMAL)
-    mix.vNt = textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_normal(m)))], uv, duvdx, duvdy).xyz * 2.0 - 1.0;
+    mix.vNt = textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_normal(m)))], uv, duvdx, duvdy).xyz * 2.0 - 1.0;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_EMISSIVE)
     // (the caller multiplies it by the material's emissive colour, which is black for almost every terrain material: the map is not read then; explicit derivatives, so a branch is fine)
     mix.emissive = vec3(0.0);
     if (emissiveColors[m] != vec3(0.0))
     {
-        mix.emissive = srgb_to_linear(textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
+        mix.emissive = srgb_to_linear(textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
     }
 #endif
     return mix;
@@ -353,12 +353,12 @@ void main()
 
     TerrainMix tm;
 #if TERRAIN_PAINT_TYPE == TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE
-    const float alpha1 = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_alpha_ramp))], vary_tc).a;
-    const float alpha2 = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_alpha_ramp))], vary_tc - vec2(2.0, 0.0)).a;
-    const float alphaFinal = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_alpha_ramp))], vary_tc - vec2(1.0, 0.0)).a;
+    const float alpha1 = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc).a;
+    const float alpha2 = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc - vec2(2.0, 0.0)).a;
+    const float alphaFinal = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_alpha_ramp))], vary_tc - vec2(1.0, 0.0)).a;
     tm = get_terrain_mix_weights(alpha1, alpha2, alphaFinal);
 #else
-    tm = get_terrain_usage_from_weight3(texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_paint_map))], vary_object.xy / region_scale).xyz);
+    tm = get_terrain_usage_from_weight3(texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_paint_map))], vary_object.xy / region_scale).xyz);
 #endif
 
     PBRMix pbr_mix = init_pbr_mix();

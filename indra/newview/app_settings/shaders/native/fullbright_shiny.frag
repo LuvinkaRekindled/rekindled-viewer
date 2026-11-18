@@ -25,7 +25,7 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     mirror_clip(vary_position);
-    vec4 color = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+    vec4 color = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
     color.rgb *= vertex_color.rgb;
 #ifndef IS_HUD
     color.rgb = srgb_to_linear(color.rgb);

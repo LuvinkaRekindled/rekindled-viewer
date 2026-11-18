@@ -973,7 +973,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             res = mHeroProbeManager.mProbeResolution;  // We also scale the hero probe RT to the probe res since we don't super sample it.
             mRT = &mHeroProbeRT;
             allocateScreenBufferInternal(res, res);
-            if (ll_mirror_planar())
+            if (rk_mirror_planar())
             {   // <FS> the planar mirror's reflected view: the main view's own size (allocateScreenBufferInternal scales it by the render resolution like the main target)
                 mRT = &mMirrorViewRT;
                 const U32 mirror_div = mirrorViewDivisor();
@@ -1122,7 +1122,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         mWaterDis.allocate(resX, resY, screenFormat, true);
 
         // <FS> the planar mirror's view at less than full size is enlarged into this one (see mMirrorUpscaled)
-        if (RenderMirrors && ll_mirror_planar() && mirrorViewDivisor() > 1)
+        if (RenderMirrors && rk_mirror_planar() && mirrorViewDivisor() > 1)
         {
             if (!mMirrorUpscaled.allocate(resX, resY, TexelFormat::RGBA16F))
             {
@@ -2120,7 +2120,7 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
 
     assertInitialized();
-    ll_phase_check("unlinkDrawable");
+    rk_phase_check("unlinkDrawable");
 
     LLPointer<LLDrawable> drawablep = drawable; // make sure this doesn't get deleted before we are done
 
@@ -2135,8 +2135,8 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
             static std::atomic<int> logged{0};
             if (trace && drawablep.get() == sMovedCurrent && logged.fetch_add(1) < 8)
             {
-                extern std::string fs_stack_here(int skip, int max_frames);
-                LL_WARNS("DrawableTrace") << "the moved list pass's current drawable is unlinked from inside its updateMove (dead " << drawablep->isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
+                extern std::string rk_stack_here(int skip, int max_frames);
+                LL_WARNS("DrawableTrace") << "the moved list pass's current drawable is unlinked from inside its updateMove (dead " << drawablep->isDead() << "):\n" << rk_stack_here(0, 30) << LL_ENDL;
             }
             mMovedList.erase(iter);
         }
@@ -2335,13 +2335,13 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
         // C1a: the vtable test alone passes a drawable freed earlier in this very replay (its base class vtable stays in the freed block): a MOVED_BRIDGE op for a bridge that an earlier MOVE_PARTITION op of the same avatar
         // just destroyed pushed it onto the moved bridge list as a counted pointer to freed memory (the stale entries of lap c1b-new1: "moved list entry 0 ... is not a live drawable", destroyed in the same frame by markDead
         // < cleanupReferences). The instance row names its owner only while the drawable lives.
-        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !(fs_drawable_looks_live(op.mDrawable) && op.mDrawable->ownsInstanceRow()))
+        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !(rk_drawable_looks_live(op.mDrawable) && op.mDrawable->ownsInstanceRow()))
         {
             static std::atomic<int> logged{0};
             if (logged.fetch_add(1) < 8)
             {
                 LL_WARNS("DrawableTrace") << "an avatar attachment request (kind " << (int)op.mKind << ") names a drawable that is already freed (" << (const void*)op.mDrawable << "), dropped; "
-                    << fs_drawable_destroy_info(op.mDrawable) << LL_ENDL;
+                    << rk_drawable_destroy_info(op.mDrawable) << LL_ENDL;
             }
             continue;
         }
@@ -2497,7 +2497,7 @@ int LLPipeline::coldMode()
 U64 LLPipeline::sRelReleased = 0, LLPipeline::sRelReleasedInfos = 0, LLPipeline::sRelWoken = 0, LLPipeline::sRelScans = 0;
 
 // <FS> expiry (cold mode 3), event driven (2026-11-12, the user: no octree scan): the groups of the VOLUME partitions that no camera has accepted for LL_VK_REL_FRAMES frames lose their geometry. A group enters an age
-// queue when its geometry is built (ll_scene_fragment_build -> scheduleRelease), with the frame at which it falls due. releaseScan (called every frame) looks only at the groups whose time has come: a group that was
+// queue when its geometry is built (rk_scene_fragment_build -> scheduleRelease), with the frame at which it falls due. releaseScan (called every frame) looks only at the groups whose time has come: a group that was
 // accepted since is queued again for the frame it would be due from its latest sighting, so a group is looked at about once in LL_VK_REL_FRAMES frames, and a group nobody asks about costs nothing. A group leaves the
 // queue when its draw map is cleared (a rebuild, the release itself, the group's death: LLSpatialGroup::clearDrawMap -> releaseForget); a rebuild queues it again. No traversal of the octree.
 static std::set<std::pair<S32, LLSpatialGroup*>> sReleaseQ;
@@ -2540,7 +2540,7 @@ void LLPipeline::releaseForget(LLSpatialGroup* group)
     group->mReleaseDeadline = 0;
 }
 
-static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // (below, after RKSceneFragment)
+static void rk_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // (below, after RKSceneFragment)
 
 void LLPipeline::releaseScan()
 {
@@ -2571,7 +2571,7 @@ void LLPipeline::releaseScan()
     for (LLSpatialGroup* group : due)
     {
         U64 infos = 0, tris = 0;
-        ll_group_draw_counts(group, infos, tris);        // (from the group's fragment: no draw info is read)
+        rk_group_draw_counts(group, infos, tris);        // (from the group's fragment: no draw info is read)
         if (group->isDead() || group->isEmpty() || infos == 0 || group->isHUDGroup() || !group->mBridgeList.empty())
         {
             continue;       // (queued again by its next build)
@@ -2682,12 +2682,12 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
         if (const LLDrawable* raw = moved_list[cur].get())
         {
             // <FS> C1a: a destroyed drawable's instance row no longer names it (a vtable test alone passes a drawable that is mid-destruction or freed with its base class vtable still in place)
-            if (!fs_drawable_looks_live(raw) || !raw->ownsInstanceRow())
+            if (!rk_drawable_looks_live(raw) || !raw->ownsInstanceRow())
             {
                 static std::atomic<int> logged{0};
                 if (logged.fetch_add(1) < 8)
                 {
-                    LL_WARNS("DrawableTrace") << "moved list entry " << cur << " of " << moved_list.size() << " (" << (const void*)raw << ") is not a live drawable; dropped; " << fs_drawable_destroy_info(raw) << LL_ENDL;
+                    LL_WARNS("DrawableTrace") << "moved list entry " << cur << " of " << moved_list.size() << " (" << (const void*)raw << ") is not a live drawable; dropped; " << rk_drawable_destroy_info(raw) << LL_ENDL;
                 }
                 static_assert(sizeof(LLPointer<LLDrawable>) == sizeof(void*), "the slot is cleared as one pointer");
                 *reinterpret_cast<void**>(&moved_list[cur]) = nullptr;
@@ -2803,7 +2803,7 @@ static struct LightLoopCensus
     U64 mCalls = 0, mUpdated = 0, mScans = 0, mScanned = 0, mDropped = 0, mInserted = 0;
 } sLightLoopCensus;
 
-static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // the draws and triangles of the group's draw map, from its current fragment (below, after RKSceneFragment)
+static void rk_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris);       // the draws and triangles of the group's draw map, from its current fragment (below, after RKSceneFragment)
 
 void LLPipeline::sceneStateCensus()
 {
@@ -2831,8 +2831,8 @@ void LLPipeline::sceneStateCensus()
         }
         if (coldMode() >= 4)
         {
-            extern void fs_kill_report();       // (llviewerregion.cpp: the object kill stage)
-            fs_kill_report();
+            extern void rk_kill_report();       // (llviewerregion.cpp: the object kill stage)
+            rk_kill_report();
         }
     }
     LLCamera& camera = *LLViewerCamera::getInstance();
@@ -2907,7 +2907,7 @@ void LLPipeline::sceneStateCensus()
         const LLVector4a* b = group->getBounds();
         const bool in = camera.AABBInFrustum(b[0], b[1]) != 0;
         U64 group_infos = 0, group_tris = 0;
-        ll_group_draw_counts(group, group_infos, group_tris);        // (from the fragment: no draw info is read)
+        rk_group_draw_counts(group, group_infos, group_tris);        // (from the fragment: no draw info is read)
         const bool has = group_infos > 0;
         built += has;
         in_frustum += in;
@@ -2992,8 +2992,8 @@ void LLPipeline::sceneStateCensus()
         LL_INFOS("SceneCensus") << "why the active and listed objects are active (an object can have several):" << r << LL_ENDL;
     }
     {
-        extern void fs_leave_census_report(double frames);      // (llspatialpartition.cpp, LL_VK_LEAVECENSUS=1)
-        fs_leave_census_report(600.0);
+        extern void rk_leave_census_report(double frames);      // (llspatialpartition.cpp, LL_VK_LEAVECENSUS=1)
+        rk_leave_census_report(600.0);
     }
     {
         // why the entries of the moved list are not skipped by the Cold stage (coldGroup / updateMovedList): not a plain root, or which cameras still had their group within LL_VK_COLD_FRAMES (600)
@@ -3128,8 +3128,8 @@ void LLPipeline::sceneStateCensus()
 // <FS> LL_VK_CPUPROBE=1 (doc/vulkan/PLAN-texture-handles.md section 17.22): after a turn the main thread loop is 2.8 ms slower and zones that do not depend on the scene (the UI) are 14-26% slower too.
 // Three fixed pieces of work with the same input every frame, in zones of their own: a chain of dependent adds and multiplies (clock speed, a busy sibling thread), a pointer chase through 128 KB
 // (the L2 cache) and through 128 MB (past the L3 cache, to memory). If they get slower after the turn the thread itself is slower (cache, clock, scheduling) and not only the work it does.
-extern std::atomic<int> gFsWorkerCpu;
-extern std::atomic<unsigned> gFsWorkerTid;
+extern std::atomic<int> gRkWorkerCpu;
+extern std::atomic<unsigned> gRkWorkerTid;
 
 void LLPipeline::pinMainThread()
 {
@@ -3156,7 +3156,7 @@ static void core_census()
     static int prev_main = -1, prev_worker = -1;
     static U64 frames = 0, main_moves = 0, main_ccd_moves = 0, worker_moves = 0, worker_ccd_moves = 0, same_core = 0, same_ccd = 0, worker_is_main = 0;
     const int m = (int)GetCurrentProcessorNumber();
-    const int w = gFsWorkerCpu.load(std::memory_order_relaxed);
+    const int w = gRkWorkerCpu.load(std::memory_order_relaxed);
     ++frames;
     ++hist_main[m & 63];
     if (prev_main >= 0 && m != prev_main) { ++main_moves; main_ccd_moves += (m >> 4) != (prev_main >> 4); }
@@ -3168,7 +3168,7 @@ static void core_census()
         prev_worker = w;
         same_core += (m >> 1) == (w >> 1);
         same_ccd += (m >> 4) == (w >> 4);
-        worker_is_main += gFsWorkerTid.load(std::memory_order_relaxed) == (unsigned)GetCurrentThreadId();
+        worker_is_main += gRkWorkerTid.load(std::memory_order_relaxed) == (unsigned)GetCurrentThreadId();
     }
     if (frames < 600)
     {
@@ -3273,7 +3273,7 @@ void LLPipeline::updateMove()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
 
-    { extern void fs_growth_probe(); fs_growth_probe(); }   // <FS> LL_VK_GROWTH=1
+    { extern void rk_growth_probe(); rk_growth_probe(); }   // <FS> LL_VK_GROWTH=1
 
     if (FreezeTime)
     {
@@ -3692,7 +3692,7 @@ namespace
 {
 // stage 9: the main view's cull marks the drawables of a static drawable group (terrain, trees, water: render by drawable, in the region partitions) where it lists the group; the shadow, probe, impostor and HUD views do not
 static bool sMarkAtCull = false;
-static bool ll_static_drawable_group(LLSpatialGroup* g)
+static bool rk_static_drawable_group(LLSpatialGroup* g)
 {
     LLSpatialPartition* part = g->getSpatialPartition();
     if (!part || part->asBridge())
@@ -3753,9 +3753,9 @@ struct CullTaskScope
 };
 
 std::vector<std::unique_ptr<LLCullResult>> sCullLocals;
-// the partitions the stage 9 emptied (bridges, avatars, animated objects) are not walked by the main view (ll_partition_emptied)
+// the partitions the stage 9 emptied (bridges, avatars, animated objects) are not walked by the main view (rk_partition_emptied)
 static U64 sPartSkipped = 0, sPartSkippedNonEmpty = 0;       // step 2: the walks of the emptied bridge, avatar and animated object partitions that the main view skipped, and the ones that held something (must stay 0)
-static bool ll_partition_emptied(LLSpatialPartition* part)
+static bool rk_partition_emptied(LLSpatialPartition* part)
 {
     const U32 type = part->mPartitionType;
     if (type != LLViewerRegion::PARTITION_BRIDGE && type != LLViewerRegion::PARTITION_AVATAR && type != LLViewerRegion::PARTITION_CONTROL_AV)
@@ -3787,17 +3787,17 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     return view;
 }
 
-static void ll_main_set_note();       // diagnostics (LL_DIAG): the age of the set on every main view frame, the frames with no set, the skipped walks of the emptied partitions; the pool counters
-static void ll_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
-bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
-void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
-std::shared_ptr<const RKVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra);        // sun cascade `index`: the worker's answer if it is usable (null if not), and in `extra` the groups changed in the last frames that the cascade's frustum holds (not in the answer)
-bool ll_cascade_covers_type(LLSpatialPartition* part);
-U8 ll_cull_slot_part_type(U32 slot);
-LLViewerOctreeGroup* ll_cull_slot_group(U32 slot);      // the group of a table slot (null if none), and the number of slots: read by the cascades' cull jobs while the main thread waits for them
-U32 ll_cull_slot_count();
-static bool ll_cull_derived_covers(LLSpatialPartition* part);
+static void rk_main_set_note();       // diagnostics (LL_DIAG): the age of the set on every main view frame, the frames with no set, the skipped walks of the emptied partitions; the pool counters
+static void rk_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
+bool rk_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
+void rk_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
+void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
+std::shared_ptr<const RKVkBridge::ViewSet> rk_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra);        // sun cascade `index`: the worker's answer if it is usable (null if not), and in `extra` the groups changed in the last frames that the cascade's frustum holds (not in the answer)
+bool rk_cascade_covers_type(LLSpatialPartition* part);
+U8 rk_cull_slot_part_type(U32 slot);
+LLViewerOctreeGroup* rk_cull_slot_group(U32 slot);      // the group of a table slot (null if none), and the number of slots: read by the cascades' cull jobs while the main thread waits for them
+U32 rk_cull_slot_count();
+static bool rk_cull_derived_covers(LLSpatialPartition* part);
 
 
 void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments)
@@ -3841,7 +3841,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
     // stage 8f, finished: in the main world view the covered partitions are never walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, whatever its age and whatever gShiftFrame says, each
-    // group goes through markNotCulled as the walk's own did (ll_cull_derived_pass: it does nothing but release the stamps when there is no set yet). The other views (cascades, probes, HUD, impostors, snapshots) cull as before.
+    // group goes through markNotCulled as the walk's own did (rk_cull_derived_pass: it does nothing but release the stamps when there is no set yet). The other views (cascades, probes, HUD, impostors, snapshots) cull as before.
     const bool main_kept = view.isMainWorld() && !gCubeSnapshot;
     struct CullShadowEnd
     {
@@ -3873,13 +3873,13 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             LLSpatialPartition* part = region->getSpatialPartition(i);
             if (part)
             {
-                if (hasRenderType(part->mDrawableType) && !(view.isMainWorld() && ll_partition_emptied(part)))
+                if (hasRenderType(part->mDrawableType) && !(view.isMainWorld() && rk_partition_emptied(part)))
                 {
                     // (one zone a partition: a few calls a frame each, so the zone cost stays small)
                     static const char* const part_zones[] = { "updateCull: cull HUD", "updateCull: cull TERRAIN", "updateCull: cull VOIDWATER", "updateCull: cull WATER", "updateCull: cull TREE", "updateCull: cull PARTICLE",
                         "updateCull: cull GRASS", "updateCull: cull VOLUME", "updateCull: cull BRIDGE", "updateCull: cull AVATAR", "updateCull: cull CONTROL_AV", "updateCull: cull HUD_PARTICLE", "updateCull: cull (other)" };
                     LL_CPU_ZONE(part_zones[i < 12 ? i : 12]);
-                    if (main_kept && ll_cull_derived_skip(part))
+                    if (main_kept && rk_cull_derived_skip(part))
                     {
                         continue;       // (stage 8f: the worker's kept set stands in for this partition's walk, below)
                     }
@@ -3899,10 +3899,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     }
     if (main_kept)
     {
-        ll_main_set_note();
+        rk_main_set_note();
         LL_CPU_ZONE("updateCull: kept groups");
-        ll_cull_derived_pass(camera, view, !RKGpuZoneTimer::isActive());
-        ll_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
+        rk_cull_derived_pass(camera, view, !RKGpuZoneTimer::isActive());
+        rk_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
     }
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -3931,13 +3931,13 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 // stage 8e (LL_VK_DIST=1, needs LL_VK_LOOPC=1): the walk no longer calls updateDistance for the groups of the table (render by group, not a bridge's): the LOD candidates make their own distance (stateSort(group)), the urgency and the wake
 // queue ask distanceNow(), and the worker names the alpha groups whose view direction moved (ConsumerList::mAlphaDirty), which is what updateDistance's alpha branch did for every group the walk kept
 static const bool sDistOwnedInit = (LLSpatialGroup::sDistOwned = true, true);
-static inline bool ll_dist_owned(LLSpatialGroup* group)
+static inline bool rk_dist_owned(LLSpatialGroup* group)
 {
     return LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && !LLPipeline::shadowRender() && group->mCullId && group->getSpatialPartition()
         && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->mRenderByGroup;
 }
 // stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group of the kept set is derived from the set (RKKeptStamps, llvieweroctree.h), not written per group: markNotCulled does not call setVisible for a group the pass
-// that is running names; the pass applies the set after its jobs, and writes the stamp back for the groups of the previous set that are not in this one (ll_kept_stamps_apply); a frame the derived path does not run folds the whole set back
+// that is running names; the pass applies the set after its jobs, and writes the stamp back for the groups of the previous set that are not in this one (rk_kept_stamps_apply); a frame the derived path does not run folds the whole set back
 static const U32* sKeptPassBitsG = nullptr;                 // the bits of the set the pass is making (written by the main thread around the pass's jobs)
 static U32 sKeptPassWordsG = 0;
 static thread_local const U32* sKeptPassBits = nullptr;     // the same, for the thread that is running a part of the pass
@@ -3947,7 +3947,7 @@ struct KeptPassScope
     KeptPassScope() { sKeptPassBits = sKeptPassBitsG; sKeptPassWords = sKeptPassWordsG; }
     ~KeptPassScope() { sKeptPassBits = nullptr; sKeptPassWords = 0; }
 };
-static inline bool ll_kept_stamped(const LLSpatialGroup* g)
+static inline bool rk_kept_stamped(const LLSpatialGroup* g)
 {
     if (!sKeptPassBits || !g->mCullId)
     {
@@ -3957,7 +3957,7 @@ static inline bool ll_kept_stamped(const LLSpatialGroup* g)
     return (slot >> 5) < sKeptPassWords && ((sKeptPassBits[slot >> 5] >> (slot & 31u)) & 1u);
 }
 static thread_local bool sLodCandRunning = false;        // the candidate pass is calling stateSort(group) (on the main thread, or in a chunk of the pool's sort)
-static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (ll_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
+static std::vector<LLSpatialGroup*> sLodCandList;        // the candidates of this main sort (rk_lod_cand_collect): chunked on the pool by sortLoopsParallel when it takes the sort, else made by the serial pass of stateSort
 static bool sLodSampling = true;            // this sort's loop makes the per-group LOD call itself (set once a main sort, read by the loops' threads)
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
@@ -3983,14 +3983,14 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
         }
     }
 
-    if (!ll_kept_stamped(group))        // <FS> stage 8b: the set the pass applies holds the stamp
+    if (!rk_kept_stamped(group))        // <FS> stage 8b: the set the pass applies holds the stamp
     {
         group->setVisible();
     }
 
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
-        if (!ll_dist_owned(group)) { group->updateDistance(camera); }       // <FS> stage 8e: the worker owns the alpha dirtiness and the LOD candidates make their own distance
+        if (!rk_dist_owned(group)) { group->updateDistance(camera); }       // <FS> stage 8e: the worker owns the alpha dirtiness and the LOD candidates make their own distance
     }
 
     assertInitialized();
@@ -3998,7 +3998,7 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     if (!group->getSpatialPartition()->mRenderByGroup)
     { //render by drawable
         sCull->pushDrawableGroup(group);
-        if (sMarkAtCull && ll_static_drawable_group(group))
+        if (sMarkAtCull && rk_static_drawable_group(group))
         {
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
@@ -4070,7 +4070,7 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
 
 // <FS> S7 H3 (doc/vulkan/S7-design.md): the occlusion pass of the world camera. The boxes of the occlusion groups, the reflection and hero probes and the object cache's groups go to the worker as one record at
 // this point of the G-buffer pass (after the big occluders were drawn); the worker's Hi-Z test answers one to four frames later (RKHiz::apply). No cube is drawn and no query is issued.
-void ll_bridge_hiz_collect();
+void rk_bridge_hiz_collect();
 
 void LLPipeline::doOcclusion(LLCamera& camera)
 {
@@ -4086,7 +4086,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     }
 
     RKHiz::begin();
-    ll_bridge_hiz_collect();        // stage 9: the bridges' own boxes
+    rk_bridge_hiz_collect();        // stage 9: the bridges' own boxes
 
     if (sReflectionProbesEnabled)
     {
@@ -4127,7 +4127,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     }
 }
 
-extern std::string fs_describe_address(const void* pc);       // (rkgpuzonetimer.cpp)
+extern std::string rk_describe_address(const void* pc);       // (rkgpuzonetimer.cpp)
 
 // <FS> LL_VK_CHURNCENSUS=1 (doc/vulkan/PLAN-hitchless-loading.md, Sirens Beach): who keeps drawables rebuilding. Counts, over 600 frames, the asks of markRebuild (by the rebuild flags: V volume,
 // T texture coordinates, C colour, P positions, and by what the object is: avatar, attachment, animated object, flexi, mesh, sculpt, prim, other) and by caller; the asks of markMoved by class and
@@ -4206,7 +4206,7 @@ void churn_report_if_due()
         std::sort(rows.rbegin(), rows.rend());
         for (size_t i = 0; i < rows.size() && i < 8; ++i)
         {
-            site_text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, fs_describe_address(rows[i].second).c_str());
+            site_text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, rk_describe_address(rows[i].second).c_str());
         }
     }
     {
@@ -4215,7 +4215,7 @@ void churn_report_if_due()
         std::sort(rows.rbegin(), rows.rend());
         for (size_t i = 0; i < rows.size() && i < 6; ++i)
         {
-            moved_text += llformat(" [%llu %s: %s]", (unsigned long long)rows[i].first, kChurnClass[rows[i].second.first], fs_describe_address(rows[i].second.second).c_str());
+            moved_text += llformat(" [%llu %s: %s]", (unsigned long long)rows[i].first, kChurnClass[rows[i].second.first], rk_describe_address(rows[i].second.second).c_str());
         }
     }
     for (U32 k = 0; k < 9; ++k)
@@ -4510,7 +4510,7 @@ void LLPipeline::updateGeom(F32 max_dtime)
 
 // stage 9 of doc/vulkan/PLAN-visible-set-owner.md: markVisible's rule for the bridge of an attachment as a function of the bridge: the avatar that wears it is an impostor (outside an impostor pass) or a jelly doll that needs no
 // impostor update: the attachment is not marked, the avatar's impostor stands for it
-static bool ll_attachment_bridge_hidden(LLSpatialBridge* bridge)
+static bool rk_attachment_bridge_hidden(LLSpatialBridge* bridge)
 {
     const LLDrawable* root = bridge->mDrawable;
     if (root && //  // this test may not be needed, see above
@@ -4547,7 +4547,7 @@ void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
         if (drawablep->isSpatialBridge())
         {
             llassert(((LLSpatialBridge*) drawablep)->mDrawable); // trying to catch a bad assumption
-            if (ll_attachment_bridge_hidden((LLSpatialBridge*) drawablep))
+            if (rk_attachment_bridge_hidden((LLSpatialBridge*) drawablep))
             {
                 return;
             }
@@ -4621,7 +4621,7 @@ struct OwnerPass
 {
     std::vector<AvHiz*> mBoxAv;                     // the avatars in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass
     std::vector<LLDrawable*> mFirst;                // the avatars' drawables, then the bridges whose group the cull listed, by group
-    std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (ll_bridge_hiz_collect)
+    std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (rk_bridge_hiz_collect)
     size_t mAddedFrom = 0;                          // the drawable groups from here on were added by the marking
     U32 mAvatars = 0;
 };
@@ -4630,7 +4630,7 @@ OwnerPass sOwner;
 
 // stage 9 (3.3): a bridge's own LOD rule (it was its region group's changeLOD()): the distance of its extents' centre to the camera (the ramp under 16 m as calcDistance has it), the slop test against the distance of its last
 // update (ratio 0.25 over the larger of that and its radius), the round robin of period 16 by its own hash, a changed field of view, a first sort always. The state (mLodDistance) is the main view's
-static void ll_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool fov_changed, U32 frame_now)
+static void rk_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool fov_changed, U32 frame_now)
 {
     const LLVector4a* ex = b->getSpatialExtents();
     const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
@@ -4649,7 +4649,7 @@ static void ll_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool f
 }
 
 // the views other than the main view's that sort the world camera's bridges (the avatar impostor render, the planar mirror) keep no state of their own: the impostor render updates every bridge, the others the round robin and a field of view change
-static inline bool ll_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32 frame_now)
+static inline bool rk_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32 frame_now)
 {
     return LLPipeline::sImpostorRender || fov_changed || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
 }
@@ -4662,7 +4662,7 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     o.mBoxBridges.clear();
     o.mAddedFrom = sCull->getDrawableGroupsSize();
     // stage 9 (avatars): an avatar's drawable is listed by its own test (its extents against the frustum and the far sphere: what the group walk gave the avatar's group) and its own Hi-Z verdict (AvHiz), not by its group in a
-    // region octree; the boxes of the avatars in view join the Hi-Z pass (ll_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the group's only 0.20,
+    // region octree; the boxes of the avatars in view join the Hi-Z pass (rk_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the group's only 0.20,
     // the own rule's only 0.14; the verdict hid 2.33 a sort, of which the groups listed 0.11
     o.mBoxAv.clear();
     {
@@ -4720,7 +4720,7 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     ready.clear();
     for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
     {
-        if (b->isDead() || ll_attachment_bridge_hidden(b) || (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()) || !b->inViewFor(camera))
+        if (b->isDead() || rk_attachment_bridge_hidden(b) || (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()) || !b->inViewFor(camera))
         {
             continue;
         }
@@ -4742,7 +4742,7 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         const LLVector3 co = camera.getOrigin();
         for (LLSpatialBridge* b : ready)
         {
-            ll_bridge_lod_decide(b, co, fov_changed, frame_now);
+            rk_bridge_lod_decide(b, co, fov_changed, frame_now);
         }
     }
     for (LLSpatialBridge* b : ready)
@@ -4753,12 +4753,12 @@ void LLPipeline::ownersCollect(LLCamera& camera)
 
 // stage 10 (bridges): the bridges a view would mark by the registry, with the rules the region octrees' walk gave them: not hidden by markVisible's impostor rule, in the partition the view walks (the bridge partition always, the
 // others when their render type is on; the HUD view takes the HUD partition's bridges), and the bridge's own test against that view's camera (setVisible's: render type, the avatar gate, the frustum, in a shadow pass without the far clip)
-static void ll_view_bridges(LLCamera& camera, bool hud_view, std::vector<LLSpatialBridge*>& out)
+static void rk_view_bridges(LLCamera& camera, bool hud_view, std::vector<LLSpatialBridge*>& out)
 {
     out.clear();
     for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
     {
-        if (b->isDead() || ll_attachment_bridge_hidden(b) || (b->mPartitionType == LLViewerRegion::PARTITION_HUD) != hud_view)
+        if (b->isDead() || rk_attachment_bridge_hidden(b) || (b->mPartitionType == LLViewerRegion::PARTITION_HUD) != hud_view)
         {
             continue;
         }
@@ -4778,16 +4778,16 @@ static void ll_view_bridges(LLCamera& camera, bool hud_view, std::vector<LLSpati
     }
 }
 
-// stage 10 (bridges, avatars): the views other than the main view's list their bridges and the avatars' drawables by the registry (ll_view_bridges, ll_view_avatars) and mark them (markVisible) before the sort's loops; the walks of the region groups no longer mark them. Not the avatar
+// stage 10 (bridges, avatars): the views other than the main view's list their bridges and the avatars' drawables by the registry (rk_view_bridges, rk_view_avatars) and mark them (markVisible) before the sort's loops; the walks of the region groups no longer mark them. Not the avatar
 // impostor render (generateImpostor marks the avatar's own attachments itself, and its sort has no cull walk)
-static inline bool ll_bridges_by_registry()
+static inline bool rk_bridges_by_registry()
 {
     return !sOwnerA && !LLPipeline::sImpostorRender;
 }
 
 // stage 10 (avatars): the avatars' drawables a view would mark by the registry: the avatar's drawable (its render type on) with its extents in the view's frustum (in a shadow pass without the far clip, as the group walk's shadow
 // culler; otherwise with the far sphere; the impostor render takes all)
-static void ll_view_avatars(LLCamera& camera, std::vector<LLDrawable*>& out)
+static void rk_view_avatars(LLCamera& camera, std::vector<LLDrawable*>& out)
 {
     out.clear();
     for (LLCharacter* c : LLCharacter::sInstances)
@@ -4827,7 +4827,7 @@ static void ll_view_avatars(LLCamera& camera, std::vector<LLDrawable*>& out)
 
 // stage 9: the boxes of the bridges in view by their own test join the Hi-Z pass of this frame (doOcclusion, after RKHiz::begin): a bridge not awaiting a verdict adds its extents with the groups' fudge; the verdict comes 2 to 4 frames
 // later (RKHiz::apply calls LLSpatialBridge::hizResult)
-void ll_bridge_hiz_collect()
+void rk_bridge_hiz_collect()
 {
     for (LLSpatialBridge* b : sOwner.mBoxBridges)
     {
@@ -4963,12 +4963,12 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
         if (drawablep->isSpatialBridge())
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep, nullptr, nullptr, 0 }); }
-            else { ll_phase_check("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
+            else { rk_phase_check("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
         }
         else
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 }); }
-            else { ll_phase_check("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
+            else { rk_phase_check("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
         }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }
@@ -5085,7 +5085,7 @@ void LLPipeline::markPartitionMove(LLDrawable* drawable)
     if (!drawable->isState(LLDrawable::PARTITION_MOVE) &&
         !drawable->getPositionGroup().equals3(LLVector4a::getZero()))
     {
-        ll_phase_check("markPartitionMove: mPartitionQ");
+        rk_phase_check("markPartitionMove: mPartitionQ");
         drawable->setState(LLDrawable::PARTITION_MOVE);
         mPartitionQ.push_back(drawable);
     }
@@ -5114,7 +5114,7 @@ void LLPipeline::processPartitionQ()
 
 void LLPipeline::markMeshDirty(LLSpatialGroup* group)
 {
-    ll_phase_check("markMeshDirty: mMeshDirtyGroup");
+    rk_phase_check("markMeshDirty: mMeshDirtyGroup");
     mMeshDirtyGroup.push_back(group);
 }
 
@@ -5136,7 +5136,7 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
         {
             llassert_always(!mGroupQ1Locked);
 
-            ll_phase_check("markRebuild: mGroupQ1");
+            rk_phase_check("markRebuild: mGroupQ1");
             mGroupQ1.push_back(group);
             group->setState(LLSpatialGroup::IN_BUILD_Q1);
         }
@@ -5165,7 +5165,7 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
         LLViewerObject* vo = drawablep->getVObj().get();
         if (vo && vo->getAvatar())
         {
-            extern std::string fs_describe_address(const void* pc);
+            extern std::string rk_describe_address(const void* pc);
             static std::mutex lock;
             static std::unordered_map<const void*, U64> sites;
             static U64 total = 0;
@@ -5179,7 +5179,7 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
                 std::string text;
                 for (size_t i = 0; i < rows.size() && i < 8; ++i)
                 {
-                    text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, fs_describe_address(rows[i].second).c_str());
+                    text += llformat(" [%llu: %s]", (unsigned long long)rows[i].first, rk_describe_address(rows[i].second).c_str());
                 }
                 LL_INFOS("RebuildCensus") << "REBUILD_POSITION asked for avatar-worn drawables, last " << 3000 << " asks, by caller:" << text << LL_ENDL;
                 sites.clear();
@@ -5245,12 +5245,12 @@ int sort_split_setting()
 // <FS> stage 8 (loop c, owner 2 of 4): the occlusion discard rule of the loops. LL_VK_CHK_COUNT=1 counts what checkOcclusion does in the loops of the main view's sort: the calls, the ones that had an effect (the parent is
 // OCCLUDED: the group is occluded with it; or a verdict is awaited and the group asked to be discarded: its OCCLUDED state is cleared), by whether the walk replayed the retained sets in that frame (a replayed member never ran
 // earlyFail's checkOcclusion, the walk's own call), and the effects that came with the group itself OCCLUDED. Nothing changes: the call is made as before.
-void ll_lod_cand_refresh();                                             // stage 8 (owner 3, defined with the stage 7 compare): the newest published LOD change set, once a sort
-void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // the sort's own changeLOD() answer for a group against the set
-void ll_lod_cand_report();
-void ll_scene_alpha_dirty_apply();                                      // stage 8e: the alpha groups the worker names (view direction moved) get ALPHA_DIRTY and a rebuild
-bool ll_lod_cand_covers(LLSpatialGroup* group);                         // the main view's group the candidate pass owns (it has a table row, is not a bridge's)
-void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out);            // the candidates of this sort that the loop would have looked at: visible, not occluded, render by group
+void rk_lod_cand_refresh();                                             // stage 8 (owner 3, defined with the stage 7 compare): the newest published LOD change set, once a sort
+void rk_lod_cand_note(LLSpatialGroup* group, bool live);                // the sort's own changeLOD() answer for a group against the set
+void rk_lod_cand_report();
+void rk_scene_alpha_dirty_apply();                                      // stage 8e: the alpha groups the worker names (view direction moved) get ALPHA_DIRTY and a rebuild
+bool rk_lod_cand_covers(LLSpatialGroup* group);                         // the main view's group the candidate pass owns (it has a table row, is not a bridge's)
+void rk_lod_cand_collect(std::vector<LLSpatialGroup*>& out);            // the candidates of this sort that the loop would have looked at: visible, not occluded, render by group
 static const bool sChkCount = getenv("LL_VK_CHK_COUNT") != nullptr;
 static std::atomic<U64> sChkNotStamped[2], sChkOccluded[2];       // the loop's groups that the walk did not stamp visible this frame, and the ones that are OCCLUDED (what is left of loop c once its four owners exist)
 static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[2];       // [0] the walk ran, [1] the walk replayed (sChkReplayFrame, set by updateCull)
@@ -5261,7 +5261,7 @@ static std::atomic<U64> sChkCalls[2], sChkParent[2], sChkStale[2], sChkStaleOcc[
 // those groups, except on every 60th sort of the main view (sLodSampling), where the whole loop runs as the check
 static inline bool sort_loopc_skips(LLSpatialGroup* group)
 {
-    return !sLodSampling && ll_lod_cand_covers(group);
+    return !sLodSampling && rk_lod_cand_covers(group);
 }
 
 static inline void sort_check_occlusion(LLSpatialGroup* group)
@@ -5584,7 +5584,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* d = (LLDrawable*)(*i)->getDrawable();
-                if (!(d && (d->isSpatialBridge() || d->isAvatar()) && ll_bridges_by_registry()))
+                if (!(d && (d->isSpatialBridge() || d->isAvatar()) && rk_bridges_by_registry()))
                 {
                     markVisible(d, camera);
                 }
@@ -5749,7 +5749,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             for (U32 k = 0; k < n_br; ++k)
             {
                 // (stage 9, 3.1: the main view's decisions were made in ownersCollect by the bridge's own rule)
-                do_distance[k] = !bridges[k]->isDead() && (sOwnerA ? bridges[k]->mLodUpdate : ll_bridge_lod_other(bridges[k], fov_changed, frame_now));
+                do_distance[k] = !bridges[k]->isDead() && (sOwnerA ? bridges[k]->mLodUpdate : rk_bridge_lod_other(bridges[k], fov_changed, frame_now));
             }
         }
         sSortJournal = saved_journal;
@@ -6066,7 +6066,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
-                if (!(drawablep && (drawablep->isSpatialBridge() || drawablep->isAvatar()) && ll_bridges_by_registry()))
+                if (!(drawablep && (drawablep->isSpatialBridge() || drawablep->isAvatar()) && rk_bridges_by_registry()))
                 {
                     markVisible(drawablep, camera);
                 }
@@ -6100,7 +6100,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
             {
                 LLSpatialBridge* bridge = *i;
-                if (!bridge->isDead() && ll_bridge_lod_other(bridge, fov_changed, frame_now))
+                if (!bridge->isDead() && rk_bridge_lod_other(bridge, fov_changed, frame_now))
                 {
                     bool force_update = false;
                     bridge->updateDistance(camera, force_update);
@@ -6174,11 +6174,11 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
-    if (ll_bridges_by_registry())
+    if (rk_bridges_by_registry())
     {
         LL_CPU_ZONE("stateSort: bridges by the registry");
         static std::vector<LLSpatialBridge*> view_bridges;
-        ll_view_bridges(camera, sRenderingHUDs, view_bridges);
+        rk_view_bridges(camera, sRenderingHUDs, view_bridges);
         for (LLSpatialBridge* b : view_bridges)
         {
             markVisible(b, camera);
@@ -6186,7 +6186,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
         if (!sRenderingHUDs)
         {
             static std::vector<LLDrawable*> view_avatars;
-            ll_view_avatars(camera, view_avatars);
+            rk_view_avatars(camera, view_avatars);
             for (LLDrawable* d : view_avatars)
             {
                 markVisible(d, camera);
@@ -6204,12 +6204,12 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     int path = 0;
     if (view.isMainWorldSort())
     {
-        ll_lod_cand_refresh();      // (stage 8, owner 3: LL_VK_LOD_CAND)
-        ll_scene_alpha_dirty_apply();       // (stage 8e: LL_VK_DIST)
+        rk_lod_cand_refresh();      // (stage 8, owner 3: LL_VK_LOD_CAND)
+        rk_scene_alpha_dirty_apply();       // (stage 8e: LL_VK_DIST)
     }
     if (!sLodSampling && view.isMainWorldSort() && split != 2 && split != 4)
     {
-        ll_lod_cand_collect(sLodCandList);      // (the groups whose turn it is, see ll_lod_cand_collect: made by the pool's chunks when sortLoopsParallel takes the sort and the loop (c) is removed, else by the serial pass below)
+        rk_lod_cand_collect(sLodCandList);      // (the groups whose turn it is, see rk_lod_cand_collect: made by the pool's chunks when sortLoopsParallel takes the sort and the loop (c) is removed, else by the serial pass below)
     }
     else
     {
@@ -6376,16 +6376,16 @@ void LLPipeline::fillPools(LLCullResult& result, const std::vector<LLDrawable*>*
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
-    if (!sLodCandRunning && !sLodSampling && ll_lod_cand_covers(group))
+    if (!sLodCandRunning && !sLodSampling && rk_lod_cand_covers(group))
     {
-        return;         // (stage 8, owner 3: the candidate pass of the sort makes this call for the groups whose turn it is, see ll_lod_cand_collect)
+        return;         // (stage 8, owner 3: the candidate pass of the sort makes this call for the groups whose turn it is, see rk_lod_cand_collect)
     }
-    if (ll_dist_owned(group))
+    if (rk_dist_owned(group))
     {
         group->updateDistance(camera);      // stage 8e: the walk did not: the groups whose turn it is make their own distance and radius, for the check below
     }
     const bool vis_lod = group->changeLOD();
-    if (!sLodCandRunning) { ll_lod_cand_note(group, vis_lod); }
+    if (!sLodCandRunning) { rk_lod_cand_note(group, vis_lod); }
     if (vis_lod)
     {
         for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
@@ -6763,7 +6763,7 @@ static bool shadow_cascade_skips_avatar(const LLVOAvatar* avatar, const ShadowCa
 static U64 sGeoElideWhole = 0;           // R2: groups postSort did not walk at all (every type of the group is served)
 static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // <FS> S3 G4: what postSort left out of the render map (groups with served draws, type lists skipped, indices)
 
-static U32 ll_group_draw_tris(const LLSpatialGroup* group);        // the triangles of the group's draws, from its current fragment (below, after RKSceneFragment)
+static U32 rk_group_draw_tris(const LLSpatialGroup* group);        // the triangles of the group's draws, from its current fragment (below, after RKSceneFragment)
 
 // <FS> far avatar tier of the main view. An avatar that is far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) and whose rigged attachments add up to more than the triangle
 // budget of its tier (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off) is drawn as an impostor (LLVOAvatar::shouldImpostor reads mFarTierHeavy): the picture of the whole avatar. The first
@@ -6795,7 +6795,7 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
         {
             continue;
         }
-        const U32 tris = ll_group_draw_tris(group);
+        const U32 tris = rk_group_draw_tris(group);
         if (tris)
         {
             by_avatar[avatar].push_back({ tris, group });
@@ -6885,7 +6885,7 @@ std::unordered_map<const LLVOAvatar*, AvBlinkState> sAvBlink;
 
 // the Pause key (while LL_VK_BLINK is set): the flight recorder of every avatar within LL_VK_BLINK_DUMP_M (30) metres, the last kRingFrames frames as runs of frames with the same flags. An avatar whose flags did not
 // change in the window is named once with its flags; the others get their runs. One log line a avatar (tag AvRecorder).
-static void fs_blink_dump(S32 frame)
+static void rk_blink_dump(S32 frame)
 {
     static const F32 near_m = getenv("LL_VK_BLINK_DUMP_M") ? (F32)atof(getenv("LL_VK_BLINK_DUMP_M")) : 30.f;
     LL_INFOS("AvRecorder") << "flight recorder at frame " << frame << " (Pause key): the last " << kRingFrames << " frames of avatars within " << near_m
@@ -6924,7 +6924,7 @@ static void fs_blink_dump(S32 frame)
     }
 }
 
-static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
+static void rk_blink_detect(LLCamera& camera, LLCullResult& cull)
 {
     static const bool on = getenv("LL_VK_BLINK") != nullptr;
     if (!on)
@@ -7129,7 +7129,7 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
         const bool down = (GetAsyncKeyState(VK_PAUSE) & 0x8000) != 0;
         if (down && !was_down)
         {
-            fs_blink_dump(frame);
+            rk_blink_dump(frame);
         }
         was_down = down;
     }
@@ -7140,7 +7140,7 @@ static void fs_blink_detect(LLCamera& camera, LLCullResult& cull)
 static bool sImpostorTableView = false;       // J1 K6 S2b: generateImpostor is drawing an avatar's impostor image (not a preview or a profile render) as a view the table serves (it sets sShadowRender too: the gates of postSort that say "not a shadow pass" take this as well)
 
 // J1 K6 S5a: the pass types no pool draws from the render map in a view the table serves: PASS_SHINY (a shadow caster: the shadow job reads the draw map itself; no pool draws it), PASS_ALPHA_INVISIBLE (the "highlight
-// alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (ll_group_has_alpha_key).
+// alpha" debug view only) and PASS_INVISI_SHINY (nothing registers it any more), with their rigged variants. The alpha types are the alpha group lists' (rk_group_has_alpha_key).
 static bool render_map_inert_type(U32 type)
 {
     return type == LLRenderPass::PASS_SHINY || type == LLRenderPass::PASS_SHINY_RIGGED || type == LLRenderPass::PASS_ALPHA_INVISIBLE || type == LLRenderPass::PASS_ALPHA_INVISIBLE_RIGGED
@@ -7157,7 +7157,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
 
-    ll_lod_cand_report();
+    rk_lod_cand_report();
     if (sChkCount && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         static U64 sorts = 0;
@@ -7416,12 +7416,12 @@ void LLPipeline::addBeacons()
 // <FS> stage 3 of doc/vulkan/PLAN-change-driven-sort.md: what postSort was, without the rebuilds (the geometry stage) and the beacons (addBeacons): the lists the renderer reads of a view, made from the cull result: the far
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
-void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
-static S32 ll_main_listed_tris(LLCullResult* cull);       // T4b-2 (defined with the listing's note, below): the triangles statistic of the main view's list
+void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
+static S32 rk_main_listed_tris(LLCullResult* cull);       // T4b-2 (defined with the listing's note, below): the triangles statistic of the main view's list
 static std::unordered_set<const LLSpatialGroup*> sMainFarSkip;       // T4a: the groups of the far avatars' attachments over their budget in the main view (far_avatar_tier), as of the main view's last render map
-void ll_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
-void ll_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
-void ll_lod_cand_report();
+void rk_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
+void rk_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
+void rk_lod_cand_report();
 
 void LLPipeline::buildRenderLists(LLCamera &camera)
 {
@@ -7429,7 +7429,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     const View view = currentView(camera, false);
     if (view.isMainWorldSort() && !gCubeSnapshot)
     {
-        fs_blink_detect(camera, *sCull);
+        rk_blink_detect(camera, *sCull);
     }
 
     assertInitialized();
@@ -7447,7 +7447,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         far_avatar_tier(sCull, sMainFarSkip);       // (the main view's own set: the record's extra handles ask it after the other views' render maps have run)
     }
     const std::unordered_set<const LLSpatialGroup*>& far_skip = view.isMainWorldSort() ? sMainFarSkip : no_far_skip_set;
-    // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha group lists come from the alpha set (ll_alpha_set_lists), not from a walk of the visible groups: the render map below collects no
+    // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha group lists come from the alpha set (rk_alpha_set_lists), not from a walk of the visible groups: the render map below collects no
     // alpha groups for it. The other views (probes, shadows, HUD, mirrors, impostors) keep the collection.
     const bool alpha_from_set = view.isMainWorldSort();
 
@@ -7458,16 +7458,16 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
-    const bool geo_collect = ll_scene_geo_on() && (!LLPipeline::shadowRender() || sImpostorTableView);       // (an impostor image is drawn with sShadowRender set: its fragments are listed and elided like the main view's, else the pools skip the served draws and nothing draws them: the far avatars lost their bodies)
-    const bool hud_table = view.mRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any();       // J1 K6 S1: the HUD view with a HUD pool that draws from rows
-    const bool geo_list = geo_collect && ll_scene_geo_serving() && (hud_table || (view.mViewerCamera && ll_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
+    const bool geo_collect = rk_scene_geo_on() && (!LLPipeline::shadowRender() || sImpostorTableView);       // (an impostor image is drawn with sShadowRender set: its fragments are listed and elided like the main view's, else the pools skip the served draws and nothing draws them: the far avatars lost their bodies)
+    const bool hud_table = view.mRenderingHUDs && rk_scene_geo_hud_view() && rk_scene_geo_hud_any();       // J1 K6 S1: the HUD view with a HUD pool that draws from rows
+    const bool geo_list = geo_collect && rk_scene_geo_serving() && (hud_table || (view.mViewerCamera && rk_scene_geo_main_view() && !view.mRenderingHUDs));       // (the HUD's camera is a copy of the viewer's, not the viewer's own: mViewerCamera is false for it)       // (S6 X1: a HUD's groups keep their draws in the render map: the HUD pools draw the old way)
     const bool geo_elide = geo_list;       // S3 G4: the draws the table serves are not listed in the render map
     if (gCubeSnapshot)
     {
         static U64 cube_sorts = 0;
         if (++cube_sorts % 600 == 1)
         {
-            LL_DIAG("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << ll_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << ll_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
+            LL_DIAG("ViewTable") << "probe cube face sort: geo_collect " << geo_collect << ", serving " << rk_scene_geo_serving() << ", viewer camera " << view.mViewerCamera << ", main view " << rk_scene_geo_main_view() << ", HUD " << view.mRenderingHUDs
                 << ", geo_list " << geo_list << ", geo_elide " << geo_elide << ", visible groups " << sCull->getVisibleGroupsSize() << ", shadow render " << LLPipeline::shadowRender() << ", camera id " << (S32)LLViewerCamera::sCurCameraID << LL_ENDL;
         }
     }
@@ -7476,11 +7476,11 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     {
         sCull->mGeoElided = true;
     }
-    // T4b-2 of doc/vulkan/PLAN-visible-set-owner.md: the main world view makes no render map. Its handles are the worker's derive and the extras the record names (ll_record_extra_handles), its alpha lists come from the alpha set (ll_alpha_set_lists),
-    // its triangles statistic is summed when the main view lists a group (ll_main_listed_note), and its flag that the table serves the draws is set above. The loop below is for the other views (probes, impostors, the HUD, mirrors).
+    // T4b-2 of doc/vulkan/PLAN-visible-set-owner.md: the main world view makes no render map. Its handles are the worker's derive and the extras the record names (rk_record_extra_handles), its alpha lists come from the alpha set (rk_alpha_set_lists),
+    // its triangles statistic is summed when the main view lists a group (rk_main_listed_note), and its flag that the table serves the draws is set above. The loop below is for the other views (probes, impostors, the HUD, mirrors).
     if (view.isMainWorldSort())
     {
-        addTrianglesDrawn(ll_main_listed_tris(sCull));
+        addTrianglesDrawn(rk_main_listed_tris(sCull));
     }
     const LLCullResult::sg_iterator serial_end = view.isMainWorldSort() ? sCull->beginVisibleGroups() : sCull->endVisibleGroups();
     for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != serial_end; ++i)
@@ -7506,7 +7506,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
         if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
         {
-            addTrianglesDrawn(ll_group_draw_tris(group) * 3);       // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
+            addTrianglesDrawn(rk_group_draw_tris(group) * 3);       // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
         }
         if (geo_list && group->mGeoHandle)
         {
@@ -7527,7 +7527,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         if (!alpha_from_set && hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("Collect Alpha groups");
-            if (ll_group_has_alpha_key(group))
+            if (rk_group_has_alpha_key(group))
             {  // store alpha groups for sorting
                 LLSpatialBridge *bridge = group->getSpatialPartition()->asBridge();
                 if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
@@ -7549,7 +7549,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
                 }
             }
 
-            if (ll_group_has_rigged_alpha_key(group))
+            if (rk_group_has_rigged_alpha_key(group))
             {  // store rigged alpha groups for LLDrawPoolAlpha prepass (skip distance update, rigged attachments use depth buffer)
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
                 {
@@ -7576,7 +7576,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
     if (!LLPipeline::shadowRender() || sImpostorTableView)
     {
-        ll_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
+        rk_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
     }
 
     {
@@ -7586,7 +7586,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         LL_CPU_ZONE("render lists: sort alpha groups");
         if (alpha_from_set)
         {
-            ll_alpha_set_lists(sCull, camera, far_skip);        // (the main view: made from the alpha set, distance and order included)
+            rk_alpha_set_lists(sCull, camera, far_skip);        // (the main view: made from the alpha set, distance and order included)
         }
         else
         {
@@ -7950,7 +7950,7 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     static const double node_split = getenv("LL_VK_SC_NODE_US") ? atof(getenv("LL_VK_SC_NODE_US")) : 40.0;
     std::deque<ScChunk> chunks;
     std::vector<std::shared_ptr<const RKVkBridge::ViewSet>> answers;       // <FS> stage 10d: the worker's answers the jobs read (LL_VK_CASC_KEPT=3)
-    const U32 slot_count = ll_cull_slot_count();
+    const U32 slot_count = rk_cull_slot_count();
     std::unordered_map<U64, float> now_us;
     auto new_chunk = [&](size_t p, LLSpatialPartition* part, bool segment, bool task, const LLViewerOctreeCull::SplitTask& split) -> ScChunk&
     {
@@ -7972,13 +7972,13 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
         prep.mDeferred.clear();
         // <FS> stage 10d (LL_VK_CASC_KEPT=3): a sun cascade with a usable answer from the worker takes the groups of the covered partitions from it (the partitions are then not walked); the others, and a cascade
         // without an answer (the first frames, a request that did not come back), are walked as the shadow culler does
-        std::shared_ptr<const RKVkBridge::ViewSet> answer = prep.mIndex < 6 ? ll_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex]) : nullptr;       // (the spot and projector passes, 4 and 5, take theirs from the set too)
+        std::shared_ptr<const RKVkBridge::ViewSet> answer = prep.mIndex < 6 ? rk_cascade_set_groups(prep.mIndex, prep.mCamera, sCascSetGroups[prep.mIndex]) : nullptr;       // (the spot and projector passes, 4 and 5, take theirs from the set too)
         const bool from_worker = answer != nullptr;
         U32 type_mask = 0;
         U8 kind_of[32] = {};
         for (LLSpatialPartition* part : partitions)
         {
-            if (from_worker && ll_cascade_covers_type(part))
+            if (from_worker && rk_cascade_covers_type(part))
             {
                 type_mask |= 1u << (part->mPartitionType & 31u);
                 kind_of[part->mPartitionType & 31u] = part->mRenderByGroup ? 2 : 1;
@@ -8079,12 +8079,12 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
                         continue;
                     }
                     // (what the worker's bits already say: not dead (flag 32), not empty (16), not a bridge's group (64); the type byte of the slot drops the partitions of bridges, avatars and the rest without touching the group)
-                    const U8 pt = ll_cull_slot_part_type(slot);
+                    const U8 pt = rk_cull_slot_part_type(slot);
                     if (pt >= 32 || !((chunk.mTypeMask >> pt) & 1u))
                     {
                         continue;
                     }
-                    LLSpatialGroup* g = (LLSpatialGroup*)ll_cull_slot_group(slot);
+                    LLSpatialGroup* g = (LLSpatialGroup*)rk_cull_slot_group(slot);
                     if (!g || g->isDead())
                     {
                         continue;
@@ -9209,7 +9209,7 @@ std::unordered_set<RKSceneFragment*> sResidentFragments;
 std::vector<RKSceneFragment*> sPendingResident;     // built, not yet told to the worker
 std::mutex sFragmentReleaseLock;
 std::vector<U32> sFragmentReleases;         // ids of fragments gone (groups destroyed or rebuilt), told to the worker with the next pass
-std::vector<U32> sGeoReleases;              // the same for the scene geometry table (kind 23), told by ll_scene_geo_frame
+std::vector<U32> sGeoReleases;              // the same for the scene geometry table (kind 23), told by rk_scene_geo_frame
 U32 sNextFragmentId = 1;
 
 enum FragmentCause { FC_COUNT, FC_FALLBACK, FC_MATRICES, FC_VERTEX_BUFFER, FC_INDEX_BUFFER, FC_RANGE, FC_MATRIX, FC_MATRIX_ID, FC_NUM };
@@ -9285,7 +9285,7 @@ static void scene_geo_detach_textures(RKSceneFragment* f)
     }
 }
 
-void ll_scene_fragment_free(RKSceneFragment*& fragment)
+void rk_scene_fragment_free(RKSceneFragment*& fragment)
 {
     if (!fragment)
     {
@@ -9307,7 +9307,7 @@ void ll_scene_fragment_free(RKSceneFragment*& fragment)
         }
         scene_geo_detach_textures(fragment);
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
-        sGeoReleases.push_back(fragment->mGeoHandle);       // told to the worker at the end of the frame (ll_scene_geo_frame_end), the handle is reused after that
+        sGeoReleases.push_back(fragment->mGeoHandle);       // told to the worker at the end of the frame (rk_scene_geo_frame_end), the handle is reused after that
     }
     if (fragment->mAlphaRegistered)
     {
@@ -9330,7 +9330,7 @@ void ll_scene_fragment_free(RKSceneFragment*& fragment)
     fragment = nullptr;
 }
 
-bool ll_scene_geo_on()
+bool rk_scene_geo_on()
 {
     return scene_geo_on();
 }
@@ -9399,43 +9399,43 @@ static bool geo_type_available(size_t t, bool rigged)
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mPbr == 1)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mPbr == 2)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_MASK)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_GLOW)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_FULLBRIGHT_SHINY)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_BUMP)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_POST_BUMP)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
     }
     if (kGeoTypes[t].mType == LLRenderPass::PASS_INVISIBLE || kGeoTypes[t].mType == LLRenderPass::PASS_ALPHA_INVISIBLE)
     {
-        return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
+        return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());      // (the water exclusion pool draws PASS_INVISIBLE with the colour program's pull twin; the rigged ones, and the invisible alpha draws, are the Highlight Transparent view's: the "Highlight Pull Skin Shader")
     }
     return true;
 }
@@ -9487,7 +9487,7 @@ static bool scene_gltf_g_entry(const RKDrawBatch& p, bool rigged, const GeoType&
 }
 
 // P3: the pass types that can have double sided rows (the glTF ones): the pass sends a second draw record for them with culling off
-bool ll_scene_geo_type_has_double_sided(int tn)
+bool rk_scene_geo_type_has_double_sided(int tn)
 {
     return tn >= 0 && kGeoTypes[(size_t)tn % kGeoTypeCount].mPbr != 0;
 }
@@ -9579,11 +9579,11 @@ static bool geo_persist_on()
     static const bool on = (getenv("LL_VK_GEOPERSIST") ? atoi(getenv("LL_VK_GEOPERSIST")) != 0 : true);
     return on;
 }
-bool ll_geo_persist() { return geo_persist_on(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
-U32 ll_geo_rebind_epoch() { return sRebindEpoch; }
+bool rk_geo_persist() { return geo_persist_on(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
+U32 rk_geo_rebind_epoch() { return sRebindEpoch; }
 // S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
 struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (mLodIb, mLodCount: the simplified index list the viewer chose for the item this frame, 0 = its own; made on the main thread, scene_geo_rigged_lod)
-// (plain pointers: the job must never hold the last reference of an avatar, a destructor on a pool thread; they stay valid until the end of the display, where the job is waited for: ll_scene_geo_frame_end)
+// (plain pointers: the job must never hold the last reference of an avatar, a destructor on a pool thread; they stay valid until the end of the display, where the job is waited for: rk_scene_geo_frame_end)
 struct GeoBindWork { LLVOAvatar* mAvatar; const LLMeshSkinInfo* mSkin; U32 mHandle, mWire; };
 struct GeoBindJob
 {
@@ -9615,7 +9615,7 @@ static bool scene_fragment_behind(const RKSceneFragment* f)
 }
 
 // stage 5 of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_CULL_OWN=1): the fragments the CPU's consumers of the main view's visible set serve; the render map's exact list for every other view and a run without the switch (defined with the group table, below)
-const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull);
+const std::vector<U32>& rk_scene_consumer_handles(LLCullResult* cull);
 
 // T7 of doc/vulkan/PLAN-visible-set-owner.md: the consumers' list by kind. The bump images, the moving matrices and the rigged bindings each walked every handle of the list to find the few fragments that have that work (12 to 13 percent
 // of the handles carry any). The list is classified once, when it is made (the fragments' own vectors say which kind), and the consumers walk the kind they serve. The order of the list is kept in each kind.
@@ -9623,7 +9623,7 @@ struct RKConsumerKinds
 {
     std::vector<U32> mBump, mMoving, mRigged;
 };
-static const RKConsumerKinds& ll_scene_consumer_kinds(LLCullResult* cull);
+static const RKConsumerKinds& rk_scene_consumer_kinds(LLCullResult* cull);
 static U32 sConsumerListGen = 0;        // counts the times the main view's consumers' list was made again
 
 // J1 K2b: the served RIGGED items of the main view that postSort left out of the render map (the same set collect_main_view_draw_infos adds from the fragments), as their sources: the avatar and the skin, the
@@ -9636,7 +9636,7 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
     {
         return;
     }
-    const int tn = ll_scene_geo_type_number(type);
+    const int tn = rk_scene_geo_type_number(type);
     if (tn < 0)
     {
         return;
@@ -9646,7 +9646,7 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
     static U64 key_frame = ~0ull;
     static size_t key_handles = 0;
     static U64 key_epoch = ~0ull;
-    const std::vector<U32>& listed = ll_scene_consumer_handles(cull);
+    const std::vector<U32>& listed = rk_scene_consumer_handles(cull);
     if (key_cull != cull || key_frame != gFrameCount || key_handles != listed.size() || key_epoch != sGeoItemsEpoch.load())
     {
         key_cull = cull;
@@ -9657,7 +9657,7 @@ static void collect_main_view_rig_sources(U32 type, std::vector<const GeoRigSour
         {
             l.clear();
         }
-        for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
+        for (U32 handle : rk_scene_consumer_kinds(cull).mRigged)
         {
             const RKSceneFragment* f = sGeoFragByHandle[handle];
             // every served item (2026-11-12: not only those of a group whose draws of the type are all served: the render map list that named the others is gone)
@@ -9734,12 +9734,12 @@ static void scene_geo_fill(LLSpatialGroup* group, RKSceneFragment& f)
             LLViewerTexture* textures[6];
             F32 pbr_values[40];
             if (!(kGeoTypes[t].mPbr ? scene_gltf_g_entry(*params, rigged, kGeoTypes[t], item.mE, textures, pbr_values)
-                                    : LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, texmat_ok, ll_pass_arrays(kGeoTypes[t].mType))))
+                                    : LLRenderPass::geometryEntry(*params, materials, item.mE, textures, rigged, texmat_ok, rk_pass_arrays(kGeoTypes[t].mType))))
             {
                 {   // S6 census: why, by type (logged with the fragment G entry builds)
                     static U64 reasons[2 * kGeoTypeCount][16] = {};
                     static U64 count = 0;
-                    ++reasons[t2][std::min(15, ll_geometry_reject_reason(*params, materials == nullptr, materials, rigged, false, ll_pass_arrays(kGeoTypes[t].mType)))];
+                    ++reasons[t2][std::min(15, rk_geometry_reject_reason(*params, materials == nullptr, materials, rigged, false, rk_pass_arrays(kGeoTypes[t].mType)))];
                     if (++count % 2000 == 0)
                     {
                         std::string text;
@@ -9820,7 +9820,7 @@ static void scene_geo_fill(LLSpatialGroup* group, RKSceneFragment& f)
                 if (rigged)
                 {
                     f.mGeoRigged.push_back((U32)f.mGeo.size());
-                    f.mGeoRiggedSrc.push_back(ll_geo_rig_source(params));
+                    f.mGeoRiggedSrc.push_back(rk_geo_rig_source(params));
                     if (rt_materials_on())
                     {
                         f.mGeoRiggedSrc.back().mMat = rt_mat_source(params);        // J1 K5
@@ -9914,7 +9914,7 @@ static U32 alpha_blend_id(int src, int dst)
     sAlphaBlendPairs.push_back({ src, dst });
     return (U32)sAlphaBlendPairs.size();
 }
-bool ll_alpha_blend_pair(U32 id, int* src, int* dst)
+bool rk_alpha_blend_pair(U32 id, int* src, int* dst)
 {
     if (id == 0)
     {
@@ -9935,7 +9935,7 @@ static int scene_alpha_only()
     static const int mask = []() { const char* v = getenv("LL_VK_SCENE_ALPHA_ONLY"); return v ? atoi(v) : 255; }();
     return mask;
 }
-bool ll_alpha_glow_table(bool pbr)
+bool rk_alpha_glow_table(bool pbr)
 {   // S5e (bit 128 of LL_VK_SCENE_ALPHA_ONLY)
     return (scene_alpha_only() & 128) != 0;
 }
@@ -10076,9 +10076,9 @@ static bool alpha_transient_context_ok(U32 pkey, bool rigged, bool depth_only)
     return have;
 }
 
-// C5 J2: a run of a particle group (rows of the group's buffer) as a transient entry: what ll_alpha_transient gives for the draw info the run replaces (a plain blend draw, one texture, no model or texture matrix, the
+// C5 J2: a run of a particle group (rows of the group's buffer) as a transient entry: what rk_alpha_transient gives for the draw info the run replaces (a plain blend draw, one texture, no model or texture matrix, the
 // pull shaders make the quads from the rows: GEO_NO_INDEX | GEO_PARTICLE_ROWS)
-bool ll_particle_transient(const RKParticleRun& run, const LLVertexBuffer* vb, bool depth_only, RKAlphaTransient& out)
+bool rk_particle_transient(const RKParticleRun& run, const LLVertexBuffer* vb, bool depth_only, RKAlphaTransient& out)
 {
     const U32 blend_id = alpha_blend_id((int)run.mBlendSrc, (int)run.mBlendDst);
     const U32 key = (run.mFullbright ? 1u : 0u) | (blend_id == ~0u ? 0u : blend_id << 8);
@@ -10133,7 +10133,7 @@ bool ll_particle_transient(const RKParticleRun& run, const LLVertexBuffer* vb, b
 }
 
 // S5f F3: a draw the scene table does not keep, as a transient entry of the alpha pass loop (same conditions as a fragment item; the particle groups, a group without a current fragment, ...)
-int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
+int rk_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
@@ -10143,19 +10143,19 @@ int ll_alpha_transient_count(const LLSpatialGroup* group, bool rigged)
     return (int)f->mAlphaSet[rigged ? 1 : 0].mTrans.size();
 }
 
-bool ll_group_has_alpha_key(const LLSpatialGroup* group)
+bool rk_group_has_alpha_key(const LLSpatialGroup* group)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     return f && f->mWalkValid && (f->mWalkAlphaBits & 1);
 }
 
-bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group)
+bool rk_group_has_rigged_alpha_key(const LLSpatialGroup* group)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     return f && f->mWalkValid && (f->mWalkAlphaBits & 2);
 }
 
-bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model)
+bool rk_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mWalkValid || f->mSerial != group->mGeometrySerial || !f->mHasDraw)
@@ -10166,13 +10166,13 @@ bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& mo
     return true;
 }
 
-bool ll_group_has_static_alpha(const LLSpatialGroup* group)
+bool rk_group_has_static_alpha(const LLSpatialGroup* group)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     return f && f->mAlphaPlanned && f->mAlphaSet[0].mCount > 0;
 }
 
-bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index, RKAlphaTransientDraw& draw)
+bool rk_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index, RKAlphaTransientDraw& draw)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
@@ -10201,7 +10201,7 @@ bool ll_alpha_transient_draw(const LLSpatialGroup* group, bool rigged, U32 index
     return true;
 }
 
-bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, RKAlphaTransient& out, RKAlphaTransientDraw& draw)
+bool rk_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index, bool depth_only, RKAlphaTransient& out, RKAlphaTransientDraw& draw)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mAlphaPlanned || f->mSerial != group->mGeometrySerial)
@@ -10216,7 +10216,7 @@ bool ll_alpha_transient_item(const LLSpatialGroup* group, bool rigged, U32 index
     const RKSceneFragment::AlphaSet::TransItem& t = ps.mTrans[index];
     if (!alpha_transient_context_ok(t.mKey & 0xFF, rigged, depth_only))
     {
-        ++sAlphaWhyTr[WHY_PBR];       // (as ll_alpha_transient counts it: a program of the context is missing)
+        ++sAlphaWhyTr[WHY_PBR];       // (as rk_alpha_transient counts it: a program of the context is missing)
         return false;
     }
     out.mEntry = t.mE;
@@ -10283,7 +10283,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, RKSceneFragment& f,
         AlphaClass ac;
         alpha_classify(p, rigged, table, whole_old, ac);
         {
-            // the transient item: the classification with the table on (what ll_alpha_transient makes of the draw), kept whether the plan serves the draw or not
+            // the transient item: the classification with the table on (what rk_alpha_transient makes of the draw), kept whether the plan serves the draw or not
             AlphaClass act;
             const AlphaClass* tc = &ac;
             if (!table)
@@ -10442,7 +10442,7 @@ static void scene_alpha_plan_fill_set(LLSpatialGroup* group, RKSceneFragment& f,
             ps.mItems.push_back(item);
             if (rigged)
             {
-                ps.mItemRig.push_back(ll_geo_rig_source(p));
+                ps.mItemRig.push_back(rk_geo_rig_source(p));
                 if (rt_materials_on())
                 {
                     ps.mItemRig.back().mMat = rt_mat_source(p);        // the ray scene material of a blended rigged item (hair layer, an avatar's translucent shell): without it the draw has material 0
@@ -10502,7 +10502,7 @@ static void scene_alpha_plan_fill(LLSpatialGroup* group, RKSceneFragment& f)
     scene_alpha_plan_fill_set(group, f, true);
 }
 
-int ll_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged)
+int rk_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (!f || !f->mAlphaPlanned)
@@ -10529,27 +10529,27 @@ int ll_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged
 
 // the alpha pass is drawn from the table: the switch (LL_VK_SCENE_ALPHA=1, LL_VK_SCENE_ALPHA_AB=<s> alternates it, marker "[phase] scene alpha now ON/off"), the table serving this frame, the pull programs, and the
 // worker told this cull result's fragments
-bool ll_alpha_ab_on()
+bool rk_alpha_ab_on()
 {   // the alpha pull programs draw in every view (S5g: always)
     return true;
 }
 
-bool ll_alpha_serving()
+bool rk_alpha_serving()
 {
-    return ll_alpha_ab_on() && ll_scene_geo_serving() && ll_scene_geo_main_view() && ll_scene_geo_prepared(sCull);
+    return rk_alpha_ab_on() && rk_scene_geo_serving() && rk_scene_geo_main_view() && rk_scene_geo_prepared(sCull);
 }
 
 static void scene_fragment_fill_alpha(LLSpatialGroup* group, RKSceneFragment& f);
 // J1 K6 S5b: the answer of the cascades' render map job walk, made once when the fragment is made: for each draw info of the group that is not a static caster (those are left out under skip_static), is it NAMED by a
 // fragment mechanism (a served rigged item, a rigged alpha source, an alpha entry or a texture matrix entry in the fragment) or would the walk push it? The draw map keeps the same infos until the fragment is made again.
 static bool alpha_source_type(U32 type);
-static U32 ll_group_draw_tris(const LLSpatialGroup* group)
+static U32 rk_group_draw_tris(const LLSpatialGroup* group)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     return (f && f->mWalkValid && f->mSerial == group->mGeometrySerial) ? f->mDrawTris : 0u;
 }
 
-static void ll_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris)
+static void rk_group_draw_counts(const LLSpatialGroup* group, U64& draws, U64& tris)
 {
     const RKSceneFragment* f = group->mSceneFragment;
     if (f && f->mWalkValid && f->mSerial == group->mGeometrySerial)
@@ -11092,7 +11092,7 @@ static void scene_geo_attach(LLSpatialGroup* group, RKSceneFragment* f)
             {
                 continue;
             }
-            const int tn = ll_scene_geo_type_number(kv.first);
+            const int tn = rk_scene_geo_type_number(kv.first);
             if (tn < 0 || !(group->mGeoServedMask & (1ull << tn)))
             {
                 all = false;
@@ -11145,7 +11145,7 @@ static RKSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
     {
         ++sFragStats.mBuiltEmpty;       // (a fragment made from an empty draw map: must stay 0 but for the case above)
     }
-    ll_scene_fragment_free(group->mSceneFragment);
+    rk_scene_fragment_free(group->mSceneFragment);
     f = group->mSceneFragment = new RKSceneFragment();
     f->mId = sNextFragmentId++;
     f->mSerial = group->mGeometrySerial;
@@ -11181,7 +11181,7 @@ static RKSceneFragment* scene_fragment_ensure(LLSpatialGroup* group)
 }
 
 // the end of a group rebuild (main thread): its fragment is made now, so the worker's table follows the rebuilds and nothing has to look at the group again
-void ll_scene_fragment_build(LLSpatialGroup* group)
+void rk_scene_fragment_build(LLSpatialGroup* group)
 {
     if ((scene_resident_on() || scene_geo_on()) && !group->isDead() && !group->mPendingDraws.empty())
     {
@@ -11219,7 +11219,7 @@ std::vector<U8> sSlotPartType;                      // <FS> stage 10d: slot -> t
 // in the group's keys), kept by the same touch events that refresh the map rows (cull_process, forget): the main thread's own state, current to the last cull_process, the groups touched since are in sDirtySlots.
 std::vector<U32> sAlphaSlots;
 std::vector<U32> sAlphaPos;                         // slot -> its index in sAlphaSlots (~0u: not a member)
-std::vector<LLSpatialGroup*> sMainListedBridgeGroups;      // the groups of the bridges' octrees the main view's visible list of build sMainListedBridgeSerial listed (a by-product of the listing: ll_main_listed_note)
+std::vector<LLSpatialGroup*> sMainListedBridgeGroups;      // the groups of the bridges' octrees the main view's visible list of build sMainListedBridgeSerial listed (a by-product of the listing: rk_main_listed_note)
 U32 sMainListedBridgeSerial = 0;
 S32 sMainTris = 0;                                  // the triangles statistic of the main view's visible list of build sMainTrisSerial (the indices of every draw of each group the render map would have kept), summed as the groups are listed
 U32 sMainTrisSerial = 0;
@@ -11279,7 +11279,7 @@ bool cull_covered(LLSpatialGroup* sg)
 }
 
 // the row a group shows now (flags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test, 16 empty, 32 dead, 64 a bridge's group). Whether a bridge's groups are listed this frame is the walk's own result for the bridge (avatar gate, impostor
-// and jelly doll rule, its box, its pixel area: all CPU state of the moment): the main view's record names the bridges the walk marked (ll_scene_geo_frame), not a row flag.
+// and jelly doll rule, its box, its pixel area: all CPU state of the moment): the main view's record names the bridges the walk marked (rk_scene_geo_frame), not a row flag.
 void cull_fill_row(LLSpatialGroup* g, RKVkBridge::CullRow& row)
 {
     memset(&row, 0, sizeof(row));
@@ -11326,7 +11326,7 @@ void cull_fill_row(LLSpatialGroup* g, RKVkBridge::CullRow& row)
     row.mFlags = (has_parent ? 0u : 1u) | (g->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK) ? 2u : 0u) | (g->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 4u : 0u) | bridge_flag | (sphere ? 8u : 0u) | (g->isEmpty() ? 16u : 0u);
 }
 
-// the map row a group shows now (the same functions the render map calls: ll_group_has_alpha_key, ll_group_draw_tris, the group's own served fields)
+// the map row a group shows now (the same functions the render map calls: rk_group_has_alpha_key, rk_group_draw_tris, the group's own served fields)
 void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
 {
     row = CullMapRow();
@@ -11336,7 +11336,7 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
     }
     LLSpatialPartition* part = g->getSpatialPartition();
     row.mHandle = g->mGeoHandle;
-    row.mFlags = (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u);
+    row.mFlags = (rk_group_has_alpha_key(g) ? 2u : 0u) | (rk_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u);
     row.mSurfaceArea = g->mSurfaceArea;
     row.mObjectBoxSize = g->row().objectBoxSize;
     // stage 3: the object bounds the walk tests for a node that has children (a bridge's group: the bridge's world box, as the cull row; such a group counts as a leaf)
@@ -11590,7 +11590,7 @@ void cull_process()
             {
                 sMapHandleFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
             }
-            if (ll_diag_on() && memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)       // (only LL_DIAG's LOD candidate check reads it)
+            if (rk_diag_on() && memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)       // (only LL_DIAG's LOD candidate check reads it)
             {
                 sMapChangeFrame[slot] = (U32)gFrameCount;
             }
@@ -11603,7 +11603,7 @@ void cull_process()
     }
 }
 
-// stage 5 (LL_VK_CULL_OWN=1, needs the table): the worker draws the main view from its own derive of the listed set and the CPU's consumers serve the late list (ll_scene_consumer_handles); the record still names the exact list, which the worker compares
+// stage 5 (LL_VK_CULL_OWN=1, needs the table): the worker draws the main view from its own derive of the listed set and the CPU's consumers serve the late list (rk_scene_consumer_handles); the record still names the exact list, which the worker compares
 
 }
 
@@ -11647,16 +11647,16 @@ void RKCullShadow::forget(LLViewerOctreeGroup* group)
 // do not need this frame's exact list: they need a superset a frame old, the worker draws from its own derive. With LL_VK_CULL_OWN=1 they serve: the worker's late list (its derive with the motion margin, no occlusion cut,
 // about a frame old), the fragments whose handle appeared in the last three frames (a new fragment cannot be in a list made before its row: its own data is made at once), and the groups of the bridges the walk marked this frame
 // (exact: the CPU's own result). Without the switch, in a view that is not the main view, or while no late list has come, it is the render map's exact list.
-static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window);       // (below, with the record's preparation)
+static void rk_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window);       // (below, with the record's preparation)
 
-const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
+const std::vector<U32>& rk_scene_consumer_handles(LLCullResult* cull)
 {
     static const std::vector<U32> none;
     if (!cull)
     {
         return none;
     }
-    if (cull != gPipeline.getCull() || !ll_scene_geo_main_view() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
+    if (cull != gPipeline.getCull() || !rk_scene_geo_main_view() || gCubeSnapshot || sImpostorTableView || LLPipeline::sRenderingHUDs)
     {
         return cull->mGeoHandles;
     }
@@ -11708,7 +11708,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
         }
     }
     extras.clear();
-    ll_record_extra_handles(cull, extras, 5);
+    rk_record_extra_handles(cull, extras, 5);
     for (U32 h : extras)
     {
         if (h < seen_stamp.size() && seen_stamp[h] != out_stamp)
@@ -11720,7 +11720,7 @@ const std::vector<U32>& ll_scene_consumer_handles(LLCullResult* cull)
     return out;
 }
 
-static const RKConsumerKinds& ll_scene_consumer_kinds(LLCullResult* cull)
+static const RKConsumerKinds& rk_scene_consumer_kinds(LLCullResult* cull)
 {
     static RKConsumerKinds kinds;
     static LLCullResult* key_cull = nullptr;
@@ -11728,7 +11728,7 @@ static const RKConsumerKinds& ll_scene_consumer_kinds(LLCullResult* cull)
     static const U32* key_data = nullptr;
     static size_t key_size = ~(size_t)0;
     static U32 key_serial = 0, key_gen = 0;
-    const std::vector<U32>& list = ll_scene_consumer_handles(cull);
+    const std::vector<U32>& list = rk_scene_consumer_handles(cull);
     if (cull && key_cull == cull && key_frame == gFrameCount && key_epoch == sGeoItemsEpoch.load() && key_data == list.data() && key_size == list.size() && key_serial == cull->mListSerial && key_gen == sConsumerListGen)
     {
         return kinds;
@@ -11771,7 +11771,7 @@ static std::vector<U32> sCandBits;          // the candidate set: the worker's c
 static U32 sCandFrame = 0, sCandTable = 0, sCandSorts = 0;
 static std::atomic<U64> sCandLooked[2], sCandLive[2], sCandHit[2], sCandNoRow[2], sCandMissDirty[2], sCandMissSlop[2], sCandMissRobin[2], sCandMissRecent[2], sCandExtra[2], sCandAge;       // [0] the group's row did not change lately, [1] it did (the worker's copy can be a frame behind)
 
-void ll_lod_cand_refresh()
+void rk_lod_cand_refresh()
 {
     static std::vector<U32> bc((1u << 15) / 32 + 1);
     U32 frame = 0;
@@ -11784,10 +11784,10 @@ void ll_lod_cand_refresh()
     // the loop makes the whole call itself (the check) when there is no set yet, when the set is more than 3 frames old (the worker's round robin turns cover the 3 frames after its own: a stalled frame would lose a group's
     // turn for a whole period), and every 60th sort
     const U32 age = (U32)gFrameCount - sCandFrame;      // (the publication is stamped with gFrameCount, not with the octree's frame counter)
-    sLodSampling = !sCandTable || age > 3u || (ll_diag_on() && ++sCandSorts % 60 == 0);       // (the 60th sort's whole loop is the check of the counters: LL_VK_DIAG=1 only, not a hitch every second in a lap)
+    sLodSampling = !sCandTable || age > 3u || (rk_diag_on() && ++sCandSorts % 60 == 0);       // (the 60th sort's whole loop is the check of the counters: LL_VK_DIAG=1 only, not a hitch every second in a lap)
 }
 
-void ll_scene_alpha_dirty_apply()
+void rk_scene_alpha_dirty_apply()
 {
     const std::shared_ptr<const RKVkBridge::ConsumerList> wl = RKVkBridge::consumerListRead();
     static U32 last = 0;
@@ -11818,13 +11818,13 @@ void ll_scene_alpha_dirty_apply()
     }
 }
 
-bool ll_lod_cand_covers(LLSpatialGroup* group)
+bool rk_lod_cand_covers(LLSpatialGroup* group)
 {
     return sCandTable && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot && !LLPipeline::shadowRender() && !LLPipeline::sImpostorRender && group->mCullId
         && group->getSpatialPartition() && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->mRenderByGroup;
 }
 
-void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
+void rk_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
 {
     out.clear();
     {
@@ -11855,7 +11855,7 @@ void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
     size_t keep = 0;
     for (LLSpatialGroup* g : out)
     {
-        if (!g->isDead() && ll_lod_cand_covers(g) && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+        if (!g->isDead() && rk_lod_cand_covers(g) && g->getVisible(LLViewerCamera::CAMERA_WORLD) >= frame && !(occ && g->isOcclusionState(LLSpatialGroup::OCCLUDED)))
         {
             out[keep++] = g;        // (what the loop looked at: a group of the walk's visible list, not occluded)
         }
@@ -11863,9 +11863,9 @@ void ll_lod_cand_collect(std::vector<LLSpatialGroup*>& out)
     out.resize(keep);
 }
 
-void ll_lod_cand_note(LLSpatialGroup* group, bool live)
+void rk_lod_cand_note(LLSpatialGroup* group, bool live)
 {
-    if (!ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender() || LLPipeline::sImpostorRender || !group->mCullId
+    if (!rk_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot || LLPipeline::shadowRender() || LLPipeline::sImpostorRender || !group->mCullId
         || !sCandTable || !group->getSpatialPartition() || group->getSpatialPartition()->asBridge())
     {
         return;
@@ -11904,9 +11904,9 @@ void ll_lod_cand_note(LLSpatialGroup* group, bool live)
     sCandAge.fetch_add((U32)gFrameCount - sCandFrame, std::memory_order_relaxed);
 }
 
-void ll_lod_cand_report()
+void rk_lod_cand_report()
 {
-    if (!ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot)       // (its counters fill only with diagnostics on: without them the line printed zeros)
+    if (!rk_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot)       // (its counters fill only with diagnostics on: without them the line printed zeros)
     {
         return;
     }
@@ -11925,7 +11925,7 @@ void ll_lod_cand_report()
 // stage 8f, finished (removing the main view's walk): the walk of the covered partitions is replaced by the worker's set of the groups the walk keeps, on every frame of the main world view, whatever the age of the
 // set and whatever gShiftFrame says (no set: nothing is listed). The covered partitions are the ones C2's flat cull covered (not the HUD's, the bridges', the avatars', the animated objects', the HUD particles', the
 // object cache's).
-static bool ll_cull_derived_covers(LLSpatialPartition* part)
+static bool rk_cull_derived_covers(LLSpatialPartition* part)
 {
     if (!part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
     {
@@ -11936,9 +11936,9 @@ static bool ll_cull_derived_covers(LLSpatialPartition* part)
         || pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
 }
 
-bool ll_cull_derived_skip(LLSpatialPartition* part)
+bool rk_cull_derived_skip(LLSpatialPartition* part)
 {
-    if (!ll_cull_derived_covers(part))
+    if (!rk_cull_derived_covers(part))
     {
         return false;
     }
@@ -11953,7 +11953,7 @@ static unsigned sKeptRing = 0;
 
 // the groups of the previous set that the new bits do not name: their stamp is the frame of the previous set (what the per-group write left), written back as the retained sets' fold does (clear_member)
 static U64 sKeptFolded = 0, sKeptApplied = 0, sKeptReleased = 0;       // (counted for the report line of the apply)
-static void ll_kept_stamps_fold(const RKKeptStamps::View* prev, const U32* now_bits, U32 now_words)
+static void rk_kept_stamps_fold(const RKKeptStamps::View* prev, const U32* now_bits, U32 now_words)
 {
     if (!prev)
     {
@@ -11978,10 +11978,10 @@ static void ll_kept_stamps_fold(const RKKeptStamps::View* prev, const U32* now_b
     }
 }
 
-static void ll_kept_stamps_apply(const std::shared_ptr<const RKVkBridge::ConsumerList>& wl)
+static void rk_kept_stamps_apply(const std::shared_ptr<const RKVkBridge::ConsumerList>& wl)
 {
     const RKKeptStamps::View* prev = RKKeptStamps::sView.load(std::memory_order_relaxed);
-    ll_kept_stamps_fold(prev, wl->mKept.data(), (U32)wl->mKept.size());
+    rk_kept_stamps_fold(prev, wl->mKept.data(), (U32)wl->mKept.size());
     const unsigned i = (sKeptRing + 1) % 3;
     sKeptHold[i] = wl;
     sKeptViews[i].mBits = wl->mKept.data();
@@ -12005,7 +12005,7 @@ static void ll_kept_stamps_apply(const std::shared_ptr<const RKVkBridge::Consume
 }
 
 // a frame the derived path does not run (the walk is back, a shift frame, a set too old): the stamps of the whole set are written back and the view is dropped
-void ll_cull_stamps_release()
+void rk_cull_stamps_release()
 {
     const RKKeptStamps::View* prev = RKKeptStamps::sView.load(std::memory_order_relaxed);
     if (!prev)
@@ -12013,11 +12013,11 @@ void ll_cull_stamps_release()
         return;
     }
     RKKeptStamps::sView.store(nullptr, std::memory_order_release);
-    ll_kept_stamps_fold(prev, nullptr, 0);
+    rk_kept_stamps_fold(prev, nullptr, 0);
     ++sKeptReleased;
 }
 
-static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
+static void rk_kept_mark(LLSpatialGroup* g, LLCamera& camera)
 {
     gPipeline.markNotCulled(g, camera);
 }
@@ -12025,7 +12025,7 @@ static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
 // STEP 3 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, LL_DIAG VkWalkFallback, nothing changes in the frame): the main view never walks the covered partitions now, the kept
 // pass runs on every frame through whatever set exists. What is counted: the age of the set on every frame (0, 1, 2, 3, 4 to 6, 7 to 20, over 20), the frames with no set (login: nothing is listed for the covered
 // partitions) and the frames with an empty set, the shift frames, and the walks of the emptied partitions that were skipped. The same 600 frame hook reports the fork-join pool's counters and the thread phase check totals.
-static void ll_main_set_note()
+static void rk_main_set_note()
 {
     static U64 pool_frames = 0;
     if (++pool_frames % 600 == 0)
@@ -12034,7 +12034,7 @@ static void ll_main_set_note()
             << RKForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << RKForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << RKForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
         RKPhaseCheck::logSummary();
     }
-    if (!ll_diag_on())
+    if (!rk_diag_on())
     {
         return;
     }
@@ -12070,7 +12070,7 @@ static void ll_main_set_note()
 // group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
 // stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
 // groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
-static void ll_occluded_retest(LLCamera& camera)
+static void rk_occluded_retest(LLCamera& camera)
 {
     static std::vector<LLOcclusionCullingGroup*> occluded;
     LLOcclusionCullingGroup::worldOccluded(occluded);
@@ -12084,7 +12084,7 @@ static void ll_occluded_retest(LLCamera& camera)
             continue;
         }
         LLSpatialPartition* part = g->getSpatialPartition();
-        if (!part || part->asBridge() || !ll_cull_derived_covers(part) || !part->isOcclusionEnabled())
+        if (!part || part->asBridge() || !rk_cull_derived_covers(part) || !part->isOcclusionEnabled())
         {
             continue;
         }
@@ -12106,7 +12106,7 @@ static void ll_occluded_retest(LLCamera& camera)
             ++asked;
         }
     }
-    if (ll_diag_on())
+    if (rk_diag_on())
     {
         static U64 frames = 0, sum_all = 0, sum_tops = 0, sum_asked = 0;
         ++frames;
@@ -12121,13 +12121,13 @@ static void ll_occluded_retest(LLCamera& camera)
     }
 }
 
-void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
+void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them 
     const std::shared_ptr<const RKVkBridge::ConsumerList> wl = RKVkBridge::consumerListRead();
     if (!wl)
     {
-        ll_cull_stamps_release();       // (no set: the stamps are the groups' own again)
+        rk_cull_stamps_release();       // (no set: the stamps are the groups' own again)
         return;
     }
     const std::vector<U32>& kept_bits = wl->mKept;
@@ -12144,7 +12144,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             {
                 sKeptPassBitsG = nullptr;
                 sKeptPassWordsG = 0;
-                ll_kept_stamps_apply(mList);        // (after the jobs and the merge: the stamps the jobs read are the previous set's)
+                rk_kept_stamps_apply(mList);        // (after the jobs and the merge: the stamps the jobs read are the previous set's)
             }
         }
     } kept_apply(wl);
@@ -12189,7 +12189,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                     continue;       // (a dead group stays in the table until it is destroyed, and its partition can be gone by then: nothing of it is read before this test; crash 2026-11-18 at gpart->asBridge())
                 }
                 LLSpatialPartition* gpart = g->getSpatialPartition();
-                if (!gpart || gpart->asBridge() || !ll_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones)
+                if (!gpart || gpart->asBridge() || !rk_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones)
                 {
                     continue;
                 }
@@ -12213,7 +12213,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                 groups.push_back(g);
             }
         }
-        if (ll_diag_on())
+        if (rk_diag_on())
         {
             static U32 passes = 0;
             if (++passes % 600 == 0)
@@ -12228,7 +12228,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     const auto keep = [](LLSpatialGroup* g)
     {
         LLSpatialPartition* part = g->getSpatialPartition();
-        return !g->isDead() && !g->isEmpty() && part && !part->asBridge() && ll_cull_derived_covers(part);
+        return !g->isDead() && !g->isEmpty() && part && !part->asBridge() && rk_cull_derived_covers(part);
     };
     RKForkJoinPool* pool = parallel_ok ? RKForkJoinPool::shared() : nullptr;
     if (!pool || groups.size() < 400)
@@ -12238,7 +12238,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         {
             if (keep(g))
             {
-                ll_kept_mark(g, camera);
+                rk_kept_mark(g, camera);
             }
         }
         return;
@@ -12269,7 +12269,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         {
             if (keep(groups[k]))
             {
-                ll_kept_mark(groups[k], camera);
+                rk_kept_mark(groups[k], camera);
             }
         }
     };
@@ -12293,7 +12293,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     gPipeline.mNumVisibleNodes += (S32)pushed;
 }
 
-void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
+void rk_main_listed_note(LLSpatialGroup* group, U32 serial)
 {
     const U32 cull_id = group->mCullId;
     if (cull_id && cull_id <= sMainListed.size())
@@ -12310,7 +12310,7 @@ void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
         const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
         if (!group->isDead() && !(LLPipeline::useOcclusion() && group->isOcclusionState(LLSpatialGroup::OCCLUDED)) && !(hide > 0.f && group->mSurfaceArea > hide * llmax(group->row().objectBoxSize, 10.f)))
         {
-            sMainTris += (S32)(ll_group_draw_tris(group) * 3);
+            sMainTris += (S32)(rk_group_draw_tris(group) * 3);
         }
     }
     if (group->getSpatialPartition() && group->getSpatialPartition()->asBridge())
@@ -12324,7 +12324,7 @@ void ll_main_listed_note(LLSpatialGroup* group, U32 serial)
     }
 }
 
-static S32 ll_main_listed_tris(LLCullResult* cull)
+static S32 rk_main_listed_tris(LLCullResult* cull)
 {
     return sMainTrisSerial == cull->mListSerial ? sMainTris : 0;
 }
@@ -12333,7 +12333,7 @@ static S32 ll_main_listed_tris(LLCullResult* cull)
 // cull_process and forget) and the slots touched since the last cull_process (judged from the group itself) are the candidates; each is tested as the render map tested a visible group (not dead, its partition renders by group, the main view's
 // visible group list of this build lists it (sMainListed[slot] == mListSerial), not occluded, under the auto-hide limit, not a far avatar's skipped attachment), its distance is made as the render map's join made it, and the lists are ordered
 // as before. All of it is the main thread's own state of this frame: no worker list, so no gap and no lag (the compare of lap as5-def1: 38,400 sorts, the same groups and the same order as the render map's lists).
-void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip)
+void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip)
 {
     if (!cull || LLPipeline::shadowRender() || !gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
     {
@@ -12378,8 +12378,8 @@ void ll_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
         {
             continue;
         }
-        const bool a = ll_group_has_alpha_key(g);
-        const bool r = ll_group_has_rigged_alpha_key(g);
+        const bool a = rk_group_has_alpha_key(g);
+        const bool r = rk_group_has_rigged_alpha_key(g);
         if ((!a && !r)
             || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
             || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))
@@ -12550,7 +12550,7 @@ bool cube_params_match(const RKVkBridge::CullParams& a, const RKVkBridge::CullPa
 // the request of a sun cascade: its shadow camera's planes with the shadow culler's model, and from mode 2 the late list's margin. The margin is the translation bound plus the distance from the view's origin times the rotation bound:
 // a sun cascade's origin is far from the scene, so the rotation part is scaled down (lap ck2, both parts: cascade 0 kept 630 groups for the 45 the cull finds; lap ck3, translation only: the far cascades lacked 13 of 3,600).
 // LL_VK_CASC_MARGIN=<translation scale>,<rotation scale> sets both for all cascades; without it the rotation scale is 0 for cascades 0 and 1 and 0.1 for cascades 2 and 3.
-static U64 ll_cascade_request(S32 index, LLCamera& camera)
+static U64 rk_cascade_request(S32 index, LLCamera& camera)
 {
     RKVkBridge::CullParams now;
     cull_fill_params(camera, now);
@@ -12570,8 +12570,8 @@ static U64 ll_cascade_request(S32 index, LLCamera& camera)
     return RKVkBridge::viewRequest(0x5C00u + (U32)index, (U32)gFrameCount, now);
 }
 
-// the partitions whose groups a sun cascade takes from the worker's set: the covered ones, never the avatar, bridge, animated object, HUD, HUD particle and object cache partitions (those three hold nothing any more; the avatars' 2 m pad of a cascade's frustum test is in ll_view_avatars)
-bool ll_cascade_covers_type(LLSpatialPartition* part)
+// the partitions whose groups a sun cascade takes from the worker's set: the covered ones, never the avatar, bridge, animated object, HUD, HUD particle and object cache partitions (those three hold nothing any more; the avatars' 2 m pad of a cascade's frustum test is in rk_view_avatars)
+bool rk_cascade_covers_type(LLSpatialPartition* part)
 {
     if (!part || !part->mOctree)
     {
@@ -12582,24 +12582,24 @@ bool ll_cascade_covers_type(LLSpatialPartition* part)
         || pi == LLViewerRegion::PARTITION_HUD_PARTICLE || pi == LLViewerRegion::PARTITION_VO_CACHE);
 }
 
-LLViewerOctreeGroup* ll_cull_slot_group(U32 slot)
+LLViewerOctreeGroup* rk_cull_slot_group(U32 slot)
 {
     return slot < sSlotGroup.size() ? sSlotGroup[slot] : nullptr;
 }
 
-U32 ll_cull_slot_count()
+U32 rk_cull_slot_count()
 {
     return (U32)sSlotGroup.size();
 }
 
-U8 ll_cull_slot_part_type(U32 slot)
+U8 rk_cull_slot_part_type(U32 slot)
 {
     return slot < sSlotPartType.size() ? sSlotPartType[slot] : (U8)255;
 }
 
 // The answer's bits go to the cull jobs of shadowPrepCullSplit as ranges of words (the slot to group step is the jobs', on the pool: made on the main thread in lap pc3 it cost 0.10 to 0.28 ms and the use step was
 // slower than the retained sets); what is made here is the recent list, a few groups.
-std::shared_ptr<const RKVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra)
+std::shared_ptr<const RKVkBridge::ViewSet> rk_cascade_set_groups(S32 index, LLCamera& camera, std::vector<LLSpatialGroup*>& extra)
 {
     extra.clear();
     if (index < 0 || index > 5 || gCubeSnapshot)       // (a probe face's cascades are another view: its planes are not the main view's under the same id)
@@ -12655,7 +12655,7 @@ std::shared_ptr<const RKVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
                 }
                 LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
                 LLSpatialPartition* part = g->getSpatialPartition();
-                if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !ll_cascade_covers_type(part))
+                if (g->isDead() || g->isEmpty() || !part || part->asBridge() || !rk_cascade_covers_type(part))
                 {
                     continue;
                 }
@@ -12678,21 +12678,21 @@ std::shared_ptr<const RKVkBridge::ViewSet> ll_cascade_set_groups(S32 index, LLCa
         }
     }
     ++s.mUsed;
-    if (s.mUsed % 600 == 0 && ll_diag_on())
+    if (s.mUsed % 600 == 0 && rk_diag_on())
     {
         LL_INFOS("VkCascKept") << (index < 4 ? "cascade " : "spot or projector pass ") << index << " from the worker's set (LL_VK_CASC_KEPT=3): used " << s.mUsed << " times (no answer " << s.mNone << ", too old " << s.mOld << ", planes differ " << s.mPlanes << "), " << (double)s.mRecent / (double)s.mUsed << " groups a time from the recent list" << LL_ENDL;
     }
     return a;
 }
 
-// the view request of a sun cascade or a spot or projector pass (the answer of the frame before is what shadowPrepCullSplit takes its groups from: ll_cascade_set_groups)
-void ll_cascade_view_ask(S32 index, LLCamera& camera)
+// the view request of a sun cascade or a spot or projector pass (the answer of the frame before is what shadowPrepCullSplit takes its groups from: rk_cascade_set_groups)
+void rk_cascade_view_ask(S32 index, LLCamera& camera)
 {
     if (index < 0 || index > 5 || gCubeSnapshot)
     {
         return;
     }
-    ll_cascade_request(index, camera);
+    rk_cascade_request(index, camera);
 }
 
 void RKCullShadow::send(LLCamera& camera)
@@ -12892,7 +12892,7 @@ U64 geo_ns_since(const std::chrono::steady_clock::time_point& t)
 }
 }
 
-bool ll_scene_geo_serving()
+bool rk_scene_geo_serving()
 {
     if (scene_geo_mode() < 2)
     {
@@ -12906,30 +12906,30 @@ bool ll_scene_geo_serving()
     return sGeoServingNow;
 }
 
-bool ll_scene_geo_skip()
+bool rk_scene_geo_skip()
 {
-    return ll_scene_geo_serving();
+    return rk_scene_geo_serving();
 }
 
-bool ll_scene_geo_prepared(LLCullResult* cull)
+bool rk_scene_geo_prepared(LLCullResult* cull)
 {
     return cull && cull == sGeoPrepared && sGeoPreparedFrame == (U32)gFrameCount;
 }
 
 // <FS> the result holds at least one draw of this pass type: in its render map, or served by the table (a fragment's served mask bit is set only for a type that has items, all served)
-bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
+bool rk_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
 {
     if (!cull)
     {
         return false;
     }
     // (2026-11-12: the render map lists are not asked: a draw the table does not serve is not drawn by any pass, so only the fragments' served items count)
-    const int tn = ll_scene_geo_type_number(type);
+    const int tn = rk_scene_geo_type_number(type);
     if (tn < 0)
     {
         return false;
     }
-    for (U32 handle : ll_scene_consumer_handles(cull))
+    for (U32 handle : rk_scene_consumer_handles(cull))
     {
         const RKSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
         if (f && (f->mGeoTypeMask & (1ull << tn)))
@@ -12940,7 +12940,7 @@ bool ll_scene_geo_cull_has_type(LLCullResult* cull, U32 type)
     return false;
 }
 
-int ll_scene_geo_type_number(U32 type)
+int rk_scene_geo_type_number(U32 type)
 {
     static std::vector<S8> lut;
     if (lut.empty())
@@ -12959,16 +12959,16 @@ int ll_scene_geo_type_number(U32 type)
 }
 
 // K6 B1: the table's pass types by number (the Batch Size / Texture Animation views draw each of them)
-int ll_scene_geo_type_count()
+int rk_scene_geo_type_count()
 {
     return (int)kGeoTypeCount;
 }
-U32 ll_scene_geo_type_pass(int tn)
+U32 rk_scene_geo_type_pass(int tn)
 {
     return tn >= 0 && tn < (int)kGeoTypeCount ? kGeoTypes[tn].mType : 0;
 }
 
-bool ll_scene_geo_main_view()
+bool rk_scene_geo_main_view()
 {
     // J1 K6 S2: the reflection probes' cube faces (gCubeSnapshot: the viewer's own camera, the world camera id) are views the table serves like the main view
     // ... and the avatar impostor images (generateImpostor sets sShadowRender and sImpostorRender; its cull result holds the avatar's visible groups, it sorts with the viewer's own camera)
@@ -12980,15 +12980,15 @@ bool ll_scene_geo_main_view()
 }
 
 // J1 K6 S1: the HUD pass is a view of its own (render_hud_attachments: updateCull + stateSort of the HUD camera, then the post deferred passes): its cull result gets the list of the visible fragments, the table is told
-// about it before the passes (renderGeomPostDeferred), and the pass types whose HUD pools draw from rows (ll_scene_geo_hud_type) are left out of its render map.
-bool ll_scene_geo_hud_view()
+// about it before the passes (renderGeomPostDeferred), and the pass types whose HUD pools draw from rows (rk_scene_geo_hud_type) are left out of its render map.
+bool rk_scene_geo_hud_view()
 {
     return LLPipeline::sRenderingHUDs && !gCubeSnapshot && !LLPipeline::sImpostorRender && !LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;
 }
 
 // <FS> K6 B1 step 1: with "Highlight Transparent" on, the types the highlight redraws from the table (LLDrawPoolAlpha::renderDebugAlpha: the alpha masked passes and the invisible draws) count as HUD types too: the HUD view
 // lists its fragments, tells the table about them and leaves these types out of its render map, and the highlight draws them in the HUD from the table as in the world. (No HUD pool draws these types.)
-static bool ll_scene_geo_highlight_type(int tn)
+static bool rk_scene_geo_highlight_type(int tn)
 {
     if (tn < 0 || !LLDrawPoolAlpha::sShowDebugAlpha)
     {
@@ -12998,7 +12998,7 @@ static bool ll_scene_geo_highlight_type(int tn)
                                  LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK, LLRenderPass::PASS_INVISIBLE, LLRenderPass::PASS_ALPHA_INVISIBLE };
     for (U32 type : types)
     {
-        if (tn == ll_scene_geo_type_number(type))
+        if (tn == rk_scene_geo_type_number(type))
         {
             return true;
         }
@@ -13006,29 +13006,29 @@ static bool ll_scene_geo_highlight_type(int tn)
     return false;
 }
 
-bool ll_scene_geo_hud_type(int tn)
+bool rk_scene_geo_hud_type(int tn)
 {
-    if (tn < 0 || !ll_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
+    if (tn < 0 || !rk_scene_geo_serving() || !LLRenderPass::deferredPacketsEnabled())
     {
         return false;
     }
-    return (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT))
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY))
-        || ((tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)))
-        || (tn == ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
-        || ll_scene_geo_highlight_type(tn);
+    return (tn == rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT))
+        || (tn == rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
+        || (tn == rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY))
+        || ((tn == rk_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR) || tn == rk_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR_ALPHA_MASK)))
+        || (tn == rk_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))       // (the emboss pull program is the world's: the HUD's post bump pass has no program of its own)
+        || rk_scene_geo_highlight_type(tn);
 }
 
-bool ll_scene_geo_hud_any()
+bool rk_scene_geo_hud_any()
 {
-    return ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
-        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY)) || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR))
-        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))
-        || ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_INVISIBLE));       // (true only while the highlight is on: see ll_scene_geo_highlight_type)
+    return rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT)) || rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK))
+        || rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY)) || rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_GLTF_PBR))
+        || rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP))
+        || rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_INVISIBLE));       // (true only while the highlight is on: see rk_scene_geo_highlight_type)
 }
 
-void ll_scene_geo_count(U32 what, U64 n)
+void rk_scene_geo_count(U32 what, U64 n)
 {
     if (what < 6)
     {
@@ -13040,17 +13040,17 @@ void ll_scene_geo_count(U32 what, U64 n)
 // the worker gets the list of visible fragments (the handles postSort collected from the groups' fields) and the region matrices
 static void scene_alpha_frame(U64 frame);
 
-void ll_scene_geo_palette_kick(LLCullResult* cull)
+void rk_scene_geo_palette_kick(LLCullResult* cull)
 {
     sBindJob.reset();
-    if (!scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
+    if (!scene_geo_rigged_on() || !cull || !rk_scene_geo_serving() || !rk_scene_geo_main_view())
     {
         return;
     }
     std::shared_ptr<GeoBindJob> job = std::make_shared<GeoBindJob>();
     job->mCull = cull;
     job->mFrame = gFrameCount;
-    for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
+    for (U32 handle : rk_scene_consumer_kinds(cull).mRigged)
     {
         const RKSceneFragment* f = sGeoFragByHandle[handle];
         if (scene_fragment_behind(f))
@@ -13082,7 +13082,7 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
                 last_avatar = w.mAvatar;
                 last_skin = w.mSkin;
                 U32 offset = 0, joints = 0;
-                if (ll_frame_palette(w.mAvatar, w.mSkin, offset, joints))
+                if (rk_frame_palette(w.mAvatar, w.mSkin, offset, joints))
                 {
                     last_offset = offset;
                     last_joints = joints;
@@ -13099,10 +13099,10 @@ void ll_scene_geo_palette_kick(LLCullResult* cull)
     sBindJob = job;
 }
 
-// T4a of doc/vulkan/PLAN-visible-set-owner.md: the handles the record names besides the worker's derive, from the main view's own listing and the events: the bridge groups it listed in this build (ll_main_listed_note collects them) and the recent changes of the map rows (sRecent), each when the render map
+// T4a of doc/vulkan/PLAN-visible-set-owner.md: the handles the record names besides the worker's derive, from the main view's own listing and the events: the bridge groups it listed in this build (rk_main_listed_note collects them) and the recent changes of the map rows (sRecent), each when the render map
 // would name it: not dead, not occluded, under the auto-hide limit, not a far avatar's attachment, a fragment handle. The worker lists them as they are, not from its rows a frame old (a group whose handle changed lately is left out of its derive). No walk of a bridge's octree, no check of the bridge's own stamp:
 // a group the main view lists belongs to a marked bridge. Compared with the walk of the bridges' octrees over 35,400 records (lap lh1-def1): 0 differences; the walk equalled the old preparation (a byte a fragment, the visible groups, every slot) for the bridge groups over 42,000 records (rh1).
-static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window)
+static void rk_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U32 window)
 {
     LL_CPU_ZONE("geo frame: the record's extra handles");
     static std::vector<U32> seen;
@@ -13144,7 +13144,7 @@ static void ll_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U
     }
 }
 
-void ll_scene_geo_frame(LLCullResult* cull)
+void rk_scene_geo_frame(LLCullResult* cull)
 {
     if (scene_geo_mode() < 2)
     {
@@ -13153,7 +13153,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     const auto t_all = std::chrono::steady_clock::now();
     GeoFrameStats& s = sGeoF;
     scene_alpha_frame((U64)gFrameCount);
-    if (!cull || !ll_scene_geo_serving())
+    if (!cull || !rk_scene_geo_serving())
     {
         ++s.mOff;
         s.mNsEvents += geo_ns_since(t_all);
@@ -13191,7 +13191,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
         }
     }
     const std::vector<U32>& handles = cull->mGeoHandles;                              // the render map's exact list: what the record names (the worker compares its own derive with it)
-    const RKConsumerKinds& kinds = ll_scene_consumer_kinds(cull);             // T7: what the CPU's consumers serve, by kind (the late list classified once; the exact list in a view that is not the main view)
+    const RKConsumerKinds& kinds = rk_scene_consumer_kinds(cull);             // T7: what the CPU's consumers serve, by kind (the late list classified once; the exact list in a view that is not the main view)
     {
         // J1 K4: the bump images of the listed fragments' bump items are made current here (a render pass inside, before the passes), as the old pass did for each draw it drew
         LL_CPU_ZONE("deferred: bump images");
@@ -13311,7 +13311,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     last_avatar = avatar;
                     last_skin = skin;
                     U32 offset = 0, joints = 0;
-                    if (ll_frame_palette(avatar, skin, offset, joints))
+                    if (rk_frame_palette(avatar, skin, offset, joints))
                     {
                         last_offset = offset;
                         last_joints = joints;
@@ -13325,9 +13325,9 @@ void ll_scene_geo_frame(LLCullResult* cull)
                 bindings.push_back({ handle, item.mWire, last_offset, last_joints, 0u, 0u });
             }
         }
-        ll_frame_palette_flush();
+        rk_frame_palette_flush();
         // item E for the opaque rigged items: a simplified list for an avatar far enough away (the cache and its background thread are the cascade casters'), in the order the bindings were made
-        extern bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count);
+        extern bool rk_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count);
         if (!bindings.empty())
         {
             static U64 asked = 0, chosen = 0, mismatch = 0, tris_all = 0, tris_lod = 0;
@@ -13365,7 +13365,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                             static std::unordered_map<U64, Last> last;
                             static int logged_total = 0;
                             static std::vector<F32> now_m;
-                            if (logged_total < 300 && ll_frame_palette_copy(b.mOffset, b.mJoints, now_m))
+                            if (logged_total < 300 && rk_frame_palette_copy(b.mOffset, b.mJoints, now_m))
                             {
                                 const U64 key = ((U64)handle << 32) | item.mWire;
                                 Last& l = last[key];
@@ -13428,7 +13428,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
                     }
                     ++asked;
                     tris_all += rig.mCount / 3;
-                    if (ll_rigged_lod_opaque(rig.range(), rig.mAvatar.get(), b.mLodIb, b.mLodCount))
+                    if (rk_rigged_lod_opaque(rig.range(), rig.mAvatar.get(), b.mLodIb, b.mLodCount))
                     {
                         ++chosen;
                         tris_lod += b.mLodCount / 3;
@@ -13455,7 +13455,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the main view's record carries the view's planes and the render map's filters after the bindings: the worker derives the listed set from its own rows and compares it with the handles
     // stage 10a (LL_VK_CUBE_DERIVE=1, needs LL_VK_CULL_SHADOW=1): a probe cube face's record carries the face's planes too; the worker derives the face's listed set and compares it with the face's handles (stats of their own, nothing published,
     // nothing drawn from it: view_extra[2] = 2)
-    const bool cull_view = (ll_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView);       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
+    const bool cull_view = (rk_scene_geo_main_view() && !LLPipeline::sRenderingHUDs && !gCubeSnapshot && !sImpostorTableView);       // (the probe cube faces and the impostor images are main views to the table, with other cameras and other lists)
     RKVkBridge::CullParams view_params;
     U32 view_extra[4] = { (1u | ((U32)LLViewerOctreeEntryData::getCurrentFrame() << 1)), 0u, 0u, 0u };       // (after the params: [0] = bit 0: the worker publishes its LOD numbers (stage 7), the other bits the frame counter needsUpdate() reads, [1] = the number of bridge slots that follow it, [2] = 1: the worker draws from its own derive, [3] = the number of handles after the slots)
     static std::vector<U32> marked_bridges;       // the root slots of the bridges the walk marked this frame (their groups are listed; the rows of the bridges' groups know their root through their parents)
@@ -13475,7 +13475,7 @@ void ll_scene_geo_frame(LLCullResult* cull)
             }
         }
         view_extra[1] = (U32)marked_bridges.size();
-        ll_record_extra_handles(cull, bridge_handles, 3);       // (the bridge groups the main view listed and the handles changed in the last 3 frames: the listing's by-product and the recent changes)
+        rk_record_extra_handles(cull, bridge_handles, 3);       // (the bridge groups the main view listed and the handles changed in the last 3 frames: the listing's by-product and the recent changes)
         view_extra[3] = (U32)bridge_handles.size();
         view_extra[2] = 1u;        // stage 10a: 2 = a probe cube face, compared only. Stage 5: the worker draws the main view from its own derive of the listed set (the handles of this record are then only compared)
         cull_fill_params(*LLViewerCamera::getInstance(), view_params);
@@ -13552,12 +13552,12 @@ void ll_scene_geo_frame(LLCullResult* cull)
             << (double)r.mNsRetain / 1000.0 / n << " | rigged palette bindings " << (double)sGeoRiggedBindings / n << " a frame (sent as " << (double)sGeoRiggedUpdates / n << "), " << (double)sGeoRiggedNs / 1000.0 / n << " us (palette jobs taken " << sBindJobTaken << ", made inline " << sBindJobInline << ") | moving matrices sent " << (double)sGeoMovingSent / n << " a frame, slots held "
             << sMovingSlot.size() << ", acquired " << sMovingAcquired << ", no slot free " << sMovingFull << LL_ENDL;
         sGeoRiggedBindings = sGeoRiggedNs = sGeoMovingSent = sGeoRiggedUpdates = 0;
-        ll_rig_census_log();
+        rk_rig_census_log();
     }
 }
 
 // after the passes: the fragments that went since the last frame are released at the worker, their handles can be reused
-void ll_scene_geo_frame_end()
+void rk_scene_geo_frame_end()
 {
     if (scene_geo_mode() < 2)
     {
@@ -14374,19 +14374,19 @@ static int shadow_rigalpha_mode()
 
 static void build_shadow_skin(LLCullResult& result, const U32* list, size_t count, LLPipeline::ShadowSkinBuild& out)
 {
-    ll_rig_census_add(7, 1);
+    rk_rig_census_add(7, 1);
     out = LLPipeline::ShadowSkinBuild();
     std::vector<RKVkBridge::ShadowSkinEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     matrices.assign(16, 0.f);
     matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;       // matrix 0: no model matrix
     std::unordered_set<U32> palettes_used;
-    out.mPaletteFrame = ll_frame_palette_frame();       // (the entries' palette offsets belong to the list of this frame)
+    out.mPaletteFrame = rk_frame_palette_frame();       // (the entries' palette offsets belong to the list of this frame)
     // the entry of one rigged draw, from its parts (a draw info's, or a fragment item's source): false = the skin is not loaded yet, not drawn
     auto make_entry = [&](LLVOAvatar* avatar, const LLMeshSkinInfo* skin, const LLVertexBuffer* vb, U32 offset, U32 index_count, U32 first_vertex, U32 last_vertex, RKVkBridge::ShadowSkinEntry& e, const RtMatSource* mat = nullptr) -> bool
     {
         e = {};
-        if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
+        if (!rk_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
         {
             return false;       // the skin is not loaded yet: not drawn, as before
         }
@@ -14442,7 +14442,7 @@ static void build_shadow_skin(LLCullResult& result, const U32* list, size_t coun
                 {
                     continue;
                 }
-                ll_rig_census_add(6, 1);
+                rk_rig_census_add(6, 1);
                 entries.push_back(e);
                 out.mDraws.push_back(rig.range());
             }
@@ -14875,7 +14875,7 @@ static bool shadow_lod_one(const GeoRange& r, U32 lvl, F32 error, int& snapshots
 
 // the main view's rigged draws (item E): the simplified list of a draw for a geometric error in metres (below half a pixel at its distance), true with its index buffer and count when it is ready.
 // The caller decides.
-bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
+bool rk_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
 {
     const int level = (int)floorf(log2f(error_m * 1000.f));
     if (level < 1)
@@ -15013,7 +15013,7 @@ struct ShadowServed
     U64 mWhy[4] = {}, mByType[128] = {}, mOrphans = 0, mGroups = 0;
     ~ShadowServed()
     {
-        if (!mGroups || !ll_diag_on())      // (the counts are for the report below only)
+        if (!mGroups || !rk_diag_on())      // (the counts are for the report below only)
         {
             return;
         }
@@ -15194,7 +15194,7 @@ void LLPipeline::shadowPrepFinish(ShadowCascadePrep& prep)
     LLCamera& camera = prep.mCamera;
     LLCullResult& result = *prep.mResult;
 
-    ll_cascade_view_ask(prep.mIndex, camera);       // <FS> stage 10d: the request for the next frame's set
+    rk_cascade_view_ask(prep.mIndex, camera);       // <FS> stage 10d: the request for the next frame's set
 
     if (hasAnyRenderType(LLPipeline::RENDER_TYPE_AVATAR,
                       LLPipeline::RENDER_TYPE_CONTROL_AV,
@@ -15575,7 +15575,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         }
 
 
-        if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || ll_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
+        if ((&camera == LLViewerCamera::getInstance() || sImpostorTableView) && (!gCubeSnapshot || rk_scene_geo_main_view()))       // (J1 K6 S2: the probes' cube faces and the avatar impostor images too: the impostor draws with a copy of the camera)
         {
             {
                 static U64 prepares[3] = {}, handles[3] = {};
@@ -15588,7 +15588,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
                 }
             }
             LL_CPU_ZONE("deferred: scene geometry prepare");
-            ll_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
+            rk_scene_geo_frame(getCull());       // <FS> S3: the visible fragments' deferred geometry, named to the worker's table (LL_VK_SCENE_GEO=2)
         }
 
         LLVertexBuffer::unbind();
@@ -15725,7 +15725,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
 
         if (&camera == LLViewerCamera::getInstance() && !gCubeSnapshot)
         {
-            ll_scene_geo_frame_end();       // <FS> S3 G3
+            rk_scene_geo_frame_end();       // <FS> S3 G3
         }
 
     } // Tracy ZoneScoped
@@ -15809,10 +15809,10 @@ void LLPipeline::renderGeomPostDeferred(LLCamera& camera)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LL_PROFILE_GPU_ZONE("renderGeomPostDeferred");
 
-    if (LLPipeline::sRenderingHUDs && ll_scene_geo_hud_view() && ll_scene_geo_hud_any() && getCull() && getCull()->mGeoElided)
+    if (LLPipeline::sRenderingHUDs && rk_scene_geo_hud_view() && rk_scene_geo_hud_any() && getCull() && getCull()->mGeoElided)
     {
         LL_CPU_ZONE("HUD: scene geometry prepare");
-        ll_scene_geo_frame(getCull());       // J1 K6 S1: the HUD's visible fragments, named to the worker's table (the HUD pools draw the types in ll_scene_geo_hud_type from it)
+        rk_scene_geo_frame(getCull());       // J1 K6 S1: the HUD's visible fragments, named to the worker's table (the HUD pools draw the types in rk_scene_geo_hud_type from it)
     }
 
     if (gUseWireframe)
@@ -16803,7 +16803,7 @@ void LLPipeline::renderDebug()
         gRender.setPointSize(1.f);
     }
 
-    // Debug stuff. (Batch Size and Texture Animation are not in this list: the scene table draws them, ll_render_table_debug below; the partitions' walks have nothing to do for them)
+    // Debug stuff. (Batch Size and Texture Animation are not in this list: the scene table draws them, rk_render_table_debug below; the partitions' walks have nothing to do for them)
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCTREE |
         LLPipeline::RENDER_DEBUG_VERIFY |
         LLPipeline::RENDER_DEBUG_OCCLUSION |
@@ -16853,7 +16853,7 @@ void LLPipeline::renderDebug()
 
     LL::GLTFSceneManager::instance().renderDebug();
 
-    ll_render_table_debug();        // K6 B1: the Batch Size and Texture Animation views, from the scene table
+    rk_render_table_debug();        // K6 B1: the Batch Size and Texture Animation views, from the scene table
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCCLUSION))
     { //render visible selected group occlusion geometry
@@ -19265,7 +19265,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
 {
     out = LLPipeline::ShadowAlphaBuild();
     out.mRigged = rigged;
-    out.mPaletteFrame = ll_frame_palette_frame();
+    out.mPaletteFrame = rk_frame_palette_frame();
     std::vector<RKVkBridge::ShadowAlphaEntry>& entries = out.mEntries;
     std::vector<F32>& matrices = out.mMatrices;
     matrices.assign(16, 0.f);
@@ -19297,7 +19297,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
             F32 tm[16];
             bool has_tm = false;
             LLViewerTexture* tex = shadow_gltf_entry_parts(vb, mat, rig.mOffset, rig.mCount, nullptr, rig.mTexture.get(), gk, e, tm, has_tm);
-            if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
+            if (!rk_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
             {
                 return false;       // the skin is not loaded yet: not drawn, as before
             }
@@ -19415,7 +19415,7 @@ static void build_shadow_alpha(LLCullResult& result, bool rigged, LLPipeline::Sh
                 e.mFirstIndex = rig.mOffset;
                 e.mIndexCount = rig.mCount;
                 e.mMatrixId = rt_matrix_id(nullptr);
-                if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
+                if (!rk_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
                 {
                     continue;       // the skin is not loaded yet: not drawn, as before
                 }
@@ -20627,7 +20627,7 @@ static bool motion_fold_active()
 
 // the matrices a rigged G-buffer program needs to write motion (GB_MOTION in the native manifest: view_proj_cur, view_proj_prev, render_res in the loose block), set by LLRenderPass::pushGeometryPackets on the bound program
 // before the draw record of a rigged type. The same matrices as the avatar velocity pass: this frame's come from the camera (mViewProjCur is last frame's until the end of the lighting).
-bool ll_motion_fold_uniforms(RKShaderProgram* program)
+bool rk_motion_fold_uniforms(RKShaderProgram* program)
 {
     if (!program || !motion_fold_active())
     {
@@ -22510,7 +22510,7 @@ void LLPipeline::bindDeferredShaderFast(RKShaderProgram& shader)
 }
 
 // <FS> S5 A0 (doc/vulkan/S5-design.md): does the group hold a current fragment (the S2 / S3 persistent scene entries), and is it resident
-bool ll_group_fragment_state(const LLSpatialGroup* group, bool* resident)
+bool rk_group_fragment_state(const LLSpatialGroup* group, bool* resident)
 {
     const RKSceneFragment* fragment = group->mSceneFragment;
     const bool current = fragment && fragment->mSerial == group->mGeometrySerial;
@@ -22971,7 +22971,7 @@ static void rt_name_rigged_main_view()
                     return;
                 }
                 RKVkBridge::ShadowSkinEntry e = {};
-                if (!ll_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints))
+                if (!rk_frame_palette(d.mAvatar, d.mSkin, e.mPaletteOffset, e.mJoints))
                 {
                     return;
                 }
@@ -23022,13 +23022,13 @@ static void rt_name_rigged_main_view()
                 entries.push_back(e);
         };
         cs_opaque_entries = (U32)entries.size();
-        if (scene_geo_rigged_on() && ll_scene_geo_serving())
+        if (scene_geo_rigged_on() && rk_scene_geo_serving())
         {
             LL_CPU_ZONE("rt name: fragments");
             // S4 B: the render map no longer holds the rigged draws the table serves: they are named from the fragments listed for this frame
             if (LLCullResult* cull = gPipeline.getCull())
             {
-                for (U32 handle : ll_scene_consumer_kinds(cull).mRigged)
+                for (U32 handle : rk_scene_consumer_kinds(cull).mRigged)
                 {
                     const RKSceneFragment* f = sGeoFragByHandle[handle];
                     for (const GeoRigSource& rig : f->mGeoRiggedSrc)
@@ -23057,7 +23057,7 @@ static void rt_name_rigged_main_view()
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mFragment = 1;       // the palettes are named by id in the frame's list
-            ll_frame_palette_flush();
+            rk_frame_palette_flush();
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
@@ -23126,7 +23126,7 @@ static void rt_name_rigged_main_view()
             e.mFirstIndex = rig.mOffset;
             e.mIndexCount = rig.mCount;
             e.mMatrixId = rt_matrix_id(nullptr);
-            if (!ll_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
+            if (!rk_frame_palette(avatar, skin, e.mPaletteOffset, e.mJoints))
             {
                 return;
             }
@@ -23260,7 +23260,7 @@ static void rt_name_rigged_main_view()
             header.mEntries = (U32)entries.size();
             header.mMatrices = (U32)(matrices.size() / 16);
             header.mFragment = 1;       // the palettes are named by id in the frame's list
-            ll_frame_palette_flush();
+            rk_frame_palette_flush();
             std::vector<U8> blob(entries.size() * sizeof(entries[0]) + matrices.size() * sizeof(F32));
             memcpy(blob.data(), entries.data(), entries.size() * sizeof(entries[0]));
             memcpy(blob.data() + entries.size() * sizeof(entries[0]), matrices.data(), matrices.size() * sizeof(F32));
@@ -24478,7 +24478,7 @@ void LLPipeline::renderDeferredLighting()
     gRender.setColorMask(true, true);
 }
 
-bool ll_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
+bool rk_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
 
 void LLPipeline::doAtmospherics()
 {
@@ -24529,7 +24529,7 @@ void LLPipeline::doWaterHaze()
     { // do not attempt water haze on impostors
         return;
     }
-    if (!ll_water_plane_in_view())
+    if (!rk_water_plane_in_view())
     { // <FS> no water can be seen in this view: the haze of the water patches (or of the water seen from below) has nothing to draw
         return;
     }
@@ -24587,11 +24587,11 @@ void LLPipeline::doWaterHaze()
     }
 }
 
-bool ll_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
+bool rk_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
 
 void LLPipeline::doWaterExclusionMask()
 {
-    if (!ll_water_plane_in_view())
+    if (!rk_water_plane_in_view())
     {
         return;         // <FS> no water can be seen in this view: nothing reads the mask (the water pool and the water haze are skipped the same way)
     }
@@ -24986,7 +24986,7 @@ void LLPipeline::bindReflectionProbes(RKShaderProgram& shader)
             mHeroProbeManager.mTexture->bind(channel);
             bound = true;
         }
-        if (ll_mirror_planar())
+        if (rk_mirror_planar())
         {   // <FS> the planar mirror's reflected view (a view being rendered never reads itself: it gets white)
             channel = shader.enableTexture(LLShaderMgr::MIRROR_VIEW, LLTexUnit::TT_TEXTURE);
             if (channel > -1)
@@ -25601,7 +25601,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             prepared->mSkinJob->wait();
         }
         const ShadowSkinBuild* source = prepared ? prepared->mSkinBuild.get() : nullptr;
-        if (source && source->mPaletteFrame != ll_frame_palette_frame())
+        if (source && source->mPaletteFrame != rk_frame_palette_frame())
         {
             source = nullptr;       // S4 A2: made in another frame: its palette offsets name that frame's list
         }
@@ -25650,7 +25650,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             header.mFragment = 1;       // S4 A2: the palettes are in the frame's shared list
             {
                 LL_CPU_ZONE("packets: shadow rigged: palette flush");
-                ll_frame_palette_flush();
+                rk_frame_palette_flush();
             }
             LL_CPU_ZONE("packets: shadow rigged: record");
             const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
@@ -25981,7 +25981,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             build_owned = std::make_shared<ShadowAlphaBuild>();
             build_shadow_alpha(result, rigged, *build_owned);
         }
-        if (build_owned->mRigged && build_owned->mPaletteFrame != ll_frame_palette_frame())
+        if (build_owned->mRigged && build_owned->mPaletteFrame != rk_frame_palette_frame())
         {
             // P3: made in another frame (an id is only in the table of the frames whose list holds its palette): made again in this one
             build_owned = std::make_shared<ShadowAlphaBuild>();
@@ -26061,7 +26061,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             }
             if (tree_left_out)
             {
-                ll_pool_draw_dropped("Linden tree shadow casters (layout the pull shader does not read)", tree_left_out);
+                rk_pool_draw_dropped("Linden tree shadow casters (layout the pull shader does not read)", tree_left_out);
             }
             static U32 tree_calls = 0;
             static U64 tree_faces_total = 0;
@@ -26149,7 +26149,7 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
                 if (build_owned->mRigged)
                 {
                     header.mFragment = 1;       // P3: the rigged entries name their palettes by id (the frame's shared list)
-                    ll_frame_palette_flush();
+                    rk_frame_palette_flush();
                 }
                 if (!build_owned->mTexmats.empty())
                 {
@@ -27473,8 +27473,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             for (size_t p = 0; p < pending.size(); ++p)
             {
                 LLCullResult& r = *pending[p].mResult;
-                ll_view_bridges(pending[p].mCamera, false, pending[p].mBridges);       // stage 10: the cascade's bridges and avatars by the registry
-                ll_view_avatars(pending[p].mCamera, pending[p].mAvatars);
+                rk_view_bridges(pending[p].mCamera, false, pending[p].mBridges);       // stage 10: the cascade's bridges and avatars by the registry
+                rk_view_avatars(pending[p].mCamera, pending[p].mAvatars);
                 for (int kind = 0; kind < 3; ++kind)
                 {
                     const U32 n = kind == 0 ? r.getDrawableGroupsSize() : (kind == 1 ? (U32)r.mLodGroups.size() : (U32)(pending[p].mBridges.size() + pending[p].mAvatars.size()));     // <FS> C4.4: kind 1 = the groups whose LOD check said yes

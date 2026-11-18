@@ -124,8 +124,8 @@ extern RKShaderProgram         gWaterPullProgram;          // <FS> the table for
 extern RKShaderProgram         gUnderWaterPullProgram;
 extern RKShaderProgram         gWaterPullRtProgram;        // <FS> the water with the ray queries of the stock water (a session with ray queries)
 extern RKShaderProgram         gWaterPullRtReflectionProgram;       // <FS> and the one that also traces the reflection (FSVkRTWater)
-bool ll_water_rt_reflection();   // it was made (the material table can be on)
-bool ll_water_rt();              // the water seen from above is drawn with it (a session with ray queries and sun shadows)
+bool rk_water_rt_reflection();   // it was made (the material table can be on)
+bool rk_water_rt();              // the water seen from above is drawn with it (a session with ray queries and sun shadows)
 extern RKShaderProgram         gGlowProgram;
 extern RKShaderProgram         gGlowExtractProgram;
 

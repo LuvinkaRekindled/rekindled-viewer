@@ -19,9 +19,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_lightMap;
-    uint ll_ti_normalMap;
-    uint ll_ti_depthMap;
+    uint rk_ti_lightMap;
+    uint rk_ti_normalMap;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -45,16 +45,16 @@ void main()
 {
     const vec2 tc0 = vary_fragcoord;
     const vec2 g0 = gbuffer_uv(tc0);
-    const float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], g0).r;
-    const vec4 ccol = texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], tc0);
+    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], g0).r;
+    const vec4 ccol = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], tc0);
     if (depth >= 1.0)
     {
         frag_color = ccol;          // a sky pixel: the lightmap is 1.0 there and nothing reads it
         return;
     }
 
-    const vec3 norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], g0).xy);
-    const vec3 pos = ll_view_pos(inv_proj, g0, depth);
+    const vec3 norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], g0).xy);
+    const vec3 pos = rk_view_pos(inv_proj, g0, depth);
 
     vec2 dlt = kern_scale * delta / (1.0 + norm.xy * norm.xy);
     dlt /= max(-pos.z * dist_factor, 1.0);
@@ -89,11 +89,11 @@ void main()
         {
             const vec2 samptc = (tc + sgn * k[i].z * dlt * 2.0) / screen_res;
             const vec2 sampg = gbuffer_uv(samptc);
-            const vec3 samppos = ll_view_pos(inv_proj, sampg, texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], sampg).r);
+            const vec3 samppos = rk_view_pos(inv_proj, sampg, texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], sampg).r);
             const float d = dot(norm, samppos - pos);       // distance from the tangent plane
             if (d * d <= tolerance2)
             {
-                col += texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], samptc) * k[i].xyxx;
+                col += texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], samptc) * k[i].xyxx;
                 defined_weight += k[i].xy;
             }
         }

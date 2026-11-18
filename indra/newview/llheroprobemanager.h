@@ -48,7 +48,7 @@ struct HeroProbeData
 };
 
 // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): LL_VK_MIRROR_PLANAR=1 also renders the reflected view of the nearest mirror at the main view's size
-bool ll_mirror_planar();
+bool rk_mirror_planar();
 
 class alignas(16) LLHeroProbeManager
 {

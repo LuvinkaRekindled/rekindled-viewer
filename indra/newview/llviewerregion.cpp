@@ -122,8 +122,8 @@ namespace
     struct RkKillStats
     {
         U64 mCalls = 0, mMovingCalls = 0, mLooked = 0, mWanted = 0, mKilled = 0, mRecreated = 0;
-    } sFsKill;
-    std::unordered_set<const LLVOCacheEntry*> sFsKilled;
+    } sRkKill;
+    std::unordered_set<const LLVOCacheEntry*> sRkKilled;
 }
 
 typedef std::unordered_map<std::string, std::string, ll::string_hash, std::equal_to<>> CapabilityMap;
@@ -1243,7 +1243,7 @@ void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
 
     //remove from the forced visible list
     mImpl->mVisibleEntries.erase(entry);
-    sFsKilled.erase(entry);         // <FS> the cache entry is gone, not instantiated again
+    sRkKilled.erase(entry);         // <FS> the cache entry is gone, not instantiated again
 
     //disconnect from parent if it is a child
     if(entry->getParentID() > 0)
@@ -1839,7 +1839,7 @@ bool LLViewerRegion::isViewerCameraStatic()
 // has had in view for LL_VK_KILL_AGE_S seconds (default 60, as Released), that is farther than SceneLoadMinRadius, and that nothing needs (not selected, no sound, particles, light, media, no avatar on it) is
 // killed through the existing killObject; it comes back from its cache entry by the paced path the stock code uses (NewObjectCreationThrottle). Nothing is killed until the camera has been still for
 // LL_VK_KILL_STILL_S seconds (default 3), so a view that is changing is never thinned out under it. Paced: LL_VK_KILL_LOOK entries looked at (64) and LL_VK_KILL_MAX killed (8) a call.
-static bool fs_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 frame, S64 min_age)
+static bool rk_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 frame, S64 min_age)
 {
     LLViewerOctreeEntry* octree_entry = entry->getEntry();
     if (!octree_entry)
@@ -1882,7 +1882,7 @@ static bool fs_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 f
     return (object->getPositionAgent() - camera).length() - drawable->getRadius() > LLVOCacheEntry::sNearRadius;
 }
 
-void fs_kill_report()
+void rk_kill_report()
 {
     if (LLPipeline::coldMode() < 4)
     {
@@ -1893,8 +1893,8 @@ void fs_kill_report()
     {
         active += region->getNumOfActiveCachedObjects();
     }
-    LL_INFOS("SceneCensus") << "Kill (LL_VK_EXPIRY=4): " << sFsKill.mCalls << " calls (" << sFsKill.mMovingCalls << " held back while the camera moved), entries looked at " << sFsKill.mLooked << ", stale and free " << sFsKill.mWanted
-        << ", killed " << sFsKill.mKilled << ", made again " << sFsKill.mRecreated << ", killed and not back " << sFsKilled.size() << ", active cached objects now " << active << LL_ENDL;
+    LL_INFOS("SceneCensus") << "Kill (LL_VK_EXPIRY=4): " << sRkKill.mCalls << " calls (" << sRkKill.mMovingCalls << " held back while the camera moved), entries looked at " << sRkKill.mLooked << ", stale and free " << sRkKill.mWanted
+        << ", killed " << sRkKill.mKilled << ", made again " << sRkKill.mRecreated << ", killed and not back " << sRkKilled.size() << ", active cached objects now " << active << LL_ENDL;
 }
 
 void LLViewerRegion::killInvisibleObjects(F32 max_time)
@@ -1919,7 +1919,7 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
 
     if (LLPipeline::coldMode() >= 4)
     {
-        // <FS> the object kill stage (see fs_kill_wanted)
+        // <FS> the object kill stage (see rk_kill_wanted)
         static const F32 still_s = getenv("LL_VK_KILL_STILL_S") ? (F32)atof(getenv("LL_VK_KILL_STILL_S")) : 3.f;
         static const F32 age_s = getenv("LL_VK_KILL_AGE_S") ? (F32)atof(getenv("LL_VK_KILL_AGE_S")) : 60.f;
         static const size_t look = getenv("LL_VK_KILL_LOOK") ? (size_t)atoi(getenv("LL_VK_KILL_LOOK")) : 64;
@@ -1949,10 +1949,10 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
             fps_at = now;
             fps_frame = frame;
         }
-        ++sFsKill.mCalls;
+        ++sRkKill.mCalls;
         if (now - moved_at < still_s)
         {
-            ++sFsKill.mMovingCalls;
+            ++sRkKill.mMovingCalls;
             return;
         }
         const S64 min_age = (S64)(age_s * llmax(fps, 10.f));        // the age is in seconds, the stamps are in frames
@@ -1974,14 +1974,14 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
             }
             LLVOCacheEntry* vo_entry = *it;
             last = vo_entry;
-            ++sFsKill.mLooked;
+            ++sRkKill.mLooked;
             if (vo_entry->getParentID() > 0)
             {
                 continue;                       // children go with their parent
             }
-            if (fs_kill_wanted(vo_entry, camera, frame, min_age))
+            if (rk_kill_wanted(vo_entry, camera, frame, min_age))
             {
-                ++sFsKill.mWanted;
+                ++sRkKill.mWanted;
                 const size_t before = kill_list.size();
                 killObject(vo_entry, kill_list);
                 if (kill_list.size() > before)
@@ -1998,16 +1998,16 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
         for (size_t i = 0; i < kill_list.size(); ++i)
         {
             gObjectList.killObject(kill_list[i]->getVObj());
-            sFsKilled.insert(kill_entries[i]);
-            ++sFsKill.mKilled;
+            sRkKilled.insert(kill_entries[i]);
+            ++sRkKill.mKilled;
         }
         // one line every 10 s (a lap without the census still shows what the kill did)
         static F64 report_at = 0.0;
         if (now - report_at >= 10.0)
         {
             report_at = now;
-            LL_INFOS("KillStage") << "Kill: " << sFsKill.mCalls << " calls (" << sFsKill.mMovingCalls << " while the camera moved), looked at " << sFsKill.mLooked << ", stale and free " << sFsKill.mWanted
-                << ", killed " << sFsKill.mKilled << ", made again " << sFsKill.mRecreated << ", killed and not back " << sFsKilled.size() << ", objects now " << gObjectList.getNumObjects() << ", active cached here " << mImpl->mActiveSet.size() << LL_ENDL;
+            LL_INFOS("KillStage") << "Kill: " << sRkKill.mCalls << " calls (" << sRkKill.mMovingCalls << " while the camera moved), looked at " << sRkKill.mLooked << ", stale and free " << sRkKill.mWanted
+                << ", killed " << sRkKill.mKilled << ", made again " << sRkKill.mRecreated << ", killed and not back " << sRkKilled.size() << ", objects now " << gObjectList.getNumObjects() << ", active cached here " << mImpl->mActiveSet.size() << LL_ENDL;
         }
         return;
     }
@@ -2145,9 +2145,9 @@ LLViewerObject* LLViewerRegion::addNewObject(LLVOCacheEntry* entry)
     LLViewerObject* obj = NULL;
     if(!entry->getEntry()->hasDrawable()) //not added to the rendering pipeline yet
     {
-        if(!sFsKilled.empty() && sFsKilled.erase(entry))
+        if(!sRkKilled.empty() && sRkKilled.erase(entry))
         {
-            ++sFsKill.mRecreated;       // <FS> an object the kill stage dropped, made again from its cache entry
+            ++sRkKill.mRecreated;       // <FS> an object the kill stage dropped, made again from its cache entry
         }
         //add the object
         obj = gObjectList.processObjectUpdateFromCache(entry, this);

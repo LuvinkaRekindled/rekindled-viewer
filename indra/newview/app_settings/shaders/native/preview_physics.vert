@@ -6,7 +6,7 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;
     vec4 color;
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };
 
 layout(location = 0) in vec3 position;

@@ -7,9 +7,9 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
-    uvec2 ll_packet_models;
-    uvec2 ll_packet_texmats;
+    uvec2 rk_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
+    uvec2 rk_packet_models;
+    uvec2 rk_packet_texmats;
     mat4 inv_proj;
     vec4 waterPlane;
     int above_water;
@@ -21,8 +21,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
-    uint ll_ti_exclusionTex;
-    uint ll_ti_depthMap;
+    uint rk_ti_exclusionTex;
+    uint rk_ti_depthMap;
 };
 
 #include "lib/legacy.glsl"
@@ -32,7 +32,7 @@ layout(location = 0) out vec4 frag_color;
 
 float getDepth(vec2 pos_screen)
 {
-    float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], pos_screen).r;
+    float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
     return depth;
 }
 
@@ -40,7 +40,7 @@ void main()
 {
     vec2  tc           = vary_fragcoord.xy / vary_fragcoord.w * 0.5 + 0.5;
     float depth        = getDepth(tc.xy);
-    float mask = texture(ll_tbl2d[LL_HM(ll_ti_exclusionTex)], tc.xy).r;
+    float mask = texture(rk_tbl2d[LL_HM(rk_ti_exclusionTex)], tc.xy).r;
 
     if (above_water > 0)
     {

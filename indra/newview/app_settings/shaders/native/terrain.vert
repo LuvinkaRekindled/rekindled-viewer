@@ -14,8 +14,8 @@ layout(location = 3) out vec2 vary_ramp;        // the height ramp's coordinate
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
 
     const uint at = row.first + uint(gl_VertexIndex);
     const uint word = RowWords(row.indices).w[at >> 1];
@@ -31,7 +31,7 @@ void main()
 
     // texgen_object of the old program: the world position through the two planes, then the texture matrix. The matrix is the row's (the old pull program builds it the same way: the row's texture matrix slot,
     // identity when there is none, a texture animation's parameters made into a matrix against the clock); it is not a uniform of the program. z is 0 and w 1, so only its x and y rows and the translation count
-    const mat4 tm = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 tm = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
     const float u = dot(position, object_plane_s);
     const float v = dot(position, object_plane_t);
     vary_detail = vec2(tm[0][0] * u + tm[1][0] * v + tm[3][0],

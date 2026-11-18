@@ -3,9 +3,9 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
-    uvec2 ll_packet_models;
-    uvec2 ll_packet_texmats;
+    uvec2 rk_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
+    uvec2 rk_packet_models;
+    uvec2 rk_packet_texmats;
     mat4 inv_proj;
     vec4 waterPlane;
     int above_water;
@@ -17,8 +17,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
-    uint ll_ti_exclusionTex;
-    uint ll_ti_depthMap;
+    uint rk_ti_exclusionTex;
+    uint rk_ti_depthMap;
 };
 
 #include "lib/rows.glsl"
@@ -26,7 +26,7 @@ layout(location = 0) out vec4 vary_fragcoord;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
     const uint at = row.first + uint(gl_VertexIndex);
     uint index = at;                    // (a draw of vertices without indices: the full screen triangle)
     if ((row.flags & 4u) == 0u)

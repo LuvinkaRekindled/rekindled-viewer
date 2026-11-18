@@ -121,7 +121,7 @@ Dummy Name replaced at run time
                  height="30"
                  layout="topleft"
                  left="5"
-                 name="fs_info_link"
+                 name="rk_info_link"
                  top="0"
                  width="450"
                  wrap="true">

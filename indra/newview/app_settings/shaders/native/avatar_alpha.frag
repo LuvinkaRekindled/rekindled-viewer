@@ -25,6 +25,6 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     mirror_clip(vary_position);
-    const vec4 texel = texture(ll_tbl2d[nonuniformEXT(LL_HM(ll_ti_diffuseMap))], vary_texcoord0);
+    const vec4 texel = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0);
     frag_color = shade_lit(vary_position, vary_normal, texel, vec4(1.0));
 }

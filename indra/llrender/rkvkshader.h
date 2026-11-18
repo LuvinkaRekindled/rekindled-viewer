@@ -12,7 +12,7 @@
  *   set 0, binding 1 + n    the viewer's named uniform blocks (n = index in the viewer's block list)
  *   set 1                   empty (the number is kept: sets 2 and 3 follow)
  *   set 2, binding 0-3      the tables of sampled images (2D, cube, cube array, 2D shadow); binding 4: the handle map. A sampler is a macro for a table element read with the id
- *                           in a loose uint uniform (ll_ti_<name>) through the map
+ *                           in a loose uint uniform (rk_ti_<name>) through the map
  *   vertex inputs           location = index of the attribute in the viewer's reserved attribute list
  *   varyings                location by name, assigned in order of first appearance in the vertex stage
  *   fragment outputs        locations in order of declaration
@@ -54,7 +54,7 @@ struct SamplerInfo
     std::string mName;
     std::string mType;
     U32 mBinding = 0;
-    S32 mIndexUniform = -1;     // bindless programs: index in mUniforms of the uint that holds this sampler's table slot (ll_ti_<name>)
+    S32 mIndexUniform = -1;     // bindless programs: index in mUniforms of the uint that holds this sampler's table slot (rk_ti_<name>)
 };
 
 struct ProgramInfo
@@ -63,7 +63,7 @@ struct ProgramInfo
     U32 mBlockSizes[UC_COUNT] = {};             // bytes of each class's block (0: the program has no uniform of that class)
     std::vector<SamplerInfo> mSamplers;
     bool mBindless = false;                     // the program has samplers (all translated to texture handles): the draw writes the id of each into the loose uniform block
-    bool mUsesRt = false;                       // traces rays against the frame's scene (set 3, binding 0: ll_rt_tlas): the draw binds the ray tracing descriptor set
+    bool mUsesRt = false;                       // traces rays against the frame's scene (set 3, binding 0: rk_rt_tlas): the draw binds the ray tracing descriptor set
     std::vector<std::string> mAttributes;       // vertex inputs the program declares
     std::vector<U32> mAttributeLocations;       // their locations (index in the viewer's reserved attribute list)
     std::vector<std::string> mAttributeTypes;   // their GLSL types ("vec4", "int", ...)

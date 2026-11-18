@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 modelview_projection_matrix;
 #endif
     mat4 texture_matrix0;
-    uint ll_ti_diffuseMap;
+    uint rk_ti_diffuseMap;
 };
 
 layout(std140, set = 0, binding = 6) uniform RKLooseMaterial

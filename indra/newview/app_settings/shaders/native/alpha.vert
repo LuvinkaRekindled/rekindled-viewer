@@ -1,4 +1,4 @@
-// alpha.vert: the vertex shader of the forward drawn transparent surfaces. A draw is one row of the scene table (alpha_pass.inc: ll_packet_table); the vertex reads its own data from the arrays the row
+// alpha.vert: the vertex shader of the forward drawn transparent surfaces. A draw is one row of the scene table (alpha_pass.inc: rk_packet_table); the vertex reads its own data from the arrays the row
 // names, so there are no vertex inputs. Variants by define: HAS_SKIN + HAS_INDEXED_DRAW (a rigged draw, the hardware reads the indices: the vertex number is the index), nothing (static draws and particles).
 // Outputs (the fragment shaders of the family read these): position in eye space, vertex colour (sRGB), texture coordinates, and the texture slot (flat).
 
@@ -38,8 +38,8 @@ layout(location = 14) flat out vec2 vary_matparams;     // the environment inten
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
 
 #ifdef HAS_SKIN
     const uint index = row_clamp_index(row, uint(gl_VertexIndex));
@@ -87,7 +87,7 @@ void main()
         texcoord = vec2((particle_corner_id & 2u) != 0u ? 1.0 : 0.0, (particle_corner_id & 1u) != 0u ? 0.0 : 1.0);
     }
 #endif
-    const mat4 texmat = row_texture_matrix(row, TexMatTable(ll_packet_texmats));
+    const mat4 texmat = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
     vary_texcoord0 = (texmat * vec4(texcoord, 0.0, 1.0)).xy;
     vary_position = eye.xyz;
 #ifdef GLOW_EMISSIVE

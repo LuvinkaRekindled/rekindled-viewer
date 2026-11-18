@@ -7722,7 +7722,7 @@ void RKRebuildBatch::flush()
         if (entry.mFragment && !group->isDead())
         {
             LL_CPU_ZONE("rebuild: scene geometry fragment build");
-            ll_scene_fragment_build(group);
+            rk_scene_fragment_build(group);
         }
     }
 }

@@ -8,9 +8,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 #if SMAA_PREDICATION
-    uint ll_ti_predicationTex;
+    uint rk_ti_predicationTex;
 #endif
 };
 
@@ -21,9 +21,9 @@ layout(location = 0) out vec4 frag_color;
 #include "lib/smaa.glsl"
 
 // (after the library: its functions have parameters of these names)
-#define diffuseRect ll_tbl2d[LL_HM(ll_ti_diffuseRect)]
+#define diffuseRect rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
 #if SMAA_PREDICATION
-#define predicationTex ll_tbl2d[LL_HM(ll_ti_predicationTex)]
+#define predicationTex rk_tbl2d[LL_HM(rk_ti_predicationTex)]
 #endif
 
 void main()

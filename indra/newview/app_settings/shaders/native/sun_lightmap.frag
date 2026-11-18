@@ -48,17 +48,17 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_depthMap;
-    uint ll_ti_normalMap;
+    uint rk_ti_depthMap;
+    uint rk_ti_normalMap;
 #ifndef LL_NO_AO
-    uint ll_ti_noiseMap;
+    uint rk_ti_noiseMap;
 #endif
-    uint ll_ti_shadow_shadowMap0;
-    uint ll_ti_shadow_shadowMap1;
-    uint ll_ti_shadow_shadowMap2;
-    uint ll_ti_shadow_shadowMap3;
-    uint ll_ti_shadow_shadowMap4;
-    uint ll_ti_shadow_shadowMap5;
+    uint rk_ti_shadow_shadowMap0;
+    uint rk_ti_shadow_shadowMap1;
+    uint rk_ti_shadow_shadowMap2;
+    uint rk_ti_shadow_shadowMap3;
+    uint rk_ti_shadow_shadowMap4;
+    uint rk_ti_shadow_shadowMap5;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -118,7 +118,7 @@ float spot_shadow(vec3 pos, vec3 norm, int index)
     {
         return 1.0;
     }
-    float shadow = pcf_spot(index == 0 ? ll_ti_shadow_shadowMap4 : ll_ti_shadow_shadowMap5, lpos, 0.8, spos.xy) * w;
+    float shadow = pcf_spot(index == 0 ? rk_ti_shadow_shadowMap4 : rk_ti_shadow_shadowMap5, lpos, 0.8, spos.xy) * w;
     shadow += max((pos.z + shadow_clip.z) / (shadow_clip.z - shadow_clip.w) * 2.0 - 1.0, 0.0);
     return shadow / w;
 }
@@ -132,14 +132,14 @@ const vec2 kAoKern[8] = vec2[8](
 float ambient_occlusion(vec3 pos, vec3 norm, vec2 uv)
 {
     const vec2 noise_shift = floor(fract(ao_noise_frame * vec2(0.7548776662, 0.5698402910)) * 128.0) / 128.0;
-    const vec2 noise_reflect = texture(ll_tbl2d[LL_HM(ll_ti_noiseMap)], uv * (screen_res / 128.0) + noise_shift).xy;
+    const vec2 noise_reflect = texture(rk_tbl2d[LL_HM(rk_ti_noiseMap)], uv * (screen_res / 128.0) + noise_shift).xy;
     const float scale = min(ssao_radius / -pos.z, ssao_max_radius);
     float angle_hidden = 0.0;
     float points = 0.0;
     for (int i = 0; i < 8; ++i)
     {
         const vec2 tap = uv + scale * reflect(kAoKern[i] / screen_res, noise_reflect);
-        const vec3 tap_pos = ll_view_pos(inv_proj, tap, texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], tap).r);
+        const vec3 tap_pos = rk_view_pos(inv_proj, tap, texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], tap).r);
         const vec3 diff = pos - tap_pos;
         const float dist2 = dot(diff, diff);
         const float hidden = dot(tap_pos - 0.05 * norm - pos, norm) > 0.0 ? 1.0 : 0.0;
@@ -161,7 +161,7 @@ void main()
 #else
     const vec2 uv = vary_fragcoord;
 #endif
-    const float depth = texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv).r;
+    const float depth = texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv).r;
     if (depth >= 1.0)
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
@@ -170,8 +170,8 @@ void main()
 #endif
         return;
     }
-    const vec3 pos = ll_view_pos(inv_proj, uv, depth);
-    const vec3 norm = ll_decode_normal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], uv).xy);
+    const vec3 pos = rk_view_pos(inv_proj, uv, depth);
+    const vec3 norm = rk_decode_normal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], uv).xy);
 
     vec4 col;
 #ifdef LL_RT_QUERY

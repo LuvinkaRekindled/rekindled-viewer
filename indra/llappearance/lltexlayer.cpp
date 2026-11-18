@@ -1570,7 +1570,7 @@ void LLTexLayer::renderMorphMasks(S32 x, S32 y, S32 width, S32 height, const LLC
                                 return;
                             }
                         }
-                        std::shared_ptr<RKReadbackTicket> ticket = ll_read_pixels_async(x, y, width, height, PixelFormat::RGBA, ComponentType::U8, mem_size * TEMP_BYTES_PER_PIXEL);
+                        std::shared_ptr<RKReadbackTicket> ticket = rk_read_pixels_async(x, y, width, height, PixelFormat::RGBA, ComponentType::U8, mem_size * TEMP_BYTES_PER_PIXEL);
                         if (ticket)
                         {
                             sPendingMasks.push_back({ this, cache_index, alpha_data, ticket, width, height, pixels });

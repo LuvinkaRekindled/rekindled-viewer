@@ -168,7 +168,7 @@ mat4 row_texture_matrix(Row row, TexMatTable table)
     return m[3][3] == 0.0 ? texanim_matrix(m, table.t[0][0].yz) : m;
 }
 
-// ---- avatar relative skinning (lldrawpool.h, ll_rig_anchor): above a height a rigged palette is relative to an anchor A (a 64 m grid point), the skinned vertex v is relative too, and the
+// ---- avatar relative skinning (lldrawpool.h, rk_rig_anchor): above a height a rigged palette is relative to an anchor A (a 64 m grid point), the skinned vertex v is relative too, and the
 // camera matrix is applied as M * v + M * (A, 1): the large numbers (the camera is 3800 m up) meet in the second term, which is the same for every vertex of the draw. A is zero for a plain palette.
 vec4 rig_transform(mat4 m, vec3 v, vec3 anchor)
 {
@@ -222,7 +222,7 @@ void skin_vertex(uvec2 weights_address, uvec2 palette_address, uint joints, uint
     skin_vertex_at(weights_address, palette_address, joints, 0u, index, rotation, translation);
 }
 
-// the palette of the frame before follows the current one in the frame's list (lldrawpool.cpp ll_frame_palette): joints + 1 entries later; its tail (the anchor) is the entry 2 * joints + 1
+// the palette of the frame before follows the current one in the frame's list (lldrawpool.cpp rk_frame_palette): joints + 1 entries later; its tail (the anchor) is the entry 2 * joints + 1
 void skin_vertex_prev(uvec2 weights_address, uvec2 palette_address, uint joints, uint index, out mat3 rotation, out vec3 translation)
 {
     skin_vertex_at(weights_address, palette_address, joints, joints + 1u, index, rotation, translation);
@@ -233,7 +233,7 @@ vec3 skin_rig_anchor_prev(uvec2 palette_address, uint joints)
     return SkinJoints(palette_address).j[2u * joints + 1u].c0.xyz;
 }
 
-// velocity fold: the tail entry's second row, x, is 1.0 when the pose moved enough since the frame before to show on screen (lldrawpool.cpp ll_palette_moving), else 0: a palette that did not move skips its
+// velocity fold: the tail entry's second row, x, is 1.0 when the pose moved enough since the frame before to show on screen (lldrawpool.cpp rk_palette_moving), else 0: a palette that did not move skips its
 // previous pose, its pixels keep the camera's motion
 bool skin_palette_moving(uvec2 palette_address, uint joints)
 {

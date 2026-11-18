@@ -4,7 +4,7 @@
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
-    uint ll_ti_tex0;
+    uint rk_ti_tex0;
 };
 
 layout(location = 0) in vec3 position;

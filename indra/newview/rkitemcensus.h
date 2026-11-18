@@ -35,7 +35,7 @@ namespace ItemCensus
         NAMETAGS,       // LLHUDNameTag::updateAll (a: visible tags)
         BALANCE,        // octree balance of all partitions (a: trees balanced)
         ANGLES,         // LLViewerObjectList::updateApparentAngles (a: objects visited, b: of these with a visible drawable)
-        ALPHA_PLAN,     // LLDrawPoolAlpha::renderAlpha: ll_alpha_plan of each group (a: groups with a plan)
+        ALPHA_PLAN,     // LLDrawPoolAlpha::renderAlpha: rk_alpha_plan of each group (a: groups with a plan)
         ALPHA_TR_ADD,   // ... tr_add: one transient entry (a: rigged ones)
         ALPHA_TR_FLUSH, // ... tr_flush: a record of transient entries to the worker (a: entries)
         ALPHA_RUN_FLUSH,// ... run_flush: a record of ranges to the worker, palette bindings included (a: ranges)

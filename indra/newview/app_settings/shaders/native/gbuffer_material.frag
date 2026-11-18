@@ -39,13 +39,13 @@ layout(location = 4) out vec2 frag_velocity;
 void main()
 {
 #ifdef GB_MOTION
-    frag_velocity = ll_motion_encode(vary_cur, vary_prev, render_res);
+    frag_velocity = rk_motion_encode(vary_cur, vary_prev, render_res);
 #else
     frag_velocity = vec2(1.0, 0.0);
 #endif
     mirror_clip(vary_position);
 
-    vec4 diffcol = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+    vec4 diffcol = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
     diffcol.rgb *= vertex_color.rgb;
 #if MAT_ALPHA_MODE == 2
     if (diffcol.a < vary_cutoff - 0.001953125)      // (the bias is half an 8 bit step: no acne at the boundary)
@@ -55,7 +55,7 @@ void main()
 #endif
 
 #ifdef MAT_SPEC_MAP
-    vec4 spec = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot_specular))], vary_texcoord2);
+    vec4 spec = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_specular))], vary_texcoord2);
     spec.rgb *= vary_specular.rgb;
 #else
     const vec4 spec = vec4(vary_specular.rgb, 1.0);
@@ -64,7 +64,7 @@ void main()
     float glossiness = vary_specular.a;
 
 #ifdef MAT_NORMAL_MAP
-    vec4 normal_sample = texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot_normal))], vary_texcoord1);
+    vec4 normal_sample = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_normal))], vary_texcoord1);
     glossiness *= normal_sample.a;
     const vec3 tangent_normal = normal_sample.xyz * 2.0 - 1.0;
     const vec3 binormal = vary_sign * cross(vary_normal, vary_tangent);

@@ -772,7 +772,7 @@ std::string getRuntime()
 // <FS> Rekindled: the settings folder is now Rekindled_x64. On the first start with no such folder, copy the
 // old Firestorm_x64 one (settings and per-account data, not the logs) so nothing has to be set up again.
 // The copy goes to a temporary name first and is renamed into place, so a failed copy is tried again next start.
-static void fs_migrate_old_settings_folder()
+static void rk_migrate_old_settings_folder()
 {
     const char* appdata = std::getenv("APPDATA");
     if (!appdata || !*appdata)
@@ -854,7 +854,7 @@ LLAppViewer::LLAppViewer()
     // that touches files should really go through the lldir API
 
 #if LL_WINDOWS
-    fs_migrate_old_settings_folder();
+    rk_migrate_old_settings_folder();
 #endif
     // <FS:ND> Init our custom directories, not from SecondLife
     // gDirUtilp->initAppDirs("SecondLife");

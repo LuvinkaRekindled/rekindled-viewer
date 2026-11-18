@@ -15,8 +15,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;
-    uint ll_ti_depthMap;
+    uint rk_ti_diffuseMap;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -38,7 +38,7 @@ const float kStep[FXAA_PS] = float[FXAA_PS](1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 2.0, 2
 const float kStep[FXAA_PS] = float[FXAA_PS](1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 4.0, 8.0);
 #endif
 
-#define FXAA_TEX ll_tbl2d[LL_HM(ll_ti_diffuseMap)]
+#define FXAA_TEX rk_tbl2d[LL_HM(rk_ti_diffuseMap)]
 
 const float fxaaQualitySubpix = 0.75;
 const float fxaaQualityEdgeThreshold = 0.07;
@@ -227,5 +227,5 @@ vec4 FxaaPixelShader(vec2 pos)
 void main()
 {
     frag_color = FxaaPixelShader(vary_tc);
-    gl_FragDepth = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], vary_fragcoord, 0.0).r;
+    gl_FragDepth = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], vary_fragcoord, 0.0).r;
 }

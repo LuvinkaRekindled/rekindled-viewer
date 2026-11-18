@@ -39,7 +39,7 @@
 #endif
 
 #include "llwebrtc.h"
-#include "llwebrtc_winplayout.h" // <FS> Rekindled: voice playout through a media stream on Windows
+#include "rkwebrtc_winplayout.h" // <FS> Rekindled: voice playout through a media stream on Windows
 #include <cstdlib>
 // WebRTC Includes
 #ifdef WEBRTC_WIN
@@ -196,7 +196,7 @@ public:
         RTC_CHECK(inner_);
 #if defined(_WIN32)
         // <FS> Rekindled: LL_RTC_MEDIA_PLAYOUT=0 goes back to libwebrtc's own playout, which opens a
-        // communications stream (see llwebrtc_winplayout.h).
+        // communications stream (see rkwebrtc_winplayout.h).
         const char* v = std::getenv("LL_RTC_MEDIA_PLAYOUT");
         mUseMedia     = !(v && v[0] == '0');
         RTC_LOG(LS_INFO) << "voice playout through a media stream: " << (mUseMedia ? "on" : "off");

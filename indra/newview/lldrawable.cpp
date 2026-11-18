@@ -178,8 +178,8 @@ void LLDrawable::initClass()
 }
 
 
-std::string fs_stack_here(int skip, int max_frames);
-std::string fs_describe_frame(const void* pc);
+std::string rk_stack_here(int skip, int max_frames);
+std::string rk_describe_frame(const void* pc);
 
 // <FS> the ring of destroyed drawables (see lldrawable.h)
 namespace
@@ -237,7 +237,7 @@ namespace
     }
 }
 
-bool fs_drawable_looks_live(const void* p)
+bool rk_drawable_looks_live(const void* p)
 {
 #if LL_WINDOWS
     static const char* image_base = (const char*)GetModuleHandle(nullptr);
@@ -263,7 +263,7 @@ bool fs_drawable_looks_live(const void* p)
     return w >= image_base && w < image_base + image_size;
 }
 
-std::string fs_drawable_destroy_info(const void* p)
+std::string rk_drawable_destroy_info(const void* p)
 {
     if (!ring_on())
     {
@@ -279,7 +279,7 @@ std::string fs_drawable_destroy_info(const void* p)
             std::string text = llformat("destroyed %u destructions ago, in frame %u (now frame %u), on thread %lu (main %lu):\n", k, r.mFrame, LLViewerOctreeEntryData::getCurrentFrame(), (unsigned long)r.mThread, (unsigned long)GetCurrentThreadId());
             for (USHORT i = 0; i < r.mDepth; ++i)
             {
-                text += llformat("  %s\n", fs_describe_frame(r.mFrames[i]).c_str());
+                text += llformat("  %s\n", rk_describe_frame(r.mFrames[i]).c_str());
             }
             return text;
         }
@@ -301,7 +301,7 @@ void LLDrawable::destroy()
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) < 8)
         {
-            LL_WARNS("DrawableTrace") << "a drawable is freed while the moved list holds it (state " << getState() << ", dead " << isDead() << "):\n" << fs_stack_here(0, 30) << LL_ENDL;
+            LL_WARNS("DrawableTrace") << "a drawable is freed while the moved list holds it (state " << getState() << ", dead " << isDead() << "):\n" << rk_stack_here(0, 30) << LL_ENDL;
         }
     }
     if (gDebugRender)

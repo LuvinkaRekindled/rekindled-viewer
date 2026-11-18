@@ -8,7 +8,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
+    uint rk_ti_diffuseRect;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -16,7 +16,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 diff = textureLod(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord.xy, mipLevel);
+    vec4 diff = textureLod(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord.xy, mipLevel);
 
     frag_color = diff;
 }

@@ -16,11 +16,11 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_emissiveRect;
-    uint ll_ti_lightMap;        // <FS> mode 17: the blocker distance of the sun lightmap's centre ray (mRtBlocker, pipeline.cpp)
-    uint ll_ti_normalMap;
-    uint ll_ti_depthMap;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_emissiveRect;
+    uint rk_ti_lightMap;        // <FS> mode 17: the blocker distance of the sun lightmap's centre ray (mRtBlocker, pipeline.cpp)
+    uint rk_ti_normalMap;
+    uint rk_ti_depthMap;
 };
 
 #include "lib/legacy.glsl"
@@ -31,7 +31,7 @@ layout(location = 0) out vec4 frag_color;
 
 float getDepth(vec2 pos_screen)
 {
-    return texture(ll_tbl2d[LL_HM(ll_ti_depthMap)], pos_screen).r;
+    return texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
 }
 
 vec4 getPosition(vec2 pos_screen)
@@ -47,12 +47,12 @@ vec4 getPosition(vec2 pos_screen)
 
 vec4 getNorm(vec2 screenpos)
 {
-    return decodeNormal(texture(ll_tbl2d[LL_HM(ll_ti_normalMap)], screenpos.xy));
+    return decodeNormal(texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], screenpos.xy));
 }
 
 void dbgSceneFrame(out mat3 to_scene, out vec3 camera)
 {
-    RKRtGeom h = ll_rt_geoms.g[0];
+    RKRtGeom h = rk_rt_geoms.g[0];
     to_scene = mat3(uintBitsToFloat(uvec3(h.positions.x, h.positions.y, h.indices.x)), uintBitsToFloat(uvec3(h.indices.y, h.texcoords.x, h.texcoords.y)),
                     uintBitsToFloat(uvec3(h.colors.x, h.colors.y, h.slots.x)));
     camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
@@ -75,11 +75,11 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     dbg_emissive = vec3(0.0);
     mat_id = 0u;
     status = 1u;
-    if (record == 0u || record >= ll_rt_geoms.g[0].first)
+    if (record == 0u || record >= rk_rt_geoms.g[0].first)
     {
         return false;
     }
-    RKRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = rk_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u || (g.indices.x == 0u && g.indices.y == 0u) || (g.positions.x == 0u && g.positions.y == 0u))
     {
         return false;
@@ -103,7 +103,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         albedo = vec4(0.5, 0.5, 0.5, 1.0);
         return true;
     }
-    RKRtMaterial m = RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
+    RKRtMaterial m = RKRtMaterials(rk_rt_geoms.g[0].normals).m[mat_id];
     status = 0u;
     uint mflags = floatBitsToUint(m.params.z);
     vec2 uv = vec2(0.0);
@@ -119,8 +119,8 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         tex_index = floatBitsToUint(pb.v[ix[0]].w) & 3u;
     }
     uint pair = (tex_index < 2u) ? m.slots.x : m.slots.y;
-    uint slot = ll_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);       // the material holds pin indices
-    vec4 tex = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod);
+    uint slot = rk_rt_slot((pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu);       // the material holds pin indices
+    vec4 tex = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(slot))], uv, lod);
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
@@ -144,7 +144,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     uint normal_pin = m.slots2.x & 0xFFFFu;
     if (normal_pin != 0u && (g.flags & 8u) != 0u)
     {
-        uint normal_slot = ll_rt_slot(normal_pin);
+        uint normal_slot = rk_rt_slot(normal_pin);
         if (normal_slot != 0u)
         {
             RKRtTexcoords tcn = RKRtTexcoords(g.texcoords);
@@ -165,7 +165,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
                     tangent = normalize(tangent);
                     vec3 bit = cross(n_geo, tangent);
                     bit *= (dot(bit, bitangent) < 0.0) ? -1.0 : 1.0;       // the handedness of the uv layout
-                    vec3 nm = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).xyz * 2.0 - 1.0;
+                    vec3 nm = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(normal_slot))], uv, lod).xyz * 2.0 - 1.0;
                     dbg_normal_obj = normalize(tangent * nm.x + bit * nm.y + n_geo * nm.z);
                 }
             }
@@ -177,10 +177,10 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         uint emissive_pin = m.slots2.y & 0xFFFFu;
         if (emissive_pin != 0u)
         {
-            uint emissive_slot = ll_rt_slot(emissive_pin);
+            uint emissive_slot = rk_rt_slot(emissive_pin);
             if (emissive_slot != 0u)
             {
-                vec3 c = textureLod(ll_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb;
+                vec3 c = textureLod(rk_rt_tex[nonuniformEXT(LL_HM(emissive_slot))], uv, lod).rgb;
                 emissive_tex = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
             }
         }
@@ -214,7 +214,7 @@ void main()
     {
         // 17: the blocker distance the sun pass wrote (PLAN-rt-shadow-penumbra.md step 1), from mRtBlocker; 18: the same read straight from the lightmap's attachment 1 (the copy left out).
         // Black where the centre ray met nothing (0), a quarter grey for a blocker at the surface, brighter with the distance, white at 20 m and beyond; a value that is not finite shows magenta
-        float t = texture(ll_tbl2d[LL_HM(ll_ti_lightMap)], uv).r;
+        float t = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], uv).r;
         if (isnan(t) || isinf(t))
         {
             frag_color = vec4(1.0, 0.0, 1.0, 1.0);
@@ -229,7 +229,7 @@ void main()
         }
         return;
     }
-    vec3 ref = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], uv).rgb;
+    vec3 ref = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], uv).rgb;
     vec3 pos = getPosition(uv).xyz;
     float depth = length(pos);
     if (depth > 1500.0 || depth < 0.01)
@@ -242,7 +242,7 @@ void main()
     dbgSceneFrame(to_scene, camera);
     float lod = clamp(0.5 * log2(max(depth, 1.0)) - 1.0, 0.0, 4.0);
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, ll_rt_tlas, 0, 0x0F, camera, 0.01, to_scene * (pos / depth), depth * 1.5 + 5.0);
+    rayQueryInitializeEXT(rq, rk_rt_tlas, 0, 0x0F, camera, 0.01, to_scene * (pos / depth), depth * 1.5 + 5.0);
     uint steps = 0u;
     while (rayQueryProceedEXT(rq))
     {
@@ -304,7 +304,7 @@ void main()
         vec3 n_shaded_eye = normalize(n_shaded_world * to_scene);
         if (rt_debug_mode == 11)
         {
-            frag_color = vec4(clamp(abs(dbg_emissive - texture(ll_tbl2d[LL_HM(ll_ti_emissiveRect)], uv).rgb) * 4.0, 0.0, 1.0), 1.0);
+            frag_color = vec4(clamp(abs(dbg_emissive - texture(rk_tbl2d[LL_HM(rk_ti_emissiveRect)], uv).rgb) * 4.0, 0.0, 1.0), 1.0);
         }
         else if (rt_debug_mode == 12)
         {

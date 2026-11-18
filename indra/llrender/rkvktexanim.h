@@ -14,7 +14,7 @@
  *   11 sign of the sine in the closed form (the convention the matrix products were found to follow)    15 = 0
  * The clock is two floats, the whole seconds and the rest, so that the difference to an origin stays exact however long the viewer has run.
  *
- * evaluate() below is the CPU twin of ll_texanim_core in llshadermgr.cpp (line for line): the compare mode of FSTexAnimOnGPU, the faces that bake their matrix into texture
+ * evaluate() below is the CPU twin of rk_texanim_core in llshadermgr.cpp (line for line): the compare mode of FSTexAnimOnGPU, the faces that bake their matrix into texture
  * coordinates, and the programs that are not pull programs use it.
  */
 #ifndef LL_LLVKTEXANIM_H

@@ -1,4 +1,4 @@
-// mask_nocolor.vert: a mesh drawn by range (ll_pull_draw_range: one row, the arrays named by the row) with the matrices of the pass in loose uniforms: the position, the normal and the texture coordinates of the
+// mask_nocolor.vert: a mesh drawn by range (rk_pull_draw_range: one row, the arrays named by the row) with the matrices of the pass in loose uniforms: the position, the normal and the texture coordinates of the
 // vertex, no vertex colour. Stands in for "Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull" (deferred/diffuseNoColorV.glsl through the pull twin); pairs with mask_nocolor.frag.
 // Defines: AVATAR_PASS (the draw block's texture slot), MASK_NOCOLOR (the matrices of the draw block of alpha_pass.inc).
 
@@ -10,7 +10,7 @@ layout(location = 1) out vec3 vary_normal;
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
     const uint at = row.first + uint(gl_VertexIndex);
     uint index = at;
     if ((row.flags & 4u) == 0u)

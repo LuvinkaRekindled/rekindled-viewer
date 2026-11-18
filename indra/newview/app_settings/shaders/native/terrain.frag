@@ -13,11 +13,11 @@
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_detail_0;
-    uint ll_ti_detail_1;
-    uint ll_ti_detail_2;
-    uint ll_ti_detail_3;
-    uint ll_ti_alpha_ramp;
+    uint rk_ti_detail_0;
+    uint rk_ti_detail_1;
+    uint rk_ti_detail_2;
+    uint rk_ti_detail_3;
+    uint rk_ti_alpha_ramp;
 };
 
 layout(location = 0) in vec3 vary_position;
@@ -42,9 +42,9 @@ void main()
     mirror_clip(vary_position);
 
     // the ramp: the same texture read at the coordinate, and 2 and 1 to the left of it (the old program's vary_texcoord0.zw, vary_texcoord1.xy, vary_texcoord1.zw)
-    const float alpha1 = texture(ll_tbl2d[LL_HM(ll_ti_alpha_ramp)], vary_ramp).a;
-    const float alpha2 = texture(ll_tbl2d[LL_HM(ll_ti_alpha_ramp)], vary_ramp - vec2(2.0, 0.0)).a;
-    const float alpha_final = texture(ll_tbl2d[LL_HM(ll_ti_alpha_ramp)], vary_ramp - vec2(1.0, 0.0)).a;
+    const float alpha1 = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_ramp).a;
+    const float alpha2 = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_ramp - vec2(2.0, 0.0)).a;
+    const float alpha_final = texture(rk_tbl2d[LL_HM(rk_ti_alpha_ramp)], vary_ramp - vec2(1.0, 0.0)).a;
 
     const float w0 = alpha_final * alpha1;
     const float w1 = alpha_final * (1.0 - alpha1);
@@ -58,19 +58,19 @@ void main()
     vec3 color = vec3(0.0);
     if (w0 > kMinWeight)
     {
-        color += w0 * textureGrad(ll_tbl2d[LL_HM(ll_ti_detail_0)], vary_detail, dx, dy).rgb;
+        color += w0 * textureGrad(rk_tbl2d[LL_HM(rk_ti_detail_0)], vary_detail, dx, dy).rgb;
     }
     if (w1 > kMinWeight)
     {
-        color += w1 * textureGrad(ll_tbl2d[LL_HM(ll_ti_detail_1)], vary_detail, dx, dy).rgb;
+        color += w1 * textureGrad(rk_tbl2d[LL_HM(rk_ti_detail_1)], vary_detail, dx, dy).rgb;
     }
     if (w2 > kMinWeight)
     {
-        color += w2 * textureGrad(ll_tbl2d[LL_HM(ll_ti_detail_2)], vary_detail, dx, dy).rgb;
+        color += w2 * textureGrad(rk_tbl2d[LL_HM(rk_ti_detail_2)], vary_detail, dx, dy).rgb;
     }
     if (w3 > kMinWeight)
     {
-        color += w3 * textureGrad(ll_tbl2d[LL_HM(ll_ti_detail_3)], vary_detail, dx, dy).rgb;
+        color += w3 * textureGrad(rk_tbl2d[LL_HM(rk_ti_detail_3)], vary_detail, dx, dy).rgb;
     }
 
     frag_albedo = vec4(color, 0.0);          // (alpha 0: the atmospherics come downstream)

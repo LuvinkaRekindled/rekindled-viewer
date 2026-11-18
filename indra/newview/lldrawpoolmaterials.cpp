@@ -68,14 +68,14 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
     if (rigged)
     {
         // (the table draws the rigged materials passes in the main view only: pushGeometryPackets returns in any other view, so there is nothing to bind there; the render map is not asked, 2026-11-12)
-        if (!(ll_scene_geo_serving() && ll_scene_geo_main_view()))
+        if (!(rk_scene_geo_serving() && rk_scene_geo_main_view()))
         {
             mUntouched = true;
-            ll_scene_geo_count(4, 1);
+            rk_scene_geo_count(4, 1);
         }
         return;
     }
-    ll_scene_geo_count(5, 1);
+    rk_scene_geo_count(5, 1);
 }
 
 void LLDrawPoolMaterials::endDeferredPass(S32 pass)
@@ -140,7 +140,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     }
 
     // <FS> J1 K6 A3: the draws of this pass are one scene table record (the pull program of this pass bound; S4 A1: the rigged draws too, with the rigged pull program)
-    if (rigged ? ll_rigged_packets_enabled() : true)
+    if (rigged ? rk_rigged_packets_enabled() : true)
     {
         const U32 idx = sMaterialPassShader[pass];
         RKShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];

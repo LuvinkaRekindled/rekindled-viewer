@@ -3,7 +3,7 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
-    uvec2 ll_packet_table;      // the rows of the record (written by the draw record)
+    uvec2 rk_packet_table;      // the rows of the record (written by the draw record)
     mat4 projection_matrix;     // the shadow camera's projection (the palette matrices are in eye space)
 #ifdef SHADOW_ALPHA
     float minimum_alpha;        // below it a texel casts only every other pixel column

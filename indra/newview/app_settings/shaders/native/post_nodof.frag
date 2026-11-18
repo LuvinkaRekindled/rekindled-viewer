@@ -18,8 +18,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;
-    uint ll_ti_depthMap;
+    uint rk_ti_diffuseRect;
+    uint rk_ti_depthMap;
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -50,7 +50,7 @@ vec3 clamp_hdr_range(vec3 color)
 
 void main()
 {
-    vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
+    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
 
 #ifdef HAS_NOISE
     const uvec2 px = uvec2(vary_fragcoord * screen_res);
@@ -59,7 +59,7 @@ void main()
 #endif
     frag_color = vec4(clamp_hdr_range(diff.rgb), diff.a);
 
-    float depth = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], vary_fragcoord, 0.0).r;
+    float depth = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], vary_fragcoord, 0.0).r;
     if (depth_texel.x > 0.0)
     {
         if (depth_radius < 0.0)
@@ -70,16 +70,16 @@ void main()
         {
             // the render pixel (i, j) holds the scene point at (i, j) minus the jitter, so the unjittered position is looked up at uv + jitter. Depth is linear over the screen on a plane, so the bilinear value of the
             // four render pixels around is the same whatever phase the jitter has; only a depth edge inside the four changes it. The margin is then the range of the four (a plane's slope).
-            const vec2 size = vec2(textureSize(ll_tbl2d[LL_HM(ll_ti_depthMap)], 0));
+            const vec2 size = vec2(textureSize(rk_tbl2d[LL_HM(rk_ti_depthMap)], 0));
             const vec2 f = (vary_fragcoord + depth_jitter) * size - vec2(0.5);
             const vec2 base = clamp(floor(f), vec2(0.0), size - vec2(2.0));
             const vec2 fr = clamp(f - base, vec2(0.0), vec2(1.0));
             const vec2 uv0 = (base + vec2(0.5)) / size;
             const vec2 t = 1.0 / size;
-            const float a = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv0, 0.0).r;
-            const float b = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv0 + vec2(t.x, 0.0), 0.0).r;
-            const float c = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv0 + vec2(0.0, t.y), 0.0).r;
-            const float d = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], uv0 + t, 0.0).r;
+            const float a = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv0, 0.0).r;
+            const float b = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv0 + vec2(t.x, 0.0), 0.0).r;
+            const float c = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv0 + vec2(0.0, t.y), 0.0).r;
+            const float d = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], uv0 + t, 0.0).r;
             const float bil = mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
             const float hi = max(max(a, b), max(c, d));
             const float lo = min(min(a, b), min(c, d));
@@ -99,7 +99,7 @@ void main()
                 {
                     if (abs(float(i)) <= depth_radius && abs(float(j)) <= depth_radius)
                     {
-                        const float d = textureLod(ll_tbl2d[LL_HM(ll_ti_depthMap)], vary_fragcoord + vec2(float(i), float(j)) * t, 0.0).r;
+                        const float d = textureLod(rk_tbl2d[LL_HM(rk_ti_depthMap)], vary_fragcoord + vec2(float(i), float(j)) * t, 0.0).r;
                         lo = min(lo, d);
                         hi = max(hi, d);
                     }

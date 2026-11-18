@@ -8,9 +8,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_edgesTex;
-    uint ll_ti_areaTex;
-    uint ll_ti_searchTex;
+    uint rk_ti_edgesTex;
+    uint rk_ti_areaTex;
+    uint rk_ti_searchTex;
 };
 
 layout(location = 0) in vec2 vary_texcoord0;
@@ -21,9 +21,9 @@ layout(location = 0) out vec4 frag_color;
 #include "lib/smaa.glsl"
 
 // (after the library: its functions have parameters of these names)
-#define edgesTex ll_tbl2d[LL_HM(ll_ti_edgesTex)]
-#define areaTex ll_tbl2d[LL_HM(ll_ti_areaTex)]
-#define searchTex ll_tbl2d[LL_HM(ll_ti_searchTex)]
+#define edgesTex rk_tbl2d[LL_HM(rk_ti_edgesTex)]
+#define areaTex rk_tbl2d[LL_HM(rk_ti_areaTex)]
+#define searchTex rk_tbl2d[LL_HM(rk_ti_searchTex)]
 
 void main()
 {

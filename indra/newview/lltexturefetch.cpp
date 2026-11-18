@@ -2629,8 +2629,8 @@ void LLTextureFetchWorker::callbackDecoded(bool success, const std::string &erro
             // <FS> what a server bake is made of at the decode: the bytes the server (or the cache) gave (size, sampled hash), and what the decode made of them (size, components, BC7 or raw, sampled hash). A bake whose
             // formatted hash equals that of one of the unused slots (leftarm, leftleg, aux2, aux3) is the placeholder the server sends for an empty bake
             LL_DIAG("BakeTex") << "server bake decoded: " << mID << ", discard " << mDecodedDiscard << ", formatted " << mFormattedImage->getDataSize() << " bytes hash " << std::hex
-                                << fs_sparse_hash(mFormattedImage->getData(), mFormattedImage->getDataSize()) << std::dec << ", raw " << raw->getWidth() << "x" << raw->getHeight() << " x" << (S32)raw->getComponents()
-                                << (raw->getCompressedFormat() ? " BC7" : " raw") << " " << raw->getDataSize() << " bytes hash " << std::hex << fs_sparse_hash(raw->getData(), raw->getDataSize()) << std::dec
+                                << rk_sparse_hash(mFormattedImage->getData(), mFormattedImage->getDataSize()) << std::dec << ", raw " << raw->getWidth() << "x" << raw->getHeight() << " x" << (S32)raw->getComponents()
+                                << (raw->getCompressedFormat() ? " BC7" : " raw") << " " << raw->getDataSize() << " bytes hash " << std::hex << rk_sparse_hash(raw->getData(), raw->getDataSize()) << std::dec
                                 << ", served by the decoded cache: " << (FSDecodedTextureCache::instance().recentlyServed(mID) ? "YES" : "no") << ", url empty at the decode request: " << (mUrl.empty() ? "yes" : "no") << ", from the texture cache: " << (mInCache ? "yes" : "no") << LL_ENDL;
         }
         if (mDecodedDiscard < mDesiredDiscard)

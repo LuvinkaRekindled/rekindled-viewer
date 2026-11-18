@@ -6,7 +6,7 @@
 //   z  = inv[3][2] / w'                      (inv[2][2] is 0; with the matrix of the viewer this is -f / (ndc.z + e))
 // which is the full 4x4 multiply and divide of the old getPosition with the zeros left out. A jittered projection puts its offsets in inv[3][0] and inv[3][1] and the same formulas hold.
 // 'inv_proj' is the pass uniform the program declares.
-vec3 ll_view_pos(mat4 inv_proj, vec2 screen_uv, float depth)
+vec3 rk_view_pos(mat4 inv_proj, vec2 screen_uv, float depth)
 {
     vec2 sc = screen_uv * 2.0 - 1.0;
     float n = 2.0 * depth - 1.0;

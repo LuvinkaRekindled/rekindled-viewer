@@ -5,7 +5,7 @@
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
-    uint ll_ti_cubearray_reflectionProbes;
+    uint rk_ti_cubearray_reflectionProbes;
 };
 
 layout(location = 0) in vec3 position;

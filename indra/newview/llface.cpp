@@ -39,7 +39,7 @@ static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "RKFaceRow::recIdx (rkfacetab
 #include <mutex>
 #include <set>
 #include <unordered_map>
-#include "lljoint.h"      // <FS> the joints' dirty flags (gFSTexPreDirtyReads)
+#include "lljoint.h"      // <FS> the joints' dirty flags (gRKTexPreDirtyReads)
 #include "m3math.h"
 #include "llmatrix4a.h"
 #include "v3color.h"
@@ -2691,8 +2691,8 @@ F32 LLFace::getTextureVirtualSize()
 
 // <FS> the texture priority jobs run calcPixelArea of rigged faces on pool threads, which is safe only while every joint they read is clean (getWorldMatrix recomputes and writes a dirty one):
 // the jobs count the dirty joints they meet (the expectation is 0; plan 8.26)
-thread_local bool gFSTexPreJob = false;
-std::atomic<U32> gFSTexPreDirtyReads{0};
+thread_local bool gRKTexPreJob = false;
+std::atomic<U32> gRKTexPreDirtyReads{0};
 
 bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
 {
@@ -2754,9 +2754,9 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
 
                         if (joint)
                         {
-                            if (gFSTexPreJob && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
+                            if (gRKTexPreJob && (joint->mDirtyFlags & LLJoint::MATRIX_DIRTY))
                             {
-                                ++gFSTexPreDirtyReads;
+                                ++gRKTexPreDirtyReads;
                             }
                             LLMatrix4a worldMat;
                             worldMat.loadu((F32*)&joint->getWorldMatrix().mMatrix[0][0]);

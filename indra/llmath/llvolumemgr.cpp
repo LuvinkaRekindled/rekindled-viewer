@@ -299,7 +299,7 @@ LLVolume* LLVolumeLODGroup::refLOD(const S32 lod)
     mRefs++;
     if (mVolumeLODs[lod].isNull())
     {
-        if (ll_diag_on())
+        if (rk_diag_on())
         {
             // <FS> 2026-11-16 (PLAN-hitchless-loading.md, A1's measurement gate, LL_VK_DIAG=1): how many volumes are built a window, per LOD, and what they cost on the calling thread (the main thread for new objects and LOD changes):
             // a line every 2 s with the builds of that window: count, total ms and the longest, per LOD.

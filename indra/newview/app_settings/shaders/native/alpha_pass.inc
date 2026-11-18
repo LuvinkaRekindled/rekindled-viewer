@@ -10,11 +10,11 @@
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the scene table of the record: three buffer addresses (rows, model matrices, texture matrices), written by the draw record
-    uvec2 ll_packet_table;
-    uvec2 ll_packet_models;
-    uvec2 ll_packet_texmats;
+    uvec2 rk_packet_table;
+    uvec2 rk_packet_models;
+    uvec2 rk_packet_texmats;
 #ifdef ALPHA_PBR
-    uvec2 ll_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
+    uvec2 rk_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
 #endif
 #ifdef GB_MOTION
     // a rigged draw of the G-buffer that writes motion (the viewer sets these on the program before the draw record: LLRenderPass::pushGeometryPackets): the unjittered view projection of this frame and of the one
@@ -23,7 +23,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     mat4 view_proj_prev;
     vec2 render_res;
 #ifndef HAS_SKIN
-    uvec2 ll_packet_motion;     // a draw that is not rigged: the table of the frame's moving model matrices (this frame's and last frame's, rows.glsl MotionTable), set by the worker with the draw
+    uvec2 rk_packet_motion;     // a draw that is not rigged: the table of the frame's moving model matrices (this frame's and last frame's, rows.glsl MotionTable), set by the worker with the draw
 #endif
 #endif
 #ifdef PBR_PREVIEW
@@ -163,7 +163,7 @@ layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #ifdef AVATAR_PASS
-    uint ll_ti_diffuseMap;              // the body part's texture
+    uint rk_ti_diffuseMap;              // the body part's texture
 #endif
 #ifdef PBR_PREVIEW
     // the material preview: the matrices of the draw and the material's textures (the slots a row of the pull program holds)
@@ -171,10 +171,10 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 modelview_projection_matrix;
     mat3 normal_matrix;
     mat4 texture_matrix0;
-    uint ll_ti_diffuseMap;
-    uint ll_ti_bumpMap;
-    uint ll_ti_specularMap;
-    uint ll_ti_emissiveMap;
+    uint rk_ti_diffuseMap;
+    uint rk_ti_bumpMap;
+    uint rk_ti_specularMap;
+    uint rk_ti_emissiveMap;
 #endif
 #ifdef MASK_NOCOLOR
     // a mesh drawn by range under the matrices of the pass (mask_nocolor.vert): the draw's own matrices, loose
@@ -183,28 +183,28 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat3 normal_matrix;
 #endif
 #ifdef ALPHA_LIT
-    uint ll_ti_shadow_shadowMap0;
-    uint ll_ti_shadow_shadowMap1;
-    uint ll_ti_shadow_shadowMap2;
-    uint ll_ti_shadow_shadowMap3;
+    uint rk_ti_shadow_shadowMap0;
+    uint rk_ti_shadow_shadowMap1;
+    uint rk_ti_shadow_shadowMap2;
+    uint rk_ti_shadow_shadowMap3;
 #endif
 #ifdef ALPHA_PROBES
-    uint ll_ti_cubearray_irradianceProbes;
-    uint ll_ti_cubearray_reflectionProbes;
+    uint rk_ti_cubearray_irradianceProbes;
+    uint rk_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
-    uint ll_ti_cubearray_heroProbes;
-    uint ll_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
+    uint rk_ti_cubearray_heroProbes;
+    uint rk_ti_mirrorView;              // the planar mirror's reflected view (the old programs' sampler mirrorView)
 #endif
 #endif
 #ifdef ALPHA_MAT
-    uint ll_ti_lightFunc;               // the sun's specular lobe table
+    uint rk_ti_lightFunc;               // the sun's specular lobe table
 #endif
 #ifdef ALPHA_PBR
-    uint ll_ti_brdfLut;                 // the split sum lookup of the image based light (x: scale of the specular colour, y: bias)
+    uint rk_ti_brdfLut;                 // the split sum lookup of the image based light (x: scale of the specular colour, y: bias)
 #endif
 #if defined(ALPHA_REFLECTS) && defined(SSR)
-    uint ll_ti_sceneMap;                // the previous frame's picture and depth
-    uint ll_ti_sceneDepth;
+    uint rk_ti_sceneMap;                // the previous frame's picture and depth
+    uint rk_ti_sceneDepth;
 #endif
 };
 #endif

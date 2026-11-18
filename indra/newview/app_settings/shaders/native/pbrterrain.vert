@@ -31,8 +31,8 @@ layout(location = 6) out vec2 vary_tc;                  // the composition coord
 
 void main()
 {
-    const Row row = RowTable(ll_packet_table).r[gl_InstanceIndex];
-    const ModelBlock model = ModelTable(ll_packet_models).m[row.model];
+    const Row row = RowTable(rk_packet_table).r[gl_InstanceIndex];
+    const ModelBlock model = ModelTable(rk_packet_models).m[row.model];
     const uint at = row.first + uint(gl_VertexIndex);
     uint index = at;
     if ((row.flags & 4u) == 0u)

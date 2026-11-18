@@ -659,8 +659,8 @@ void RKCpuZoneScope::frame()
     if (sCoreProbeOn)
     {
         blocked_text += core_probe_text(frames);
-        extern std::string fs_hero_probe_report(double frames);     // (llheroprobemanager.cpp)
-        blocked_text += fs_hero_probe_report(frames);
+        extern std::string rk_hero_probe_report(double frames);     // (llheroprobemanager.cpp)
+        blocked_text += rk_hero_probe_report(frames);
     }
     LL_INFOS("CpuZones") << "main thread per frame over " << sCpuFrames << " frames: loop interval " << interval_ms << " ms" << blocked_text << " (inclusive zones, nested ones count in their parents)" << text << LL_ENDL;
     uni_census_report(frames);
@@ -678,7 +678,7 @@ void RKCpuZoneScope::frame()
 #include <mutex>
 #include <dbghelp.h>
 // <FS> the name of the function an address is in (DbgHelp, loaded here the way the hitch watcher does it), for censuses that count by call site (LL_VK_REBUILDCENSUS in LLPipeline::markRebuild)
-std::string fs_describe_address(const void* pc)
+std::string rk_describe_address(const void* pc)
 {
     typedef BOOL(WINAPI * SymInitializeFn)(HANDLE, PCSTR, BOOL);
     typedef DWORD(WINAPI * SymSetOptionsFn)(DWORD);
@@ -1180,7 +1180,7 @@ namespace
                 // the first frame inside the executable that is not the allocator's own plumbing is the site; its caller is shown with it
                 auto plumbing = [](const std::string& n)
                 {
-                    return n.find("ll_tracy_") == 0 || n.find("operator new") == 0 || n.find("operator delete") == 0 || n.find("malloc") != std::string::npos || n.find("free") == 0
+                    return n.find("rk_tracy_") == 0 || n.find("operator new") == 0 || n.find("operator delete") == 0 || n.find("malloc") != std::string::npos || n.find("free") == 0
                         || n.find("_Allocate") != std::string::npos || n.find("_Deallocate") != std::string::npos || n.find("::allocate") != std::string::npos || n.find("::deallocate") != std::string::npos
                         || n.find("_Change_array") != std::string::npos || n.find("_Reallocate") != std::string::npos;
                 };
@@ -1277,7 +1277,7 @@ void HitchWatch::frame()
 
 // <FS> LL_VK_GROWTH=1: one line every 10 s from the main loop with what could be growing while the scene is flat (process private bytes, working set, page faults,
 // object and active object counts, vertex buffer bytes). For the late creep in a long still (doc/vulkan/EXPIRY-design.md).
-void fs_growth_probe()
+void rk_growth_probe()
 {
     static const bool on = getenv("LL_VK_GROWTH") != nullptr;
     if (!on)
@@ -1308,10 +1308,10 @@ void fs_growth_probe()
 }
 
 // <FS> LL_VK_SYNC_LOG: names the functions that wait in RKVkAsync::syncCall
-static const bool sSyncSymbolizerSet = []() { RKVkBridge::setSymbolizer(&fs_describe_address); return true; }();
+static const bool sSyncSymbolizerSet = []() { RKVkBridge::setSymbolizer(&rk_describe_address); return true; }();
 
 // <FS> one stack address as text: module+offset (what a pdb reads) and the nearest symbol
-std::string fs_describe_frame(const void* pc)
+std::string rk_describe_frame(const void* pc)
 {
     HMODULE module = nullptr;
     char name[MAX_PATH] = {};
@@ -1320,11 +1320,11 @@ std::string fs_describe_frame(const void* pc)
         GetModuleFileNameA(module, name, MAX_PATH);
     }
     const char* base_name = strrchr(name, '\\');
-    return llformat("%s+0x%llx  %s", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)pc - (DWORD64)module), fs_describe_address(pc).c_str());
+    return llformat("%s+0x%llx  %s", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)pc - (DWORD64)module), rk_describe_address(pc).c_str());
 }
 
 // <FS> the calling thread's stack as text, one frame a line (module+offset and the nearest symbol), for probes that log where something happened (LL_VK_DRAWABLE_TRACE)
-std::string fs_stack_here(int skip, int max_frames)
+std::string rk_stack_here(int skip, int max_frames)
 {
     void* frames[48] = {};
     const USHORT n = CaptureStackBackTrace((DWORD)skip + 1, (DWORD)std::min(max_frames, 48), frames, nullptr);
@@ -1338,7 +1338,7 @@ std::string fs_stack_here(int skip, int max_frames)
             GetModuleFileNameA(module, name, MAX_PATH);
         }
         const char* base_name = strrchr(name, '\\');
-        text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)frames[i] - (DWORD64)module), fs_describe_address(frames[i]).c_str());
+        text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)((DWORD64)frames[i] - (DWORD64)module), rk_describe_address(frames[i]).c_str());
     }
     return text;
 }
@@ -1348,7 +1348,7 @@ std::string fs_stack_here(int skip, int max_frames)
 // Off with LL_VK_NO_CRASHSTACK=1.
 namespace
 {
-    LONG CALLBACK fs_crash_stack_handler(EXCEPTION_POINTERS* ep)
+    LONG CALLBACK rk_crash_stack_handler(EXCEPTION_POINTERS* ep)
     {
         const DWORD code = ep->ExceptionRecord->ExceptionCode;
         if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION && code != EXCEPTION_STACK_OVERFLOW)
@@ -1373,7 +1373,7 @@ namespace
                 GetModuleFileNameA(module, name, MAX_PATH);
             }
             const char* base_name = strrchr(name, '\\');
-            text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)(ctx.Rip - (DWORD64)module), fs_describe_address((void*)ctx.Rip).c_str());
+            text += llformat("  %s+0x%llx  %s\n", base_name ? base_name + 1 : name, (unsigned long long)(ctx.Rip - (DWORD64)module), rk_describe_address((void*)ctx.Rip).c_str());
             DWORD64 base = 0;
             PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(ctx.Rip, &base, nullptr);
             if (!fn)
@@ -1405,7 +1405,7 @@ namespace
     const bool sCrashStackInstalled = []() {
         if (!getenv("LL_VK_NO_CRASHSTACK"))
         {
-            AddVectoredExceptionHandler(1, fs_crash_stack_handler);
+            AddVectoredExceptionHandler(1, rk_crash_stack_handler);
         }
         return true;
     }();
@@ -1413,7 +1413,7 @@ namespace
 
 #else // Linux: the diagnostics below read the Windows debug help and process APIs; the entry points exist and do nothing, addresses are printed as numbers
 
-std::string fs_describe_address(const void* pc)
+std::string rk_describe_address(const void* pc)
 {
     return llformat("0x%llx", (unsigned long long)(uintptr_t)pc);
 }
@@ -1422,23 +1422,23 @@ void HitchWatch::frame()
 {
 }
 
-void fs_growth_probe()
+void rk_growth_probe()
 {
 }
 
-std::string fs_describe_frame(const void* pc)
+std::string rk_describe_frame(const void* pc)
 {
-    return fs_describe_address(pc);
+    return rk_describe_address(pc);
 }
 
-std::string fs_stack_here(int skip, int max_frames)
+std::string rk_stack_here(int skip, int max_frames)
 {
     void* frames[48] = {};
     const USHORT n = CaptureStackBackTrace((DWORD)skip + 1, (DWORD)std::min(max_frames, 48), frames, nullptr);
     std::string text;
     for (USHORT i = 0; i < n; ++i)
     {
-        text += llformat("  %s\n", fs_describe_address(frames[i]).c_str());
+        text += llformat("  %s\n", rk_describe_address(frames[i]).c_str());
     }
     return text;
 }

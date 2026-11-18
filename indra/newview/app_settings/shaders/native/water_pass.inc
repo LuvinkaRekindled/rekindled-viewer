@@ -8,9 +8,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 #ifdef WATER_PULL
     // the table form of the water planes (the manifest lines "Water Pull Shader", "Underwater Pull Shader": WATER_PULL): the vertex buffers of the planes are read by address, three buffer addresses written by the
     // draw record. The matrices below are still the loose draw values (the record has no model matrix of its own: the planes are drawn under the matrices of the pass)
-    uvec2 ll_packet_table;
-    uvec2 ll_packet_models;
-    uvec2 ll_packet_texmats;
+    uvec2 rk_packet_table;
+    uvec2 rk_packet_models;
+    uvec2 rk_packet_texmats;
 #endif
     // the waves: where the camera is, how the two wave maps move
     vec2 waveDir1;
@@ -113,29 +113,29 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     mat4 modelview_matrix;
     mat3 normal_matrix;
     mat4 modelview_projection_matrix;
-    uint ll_ti_bumpMap;
-    uint ll_ti_exclusionTex;    // 1 where the water shows, 0 where an exclusion surface cuts it out
+    uint rk_ti_bumpMap;
+    uint rk_ti_exclusionTex;    // 1 where the water shows, 0 where an exclusion surface cuts it out
 #ifdef TRANSPARENT_WATER
-    uint ll_ti_screenTex;       // the picture below the water (mWaterDis)
+    uint rk_ti_screenTex;       // the picture below the water (mWaterDis)
 #endif
 #ifndef UNDERWATER
-    uint ll_ti_bumpMap2;
+    uint rk_ti_bumpMap2;
 #ifdef TRANSPARENT_WATER
-    uint ll_ti_depthMap;
+    uint rk_ti_depthMap;
 #endif
-    uint ll_ti_shadow_shadowMap0;
-    uint ll_ti_shadow_shadowMap1;
-    uint ll_ti_shadow_shadowMap2;
-    uint ll_ti_shadow_shadowMap3;
-    uint ll_ti_cubearray_irradianceProbes;
-    uint ll_ti_cubearray_reflectionProbes;
+    uint rk_ti_shadow_shadowMap0;
+    uint rk_ti_shadow_shadowMap1;
+    uint rk_ti_shadow_shadowMap2;
+    uint rk_ti_shadow_shadowMap3;
+    uint rk_ti_cubearray_irradianceProbes;
+    uint rk_ti_cubearray_reflectionProbes;
 #ifdef HERO_PROBES
-    uint ll_ti_cubearray_heroProbes;
-    uint ll_ti_mirrorView;      // the planar mirror's reflected view
+    uint rk_ti_cubearray_heroProbes;
+    uint rk_ti_mirrorView;      // the planar mirror's reflected view
 #endif
 #ifdef SSR
-    uint ll_ti_sceneMap;        // the previous frame's picture and depth
-    uint ll_ti_sceneDepth;
+    uint rk_ti_sceneMap;        // the previous frame's picture and depth
+    uint rk_ti_sceneDepth;
 #endif
 #endif
 };

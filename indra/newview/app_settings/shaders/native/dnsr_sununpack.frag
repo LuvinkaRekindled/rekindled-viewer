@@ -4,8 +4,8 @@
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseMap;      // the sun lightmap as the sun pass wrote it
-    uint ll_ti_bumpMap;         // the denoiser's output (r: the filtered visibility, 1 lit)
+    uint rk_ti_diffuseMap;      // the sun lightmap as the sun pass wrote it
+    uint rk_ti_bumpMap;         // the denoiser's output (r: the filtered visibility, 1 lit)
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -14,10 +14,10 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
-    vec4 orig = texture(ll_tbl2d[LL_HM(ll_ti_diffuseMap)], tc);
+    vec4 orig = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], tc);
     if (orig.r <= 0.02 || orig.r >= 0.98)
     {
-        orig.r = clamp(texture(ll_tbl2d[LL_HM(ll_ti_bumpMap)], tc).r, 0.0, 1.0);
+        orig.r = clamp(texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], tc).r, 0.0, 1.0);
     }
     frag_color = orig;
 }

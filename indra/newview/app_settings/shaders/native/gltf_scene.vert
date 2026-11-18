@@ -85,27 +85,27 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
-    uint ll_ti_diffuseMap;
-    uint ll_ti_emissiveMap;
-    uint ll_ti_normalMap;
-    uint ll_ti_metallicRoughnessMap;
-    uint ll_ti_occlusionMap;
-    uint ll_ti_lightMap;
-    uint ll_ti_depthMap;
-    uint ll_ti_brdfLut;
-    uint ll_ti_projectionMap;
-    uint ll_ti_sceneMap;
-    uint ll_ti_sceneDepth;
-    uint ll_ti_shadowMap0;
-    uint ll_ti_shadowMap1;
-    uint ll_ti_shadowMap2;
-    uint ll_ti_shadowMap3;
-    uint ll_ti_shadowMap4;
-    uint ll_ti_shadowMap5;
-    uint ll_ti_reflectionProbes;
-    uint ll_ti_irradianceProbes;
-    uint ll_ti_heroProbes;
-    uint ll_ti_mirrorView;
+    uint rk_ti_diffuseMap;
+    uint rk_ti_emissiveMap;
+    uint rk_ti_normalMap;
+    uint rk_ti_metallicRoughnessMap;
+    uint rk_ti_occlusionMap;
+    uint rk_ti_lightMap;
+    uint rk_ti_depthMap;
+    uint rk_ti_brdfLut;
+    uint rk_ti_projectionMap;
+    uint rk_ti_sceneMap;
+    uint rk_ti_sceneDepth;
+    uint rk_ti_shadowMap0;
+    uint rk_ti_shadowMap1;
+    uint rk_ti_shadowMap2;
+    uint rk_ti_shadowMap3;
+    uint rk_ti_shadowMap4;
+    uint rk_ti_shadowMap5;
+    uint rk_ti_reflectionProbes;
+    uint rk_ti_irradianceProbes;
+    uint rk_ti_heroProbes;
+    uint rk_ti_mirrorView;
 };
 layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
@@ -127,27 +127,27 @@ layout(std140, set = 0, binding = 7) uniform RKLooseLight
     float spot_shadow_bias;
     float spot_shadow_offset;
 };
-#define diffuseMap ll_tbl2d[LL_HM(ll_ti_diffuseMap)]
-#define emissiveMap ll_tbl2d[LL_HM(ll_ti_emissiveMap)]
-#define normalMap ll_tbl2d[LL_HM(ll_ti_normalMap)]
-#define metallicRoughnessMap ll_tbl2d[LL_HM(ll_ti_metallicRoughnessMap)]
-#define occlusionMap ll_tbl2d[LL_HM(ll_ti_occlusionMap)]
-#define lightMap ll_tbl2d[LL_HM(ll_ti_lightMap)]
-#define depthMap ll_tbl2d[LL_HM(ll_ti_depthMap)]
-#define brdfLut ll_tbl2d[LL_HM(ll_ti_brdfLut)]
-#define projectionMap ll_tbl2d[LL_HM(ll_ti_projectionMap)]
-#define sceneMap ll_tbl2d[LL_HM(ll_ti_sceneMap)]
-#define sceneDepth ll_tbl2d[LL_HM(ll_ti_sceneDepth)]
-#define shadowMap0 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap0)]
-#define shadowMap1 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap1)]
-#define shadowMap2 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap2)]
-#define shadowMap3 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap3)]
-#define shadowMap4 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap4)]
-#define shadowMap5 ll_tbl2dshadow[LL_HM(ll_ti_shadowMap5)]
-#define reflectionProbes ll_tblcubearray[LL_HM(ll_ti_reflectionProbes)]
-#define irradianceProbes ll_tblcubearray[LL_HM(ll_ti_irradianceProbes)]
-#define heroProbes ll_tblcubearray[LL_HM(ll_ti_heroProbes)]
-#define mirrorView ll_tbl2d[LL_HM(ll_ti_mirrorView)]
+#define diffuseMap rk_tbl2d[LL_HM(rk_ti_diffuseMap)]
+#define emissiveMap rk_tbl2d[LL_HM(rk_ti_emissiveMap)]
+#define normalMap rk_tbl2d[LL_HM(rk_ti_normalMap)]
+#define metallicRoughnessMap rk_tbl2d[LL_HM(rk_ti_metallicRoughnessMap)]
+#define occlusionMap rk_tbl2d[LL_HM(rk_ti_occlusionMap)]
+#define lightMap rk_tbl2d[LL_HM(rk_ti_lightMap)]
+#define depthMap rk_tbl2d[LL_HM(rk_ti_depthMap)]
+#define brdfLut rk_tbl2d[LL_HM(rk_ti_brdfLut)]
+#define projectionMap rk_tbl2d[LL_HM(rk_ti_projectionMap)]
+#define sceneMap rk_tbl2d[LL_HM(rk_ti_sceneMap)]
+#define sceneDepth rk_tbl2d[LL_HM(rk_ti_sceneDepth)]
+#define shadowMap0 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap0)]
+#define shadowMap1 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap1)]
+#define shadowMap2 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap2)]
+#define shadowMap3 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap3)]
+#define shadowMap4 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap4)]
+#define shadowMap5 rk_tbl2dshadow[LL_HM(rk_ti_shadowMap5)]
+#define reflectionProbes rk_tblcubearray[LL_HM(rk_ti_reflectionProbes)]
+#define irradianceProbes rk_tblcubearray[LL_HM(rk_ti_irradianceProbes)]
+#define heroProbes rk_tblcubearray[LL_HM(rk_ti_heroProbes)]
+#define mirrorView rk_tbl2d[LL_HM(rk_ti_mirrorView)]
 
 struct GBufferInfo { vec4 albedo; vec4 specular; vec3 normal; vec4 emissive; float gbufferFlag; float envIntensity; };
 #include "lib/flags.glsl"

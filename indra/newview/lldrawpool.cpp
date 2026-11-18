@@ -473,7 +473,7 @@ void LLFacePool::pushWholeBufferFacesPull()
 }
 
 // S6.6d: one range of a buffer (a body mesh of an avatar) as a record of one entry, drawn with the pull program bound now under the modelview matrix on the stack
-void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count)
+void rk_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count)
 {
     // (the draw the old way starts with setBuffer(): it flushes a buffer that is still mapped, which a body mesh can be)
     const_cast<LLVertexBuffer*>(vb)->setBuffer();
@@ -486,7 +486,7 @@ void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_cou
 
 // <FS> K6: the terrain, tree and avatar body draws of a pass whose pull program is not ready are not drawn the old way any more (their classic loops are deleted); the draw is counted and the first
 // one is logged, so a missing patch or mesh is not a silent one
-void ll_pool_draw_dropped(const char* what, size_t count)
+void rk_pool_draw_dropped(const char* what, size_t count)
 {
     static std::map<std::string, U64> totals;
     if (count == 0)
@@ -592,7 +592,7 @@ bool LLRenderPass::deferredPacketsEnabled()
 }
 
 // <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
-bool ll_rigged_packets_enabled()
+bool rk_rigged_packets_enabled()
 {
     return LLRenderPass::deferredPacketsEnabled();
 }
@@ -642,7 +642,7 @@ RigAnchorSlot sRigAnchorRing[8];
 RKRigAnchor sRigAnchorCurrent;
 }
 
-RKRigAnchor ll_rig_anchor(U32 frame)
+RKRigAnchor rk_rig_anchor(U32 frame)
 {
     std::lock_guard<std::mutex> lock(sRigAnchorMutex);
     RigAnchorSlot& slot = sRigAnchorRing[frame & 7u];
@@ -695,7 +695,7 @@ PaletteIds& palette_ids()
 }
 }
 
-U32 ll_palette_id_alloc()
+U32 rk_palette_id_alloc()
 {
     PaletteIds& ids = palette_ids();
     std::lock_guard<std::mutex> lock(ids.mMutex);
@@ -717,7 +717,7 @@ U32 ll_palette_id_alloc()
     return ((U32)ids.mGen[index] << 24) | index;
 }
 
-void ll_palette_id_free(U32 id)
+void rk_palette_id_free(U32 id)
 {
     if (!id)
     {
@@ -743,23 +743,23 @@ void ll_palette_id_free(U32 id)
 // (no skin / no palette), 5 fallback to the old path, 6 entries of the cascades' rigged shadow records, 7 builds of those records, 8 transient rigged alpha entries, 9 rigged draw infos in the render maps
 // the cascade jobs push (read from the caster lists)
 static std::atomic<U64> sRigCensus[12];
-static std::atomic<U64> sRigReasonEntry[16], sRigReasonFallback[16];       // why the table did not take a rigged draw the per frame records built (ll_geometry_reject_reason, texture matrix not allowed as for table rows), and why a draw went to the old path
+static std::atomic<U64> sRigReasonEntry[16], sRigReasonFallback[16];       // why the table did not take a rigged draw the per frame records built (rk_geometry_reject_reason, texture matrix not allowed as for table rows), and why a draw went to the old path
 static std::atomic<U64> sRigWithModel{ 0 };
-static std::atomic<U64> sStaticFallbackReason[16], sStaticFallbackType[64];       // J1 K6 S4: the non rigged draws of the per frame records that went to the old path, by reason (ll_geometry_reject_reason) and by pass type
+static std::atomic<U64> sStaticFallbackReason[16], sStaticFallbackType[64];       // J1 K6 S4: the non rigged draws of the per frame records that went to the old path, by reason (rk_geometry_reject_reason) and by pass type
 static std::atomic<U64> sRigGltf[4];       // the rigged glTF draws that went to the old path: all / double sided / with a texture matrix / the glow pass without an emissive array
 static bool rig_census_on()
 {
     static const bool on = getenv("LL_VK_RIGCENSUS") != nullptr;       // (read once: the census is asked about for every rigged draw of every frame)
     return on;
 }
-void ll_rig_census_add(int what, U64 n)
+void rk_rig_census_add(int what, U64 n)
 {
     if (rig_census_on() && n)
     {
         sRigCensus[what].fetch_add(n, std::memory_order_relaxed);
     }
 }
-void ll_rig_census_log()
+void rk_rig_census_log()
 {
     static U64 last = 0;
     if (!rig_census_on() || gFrameCount < last + 1200)
@@ -820,7 +820,7 @@ static U32 palette_id_of(std::atomic<U32>& cell)
     {
         return have;
     }
-    const U32 fresh = ll_palette_id_alloc();
+    const U32 fresh = rk_palette_id_alloc();
     if (!fresh)
     {
         return 0;
@@ -830,7 +830,7 @@ static U32 palette_id_of(std::atomic<U32>& cell)
     {
         return fresh;
     }
-    ll_palette_id_free(fresh);
+    rk_palette_id_free(fresh);
     return expected;
 }
 
@@ -865,7 +865,7 @@ static U32 palette_real_offset(U32 value)
     return ~0u;
 }
 
-U64 ll_frame_palette_frame()
+U64 rk_frame_palette_frame()
 {
     return gFrameCount;
 }
@@ -894,7 +894,7 @@ static void palette_frame_begin_locked(U64 frame)
 }
 
 // <FS> P1 step 2 (the palette jobs write into the arena): main thread, before the jobs of the idle launch: the list of the coming frame (gFrameCount + 1) begins and takes its arena
-void ll_frame_palette_prepare(U32 frame)
+void rk_frame_palette_prepare(U32 frame)
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame == frame)
@@ -908,7 +908,7 @@ void ll_frame_palette_prepare(U32 frame)
 // a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
 // <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md): every palette in the list is followed by the palette of the frame before (same size, same anchor: mPrevGLMp, equal to the current one when there is no history): the
 // rigged G-buffer vertex shaders read both and write the motion of the surface. prev_floats null: the current palette is written twice.
-F32 ll_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
+F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
 {
     if (!LLPipeline::sDLSS || !prev || prev == cur || !gPipeline.mRT)
     {
@@ -928,7 +928,7 @@ F32 ll_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVecto
     return biggest * 1.5f * focal_px / llmax(distance, 0.5f) >= 0.3f ? 1.f : 0.f;
 }
 
-bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
+bool rk_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
 {
     if (!count || sFramePal.mPreparedFrame != frame || !sFramePal.mArenaOn)
     {
@@ -945,7 +945,7 @@ bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 movin
     while (!sFramePal.mArenaCursor.compare_exchange_weak(cur, cur + 2 * count, std::memory_order_acq_rel));
     memcpy(sFramePal.mArena.mPtr + cur, floats, (size_t)count * sizeof(F32));
     memcpy(sFramePal.mArena.mPtr + cur + count, prev_floats ? prev_floats : floats, (size_t)count * sizeof(F32));
-    sFramePal.mArena.mPtr[cur + count - 8] = moving;        // (the tail entry's second row, x: see ll_palette_moving)
+    sFramePal.mArena.mPtr[cur + count - 8] = moving;        // (the tail entry's second row, x: see rk_palette_moving)
     {
         const U32 id = palette_id_of(id_cell);
         if (!id || !palette_pair_push(id, cur))
@@ -960,7 +960,7 @@ bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 movin
 
 // census (a rigged outfit that disappears for a frame now and then): why a palette request fails. An item without a palette is not drawn (the old path draws nothing for it either)
 static std::atomic<U64> sPalFailNoAvatar{ 0 }, sPalFailEmpty{ 0 }, sPalFailShort{ 0 }, sPalRequests{ 0 }, sPalFastRequests{ 0 };
-bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
+bool rk_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints)
 {
     ++sPalRequests;
     if (!avatar || !skin)
@@ -974,7 +974,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     }
     const LLVOAvatar::MatrixPaletteCache& mpc = avatar->updateSkinInfoMatrixPalette(skin);       // (one at a time inside, and the entry is not written again in this frame)
     joints = (U32)mpc.mMatrixPalette.size();
-    if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12)       // (the palette has one entry more than its mesh: the tail with the anchor, see ll_rig_anchor)
+    if (joints == 0 || mpc.mGLMp.size() < (size_t)(joints + 1) * 12)       // (the palette has one entry more than its mesh: the tail with the anchor, see rk_rig_anchor)
     {
         const U64 n = joints == 0 ? ++sPalFailEmpty : ++sPalFailShort;
         if (n <= 20 || (n % 200) == 0)
@@ -1035,8 +1035,8 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
         return true;
     }
     const size_t need = (size_t)(joints + 1) * 12;
-    const F32* prev_data = mpc.mPrevGLMp.size() >= need ? mpc.mPrevGLMp.data() : mpc.mGLMp.data();       // (the previous palette follows the current one: see ll_frame_palette_write)
-    const F32 moving = ll_palette_moving(mpc.mGLMp.data(), prev_data, (U32)need, avatar->getRenderPosition());
+    const F32* prev_data = mpc.mPrevGLMp.size() >= need ? mpc.mPrevGLMp.data() : mpc.mGLMp.data();       // (the previous palette follows the current one: see rk_frame_palette_write)
+    const F32 moving = rk_palette_moving(mpc.mGLMp.data(), prev_data, (U32)need, avatar->getRenderPosition());
     U32 at = 0;
     bool in_arena = false;
     if (sFramePal.mArenaOn)
@@ -1080,7 +1080,7 @@ bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     return true;
 }
 
-bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
+bool rk_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
@@ -1106,7 +1106,7 @@ bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out)
     return true;
 }
 
-bool ll_frame_palette_first_joint(U32 offset, F32* out12)
+bool rk_frame_palette_first_joint(U32 offset, F32* out12)
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
@@ -1131,7 +1131,7 @@ bool ll_frame_palette_first_joint(U32 offset, F32* out12)
     return true;
 }
 
-void ll_frame_palette_flush()
+void rk_frame_palette_flush()
 {
     std::lock_guard<std::mutex> lock(sFramePal.mMutex);
     if (sFramePal.mFrame != gFrameCount)
@@ -1195,7 +1195,7 @@ static struct RiggedStats
 // come from the bindless table: a texture matrix is not carried (such draws, and a batch of more than four textures, take the old path).
 // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour and indices: the fullbright passes have no use for normals (their pull program does not read them), the glow pass needs the
 // emissive array instead
-U32 ll_pass_arrays(U32 type)
+U32 rk_pass_arrays(U32 type)
 {
     switch (type)
     {
@@ -1267,7 +1267,7 @@ static bool geometry_packet_ok(const RKDrawBatch& p, bool batch_textures, const 
 }
 
 // S6 census: why geometry_packet_ok refuses a draw (0 = it does not)
-int ll_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
+int rk_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount) return 1;
@@ -1427,24 +1427,24 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     LLCullResult* cull = gPipeline.getCull();
-    const int tn = ll_scene_geo_type_number(type);
-    if (tn < 0 || !(ll_scene_geo_serving() && ll_scene_geo_main_view()))
+    const int tn = rk_scene_geo_type_number(type);
+    if (tn < 0 || !(rk_scene_geo_serving() && rk_scene_geo_main_view()))
     {
         return;
     }
-    if (!ll_scene_geo_prepared(cull))
+    if (!rk_scene_geo_prepared(cull))
     {
         if (cull && cull->mGeoElided)
         {
-            ll_scene_geo_count(3, 1);       // postSort left the table's draws out of this render map and the table was not told: they are missing from this frame (should stay 0)
+            rk_scene_geo_count(3, 1);       // postSort left the table's draws out of this render map and the table was not told: they are missing from this frame (should stay 0)
         }
         return;
     }
     LL_CPU_ZONE("packets: scene table draw record");
     {
         // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
-        extern bool ll_motion_fold_uniforms(RKShaderProgram* program);
-        ll_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr);
+        extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
+        rk_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr);
     }
     RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 22;
@@ -1453,9 +1453,9 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
     memcpy(matrices, gRenderModelView, 16 * sizeof(F32));
     memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
     RKVkBridge::shadowPackets(header, matrices, sizeof(matrices));
-    ll_scene_geo_count(1, 1);
-    extern bool ll_scene_geo_type_has_double_sided(int tn);
-    if (ll_scene_geo_type_has_double_sided(tn))
+    rk_scene_geo_count(1, 1);
+    extern bool rk_scene_geo_type_has_double_sided(int tn);
+    if (rk_scene_geo_type_has_double_sided(tn))
     {
         // P3: the type's double sided rows (glTF materials): their own draw, culling off (the worker draws nothing when the frame has none)
         RKRenderState::CullScope cull_face(false, true);

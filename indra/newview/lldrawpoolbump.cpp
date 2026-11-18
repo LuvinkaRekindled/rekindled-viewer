@@ -287,9 +287,9 @@ static bool fullbright_shiny_table(bool rigged)
     if (LLPipeline::sRenderingHUDs)
     {
         // J1 K6 S1: the HUD's shiny draws from the scene table (the HUD's cull result was told to the worker before the passes)
-        return !rigged && ll_scene_geo_hud_view() && ll_scene_geo_prepared(gPipeline.getCull()) && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
+        return !rigged && rk_scene_geo_hud_view() && rk_scene_geo_prepared(gPipeline.getCull()) && rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_FULLBRIGHT_SHINY));
     }
-    return LLRenderPass::deferredPacketsEnabled() && (!rigged || ll_rigged_packets_enabled());
+    return LLRenderPass::deferredPacketsEnabled() && (!rigged || rk_rigged_packets_enabled());
 }
 
 void LLDrawPoolBump::beginFullbrightShiny()
@@ -474,9 +474,9 @@ void LLDrawPoolBump::beginBump()
 static bool emboss_table(bool rigged)
 {
     // J1 K6 S1: the HUD's post bump pass too (no rigged draws in a HUD; the HUD's cull result was told to the worker before the passes)
-    const bool view_ok = !LLPipeline::sRenderingHUDs || (!rigged && ll_scene_geo_hud_view() && ll_scene_geo_hud_type(ll_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP)));
-    return view_ok && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
-        && (!rigged || ll_rigged_packets_enabled());
+    const bool view_ok = !LLPipeline::sRenderingHUDs || (!rigged && rk_scene_geo_hud_view() && rk_scene_geo_hud_type(rk_scene_geo_type_number(LLRenderPass::PASS_POST_BUMP)));
+    return view_ok && LLRenderPass::deferredPacketsEnabled() && rk_scene_geo_main_view() && rk_scene_geo_prepared(gPipeline.getCull())
+        && (!rigged || rk_rigged_packets_enabled());
 }
 
 //static
@@ -510,8 +510,8 @@ S32 LLDrawPoolBump::getNumDeferredPasses()
 // the rows cannot carry, draws the old way
 static bool bump_table(bool rigged)
 {
-    return !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && ll_scene_geo_main_view() && ll_scene_geo_prepared(gPipeline.getCull())
-        && (!rigged || ll_rigged_packets_enabled());
+    return !LLPipeline::sRenderingHUDs && LLRenderPass::deferredPacketsEnabled() && rk_scene_geo_main_view() && rk_scene_geo_prepared(gPipeline.getCull())
+        && (!rigged || rk_rigged_packets_enabled());
 }
 
 void LLDrawPoolBump::renderDeferred(S32 pass)

@@ -81,7 +81,7 @@
 #include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include <unordered_map>
 
-std::string fs_stack_here(int skip, int max_frames);       // (rkgpuzonetimer.cpp)
+std::string rk_stack_here(int skip, int max_frames);       // (rkgpuzonetimer.cpp)
 namespace
 {
 // <FS> 2026-11-16 (LL_VK_DIAG=1): the discard level and the size of the last image a texture was created with, to see a texture created again for the same data (createTexture, scheduleCreateTexture)
@@ -1939,21 +1939,21 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     // <FS> the sampled hash of every level of a BC7 upload, finest first: entered in the registry of recent BC7 levels (so that a level found in a GPU image that was not uploaded to it can be named: id, level,
     // size, discard), and kept by the texture object of a server bake for Show Textures and the periodic check
     std::vector<U64> bc7_level_hashes;
-    if (mRawImage->isCompressed() && ll_diag_on())        // (the hashes are the ears bug hunt of 2026-11-14: Show Textures, the periodic check and the BakeTex log: off unless LL_VK_DIAG)
+    if (mRawImage->isCompressed() && rk_diag_on())        // (the hashes are the ears bug hunt of 2026-11-14: Show Textures, the periodic check and the BakeTex log: off unless LL_VK_DIAG)
     {
         RKImageBC7::levelHashes(mRawImage, bc7_level_hashes);
         RKImageBC7::registerLevels(bc7_level_hashes, mID.asString().substr(0, 8), mRawDiscardLevel, (U32)mRawImage->getWidth(), (U32)mRawImage->getHeight());
     }
-    if (mFTType == FTT_SERVER_BAKE && ll_diag_on())
+    if (mFTType == FTT_SERVER_BAKE && rk_diag_on())
     {
         // <FS> what this server bake's texture object is about to upload (the same hash as the BakeTex log of the decode; printed with the bake slot by Show Textures)
         U64 finest = 0;
         if (mRawImage->isCompressed())
         {
             // (the finest level of a BC7 chain is the last in the buffer: what the GPU image's level 0 has to hold, compared by Show Textures and the periodic check)
-            finest = fs_sparse_hash(mRawImage->getFinestLevelData(), (size_t)RKImageBC7::blockBytes((U32)mRawImage->getWidth(), (U32)mRawImage->getHeight()));
+            finest = rk_sparse_hash(mRawImage->getFinestLevelData(), (size_t)RKImageBC7::blockBytes((U32)mRawImage->getWidth(), (U32)mRawImage->getHeight()));
         }
-        mImageTexp->setUploadHash(fs_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize(), finest);
+        mImageTexp->setUploadHash(rk_sparse_hash(mRawImage->getData(), (size_t)mRawImage->getDataSize()), (U64)mRawImage->getDataSize(), finest);
         mImageTexp->setUploadLevelHashes(bc7_level_hashes);
     }
     bool res = mImageTexp->createImageTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
@@ -1964,7 +1964,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
                           << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
     }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
-    if (ll_diag_on() && res && mRawImage.notNull())
+    if (rk_diag_on() && res && mRawImage.notNull())
     {
         // <FS> 2026-11-16 (LL_VK_DIAG=1; the user: images that already show flash white again for a frame on the first load): a texture created again with the discard level and the size of the one it was created with before. A new GPU image
         // for data the old one holds (a loader's re-decode, a second schedule) is one more chance for the handle to read the stand-in; scheduleCreateTexture says who asked.
@@ -2022,7 +2022,7 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
-    if (!mNeedsCreateTexture && ll_diag_on() && mRawImage.notNull())
+    if (!mNeedsCreateTexture && rk_diag_on() && mRawImage.notNull())
     {
         // (see createTexture: a schedule for the discard level and the size the texture was created with before; the first 40 say who asked)
         std::lock_guard<std::mutex> lock(sTexCreateMutex);
@@ -2036,7 +2036,7 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                 const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - it->second.mWhen).count();
                 LL_INFOS("VkTexRedundant") << "texture " << mID << " (type " << (S32)mFTType << ", boost " << (S32)mBoostLevel << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << ") is scheduled for creation again, "
                                            << ms << " ms after it was created, the GPU image's discard level now " << getDiscardLevel() << " (GPU image present " << (S32)(mImageTexp.notNull() && mImageTexp->getHasImageTexture()) << "), fetching " << (S32)mIsFetching << ", fetch state " << mFetchState << ", saved raw discard " << mSavedRawDiscardLevel << ", asked by:\n"
-                                           << fs_stack_here(0, 8) << LL_ENDL;
+                                           << rk_stack_here(0, 8) << LL_ENDL;
             }
         }
     }

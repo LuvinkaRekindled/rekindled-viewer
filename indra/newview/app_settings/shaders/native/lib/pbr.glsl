@@ -2,14 +2,14 @@
 // Same model and the same constants as the viewer's glTF lighting (GGX distribution, Smith visibility, Schlick fresnel, the split sum lookup for the probes, classic mode's own mixing in sRGB), so the picture
 // is the same. What is different is the cost: everything that depends on the view alone (the view term of the visibility, the roughness terms, the fresnel colours) is made once for the surface and not
 // again for every light, and a light that cannot reach the surface is skipped before any of it.
-// Needs color.glsl, ALPHA_LIT's uniforms (classic_mode, the light slots and list) and ll_ti_brdfLut (alpha_pass.inc, ALPHA_PBR).
+// Needs color.glsl, ALPHA_LIT's uniforms (classic_mode, the light slots and list) and rk_ti_brdfLut (alpha_pass.inc, ALPHA_PBR).
 
 #include "lib/pbr_core.glsl"
 
 // the split sum lookup: x scales the specular colour, y is the bias. (The second coordinate is the glossiness, not the roughness: the viewer's lookup is addressed that way. Level 0: one level.)
 vec2 pbr_brdf(float nv, float gloss)
 {
-    return textureLod(ll_tbl2d[LL_HM(ll_ti_brdfLut)], clamp(vec2(nv, gloss), vec2(0.004), vec2(0.996)), 0.0).rg;
+    return textureLod(rk_tbl2d[LL_HM(rk_ti_brdfLut)], clamp(vec2(nv, gloss), vec2(0.004), vec2(0.996)), 0.0).rg;
 }
 
 // the light of the sky and the sun on the surface, plus its glow: irradiance / radiance are what the probes give (ambient, reflection), sunlit and scol the sun and its shadow

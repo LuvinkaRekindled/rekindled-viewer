@@ -16,14 +16,14 @@ set(llwebrtc_SOURCE_FILES
 
 if (WINDOWS)
     # <FS> Rekindled: voice playout through a media stream
-    list(APPEND llwebrtc_SOURCE_FILES llwebrtc_winplayout.cpp)
+    list(APPEND llwebrtc_SOURCE_FILES rkwebrtc_winplayout.cpp)
 endif (WINDOWS)
 
 set(llwebrtc_HEADER_FILES
     CMakeLists.txt
     llwebrtc.h
     llwebrtc_impl.h
-    llwebrtc_winplayout.h
+    rkwebrtc_winplayout.h
     )
 
 list(APPEND llwebrtc_SOURCE_FILES ${llwebrtc_HEADER_FILES})

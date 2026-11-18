@@ -12,17 +12,17 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
-    uint ll_ti_diffuseRect;     // the neural renderer's output
-    uint ll_ti_emissiveRect;    // its input (the picture before it)
-    uint ll_ti_depthMap;        // the scene depth (render size)
+    uint rk_ti_diffuseRect;     // the neural renderer's output
+    uint rk_ti_emissiveRect;    // its input (the picture before it)
+    uint rk_ti_depthMap;        // the scene depth (render size)
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 0) out vec4 frag_color;
 
-#define DIFFUSE ll_tbl2d[LL_HM(ll_ti_diffuseRect)]
-#define EMISSIVE ll_tbl2d[LL_HM(ll_ti_emissiveRect)]
-#define DEPTH ll_tbl2d[LL_HM(ll_ti_depthMap)]
+#define DIFFUSE rk_tbl2d[LL_HM(rk_ti_diffuseRect)]
+#define EMISSIVE rk_tbl2d[LL_HM(rk_ti_emissiveRect)]
+#define DEPTH rk_tbl2d[LL_HM(rk_ti_depthMap)]
 
 float lin(float d)
 {

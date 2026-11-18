@@ -140,29 +140,29 @@ struct RKGeometryPassInfo
 };
 
 // <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs): whether the skinned diffuse pull program and the packet path exist
-bool ll_rigged_packets_enabled();
+bool rk_rigged_packets_enabled();
 enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4, LL_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
-U32 ll_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
-int ll_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
+U32 rk_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
+int rk_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
-// rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
-bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
-void ll_frame_palette_flush();
-void ll_rig_census_add(int what, U64 n);          // <FS> P3 census (LL_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see ll_rig_census_log)
-void ll_rig_census_log();
-U32 ll_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
-void ll_palette_id_free(U32 id);
-void ll_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread, before the palette jobs: the list of the coming frame begins and takes its palette arena
+// rigged shadow records); the new part of the list is sent (kind 27) by rk_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
+bool rk_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
+void rk_frame_palette_flush();
+void rk_rig_census_add(int what, U64 n);          // <FS> P3 census (LL_VK_RIGCENSUS=1): rigged draws by consumer, per frame (see rk_rig_census_log)
+void rk_rig_census_log();
+U32 rk_palette_id_alloc();                       // <FS> P1 step 3: palette ids (see lldrawpool.cpp); a palette entry owns one from its first write into a frame's list until it is destroyed
+void rk_palette_id_free(U32 id);
+void rk_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread, before the palette jobs: the list of the coming frame begins and takes its palette arena
 // <FS> velocity fold: 1.0 when the pose of a palette differs from the frame before's enough to show on screen (the old avatar velocity pass's test: the biggest change of a palette float times a reach of 1.5 m,
 // as pixels at the avatar's distance, at least 0.3 px; not beyond 48 m), else 0.0. It goes into the tail entry of the palette in the frame's list (second row, x), where the rigged G-buffer vertex shaders read it:
 // a palette that did not move skips its previous pose and its pixels keep the camera's motion. 0 without an upscaler.
-F32 ll_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position);
-bool ll_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
+F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position);
+bool rk_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
 // DIAGNOSTIC (the ear blink hunt): the 12 floats of the first joint of the palette at a float offset of this frame's shared list (false when the offset is not in the list)
-bool ll_frame_palette_first_joint(U32 offset, F32* out12);
+bool rk_frame_palette_first_joint(U32 offset, F32* out12);
 // DIAGNOSTIC: the whole palette (12 floats a joint) at a float offset of this frame's shared list
-bool ll_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out);
-U64 ll_frame_palette_frame();       // the frame the list belongs to (a build made in another frame names offsets of another list)
+bool rk_frame_palette_copy(U32 offset, U32 joints, std::vector<F32>& out);
+U64 rk_frame_palette_frame();       // the frame the list belongs to (a build made in another frame names offsets of another list)
 
 // <FS> avatar relative skinning (2026-11-09). A rigged palette holds world matrices in region coordinates; far above the ground (a skybox at 3800 m) a float there has a step of 0.24 mm, every skinned
 // vertex lands on that lattice on its own (the jagged face and chin under DLSS). Above a height the palettes are made relative to an anchor (a 64 m grid point near the camera) and the shaders add the
@@ -173,7 +173,7 @@ struct RKRigAnchor
     F32 mA[3] = { 0.f, 0.f, 0.f };
     bool mActive = false;
 };
-RKRigAnchor ll_rig_anchor(U32 frame);      // when the camera is high
+RKRigAnchor rk_rig_anchor(U32 frame);      // when the camera is high
 
 class LLRenderPass : public LLDrawPool
 {
@@ -422,11 +422,11 @@ public:
     static bool uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const RKShaderProgram*& lastAvatarShader, bool& skipLastSkin);
 };
 
-void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count);       // S6.6d
-void ll_pool_draw_dropped(const char* what, size_t count);       // a draw that has no old path any more because its pull program is not ready: counted, the first one (and every 10000th) logged
-void ll_render_table_debug();       // K6 B1 (lldrawpoolalpha.cpp): the Batch Size and Texture Animation debug views, drawn from the scene table
-int ll_scene_geo_type_count();       // pipeline.cpp: the table's pass types by number
-U32 ll_scene_geo_type_pass(int tn);
+void rk_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count);       // S6.6d
+void rk_pool_draw_dropped(const char* what, size_t count);       // a draw that has no old path any more because its pull program is not ready: counted, the first one (and every 10000th) logged
+void rk_render_table_debug();       // K6 B1 (lldrawpoolalpha.cpp): the Batch Size and Texture Animation debug views, drawn from the scene table
+int rk_scene_geo_type_count();       // pipeline.cpp: the table's pass types by number
+U32 rk_scene_geo_type_pass(int tn);
 
 class LLFacePool : public LLDrawPool
 {

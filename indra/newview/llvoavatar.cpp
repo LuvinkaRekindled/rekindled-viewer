@@ -3149,9 +3149,9 @@ void LLVOAvatar::dumpAnimationState()
 }
 
 // <FS> Where the main thread's avatar update time goes, per avatar and path (logged from LLViewerObjectList::update every 300 frames; reset there).
-U64 gFSAvStatNs[32];
-U32 gFSAvStatCount[32];
-bool gFSAvTimersOn = getenv("FS_AVATAR_TIMERS") != nullptr; // the timers cost a clock read pair per scope: opt-in (log tag AvatarUpdate)
+U64 gRKAvStatNs[32];
+U32 gRKAvStatCount[32];
+bool gRKAvTimersOn = getenv("FS_AVATAR_TIMERS") != nullptr; // the timers cost a clock read pair per scope: opt-in (log tag AvatarUpdate)
 namespace
 {
 enum
@@ -3193,17 +3193,17 @@ struct AvScope
     std::chrono::steady_clock::time_point mStart;
     explicit AvScope(int slot) : mSlot(slot)
     {
-        if (gFSAvTimersOn)
+        if (gRKAvTimersOn)
         {
             mStart = std::chrono::steady_clock::now();
         }
     }
     ~AvScope()
     {
-        if (gFSAvTimersOn)
+        if (gRKAvTimersOn)
         {
-            gFSAvStatNs[mSlot] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count();
-            gFSAvStatCount[mSlot]++;
+            gRKAvStatNs[mSlot] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count();
+            gRKAvStatCount[mSlot]++;
         }
     }
 };
@@ -3285,7 +3285,7 @@ inline bool att_rowable(const LLViewerObject* root)
 // <FS> stage C5 census (LL_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
 static std::atomic<U64> sWalkClassN[8][2], sWalkClassOps[8][2];
 static std::atomic<U64> sRowFlexiRoot{ 0 }, sRowFlexiChild{ 0 }, sRowFlexiFull{ 0 };   // flexible attachments in the rows: a flexible root, a linkset with flexible children; full moves
-static int fs_att_class(const LLViewerObject* root)
+static int rk_att_class(const LLViewerObject* root)
 {
     auto reason = [](const LLViewerObject* o) -> int
     {
@@ -3361,16 +3361,16 @@ inline int att_all_clear(const LLViewerObject* root, U64& faces)
     faces += clear ? (U64)seen : 0;
     return clear ? 1 : 0;
 }
-inline std::chrono::steady_clock::time_point att_now() { return gFSAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point(); }
-inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gFSAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
+inline std::chrono::steady_clock::time_point att_now() { return gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point(); }
+inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gRKAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
 }
 
 // <FS> PLAN-avatars.md stage 0 (LL_VK_AVIMP=1): the time of three regions of the avatar update by importance class and kind (defined with the class below): 0 idleUpdate (the serial part), 1 the batched pose
 // blend of one avatar (a pool thread), 2 completeDeferredMotionUpdate (the serial completion)
-static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns);
-static bool fs_av_imp_on();
-static void fs_av_piece_time(int slot, const LLVOAvatar* av, U64 ns);
-static void fs_av_imp_motions(const LLVOAvatar* av, size_t motions);
+static void rk_av_imp_time(int region, const LLVOAvatar* av, U64 ns);
+static bool rk_av_imp_on();
+static void rk_av_piece_time(int slot, const LLVOAvatar* av, U64 ns);
+static void rk_av_imp_motions(const LLVOAvatar* av, size_t motions);
 namespace
 {
 struct AvSelfScope      // (a piece of the avatar update by importance class: the name is from the first cut, which was the own avatar alone)
@@ -3379,7 +3379,7 @@ struct AvSelfScope      // (a piece of the avatar update by importance class: th
     const LLVOAvatar* mAv;
     bool mOn;
     std::chrono::steady_clock::time_point mStart;
-    AvSelfScope(int slot, const LLVOAvatar* av) : mSlot(slot), mAv(av), mOn(fs_av_imp_on())
+    AvSelfScope(int slot, const LLVOAvatar* av) : mSlot(slot), mAv(av), mOn(rk_av_imp_on())
     {
         if (mOn) { mStart = std::chrono::steady_clock::now(); }
     }
@@ -3387,7 +3387,7 @@ struct AvSelfScope      // (a piece of the avatar update by importance class: th
     {
         if (mOn)
         {
-            fs_av_piece_time(mSlot, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
+            rk_av_piece_time(mSlot, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
         }
     }
 };
@@ -3398,16 +3398,16 @@ struct AvImpTimer
     std::chrono::steady_clock::time_point mStart;
     AvImpTimer(int region, const LLVOAvatar* av) : mRegion(region), mAv(av)
     {
-        if (fs_av_imp_on())
+        if (rk_av_imp_on())
         {
             mStart = std::chrono::steady_clock::now();
         }
     }
     ~AvImpTimer()
     {
-        if (fs_av_imp_on())
+        if (rk_av_imp_on())
         {
-            fs_av_imp_time(mRegion, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
+            rk_av_imp_time(mRegion, mAv, (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mStart).count());
         }
     }
 };
@@ -3575,10 +3575,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // animate the character
     // store off last frame's root position to be consistent with camera position
     mLastRootPos = mRoot->getWorldPosition();
-    if (gFSAvTimersOn)
+    if (gRKAvTimersOn)
     {
-        gFSAvStatNs[AV_IDLE_PRE] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_total_scope.mStart).count();
-        gFSAvStatCount[AV_IDLE_PRE]++;
+        gRKAvStatNs[AV_IDLE_PRE] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_total_scope.mStart).count();
+        gRKAvStatCount[AV_IDLE_PRE]++;
     }
     bool detailed_update = updateCharacter(agent);
     detailed_update = RKAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
@@ -3597,7 +3597,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 }
 
 // <FS> PLAN-avatars.md B3d: LL_VK_WINDDRAW 1 (default) the cloth wind state is worked out when the avatar is drawn (once a frame), 0 in the update as before
-static bool fs_winddraw_on()
+static bool rk_winddraw_on()
 {
     static const bool on = !getenv("LL_VK_WINDDRAW") || atoi(getenv("LL_VK_WINDDRAW")) != 0;
     return on;
@@ -3605,7 +3605,7 @@ static bool fs_winddraw_on()
 
 void LLVOAvatar::updateWindEffectForDraw()
 {
-    if (fs_winddraw_on() && mWindFrame != gFrameCount)
+    if (rk_winddraw_on() && mWindFrame != gFrameCount)
     {
         mWindFrame = gFrameCount;
         idleUpdateWindEffect();
@@ -3662,7 +3662,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         {
             idleUpdateBelowWater(); // wind effect uses this
         }
-        if (!fs_winddraw_on())
+        if (!rk_winddraw_on())
         {
             idleUpdateWindEffect();
         }
@@ -3987,7 +3987,7 @@ void LLVOAvatar::rebuildAttRows()
 }
 
 // <FS> stage C4: the stamp of a rigged attachment's spatial group (the avatar and the place among the avatar's rigged groups, read by the alpha sort): written only when the group does not hold it
-static void fs_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSpatialGroup* group, U32 order)
+static void rk_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSpatialGroup* group, U32 order)
 {
     if (group->mAvatarp == avatar && group->mRenderOrder == order)
     {
@@ -4033,7 +4033,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         // the tolerance is a quarter of a pixel on the screen at the avatar's distance (1 mm up close, up to 2 cm far away)
         F32 rigid_tolerance = 0.001f;
         F32 att_distance = 0.f;
-        if (skip_static_rigid || gFSAvTimersOn)
+        if (skip_static_rigid || gRKAvTimersOn)
         {
             LLViewerCamera* view_camera = LLViewerCamera::getInstance();
             const F32 height_px = (F32)llmax(gViewerWindow->getWorldViewHeightRaw(), 1);
@@ -4142,7 +4142,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         }
                     }
                 }
-                if (gFSAvTimersOn)
+                if (gRKAvTimersOn)
                 {
                     ++gAttStats.attachments;
                     ++gAttStats.rigid;
@@ -4239,7 +4239,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         LLSpatialGroup* group = drawable->getSpatialGroup();
                         if (group && drawable->mAttOrderRev == LLViewerJointAttachment::sRevision)
                         {
-                            fs_stamp_rigged_group(this, drawable, group, drawable->mAttOrder);
+                            rk_stamp_rigged_group(this, drawable, group, drawable->mAttOrder);
                         }
                     }
                     obj->updateText();
@@ -4432,7 +4432,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     {
                         RKAttCensus::classify(attached_object.get(), attached_object->mDrawable);
                     }
-                    if (gFSAvTimersOn && !rigged && bridge)
+                    if (gRKAvTimersOn && !rigged && bridge)
                     {
                         // measurement: does the joint the attachment follows move from one visit to the next?
                         static std::unordered_map<const LLViewerObject*, LLMatrix4a> sPrevWorld;
@@ -4458,7 +4458,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         }
                     }
 
-                    if (gFSAvTimersOn && bridge)
+                    if (gRKAvTimersOn && bridge)
                     {
                         // census: attachments of which nothing is drawn (every face alpha 0, no glow, no glTF material)
                         const int clear_verdict = att_all_clear(attached_object.get(), gAttStats.clearFaces);
@@ -4641,12 +4641,12 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 }
                 if (rowops_on && LLPipeline::sAvSink)
                 {
-                    const int cls = fs_att_class(attached_object.get());
+                    const int cls = rk_att_class(attached_object.get());
                     const int rig = attached_object->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) ? 1 : 0;
                     ++sWalkClassN[cls][rig];
                     sWalkClassOps[cls][rig] += LLPipeline::sAvSink->size() - walk_ops0;
                 }
-                if (gFSAvTimersOn)
+                if (gRKAvTimersOn)
                 {
                     const U64 ns = att_ns(att_t0);
                     if (att_rigged_kind)
@@ -4695,7 +4695,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             }
         }
         gAttStats.nsLoop += att_ns(att_loop_t0);
-        if (gFSAvTimersOn)
+        if (gRKAvTimersOn)
         {
             const U32 frame = (U32)LLFrameTimer::getFrameCount();
             if (!gAttStats.firstFrame)
@@ -5278,7 +5278,7 @@ void LLVOAvatar::idleUpdateNameTag(const LLVector3& root_pos_last)
 // do not disturb / appearance animations, mute, friend, missing parts, colour, distance text, complexity, title and names) were gathered and compared with the last build of the tag every frame for every avatar whose tag
 // can be seen (about 1.7 us each); the viewer already marks the tag for rebuilding where it knows (clearNameTag: settings, display names, RLV, contact sets) and typing / chat force it here, the rest is looked at
 // at most 0.1 s apart (a label that says "away" appears a tenth of a second late; staggered by avatar so that they do not all look in the same frame).
-static int fs_nametagpoll_mode()
+static int rk_nametagpoll_mode()
 {
     static const int mode = getenv("LL_VK_NAMETAGPOLL") ? atoi(getenv("LL_VK_NAMETAGPOLL")) : 1;
     return mode;
@@ -5305,7 +5305,7 @@ void LLVOAvatar::bumpNameTagGen()
 void LLVOAvatar::idleUpdateNameTagText(bool new_name)
 {
     bool poll = true;
-    const int poll_mode = fs_nametagpoll_mode();
+    const int poll_mode = rk_nametagpoll_mode();
     const F64 poll_now = LLFrameTimer::getElapsedSeconds();
     bool would_skip = false;
     if (poll_mode != 0)
@@ -7115,7 +7115,7 @@ std::atomic<U64> sAvPieceNs[8][16], sAvPieceCount[8][16];          // [kind * 4 
 std::atomic<U64> sAvMotionSum[8], sAvMotionCount[8];               // active motions of the controller at the blend job
 }
 
-static void fs_av_piece_time(int slot, const LLVOAvatar* av, U64 ns)
+static void rk_av_piece_time(int slot, const LLVOAvatar* av, U64 ns)
 {
     auto found = sAvImpMap.find(av);
     if (found == sAvImpMap.end())
@@ -7126,7 +7126,7 @@ static void fs_av_piece_time(int slot, const LLVOAvatar* av, U64 ns)
     sAvPieceCount[found->second][slot].fetch_add(1, std::memory_order_relaxed);
 }
 
-static void fs_av_imp_motions(const LLVOAvatar* av, size_t motions)
+static void rk_av_imp_motions(const LLVOAvatar* av, size_t motions)
 {
     auto found = sAvImpMap.find(av);
     if (found == sAvImpMap.end())
@@ -7137,13 +7137,13 @@ static void fs_av_imp_motions(const LLVOAvatar* av, size_t motions)
     sAvMotionCount[found->second].fetch_add(1, std::memory_order_relaxed);
 }
 
-static bool fs_av_imp_on()
+static bool rk_av_imp_on()
 {
     static const bool on = getenv("LL_VK_AVIMP") != nullptr;
     return on;
 }
 
-static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns)
+static void rk_av_imp_time(int region, const LLVOAvatar* av, U64 ns)
 {
     auto found = sAvImpMap.find(av);
     if (found == sAvImpMap.end())
@@ -7155,7 +7155,7 @@ static void fs_av_imp_time(int region, const LLVOAvatar* av, U64 ns)
     sAvImpCount[region][kind][cls].fetch_add(1, std::memory_order_relaxed);
 }
 
-static int fs_av_importance_class(LLVOAvatar* av, bool visible)
+static int rk_av_importance_class(LLVOAvatar* av, bool visible)
 {
     if (av->isSelf())
     {
@@ -7187,7 +7187,7 @@ static int fs_av_importance_class(LLVOAvatar* av, bool visible)
 
 static int sAvImpKind = 0, sAvImpClass = 0;
 
-static void fs_av_importance_begin(LLVOAvatar* av, bool visible)
+static void rk_av_importance_begin(LLVOAvatar* av, bool visible)
 {
     static const bool on = getenv("LL_VK_AVIMP") != nullptr;
     if (!on)
@@ -7196,7 +7196,7 @@ static void fs_av_importance_begin(LLVOAvatar* av, bool visible)
         return;
     }
     sAvImpKind = (av->isControlAvatar() || av->isUIAvatar() || av->mDrawable.isNull()) ? 1 : 0;
-    sAvImpClass = fs_av_importance_class(av, visible);
+    sAvImpClass = rk_av_importance_class(av, visible);
     sAvImpMap[av] = sAvImpKind * 4 + sAvImpClass;
     if (sAvImpKind == 0)
     {
@@ -7212,7 +7212,7 @@ static void fs_av_importance_begin(LLVOAvatar* av, bool visible)
     }
 }
 
-static void fs_av_importance_ran(int ran)
+static void rk_av_importance_ran(int ran)
 {
     if (sAvImpClass < 0)
     {
@@ -7674,7 +7674,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         mTimeVisible.reset();
     }
-    fs_av_importance_begin(this, visible);
+    rk_av_importance_begin(this, visible);
 
     //--------------------------------------------------------------------
     // The rest should only be done occasionally for far away avatars.
@@ -7691,12 +7691,12 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (!needs_update && !isSelf())
     {
-        fs_av_importance_ran(0);
+        rk_av_importance_ran(0);
         AvScope early_scope(AV_CHAR_EARLY);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
-    fs_av_importance_ran((!visible && !isSelf()) ? 1 : 2);
+    rk_av_importance_ran((!visible && !isSelf()) ? 1 : 2);
 
     //--------------------------------------------------------------------
     // Handle transitions between regular rendering, jellydoll, or invisible.
@@ -7750,7 +7750,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     bool root_in_job = false;
     {
         static const bool root_job_on = !getenv("LL_VK_ROOTJOB") || atoi(getenv("LL_VK_ROOTJOB")) != 0;
-        if (root_job_on && !gFSAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !(isSitting() && getParent()))
+        if (root_job_on && !gRKAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !(isSitting() && getParent()))
         {
             if (!visible)
             {
@@ -7820,9 +7820,9 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     else
     {
         // Might be better to do HIDDEN_UPDATE if cloud
-        if (gFSAvTimersOn)
+        if (gRKAvTimersOn)
         {
-            gFSAvStatCount[isSelf() ? AV_INL_SELF : (isControlAvatar() ? AV_INL_CONTROL : AV_INL_OTHER)]++;
+            gRKAvStatCount[isSelf() ? AV_INL_SELF : (isControlAvatar() ? AV_INL_CONTROL : AV_INL_OTHER)]++;
         }
         AvScope inline_scope(AV_CHAR_INLINE);
         updateMotions(LLCharacter::NORMAL_UPDATE);
@@ -7939,9 +7939,9 @@ void LLVOAvatar::runDeferredMotionBlend()
             LL_INFOS("RootJob") << "root position and rotation worked out in the avatar's pool job: " << in_job.load() << " so far" << LL_ENDL;
         }
     }
-    if (fs_av_imp_on())
+    if (rk_av_imp_on())
     {
-        fs_av_imp_motions(this, mMotionController.getActiveMotions().size());
+        rk_av_imp_motions(this, mMotionController.getActiveMotions().size());
     }
     if (mDeferredMatricesOnly)
     {
@@ -13574,7 +13574,7 @@ struct RKFlatSkeleton
     U32 mLocalsKey = ~0u;                   // the structure key the joints were bound for
     // <FS> avatar relative skinning: the world matrices again, with the world position of every joint relative to an anchor; made from the joints' local transforms (a float world position at 3800 m has a step of 0.24 mm, the chain
     // from the locals does not). Valid for one fill of the plain array and one anchor.
-    U32 mFillCount = 0;                     // counts the fills of mWorld (fs_flat_fill, the pose job)
+    U32 mFillCount = 0;                     // counts the fills of mWorld (rk_flat_fill, the pose job)
     std::vector<LLMatrix4a> mRelWorld;
     std::vector<LLVector3> mRelPos;
     std::vector<LLQuaternion> mRelRot;
@@ -13589,7 +13589,7 @@ std::atomic<U64> sFlatPalettes{ 0 }, sFlatFallbacks{ 0 }, sFlatFills{ 0 };
 std::atomic<U32> sFlatLast{ 0 };
 }
 
-static void fs_flat_report()
+static void rk_flat_report()
 {
     if (gFrameCount >= sFlatLast.load() + 600)
     {
@@ -13601,7 +13601,7 @@ static void fs_flat_report()
     }
 }
 
-static void fs_flat_fill(LLVOAvatar* av, RKFlatSkeleton& flat)
+static void rk_flat_fill(LLVOAvatar* av, RKFlatSkeleton& flat)
 {
     const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
     if (flat.mWorld.size() != N)
@@ -13669,7 +13669,7 @@ static void fs_flat_fill(LLVOAvatar* av, RKFlatSkeleton& flat)
 
 // <FS> avatar relative skinning: the chain of the flat world pass, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
 // subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when LL_VK_RIGREBASE_CHECK=1.
-static bool fs_flat_rel_fill(RKFlatSkeleton& flat, const F32* anchor)
+static bool rk_flat_rel_fill(RKFlatSkeleton& flat, const F32* anchor)
 {
     if (flat.mOrder.empty() || flat.mWorld.empty())
     {
@@ -13771,7 +13771,7 @@ bool LLVOAvatar::flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo
         return false;
     }
     RKFlatSkeleton& flat = *mFlatSkel;
-    if (!fs_flat_rel_fill(flat, anchor))
+    if (!rk_flat_rel_fill(flat, anchor))
     {
         return false;
     }
@@ -13788,7 +13788,7 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     RKFlatSkeleton& flat = *mFlatSkel;
     if (flat.mFrame != gFrameCount)
     {
-        fs_flat_fill(this, flat);
+        rk_flat_fill(this, flat);
         flat.mFrame = gFrameCount;
     }
     LLSkinningUtil::initJointNums(const_cast<LLMeshSkinInfo*>(skin), this);
@@ -13804,11 +13804,11 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     {
         ++sFlatPalettes;
     }
-    fs_flat_report();
+    rk_flat_report();
 }
 
 // <FS> PLAN-avatars.md stage B3a: LL_VK_PALJOB 1 (default) the palettes are rebuilt by a pool job per avatar after the frame's completions, 0 only on request, 2 job and compared with a rebuild at the first request
-static int fs_paljob_mode()
+static int rk_paljob_mode()
 {
     static const int mode = getenv("LL_VK_PALJOB") ? atoi(getenv("LL_VK_PALJOB")) : 1;
     return mode;
@@ -13821,16 +13821,16 @@ std::atomic<U64> sPalBuildNs[2], sPalBuilds[2], sPalWaitNs{ 0 }, sPalRequests2{ 
 std::atomic<U64> sPalCompared{ 0 }, sPalDiffer{ 0 }, sPalSkippedUninit{ 0 }, sPalStaleByTouch{ 0 }, sPalDifferUntouched{ 0 };
 std::atomic<U32> sPalJobTouchSerial{ 0 };       // LLJoint::sTouchSerial when the palette jobs of the last batch were done: a joint touched after that makes the job's palettes suspect for the frame
 std::atomic<U32> sPalTimeLast{ 0 };
-bool fs_paltime_on()
+bool rk_paltime_on()
 {
     static const bool on = getenv("LL_VK_PALTIME") != nullptr;
     return on;
 }
-inline U64 fs_pal_now()
+inline U64 rk_pal_now()
 {
     return (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
-void fs_paltime_report()
+void rk_paltime_report()
 {
     if (gFrameCount >= sPalTimeLast.load() + 600)
     {
@@ -13851,14 +13851,14 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     // <FS> the packet builders of the shadow cascades run on pool threads and ask for palettes at the same time: the lazy cache (and the lazy joint matrices and joint numbers it fills in) is one at a time.
     // The entry returned is not written again in this frame, so the callers read it without the lock.
     static std::mutex palette_mutex;
-    const bool timed = fs_paltime_on();
+    const bool timed = rk_paltime_on();
     // <FS> stage B3b: a request that finds the palette ready (the job built it, or an earlier request) reads the avatar's cache under a shared lock and never touches the global lock
     {
-        const U64 shared_t0 = timed ? fs_pal_now() : 0;
+        const U64 shared_t0 = timed ? rk_pal_now() : 0;
         std::shared_lock<std::shared_mutex> shared_lock(mPaletteMutex);
         if (timed)
         {
-            sPalWaitNs += fs_pal_now() - shared_t0;
+            sPalWaitNs += rk_pal_now() - shared_t0;
             ++sPalRequests2;
         }
         auto found = mMatrixPaletteCache.find(skin->mHash);
@@ -13868,17 +13868,17 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
             if (timed)
             {
                 ++sPalHits;
-                fs_paltime_report();
+                rk_paltime_report();
             }
             return found->second;
         }
     }
-    const U64 wait_t0 = timed ? fs_pal_now() : 0;
+    const U64 wait_t0 = timed ? rk_pal_now() : 0;
     std::lock_guard<std::mutex> palette_lock(palette_mutex);
     std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
     if (timed)
     {
-        sPalWaitNs += fs_pal_now() - wait_t0;
+        sPalWaitNs += rk_pal_now() - wait_t0;
     }
 
     U64 hash = skin->mHash;
@@ -13899,9 +13899,9 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         if (timed)
         {
             ++sPalHits;
-            fs_paltime_report();
+            rk_paltime_report();
         }
-        if (entry.mJobFor == gFrameCount && fs_paljob_mode() == 2 && !entry.mJobChecked && entry.mSkin.notNull())
+        if (entry.mJobFor == gFrameCount && rk_paljob_mode() == 2 && !entry.mJobChecked && entry.mSkin.notNull())
         {
             // compare mode: the palette the job built against a rebuild now, bit for bit (matrices, as B0)
             entry.mJobChecked = true;
@@ -13935,13 +13935,13 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
         // <FS> motion vectors: last frame's palette becomes the previous one, but only when the entry was computed in the frame just before (an avatar that was not
         // asked for in between has no valid history: previous = current, no motion)
         const bool had_last_frame = entry.mComputed && entry.mFrame == gFrameCount - 1;
-        const U64 build_t0 = timed ? fs_pal_now() : 0;
+        const U64 build_t0 = timed ? rk_pal_now() : 0;
         buildPaletteEntry(entry, skin, gFrameCount, had_last_frame, had_last_frame);
         if (timed)
         {
-            sPalBuildNs[0] += fs_pal_now() - build_t0;
+            sPalBuildNs[0] += rk_pal_now() - build_t0;
             ++sPalBuilds[0];
-            fs_paltime_report();
+            rk_paltime_report();
         }
     }
     return entry;
@@ -13997,7 +13997,7 @@ void LLVOAvatar::ensureJointLocals()
     const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
     if (flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty())
     {
-        fs_flat_fill(this, flat);
+        rk_flat_fill(this, flat);
         flat.mStructKey = key;
     }
     if (flat.mLocalsKey == key && flat.mLocals.size() == N)
@@ -14058,7 +14058,7 @@ bool LLVOAvatar::flatWorldPass()
     const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
     if (flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty())
     {
-        fs_flat_fill(this, flat);
+        rk_flat_fill(this, flat);
         flat.mStructKey = key;
     }
     // The arithmetic of LLXformMatrix::update / updateMatrix, in array order from the joints' locals, with the parents' world position, rotation, scale and scale-child-offset kept in arrays (the first joints'
@@ -14200,12 +14200,12 @@ const F32* LLVOAvatar::flatWorld(S32 joint_num) const
 // the pool job of one avatar (after the completions of the frame): rebuilds the palettes it had asked for in the last rendered frame, for the frame about to be rendered
 void LLVOAvatar::buildPalettesInJob()
 {
-    const int mode = fs_paljob_mode();
+    const int mode = rk_paljob_mode();
     if (mode == 0 || isDead() || mMatrixPaletteCache.empty())
     {
         return;
     }
-    const bool timed = fs_paltime_on();
+    const bool timed = rk_paltime_on();
     const U32 target = gFrameCount + 1;     // (gFrameCount is advanced at the start of display(), after this idle: the request of the render finds mFrame == its own frame)
     std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
     if (mFlatSkel)
@@ -14231,14 +14231,14 @@ void LLVOAvatar::buildPalettesInJob()
             continue;
         }
         const bool again = entry.mFrame == target;
-        const U64 t0 = timed ? fs_pal_now() : 0;
+        const U64 t0 = timed ? rk_pal_now() : 0;
         buildPaletteEntry(entry, skin, target, true, !again);
         {
             // <FS> P1 step 2: the palette goes straight into the coming frame's arena (the request at render time finds the slot stamped: no copy under the list's mutex)
             U32 at = 0;
             const F32* prev_pose = entry.mPrevGLMp.size() == entry.mGLMp.size() ? entry.mPrevGLMp.data() : nullptr;
-            const F32 moving = ll_palette_moving(entry.mGLMp.data(), prev_pose, (U32)entry.mGLMp.size(), getRenderPosition());
-            if (ll_frame_palette_write(entry.mGLMp.data(), prev_pose, moving, (U32)entry.mGLMp.size(), target, at, entry.mPaletteId))
+            const F32 moving = rk_palette_moving(entry.mGLMp.data(), prev_pose, (U32)entry.mGLMp.size(), getRenderPosition());
+            if (rk_frame_palette_write(entry.mGLMp.data(), prev_pose, moving, (U32)entry.mGLMp.size(), target, at, entry.mPaletteId))
             {
                 entry.mListSlot.store(((U64)target << 32) | at, std::memory_order_release);
             }
@@ -14247,7 +14247,7 @@ void LLVOAvatar::buildPalettesInJob()
         entry.mJobChecked = false;
         if (timed)
         {
-            sPalBuildNs[1] += fs_pal_now() - t0;
+            sPalBuildNs[1] += rk_pal_now() - t0;
             ++sPalBuilds[1];
         }
     }
@@ -14260,7 +14260,7 @@ void LLVOAvatar::buildPalettesInJob()
 
 LLVOAvatar::MatrixPaletteCache::~MatrixPaletteCache()
 {
-    ll_palette_id_free(mPaletteId.load(std::memory_order_relaxed));
+    rk_palette_id_free(mPaletteId.load(std::memory_order_relaxed));
 }
 
 void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinInfo* skin, U32 stamp, bool had_last_frame, bool swap_prev)
@@ -14294,9 +14294,9 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
 
         const LLMatrix4a* mat = &(entry.mMatrixPalette[0]);
 
-        // <FS> avatar relative skinning: above a height the palette the shaders read is made from world matrices relative to the anchor (ll_rig_anchor); the plain one is kept for the programs that take a
+        // <FS> avatar relative skinning: above a height the palette the shaders read is made from world matrices relative to the anchor (rk_rig_anchor); the plain one is kept for the programs that take a
         // uniform palette. The tail (one entry more) names the anchor, all zeros when the palette is plain.
-        const RKRigAnchor rig = ll_rig_anchor(stamp);
+        const RKRigAnchor rig = rk_rig_anchor(stamp);
         bool rebase = false;
         LLMeshSkinInfo::matrix_list_t rel_palette;
         if (rig.mActive)

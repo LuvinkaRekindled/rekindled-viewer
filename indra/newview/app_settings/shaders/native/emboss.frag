@@ -15,7 +15,7 @@ void main()
 {
     mirror_clip(vary_position);
     const uint slot = LL_HM(vary_slot);
-    const float tex0 = texture(ll_tbl2d[nonuniformEXT(slot)], vary_texcoord0).a;
-    const float tex1 = texture(ll_tbl2d[nonuniformEXT(slot)], vary_texcoord1).a;
+    const float tex0 = texture(rk_tbl2d[nonuniformEXT(slot)], vary_texcoord0).a;
+    const float tex1 = texture(rk_tbl2d[nonuniformEXT(slot)], vary_texcoord1).a;
     frag_color = vec4(max(tex0 + (1.0 - tex1) - 0.5, 0.0));
 }

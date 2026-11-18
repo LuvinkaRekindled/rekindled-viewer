@@ -695,13 +695,13 @@ const Program::PacketUniforms& Program::packetUniforms()
             auto it = mUniformIndex.find(name);
             return it == mUniformIndex.end() ? ~0u : (U32)it->second;
         };
-        mPacketU.mTable = find("ll_packet_table");
-        mPacketU.mModels = find("ll_packet_models");
-        mPacketU.mTexmats = find("ll_packet_texmats");
-        mPacketU.mPbr = find("ll_packet_pbr");
-        mPacketU.mLights = find("ll_light_table");
-        mPacketU.mImpostors = find("ll_impostor_table");
-        mPacketU.mMotion = find("ll_packet_motion");
+        mPacketU.mTable = find("rk_packet_table");
+        mPacketU.mModels = find("rk_packet_models");
+        mPacketU.mTexmats = find("rk_packet_texmats");
+        mPacketU.mPbr = find("rk_packet_pbr");
+        mPacketU.mLights = find("rk_light_table");
+        mPacketU.mImpostors = find("rk_impostor_table");
+        mPacketU.mMotion = find("rk_packet_motion");
         mPacketU.mResolved = true;
     }
     return mPacketU;
