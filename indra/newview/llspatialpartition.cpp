@@ -1715,37 +1715,6 @@ S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
     return 0;
 }
 
-void LLSpatialPartition::cullSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task)
-{
-    LLSpatialGroup* group = (LLSpatialGroup*) mOctree->getListener(0);
-    group->rebound();
-
-    if (mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot))
-    {
-        LLOctreeCullNoFarClip culler(&camera);
-        culler.traverseTop(mOctree, levels, descend_more, on_task);
-    }
-    else
-    {
-        LLOctreeCull culler(&camera);
-        culler.traverseTop(mOctree, levels, descend_more, on_task);
-    }
-}
-
-void LLSpatialPartition::cullTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task)
-{
-    if (mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot))
-    {
-        LLOctreeCullNoFarClip culler(&camera);
-        culler.traverseTask(task);
-    }
-    else
-    {
-        LLOctreeCull culler(&camera);
-        culler.traverseTask(task);
-    }
-}
-
 void pushVerts(LLFace* face)
 {
     if (face)
