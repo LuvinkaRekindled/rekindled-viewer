@@ -15195,6 +15195,7 @@ S32 LLVOAvatar::getUnbakedPixelAreaRank()
 // static
 void LLVOAvatar::cullAvatarsByPixelArea()
 {
+    LL_CPU_ZONE("avatars: cullAvatarsByPixelArea");
     LLCharacter::sInstances.sort([](LLCharacter* lhs, LLCharacter* rhs)
         {
             return ((LLVOAvatar*)lhs)->mVisibilityPreference > ((LLVOAvatar*)rhs)->mVisibilityPreference;

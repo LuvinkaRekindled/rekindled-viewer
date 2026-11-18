@@ -45,6 +45,7 @@
 #include "llviewerregion.h"
 #include "lldrawpoolterrain.h"
 #include "llworldmipmap.h"
+#include "llgpuzonetimer.h"
 
 extern LLPipeline gPipeline;
 extern bool gShiftFrame;
@@ -857,7 +858,7 @@ bool LLSurface::idleUpdate(F32 max_update_time)
     }
 
     // some patches changed, update region reflection probes
-    mRegionp->updateReflectionProbes(did_update);
+    { LL_CPU_ZONE("idle: region probe grid"); mRegionp->updateReflectionProbes(did_update); }
 
     return did_update;
 }
