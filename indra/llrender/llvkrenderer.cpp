@@ -741,63 +741,6 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
-// A native stand-in (llvknative.h) draws with the values the viewer set on the program it replaces: every loose uniform of the same name is copied (a texture slot is not: the draw writes
-// the stand-in's own), and the sampler units of the samplers of the same name.
-void Program::adoptFrom(const Program& src)
-{
-    if (mAdoptSrc != &src || mAdoptSrcUniforms != src.mInfo.mUniforms.size() || mAdoptSrcSamplers != src.mInfo.mSamplers.size() || mAdoptUniformMap.size() != mInfo.mUniforms.size())
-    {
-        mAdoptSrc = &src;
-        mAdoptSrcUniforms = src.mInfo.mUniforms.size();
-        mAdoptSrcSamplers = src.mInfo.mSamplers.size();
-        mAdoptUniformMap.assign(mInfo.mUniforms.size(), -1);
-        for (size_t i = 0; i < mInfo.mUniforms.size(); ++i)
-        {
-            const LooseUniform& u = mInfo.mUniforms[i];
-            auto it = u.mName.compare(0, 6, "ll_ti_") == 0 ? src.mUniformIndex.end() : src.mUniformIndex.find(u.mName);
-            if (it != src.mUniformIndex.end())
-            {
-                mAdoptUniformMap[i] = (S32)it->second;
-            }
-        }
-        mAdoptSamplerMap.assign(mInfo.mSamplers.size(), -1);
-        for (size_t i = 0; i < mInfo.mSamplers.size(); ++i)
-        {
-            mAdoptSamplerMap[i] = src.findSampler(mInfo.mSamplers[i].mName);
-        }
-    }
-    for (size_t ui = 0; ui < mInfo.mUniforms.size(); ++ui)
-    {
-        if (mAdoptUniformMap[ui] < 0)
-        {
-            continue;
-        }
-        const LooseUniform& u = mInfo.mUniforms[ui];
-        const LooseUniform& s = src.mInfo.mUniforms[(size_t)mAdoptUniformMap[ui]];
-        // the bytes of the native uniform (its std140 size counts every element of an array); the old program's own size field is not trusted: it is not always the whole array
-        const U32 bytes = u.mSize;
-        if (u.mType != s.mType || u.mArraySize != s.mArraySize || (size_t)s.mOffset + bytes > src.mShadow[s.mClass].size() || (size_t)u.mOffset + bytes > mShadow[u.mClass].size())
-        {
-            static std::set<std::string> warned;
-            if (warned.insert(mName + "/" + u.mName).second)
-            {
-                LL_WARNS("VkNative") << "native program '" << mName << "': the uniform '" << u.mName << "' is a " << u.mType << "[" << u.mArraySize << "] here and a " << s.mType << "[" << s.mArraySize << "] in the program it stands in for: not copied" << LL_ENDL;
-            }
-            mAdoptUniformMap[ui] = -1;          // (said once, and not looked at again for this source)
-            continue;
-        }
-        writeRange(u.mClass, u.mOffset, bytes, &src.mShadow[s.mClass][s.mOffset]);
-    }
-    for (size_t i = 0; i < mAdoptSamplerMap.size(); ++i)
-    {
-        const S32 j = mAdoptSamplerMap[i];
-        if (j >= 0)
-        {
-            mSamplerUnits[i] = src.mSamplerUnits[(size_t)j];
-        }
-    }
-}
-
 void Program::writeRange(U32 cls, U32 offset, U32 size, const U8* data)
 {
     if (cls >= UC_COUNT || (size_t)offset + size > mShadow[cls].size())

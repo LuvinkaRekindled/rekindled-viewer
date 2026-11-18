@@ -13,10 +13,9 @@
  *   outputs            explicit locations
  *   depth              Vulkan clip space (z in [0, w]); no GL remap
  *
- * Which old program a native one stands in for, and the switch that turns it on, are in native/manifest.txt:
- *     override | <old program name> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE | spec ID=VALUE ...]
- * The family is a live key of rt-debug.txt (native_<family>=1; 0 or missing: the old program). The renderer swaps the program at the draw (nativeOverride), the old program's uniform values and sampler units
- * are copied by name into the native one, so the callers do not change. LL_VK_NATIVE_DIR points the loader at the source directory (edit a shader, save: it is recompiled within a second).
+ * The programs are listed in native/manifest.txt, one line each; a program is built from its line when the viewer loads its shaders (nativeOnlyLine):
+ *     override | <program name> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE ...] [| default on] [| rtquery] [| geometry <file>]
+ * LL_VK_NATIVE_DIR points the loader at the source directory. A compile is kept on disk between runs (the compile cache of llvknative.cpp, LL_VK_NATIVE_CACHE=0 turns it off).
  */
 
 #ifndef LL_LLVKNATIVE_H
@@ -47,12 +46,6 @@ int nativeKey(const std::string& key, int def);
 // they are set. A native program is built with them (before the manifest's own defines) and rebuilt when they change.
 void nativeSetGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines);
 
-// The program to draw with in place of 'p' (p itself when no native program stands in for it or its family is off). Called on the worker thread for every draw.
-Program* nativeOverride(Program* p);
-
-// <FS> shader cleanup (stage 4): logs the native draws and the fallbacks by reason (tag NativeCensus); LL_VK_PROGRAM_CENSUS=1
-void dumpNativeCensus();
-
 // <FS> shader cleanup (stage 4, step 1 of DESIGN-stock-carrier-removal.md): a program of a converted family (kNativeOnlyFamilies in llvknative.cpp) has no stock twin: createShader asks here for the
 // manifest line of its name and builds the program from the native source (the way Native Sun Half does). False when the program has no line, its family is not converted, the line has `require` /
 // `when` / `spec` options, or several lines name the program. `defines` are the manifest line's own; the viewer's global defines are added by the caller (nativeGlobalDefinesCopy)
@@ -62,14 +55,6 @@ std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
 // <FS> stage 4 step 4: whether this session's stock programs carry ray query code (the global define LL_RT_SHADOWS is set). A manifest line with the option `rt` is native only while it is not: with ray traced
 // shadows on, the stock program with its ray query code stays and the line is swapped in at the draw. Set with the global defines each time the viewer's shaders are set up (main thread).
 void nativeSetRtSession(bool on);
-
-// <FS> shader cleanup (stage 4, step 0 of DESIGN-stock-carrier-removal.md): the interface of a program as one line of text: the loose uniforms (name:type, arrays name:type[n]; the ll_ti_ slot members left out),
-// the samplers, the vertex inputs and the number of fragment outputs. Used for the stock and the native side of the interface comparison.
-std::string interfaceText(const ProgramInfo& info);
-
-// logs the interface of every built native program, one line each (tag InterfaceDiff, `native | <program> | ...`); LL_VK_INTERFACE_DIFF=1. LL_VK_NATIVE_BUILD_ALL=1 builds every manifest line at the first
-// draw so that the lines no scene reaches have an interface too
-void dumpNativeInterfaces();
 
 } // namespace LLVk
 
