@@ -12004,17 +12004,20 @@ void main()
     uint n = J.j[b + 15u];
     gSrc = J.j[b + 16u];
     if (n > 1024u) return;
-    for (uint i = tid; i < 1024u; i += 256u)
+    // the network covers the next power of two at or above n, not always 1024 (the stores average 34 to 96 particles: 55 stages of 1024 slots were 15 stages of 64 or 128): the padding keys still sort last
+    uint N = 2u;
+    while (N < n) N <<= 1;
+    for (uint i = tid; i < N; i += 256u)
     {
         sKey[i] = (i < n) ? sort_key(i) : 0xFFFFFFFFu;
         sIdx[i] = i;
     }
     barrier();
-    for (uint k = 2u; k <= 1024u; k <<= 1)
+    for (uint k = 2u; k <= N; k <<= 1)
     {
         for (uint j = k >> 1; j > 0u; j >>= 1)
         {
-            for (uint i = tid; i < 1024u; i += 256u)
+            for (uint i = tid; i < N; i += 256u)
             {
                 uint ixj = i ^ j;
                 if (ixj > i)
