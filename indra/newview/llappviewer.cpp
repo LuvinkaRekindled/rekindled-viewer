@@ -1599,12 +1599,12 @@ void LLAppViewer::initMaxHeapSize()
 // externally visible timers
 LLTrace::BlockTimerStatHandle FTM_FRAME("Frame");
 
-// <FS> Development aid (inert unless the environment variable FS_DEV_SETTINGS names a text file): applies "SettingName value" lines
+// <FS> Development aid (inert unless the environment variable RK_DEV_SETTINGS names a text file): applies "SettingName value" lines
 // to the running viewer as unsaved values, so a measurement script can switch settings without UI clicks and nothing reaches
 // settings.xml. Lines starting with # are ignored; removing a line or the file puts the setting back to what it was.
 static void apply_dev_settings()
 {
-    static const char* const env_path = getenv("FS_DEV_SETTINGS");
+    static const char* const env_path = getenv("RK_DEV_SETTINGS");
     if (!env_path)
     {
         return;
@@ -2204,7 +2204,7 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
-    RKShaderProgram::dumpProgramCensus(); // <FS> LL_VK_PROGRAM_CENSUS=1 (shader cleanup, stage 4): what the run loaded and bound, while the programs are still there
+    RKShaderProgram::dumpProgramCensus(); // <FS> RK_VK_PROGRAM_CENSUS=1 (shader cleanup, stage 4): what the run loaded and bound, while the programs are still there
     RKVkBridge::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
 
 #if LL_VELOPACK
@@ -3985,29 +3985,29 @@ bool LLAppViewer::initWindow()
 
 #if LL_WINDOWS
     // <FS> The settings of the Vulkan renderer (DLSS, ray tracing, the worker thread) are translated to the environment variables the renderer reads, before the window exists.
-    // LL_VK_MIRROR set by hand (the launchers do) means "configured by hand": the settings are not translated and the variables the launcher set are used as they are.
-    if (!getenv("LL_VK_MIRROR"))
+    // RK_VK_MIRROR set by hand (the launchers do) means "configured by hand": the settings are not translated and the variables the launcher set are used as they are.
+    if (!getenv("RK_VK_MIRROR"))
     {
         LL_INFOS("AppInit") << "translating the Vulkan renderer settings" << LL_ENDL;
-        _putenv_s("LL_VK_MIRROR", "1");
-        if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("LL_VK_DLSS"))
+        _putenv_s("RK_VK_MIRROR", "1");
+        if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("RK_VK_DLSS"))
         {
-            _putenv_s("LL_VK_DLSS", "1");       // the upscaler switch (AMD FSR 3.1; the variable name is a left over from DLSS)
-            _putenv_s("LL_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
-            // <FS> DLSS-NR (a local build option, doc/vulkan/PLAN-dlss-nr.md): FSVkNeuralRenderMode is read live by the pipeline; LL_VK_DLSS_NR stays the launchers' test override
+            _putenv_s("RK_VK_DLSS", "1");       // the upscaler switch (AMD FSR 3.1; the variable name is a left over from DLSS)
+            _putenv_s("RK_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
+            // <FS> DLSS-NR (a local build option, doc/vulkan/PLAN-dlss-nr.md): FSVkNeuralRenderMode is read live by the pipeline; RK_VK_DLSS_NR stays the launchers' test override
         }
-        if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("LL_VK_RT") && !getenv("LL_VK_RT_SHADOWS"))
+        if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("RK_VK_RT") && !getenv("RK_VK_RT_SHADOWS"))
         {
-            _putenv_s("LL_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental; any card with Vulkan ray queries)
-            _putenv_s("LL_VK_RT_SHADOWS", "1");
-            if ((gSavedSettings.getS32("FSVkMirrorQuality") > 0 || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("LL_VK_RT_MATERIALS"))
+            _putenv_s("RK_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental; any card with Vulkan ray queries)
+            _putenv_s("RK_VK_RT_SHADOWS", "1");
+            if ((gSavedSettings.getS32("FSVkMirrorQuality") > 0 || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("RK_VK_RT_MATERIALS"))
             {
-                _putenv_s("LL_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
+                _putenv_s("RK_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
             }
         }
         {
             // the scene tables (doc/vulkan/S2-handoff.md). <FS> K6: they are the only path now (the FSVkResidentScene setting is gone); what the environment sets explicitly (also 0) still wins for the ray scene parts.
-            for (const char* name : { "LL_VK_SCENE_RAYRANGE", "LL_VK_RT_INSTDELTA" })
+            for (const char* name : { "RK_VK_SCENE_RAYRANGE", "RK_VK_RT_INSTDELTA" })
             {
                 if (!getenv(name))
                 {
@@ -4015,9 +4015,9 @@ bool LLAppViewer::initWindow()
                 }
             }
         }
-        if (!getenv("LL_VK_ASYNC"))
+        if (!getenv("RK_VK_ASYNC"))
         {
-            _putenv_s("LL_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
+            _putenv_s("RK_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
         }
     }
 #endif
@@ -4127,7 +4127,7 @@ bool LLAppViewer::initWindow()
 
     gPipeline.init();
     LL_INFOS("AppInit") << "gPipeline Initialized" << LL_ENDL;
-    if (const char* pool_selftest = getenv("LL_VK_POOL_SELFTEST"))
+    if (const char* pool_selftest = getenv("RK_VK_POOL_SELFTEST"))
     {
         RKForkJoinPool::selfTest((unsigned)std::max(atoi(pool_selftest), 1));       // (GPU-LIFETIMES.md step 4: a stress test of the pool and a trial of the phase check, nothing without the variable)
     }
@@ -7444,7 +7444,7 @@ void stall_watch_thread()
 
 void stall_watch_note(std::string_view state)
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();       // off unless LL_VK_DIAG=1 (run-viewer-clean-rtshadows-diag.bat)
+    static const bool on = []() { const char* e = getenv("RK_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();       // off unless RK_VK_DIAG=1 (run-viewer-clean-rtshadows-diag.bat)
     if (!on)
     {
         return;

@@ -140,7 +140,7 @@ public:
     void setAllowCompression(bool allow) { mAllowCompression = allow; }
 
     // the texture is named: nothing is bound or read from the unit state
-    static void setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: LL_VK_FORMAT_VERIFY
+    static void setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void *pixels, bool allow_compression = true, const char* file = __builtin_FILE(), int line = __builtin_LINE());       // file/line: RK_VK_FORMAT_VERIFY
 
     bool createImageTexture() ;
     bool createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,

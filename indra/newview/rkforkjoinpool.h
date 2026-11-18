@@ -86,7 +86,7 @@ public:
     // given up on after a second of waiting with every job claimed and none in flight (the state is logged; the report line prints both; 0 and 0 are the expectation)
     static inline std::atomic<unsigned> sMismatchRuns{ 0 }, sRecoveredRuns{ 0 }, sUnderflows{ 0 };
 
-    // <FS> LL_VK_POOL_LABELS=1 (C4 measurement, doc/vulkan/PLAN-clean-core.md): the time the jobs of each named family take on ALL threads of a batch (the workers and the launching thread), per frame, logged
+    // <FS> RK_VK_POOL_LABELS=1 (C4 measurement, doc/vulkan/PLAN-clean-core.md): the time the jobs of each named family take on ALL threads of a batch (the workers and the launching thread), per frame, logged
     // every 600 frames (reportLabels, called from the main loop). A launch names its family with runLabeled (or a Label in scope); a batch launched without one is counted as "other".
     // Wall time of each job (two clock reads a job: only while the switch is set). For a 4-core machine the total of the families is the number, not the main thread's wait zone.
     struct Label
@@ -96,7 +96,7 @@ public:
         ~Label() { sCurrentLabel = mPrevious; }
     };
     static inline thread_local const char* sCurrentLabel = nullptr;
-    static bool labelsOn() { static const bool on = getenv("LL_VK_POOL_LABELS") != nullptr; return on; }
+    static bool labelsOn() { static const bool on = getenv("RK_VK_POOL_LABELS") != nullptr; return on; }
     void runLabeled(const char* label, size_t count, const std::function<void(size_t)>& fn) { Label l(label); run(count, fn); }
     // main thread, every frame: logs and resets the per-label accounting every 600 frames (a few lines: family, ms a frame on all threads, of it on the main thread, jobs and batches a frame)
     static void reportLabels(unsigned frame_count);
@@ -152,10 +152,10 @@ public:
             std::lock_guard<std::mutex> lock(mMutex);      // (under the mutex: a worker that is about to sleep cannot miss it)
             mGeneration.fetch_add(1, std::memory_order_release);
         }
-        // <FS> LL_VK_POOL_WAKE (default 1, 0 = notify_all as before): wake only as many sleeping workers as the batch has jobs for besides the launching thread's own share. A batch of one or two jobs (a shadow cascade's
+        // <FS> RK_VK_POOL_WAKE (default 1, 0 = notify_all as before): wake only as many sleeping workers as the batch has jobs for besides the launching thread's own share. A batch of one or two jobs (a shadow cascade's
         // cull) used to wake every sleeper: seven futex wake-ups on the launching thread and seven threads fighting for the mutex to find nothing to do. Workers that are still spinning see the new generation by themselves.
-        static const bool targeted_wake = !getenv("LL_VK_POOL_WAKE") || atoi(getenv("LL_VK_POOL_WAKE")) != 0;
-        static const bool wake_stats = getenv("LL_VK_POOL_WAKE_STATS") != nullptr;
+        static const bool targeted_wake = !getenv("RK_VK_POOL_WAKE") || atoi(getenv("RK_VK_POOL_WAKE")) != 0;
+        static const bool wake_stats = getenv("RK_VK_POOL_WAKE_STATS") != nullptr;
         const auto notify_t0 = wake_stats ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         const int sleepers = mSleeping.load(std::memory_order_acquire);
         if (targeted_wake && sleepers > 0)
@@ -252,7 +252,7 @@ public:
     }
 
     // A stress test of the pool and a trial of the thread phase check (GPU-LIFETIMES.md step 4; incident row 11, the double claim that a standalone test of this header found in seconds).
-    // Run once at start by LL_VK_POOL_SELFTEST=<seconds> (main thread, blocks for that long). Random batches of 1 to 1000 jobs: each index must run exactly once and nothing may be running when
+    // Run once at start by RK_VK_POOL_SELFTEST=<seconds> (main thread, blocks for that long). Random batches of 1 to 1000 jobs: each index must run exactly once and nothing may be running when
     // run() returns. Healthy = "0 wrong, 0 still running". Then the phase check is tried: a call on the main thread outside a batch must stay silent, calls from jobs must each log a PhaseCheck line.
     static void selfTest(unsigned seconds)
     {
@@ -313,8 +313,8 @@ public:
             const unsigned hardware_threads = std::thread::hardware_concurrency();
             const unsigned budget = hardware_threads / 2 < 8u ? hardware_threads / 2 : 8u;
             unsigned workers = (hardware_threads >= 8) ? budget - 1 : 0;
-            // LL_VK_POOL_WORKERS=<n>: the worker count by hand (a test of a larger pool: the main thread works a share of every batch, so a pool of n workers is n + 1 threads of work)
-            const char* forced = getenv("LL_VK_POOL_WORKERS");
+            // RK_VK_POOL_WORKERS=<n>: the worker count by hand (a test of a larger pool: the main thread works a share of every batch, so a pool of n workers is n + 1 threads of work)
+            const char* forced = getenv("RK_VK_POOL_WORKERS");
             if (forced && hardware_threads >= 8)
             {
                 workers = (unsigned)std::max(atoi(forced), 0);
@@ -365,7 +365,7 @@ private:
         size_t mCount = 0;
     };
 
-    // the per-label accounting (LL_VK_POOL_LABELS): a few families, found by the address of their label string
+    // the per-label accounting (RK_VK_POOL_LABELS): a few families, found by the address of their label string
     struct LabelStat
     {
         std::atomic<const char*> mName{ nullptr };
@@ -493,7 +493,7 @@ private:
     std::vector<std::thread> mThreads;
     std::mutex mMutex;
     std::condition_variable mWake;
-    std::atomic<int> mSleeping{ 0 };       // workers waiting on mWake (LL_VK_POOL_WAKE)
+    std::atomic<int> mSleeping{ 0 };       // workers waiting on mWake (RK_VK_POOL_WAKE)
     std::condition_variable mDone;
     Batch mBatches[kSlots];
     std::atomic<unsigned long long> mSerial{ 0 };

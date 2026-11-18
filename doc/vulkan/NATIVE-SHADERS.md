@@ -11,7 +11,7 @@ Code: `indra/llrender/rkvknative.h/.cpp` (the compile of a program with glslang,
 
 ## Putting it in the picture
 - `native/manifest.txt`: `override | <name of the viewer program> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE] [| default on] [| rtquery] [| geometry <file>]`. The program of that name is built from its line when the viewer loads its shaders (`RKShaderProgram::link`).
-- `LL_VK_NATIVE_DIR=<repo>/indra/newview/app_settings/shaders/native` makes the viewer read the source directory instead of the packaged copy. A shader edit needs a viewer start (there is no hot reload); the compile cache (`<cache>/native_spirv/`, `LL_VK_NATIVE_CACHE=0` turns it off) recompiles only the programs whose files changed.
+- `RK_VK_NATIVE_DIR=<repo>/indra/newview/app_settings/shaders/native` makes the viewer read the source directory instead of the packaged copy. A shader edit needs a viewer start (there is no hot reload); the compile cache (`<cache>/native_spirv/`, `RK_VK_NATIVE_CACHE=0` turns it off) recompiles only the programs whose files changed.
 
 ## Testing old against new (historical: the old programs are gone; the lap tools below need a build that still has them)
 - `powershell -File <work>\native-ab.ps1 -Name <lap name> -Family <family> -Seconds 25 -Pairs 3` (start the lap `h6-fixed.ps1 -Mode nativeab -Prefix <p>-` in the background first): alternates the family 0 / 1 in 25 s windows and writes `<name>.keys.txt`; read GPU ms per window with the zone timers (`H6_EXTRA_ARGS='--set,FSGpuZoneTimers,1'`) as with `keycycle.ps1`.

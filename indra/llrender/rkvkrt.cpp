@@ -47,7 +47,7 @@ U64 env_u64(const char* name, U64 fallback)
 constexpr U32 kCalls = 6;
 constexpr U32 kInstanceCapacity = 32768;                    // per call
 constexpr VkDeviceSize kGeomBytesBase = 2u << 20;           // per call: the geometry records of the alpha masked structures
-constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (LL_VK_RT_MATERIALS=1): a record for every geometry
+constexpr VkDeviceSize kGeomBytesMats = 4u << 20;           // the same with the material tables on (RK_VK_RT_MATERIALS=1): a record for every geometry
 constexpr U32 kMatCap = 32768;                              // rows of the material table (the viewer's registry has the same capacity)
 constexpr VkDeviceSize kMatBytes = 96ull * kMatCap;
 constexpr U32 kPinCap = 32768;                              // pin indices (a pin = a texture with a permanent bindless slot, see RKVkWorker::rtPinAcquire)
@@ -113,8 +113,8 @@ struct GpuMaterial
 };
 static_assert(sizeof(GpuMaterial) == 96, "material row");
 
-bool sMatsInit = false;                                     // LL_VK_RT_MATERIALS=1 at start-up: bigger tables, records for every geometry (the scene side can still be switched off live)
-// Texture identity for the alpha records without the material tables (LL_VK_RT_PINS=0 turns it off): the records of the masked structures hold PIN indices (a pin = a texture with a permanent bindless slot, kept
+bool sMatsInit = false;                                     // RK_VK_RT_MATERIALS=1 at start-up: bigger tables, records for every geometry (the scene side can still be switched off live)
+// Texture identity for the alpha records without the material tables (RK_VK_RT_PINS=0 turns it off): the records of the masked structures hold PIN indices (a pin = a texture with a permanent bindless slot, kept
 // by events in RKVkWorker::rtPin*), the shader looks the slot up in the pin table of the call's region (kRecPinned), nothing asks every texture's slot every call (record slots 0.38 ms a call, 900 rows
 // rewritten a call, 2026-10-21). With the material tables on the same pins are used; the pin table then follows the material table in the region.
 bool sPinsInit = false;
@@ -253,7 +253,7 @@ struct Stats
     double mPhaseMs[6] = {};        // expire, order, scan (with sort), instances, recording, the rest
     U64 mDropped[2][8] = {};         // instances taken out of the scene while they were in it, by kind (0 opaque, 1 masked) and reason: expired, switched off, no structure, bad matrix, singular matrix, no buffer data, records table full, other
     U64 mMaskedMin = ~0ull, mMaskedMax = 0;     // live alpha records per scene call over the report interval (a dip shows leaves leaving the scene)
-    double mBuildCostMs = 0.0; U64 mBuildFrameCap = 0;      // the pacing of the builds (LL_VK_RT_BUILD_MS): GPU ms per build as measured, builds a frame it allows
+    double mBuildCostMs = 0.0; U64 mBuildFrameCap = 0;      // the pacing of the builds (RK_VK_RT_BUILD_MS): GPU ms per build as measured, builds a frame it allows
     U64 mEmptied = 0, mEmptiedDistinct = 0, mEmptiedRepeat = 0, mRefillSame = 0, mRefillLater = 0, mRefillGapFrames = 0;     // masked groups whose last held range was released: how often, by how many different groups, how many had been emptied before in the interval, and how soon a range came back (next frame / later, frames summed)
     U64 mProbeCount = 0, mProbeNow = 0, mProbeNoUpdate = 0, mProbeNoUpdateFast = 0, mProbeFast = 0;     // size probe: bytes the new group structures need with the flags used / without ALLOW_UPDATE / without it and with PREFER_FAST_BUILD / with PREFER_FAST_BUILD
     U64 mStaleRanges = 0;           // builds that had ranges of the old structure past the end of the index buffer (left out)
@@ -265,7 +265,7 @@ struct Stats
     U64 mRefreshed = 0, mFullRebuilds = 0, mVerifies = 0, mVerifyGroups = 0, mVerifyMismatch = 0, mTopologyChecks = 0;      // the scene cache (see sInstArray)
 };
 
-// Switches that can be changed while the viewer runs: the file named by LL_VK_RT_DEBUG_FILE (default <work>/rt-debug.txt) is read again every half second (key=value lines:
+// Switches that can be changed while the viewer runs: the file named by RK_VK_RT_DEBUG_FILE (default <work>/rt-debug.txt) is read again every half second (key=value lines:
 // single, norefit, keep, common_only, alpha, check, skipbad). Used to bisect picture problems without restarts.
 struct DebugSwitches
 {
@@ -295,10 +295,10 @@ struct DebugSwitches
     bool mDynCasters = true;        // include casters with a matrix of their own (avatar attachments, moving linksets); they flashed before the preflush, fine since (see PLAN-rt-shadows.md)
     bool mCallLog = false;          // one line per scene call into <work>/rt-calls.log (wall clock, frame, call, jobs, instances)
     bool mVerify = false;           // every 120 scene calls: make the whole cached scene again from the groups and compare it with the one kept up to date (log line "scene cache check")
-    U64 mFarTris[3] = { 250000, 100000, 40000 };   // an avatar beyond mFarDist[0] / [1] / [2] metres gets a structure of at most this many triangles (whole draws, the largest that fit first; 0 = no limit): LL_VK_RT_MID_TRIS / LL_VK_RT_FAR_TRIS / LL_VK_RT_VERYFAR_TRIS, live midtris / fartris / verytris
-    F32 mFarDist[3] = { 20.f, 32.f, 64.f };        // LL_VK_RT_MID_DIST / LL_VK_RT_FAR_DIST / LL_VK_RT_VERYFAR_DIST, live middist / fardist / verydist; a tier is left again 12.5 % nearer (hysteresis). 20 m is about the range of chat: beyond it nobody is looking at an avatar closely
-    U32 mSelfPeriod = 1;           // the viewer's own avatar is refit every this many viewer frames (1 = every frame; LL_VK_RT_SELF_PERIOD, live selfperiod): its structure is about 1 M triangles, 0.5 ms of GPU
-    U32 mSkinPeriodMax = 4;         // avatars farther than LL_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
+    U64 mFarTris[3] = { 250000, 100000, 40000 };   // an avatar beyond mFarDist[0] / [1] / [2] metres gets a structure of at most this many triangles (whole draws, the largest that fit first; 0 = no limit): RK_VK_RT_MID_TRIS / RK_VK_RT_FAR_TRIS / RK_VK_RT_VERYFAR_TRIS, live midtris / fartris / verytris
+    F32 mFarDist[3] = { 20.f, 32.f, 64.f };        // RK_VK_RT_MID_DIST / RK_VK_RT_FAR_DIST / RK_VK_RT_VERYFAR_DIST, live middist / fardist / verydist; a tier is left again 12.5 % nearer (hysteresis). 20 m is about the range of chat: beyond it nobody is looking at an avatar closely
+    U32 mSelfPeriod = 1;           // the viewer's own avatar is refit every this many viewer frames (1 = every frame; RK_VK_RT_SELF_PERIOD, live selfperiod): its structure is about 1 M triangles, 0.5 ms of GPU
+    U32 mSkinPeriodMax = 4;         // avatars farther than RK_VK_RT_SKIN_NEAR (8 m) are refreshed (skinned and refitted) every 2..this many viewer frames, by distance (1 = every frame for all)
     bool mPreflush = true;          // before the builds and the skinning: record the queued writes of video-memory buffers (they are only recorded when a draw reads the buffer, which a build does not)
     bool mAvatarLog = false;
     bool mAvatarKeepOff = false;       // live (avatarkeep=1): an avatar structure is made only from the draws named in this very frame (the old behaviour: the body vanished from the traced reflection on the frames without the naming pass)        // one line per avatar instance of every scene call into <work>/rt-avatars.log: how old its data is, why it was not refreshed
@@ -313,10 +313,10 @@ struct DebugSwitches
     bool mSkinFast = false;         // C4: avatar structures are built with PREFER_FAST_BUILD instead of PREFER_FAST_TRACE (cheaper builds and refits, slower rays)
     bool mSkinTest = false;         // stage C step C1: structures of opaque casters are built from a compute-pass copy of their vertices (must look identical to the direct path)
     U32 mPfA = 14, mPfB = 6;        // slot lookups: how many materials ahead the texture state and the table entries are prefetched (0 = no prefetch)
-    bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs LL_VK_RT_MATERIALS=1 at start-up)
+    bool mMats = false;             // records for the opaque geometries too, the material table is filled and traced against (needs RK_VK_RT_MATERIALS=1 at start-up)
     bool mDelta = true;             // the tables are written to the call's region as deltas (rows changed since the region was last written); off: all rows every call
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
-    S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs LL_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
+    S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs RK_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
     S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
     S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
     S32 mSnapTest = 0;              // live (snaptest=N): every change of N to a value above 0 takes a snapshot as the exit does (LLAppViewer::doFrame), a repeatable look at what the snapshot costs
@@ -324,14 +324,14 @@ struct DebugSwitches
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
     S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
     S32 mSunNoise = 1;              // live (sunnoise=0/1/2, default 1): how the noise of the sun rays moves: 1 every frame (the upscaler averages it), 2 every 4th frame, 0 never (a fixed pattern)
-    S32 mRtEarly = -1;              // live (rtearly=0/1/3, default -1: LL_VK_RT_EARLY decides): where the ray scene is built, 0 at the lighting, 1 before the G-buffer on the graphics queue, 3 before it on the compute queue (E2: needs LL_VK_RT_EARLY=3 at start-up, which sets the queue up); a same-session A/B
+    S32 mRtEarly = -1;              // live (rtearly=0/1/3, default -1: RK_VK_RT_EARLY decides): where the ray scene is built, 0 at the lighting, 1 before the G-buffer on the graphics queue, 3 before it on the compute queue (E2: needs RK_VK_RT_EARLY=3 at start-up, which sets the queue up); a same-session A/B
     S32 mSunFilter = 1;             // live (sunfilter=0/1, default 1): with the centre ray, the penumbra filter sized by the blocker distance (rtShadowFilterF.glsl) runs on the sun channel; 0 = the hard shadow as traced
     S32 mPenMax = 8;                // live (penmax=N, default 8, Adam's choice by eye 2026-11-05): the filter's widest penumbra half-width in render pixels
     S32 mPenLod = 1;                // live (penlod=N, default 1, Adam's choice by eye 2026-11-05): a bias in mip levels on the filter taps' level (1 = each tap averages twice the footprint, -1 half)
     S32 mSunStrength = 65;          // live (sunstrength=N percent, default 65, Adam's choice by eye 2026-11-05): with the centre ray, the most light an avatar's own close surfaces block on that avatar (the translucency floor); 100 = block fully
     S32 mPenRays = 0;               // live (penrays=N, default 0 = the shader's 8): the rays a pixel traces once its first ray met a close skinned surface (hair on the face, a hand on the shoulder), alpha and sun passes (a same-lap cost A/B)
     S32 mSunSelf = 1;               // live (sunself=0/1, default 1): the avatar self shadow work of 2026-10-28 (translucency floor, receiver probe, start disc); 0 = an avatar blocks fully and no disc, for a same-lap cost A/B
-    S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs LL_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
+    S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs RK_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
     bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through RKVkBridge::rtLoadingGates)
     bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (RKVkBridge::rtBodyRename)
@@ -356,25 +356,25 @@ void read_debug_switches()
         return;
     }
     sDbgRead = now;
-    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>/rt-debug.txt"; }();
+    static const char* path = []() { const char* e = getenv("RK_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>/rt-debug.txt"; }();
     DebugSwitches d;
-    d.mKeep = env_u64("LL_VK_RT_KEEP_FRAMES", 8);
-    d.mAlpha = env_u64("LL_VK_RT_ALPHA", 1) != 0;
-    d.mCheck = env_u64("LL_VK_RT_CHECK", 1) != 0;       // on by default: measured 1-2 microseconds a frame in the mirror room (2026-10-13), and it keeps NaN vertices and indices past the buffer out of the structures
-    d.mSkipBad = env_u64("LL_VK_RT_SKIPBAD", 1) != 0;
-    d.mDynCasters = env_u64("LL_VK_RT_DYNAMIC", 1) != 0;
-    d.mSkinTest = env_u64("LL_VK_RT_SKINTEST", 0) != 0;
-    d.mRigged = env_u64("LL_VK_RT_RIGGED", 1) != 0;
-    d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_PERIOD_MAX", 4));
-    d.mFarTris[0] = env_u64("LL_VK_RT_MID_TRIS", 250000);
-    d.mFarTris[1] = env_u64("LL_VK_RT_FAR_TRIS", 100000);
-    d.mFarDist[0] = (F32)env_u64("LL_VK_RT_MID_DIST", 20);
-    d.mSelfPeriod = (U32)std::max<U64>(1, env_u64("LL_VK_RT_SELF_PERIOD", 1));
-    d.mFarTris[2] = env_u64("LL_VK_RT_VERYFAR_TRIS", 40000);
-    d.mFarDist[1] = (F32)env_u64("LL_VK_RT_FAR_DIST", 32);
-    d.mFarDist[2] = (F32)env_u64("LL_VK_RT_VERYFAR_DIST", 64);
+    d.mKeep = env_u64("RK_VK_RT_KEEP_FRAMES", 8);
+    d.mAlpha = env_u64("RK_VK_RT_ALPHA", 1) != 0;
+    d.mCheck = env_u64("RK_VK_RT_CHECK", 1) != 0;       // on by default: measured 1-2 microseconds a frame in the mirror room (2026-10-13), and it keeps NaN vertices and indices past the buffer out of the structures
+    d.mSkipBad = env_u64("RK_VK_RT_SKIPBAD", 1) != 0;
+    d.mDynCasters = env_u64("RK_VK_RT_DYNAMIC", 1) != 0;
+    d.mSkinTest = env_u64("RK_VK_RT_SKINTEST", 0) != 0;
+    d.mRigged = env_u64("RK_VK_RT_RIGGED", 1) != 0;
+    d.mSkinPeriodMax = (U32)std::max<U64>(1, env_u64("RK_VK_RT_SKIN_PERIOD_MAX", 4));
+    d.mFarTris[0] = env_u64("RK_VK_RT_MID_TRIS", 250000);
+    d.mFarTris[1] = env_u64("RK_VK_RT_FAR_TRIS", 100000);
+    d.mFarDist[0] = (F32)env_u64("RK_VK_RT_MID_DIST", 20);
+    d.mSelfPeriod = (U32)std::max<U64>(1, env_u64("RK_VK_RT_SELF_PERIOD", 1));
+    d.mFarTris[2] = env_u64("RK_VK_RT_VERYFAR_TRIS", 40000);
+    d.mFarDist[1] = (F32)env_u64("RK_VK_RT_FAR_DIST", 32);
+    d.mFarDist[2] = (F32)env_u64("RK_VK_RT_VERYFAR_DIST", 64);
     d.mMats = sMatsInit;
-    d.mSkinFast = env_u64("LL_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
+    d.mSkinFast = env_u64("RK_VK_RT_SKIN_FAST", 1) != 0;       // on by default: builds and refits of the avatar structures 38 % cheaper, traces unchanged (measured 2026-10-12)
     if (FILE* f = fopen(path, "rb"))
     {
         char line[256];
@@ -497,7 +497,7 @@ void read_debug_switches()
         if (d.mRtEarly != last_early)
         {
             last_early = d.mRtEarly;
-            LL_INFOS("VkRt") << "rt-debug.txt rtearly=" << d.mRtEarly << " (-1 LL_VK_RT_EARLY decides, 0 scene built at the lighting, 1 before the G-buffer, 3 before it on the compute queue)" << LL_ENDL;
+            LL_INFOS("VkRt") << "rt-debug.txt rtearly=" << d.mRtEarly << " (-1 RK_VK_RT_EARLY decides, 0 scene built at the lighting, 1 before the G-buffer, 3 before it on the compute queue)" << LL_ENDL;
         }
     }
     sSunFilterLive.store(d.mSunFilter, std::memory_order_relaxed);
@@ -677,14 +677,14 @@ size_t apply_rows(RowLog& log, RegionState& rs, const std::vector<T>& rows, T* d
     return copied;
 }
 RowLog sRecLog, sMatLog;
-// S2: the scene's static instances (sInstArray) are written to the call's TLAS instance region as deltas, like the table rows (LL_VK_RT_INSTDELTA=1): the transforms are world space relative to
+// S2: the scene's static instances (sInstArray) are written to the call's TLAS instance region as deltas, like the table rows (RK_VK_RT_INSTDELTA=1): the transforms are world space relative to
 // sOrigin, they do not depend on the camera, so a region only needs the entries that changed since it was last written (not all 12,000 every call); avatar instances are added after them per call
 RowLog sInstLog;
 RegionState sInstRegion[Context::FRAMES_IN_FLIGHT * kCalls];
 U64 sInstRowsWritten = 0, sInstCalls = 0, sInstMismatch = 0;
 bool inst_delta_on()
 {
-    static const bool on = env_u64("LL_VK_RT_INSTDELTA", 0) != 0;
+    static const bool on = env_u64("RK_VK_RT_INSTDELTA", 0) != 0;
     return on;
 }
 RegionState sRecRegion[Context::FRAMES_IN_FLIGHT * kCalls], sMatRegion[Context::FRAMES_IN_FLIGHT * kCalls];
@@ -720,7 +720,7 @@ struct SceneRecord
     U32 mZeroRefs = 0;                  // instances that refer to no structure
     U32 mUnknownRefs = 0;               // instances that refer to a structure this scene does not know (checked on the stuck frame only)
     float mMaxTranslation = 0.f, mMaxScale = 0.f;
-    float mMaxExtent = 0.f;             // the largest side of the box of a vertex range checked for a structure build since the previous scene call (LL_VK_RT_CHECK; host-written data only)
+    float mMaxExtent = 0.f;             // the largest side of the box of a vertex range checked for a structure build since the previous scene call (RK_VK_RT_CHECK; host-written data only)
     U32 mUnchecked = 0;                 // structure builds since the previous scene call over data the CPU cannot see (device path buffers): not checked
     float mOrigin[3] = {}, mCamera[3] = {};
     U64 mScratchNeeded = 0, mInstanceOffset = 0;
@@ -841,11 +841,11 @@ void mat_mul(const F32* a, const F32* b, F32* out)
 
 const F32 kIdentity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 
-// LL_VK_DIAG=1 turns on the diagnostics that cost CPU time on the worker: the flight recorder (with the instance sources), the instance filter, the draw ring, the draw range check, the
-// stall logger. Off by default: the launcher run-viewer-clean-rtshadows-diag.bat sets it together with the timers (LL_VK_PHASES, LL_VK_OPSTATS).
+// RK_VK_DIAG=1 turns on the diagnostics that cost CPU time on the worker: the flight recorder (with the instance sources), the instance filter, the draw ring, the draw range check, the
+// stall logger. Off by default: the launcher run-viewer-clean-rtshadows-diag.bat sets it together with the timers (RK_VK_PHASES, RK_VK_OPSTATS).
 bool diag_on()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();
+    static const bool on = []() { const char* e = getenv("RK_VK_DIAG"); return e && e[0] && atoi(e) != 0; }();
     return on;
 }
 
@@ -1298,8 +1298,8 @@ bool bodyRename() { return sBodyNameLive.load(std::memory_order_relaxed); }
 
 U32 skinPeriod(float distance)
 {
-    static const float skin_near = (float)env_u64("LL_VK_RT_SKIN_NEAR", 8);
-    static const float skin_step = (float)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_STEP", 10));
+    static const float skin_near = (float)env_u64("RK_VK_RT_SKIN_NEAR", 8);
+    static const float skin_step = (float)std::max<U64>(1, env_u64("RK_VK_RT_SKIN_STEP", 10));
     if (distance <= skin_near || sDbg.mSkinPeriodMax <= 1)
     {
         return 1;       // (the same rule as the avatars' turn in the scene call)
@@ -1310,12 +1310,12 @@ U32 skinPeriod(float distance)
 U32 shadowMode()
 {
     static const U32 mode = []() {
-        const U64 v = env_u64("LL_VK_RT_SHADOWS", 0);
+        const U64 v = env_u64("RK_VK_RT_SHADOWS", 0);
         if (v == 2 || v == 3)
         {
             // (2026-11-12, Adam) the split screen (2) and the disagreement map (3) are retired: they kept the sun cascades drawing next to the rays, which is what kept the old render map loops alive. A diagnostic view
             // of the rays against the shadow maps is to be made new when it is needed, on the table's own caster lists. The shader still has their branches (dead: it never gets those values now).
-            LL_WARNS("VkRt") << "LL_VK_RT_SHADOWS=" << v << " is retired (the cascade comparison views): running as 1" << LL_ENDL;
+            LL_WARNS("VkRt") << "RK_VK_RT_SHADOWS=" << v << " is retired (the cascade comparison views): running as 1" << LL_ENDL;
             return 1u;
         }
         return v >= 1 && v <= 5 ? (U32)v : 0u;
@@ -1433,8 +1433,8 @@ bool init(VkDescriptorSetLayout set_layout)
     }
     Context& ctx = Context::instance();
     VkDevice dev = ctx.getDevice();
-    sMatsInit = env_u64("LL_VK_RT_MATERIALS", 0) != 0;
-    sPinsInit = !sMatsInit && env_u64("LL_VK_RT_PINS", 1) != 0;       // pins are handles of the texture table
+    sMatsInit = env_u64("RK_VK_RT_MATERIALS", 0) != 0;
+    sPinsInit = !sMatsInit && env_u64("RK_VK_RT_PINS", 1) != 0;       // pins are handles of the texture table
     sGeomBytes = sMatsInit ? kGeomBytesMats : kGeomBytesBase;
     sRegionBytes = sGeomBytes + (sMatsInit ? kMatBytes + kPinBytes : (sPinsInit ? kPinBytes : 0));
     sPinOffset = sMatsInit ? sGeomBytes + kMatBytes : sGeomBytes;
@@ -1531,7 +1531,7 @@ bool init(VkDescriptorSetLayout set_layout)
         return false;
     }
     sInit = true;
-    // always, not only under LL_VK_DIAG: the ring of the last scene calls (sRecent) is always kept, and the sun shader hangs of 2026-10-26 (doc/vulkan/PLAN-texture-handles.md 17.24, 17.25) came with no report of the
+    // always, not only under RK_VK_DIAG: the ring of the last scene calls (sRecent) is always kept, and the sun shader hangs of 2026-10-26 (doc/vulkan/PLAN-texture-handles.md 17.24, 17.25) came with no report of the
     // transforms, scales and references of the newest scene calls (nothing runs until a hang)
     Context::instance().setHangReporter(report_recent_scene_calls);
     {
@@ -2241,15 +2241,15 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
     // limit of 256 per call put 33 ms of builds into every frame for two minutes. The nearest structures are built first, the rest follow over the next seconds.
     // 384 per call and 3 M triangles since doc/vulkan/PLAN-texture-handles.md section 17.11: the first turn of a session needs about 1,900 new masked structures at once and 128 per call let the leaf
     // shadows blink out for a second (the masked records fell to a third); one lap each, the larger limits cleared that backlog, the load of the plaza went through as fast, scratch memory unchanged.
-    static const U64 max_builds_default = env_u64("LL_VK_RT_BUILD_MAX", 384);
-    // Ceiling for the memory of the structures (LL_VK_RT_MAX_MB, default 1.5 GB: the steady state of a busy place is about 1 GB). Over it no NEW structure is started, and structures that nothing has
+    static const U64 max_builds_default = env_u64("RK_VK_RT_BUILD_MAX", 384);
+    // Ceiling for the memory of the structures (RK_VK_RT_MAX_MB, default 1.5 GB: the steady state of a busy place is about 1 GB). Over it no NEW structure is started, and structures that nothing has
     // named for a short while are given back at once (see below), so that the scene cannot push video memory past the budget the OS grants (over it the driver moves allocations to system memory).
-    static const U64 as_ceiling_mb = env_u64("LL_VK_RT_MAX_MB", 1536);
+    static const U64 as_ceiling_mb = env_u64("RK_VK_RT_MAX_MB", 1536);
     const U64 as_ceiling = as_ceiling_mb << 20;
     // Paced by GPU time (doc/vulkan/PLAN-texture-handles.md section 17.19): the count limit above let a teleport arrival put 150-400 ms of builds into single frames (the "rt scene builds" pass, plaza
     // and club, 2026-10-25) so the fps counter said 60 while the view answered like 20. The pass is timed by the frame's timestamps; the cost of one build (an average over the frames timed so far,
-    // 0.18 ms to start with) and a budget of LL_VK_RT_BUILD_MS a frame (default 8, 0 = the count limits only) give the number of builds the frame may start, over all its scene calls. Nearest first, as before.
-    static const double build_budget_ms = (double)env_u64("LL_VK_RT_BUILD_MS", 8);
+    // 0.18 ms to start with) and a budget of RK_VK_RT_BUILD_MS a frame (default 8, 0 = the count limits only) give the number of builds the frame may start, over all its scene calls. Nearest first, as before.
+    static const double build_budget_ms = (double)env_u64("RK_VK_RT_BUILD_MS", 8);
     static double build_cost_ms = 0.18;
     static U32 builds_by_slot[Context::FRAMES_IN_FLIGHT] = {};
     static U64 paced_frame = ~0ull;
@@ -2279,7 +2279,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
         sStats.mBuildCostMs = build_cost_ms;
         sStats.mBuildFrameCap = frame_cap;
     }
-    static const U64 max_tris = env_u64("LL_VK_RT_BUILD_TRIS", 3000000);
+    static const U64 max_tris = env_u64("RK_VK_RT_BUILD_TRIS", 3000000);
     const bool alpha_on = sDbg.mAlpha;
     const bool check_on = sDbg.mCheck;
     const bool skip_bad = sDbg.mSkipBad;
@@ -2588,7 +2588,7 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             {
                 continue;                       // outside the data (a stale range)
             }
-            static const bool epoch_check = getenv("LL_VK_RT_EPOCH") == nullptr || atoi(getenv("LL_VK_RT_EPOCH")) != 0;       // (0 = built from whatever was noted, as before)
+            static const bool epoch_check = getenv("RK_VK_RT_EPOCH") == nullptr || atoi(getenv("RK_VK_RT_EPOCH")) != 0;       // (0 = built from whatever was noted, as before)
             if (epoch_check && k < g.mRangeEpochs.size() && g.mRangeEpochs[k].first != ~0ull && (g.mRangeEpochs[k].first != vi.mEpoch || g.mRangeEpochs[k].second != ii.mEpoch))
             {
                 // <FS> noted for buffers of an earlier epoch (respecified, deleted or recycled since): not built from until it is noted again
@@ -2598,10 +2598,10 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
                     LL_INFOS("VkRt") << "a range noted for an earlier epoch is left out of the build: vb " << g.mKey.mVb << " ib " << g.mKey.mIb << " range first " << r.mFirst << " count " << r.mCount << " (noted at vb epoch "
                                      << g.mRangeEpochs[k].first << ", ib epoch " << g.mRangeEpochs[k].second << "; now " << vi.mEpoch << ", " << ii.mEpoch << "), " << stale_epoch << " so far" << LL_ENDL;
                 }
-                // <FS> how long: a range that stays stale and is not held (nothing notes it again: its owner is gone, the name was recycled) leaves the group after LL_VK_RT_STALE_FRAMES (default 240) frames,
+                // <FS> how long: a range that stays stale and is not held (nothing notes it again: its owner is gone, the name was recycled) leaves the group after RK_VK_RT_STALE_FRAMES (default 240) frames,
                 // so that it is not looked at at every scene call for ever. A held range (a resident caster holds it, and only a full note of that caster renews it) is never dropped here: one that stays
                 // stale means the resident side did not notice the respecify, which is logged (HELD) so it can be fixed there.
-                static const U64 stale_limit = getenv("LL_VK_RT_STALE_FRAMES") ? (U64)atoll(getenv("LL_VK_RT_STALE_FRAMES")) : 240;
+                static const U64 stale_limit = getenv("RK_VK_RT_STALE_FRAMES") ? (U64)atoll(getenv("RK_VK_RT_STALE_FRAMES")) : 240;
                 const U64 now_frame = ctx.getFrameNumber();
                 constexpr U64 kReported = 1ull << 63;       // (the top bit of the stale frame: this range was reported as held and stale)
                 if (!g.mRangeStale[k])
@@ -2814,8 +2814,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             ctx.flight(Context::FL_MISC, 5ull, (unsigned long long)(vertex_address + (U64)max_vertex * 16 + 16), (unsigned long long)(ii.mAddress + index_end),
                        ((unsigned long long)g.mKey.mVb << 40) ^ ((unsigned long long)g.mKey.mIb << 16) ^ (prims & 0xffff));
         }
-        // LL_VK_RT_CHECK (default on): the vertices the structure will be built over, when the CPU can see them (host-written buffers), must be finite and not absurd, and the
-        // indices must name vertices of the buffer. A range that fails is left out of the structure (LL_VK_RT_SKIPBAD=0 keeps it).
+        // RK_VK_RT_CHECK (default on): the vertices the structure will be built over, when the CPU can see them (host-written buffers), must be finite and not absurd, and the
+        // indices must name vertices of the buffer. A range that fails is left out of the structure (RK_VK_RT_SKIPBAD=0 keeps it).
         if (!(vi.mCpu && ii.mCpu))
         {
             ++sCallUnchecked;
@@ -2830,8 +2830,8 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             U64 verts = vi.mSize / 16;
             // <FS> an alpha caster's positions fill only the start of its vertex buffer (the arrays after them start at the byte offsets its alpha record names): an index past that reads texcoords or
             // colours as positions, and those values are often small enough to pass the coordinate check below (a spike or a block in the structure, 2026-11-03: 295 of 360 flagged ranges of a lap
-            // had their largest index past the positions). Such a range is flagged as out of range and left out until it is noted again (LL_VK_RT_POSLIMIT=0 turns it off).
-            static const bool pos_limit = getenv("LL_VK_RT_POSLIMIT") == nullptr || atoi(getenv("LL_VK_RT_POSLIMIT")) != 0;
+            // had their largest index past the positions). Such a range is flagged as out of range and left out until it is noted again (RK_VK_RT_POSLIMIT=0 turns it off).
+            static const bool pos_limit = getenv("RK_VK_RT_POSLIMIT") == nullptr || atoi(getenv("RK_VK_RT_POSLIMIT")) != 0;
             if (pos_limit && g.mKey.mKind == 1 && !g.mAlpha.empty())
             {
                 const AlphaInfo& ai = g.mAlpha[0];
@@ -3146,17 +3146,17 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
 
     // ---- 1b. rigged draws: skin them on the GPU, one structure per avatar over the skinned copies -------------------------------------------------
     const U64 av_tag = ctx.getFrameNumber() + 1;
-    static const U64 skin_refit_limit = env_u64("LL_VK_RT_SKIN_REFITS", 32);
-    static const U64 skin_vertex_budget = env_u64("LL_VK_RT_SKIN_VERTS", 2000000);
+    static const U64 skin_refit_limit = env_u64("RK_VK_RT_SKIN_REFITS", 32);
+    static const U64 skin_vertex_budget = env_u64("RK_VK_RT_SKIN_VERTS", 2000000);
     U64 skin_verts_left = skin_vertex_budget;
     // Which avatars get a new pose this call. The viewer's own avatar always. Every other one is due after a number of viewer frames that grows with its distance (1 up to
-    // LL_VK_RT_SKIN_NEAR metres, then 2, 3 ... skinperiod): their shadows are small and need no new pose every frame. The due ones are served most overdue first (age divided by
+    // RK_VK_RT_SKIN_NEAR metres, then 2, 3 ... skinperiod): their shadows are small and need no new pose every frame. The due ones are served most overdue first (age divided by
     // that number of frames), until the vertex budget is used up: when there is more due than the budget allows every avatar slows down alike, none is starved. In between an
     // avatar's last structure stays in the scene.
     struct AvatarTurn { double mUrgency; Avatar* mAvatar; };
     std::vector<AvatarTurn> av_order;
-    static const float skin_near = (float)env_u64("LL_VK_RT_SKIN_NEAR", 8);
-    static const float skin_step = (float)std::max<U64>(1, env_u64("LL_VK_RT_SKIN_STEP", 10));
+    static const float skin_near = (float)env_u64("RK_VK_RT_SKIN_NEAR", 8);
+    static const float skin_step = (float)std::max<U64>(1, env_u64("RK_VK_RT_SKIN_STEP", 10));
     for (auto ait = sAvatars.begin(); ait != sAvatars.end();)
     {
         Avatar& a = ait->second;
@@ -4112,11 +4112,11 @@ void buildScene(const F32* view, TextureSlotFn slot_of, TexturePrefetchFn prefet
             }
         }
         sub_lap(5);
-        // The stale check (LL_VK_RT_STALECHECK=0 turns it off): nothing the GPU reads may name memory that was given up. Two things are looked at here, before the dirty groups are made again:
+        // The stale check (RK_VK_RT_STALECHECK=0 turns it off): nothing the GPU reads may name memory that was given up. Two things are looked at here, before the dirty groups are made again:
         // (a) every instance row against its group's structure address (and the recently destroyed ones), (b) every few calls the masked groups' records against the buffer addresses now. A group
         // that fails is counted, reported (the first few) and marked dirty, so it is made again in this call. The device-lost crashes of 2026-10-20 read just past the end of a block that
         // no longer existed (a freed block's address): this finds which of the two kept tables names it.
-        static const bool stale_check = env_u64("LL_VK_RT_STALECHECK", 1) != 0;
+        static const bool stale_check = env_u64("RK_VK_RT_STALECHECK", 1) != 0;
         if (stale_check)
         {
             static U64 stale_rows = 0, stale_recs = 0, checked_calls = 0;
@@ -5379,7 +5379,7 @@ std::string report(double frames)
     }
     {
         const size_t used = strlen(buf);
-        snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame), instances left out for naming a dead structure: %llu", (unsigned long long)env_u64("LL_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f, (unsigned long long)s.mDeadRefs);
+        snprintf(buf + used, sizeof(buf) - used, ", structure memory ceiling %llu MB (new structures held back by it: %.2f/frame), instances left out for naming a dead structure: %llu", (unsigned long long)env_u64("RK_VK_RT_MAX_MB", 1536), (double)s.mCeilingHeld / f, (unsigned long long)s.mDeadRefs);
     }
     std::string text = buf;
     text += alpha_census();

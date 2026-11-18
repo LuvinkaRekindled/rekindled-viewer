@@ -309,16 +309,16 @@ void closeReport()
 void init()
 {
     {
-        const char* c = getenv("LL_VK_PASSCLOSE");
+        const char* c = getenv("RK_VK_PASSCLOSE");
         sClose = c && (c[0] == '2' || c[0] == '3') ? c[0] - '0' : 1;
-        const char* pm = getenv("LL_VK_PASSPOISON");
+        const char* pm = getenv("RK_VK_PASSPOISON");
         if (pm && pm[0]) sPoisonMask = atoi(pm);
         if (sClose > 1)
         {
-            LL_INFOS("VkPassClose") << "LL_VK_PASSCLOSE=" << sClose << ": passes are closed" << (sClose == 2 ? " (announced blocks are compared with the worker's)" : sClose == 3 ? " (the worker forgets the inherited state at every pass, mask " : "") << (sClose == 3 ? std::to_string(sPoisonMask) + ")" : std::string()) << LL_ENDL;
+            LL_INFOS("VkPassClose") << "RK_VK_PASSCLOSE=" << sClose << ": passes are closed" << (sClose == 2 ? " (announced blocks are compared with the worker's)" : sClose == 3 ? " (the worker forgets the inherited state at every pass, mask " : "") << (sClose == 3 ? std::to_string(sPoisonMask) + ")" : std::string()) << LL_ENDL;
         }
     }
-    const char* v = getenv("LL_VK_PASSCENSUS");
+    const char* v = getenv("RK_VK_PASSCENSUS");
     sOn = v && v[0] >= '1' && v[0] <= '3';
     sMode = sOn ? v[0] - '0' : 1;
     if (sOn)
@@ -327,7 +327,7 @@ void init()
         QueryPerformanceCounter(&q);
         gQpc0 = (U64)q.QuadPart;
         gTsc0 = __rdtsc();
-        LL_INFOS("VkPassCensus") << "LL_VK_PASSCENSUS=" << sMode << ": pass state census on (report every 600 presented frames; 1 target binds, 2 Vulkan render passes, 3 GPU zone phases)" << LL_ENDL;
+        LL_INFOS("VkPassCensus") << "RK_VK_PASSCENSUS=" << sMode << ": pass state census on (report every 600 presented frames; 1 target binds, 2 Vulkan render passes, 3 GPU zone phases)" << LL_ENDL;
     }
 }
 

@@ -13,7 +13,7 @@
  *   DepthScope depth(true, false, CompareOp::Less); was: LLGLDepthTest depth(true, false, GL_LESS);
  *   BlendScope blend(cond, false-or-true);          was: LLGLEnable blend(cond ? GL_BLEND : 0);   (second argument 'active': false changes nothing)
  *
- * LL_VK_STATE_GUARD_CHECK=1: when a guard is destroyed the block must still hold what the guard set; if not, something changed the state while the guard
+ * RK_VK_STATE_GUARD_CHECK=1: when a guard is destroyed the block must still hold what the guard set; if not, something changed the state while the guard
  * was alive (and the guard puts back its saved value over it). The first occurrence per guard site is logged with the file and line of the constructor.
  * (The old LLGLState / LLGLEnable / LLGLDisable / LLGLDepthTest classes and their GL-number setters are gone: F3.2e.)
  */
@@ -49,10 +49,10 @@ enum class Kind : U8
     Count
 };
 
-extern bool sGuardCheck;                                                                    // LL_VK_STATE_GUARD_CHECK=1
+extern bool sGuardCheck;                                                                    // RK_VK_STATE_GUARD_CHECK=1
 U32 read(Kind kind);                                                                     // the field now
-U32 exchange(Kind kind, U32 value, const char* file = nullptr, int line = 0);                   // flush if it changes, set it, return what it was (file/line: LL_VK_STATE_WHY)
-extern bool sWhy;                                                                           // LL_VK_STATE_WHY=1: which writers cause the CMD_STATE records (top 15 per 600 frames in the log)
+U32 exchange(Kind kind, U32 value, const char* file = nullptr, int line = 0);                   // flush if it changes, set it, return what it was (file/line: RK_VK_STATE_WHY)
+extern bool sWhy;                                                                           // RK_VK_STATE_WHY=1: which writers cause the CMD_STATE records (top 15 per 600 frames in the log)
 extern bool sInGuard;
 void noteWriter(const char* file, int line, int kind);                                      // kind: Kind value, -1 any
 void noteDirect(const char* what);                                                          // a direct RKVkState setter
@@ -66,7 +66,7 @@ constexpr U32 packDepth(bool test, bool write, CompareOp op) { return (test ? 1u
 
 // ---- guards ----
 // 'active' false: the guard does nothing at all (the conditional-cap sites: cond ? GL_BLEND : 0)
-// the file and line of the constructor's caller are only used by LL_VK_STATE_GUARD_CHECK
+// the file and line of the constructor's caller are only used by RK_VK_STATE_GUARD_CHECK
 struct Keep {};                                                                             // 'do not change the field now, I will call setEnabled()'
 
 template<Kind K>

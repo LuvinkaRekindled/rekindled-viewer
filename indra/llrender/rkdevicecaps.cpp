@@ -326,10 +326,10 @@ void RKDeviceCaps::shutdownRenderDevice()
 #include "rkvkstate.h"
 #endif
 
-// <FS> LL_VK_NOGL start-up: what initRenderDevice and initExtensions work out from a GL context, worked out from the Vulkan device instead
+// <FS> RK_VK_NOGL start-up: what initRenderDevice and initExtensions work out from a GL context, worked out from the Vulkan device instead
 bool RKDeviceCaps::initFromDevice()
 {
-    LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
+    LL_INFOS("RenderInit") << "Initializing without OpenGL (RK_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
 
     RKVkBridge::DeviceInfo dev;
     if (!RKVkBridge::describeDevice(dev))

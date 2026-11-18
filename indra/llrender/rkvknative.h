@@ -15,7 +15,7 @@
  *
  * The programs are listed in native/manifest.txt, one line each; a program is built from its line when the viewer loads its shaders (nativeOnlyLine):
  *     override | <program name> | <vertex file> | <fragment file> | <family> [| define NAME=VALUE ...] [| default on] [| rtquery] [| geometry <file>]
- * LL_VK_NATIVE_DIR points the loader at the source directory. A compile is kept on disk between runs (the compile cache of rkvknative.cpp, LL_VK_NATIVE_CACHE=0 turns it off).
+ * RK_VK_NATIVE_DIR points the loader at the source directory. A compile is kept on disk between runs (the compile cache of rkvknative.cpp, RK_VK_NATIVE_CACHE=0 turns it off).
  */
 
 #ifndef RK_RKVKNATIVE_H
@@ -36,7 +36,7 @@ class Program;
 bool compileNativeProgram(const std::string& name, const std::string& root, const std::string& vertex_file, const std::string& fragment_file,
                           const std::vector<std::pair<std::string, std::string>>& defines, ProgramInfo& out, std::vector<std::string>* files, std::string* error, const std::string& geometry_file = std::string());
 
-// The directory the native shaders are read from (LL_VK_NATIVE_DIR, else app_settings/shaders/native next to the executable).
+// The directory the native shaders are read from (RK_VK_NATIVE_DIR, else app_settings/shaders/native next to the executable).
 const std::string& nativeRoot();
 
 // A live key of rt-debug.txt (read at most twice a second; any thread): the value of `key=N`, or 'def' when the line is missing.

@@ -34,7 +34,7 @@
 #include <cstdlib>
 #include "lldir.h"
 #include "llfile.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 namespace RKVk
 {
@@ -50,7 +50,7 @@ std::atomic<U32> gPipelineCacheMisses{ 0 };
 std::string pipeline_cache_path()
 {
     static const std::string path = []() {
-        const char* off = getenv("LL_VK_PIPELINE_CACHE");
+        const char* off = getenv("RK_VK_PIPELINE_CACHE");
         if (off && off[0] == '0')
         {
             return std::string();
@@ -173,7 +173,7 @@ namespace
 bool pipeline_async()
 {
     static const bool on = []() {
-        const char* v = getenv("LL_VK_PIPELINE_ASYNC");
+        const char* v = getenv("RK_VK_PIPELINE_ASYNC");
         return !(v && v[0] == '0');
     }();
     return on;
@@ -193,7 +193,7 @@ public:
         }
         if (mThreads.empty())
         {
-            const char* v = getenv("LL_VK_PIPELINE_THREADS");
+            const char* v = getenv("RK_VK_PIPELINE_THREADS");
             const unsigned n = v ? (unsigned)std::max(1, atoi(v)) : 2u;
             for (unsigned i = 0; i < n; ++i)
             {
@@ -333,16 +333,16 @@ void load_variants()
     U32 loaded = 0, shipped = 0;
     const bool had_user_file = load_variants_file(variants_path(), loaded);
     // J1 (Adam, 2026-11-07: a first start must not be two minutes of darkness): the viewer ships a list of the variants it uses (app_settings/vk_pipeline_variants_default.txt, made with
-    // LL_VK_VARIANTS_EXPORT), so the very first start on a machine, whose own list does not exist yet, builds them all at start-up (behind the progress screen, see llstartup.cpp) instead of when the
+    // RK_VK_VARIANTS_EXPORT), so the very first start on a machine, whose own list does not exist yet, builds them all at start-up (behind the progress screen, see llstartup.cpp) instead of when the
     // first draw asks and is dropped
     load_variants_file(gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "vk_pipeline_variants_default.txt"), shipped);
     LL_INFOS("Vulkan") << "pipeline variants recorded by earlier sessions: " << loaded << (had_user_file ? "" : " (no list of this machine yet)") << ", shipped list: " << shipped << ", " << gVariants.size() << " programs" << LL_ENDL;
 }
 
-// every variant known, to a file (LL_VK_VARIANTS_EXPORT=<path>: the shipped list is made from a session that used everything)
+// every variant known, to a file (RK_VK_VARIANTS_EXPORT=<path>: the shipped list is made from a session that used everything)
 void export_variants()
 {
-    const char* path = getenv("LL_VK_VARIANTS_EXPORT");
+    const char* path = getenv("RK_VK_VARIANTS_EXPORT");
     if (!path || !path[0])
     {
         return;
@@ -422,9 +422,9 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
         VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
         mi.codeSize = info.mSpirv[s].size() * sizeof(U32);
         mi.pCode = info.mSpirv[s].data();
-        // LL_VK_COLD_SALT=<n> (a test of cold start times, 2026-11-12): the id bound in the SPIR-V header is raised by n, which changes the module's bytes and nothing it does, so the driver's own on disk shader
+        // RK_VK_COLD_SALT=<n> (a test of cold start times, 2026-11-12): the id bound in the SPIR-V header is raised by n, which changes the module's bytes and nothing it does, so the driver's own on disk shader
         // cache (NVIDIA's, which this program cannot switch off and which sits outside the program's directories) holds no pipeline for it and the driver compiles every pipeline again. A different n for each cold run.
-        static const U32 cold_salt = []() { const char* e = getenv("LL_VK_COLD_SALT"); return e ? (U32)std::max(0, atoi(e)) : 0u; }();
+        static const U32 cold_salt = []() { const char* e = getenv("RK_VK_COLD_SALT"); return e ? (U32)std::max(0, atoi(e)) : 0u; }();
         std::vector<U32> salted;
         if (cold_salt && info.mSpirv[s].size() > 5)
         {
@@ -573,8 +573,8 @@ bool Program::create(const std::string& name, const ProgramInfo& info)
     }
 
     {
-        // LL_VK_UNIFORM_DUMP=1: every program's loose uniforms and samplers, for the uniform class table (doc/vulkan/F0-inventory.md)
-        static FILE* dump = getenv("LL_VK_UNIFORM_DUMP") ? fopen("<work>/run-logs/program-uniforms.txt", "wb") : nullptr;
+        // RK_VK_UNIFORM_DUMP=1: every program's loose uniforms and samplers, for the uniform class table (doc/vulkan/F0-inventory.md)
+        static FILE* dump = getenv("RK_VK_UNIFORM_DUMP") ? fopen("<work>/run-logs/program-uniforms.txt", "wb") : nullptr;
         if (dump)
         {
             fprintf(dump, "PROGRAM\t%s\tbindless=%d\tblock=%zu\n", mName.c_str(), mBindless ? 1 : 0, mShadow[0].size() + mShadow[1].size() + mShadow[2].size() + mShadow[3].size() + mShadow[4].size());
@@ -675,7 +675,7 @@ void Program::destroy()
     mValid = false;
 }
 
-// LL_VK_PHASES: per uniform name, how often it is written and how often the value really changes (classifies uniforms as per pass, per material or per draw)
+// RK_VK_PHASES: per uniform name, how often it is written and how often the value really changes (classifies uniforms as per pass, per material or per draw)
 struct UniformChangeStat { U64 mWrites = 0, mChanges = 0, mBytes = 0; U32 mSize = 0; };
 static std::unordered_map<std::string, UniformChangeStat> gUniformChangeStats;
 static void note_uniform_write(const std::string& program, const LooseUniform& u, bool changed, U32 bytes)
@@ -933,9 +933,9 @@ VkResult Program::createPipelineObject(const PipelineKey& key, VkPipelineCreateF
 
     gi.flags = flags;
     gDebugProgram = getName().c_str();      // (validation messages about this pipeline name its program)
-    // <FS> compile time baseline (PLAN-rt-reflection-pass.md step 0): LL_VK_PIPEDIAG=1 logs, for every pipeline the driver needed more than a second for, a hash of what it was given
+    // <FS> compile time baseline (PLAN-rt-reflection-pass.md step 0): RK_VK_PIPEDIAG=1 logs, for every pipeline the driver needed more than a second for, a hash of what it was given
     // and the size of the driver's pipeline cache before and after (a cache hit leaves the size as it was; a miss adds the pipeline)
-    static const bool pipe_diag = []() { const char* e = getenv("LL_VK_PIPEDIAG"); return e && e[0] == '1'; }();
+    static const bool pipe_diag = []() { const char* e = getenv("RK_VK_PIPEDIAG"); return e && e[0] == '1'; }();
     if (pipe_diag)
     {
         auto cache_size = [&]() { size_t sz = 0; vkGetPipelineCacheData(ctx.getDevice(), r.mPipelineCache, &sz, nullptr); return sz; };
@@ -1319,7 +1319,7 @@ bool Renderer::createLayouts()
         }
     }
 
-    // <FS> set 3: the ray tracing scene (ray query shadows, LL_VK_RT_SHADOWS); without it the layout is what it was
+    // <FS> set 3: the ray tracing scene (ray query shadows, RK_VK_RT_SHADOWS); without it the layout is what it was
     {
         const Capabilities& caps = ctx.getCaps();
         if (mSet2Layout && Rt::shadowMode() && caps.mRt.mEnabled && caps.mRt.mUsable)
@@ -1366,8 +1366,8 @@ bool Renderer::init()
     // uniform rings (one per frame in flight) and a stand-in for named uniform blocks nobody has bound
     for (U32 i = 0; i < Context::frameCount(); ++i)
     {
-        // LL_VK_RING_MEM=host (write-combined system memory) or cached (CPU-cached system memory) puts the uniform ring there instead of video memory behind the BAR
-        static const char* const ring_mem = getenv("LL_VK_RING_MEM");
+        // RK_VK_RING_MEM=host (write-combined system memory) or cached (CPU-cached system memory) puts the uniform ring there instead of video memory behind the BAR
+        static const char* const ring_mem = getenv("RK_VK_RING_MEM");
         const Context::Memory ring_memory = ring_mem && strcmp(ring_mem, "host") == 0 ? Context::Memory::Upload : (ring_mem && strcmp(ring_mem, "cached") == 0 ? Context::Memory::Readback : Context::Memory::UploadDevice);
         if (!ctx.createBuffer(RING_BYTES, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ring_memory, mRing[i]))
         {
@@ -1573,7 +1573,7 @@ bool Renderer::init()
     ctx.waitIdle();
     vmaDestroyBuffer(ctx.getAllocator(), staging.mBuffer, staging.mAllocation);
 
-    if (getenv("LL_VK_STANDIN_MAGENTA") && ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mMagenta))
+    if (getenv("RK_VK_STANDIN_MAGENTA") && ctx.createImage2D(1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, mMagenta))
     {
         Buffer mstaging;
         if (ctx.createBuffer(16, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, Context::Memory::Upload, mstaging))
@@ -1731,11 +1731,11 @@ void Renderer::tracyEndPass()
 
 static bool frag_stats()
 {
-    static const bool on = getenv("LL_VK_FRAGSTATS") != nullptr;
+    static const bool on = getenv("RK_VK_FRAGSTATS") != nullptr;
     return on;
 }
 
-// LL_VK_FRAGSTATS: the GPU time table switches its tag (a zone, a table draw type) inside a pass: the statistics query follows it, so the counts have the same rows as the times
+// RK_VK_FRAGSTATS: the GPU time table switches its tag (a zone, a table draw type) inside a pass: the statistics query follows it, so the counts have the same rows as the times
 void Renderer::statSegment(U32 tag)
 {
     if (!mRendering || mStatOpen < 0 || !mStatPool[mSlot] || mStatTag[mSlot].size() >= MAX_STAT_QUERIES || mStatTag[mSlot][(size_t)mStatOpen] == tag)
@@ -1793,7 +1793,7 @@ bool Renderer::createQueryPools()
             if (vkCreateQueryPool(dev, &qi, nullptr, &mStatPool[i]) != VK_SUCCESS)
             {
                 mStatPool[i] = VK_NULL_HANDLE;
-                LL_WARNS("Vulkan") << "LL_VK_FRAGSTATS: the device has no pipeline statistics queries" << LL_ENDL;
+                LL_WARNS("Vulkan") << "RK_VK_FRAGSTATS: the device has no pipeline statistics queries" << LL_ENDL;
             }
             else
             {
@@ -2388,7 +2388,7 @@ static Image* root_of(Image* i)
 
 // What a layout transition has to wait for and to block, by the layout the image leaves and the one it enters. Waiting for "all commands" at every
 // transition makes the GPU drain completely between passes; naming the stages that really touch the image lets unrelated work overlap.
-// LL_VK_COARSE_BARRIERS=1 goes back to the old all-commands barrier.
+// RK_VK_COARSE_BARRIERS=1 goes back to the old all-commands barrier.
 namespace
 {
 struct LayoutSync
@@ -2403,7 +2403,7 @@ constexpr LayoutSync CONSERVATIVE = { VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_A
 
 bool coarse_barriers()
 {
-    static const bool coarse = getenv("LL_VK_COARSE_BARRIERS") != nullptr;
+    static const bool coarse = getenv("RK_VK_COARSE_BARRIERS") != nullptr;
     return coarse;
 }
 
@@ -2537,7 +2537,7 @@ static std::string image_kind(const Image& im)
 
 void Renderer::noteBarrier(const Image& image, VkImageLayout from, VkImageLayout to)
 {
-    static const bool on = getenv("LL_VK_PHASES") != nullptr;
+    static const bool on = getenv("RK_VK_PHASES") != nullptr;
     if (!on)
     {
         mBarrierEndedPass = false;
@@ -2857,8 +2857,8 @@ void Renderer::beginRenderingIfNeeded()
     mDrawStampCount = 0;
     if (RKVkBridge::gPhaseTiming)
     {
-        // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (four colour attachments and depth, up to 1024 per side, not the 343x343 probe faces), 2 every pass
-        static const U64 draw_stamp_mode = []() { const char* e = getenv("LL_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
+        // RK_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (four colour attachments and depth, up to 1024 per side, not the 343x343 probe faces), 2 every pass
+        static const U64 draw_stamp_mode = []() { const char* e = getenv("RK_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
         const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
         if (ref && draw_stamp_mode)
         {
@@ -2871,7 +2871,7 @@ void Renderer::beginRenderingIfNeeded()
         mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
         // a pass that starts with a clear: the layout changes, the begin and the clear get their own entry, so that they are not counted as the first draws' time
         mBeginSplit = mPendingClear != 0;
-        Context::instance().gpuStamp(mBeginSplit ? Context::stampTag("pass begin + clear " + describeTarget()) : mBeginTag);      // LL_VK_PHASES: GPU time by render pass (or by the viewer's zone that spans it)
+        Context::instance().gpuStamp(mBeginSplit ? Context::stampTag("pass begin + clear " + describeTarget()) : mBeginTag);      // RK_VK_PHASES: GPU time by render pass (or by the viewer's zone that spans it)
     }
     tracyBeginPass();
     VkExtent2D extent = { 0, 0 };
@@ -3026,7 +3026,7 @@ void Renderer::bindlessStart()
     for (U32 t = 0; t < BINDLESS_TABLES; ++t)
     {
         const Image* stand_in = &mWhite;
-        if (t == 0 && mMagenta.valid()) stand_in = &mMagenta;       // (debug: LL_VK_STANDIN_MAGENTA)
+        if (t == 0 && mMagenta.valid()) stand_in = &mMagenta;       // (debug: RK_VK_STANDIN_MAGENTA)
         if (t == 1 && mFallback[1].valid()) stand_in = &mFallback[1];
         if (t == 2 && mFallback[2].valid()) stand_in = &mFallback[2];
         mPlaceholder[t] = { getSampler(SamplerDesc()), stand_in->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
@@ -3605,7 +3605,7 @@ void Renderer::applyState()
         }
     }
     {
-        static const bool diag = getenv("LL_VK_PHASES") != nullptr;
+        static const bool diag = getenv("RK_VK_PHASES") != nullptr;
         if (diag && depth_root && mProgram)
         {
             static const char* const use_name[4] = { "plain", "samples", "writes", "writes+samples" };       // plain: no write, not sampled
@@ -3626,7 +3626,7 @@ void Renderer::applyState()
     bool depth_ro = depth_sampled && !mDepthStencil.mDepthWrite;
     {
         // F3.5c: the viewer's declaration (DepthReadOnlyScope) against the inference
-        static const bool decl_verify = getenv("LL_VK_PHASES") != nullptr || getenv("LL_VK_DEPTHRO_VERIFY") != nullptr;
+        static const bool decl_verify = getenv("RK_VK_PHASES") != nullptr || getenv("RK_VK_DEPTHRO_VERIFY") != nullptr;
         if (decl_verify && depth_root && mProgram)
         {
             DeclStat& ds = mDeclStats[mProgram];
@@ -3661,7 +3661,7 @@ void Renderer::applyState()
     {
         // C9: a draw that neither writes depth nor reads the depth buffer works in either layout, so it keeps the one the pass is in (it used to force the
         // writable layout, which ended the pass and turned the layout back and forth around every draw that samples the depth: about 50 times a frame in a busy scene)
-        static const bool sticky = getenv("LL_VK_STICKY_DEPTH") == nullptr || getenv("LL_VK_STICKY_DEPTH")[0] != '0';
+        static const bool sticky = getenv("RK_VK_STICKY_DEPTH") == nullptr || getenv("RK_VK_STICKY_DEPTH")[0] != '0';
         const DepthStencilState& ds = mDepthStencil;
         const bool stencil_writes = ds.mStencilTest && ds.mWriteMask && (ds.mFail != VK_STENCIL_OP_KEEP || ds.mDepthFail != VK_STENCIL_OP_KEEP || ds.mPass != VK_STENCIL_OP_KEEP);
         if (sticky && depth_root && !depth_sampled && !ds.mDepthWrite && !stencil_writes && mDepthRO && mDepthRORoot == depth_root && !(mPendingClear & CLEAR_DEPTH))
@@ -3689,7 +3689,7 @@ void Renderer::applyState()
         mDepthRORoot = depth_root;
     }
     {
-        static const bool pu_diag = getenv("LL_VK_PHASES") != nullptr;
+        static const bool pu_diag = getenv("RK_VK_PHASES") != nullptr;
         if (pu_diag && depth_root && mProgram)
         {
             if (mPUKey.empty())
@@ -4206,10 +4206,10 @@ std::string Renderer::auditBindless() const
 
 // One GPU timestamp after a draw, described well enough to find the draw again: when a frame hangs the watchdog (Context::beginFrame) names the first draw whose stamp never
 // completed. The program, what was drawn, and the buffers (handle and offset: the arena buffers are shared, the offset tells which range).
-// LL_VK_ADDR_LOG is read once (getenv on every draw stamp made the render thread the bottleneck)
+// RK_VK_ADDR_LOG is read once (getenv on every draw stamp made the render thread the bottleneck)
 static bool addr_log_on()
 {
-    static const bool on = getenv("LL_VK_ADDR_LOG") != nullptr;
+    static const bool on = getenv("RK_VK_ADDR_LOG") != nullptr;
     return on;
 }
 
@@ -4299,10 +4299,10 @@ U32 Renderer::drawTag(const char* what, U32 count, U32 first, S32 vertex_offset)
     return Context::drawStampTag(text);
 }
 
-// One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; on by default, LL_VK_DRAW_RING=0 turns it off.
+// One record per draw in the ring (see DrawRec) and one checkpoint before it. Costs a few tens of nanoseconds a draw; on by default, RK_VK_DRAW_RING=0 turns it off.
 void Renderer::noteDraw(U8 kind, U32 count, U32 first, S32 vertex_offset)
 {
-    static const bool on = getenv("LL_VK_DRAW_RING") ? atoi(getenv("LL_VK_DRAW_RING")) != 0 : true;       // (on unless LL_VK_DRAW_RING=0: after a device lost the report names the draw the GPU had started)
+    static const bool on = getenv("RK_VK_DRAW_RING") ? atoi(getenv("RK_VK_DRAW_RING")) != 0 : true;       // (on unless RK_VK_DRAW_RING=0: after a device lost the report names the draw the GPU had started)
     if (!on || !Context::instance().getCaps().mCheckpoints)
     {
         return;
@@ -4825,12 +4825,12 @@ bool Renderer::uploadTexture(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32
     return uploadTextureDirect(image, mip, layer, x, y, width, height, depth, bytes, [](void* ctx, U8* dst, VkDeviceSize n) { memcpy(dst, ((const Src*)ctx)->mData, (size_t)n); }, &src);
 }
 
-// <FS> LL_VK_UPLOADLOG=1 (also on with the hitch watcher): what the worker spends on texture uploads, every 2 s (doc/vulkan/PLAN-hitchless-loading.md, texture uploads): the number, the bytes, the time
+// <FS> RK_VK_UPLOADLOG=1 (also on with the hitch watcher): what the worker spends on texture uploads, every 2 s (doc/vulkan/PLAN-hitchless-loading.md, texture uploads): the number, the bytes, the time
 // filling the staging memory and the time of the whole call (fill + recording the copies and their barriers), the longest single upload, how many ended a render pass, how many had a buffer of their
 // own (the old path outside a frame) and how many were kept for the next frame
 static void note_upload_log(VkDeviceSize bytes, U64 fill_us, U64 total_us, U32 split, U32 own, U32 deferred)
 {
-    static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
+    static const bool log_on = getenv("RK_VK_UPLOADLOG") != nullptr || getenv("RK_VK_HITCHWATCH") != nullptr;
     if (!log_on)
     {
         return;
@@ -4879,7 +4879,7 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
     }
 
     // <FS> between frames: keep the upload for the next frame instead of a submit and a wait for each (see mDeferredUploads)
-    static const bool batch = getenv("LL_VK_UPLOAD_BATCH") == nullptr || atoi(getenv("LL_VK_UPLOAD_BATCH")) != 0;
+    static const bool batch = getenv("RK_VK_UPLOAD_BATCH") == nullptr || atoi(getenv("RK_VK_UPLOAD_BATCH")) != 0;
     if (mCmd == VK_NULL_HANDLE && batch && expected <= 64ull * 1024 * 1024)
     {
         const VkDeviceSize align = std::max<VkDeviceSize>(4, fi.mBytesPerBlock);
@@ -5107,7 +5107,7 @@ void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
         }
         i = j;
     }
-    static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
+    static const bool log_on = getenv("RK_VK_UPLOADLOG") != nullptr || getenv("RK_VK_HITCHWATCH") != nullptr;
     if (log_on && mDeferredUploads.size() >= 200)
     {
         RK_DIAG("VkUpload") << "recorded " << mDeferredUploads.size() << " uploads kept from between frames: " << images << " images, " << copies << " copies, "
@@ -5460,8 +5460,8 @@ bool Renderer::flushBufferUpdates()
         {
             batch_has_fill = batch_has_fill || c.mSrc == VK_NULL_HANDLE;
         }
-        // LL_VK_COPY_TRIM=0: the copies go in as they were queued, with nothing ordering overlapping ones (how it was before 2026-11-03: a same-session A/B of the trimming)
-        static const bool trim_on = getenv("LL_VK_COPY_TRIM") == nullptr || atoi(getenv("LL_VK_COPY_TRIM")) != 0;
+        // RK_VK_COPY_TRIM=0: the copies go in as they were queued, with nothing ordering overlapping ones (how it was before 2026-11-03: a same-session A/B of the trimming)
+        static const bool trim_on = getenv("RK_VK_COPY_TRIM") == nullptr || atoi(getenv("RK_VK_COPY_TRIM")) != 0;
         if (!trim_on)
         {
             for (const BufferCopy& c : mPendingCopies)

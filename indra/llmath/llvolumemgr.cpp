@@ -301,7 +301,7 @@ LLVolume* LLVolumeLODGroup::refLOD(const S32 lod)
     {
         if (rk_diag_on())
         {
-            // <FS> 2026-11-16 (PLAN-hitchless-loading.md, A1's measurement gate, LL_VK_DIAG=1): how many volumes are built a window, per LOD, and what they cost on the calling thread (the main thread for new objects and LOD changes):
+            // <FS> 2026-11-16 (PLAN-hitchless-loading.md, A1's measurement gate, RK_VK_DIAG=1): how many volumes are built a window, per LOD, and what they cost on the calling thread (the main thread for new objects and LOD changes):
             // a line every 2 s with the builds of that window: count, total ms and the longest, per LOD.
             static std::mutex stats_mutex;
             static U64 builds[NUM_LODS] = {}, build_us[NUM_LODS] = {}, longest_us[NUM_LODS] = {};

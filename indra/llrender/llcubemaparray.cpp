@@ -117,7 +117,7 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
     // Copy each cubemap from the incoming array to the new array
     U32 min_count = std::min(count, lhs.mCount);
     // <FS> the image read back below is that of the NEW array (mImage), the same for every layer (nothing in the loop changes what it reads), and a readback makes the main thread wait for the whole worker queue
-    // (76 waits, 500 ms in the 10 s of a login, worst 228 ms: LL_VK_SYNC_LOG): it is read back and scaled once, and written to each layer
+    // (76 waits, 500 ms in the 10 s of a login, worst 228 ms: RK_VK_SYNC_LOG): it is read back and scaled once, and written to each layer
     if (min_count > 0)
     {
         PixelFormat components = PixelFormat::RGB;

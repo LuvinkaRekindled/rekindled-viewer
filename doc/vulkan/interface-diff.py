@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Interface comparison of the stock and the native side of every manifest program (stage 4, step 0 of DESIGN-stock-carrier-removal.md).
 
-Input: the `InterfaceDiff` log lines of one run with LL_VK_INTERFACE_DIFF=1, LL_VK_UNICENSUS=1 (which uniforms the callers wrote) and LL_VK_NATIVE_BUILD_ALL=1 (every manifest line built):
+Input: the `InterfaceDiff` log lines of one run with RK_VK_INTERFACE_DIFF=1, RK_VK_UNICENSUS=1 (which uniforms the callers wrote) and RK_VK_NATIVE_BUILD_ALL=1 (every manifest line built):
     stock  | <program> | u name:type;name:type[n] | s name:type | a name@loc | o <outputs> | set name;name
     native | <program> | <family> | <vertex>,<fragment> | u ... | s ... | a ... | o <n>
     native-none | <program> | <family> | build failed | never built
@@ -146,7 +146,7 @@ with_key = [r for r in rows if r[2]]
 with_drop = [r for r in rows if r[3]]
 with_other = [r for r in rows if r[4]]
 lines = ['# Interface comparison: stock program against its native program', '',
-         'Made by `doc/vulkan/interface-diff.py` from `inventory-data/interface-diff.txt` (one RT-off run with `LL_VK_INTERFACE_DIFF=1 LL_VK_UNICENSUS=1 LL_VK_NATIVE_BUILD_ALL=1`) and the manifest. Do not edit by hand.', '',
+         'Made by `doc/vulkan/interface-diff.py` from `inventory-data/interface-diff.txt` (one RT-off run with `RK_VK_INTERFACE_DIFF=1 RK_VK_UNICENSUS=1 RK_VK_NATIVE_BUILD_ALL=1`) and the manifest. Do not edit by hand.', '',
          '## Counts', '',
          '- manifest lines with a native interface: %d (not built or failed: %d); stock programs loaded: %d' % (sum(len(v) for v in native.values()), len(none), nprog),
          '- lines whose program name is not among the loaded stock programs (terrain variants this run did not make): %d' % len(no_stock),

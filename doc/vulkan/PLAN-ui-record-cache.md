@@ -34,11 +34,11 @@ Goal: take the widgets' 0.65-0.70 ms (harness layout) off the main thread on the
 - Not covered: name tags (0.13), `updateUI` (0.20), the HUD.
 
 ## Risks, and how each is checked
-1. **A belief that the boundary does not cover shows as a wrong texture, colour or clip on a replay frame.** `LL_VK_UI_CACHE_VERIFY=1`: on every replay frame the live draw is also recorded (not spliced) and compared with the cached bytes; the log counts mismatches per unit. In a static UI the mismatch rate must be 0 except for the views that really change (the status bar). Pictures: the same scripted spot with the cache on and off, `rt-shot-diff.py`, UI crops.
+1. **A belief that the boundary does not cover shows as a wrong texture, colour or clip on a replay frame.** `RK_VK_UI_CACHE_VERIFY=1`: on every replay frame the live draw is also recorded (not spliced) and compared with the cached bytes; the log counts mismatches per unit. In a static UI the mismatch rate must be 0 except for the views that really change (the status bar). Pictures: the same scripted spot with the cache on and off, `rt-shot-diff.py`, UI crops.
 2. **Stale pictures** up to N frames (33 ms at 90 fps, N = 3). Your eyes decide N and the Hz.
 3. **A widget that depends on being drawn every frame** (a timer in `draw()`, a blink, a drag preview). Found by use; `FSUIRecordCache` off per view class is a one-line list.
 4. **Memory**: a cap of 8 MB of cached bytes, least recently live first dropped.
-5. **Sub-stream on the main thread**: it exists and was tested on the cascades (`LL_VK_SUBSTREAM_TEST`); the UI's `LLRender::flush` goes through `drawScratch` -> `writeDraw` -> `mainReserve`, which the sub-stream buffer already intercepts (`tlsBuf`). Checked first, on a single unit, before any slicing.
+5. **Sub-stream on the main thread**: it exists and was tested on the cascades (`RK_VK_SUBSTREAM_TEST`); the UI's `LLRender::flush` goes through `drawScratch` -> `writeDraw` -> `mainReserve`, which the sub-stream buffer already intercepts (`tlsBuf`). Checked first, on a single unit, before any slicing.
 
 ## Steps (each measured or checked before the next; behind `FSUIRecordCache`, default off until you have looked)
 1. `rkvkasync`: `segmentBoundary()`, `SegmentRecording` (begin / end returning the bytes and the texture ids, op scan), `replay(bytes)`. Single unit (the people floater), N = 1: records recorded and spliced at once, nothing replayed: must be byte-identical to the uncached stream (verify) and the picture identical.
@@ -48,7 +48,7 @@ Goal: take the widgets' 0.65-0.70 ms (harness layout) off the main thread on the
 5. Laps (harness layout and yours), pictures, then you drive it: hover, type in chat, drag and resize floaters, open and close, scroll the people list, minimap, tooltips, menus.
 
 ## Status 2026-10-27: built, off by default (`FSUIRecordCache` 0); measured; waiting for Adam's hands-on check
-Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, `spliceSideEffects`, texture and buffer name registries with a cache epoch; `LLRender::segmentBoundary`; `LLView::drawChildren/drawChild` -> `ui_draw_view`). Switches: setting `FSUIRecordCache` (0 / 1) and `FSUIRecordCacheHz` (30); `LL_VK_UI_CACHE=<mode>,<hz>` (0 off, 1 record only the units of `LL_VK_UI_CACHE_UNITS`, 2 sliced replay) and, with `LL_VK_FARTIER_FILE=1`, `<work>/ui-cache.txt` for same-lap A/B; `LL_VK_UI_CACHE_VERIFY=1`. Launcher `<work>\run-viewer-uicache.bat`. Log tag `UiCache` every 600 frames: per unit live / replay cost, live and replayed frames, forced by input, key misses, records, bytes, recordings and the records that made some not cacheable, verify mismatches.
+Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, `spliceSideEffects`, texture and buffer name registries with a cache epoch; `LLRender::segmentBoundary`; `LLView::drawChildren/drawChild` -> `ui_draw_view`). Switches: setting `FSUIRecordCache` (0 / 1) and `FSUIRecordCacheHz` (30); `RK_VK_UI_CACHE=<mode>,<hz>` (0 off, 1 record only the units of `RK_VK_UI_CACHE_UNITS`, 2 sliced replay) and, with `RK_VK_FARTIER_FILE=1`, `<work>/ui-cache.txt` for same-lap A/B; `RK_VK_UI_CACHE_VERIFY=1`. Launcher `<work>\run-viewer-uicache.bat`. Log tag `UiCache` every 600 frames: per unit live / replay cost, live and replayed frames, forced by input, key misses, records, bytes, recordings and the records that made some not cacheable, verify mismatches.
 
 **What the first laps found (all fixed):**
 1. *The pending immediate-mode batch.* `LLRender` batches vertices until the next state change, so the last widget of a recorded unit was still pending when the recording ended and was flushed afterwards, outside the segment, with whatever texture the main producer believed: a white square for the "?", a neighbour's icon on hover, a missing "Developer" label (laps ucv1- / uca1-, Adam saw it as flashing). `segmentBoundary()` flushes first and the recording flushes before it ends.
@@ -60,5 +60,5 @@ Built as planned (rkvkasync: `segmentBoundary`, `scanSegment`, `replaySegment`, 
 
 **Not exercised by the harness (Adam, with `FSUIRecordCache` 1 or the launcher):** hover and click (a hovered unit is drawn every frame, plus 15 frames after), typing in chat, dragging and resizing a floater (the rect is in the key), scrolling the people list, opening and closing floaters and menus, tool tips, the minimap, the radar, an inventory window, a very full people list; what looks stale and for how long (the target is `FSUIRecordCacheHz`).
 
-## Status 2026-10-31: Adam's hands-on check done ("the ui seems fine"); `FSUIRecordCache` is on by default (1) from the next build. Off with the setting (0) or `LL_VK_UI_CACHE=0`.
+## Status 2026-10-31: Adam's hands-on check done ("the ui seems fine"); `FSUIRecordCache` is on by default (1) from the next build. Off with the setting (0) or `RK_VK_UI_CACHE=0`.
 

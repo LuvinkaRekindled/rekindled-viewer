@@ -82,7 +82,7 @@
 // </FS:Ansariel> [Legacy Bake]
 
 #include <boost/lexical_cast.hpp>
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 LLPointer<LLVOAvatarSelf> gAgentAvatarp = NULL;
 
@@ -1000,8 +1000,8 @@ bool LLVOAvatarSelf::updateCharacter(LLAgent &agent)
         LLVector3 scale(1.f, aspect, 1.f);
         // <FS> stage C5f: the HUD attachment points hang off the standalone screen joint, not under the skeleton root, so the avatar's attachment loop never sees them (updateJointLODs only walks the root: the points are
         // never valid); this is where the avatar moves them. Their only inputs are the screen's aspect (the sidebar opening, the window) and which objects are attached; an edit of a HUD object marks the object itself.
-        // So they are moved when one of those changed, and every 240 frames as a safety, not every frame (LL_VK_HUDEVENT=0: every frame, as before).
-        static const bool hud_event = !getenv("LL_VK_HUDEVENT") || atoi(getenv("LL_VK_HUDEVENT")) != 0;
+        // So they are moved when one of those changed, and every 240 frames as a safety, not every frame (RK_VK_HUDEVENT=0: every frame, as before).
+        static const bool hud_event = !getenv("RK_VK_HUDEVENT") || atoi(getenv("RK_VK_HUDEVENT")) != 0;
         static U64 hud_moved = 0, hud_kept = 0;
         const U32 frame = (U32)LLFrameTimer::getFrameCount();
         if (!hud_event || aspect != mHudAspect || LLViewerJointAttachment::sRevision != mHudRevision || frame - mHudResetFrame >= 240)
@@ -1044,7 +1044,7 @@ void LLVOAvatarSelf::idleUpdate(LLAgent &agent, const F64 &time)
         LLVOAvatar::idleUpdate(agent, time);
         idleUpdateTractorBeam();
 
-        if (rk_diag_on())       // <FS> the bake slot monitor and the periodic GPU readback below are the ears bug hunt (2026-11-14): a texture lookup a frame and a mid-frame GPU flush every 10 s: off unless LL_VK_DIAG
+        if (rk_diag_on())       // <FS> the bake slot monitor and the periodic GPU readback below are the ears bug hunt (2026-11-14): a texture lookup a frame and a mid-frame GPU flush every 10 s: off unless RK_VK_DIAG
         {
             monitorBakeSlots();
         }
@@ -1198,8 +1198,8 @@ void LLVOAvatarSelf::idleUpdateAppearanceAnimation()
 {
     // <FS> PLAN-avatars.md stage 0 (lap avi3): this override wrote every worn wearable's visual parameters to the avatar EVERY frame, 122 us of the main thread. Nothing has to be written unless the avatar is
     // morphing (the base function below does nothing else either), the appearance editor is open (the sliders change the wearables' parameters), or a wearable changed: the last is caught by the write every
-    // 30th frame. LL_VK_SELF_APPEARANCE=0 = every frame as before.
-    static const bool gate = !getenv("LL_VK_SELF_APPEARANCE") || getenv("LL_VK_SELF_APPEARANCE")[0] != '0';
+    // 30th frame. RK_VK_SELF_APPEARANCE=0 = every frame as before.
+    static const bool gate = !getenv("RK_VK_SELF_APPEARANCE") || getenv("RK_VK_SELF_APPEARANCE")[0] != '0';
     if (gate && !getIsAppearanceAnimating() && !isEditingAppearance() && (LLFrameTimer::getFrameCount() % 30) != 0)
     {
         return;

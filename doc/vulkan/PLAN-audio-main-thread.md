@@ -27,7 +27,7 @@ Cause of the burst is **not proven**. Best guess: `LLAudioData::load()` -> `LLAu
 
 ## Stage 0: measure (about half a day, one test cycle)
 
-Add timing that `llaudio` can report (it cannot use `RK_CPU_ZONE`, which lives in newview `rkgpuzonetimer.h`): a small stats struct in `llaudio` (accumulated microseconds and counts, reset on read), read and logged by the existing `FS_CPU_ZONES` block in `llappviewer.cpp` (next to `idle: audio`, line about 6485) under the `CpuZones` tag.
+Add timing that `llaudio` can report (it cannot use `RK_CPU_ZONE`, which lives in newview `rkgpuzonetimer.h`): a small stats struct in `llaudio` (accumulated microseconds and counts, reset on read), read and logged by the existing `RK_CPU_ZONES` block in `llappviewer.cpp` (next to `idle: audio`, line about 6485) under the `CpuZones` tag.
 
 Timers (per frame average and max, per 600-frame window):
 - `LLAudioEngine::idle` parts: source loop (`update` + `updatePriority`), channel pick + `play`, `updateChannels` (it runs twice per idle), queued-sound loop, sync loop, `LLAudioDecodeMgr::processQueue`, `startNextTransfer`, `updateInternetStream`.

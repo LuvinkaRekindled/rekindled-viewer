@@ -57,7 +57,7 @@ public:
     static const Row* row(const LLVOAvatar* av);                                     // null when the avatar has no row this frame
     static void endFrame();                                                          // after the avatars' update (the motion batch and the completions): the facts the render side reads
     static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
-    static void noteCheck(int which, bool same);                                     // LL_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted, 3 overall appearance) against the live one
+    static void noteCheck(int which, bool same);                                     // RK_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted, 3 overall appearance) against the live one
     static bool attachmentLoop(const LLVOAvatar* av, bool from_update);              // step 3: the loop's gate, from the row (the result of updateCharacter is only compared with it)
     static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
     static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)

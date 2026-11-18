@@ -13,4 +13,4 @@ Run the standard turn lap (and the crowded census lap) at full spec and constrai
 - Texture compression (BC1/BC3/BC7; about 4-8x smaller than RGBA8; the next memory item since the 2026-10-21 London lockups).
 - Shaders not optimised yet (start from a GPU zone breakdown by pass).
 - Revisit earlier "decided against" ideas now that the legacy boundaries are gone.
-- Cleanup pass: list the `LL_VK_*` switches and old paths, remove those with no reason left (keep the verify modes).
+- Cleanup pass: list the `RK_VK_*` switches and old paths, remove those with no reason left (keep the verify modes).

@@ -1,6 +1,6 @@
-param([int]$Pairs = 3, [int]$StartPair = 1, [string[]]$Arms = @('on','off'), [string]$Prefix = 'ab-', [string]$OffVars = 'LL_VK_HANDLES=0', [int]$Wait = 200)
+param([int]$Pairs = 3, [int]$StartPair = 1, [string[]]$Arms = @('on','off'), [string]$Prefix = 'ab-', [string]$OffVars = 'RK_VK_HANDLES=0', [int]$Wait = 200)
 # A/B in the plaza (PLAN-texture-handles.md, H1): on1, off1, on2, off2, ... The same lap as h0-chain.ps1 (60 s still, 60 s turn, 120 s still), but the chain goes on after a lap that did not end cleanly (a device lost): every lap is noted in <prefix>summary.txt.
-$base = 'LL_VK_AB_MARK=1;LL_VK_POSE_LOG=1;LL_VK_BUDGET_LOG=1'
+$base = 'RK_VK_AB_MARK=1;RK_VK_POSE_LOG=1;RK_VK_BUDGET_LOG=1'
 $summary = "<work>\run-logs\${Prefix}summary.txt"
 if ($StartPair -le 1) { "A/B started " + (Get-Date -Format 'HH:mm:ss') | Out-File $summary -Encoding utf8 } else { "A/B resumed at pair $StartPair " + (Get-Date -Format 'HH:mm:ss') | Out-File $summary -Append -Encoding utf8 }
 for ($i = $StartPair; $i -le $Pairs; ++$i) {

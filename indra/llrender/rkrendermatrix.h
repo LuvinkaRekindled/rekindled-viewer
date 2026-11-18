@@ -11,7 +11,7 @@
  *   RKRenderMatrix::load(Kind::Projection, ptr);           was: gRender.loadMatrix(ptr);
  *   ModelviewScope m;  m.translate(x, y, z);               push when made, pop when destroyed
  *
- * LL_VK_MATRIX_GUARD_CHECK=1: (1) when a scope is destroyed the stack of its matrix must be as deep as the scope left it (an unbalanced push or pop inside the scope shows up as a
+ * RK_VK_MATRIX_GUARD_CHECK=1: (1) when a scope is destroyed the stack of its matrix must be as deep as the scope left it (an unbalanced push or pop inside the scope shows up as a
  * warning with the file and line of the constructor), (2) the stacks that are not empty at the end of a frame are reported once per new depth.
  */
 
@@ -29,7 +29,7 @@ enum class Kind : U8 { Modelview, Projection, Texture0, Texture1, Texture2, Text
 
 inline Kind textureKind(S32 unit) { return (Kind)((U8)Kind::Texture0 + (unit < 0 ? 0 : (unit > 3 ? 3 : unit))); }     // the texture matrix of a texture unit (the shaders use units 0-3)
 
-extern bool sGuardCheck;                                                                       // LL_VK_MATRIX_GUARD_CHECK=1
+extern bool sGuardCheck;                                                                       // RK_VK_MATRIX_GUARD_CHECK=1
 
 // ---- the operations (llrender.cpp), each on the named matrix ----
 void push(Kind kind);

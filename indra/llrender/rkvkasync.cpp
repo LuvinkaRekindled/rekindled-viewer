@@ -102,7 +102,7 @@ struct SideRec
     U64 mAfter = 0;                 // the main thread's queue position when this was queued: replayed only once the worker has got that far
     std::vector<U8> mPayload;
 };
-// LL_VK_OPSTATS: what the main thread spends writing records (one write in 16 is timed, the total scaled up, so the timer does not distort it)
+// RK_VK_OPSTATS: what the main thread spends writing records (one write in 16 is timed, the total scaled up, so the timer does not distort it)
 unsigned long long gMainPushOps = 0;
 unsigned long long gMainPushTicks = 0;
 std::mutex gSideMutex;
@@ -167,16 +167,16 @@ unsigned long long* gWorkerGen = nullptr;           // worker side: the generati
 std::atomic<unsigned long long> gQStat[7];
 std::atomic<unsigned long long> gQValue[2];
 
-// ---- frame pacing statistics (LL_VK_PHASES) ----
+// ---- frame pacing statistics (RK_VK_PHASES) ----
 std::mutex gPaceMutex;
 std::vector<float> gBeginGaps, gPresentGaps;        // milliseconds between consecutive frame starts (main) / presents (worker)
 long long gLastBeginTick = 0, gLastPresentTick = 0;
 long long gMainWaitTicks = 0, gWorkerIdleTicks = 0;
 
-// LL_VK_PHASES: the worker's time per operation, in processor time-stamp ticks (a cheap read; converted with a ratio measured against the performance counter)
+// RK_VK_PHASES: the worker's time per operation, in processor time-stamp ticks (a cheap read; converted with a ratio measured against the performance counter)
 constexpr int OP_STAT_SLOTS = 56;
 bool gOpStats = false;
-bool gOpStatsPeriodic = false;      // LL_VK_OPSTATS without LL_VK_PHASES: the worker logs the numbers itself every 600 presented frames
+bool gOpStatsPeriodic = false;      // RK_VK_OPSTATS without RK_VK_PHASES: the worker logs the numbers itself every 600 presented frames
 unsigned gOpStatsFrames = 0;
 unsigned long long gOpStatTicks[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
@@ -190,7 +190,7 @@ constexpr int OP_SLOT_CUBE = OP_STAT_SLOTS - 1;     // S7 H0: the draws of 8 ind
 const char* const kCmdNames[] = { "base", "frameBegin", "frameEnd", "present", "hold", "snapshotBoundary", "upscale", "programBind", "uniformScalar",
                                   "uniformVector", "uniformMatrix", "samplerUnit", "programDestroy", "sync", "stop", "wrap", "bufferData", "bufferSubData", "shadowPackets", "fboAttach", "targetState", "texSlots", "gpuZone", "uniformBatch", "bufferRecycle", "rtScene", "state", "texImage", "texParamsId", "texOp", "uniformBlock", "constAttrib", "clear", "queryBegin", "queryEnd", "resourceCreate", "resourceDestroy", "draw", "uniformRange", "pass", "drawScratch" };
 const char* slotName(int slot) { if (slot == OP_SLOT_CUBE) return "draw of 8 indices (occlusion cubes, included in draw)"; return slot >= 0 && slot < (int)(sizeof(kCmdNames) / sizeof(kCmdNames[0])) ? kCmdNames[slot] : "cmd?"; }
-unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
+unsigned long long gMainOpCalls[OP_STAT_SLOTS] = {};     // RK_VK_OPSTATS: the plain calls the main thread pushed (the ones not yet typed), by operation
 
 // C4: texture upload costs on the main thread, and what was handed over without a copy
 std::atomic<unsigned long long> gTexMainCalls{ 0 }, gTexMainTicks{ 0 }, gTexHandedCalls{ 0 }, gTexHandedBytes{ 0 }, gTexCopiedBytes{ 0 }, gHoldWaits{ 0 }, gHoldWaitTicks{ 0 };
@@ -286,7 +286,7 @@ inline void mainCommit(size_t payload_bytes)
     }
 }
 
-// ---- merging records on the main thread (LL_VK_COALESCE=0 turns it off) ----
+// ---- merging records on the main thread (RK_VK_COALESCE=0 turns it off) ----
 // A draw is preceded by runs of glActiveTexture + glBindTexture and of glBindBuffer(ARRAY) + glVertexAttribPointer*. They are held back
 // and written as one record each: BIND_TEXTURE_UNIT (the unit and the bind) and ARRAY_RUN (the buffer bind and its attribute pointers).
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
@@ -344,7 +344,7 @@ U32 pendTexWrite(U8* p)
     return n * (U32)sizeof(U32);
 }
 
-unsigned long long gTexFlushWhy[OP_STAT_SLOTS] = {};     // LL_VK_OPSTATS: what forced the pending texture slots out as a record of their own (slot of the operation)
+unsigned long long gTexFlushWhy[OP_STAT_SLOTS] = {};     // RK_VK_OPSTATS: what forced the pending texture slots out as a record of their own (slot of the operation)
 
 void flushPendingTex(int why = 0)
 {
@@ -1085,7 +1085,7 @@ void sync_report_if_due(bool counted)
 
 void sync_note(const SyncKey& caller, double ms)
 {
-    static const bool on = getenv("LL_VK_SYNC_LOG") == nullptr || atoi(getenv("LL_VK_SYNC_LOG")) != 0;
+    static const bool on = getenv("RK_VK_SYNC_LOG") == nullptr || atoi(getenv("RK_VK_SYNC_LOG")) != 0;
     if (!on)
     {
         return;
@@ -1354,7 +1354,7 @@ std::string opStatsReport(size_t frames)
     }
     if (RKVkBridge::gPhaseTiming)
     {
-        // LL_VK_WORKERPHASES: where the worker's draw time goes (ms per frame; the timers themselves add about 25 ns per reading)
+        // RK_VK_WORKERPHASES: where the worker's draw time goes (ms per frame; the timers themselves add about 25 ns per reading)
         LARGE_INTEGER pf;
         QueryPerformanceFrequency(&pf);
         out += "worker draw phases ms/frame: ";
@@ -1404,10 +1404,10 @@ std::string pacingReport()
 void frameBegin(S32 width, S32 height)
 {
     note_gap(gBeginGaps, gLastBeginTick);
-    sync_report_if_due(false);         // <FS> LL_VK_SYNC_LOG: the main thread's own waits are reported from here too, so a quiet spell does not hold a report back
+    sync_report_if_due(false);         // <FS> RK_VK_SYNC_LOG: the main thread's own waits are reported from here too, so a quiet spell does not hold a report back
     const long long wait_start = now_ticks();
-    // how many frames the main thread may be ahead of the worker: one keeps the frame times even (LL_VK_ASYNC_DEPTH overrides, for comparing)
-    static const unsigned depth = []() { const char* v = getenv("LL_VK_ASYNC_DEPTH"); return v ? (unsigned)std::max(1, atoi(v)) : 1u; }();
+    // how many frames the main thread may be ahead of the worker: one keeps the frame times even (RK_VK_ASYNC_DEPTH overrides, for comparing)
+    static const unsigned depth = []() { const char* v = getenv("RK_VK_ASYNC_DEPTH"); return v ? (unsigned)std::max(1, atoi(v)) : 1u; }();
     int spins = 0;
     while (gBeginsEnqueued.load(std::memory_order_relaxed) - gBeginsDone.load(std::memory_order_acquire) > depth)
     {
@@ -1591,7 +1591,7 @@ void queryIdle(unsigned id, unsigned long long gen)
 
 bool query_get(int kind, unsigned id, unsigned pname, void* params)
 {
-    static const bool no_table = getenv("LL_VK_ASYNC_NOQT") != nullptr;      // debugging: every query read goes through the mirror's own bookkeeping
+    static const bool no_table = getenv("RK_VK_ASYNC_NOQT") != nullptr;      // debugging: every query read goes through the mirror's own bookkeeping
     if (no_table || !gPub || id >= QUERY_TABLE || !params)
     {
         return false;
@@ -2016,15 +2016,15 @@ void copyImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_f
 
 // A read back of a texture is a round trip: the main thread waits until the worker has replayed everything queued before it (and then for the copy). With the worker far behind (a burst of
 // texture uploads) one sculpted prim asking for its map cost seconds, and a plaza of them 15 s. The caller asks first and tries again in a later frame when the answer is no: not when
-// the worker has more than LL_VK_READBACK_BACKLOG_KB (default 4096) queued, and not more than LL_VK_READBACKS_PER_FRAME (default 4) a frame. Main thread only.
+// the worker has more than RK_VK_READBACK_BACKLOG_KB (default 4096) queued, and not more than RK_VK_READBACKS_PER_FRAME (default 4) a frame. Main thread only.
 bool readbackAffordable()
 {
     if (!RKVkAsync::gEnabled)
     {
         return true;
     }
-    static const U64 limit_bytes = [](){ const char* e = getenv("LL_VK_READBACK_BACKLOG_KB"); return (U64)(e && e[0] ? atoi(e) : 4096) * 1024; }();
-    static const U32 per_frame = [](){ const char* e = getenv("LL_VK_READBACKS_PER_FRAME"); return (U32)(e && e[0] ? atoi(e) : 4); }();
+    static const U64 limit_bytes = [](){ const char* e = getenv("RK_VK_READBACK_BACKLOG_KB"); return (U64)(e && e[0] ? atoi(e) : 4096) * 1024; }();
+    static const U32 per_frame = [](){ const char* e = getenv("RK_VK_READBACKS_PER_FRAME"); return (U32)(e && e[0] ? atoi(e) : 4); }();
     static U32 frame = ~0u, used = 0;
     const U32 now = (U32)LLFrameTimer::getFrameCount();
     if (frame != now)
@@ -2886,14 +2886,14 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
     gCurrentCtx = ctx;
     RKVkWorker::set_worker_context(ctx);
     const unsigned long long t0 = (gOpStats || RKVkPassCensus::sOn) ? __rdtsc() : 0;
-    // <FS> a command the worker needed more than LL_VK_SLOW_CMD_MS (default 100) for is named in the log (the first 200): where a frame that stalls while the GPU sits idle waits
+    // <FS> a command the worker needed more than RK_VK_SLOW_CMD_MS (default 100) for is named in the log (the first 200): where a frame that stalls while the GPU sits idle waits
     static const double slow_ticks = []()
     {
         const auto c0 = std::chrono::steady_clock::now();
         const unsigned long long a = __rdtsc();
         while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count() < 5.0) {}
         const unsigned long long b = __rdtsc();
-        const char* v = getenv("LL_VK_SLOW_CMD_MS");
+        const char* v = getenv("RK_VK_SLOW_CMD_MS");
         return (double)(b - a) / 5.0 * (v ? atof(v) : 100.0);
     }();
     const unsigned long long slow_t0 = t0 ? t0 : __rdtsc();
@@ -2905,7 +2905,7 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
         {
             ++slow_logged;
             const unsigned kind = op == CMD_SHADOW_PACKETS ? ((const RKVkBridge::ShadowPacketsHeader*)payload)->mKind : 0;
-            LL_WARNS("VkAsync") << "worker command " << op << (op == CMD_SHADOW_PACKETS ? " (shadow packets kind " : " (") << kind << ") took " << (double)took / slow_ticks * (getenv("LL_VK_SLOW_CMD_MS") ? atof(getenv("LL_VK_SLOW_CMD_MS")) : 100.0) << " ms" << LL_ENDL;
+            LL_WARNS("VkAsync") << "worker command " << op << (op == CMD_SHADOW_PACKETS ? " (shadow packets kind " : " (") << kind << ") took " << (double)took / slow_ticks * (getenv("RK_VK_SLOW_CMD_MS") ? atof(getenv("RK_VK_SLOW_CMD_MS")) : 100.0) << " ms" << LL_ENDL;
         }
     }
     // </FS>
@@ -3158,8 +3158,8 @@ void run_loop()
 bool requested()
 {
     static const bool on = []() {
-        const char* v = getenv("LL_VK_ASYNC");
-        if (!v || strcmp(v, "0") == 0) return false;        // LL_VK_ASYNC=0 forces the inline mirror whatever the setting says
+        const char* v = getenv("RK_VK_ASYNC");
+        if (!v || strcmp(v, "0") == 0) return false;        // RK_VK_ASYNC=0 forces the inline mirror whatever the setting says
         if (strcmp(v, "loopback") == 0) gMode = 2;
         else if (strcmp(v, "lockstep") == 0) gMode = 3;
         return true;
@@ -3197,13 +3197,13 @@ bool start()
         // loopback: everything is encoded into the queue, and the main thread replays it at once
         gWorkerTid = gMainTid;
         gEnabled = true;
-        LL_INFOS("VkAsync") << "LL_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
+        LL_INFOS("VkAsync") << "RK_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
         return true;
     }
     RKVkPassCensus::init();
-    if (getenv("LL_VK_PHASES") || getenv("LL_VK_OPSTATS"))
+    if (getenv("RK_VK_PHASES") || getenv("RK_VK_OPSTATS"))
     {
-        gOpStatsPeriodic = getenv("LL_VK_PHASES") == nullptr;
+        gOpStatsPeriodic = getenv("RK_VK_PHASES") == nullptr;
         LARGE_INTEGER qn;
         QueryPerformanceCounter(&qn);
         gOpStatQpc0 = qn.QuadPart;
@@ -3211,7 +3211,7 @@ bool start()
         gOpStats = true;
         gFrontStats = true;
     }
-    if (getenv("LL_VK_WORKERPHASES"))
+    if (getenv("RK_VK_WORKERPHASES"))
     {
         RKVkBridge::gPhaseTiming = true;        // the draw path's own phase timers (they run on the thread that replays the frames: the worker here); each costs a counter read
     }
@@ -3223,8 +3223,8 @@ bool start()
         return false;
     }
     gEnabled = true;
-    LL_INFOS("VkAsync") << (gMode == 3 ? "LL_VK_ASYNC=lockstep: the Vulkan mirror runs on its own thread, the main thread waits for it at the end of every frame"
-                                       : "the Vulkan mirror runs on its own thread (LL_VK_ASYNC): GL calls are queued by the main thread") << LL_ENDL;
+    LL_INFOS("VkAsync") << (gMode == 3 ? "RK_VK_ASYNC=lockstep: the Vulkan mirror runs on its own thread, the main thread waits for it at the end of every frame"
+                                       : "the Vulkan mirror runs on its own thread (RK_VK_ASYNC): GL calls are queued by the main thread") << LL_ENDL;
     return true;
 }
 

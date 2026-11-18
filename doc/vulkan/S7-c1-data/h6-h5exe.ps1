@@ -11,8 +11,8 @@ try {
   Copy-Item $h5 $exe -Force
   'H5 exe in place: ' + (Get-Item $exe).Length
   $env:LAP_YAW = "$Yaw"
-  Remove-Item Env:LL_VK_TEXFB -ErrorAction SilentlyContinue
-  Remove-Item Env:LL_VK_FB_OFF -ErrorAction SilentlyContinue
+  Remove-Item Env:RK_VK_TEXFB -ErrorAction SilentlyContinue
+  Remove-Item Env:RK_VK_FB_OFF -ErrorAction SilentlyContinue
   for ($i = 1; $i -le $Laps; ++$i) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File <work>\h0-chain.ps1 -Runs ("h5exe$i") -Prefix $Prefix
   }

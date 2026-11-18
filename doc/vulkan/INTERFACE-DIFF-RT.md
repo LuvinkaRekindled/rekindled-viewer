@@ -1,6 +1,6 @@
 # Interface comparison: stock program against its native program
 
-Made by `doc/vulkan/interface-diff.py` from `inventory-data/interface-diff.txt` (one RT-off run with `LL_VK_INTERFACE_DIFF=1 LL_VK_UNICENSUS=1 LL_VK_NATIVE_BUILD_ALL=1`) and the manifest. Do not edit by hand.
+Made by `doc/vulkan/interface-diff.py` from `inventory-data/interface-diff.txt` (one RT-off run with `RK_VK_INTERFACE_DIFF=1 RK_VK_UNICENSUS=1 RK_VK_NATIVE_BUILD_ALL=1`) and the manifest. Do not edit by hand.
 
 ## Counts
 

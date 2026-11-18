@@ -1,12 +1,12 @@
 param([string[]]$Runs = @('off','zones','cen','box'))
 # S7 B0/C0 session: the runs one after the other; stops at the first run whose viewer did not exit cleanly (a crashed viewer must not be followed by a login within 5 minutes)
 $defs = @{
-  'off'   = @{ Vars = 'LL_VK_AB_MARK=1'; Zones = $false };
-  'zones' = @{ Vars = 'LL_VK_AB_MARK=1'; Zones = $true };
-  'cen'   = @{ Vars = 'LL_VK_AB_MARK=1;LL_VK_VISCENSUS=1;LL_VK_VISCENSUS_BOXES=0'; Zones = $false };
-  'box'   = @{ Vars = 'LL_VK_AB_MARK=1;LL_VK_VISCENSUS=1'; Zones = $false };
-  'box2'  = @{ Vars = 'LL_VK_AB_MARK=1;LL_VK_VISCENSUS=1'; Zones = $false };
-  'box3'  = @{ Vars = 'LL_VK_AB_MARK=1;LL_VK_VISCENSUS=1'; Zones = $false };
+  'off'   = @{ Vars = 'RK_VK_AB_MARK=1'; Zones = $false };
+  'zones' = @{ Vars = 'RK_VK_AB_MARK=1'; Zones = $true };
+  'cen'   = @{ Vars = 'RK_VK_AB_MARK=1;RK_VK_VISCENSUS=1;RK_VK_VISCENSUS_BOXES=0'; Zones = $false };
+  'box'   = @{ Vars = 'RK_VK_AB_MARK=1;RK_VK_VISCENSUS=1'; Zones = $false };
+  'box2'  = @{ Vars = 'RK_VK_AB_MARK=1;RK_VK_VISCENSUS=1'; Zones = $false };
+  'box3'  = @{ Vars = 'RK_VK_AB_MARK=1;RK_VK_VISCENSUS=1'; Zones = $false };
 }
 foreach ($r in $Runs) {
   $name = 'b0c0-' + $r

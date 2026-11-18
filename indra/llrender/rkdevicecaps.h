@@ -69,7 +69,7 @@ public:
     RKDeviceCaps();
 
     bool initRenderDevice();
-    bool initFromDevice();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
+    bool initFromDevice();     // <FS> RK_VK_NOGL: everything comes from the Vulkan device
     void shutdownRenderDevice();
 
 #if LL_WINDOWS
@@ -100,7 +100,7 @@ public:
     bool mHasRayQuery = false;
     bool mHasRayTracingPipeline = false;
     bool mHasRayTracing = false;            // acceleration structures + ray query + device addresses: the ray tracing steps can be built on this device
-    bool mRayTracingEnabled = false;        // ... and switched on at device creation (LL_VK_RT=1)
+    bool mRayTracingEnabled = false;        // ... and switched on at device creation (RK_VK_RT=1)
     bool mHasNeuralRender = false;          // <FS> DLSS-NR (neural rendering) can run here: DLSS on, the NGX core says yes, nvngx_dlssnr.dll next to the viewer
 
     // GL 4.x capabilities

@@ -2846,7 +2846,7 @@
     <key>FSVkAmdDenoiseShadows</key>
     <map>
       <key>Comment</key>
-      <string>Experimental: denoise the traced sun shadow with the AMD FidelityFX shadow denoiser (steadies the edges of small shadows such as leaves). On by default, and counts only with FSR as the upscaler (not DLSS) and the ray traced shadows on. LL_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler for a test. Takes effect at once.</string>
+      <string>Experimental: denoise the traced sun shadow with the AMD FidelityFX shadow denoiser (steadies the edges of small shadows such as leaves). On by default, and counts only with FSR as the upscaler (not DLSS) and the ray traced shadows on. RK_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler for a test. Takes effect at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2857,7 +2857,7 @@
     <key>FSVkAmdDenoise</key>
     <map>
       <key>Comment</key>
-      <string>Experimental: denoise the traced glossy reflections with the AMD FidelityFX reflection denoiser (works on any graphics card). Needs the upscaler on and FSR as the upscaler (no ray reconstruction) and the traced mirror on. LL_VK_AMD_DENOISE=1 turns it on for a test. Takes effect at once.</string>
+      <string>Experimental: denoise the traced glossy reflections with the AMD FidelityFX reflection denoiser (works on any graphics card). Needs the upscaler on and FSR as the upscaler (no ray reconstruction) and the traced mirror on. RK_VK_AMD_DENOISE=1 turns it on for a test. Takes effect at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -3121,7 +3121,7 @@
     <key>FSObjectExpiry</key>
     <map>
       <key>Comment</key>
-      <string>Forget what the camera has not seen for a long time. Groups no camera accepted for 10 s skip their per-frame updates, groups unseen for 90 s drop their draw data, and objects unseen for 60 s (camera still for 3 s, farther than the scene load radius, not selected, no sound, particles, light or media) are removed and come back from the cache when you turn to them. Keeps the frame time from growing after a turn. Read at start: a change needs a restart. LL_VK_EXPIRY=0 in the environment turns it off.</string>
+      <string>Forget what the camera has not seen for a long time. Groups no camera accepted for 10 s skip their per-frame updates, groups unseen for 90 s drop their draw data, and objects unseen for 60 s (camera still for 3 s, farther than the scene load radius, not selected, no sound, particles, light or media) are removed and come back from the cache when you turn to them. Keeps the frame time from growing after a turn. Read at start: a change needs a restart. RK_VK_EXPIRY=0 in the environment turns it off.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -13085,7 +13085,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderRTMaterialDebug</key>
   <map>
     <key>Comment</key>
-    <string>Ray scene material table debug view (RenderBufferVisualization 9, LL_VK_RT_MATERIALS=1): 1 the hit's albedo, 2 the G-buffer's albedo, 3 their difference x4, 4 the hit's flat normal, 5 material id colours, 6 status (green hit with material, yellow no material, red bad record, blue no hit, magenta other depth), 7 the hit's albedo with the alpha test off (every triangle shows). 9 the difference view with the alpha test off in a checkerboard, 10 alpha probe, 11 emissive difference (glTF), 12 the hit's shaded normal (normal map applied), 13 its difference to the G-buffer normal.</string>
+    <string>Ray scene material table debug view (RenderBufferVisualization 9, RK_VK_RT_MATERIALS=1): 1 the hit's albedo, 2 the G-buffer's albedo, 3 their difference x4, 4 the hit's flat normal, 5 material id colours, 6 status (green hit with material, yellow no material, red bad record, blue no hit, magenta other depth), 7 the hit's albedo with the alpha test off (every triangle shows). 9 the difference view with the alpha test off in a checkerboard, 10 alpha probe, 11 emissive difference (glTF), 12 the hit's shaded normal (normal map applied), 13 its difference to the G-buffer normal.</string>
     <key>Persist</key>
     <integer>0</integer>
     <key>Type</key>
@@ -13096,7 +13096,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderRTShadowSoftness</key>
   <map>
     <key>Comment</key>
-    <string>Ray traced sun shadows (LL_VK_RT_SHADOWS): angular radius of the sun's disc in degrees. The penumbra of a shadow grows with the distance between caster and receiver (the filter sized by the blocker distance, PLAN-rt-shadow-penumbra.md; its pixel cap is rt-debug.txt penmax). 0 = hard shadows. The real sun is 0.27; 0.3 since 2026-11-05 (Adam, by eye, with penmax 8 and penlod 1).</string>
+    <string>Ray traced sun shadows (RK_VK_RT_SHADOWS): angular radius of the sun's disc in degrees. The penumbra of a shadow grows with the distance between caster and receiver (the filter sized by the blocker distance, PLAN-rt-shadow-penumbra.md; its pixel cap is rt-debug.txt penmax). 0 = hard shadows. The real sun is 0.27; 0.3 since 2026-11-05 (Adam, by eye, with penmax 8 and penlod 1).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

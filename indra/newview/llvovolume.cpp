@@ -5993,10 +5993,10 @@ void LLVolumeGeometryManager::freeFaces()
     }
 }
 
-// <FS> cheaper fill: LL_VK_CHEAP_FILL (default on, 0 = the old paths; 2 = also checks every cached result against the computed one and logs a difference)
+// <FS> cheaper fill: RK_VK_CHEAP_FILL (default on, 0 = the old paths; 2 = also checks every cached result against the computed one and logs a difference)
 static int cheap_fill_mode()
 {
-    static const int mode = getenv("LL_VK_CHEAP_FILL") ? atoi(getenv("LL_VK_CHEAP_FILL")) : 1;
+    static const int mode = getenv("RK_VK_CHEAP_FILL") ? atoi(getenv("RK_VK_CHEAP_FILL")) : 1;
     return mode;
 }
 
@@ -7565,14 +7565,14 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
         }
 }
 
-// LL_VK_REBUILD_PARALLEL: 0 = the fills on this thread, 1 = the fill tasks of one group on the pool, 2 (the default since 2026-10-31) = the fills of all the groups of a rebuild loop together (RKRebuildBatch)
+// RK_VK_REBUILD_PARALLEL: 0 = the fills on this thread, 1 = the fill tasks of one group on the pool, 2 (the default since 2026-10-31) = the fills of all the groups of a rebuild loop together (RKRebuildBatch)
 static int rebuild_parallel_mode()
 {
-    static const int mode = getenv("LL_VK_REBUILD_PARALLEL") ? atoi(getenv("LL_VK_REBUILD_PARALLEL")) : 2;
+    static const int mode = getenv("RK_VK_REBUILD_PARALLEL") ? atoi(getenv("RK_VK_REBUILD_PARALLEL")) : 2;
     return mode;
 }
 
-// the tasks of the kinds of one group, in the order genDrawInfo made them: on the pool when LL_VK_REBUILD_PARALLEL is set (the tasks of animated children stay on this thread), then the draw maps appended to the group's in that order
+// the tasks of the kinds of one group, in the order genDrawInfo made them: on the pool when RK_VK_REBUILD_PARALLEL is set (the tasks of animated children stay on this thread), then the draw maps appended to the group's in that order
 void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<FillTask>& tasks)
 {
     RK_CPU_ZONE("rebuild: fill tasks (geometry and registration)");

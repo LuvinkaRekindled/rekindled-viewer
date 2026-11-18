@@ -408,7 +408,7 @@ bool RKVkBridge::ensureReady()
             LL_WARNS("VkMirror") << sMirror.mFailureMessage << LL_ENDL;
             const std::string message = sMirror.mFailureMessage;
             lock.unlock();
-            static const bool no_box = getenv("LL_VK_NO_MESSAGE_BOX") != nullptr;      // (for tests that must not wait for a person)
+            static const bool no_box = getenv("RK_VK_NO_MESSAGE_BOX") != nullptr;      // (for tests that must not wait for a person)
             if (!no_box)
             {
                 OSMessageBox(message, "Rekindled cannot start", OSMB_OK);
@@ -750,11 +750,11 @@ bool represent_after_resize()
 }
 
 
-// ---- <FS> blink capture (LL_VK_BLINK_CAPTURE=1, off by default) ----------------------------------------------------------------------------------------------------------------------------
+// ---- <FS> blink capture (RK_VK_BLINK_CAPTURE=1, off by default) ----------------------------------------------------------------------------------------------------------------------------
 // A diagnostic for a frame that is wrong for one frame (a patch of the ground black, a green flash): every finished frame is also blitted down to a small image and copied into a ring of host
 // buffers, read back when the GPU has finished with it (no wait, so the timing is that of a normal run apart from two small copies). Each new frame is compared with the two before it: where a block
 // is much darker (or much greener) in the middle frame and the frames on both sides agree with each other, the three frames and a difference picture are written as BMP files into
-// <exe folder>\blink-captures (LL_VK_BLINK_DIR) and a VkBlink line goes to the log.
+// <exe folder>\blink-captures (RK_VK_BLINK_DIR) and a VkBlink line goes to the log.
 namespace
 {
 struct BlinkCapture
@@ -784,12 +784,12 @@ struct BlinkCapture
     Slot mSlots[RING];
     std::deque<Done> mHistory;
     U64 mCaptured = 0, mSkippedBusy = 0, mTriggers = 0, mSaved = 0, mLastSaveFrame = 0, mChecks = 0, mGap = 0;
-    F32 mDrop = 0.25f;          // LL_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
-    U32 mBlocks = 3;            // LL_VK_BLINK_BLOCKS: how many blocks must do it
-    U32 mMaxSaved = 300;        // LL_VK_BLINK_MAX: how many blinks are written out
-    F32 mChange = 0.f;          // LL_VK_BLINK_CHANGE (0 = off): a block whose colour differs from the mean of the frames before and after by more than this (0 to 1, in any channel) for ONE frame, while those two agree, counts: a surface that shows another texture for a frame changes colour more than its brightness
+    F32 mDrop = 0.25f;          // RK_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
+    U32 mBlocks = 3;            // RK_VK_BLINK_BLOCKS: how many blocks must do it
+    U32 mMaxSaved = 300;        // RK_VK_BLINK_MAX: how many blinks are written out
+    F32 mChange = 0.f;          // RK_VK_BLINK_CHANGE (0 = off): a block whose colour differs from the mean of the frames before and after by more than this (0 to 1, in any channel) for ONE frame, while those two agree, counts: a surface that shows another texture for a frame changes colour more than its brightness
     U32 mMaxChanged = 0;
-    U32 mCapW = CAP_W;          // LL_VK_BLINK_WIDTH: the width of the copy (320 to 1280, a multiple of the block size): a flash of a small surface needs more than 320
+    U32 mCapW = CAP_W;          // RK_VK_BLINK_WIDTH: the width of the copy (320 to 1280, a multiple of the block size): a flash of a small surface needs more than 320
     U32 mMaxDark = 0, mMaxGreen = 0, mMaxBright = 0;       // the strongest changes seen since the last log line (how far the thresholds are from what happens)
     std::string mDir;
 
@@ -798,11 +798,11 @@ struct BlinkCapture
         if (!mChecked)
         {
             mChecked = true;
-            const char* e = getenv("LL_VK_BLINK_CAPTURE");
+            const char* e = getenv("RK_VK_BLINK_CAPTURE");
             mOn = e && e[0] && e[0] != '0';
             if (mOn)
             {
-                const char* d = getenv("LL_VK_BLINK_DIR");
+                const char* d = getenv("RK_VK_BLINK_DIR");
                 if (d && d[0])
                 {
                     mDir = d;
@@ -815,13 +815,13 @@ struct BlinkCapture
                     const size_t slash = exe.find_last_of("\\/");
                     mDir = (slash == std::string::npos ? std::string() : exe.substr(0, slash)) + "\\blink-captures";
                 }
-                if (const char* v = getenv("LL_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
-                if (const char* v = getenv("LL_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
-                if (const char* v = getenv("LL_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
-                if (const char* v = getenv("LL_VK_BLINK_CHANGE")) mChange = std::max(0.f, std::min(1.f, (F32)atof(v)));
-                if (const char* v = getenv("LL_VK_BLINK_WIDTH")) mCapW = (U32)std::max<S32>(320, std::min<S32>(1280, atoi(v))) / CELL * CELL;
+                if (const char* v = getenv("RK_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
+                if (const char* v = getenv("RK_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("RK_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("RK_VK_BLINK_CHANGE")) mChange = std::max(0.f, std::min(1.f, (F32)atof(v)));
+                if (const char* v = getenv("RK_VK_BLINK_WIDTH")) mCapW = (U32)std::max<S32>(320, std::min<S32>(1280, atoi(v))) / CELL * CELL;
                 CreateDirectoryA(mDir.c_str(), nullptr);
-                LL_INFOS("VkBlink") << "blink capture is ON (LL_VK_BLINK_CAPTURE): small copies of every frame, bad frames saved to " << mDir << " (a block " << (S32)(mDrop * 100.f) << "% darker for one frame, " << mBlocks << " blocks)" << LL_ENDL;
+                LL_INFOS("VkBlink") << "blink capture is ON (RK_VK_BLINK_CAPTURE): small copies of every frame, bad frames saved to " << mDir << " (a block " << (S32)(mDrop * 100.f) << "% darker for one frame, " << mBlocks << " blocks)" << LL_ENDL;
             }
         }
         return mOn;
@@ -1147,7 +1147,7 @@ void RKVkBridge::endFrameImpl()
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     if (sBlink.enabled())
     {
-        sBlink.record(ctx, renderer, sMirror.mBackbuffer, sMirror.mBackWidth, sMirror.mBackHeight);        // <FS> LL_VK_BLINK_CAPTURE
+        sBlink.record(ctx, renderer, sMirror.mBackbuffer, sMirror.mBackWidth, sMirror.mBackHeight);        // <FS> RK_VK_BLINK_CAPTURE
     }
 
     renderer.ensureLayout(target, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -1166,7 +1166,7 @@ void RKVkBridge::endFrameImpl()
     RKVkWorker::after_frame();
 }
 
-// ---- the public frame calls: queued for the worker thread in async mode (LL_VK_ASYNC), inline otherwise ----
+// ---- the public frame calls: queued for the worker thread in async mode (RK_VK_ASYNC), inline otherwise ----
 namespace
 {
 // The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.

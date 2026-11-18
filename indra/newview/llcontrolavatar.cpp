@@ -219,9 +219,9 @@ void LLControlAvatar::matchVolumeTransform()
                         LL_INFOS("AnimRoot") << "animated object root placements: the attachment point from the host's flat array " << from_array.load() << ", from the joint " << from_joint.load() << LL_ENDL;
                     }
                 }
-                // (LL_VK_HOVERFIX=0: as before, always when the host's motion update is pending) Only when the host's pose job has run this frame: its attachment point then holds this frame's pose without the hover. Before
+                // (RK_VK_HOVERFIX=0: as before, always when the host's motion update is pending) Only when the host's pose job has run this frame: its attachment point then holds this frame's pose without the hover. Before
                 // that it holds last frame's final value, hover included, and adding it again put the animated object one hover offset too high in the frames this call was the last to run.
-                static const bool hover_fix = !getenv("LL_VK_HOVERFIX") || atoi(getenv("LL_VK_HOVERFIX")) != 0;
+                static const bool hover_fix = !getenv("RK_VK_HOVERFIX") || atoi(getenv("RK_VK_HOVERFIX")) != 0;
                 static std::atomic<U64> hover_added{ 0 }, hover_skipped{ 0 };
                 const bool pending = attached_av->hasPendingGroundSitHover();
                 const bool add_hover = pending && (!hover_fix || attached_av->poseJobDoneThisFrame());

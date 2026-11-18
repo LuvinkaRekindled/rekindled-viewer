@@ -194,7 +194,7 @@ public:
     LLRenderTarget          mDnsrHit;       // the sun shadow denoiser's hit mask: RGBA8, one texel a tile of 8 x 4 pixels of the lightmap (dnsr_sunpack.frag)
     LLRenderTarget          mDnsrSunOut;    // its output: RGBA8 render size, r the filtered visibility
     bool                    amdDenoiserWanted();
-    bool                    amdSunDenoiserWanted();     // the AMD shadow denoiser on the traced sun shadow (setting FSVkAmdDenoiseShadows, LL_VK_AMD_DENOISE_SHADOWS=1)
+    bool                    amdSunDenoiserWanted();     // the AMD shadow denoiser on the traced sun shadow (setting FSVkAmdDenoiseShadows, RK_VK_AMD_DENOISE_SHADOWS=1)
     U32                     denoiseKinds();             // the denoisers in use this frame (1 reflections, 2 shadows): the denoiser's context is made for all of them
     bool                    prepareDenoiseInputs(U32 w, U32 h, bool& made);       // the world normal, roughness and raw depth for the denoisers, once a frame
     void                    denoiseSunShadow(LLRenderTarget* light);      // denoises the sun channel of the lightmap in place (before the penumbra filter)
@@ -209,7 +209,7 @@ public:
     LLRenderTarget          mRtBlocker;                         // <FS> PLAN-rt-shadow-penumbra.md step 1: the blocker distance of the sun lightmap's centre ray (R16F, copied from the lightmap's attachment 1 right after the sun pass)
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mUpscaledMap;
-    LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with LL_VK_DLSS_NR >= 2 (the position after the upscale)
+    LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with RK_VK_DLSS_NR >= 2 (the position after the upscale)
     LLRenderTarget          mNROutputRender;    // <FS> DLSS-NR: render size RGBA16F (the position before the upscale)
     LLRenderTarget          mNRLift;            // <FS> DLSS-NR: the rim lift's output, window size
     LLRenderTarget          mNRLiftRender;      // <FS> DLSS-NR: the rim lift's output, render size
@@ -324,7 +324,7 @@ public:
     void updateMove();
     bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max);
     bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
-    bool pointCloudFromExtents(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp);      // <FS> what getVisiblePointCloud makes of the visible extents (the walk is separate: LL_VK_PC_SPLIT)
+    bool pointCloudFromExtents(LLCamera& camera, const LLVector3& min, const LLVector3& max, std::vector<LLVector3>& fp);      // <FS> what getVisiblePointCloud makes of the visible extents (the walk is separate: RK_VK_PC_SPLIT)
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
     void updateCull(LLCamera& camera, LLCullResult& result, bool hud_attachments = false);
@@ -352,7 +352,7 @@ public:
     static View currentView(LLCamera& camera, bool hud);
 
     // <FS> the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1): the loops of stateSort make their writes to shared state (the rebuild and partition move queues, the LOD update of
-    // avatars and other objects, the mesh rebuilds) through one list of deltas that is applied in the order it was recorded. LL_VK_SORT_SPLIT=1 sorts that way (compute everything, then apply);
+    // avatars and other objects, the mesh rebuilds) through one list of deltas that is applied in the order it was recorded. RK_VK_SORT_SPLIT=1 sorts that way (compute everything, then apply);
     // =2 is the check: the loops run twice, deferred (nothing applied, the fields they write put back) and then as before with the same list recorded, and the two lists are compared.
     struct SortDelta
     {
@@ -387,7 +387,7 @@ public:
     void applySortDeltas(std::vector<SortDelta>& deltas);
     void sortLoops(LLCamera& camera, LLCullResult& read);
     void sortSplitCheck(LLCamera& camera, std::vector<SortDelta>& ledger_a, std::vector<SortDelta>& ledger_b);
-    // stage 2: the compute on the pool (LL_VK_SORT_SPLIT=3; =4 checks it against the serial compute). False: the sort has to stay serial (no pool, a group whose occlusion state the main thread must change).
+    // stage 2: the compute on the pool (RK_VK_SORT_SPLIT=3; =4 checks it against the serial compute). False: the sort has to stay serial (no pool, a group whose occlusion state the main thread must change).
     bool sortLoopsParallel(const View& view, LLCullResult& read, std::vector<SortDelta>& ledger, void* journal);
     void sortDryRun(const View& view, bool parallel, void* result);
     void sortParallelCheck(const View& view);
@@ -432,7 +432,7 @@ public:
         RKAsyncPool::JobPtr mAlphaJob[2];
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
-    // <FS> LL_VK_SC_SPLIT: the cull of all the pending cascades as pool jobs by partition and subtree (what a serial shadowPrepCull per cascade finds, in the same order)
+    // <FS> RK_VK_SC_SPLIT: the cull of all the pending cascades as pool jobs by partition and subtree (what a serial shadowPrepCull per cascade finds, in the same order)
     void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class RKForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
     void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
@@ -483,9 +483,9 @@ public:
     void unbindReflectionProbes(RKShaderProgram& shader);
 
     void renderDeferredLighting();
-    void rtSceneEarly(int where);            // <FS> LL_VK_RT_EARLY: the ray scene is built before the G-buffer (see renderDeferredLighting for the wait)
+    void rtSceneEarly(int where);            // <FS> RK_VK_RT_EARLY: the ray scene is built before the G-buffer (see renderDeferredLighting for the wait)
     bool mRtSceneEarly = false;
-    F32 mRtEarlyView[16] = {};      // the view matrix and distance scale the early scene was built with (a comparison at the lighting, LL_VK_RT_EARLY)
+    F32 mRtEarlyView[16] = {};      // the view matrix and distance scale the early scene was built with (a comparison at the lighting, RK_VK_RT_EARLY)
     F32 mRtEarlyScale = 0.f;
 
     // apply atmospheric haze based on contents of color and depth buffer
@@ -520,29 +520,29 @@ public:
     void rebuildPools(); // Rebuild pools
 
     void findReferences(LLDrawable *drawablep); // Find the lists which have references to this object
-    bool inMovedList(const LLDrawable* drawablep) const;    // <FS> LL_VK_DRAWABLE_TRACE: is the drawable an entry of the moved list (by pointer)
+    bool inMovedList(const LLDrawable* drawablep) const;    // <FS> RK_VK_DRAWABLE_TRACE: is the drawable an entry of the moved list (by pointer)
     static inline LLDrawable* sMovedCurrent = nullptr;      // <FS> the entry updateMovedListSerial is working on (main thread only)
     bool verify();                      // Verify that all data in the pipeline is "correct"
 
     S32  getLightCount() const { return static_cast<S32>(mLights.size()); }
-    // <FS> LL_VK_EXPIRY (doc/vulkan/EXPIRY-design.md section 4, state Cold): 0 off, 1 counts what would be skipped, 2 skips. A group no camera has accepted for LL_VK_COLD_FRAMES (default 600, about 10 s) is Cold:
+    // <FS> RK_VK_EXPIRY (doc/vulkan/EXPIRY-design.md section 4, state Cold): 0 off, 1 counts what would be skipped, 2 skips. A group no camera has accepted for RK_VK_COLD_FRAMES (default 600, about 10 s) is Cold:
     // the moved list leaves the plain root objects in it alone while they stay inside the group, and animated textures of its objects are not stepped. The counters are logged with the scene census.
     static bool coldGroup(const LLSpatialGroup* group);
-    // Released (LL_VK_EXPIRY=3): a VOLUME group no camera accepted for LL_VK_REL_FRAMES (default 3600, about 60 s) drops its draw infos and scene fragment (the vertex data stays) and is marked RK_RELEASED; when a camera
-    // accepts it again it joins the wake queue, from which LL_VK_WAKE_PER_FRAME (default 48) groups a frame, nearest first, are rebuilt the way a dirty group is.
+    // Released (RK_VK_EXPIRY=3): a VOLUME group no camera accepted for RK_VK_REL_FRAMES (default 3600, about 60 s) drops its draw infos and scene fragment (the vertex data stays) and is marked RK_RELEASED; when a camera
+    // accepts it again it joins the wake queue, from which RK_VK_WAKE_PER_FRAME (default 48) groups a frame, nearest first, are rebuilt the way a dirty group is.
     void releaseScan();
     void wakeGroups();
     void wakeRequest(LLSpatialGroup* group);
     void wakeForget(LLSpatialGroup* group);
-    void scheduleRelease(LLSpatialGroup* group);        // <FS> expiry (cold mode 3): the group's geometry was built; it is looked at again after LL_VK_REL_FRAMES frames (an age queue, no octree scan)
+    void scheduleRelease(LLSpatialGroup* group);        // <FS> expiry (cold mode 3): the group's geometry was built; it is looked at again after RK_VK_REL_FRAMES frames (an age queue, no octree scan)
     void releaseForget(LLSpatialGroup* group);          // <FS> the group's draw map was cleared (a rebuild, a release, its death): it leaves the age queue
     std::vector<LLSpatialGroup*> mWakeQ;
     static U64 sRelReleased, sRelReleasedInfos, sRelWoken, sRelScans;
     static int coldMode();
     static U64 sColdMovedSeen, sColdMovedSkipped, sColdTexAnimSeen, sColdTexAnimSkipped, sColdMovedWoken;
-    void pinMainThread();               // <FS> LL_VK_PIN_MAIN=<logical cpu>: pins the main thread (a test, doc/vulkan/PLAN-texture-handles.md section 17.22)
-    void cpuProbe();                    // <FS> LL_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)
-    void sceneStateCensus();            // <FS> LL_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.16): what the scene holds against what is in view, logged every 600 frames
+    void pinMainThread();               // <FS> RK_VK_PIN_MAIN=<logical cpu>: pins the main thread (a test, doc/vulkan/PLAN-texture-handles.md section 17.22)
+    void cpuProbe();                    // <FS> RK_VK_CPUPROBE=1: three fixed benchmarks on the main thread each frame, as CPU zones (does the thread itself get slower after a turn?)
+    void sceneStateCensus();            // <FS> RK_VK_SCENECENSUS=1 (doc/vulkan/PLAN-texture-handles.md section 17.16): what the scene holds against what is in view, logged every 600 frames
 
     void calcNearbyLights(LLCamera& camera);
     void setupHWLights();
@@ -950,7 +950,7 @@ public:
     // Auxillary render target pack scaled to the hero probe's per-face size.
     RenderTargetPack mHeroProbeRT;
 
-    // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view, at the main view's render size (allocated with LL_VK_MIRROR_PLANAR=1)
+    // <FS> the planar mirror (doc/vulkan/PLAN-planar-mirror.md): the reflected view, at the main view's render size (allocated with RK_VK_MIRROR_PLANAR=1)
     RenderTargetPack mMirrorViewRT;
     // <FS> the mirror view's quality setting (RenderHeroProbeResolution 256 / 512 / 1024 / 2048: 1/4, 1/2, full, full of the main view's size): below full size the view is rendered into the smaller
     // mMirrorViewRT and enlarged into this target, at the main view's size, which is what the glass reads (the glass shaders find a pixel by the size of the texture)

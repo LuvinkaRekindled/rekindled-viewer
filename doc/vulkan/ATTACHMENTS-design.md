@@ -4,7 +4,7 @@ Status: DESIGN for Adam's review. No code. Read with `PLAN-texture-handles.md` s
 
 Naming: Adam asked for "N6 / S4 D". In `S4-design.md` option D is the *shared skinned output* (measured: skinning is at most 0.26 ms of GPU in the G-buffer, not built). What is meant here is the N6 line, attachments following joints. This note argues that the GPU is the last stage of that, not the first.
 
-## 1. What the measurements say (plaza, FS_AVATAR_TIMERS, section 17.13)
+## 1. What the measurements say (plaza, RK_AVATAR_TIMERS, section 17.13)
 
 Per frame in the still: 23-27 avatars run the attachment loop of `LLVOAvatar::idleUpdateMisc`, about 200 attachments (91 rigged, 108 rigid, all with a bridge).
 
@@ -51,7 +51,7 @@ The 91% rigged triangles already have no model matrix (`registerFace`: "rigged m
 
 ## 5. Stages and gates
 
-Everything behind `LL_VK_ATT_BULK` (0 off, 1 verify, 2 use); off by default until Adam has used it, as for S3/S4.
+Everything behind `RK_VK_ATT_BULK` (0 off, 1 verify, 2 use); off by default until Adam has used it, as for S3/S4.
 
 - **Stage 0, census (no behaviour change).** Attribute the downstream zones to attachments: split `updateMovedList`, `drawable: updateMove`, `bridge: updateMove`, `octree: partition move` by "belongs to an attachment of an avatar" (drawable flag `ATTACHMENT_ROOT`/parent chain) and by plain / not plain. Count the not-plain reasons (selected, lights, flexi, animesh, recent server update, hidden-update avatars). Gate: the attributable downstream cost plus the loop's 0.245 ms is at least 0.4 ms of the main thread, else stop here and take the tolerance skip (section 7).
 - **Stage A, bulk pass in verify mode (mode 1).** Compute the L1 matrices and extents on the pool *beside* the old chain and compare with what the chain produced (matrix max abs difference over 16 floats, extents within 1 cm); count per attachment kind and reason, log the worst cases with object ids. Gate: 0 mismatches above 1e-4 for plain attachments over a full lap with the turn; every mismatch category explained (linkset child order, damping: `updateMoveDampedAsync` interpolates, check that the damped path equals the joint-driven value at rest; the first frame after attach).

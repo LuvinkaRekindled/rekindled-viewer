@@ -8,7 +8,7 @@
  * every frame) destroys it once it is old enough (with a time budget: a teleport can release thousands at once). What must not wait for the list is done when the object is parked (onRetire()). A parked
  * object whose reference count rose again is left alone. Only on the main thread: another thread's last unref deletes at once, as before.
  *
- * LL_VK_RETIRE_FRAMES (default 4) is the age at which a parked object is destroyed.
+ * RK_VK_RETIRE_FRAMES (default 4) is the age at which a parked object is destroyed.
  * Header only; the state lives in function-local statics. Independent of the viewer classes: an object is an LLThreadSafeRefCount with the hooks in llrefcount.h (onRetire, retireKind, mParked).
  */
 
@@ -172,7 +172,7 @@ private:
         U64 mFrames = 4;
         State()
         {
-            const char* f = getenv("LL_VK_RETIRE_FRAMES");
+            const char* f = getenv("RK_VK_RETIRE_FRAMES");
             const int v = f ? atoi(f) : 4;
             mFrames = (U64)(v < 1 ? 1 : v);
         }

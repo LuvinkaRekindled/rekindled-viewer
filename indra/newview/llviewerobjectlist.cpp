@@ -111,7 +111,7 @@
 #include "fsareasearch.h" // <FS:Cron> Added to provide the ability to update the impact costs in area search. </FS:Cron>
 #include "llavataractions.h"
 #include "rkitemcensus.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 extern F32 gMinObjectDistance;
 extern bool gAnimateTextures;
@@ -1036,7 +1036,7 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     LLVOAvatar::cullAvatarsByPixelArea();
 }
 
-// <FS> Stage 0 of doc/vulkan/ATTACHMENTS-design.md (LL_VK_ATTCENSUS=1): how much of the move chain belongs to attachments
+// <FS> Stage 0 of doc/vulkan/ATTACHMENTS-design.md (RK_VK_ATTCENSUS=1): how much of the move chain belongs to attachments
 RKAttCensus::Kind RKAttCensus::kindOf(const LLDrawable* drawable)
 {
     const LLViewerObject* object = drawable ? drawable->getVObj() : nullptr;
@@ -1173,7 +1173,7 @@ namespace
 {
 // Runs the deferred pose blend of every avatar in the batch, in parallel when
 // that is worth it, then finishes their idle updates on the calling thread.
-// <FS> LL_VK_AVCLASS=1 (a census, off by default): who is in the avatar motion batch and what each kind costs. Class: 0 the own avatar, 1 visible in the main view, 2 not visible in the main view but marked visible by another view
+// <FS> RK_VK_AVCLASS=1 (a census, off by default): who is in the avatar motion batch and what each kind costs. Class: 0 the own avatar, 1 visible in the main view, 2 not visible in the main view but marked visible by another view
 // (a shadow cascade), 3 visible in none; +4 when only the skeleton's matrices are worked out (a hidden avatar: no pose blend). Per class a frame: avatars, the blend time (on all threads), the completion time (main thread).
 struct AvClassCensus
 {
@@ -1188,7 +1188,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     const auto batch_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
 
-    static const bool av_class = getenv("LL_VK_AVCLASS") != nullptr;
+    static const bool av_class = getenv("RK_VK_AVCLASS") != nullptr;
     static std::vector<U8> av_cls;
     if (av_class)
     {
@@ -1351,10 +1351,10 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             batch[i]->completeDeferredMotionUpdate();
         }
     }
-    // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
+    // <FS> PLAN-avatars.md stage B3a (RK_VK_PALJOB): the palettes of the avatars of the batch, rebuilt for the coming frame now that the skeletons are final (the completions made their last changes)
     {
         rk_frame_palette_prepare((U32)gFrameCount + 1);      // <FS> P1 step 2: the coming frame's palette list begins (and takes its arena) before the jobs write into it
-        static const bool pal_time = getenv("LL_VK_PALTIME") != nullptr;
+        static const bool pal_time = getenv("RK_VK_PALTIME") != nullptr;
         const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         if (pool && batch.size() >= MIN_PARALLEL_BATCH)
         {

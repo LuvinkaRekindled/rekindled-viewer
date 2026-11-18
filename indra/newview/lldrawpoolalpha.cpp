@@ -62,7 +62,7 @@
 
 #include "llenvironment.h"
 #include "glm/gtc/type_ptr.hpp"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
@@ -685,10 +685,10 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
 
 extern U32 gFrameCount;
 
-// <FS> GPU particles G1: the order of a record store is written by the GPU (default on since 2026-11-02; LL_VK_GPU_PARTICLE_SORT=0 sorts on the CPU; implies the shader evaluation of G0)
+// <FS> GPU particles G1: the order of a record store is written by the GPU (default on since 2026-11-02; RK_VK_GPU_PARTICLE_SORT=0 sorts on the CPU; implies the shader evaluation of G0)
 bool rk_particle_sort_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLE_SORT"); return !v || atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("RK_VK_GPU_PARTICLE_SORT"); return !v || atoi(v) != 0; }();
     return on;
 }
 
@@ -743,10 +743,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // <FS> S5g (doc/vulkan/S5-design.md): the scene table is the ONLY alpha path. The main view's passes draw the groups' plans from the fragments (one record per run, in the loop's order), every other draw as a
     // transient entry; a draw that neither can draw is not drawn (counted, logged once by rk_alpha_transient)
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
-    // diagnostics (crash / blink hunt 2026-10-22): LL_VK_ALPHA_NO_FRAGMENTS=1 draws every alpha draw as a transient entry (the fragments' plans are not used), LL_VK_ALPHA_NO_TRANSIENT=1 draws no transient entry (what only they draw is missing)
-    static const bool dbg_no_fragments = getenv("LL_VK_ALPHA_NO_FRAGMENTS") != nullptr, dbg_no_transient = getenv("LL_VK_ALPHA_NO_TRANSIENT") != nullptr;
-    // J1 K6 S5c: the impostor images and the probes' cube faces are views the table serves (their cull results are prepared): their alpha draws come from the fragments' plans too (LL_VK_ALPHA_VIEWS=0 = transient entries from the draw infos as before)
-    static const bool alpha_views = !getenv("LL_VK_ALPHA_VIEWS") || getenv("LL_VK_ALPHA_VIEWS")[0] != '0';
+    // diagnostics (crash / blink hunt 2026-10-22): RK_VK_ALPHA_NO_FRAGMENTS=1 draws every alpha draw as a transient entry (the fragments' plans are not used), RK_VK_ALPHA_NO_TRANSIENT=1 draws no transient entry (what only they draw is missing)
+    static const bool dbg_no_fragments = getenv("RK_VK_ALPHA_NO_FRAGMENTS") != nullptr, dbg_no_transient = getenv("RK_VK_ALPHA_NO_TRANSIENT") != nullptr;
+    // J1 K6 S5c: the impostor images and the probes' cube faces are views the table serves (their cull results are prepared): their alpha draws come from the fragments' plans too (RK_VK_ALPHA_VIEWS=0 = transient entries from the draw infos as before)
+    static const bool alpha_views = !getenv("RK_VK_ALPHA_VIEWS") || getenv("RK_VK_ALPHA_VIEWS")[0] != '0';
     const bool alpha_table = !dbg_no_fragments && (alpha_views || !LLPipeline::sImpostorRender) && (!LLPipeline::sRenderingHUDs || rk_scene_geo_hud_any()) && (alpha_views || !gCubeSnapshot) && !LLPipeline::sReflectionRender && rk_alpha_serving();       // S5d: the rigged passes (colour and fringe) too
     // S5f F4: the draws the fragments do not keep are sent as transient entries in EVERY view that has its pull programs (HUD, impostor render, probe and reflection renders, the depth only passes): a pass
     // that is not the main view's has no fragments to serve (alpha_table false) but draws all of its draws that way
@@ -775,7 +775,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         return dof_pass && (program == &gDeferredFullbrightMaskPullProgram || program == &gDeferredFullbrightMaskPullSkinProgram) ? 0.33f : MINIMUM_ALPHA;
     };
     // item D1 / D2 (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the colour pass of the world draws the fullbright and the material alpha draws with the lit program (ALPHA_UBER, ALPHA_UBER_MAT: the row's GEO_FULLBRIGHT and
-    // GEO_MATERIAL flags), so a lit, a fullbright and a material draw in the blend order are one run (the A/B keys alphauber and alphamat, LL_VK_ALPHAUBER and LL_VK_ALPHAMAT are gone: PLAN-twin-removal.md, section 8)
+    // GEO_MATERIAL flags), so a lit, a fullbright and a material draw in the blend order are one run (the A/B keys alphauber and alphamat, RK_VK_ALPHAUBER and RK_VK_ALPHAMAT are gone: PLAN-twin-removal.md, section 8)
     // (the HUD draws all its plain draws with its fullbright program; the depth only passes draw lit and fullbright ones with the mask program)
     const bool uber_ctx = !depth_only && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender;
     const bool mat_ctx = uber_ctx;
@@ -1098,10 +1098,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // a new run: the pull program of its key bound, the blend function, the per-draw values a plain draw has (spec 1, env 0, brightness 1)
     auto run_begin = [&](int key)
     {
-        // LL_VK_ALPHAKEYCENSUS=1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md item D): which keys the alpha runs have and how they follow each other. A run starts where the key of the next draw in the
+        // RK_VK_ALPHAKEYCENSUS=1 (doc/vulkan/PLAN-crowd-worker-and-gpu.md item D): which keys the alpha runs have and how they follow each other. A run starts where the key of the next draw in the
         // blend order differs (program, blend function pair, double sided, rigged): a transition that keeps the program only changes the blend or the culling, one that changes the program needs
         // another pull program. Logged every 6000 runs.
-        static const bool key_census = getenv("LL_VK_ALPHAKEYCENSUS") != nullptr;
+        static const bool key_census = getenv("RK_VK_ALPHAKEYCENSUS") != nullptr;
         if (key_census)
         {
             static int prev = -1;

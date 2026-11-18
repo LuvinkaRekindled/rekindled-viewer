@@ -63,7 +63,7 @@
 #include <array>
 #include <atomic>
 #include "llappviewer.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 extern bool gCubeSnapshot;
 
@@ -226,7 +226,7 @@ void LLViewerJointMesh::uploadJointMatrices()
 
 static bool rt_body_log_wanted()
 {
-    static const bool on = getenv("LL_VK_RT_BODYLOG") != nullptr;
+    static const bool on = getenv("RK_VK_RT_BODYLOG") != nullptr;
     return on;
 }
 
@@ -470,7 +470,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         }
         if (rt_body_log_wanted())
         {
-            // debug (LL_VK_RT_BODYLOG=1): how often each mesh of the viewer's own avatar is reached from the shadow passes and from the main view, logged every 600 frames
+            // debug (RK_VK_RT_BODYLOG=1): how often each mesh of the viewer's own avatar is reached from the shadow passes and from the main view, logged every 600 frames
             static std::unordered_map<S32, std::array<U32, 2>> reached;
             static U32 last_report = 0;
             LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;
@@ -558,8 +558,8 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     LLVertexBuffer* buff = mFace->getVertexBuffer();
 
     {
-        // debug (LL_VK_BODYLOG=1): what a body mesh is drawn with, logged when it changes (a body mesh that is drawn wrong through the pull twin is compared with the ones that are not)
-        static const bool wanted = getenv("LL_VK_BODYLOG") != nullptr;
+        // debug (RK_VK_BODYLOG=1): what a body mesh is drawn with, logged when it changes (a body mesh that is drawn wrong through the pull twin is compared with the ones that are not)
+        static const bool wanted = getenv("RK_VK_BODYLOG") != nullptr;
         if (wanted && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender)
         {
             static std::unordered_map<const LLViewerJointMesh*, std::string> told;
@@ -582,9 +582,9 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     }
 
     {
-        // debug (LL_VK_POSELAG=1): how far the viewer's own avatar is, when its mesh is drawn, from where its joints are (root joint world position against the render position of the avatar, which
+        // debug (RK_VK_POSELAG=1): how far the viewer's own avatar is, when its mesh is drawn, from where its joints are (root joint world position against the render position of the avatar, which
         // the camera and the views follow): a pose that is a frame old shows as a difference while the avatar moves. Logged every 300 frames of the main view.
-        static const bool wanted = getenv("LL_VK_POSELAG") != nullptr;
+        static const bool wanted = getenv("RK_VK_POSELAG") != nullptr;
         if (wanted && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
         {
             LLDrawable* drawable = mFace ? mFace->getDrawable() : nullptr;

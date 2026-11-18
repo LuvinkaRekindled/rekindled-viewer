@@ -31,11 +31,11 @@
 namespace RKVk
 {
 
-#define LL_VK_GLOBAL_FN(name) PFN_##name name = nullptr;
-#define LL_VK_INSTANCE_FN(name) PFN_##name name = nullptr;
-#define LL_VK_DEVICE_FN(name) PFN_##name name = nullptr;
+#define RK_VK_GLOBAL_FN(name) PFN_##name name = nullptr;
+#define RK_VK_INSTANCE_FN(name) PFN_##name name = nullptr;
+#define RK_VK_DEVICE_FN(name) PFN_##name name = nullptr;
 #include "rkvkfunctions.inl"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 const char* gDebugProgram = nullptr;
 bool gDeviceLost = false;
@@ -45,7 +45,7 @@ namespace
 {
 
 #if LL_WINDOWS
-// LL_VK_AV_LOG=<file>: a vectored exception handler that writes the call stack (names from the PDB next to the exe) of the first access violations to the file, whichever module they
+// RK_VK_AV_LOG=<file>: a vectored exception handler that writes the call stack (names from the PDB next to the exe) of the first access violations to the file, whichever module they
 // fault in. The driver's own crashes (nvoglv64.dll) left no trace in the viewer's log; the stack names the Vulkan call that was running.
 LONG CALLBACK av_stack_handler(PEXCEPTION_POINTERS ep)
 {
@@ -59,7 +59,7 @@ LONG CALLBACK av_stack_handler(PEXCEPTION_POINTERS ep)
         return EXCEPTION_CONTINUE_SEARCH;
     }
     char path[MAX_PATH] = {};
-    if (GetEnvironmentVariableA("LL_VK_AV_LOG", path, sizeof(path)) == 0)
+    if (GetEnvironmentVariableA("RK_VK_AV_LOG", path, sizeof(path)) == 0)
     {
         return EXCEPTION_CONTINUE_SEARCH;
     }
@@ -195,7 +195,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     return VK_FALSE;
 }
 
-// LL_VK_ADDR_LOG (on; =0 turns it off): VK_EXT_device_address_binding_report. Every bind / unbind of GPU memory to a buffer, image or acceleration structure goes into a ring, so the
+// RK_VK_ADDR_LOG (on; =0 turns it off): VK_EXT_device_address_binding_report. Every bind / unbind of GPU memory to a buffer, image or acceleration structure goes into a ring, so the
 // address of a device fault can be traced to the resource that held it and the frame it was given up in (the report lists them)
 struct AddrEvent
 {
@@ -241,11 +241,11 @@ std::mutex sAddrMutex;
 std::vector<AddrEvent> sAddrRing;
 U64 sAddrCount = 0;
 const size_t ADDR_RING = 1u << 20;
-// on unless LL_VK_ADDR_LOG=0: the ring costs a few microseconds per memory bind and is what names the owner of a stale address after a device lost
+// on unless RK_VK_ADDR_LOG=0: the ring costs a few microseconds per memory bind and is what names the owner of a stale address after a device lost
 static bool addr_log_wanted()
 {
     char v[8] = {};
-    const DWORD n = GetEnvironmentVariableA("LL_VK_ADDR_LOG", v, sizeof(v));
+    const DWORD n = GetEnvironmentVariableA("RK_VK_ADDR_LOG", v, sizeof(v));
     return !(n > 0 && v[0] == '0');
 }
 
@@ -350,13 +350,13 @@ struct FeatureChain
     }
 };
 
-// ray tracing is switched on at device creation only on request (LL_VK_RT=1): until the renderer uses it, nothing about the device should differ from a build without it
+// ray tracing is switched on at device creation only on request (RK_VK_RT=1): until the renderer uses it, nothing about the device should differ from a build without it
 bool rayTracingRequested()
 {
-    // LL_VK_RT_SHADOWS (ray query sun shadows) needs the device features as well
+    // RK_VK_RT_SHADOWS (ray query sun shadows) needs the device features as well
     static const bool on = []() {
         char b[8] = {}, c[8] = {};
-        return (GetEnvironmentVariableA("LL_VK_RT", b, sizeof(b)) > 0 && b[0] != '0') || (GetEnvironmentVariableA("LL_VK_RT_SHADOWS", c, sizeof(c)) > 0 && c[0] != '0');
+        return (GetEnvironmentVariableA("RK_VK_RT", b, sizeof(b)) > 0 && b[0] != '0') || (GetEnvironmentVariableA("RK_VK_RT_SHADOWS", c, sizeof(c)) > 0 && c[0] != '0');
     }();
     return on;
 }
@@ -572,9 +572,9 @@ bool Context::loadLoader()
     {
         return false;
     }
-#define LL_VK_GLOBAL_FN(name) name = (PFN_##name)vkGetInstanceProcAddr(nullptr, #name);
-#define LL_VK_INSTANCE_FN(name)
-#define LL_VK_DEVICE_FN(name)
+#define RK_VK_GLOBAL_FN(name) name = (PFN_##name)vkGetInstanceProcAddr(nullptr, #name);
+#define RK_VK_INSTANCE_FN(name)
+#define RK_VK_DEVICE_FN(name)
 #include "rkvkfunctions.inl"
     return vkCreateInstance && vkEnumerateInstanceExtensionProperties;
 }
@@ -636,10 +636,10 @@ bool Context::createInstance()
             return false;
         }
     }
-    const bool want_validation = GetEnvironmentVariableA("LL_VK_VALIDATION", nullptr, 0) > 0;
+    const bool want_validation = GetEnvironmentVariableA("RK_VK_VALIDATION", nullptr, 0) > 0;
     const bool want_addr_log = addr_log_wanted();
-    // LL_VK_LABELS=1: every GPU stamp also inserts a debug label with its name, so a capture in Nsight Graphics (GPU Trace) shows where the passes begin
-    const bool want_labels = GetEnvironmentVariableA("LL_VK_LABELS", nullptr, 0) > 0;
+    // RK_VK_LABELS=1: every GPU stamp also inserts a debug label with its name, so a capture in Nsight Graphics (GPU Trace) shows where the passes begin
+    const bool want_labels = GetEnvironmentVariableA("RK_VK_LABELS", nullptr, 0) > 0;
     const bool debug_utils = (want_validation || want_addr_log || want_labels) && has_extension(available, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (debug_utils)
     {
@@ -669,9 +669,9 @@ bool Context::createInstance()
         return false;
     }
 
-#define LL_VK_GLOBAL_FN(name)
-#define LL_VK_INSTANCE_FN(name) name = (PFN_##name)vkGetInstanceProcAddr(mInstance, #name);
-#define LL_VK_DEVICE_FN(name)
+#define RK_VK_GLOBAL_FN(name)
+#define RK_VK_INSTANCE_FN(name) name = (PFN_##name)vkGetInstanceProcAddr(mInstance, #name);
+#define RK_VK_DEVICE_FN(name)
 #include "rkvkfunctions.inl"
 
     if (debug_utils)
@@ -685,7 +685,7 @@ bool Context::createInstance()
             ai.pfnUserCallback = address_binding_callback;
             VkDebugUtilsMessengerEXT m = VK_NULL_HANDLE;
             create_messenger(mInstance, &ai, nullptr, &m);
-            LL_INFOS("Vulkan") << "device address binding log requested (LL_VK_ADDR_LOG)" << LL_ENDL;
+            LL_INFOS("Vulkan") << "device address binding log requested (RK_VK_ADDR_LOG)" << LL_ENDL;
         }
         if (create_messenger && want_validation)
         {
@@ -737,9 +737,9 @@ bool Context::pickDevice()
         vkGetPhysicalDeviceProperties(dev, &props);
         LL_INFOS("Vulkan") << "device: " << props.deviceName << " (api " << VK_API_VERSION_MAJOR(props.apiVersion) << "."
                            << VK_API_VERSION_MINOR(props.apiVersion) << "." << VK_API_VERSION_PATCH(props.apiVersion) << ")" << LL_ENDL;
-        if (getenv("LL_VK_TEST_NO_DEVICE"))
+        if (getenv("RK_VK_TEST_NO_DEVICE"))
         {
-            rejected(props.deviceName, "(test) LL_VK_TEST_NO_DEVICE is set");        // (tries the start-up message without a device that fails)
+            rejected(props.deviceName, "(test) RK_VK_TEST_NO_DEVICE is set");        // (tries the start-up message without a device that fails)
             continue;
         }
         if (props.apiVersion < VK_API_VERSION_1_3)
@@ -935,7 +935,7 @@ bool Context::pickDevice()
                 << ", position fetch " << rt.mPositionFetch << ", maintenance1 " << rt.mMaintenance1 << ", invocation reorder " << rt.mReorder << ", opacity micromap "
                 << rt.mOpacityMicromap << ", cluster acceleration structure " << rt.mClusterAccel << " -> usable " << rt.mUsable << "; limits: geometries " << rt.mMaxGeometryCount
                 << ", instances " << rt.mMaxInstanceCount << ", primitives " << rt.mMaxPrimitiveCount << ", scratch alignment " << rt.mScratchAlignment
-                << ", recursion " << rt.mMaxRecursionDepth << (rayTracingRequested() ? "" : " (not enabled on the device: LL_VK_RT=1 does that)") << LL_ENDL;
+                << ", recursion " << rt.mMaxRecursionDepth << (rayTracingRequested() ? "" : " (not enabled on the device: RK_VK_RT=1 does that)") << LL_ENDL;
 
             // <FS> bindless sampled images for the render packets: the features, and a table size that leaves room for the push set and the uniform set
             if (chain.f12.runtimeDescriptorArray && chain.f12.descriptorBindingPartiallyBound && chain.f12.descriptorBindingSampledImageUpdateAfterBind
@@ -980,7 +980,7 @@ bool Context::pickDevice()
 bool Context::createDevice()
 {
 #if LL_WINDOWS
-    if (GetEnvironmentVariableA("LL_VK_AV_LOG", nullptr, 0) > 0)
+    if (GetEnvironmentVariableA("RK_VK_AV_LOG", nullptr, 0) > 0)
     {
         AddVectoredExceptionHandler(1, av_stack_handler);
     }
@@ -997,16 +997,16 @@ bool Context::createDevice()
     }
     else if (rayTracingRequested())
     {
-        LL_WARNS("Vulkan") << "LL_VK_RT is set but this device cannot do ray queries (acceleration structure " << mCaps.mRt.mAccelStruct << ", ray query " << mCaps.mRt.mRayQuery << ")" << LL_ENDL;
+        LL_WARNS("Vulkan") << "RK_VK_RT is set but this device cannot do ray queries (acceleration structure " << mCaps.mRt.mAccelStruct << ", ray query " << mCaps.mRt.mRayQuery << ")" << LL_ENDL;
     }
     vkGetPhysicalDeviceFeatures2(mPhysical, &chain.f2);
 
     const float priority = 1.f;
-    // <FS> E2: the ray scene work on the compute queue (LL_VK_RT_EARLY=3, the default since 2026-11-05: 0.35 ms of GPU a frame less than building at the lighting, same-session A/B): needs the compute-only
-    // family and timeline semaphores, and ray tracing on; LL_VK_RT_EARLY=0 / 1 / 2 turn it off (the live key rtearly= in rt-debug.txt picks the build point of each frame while it is set up)
+    // <FS> E2: the ray scene work on the compute queue (RK_VK_RT_EARLY=3, the default since 2026-11-05: 0.35 ms of GPU a frame less than building at the lighting, same-session A/B): needs the compute-only
+    // family and timeline semaphores, and ray tracing on; RK_VK_RT_EARLY=0 / 1 / 2 turn it off (the live key rtearly= in rt-debug.txt picks the build point of each frame while it is set up)
     {
         char b[8] = {};
-        mAsyncOn = rt_on && mCaps.mComputeFamily >= 0 && mCaps.mTimelineSemaphore && (GetEnvironmentVariableA("LL_VK_RT_EARLY", b, sizeof(b)) == 0 || b[0] == '3');
+        mAsyncOn = rt_on && mCaps.mComputeFamily >= 0 && mCaps.mTimelineSemaphore && (GetEnvironmentVariableA("RK_VK_RT_EARLY", b, sizeof(b)) == 0 || b[0] == '3');
         LL_INFOS("Vulkan") << "E2 (ray scene on the compute queue): " << (mAsyncOn ? "on" : "off") << LL_ENDL;
     }
     VkDeviceQueueCreateInfo qcis[2] = { { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO }, { VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO } };
@@ -1055,9 +1055,9 @@ bool Context::createDevice()
             tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&addr_features);
         }
     }
-    // LL_VK_ROBUST2=1: VK_EXT_robustness2 (robust image access: an access outside the image or view reads zeros instead of memory; null descriptors read zeros). A/B for the login device lost.
+    // RK_VK_ROBUST2=1: VK_EXT_robustness2 (robust image access: an access outside the image or view reads zeros instead of memory; null descriptors read zeros). A/B for the login device lost.
     VkPhysicalDeviceRobustness2FeaturesEXT robust2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
-    if (GetEnvironmentVariableA("LL_VK_ROBUST2", nullptr, 0) > 0)
+    if (GetEnvironmentVariableA("RK_VK_ROBUST2", nullptr, 0) > 0)
     {
         U32 n = 0;
         vkEnumerateDeviceExtensionProperties(mPhysical, nullptr, &n, nullptr);
@@ -1075,7 +1075,7 @@ bool Context::createDevice()
                 tail = tail->pNext;
             }
             tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&robust2);
-            LL_INFOS("Vulkan") << "robustness2 enabled (LL_VK_ROBUST2): robust buffer and image access, null descriptors" << LL_ENDL;
+            LL_INFOS("Vulkan") << "robustness2 enabled (RK_VK_ROBUST2): robust buffer and image access, null descriptors" << LL_ENDL;
         }
     }
     VkPhysicalDeviceFaultFeaturesEXT fault_features = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
@@ -1091,11 +1091,11 @@ bool Context::createDevice()
         tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&fault_features);
     }
     // <FS> device lost diagnostics (2026-11-09): NVIDIA's VK_NV_device_diagnostics_config makes the driver keep the resources it hands out by address, so the Aftermath decode of a page fault names what used to live
-    // at the faulting address (an image freed lately, with its debug name "GL texture N"); shader debug info lets the decoder map the faulting instruction when it is given the SPIR-V. LL_VK_DIAG=0 turns it off.
+    // at the faulting address (an image freed lately, with its debug name "GL texture N"); shader debug info lets the decoder map the faulting instruction when it is given the SPIR-V. RK_VK_DIAG=0 turns it off.
     VkDeviceDiagnosticsConfigCreateInfoNV diag_config = { VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV };
     {
 #if defined(RK_LOCAL_NV_DIAG)
-        static const bool diag_on = getenv("LL_VK_DIAG") == nullptr || atoi(getenv("LL_VK_DIAG")) != 0;
+        static const bool diag_on = getenv("RK_VK_DIAG") == nullptr || atoi(getenv("RK_VK_DIAG")) != 0;
 #else
         static const bool diag_on = false;      // a release build asks the driver for nothing NVIDIA specific (REKINDLED_LOCAL_NVIDIA turns it on for a local build)
 #endif
@@ -1113,7 +1113,7 @@ bool Context::createDevice()
                 tail = tail->pNext;
             }
             tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&diag_config);
-            LL_INFOS("Vulkan") << "device diagnostics (VK_NV_device_diagnostics_config): resource tracking and shader debug info are on (LL_VK_DIAG=0 turns them off)" << LL_ENDL;
+            LL_INFOS("Vulkan") << "device diagnostics (VK_NV_device_diagnostics_config): resource tracking and shader debug info are on (RK_VK_DIAG=0 turns them off)" << LL_ENDL;
         }
     }
     if (RKVkUpscale::requested())
@@ -1129,12 +1129,12 @@ bool Context::createDevice()
     mCaps.mRt.mEnabled = rt_on;
     if (rt_on)
     {
-        LL_INFOS("Vulkan") << "ray tracing extensions and features are enabled on the device (LL_VK_RT)" << LL_ENDL;
+        LL_INFOS("Vulkan") << "ray tracing extensions and features are enabled on the device (RK_VK_RT)" << LL_ENDL;
     }
 
-#define LL_VK_GLOBAL_FN(name)
-#define LL_VK_INSTANCE_FN(name)
-#define LL_VK_DEVICE_FN(name) name = (PFN_##name)vkGetDeviceProcAddr(mDevice, #name);
+#define RK_VK_GLOBAL_FN(name)
+#define RK_VK_INSTANCE_FN(name)
+#define RK_VK_DEVICE_FN(name) name = (PFN_##name)vkGetDeviceProcAddr(mDevice, #name);
 #include "rkvkfunctions.inl"
 
     vkGetDeviceQueue(mDevice, mQueueFamily, 0, &mQueue);
@@ -1463,7 +1463,7 @@ static void write_device_lost_dump()
     }
     done = true;
     char dir[MAX_PATH] = {};
-    if (GetEnvironmentVariableA("APPDATA", dir, sizeof(dir)) == 0 || GetEnvironmentVariableA("LL_VK_NO_DUMP", nullptr, 0) > 0)
+    if (GetEnvironmentVariableA("APPDATA", dir, sizeof(dir)) == 0 || GetEnvironmentVariableA("RK_VK_NO_DUMP", nullptr, 0) > 0)
     {
         return;
     }
@@ -2003,7 +2003,7 @@ void Context::gpuStamp(U32 tag)
         vkCmdSetCheckpointNV(f.mCmd, (const void*)(uintptr_t)((tag & ~STAMP_DRAW) + 1));
     }
     {
-        static const bool labels = GetEnvironmentVariableA("LL_VK_LABELS", nullptr, 0) > 0;
+        static const bool labels = GetEnvironmentVariableA("RK_VK_LABELS", nullptr, 0) > 0;
         if (labels && !(tag & STAMP_DRAW))
         {
             static PFN_vkCmdInsertDebugUtilsLabelEXT insert_label = (PFN_vkCmdInsertDebugUtilsLabelEXT)vkGetInstanceProcAddr(mInstance, "vkCmdInsertDebugUtilsLabelEXT");
@@ -2056,7 +2056,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
             {
                 ++reports;
                 const U32 n = (U32)f.mStampTags.size();
-                std::string where = "no per-pass stamps (LL_VK_PHASES is off)";
+                std::string where = "no per-pass stamps (RK_VK_PHASES is off)";
                 if (f.mTsPool && f.mTsPending && n)
                 {
                     std::vector<U64> r((size_t)(2 + n) * 2);        // per query: the value and its availability
@@ -2303,7 +2303,7 @@ void Context::endFrame(VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
         waits[wait_count].stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
         ++wait_count;
     }
-    static const int break_order_graphics = getenv("LL_VK_BREAK_ORDER") ? atoi(getenv("LL_VK_BREAK_ORDER")) : 0;      // <FS> =2: the frame's last submit does not wait for the compute work (see submitCompute)
+    static const int break_order_graphics = getenv("RK_VK_BREAK_ORDER") ? atoi(getenv("RK_VK_BREAK_ORDER")) : 0;      // <FS> =2: the frame's last submit does not wait for the compute work (see submitCompute)
     if ((f.mWaitValue || f.mComputeDone) && break_order_graphics != 2)
     {
         // E2: the ray scene the compute queue builds for this frame (the lighting reads it); the last submit of the frame waits for the compute work even when the join was not reached
@@ -2399,8 +2399,8 @@ bool Context::submitCompute(VkCommandBuffer cmd, U64 wait_value, U64& signal_val
     VkSemaphoreSubmitInfo wait = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     VkSemaphoreSubmitInfo sig = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
     VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
-    // <FS> LL_VK_BREAK_ORDER=1 (a test of the test, doc/vulkan/GPU-LIFETIMES.md section 9): the compute work does not wait for the uploads of its own frame. Never for use: the stress lap must show it.
-    static const int break_order = getenv("LL_VK_BREAK_ORDER") ? atoi(getenv("LL_VK_BREAK_ORDER")) : 0;
+    // <FS> RK_VK_BREAK_ORDER=1 (a test of the test, doc/vulkan/GPU-LIFETIMES.md section 9): the compute work does not wait for the uploads of its own frame. Never for use: the stress lap must show it.
+    static const int break_order = getenv("RK_VK_BREAK_ORDER") ? atoi(getenv("RK_VK_BREAK_ORDER")) : 0;
     if (wait_value && break_order != 1)
     {
         wait.semaphore = mAsyncSem;
@@ -2603,7 +2603,7 @@ void Context::destroyLater(std::function<void()> fn, U64 bytes)
     mDeferredNext.push_back(std::move(fn));
     if (bytes)
     {
-        static const U64 limit = []() { char b[16] = {}; return (GetEnvironmentVariableA("LL_VK_DEFER_DRAIN_MB", b, sizeof(b)) > 0 ? (U64)std::max(atoi(b), 0) : 512ull) << 20; }();
+        static const U64 limit = []() { char b[16] = {}; return (GetEnvironmentVariableA("RK_VK_DEFER_DRAIN_MB", b, sizeof(b)) > 0 ? (U64)std::max(atoi(b), 0) : 512ull) << 20; }();
         if (mDeferredNextBytes.fetch_add(bytes, std::memory_order_relaxed) + bytes > limit)
         {
             mDrainWanted.store(true, std::memory_order_relaxed);
@@ -2778,21 +2778,21 @@ VkDeviceSize arena_block_bytes()
         char b[16] = {};
         // <FS> native-vk (S7 measurement, tex-pts15 against tex-pts17): 64 MB blocks leave about half the unused space in the acceleration structure blocks (390 MB instead of 800 MB) and keep the used video
         // memory under the texture budget (10.7 GB instead of 11.7 GB: the discard bias 1.1 instead of 4.0); a range over a quarter of a block gets a block of its own, so there are more of those (about 15 a second
-        // in a busy scene, 0.07 ms/frame in vmaCreateBuffer at the worst). LL_VK_ARENA_BLOCK_MB=256 is the old size.
-        const U32 mb = GetEnvironmentVariableA("LL_VK_ARENA_BLOCK_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 64;
+        // in a busy scene, 0.07 ms/frame in vmaCreateBuffer at the worst). RK_VK_ARENA_BLOCK_MB=256 is the old size.
+        const U32 mb = GetEnvironmentVariableA("RK_VK_ARENA_BLOCK_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 64;
         return (VkDeviceSize)std::max<U32>(mb, 16) * 1024 * 1024;
     }();
     return v;
 }
 }
 
-// <FS> the dedicated acceleration structure blocks come in size classes (1.25 steps from 16 MB) so that one that went empty fits the next range of its class; LL_VK_AS_POOL_MB is what the pool may hold (0: no pool, the
+// <FS> the dedicated acceleration structure blocks come in size classes (1.25 steps from 16 MB) so that one that went empty fits the next range of its class; RK_VK_AS_POOL_MB is what the pool may hold (0: no pool, the
 // blocks are made for the range and given back with it, as before)
 static VkDeviceSize as_pool_bytes()
 {
     static const VkDeviceSize v = []() {
         char b[16] = {};
-        const U32 mb = GetEnvironmentVariableA("LL_VK_AS_POOL_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 512;
+        const U32 mb = GetEnvironmentVariableA("RK_VK_AS_POOL_MB", b, sizeof(b)) > 0 ? (U32)atoi(b) : 512;
         return (VkDeviceSize)mb << 20;
     }();
     return v;
@@ -2814,17 +2814,17 @@ static VkDeviceSize as_class_bytes(VkDeviceSize n)
 // The host block gate (doc/vulkan/PLAN-texture-handles.md section 17.15, Aftermath of 2026-10-31): a new host-written block is written once by the GPU (a fill that is submitted without waiting) and nothing is placed in it until that fill
 // has finished; arenaPrepareTick keeps a spare block made and filled ahead of need, so a request normally finds a ready block. The sudden device losses were a vertex shader reading a page of a host-written block made one to three
 // seconds before that the GPU could not translate (Error_DMA_PageFault), in video and in system memory; the shaders reach these blocks by device address only, so nothing in a frame's commands names the allocation. Stress laps
-// (LL_VK_ARENA_BLOCK_MB=16): 1 loss in 3 without the gate, none in 7 with it or with a blocking fill. Normal laps: 2 losses in 2 without, none with. Cost in the default placement: none measured.
-// LL_VK_HOST_BLOCK_GATE=0 switches it off. LL_VK_HOST_BLOCK_SPARE (default 1) is how many blocks with at least half their room free are kept; LL_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block) is how much the fill writes.
+// (RK_VK_ARENA_BLOCK_MB=16): 1 loss in 3 without the gate, none in 7 with it or with a blocking fill. Normal laps: 2 losses in 2 without, none with. Cost in the default placement: none measured.
+// RK_VK_HOST_BLOCK_GATE=0 switches it off. RK_VK_HOST_BLOCK_SPARE (default 1) is how many blocks with at least half their room free are kept; RK_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block) is how much the fill writes.
 static bool host_block_gate()
 {
-    static const bool v = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_GATE", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+    static const bool v = []() { char b[8] = {}; return GetEnvironmentVariableA("RK_VK_HOST_BLOCK_GATE", b, sizeof(b)) == 0 || atoi(b) != 0; }();
     return v;
 }
 
 static U32 host_block_spare()
 {
-    static const U32 v = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_SPARE", b, sizeof(b)) > 0 ? (U32)std::max(atoi(b), 1) : 1u; }();
+    static const U32 v = []() { char b[8] = {}; return GetEnvironmentVariableA("RK_VK_HOST_BLOCK_SPARE", b, sizeof(b)) > 0 ? (U32)std::max(atoi(b), 1) : 1u; }();
     return v;
 }
 
@@ -2851,8 +2851,8 @@ void Context::arenaStartReadyFill(ArenaBlock* block)
         VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         vkBeginCommandBuffer(cmd, &bi);
-        // LL_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block): how much the fill writes; a command that names the allocation may be all the driver needs, and a whole 64 MB block is a PCIe transfer
-        static const VkDeviceSize fill_bytes = []() { char b[16] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_FILL_KB", b, sizeof(b)) > 0 ? (VkDeviceSize)std::max(atoi(b), 0) * 1024 : (VkDeviceSize)0; }();
+        // RK_VK_HOST_BLOCK_FILL_KB (default 0 = the whole block): how much the fill writes; a command that names the allocation may be all the driver needs, and a whole 64 MB block is a PCIe transfer
+        static const VkDeviceSize fill_bytes = []() { char b[16] = {}; return GetEnvironmentVariableA("RK_VK_HOST_BLOCK_FILL_KB", b, sizeof(b)) > 0 ? (VkDeviceSize)std::max(atoi(b), 0) * 1024 : (VkDeviceSize)0; }();
         vkCmdFillBuffer(cmd, block->mBuffer, 0, fill_bytes ? std::min<VkDeviceSize>(fill_bytes, block->mSize) : VK_WHOLE_SIZE, 0u);
         vkEndCommandBuffer(cmd);
         VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
@@ -2943,9 +2943,9 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
         // as Memory::UploadDevice: written by the CPU, read by the GPU every frame; video memory the CPU can map (resizable BAR) when there is room
         ai.flags |= VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
         ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-        // LL_VK_HOST_BLOCK_VRAM=0 (doc/vulkan/PLAN-texture-handles.md section 17.15): the block lives in system memory, the GPU reads it over PCIe. Five sudden device losses on 2026-10-25 faulted on a page-sized
+        // RK_VK_HOST_BLOCK_VRAM=0 (doc/vulkan/PLAN-texture-handles.md section 17.15): the block lives in system memory, the GPU reads it over PCIe. Five sudden device losses on 2026-10-25 faulted on a page-sized
         // invalid read in the first megabyte of a host-written block that was made one to three seconds before; every one of those blocks lived in video memory.
-        static const bool host_in_vram = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_HOST_BLOCK_VRAM", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+        static const bool host_in_vram = []() { char b[8] = {}; return GetEnvironmentVariableA("RK_VK_HOST_BLOCK_VRAM", b, sizeof(b)) == 0 || atoi(b) != 0; }();
         if (host_in_vram)
         {
             ai.preferredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -2966,9 +2966,9 @@ Context::ArenaBlock* Context::arenaNewBlock(VkDeviceSize min_size, ArenaKind kin
     }
     QueryPerformanceCounter(&t_end);
     {
-        // <FS> LL_VK_SLOW_ALLOC_MS (default 20, 0 = off): a block that takes this long to create stalls the thread that creates it (the worker, in the middle of a frame): the GPU idles meanwhile and the frame's
+        // <FS> RK_VK_SLOW_ALLOC_MS (default 20, 0 = off): a block that takes this long to create stalls the thread that creates it (the worker, in the middle of a frame): the GPU idles meanwhile and the frame's
         // passes read as hundreds of ms long (2026-11-01: three frames of 270 ms, the GPU at 30-50%, 15 blocks created in 8 s when the camera turned to a side that had no structures yet)
-        static const double slow_ms = (double)(getenv("LL_VK_SLOW_ALLOC_MS") ? atoi(getenv("LL_VK_SLOW_ALLOC_MS")) : 20);
+        static const double slow_ms = (double)(getenv("RK_VK_SLOW_ALLOC_MS") ? atoi(getenv("RK_VK_SLOW_ALLOC_MS")) : 20);
         const double took_ms = 1000.0 * (double)(t_end.QuadPart - t_start.QuadPart) / (double)t_freq.QuadPart;
         if (slow_ms > 0.0 && took_ms >= slow_ms)
         {
@@ -3102,9 +3102,9 @@ bool Context::arenaAlloc(VkDeviceSize size, VkDeviceSize alignment, ArenaKind ki
     };
     if (!dedicated)
     {
-        // LL_VK_ARENA_FULLEST (default on, 0 = the first block with room, as before): the fullest block that still has room for the range goes first. With first fit the old blocks fill unevenly and stay
+        // RK_VK_ARENA_FULLEST (default on, 0 = the first block with room, as before): the fullest block that still has room for the range goes first. With first fit the old blocks fill unevenly and stay
         // half empty for good (the club run of 2026-10-25 had 48 acceleration structure blocks with 1.0 GB in use of 2.6 GB); filling the fullest first lets the sparse ones drain, and an empty block is given back
-        static const bool fullest = []() { char b[8] = {}; return GetEnvironmentVariableA("LL_VK_ARENA_FULLEST", b, sizeof(b)) == 0 || atoi(b) != 0; }();
+        static const bool fullest = []() { char b[8] = {}; return GetEnvironmentVariableA("RK_VK_ARENA_FULLEST", b, sizeof(b)) == 0 || atoi(b) != 0; }();
         if (fullest)
         {
             arenaTrimPool();
@@ -3420,7 +3420,7 @@ std::string Context::arenaAccelCensus()
     return out;
 }
 
-// once a frame on the render worker (LL_VK_HOST_BLOCK_GATE): finished fills make their blocks ready, and when fewer than LL_VK_HOST_BLOCK_SPARE host blocks have half their room free (ready or being filled) another is made and
+// once a frame on the render worker (RK_VK_HOST_BLOCK_GATE): finished fills make their blocks ready, and when fewer than RK_VK_HOST_BLOCK_SPARE host blocks have half their room free (ready or being filled) another is made and
 // its fill submitted, so the next request finds a block the GPU has already written
 void Context::arenaPrepareTick()
 {
@@ -3644,7 +3644,7 @@ bool Context::immediateSubmit(const std::function<void(VkCommandBuffer)>& record
 }
 
 // <FS> (2026-11-14, a loading screen that showed no frame for 12 s while about 33 GB of staging blocks queued up to be destroyed when a frame came; the same kind of pile as the minimised viewer of 2026-11-09)
-// the list of what was given up while no frame is being recorded only empties when a frame begins, so with no frames it had no limit. Over LL_VK_DEFER_DRAIN_MB (512) it is now emptied here, at the end of an
+// the list of what was given up while no frame is being recorded only empties when a frame begins, so with no frames it had no limit. Over RK_VK_DEFER_DRAIN_MB (512) it is now emptied here, at the end of an
 // immediate submit: nothing is being recorded then (a destroy during a recording could free a block whose copy is in that very command buffer), the device is idle, and the frame thread owns the queue.
 void Context::drainDeferredNext()
 {
@@ -3886,7 +3886,7 @@ std::atomic<bool> gVsyncPref{ true };
 
 VkPresentModeKHR wanted_present_mode()
 {
-    static const char* env = getenv("LL_VK_PRESENT");        // experiment: fifo, mailbox, immediate, relaxed; wins over the settings
+    static const char* env = getenv("RK_VK_PRESENT");        // experiment: fifo, mailbox, immediate, relaxed; wins over the settings
     if (env)
     {
         return strcmp(env, "mailbox") == 0 ? VK_PRESENT_MODE_MAILBOX_KHR : strcmp(env, "immediate") == 0 ? VK_PRESENT_MODE_IMMEDIATE_KHR

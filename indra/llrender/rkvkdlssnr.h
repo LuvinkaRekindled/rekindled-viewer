@@ -1,7 +1,7 @@
 /**
  * @file rkvkdlssnr.h
  * @brief DLSS-NR (DLSS 5 neural rendering) for the Vulkan mirror, through the NGX parameter interface (no public header exists). doc/vulkan/PLAN-dlss-nr.md.
- *        LL_VK_DLSS_NR=1: at device creation the viewer asks the NGX core what it knows about the feature (NGX feature id 18) and logs every answer (step one).
+ *        RK_VK_DLSS_NR=1: at device creation the viewer asks the NGX core what it knows about the feature (NGX feature id 18) and logs every answer (step one).
  *        2: the feature is created and evaluated on the finished window-size picture every frame, the result is not shown (step two, gate G2). 3: the result is shown (gate G3).
  *        Local testing only, never shipped: the only nvngx_dlssnr.dll we have is the NVIDIA-signed one from a mod bundle; with the flag unset not one line here runs.
  */
@@ -20,7 +20,7 @@ typedef struct NVSDK_NGX_FeatureDiscoveryInfo NVSDK_NGX_FeatureDiscoveryInfo;
 
 namespace RKVkDlssNr
 {
-    // the value of LL_VK_DLSS_NR (0 when unset): 1 probe only, 2 create and evaluate, 3 show the result
+    // the value of RK_VK_DLSS_NR (0 when unset): 1 probe only, 2 create and evaluate, 3 show the result
     int requested();
 
     // the NGX feature id of DLSS-NR: 18 (NVSDK_NGX_Feature_Reserved18 in the public enum; the driver's NGX core lists DLSSNR there)

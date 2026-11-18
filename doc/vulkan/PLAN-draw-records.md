@@ -30,7 +30,7 @@ The draw record is also the unit the GPU scene needs later (indirect draw argume
 4. Fold the vertex binding and the draw into the one record. (removes about 4k records)
 5. Queries and readbacks as their own commands; `LLImageGL` uploads by name with the pixel data handed over without a copy where the source outlives the call.
 
-Measure after each step with `LL_VK_OPSTATS` (records per frame, main-thread queue ms, worker ms) at the same spot, and keep the old path behind `LL_VK_TYPED=0` until step 4 is done.
+Measure after each step with `RK_VK_OPSTATS` (records per frame, main-thread queue ms, worker ms) at the same spot, and keep the old path behind `RK_VK_TYPED=0` until step 4 is done.
 
 ## Things that need checking before step 1
 - Are there GL calls that depend on the active unit besides binds (glTexImage*, glGenerateMipmap, glCopyTexSubImage2D on the bound texture)? They become named operations (texture id) in step 5; until then they keep the existing path.

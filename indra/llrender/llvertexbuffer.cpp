@@ -862,7 +862,7 @@ void LLVertexBuffer::cleanupClass()
 //----------------------------------------------------------------------------
 
 // F2.4: what setBuffer worked out for this buffer last: the whole vertex binding for the shader attribute mask. The attribute pointers are a function of the layout (type mask and
-// vertex count, which fix the offsets), the two buffer ids and the mask, so the binding is reused while all five are the same (the verify mode of LL_VK_DRAWREC compares every draw's
+// vertex count, which fix the offsets), the two buffer ids and the mask, so the binding is reused while all five are the same (the verify mode of RK_VK_DRAWREC compares every draw's
 // binding with the old state machine's, so a stale one shows up there).
 struct LLVertexBuffer::VkBindCache
 {
@@ -1239,9 +1239,9 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
     // the buffer is named in the record: nothing is bound for it
     if (end != 0)
     {
-        // <FS> LL_VK_VBCHECK (default on, 0 = off): the positions that are about to be flushed (the array at offset 0, 16 bytes a vertex) must be finite and not beyond 1e5: the ray scene builder's "bad range"
+        // <FS> RK_VK_VBCHECK (default on, 0 = off): the positions that are about to be flushed (the array at offset 0, 16 bytes a vertex) must be finite and not beyond 1e5: the ray scene builder's "bad range"
         // warnings are whole NaN vertices that the volume fill does not write, and the stack here is the code that filled the buffer (every fill ends in an unmap). Logged with that stack (first 40).
-        static const bool vb_check = getenv("LL_VK_VBCHECK") == nullptr || atoi(getenv("LL_VK_VBCHECK")) != 0;
+        static const bool vb_check = getenv("RK_VK_VBCHECK") == nullptr || atoi(getenv("RK_VK_VBCHECK")) != 0;
         if (vb_check && target == BufferKind::Vertex && start < (U32)getNumVerts() * 16u)
         {
             const U32 pos_end = std::min<U32>(end, (U32)getNumVerts() * 16u - 1u);
@@ -1251,7 +1251,7 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
             QueryPerformanceCounter(&scan_t0);
             U32 bad = 0, first_bad = ~0u, nan_comp = 0, inf_comp = 0, huge_comp = 0;
             F32 first_vals[4] = {};
-            static const bool vb_fix = getenv("LL_VK_VBFIX") == nullptr || atoi(getenv("LL_VK_VBFIX")) != 0;
+            static const bool vb_fix = getenv("RK_VK_VBFIX") == nullptr || atoi(getenv("RK_VK_VBFIX")) != 0;
             for (U32 v = first_v; v < last_v; ++v)
             {
                 F32* p = (F32*)((U8*)data + (size_t)v * 16u - start);
@@ -1265,7 +1265,7 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
                         else if (!(p[c] > -1e30f && p[c] < 1e30f)) { ++inf_comp; }
                         else if (!(p[c] > -1e5f && p[c] < 1e5f)) { ++huge_comp; }
                     }
-                    // <FS> LL_VK_VBFIX (default on, 0 = off): a vertex whose position is not finite or beyond 1e6 is set to the origin (a degenerate triangle) in what is sent: it would be a spike on the screen and a bad
+                    // <FS> RK_VK_VBFIX (default on, 0 = off): a vertex whose position is not finite or beyond 1e6 is set to the origin (a degenerate triangle) in what is sent: it would be a spike on the screen and a bad
                     // structure in the ray scene; the UI's immediate mode buffers (mask 69) fill only x and y and are left alone
                     if (vb_fix && mTypeMask != 69u && !(p[0] > -1e6f && p[0] < 1e6f && p[1] > -1e6f && p[1] < 1e6f && p[2] > -1e6f && p[2] < 1e6f))
                     {

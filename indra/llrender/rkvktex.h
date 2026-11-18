@@ -38,7 +38,7 @@ namespace RKVkTex
     void destroy(S32 count, const U32* ids);
 
     // ---- producer (any thread; the calling thread's pixel-store state applies) ----
-    // F3.6e: typed (TexelFormat = how the texture stores texels, PixelFormat + ComponentType = how the client data is laid out). file/line name the call site (LL_VK_FORMAT_VERIFY)
+    // F3.6e: typed (TexelFormat = how the texture stores texels, PixelFormat + ComponentType = how the client data is laid out). file/line name the call site (RK_VK_FORMAT_VERIFY)
     void image2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void image3D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, S32 row_length = 0, const char* file = __builtin_FILE(), int line = __builtin_LINE());

@@ -1,6 +1,6 @@
 # Plan: the avatar frame record (R1 stages a and b of `overview-brief/REPORT-fable-avatars.md`), with the numbers as they are now (2026-10-26)
 
-Status: **plan only, nothing built.** Numbers are from lap `avt2-` (heavy plaza crowd, after the cheap batch `1b24c599`; `FS_AVATAR_TIMERS` + `LL_VK_ATTCENSUS`) unless stated. Fable's own figures were estimates from the code shape; where our per-call census disagrees it is said.
+Status: **plan only, nothing built.** Numbers are from lap `avt2-` (heavy plaza crowd, after the cheap batch `1b24c599`; `RK_AVATAR_TIMERS` + `RK_VK_ATTCENSUS`) unless stated. Fable's own figures were estimates from the code shape; where our per-call census disagrees it is said.
 
 ## 1. What the serial avatar update costs now
 

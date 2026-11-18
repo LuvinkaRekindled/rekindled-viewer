@@ -37,7 +37,7 @@
 #include "rkavatartable.h"
 #include "rkretirelist.h"
 #include "rkavatarref.h"
-#include <map>      // <FS> LL_VK_PALSTATS
+#include <map>      // <FS> RK_VK_PALSTATS
 
 #include <stdio.h>
 #include <ctype.h>
@@ -148,7 +148,7 @@
 #include "llhudeffectresetskeleton.h"
 #include "llnetmap.h"
 #include "llsidepanelappearance.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 #include "llviewermenufile.h"
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
 
@@ -3151,7 +3151,7 @@ void LLVOAvatar::dumpAnimationState()
 // <FS> Where the main thread's avatar update time goes, per avatar and path (logged from LLViewerObjectList::update every 300 frames; reset there).
 U64 gRKAvStatNs[32];
 U32 gRKAvStatCount[32];
-bool gRKAvTimersOn = getenv("FS_AVATAR_TIMERS") != nullptr; // the timers cost a clock read pair per scope: opt-in (log tag AvatarUpdate)
+bool gRKAvTimersOn = getenv("RK_AVATAR_TIMERS") != nullptr; // the timers cost a clock read pair per scope: opt-in (log tag AvatarUpdate)
 namespace
 {
 enum
@@ -3208,7 +3208,7 @@ struct AvScope
     }
 };
 
-// What the attachment loop of idleUpdateMisc does per attachment kind (FS_AVATAR_TIMERS=1; logged as AttLoop every 600 frames): doc/vulkan/PLAN-texture-handles.md section 17.13
+// What the attachment loop of idleUpdateMisc does per attachment kind (RK_AVATAR_TIMERS=1; logged as AttLoop every 600 frames): doc/vulkan/PLAN-texture-handles.md section 17.13
 struct AttStats
 {
     U64 avatars = 0, skipFrames = 0, attachments = 0, rigged = 0, rigid = 0, noBridge = 0, skipped = 0, ovApplied = 0, ovSkipped = 0, riggedSelected = 0;
@@ -3282,7 +3282,7 @@ inline bool att_rowable(const LLViewerObject* root)
     }
     return true;
 }
-// <FS> stage C5 census (LL_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
+// <FS> stage C5 census (RK_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
 static std::atomic<U64> sWalkClassN[8][2], sWalkClassOps[8][2];
 static std::atomic<U64> sRowFlexiRoot{ 0 }, sRowFlexiChild{ 0 }, sRowFlexiFull{ 0 };   // flexible attachments in the rows: a flexible root, a linkset with flexible children; full moves
 static int rk_att_class(const LLViewerObject* root)
@@ -3365,7 +3365,7 @@ inline std::chrono::steady_clock::time_point att_now() { return gRKAvTimersOn ? 
 inline U64 att_ns(std::chrono::steady_clock::time_point since) { return gRKAvTimersOn ? (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count() : 0; }
 }
 
-// <FS> PLAN-avatars.md stage 0 (LL_VK_AVIMP=1): the time of three regions of the avatar update by importance class and kind (defined with the class below): 0 idleUpdate (the serial part), 1 the batched pose
+// <FS> PLAN-avatars.md stage 0 (RK_VK_AVIMP=1): the time of three regions of the avatar update by importance class and kind (defined with the class below): 0 idleUpdate (the serial part), 1 the batched pose
 // blend of one avatar (a pool thread), 2 completeDeferredMotionUpdate (the serial completion)
 static void rk_av_imp_time(int region, const LLVOAvatar* av, U64 ns);
 static bool rk_av_imp_on();
@@ -3596,10 +3596,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     }
 }
 
-// <FS> PLAN-avatars.md B3d: LL_VK_WINDDRAW 1 (default) the cloth wind state is worked out when the avatar is drawn (once a frame), 0 in the update as before
+// <FS> PLAN-avatars.md B3d: RK_VK_WINDDRAW 1 (default) the cloth wind state is worked out when the avatar is drawn (once a frame), 0 in the update as before
 static bool rk_winddraw_on()
 {
-    static const bool on = !getenv("LL_VK_WINDDRAW") || atoi(getenv("LL_VK_WINDDRAW")) != 0;
+    static const bool on = !getenv("RK_VK_WINDDRAW") || atoi(getenv("RK_VK_WINDDRAW")) != 0;
     return on;
 }
 
@@ -4090,7 +4090,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
 
         // <FS> PLAN-avatars.md stage C: the plain rigid attachments from the avatar's rows, each moved as the walk below would move it (the same gate, the same skip of a
         // static joint, the avatar's box for its bridge, the fast move, the bridge move when the box changed, the text); the walk below skips what the rows moved this frame.
-        static const bool rowops_on = getenv("LL_VK_ROWOPS") && atoi(getenv("LL_VK_ROWOPS")) != 0;      // census: the ops the rows write into the ledger and the ops the walk writes, by kind (stage C step C3)
+        static const bool rowops_on = getenv("RK_VK_ROWOPS") && atoi(getenv("RK_VK_ROWOPS")) != 0;      // census: the ops the rows write into the ledger and the ops the walk writes, by kind (stage C step C3)
         const size_t rowops0 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
         U32 rows_passed = 0;
         // (every avatar, the viewer's own included, with a selection anywhere or a diagnostic on: what is not plain is not in the rows - a selected attachment, a light, flexi, particles... - and the walk below moves it)
@@ -4125,7 +4125,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 ++rows_passed;
                 if (rowops_on)
                 {
-                    // census of the flexible attachments the rows hold (LL_VK_ROWOPS): a flexible root, or a linkset with a flexible child
+                    // census of the flexible attachments the rows hold (RK_VK_ROWOPS): a flexible root, or a linkset with a flexible child
                     if (obj->isFlexible())
                     {
                         ++sRowFlexiRoot;
@@ -4664,7 +4664,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         gAttStats.nsWalk += att_ns(walk_t0);
         if (rowops_on && LLPipeline::sAvSink)
         {
-            // census (LL_VK_ROWOPS=1): per kind, the ops the rows wrote (index 0) and the ops the walk wrote (index 1); the rows' share of attachments is rows_passed
+            // census (RK_VK_ROWOPS=1): per kind, the ops the rows wrote (index 0) and the ops the walk wrote (index 1); the rows' share of attachments is rows_passed
             static std::atomic<U64> loops{ 0 }, row_loops{ 0 }, row_atts{ 0 }, by_kind[2][8];
             const std::vector<LLPipeline::AvOp>& sink = *LLPipeline::sAvSink;
             for (size_t i = rowops0; i < sink.size(); ++i)
@@ -5274,13 +5274,13 @@ void LLVOAvatar::idleUpdateNameTag(const LLVector3& root_pos_last)
     // idleUpdateNameTagAlpha(new_name, alpha);
 }
 
-// <FS> PLAN-avatars.md stage B3d, name tag: when the tag's INPUTS are looked at (LL_VK_NAMETAGPOLL: 1 default, 0 every frame as before, 2 every frame and counts what the throttle would have delayed). The inputs (away /
+// <FS> PLAN-avatars.md stage B3d, name tag: when the tag's INPUTS are looked at (RK_VK_NAMETAGPOLL: 1 default, 0 every frame as before, 2 every frame and counts what the throttle would have delayed). The inputs (away /
 // do not disturb / appearance animations, mute, friend, missing parts, colour, distance text, complexity, title and names) were gathered and compared with the last build of the tag every frame for every avatar whose tag
 // can be seen (about 1.7 us each); the viewer already marks the tag for rebuilding where it knows (clearNameTag: settings, display names, RLV, contact sets) and typing / chat force it here, the rest is looked at
 // at most 0.1 s apart (a label that says "away" appears a tenth of a second late; staggered by avatar so that they do not all look in the same frame).
 static int rk_nametagpoll_mode()
 {
-    static const int mode = getenv("LL_VK_NAMETAGPOLL") ? atoi(getenv("LL_VK_NAMETAGPOLL")) : 1;
+    static const int mode = getenv("RK_VK_NAMETAGPOLL") ? atoi(getenv("RK_VK_NAMETAGPOLL")) : 1;
     return mode;
 }
 
@@ -6107,7 +6107,7 @@ bool LLVOAvatar::isVisuallyMuted()
     // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
     if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
-        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
             RKAvatarTable::noteCheck(2, row->mMuted == computeVisuallyMutedLive());
@@ -7095,7 +7095,7 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
 // Non-impostors have mUpdatePeriod == 1 and will need update every frame.
 //------------------------------------------------------------------------
 
-// <FS> PLAN-avatars.md stage 0 (LL_VK_AVIMP=1): the importance class of every avatar the update loop visits, as a number next to the tests the code uses today, and what the loop then did with it.
+// <FS> PLAN-avatars.md stage 0 (RK_VK_AVIMP=1): the importance class of every avatar the update loop visits, as a number next to the tests the code uses today, and what the loop then did with it.
 // Class: 0 the viewer's own, 1 seen in the main view (isVisible()), 2 not in the main view but inside a sun cascade's frustum (the previous frame's cameras), 3 seen by nothing. Kind: 0 a resident's
 // avatar, 1 a dummy / control avatar (animesh) / UI avatar. Ran: 0 skipped by computeNeedsUpdate (impostor period, far period), 1 the hidden update (not visible: motions only, matrices in the batch),
 // 2 the full update. Counters only: nothing here changes what is done.
@@ -7139,7 +7139,7 @@ static void rk_av_imp_motions(const LLVOAvatar* av, size_t motions)
 
 static bool rk_av_imp_on()
 {
-    static const bool on = getenv("LL_VK_AVIMP") != nullptr;
+    static const bool on = getenv("RK_VK_AVIMP") != nullptr;
     return on;
 }
 
@@ -7189,7 +7189,7 @@ static int sAvImpKind = 0, sAvImpClass = 0;
 
 static void rk_av_importance_begin(LLVOAvatar* av, bool visible)
 {
-    static const bool on = getenv("LL_VK_AVIMP") != nullptr;
+    static const bool on = getenv("RK_VK_AVIMP") != nullptr;
     if (!on)
     {
         sAvImpClass = -1;
@@ -7430,7 +7430,7 @@ bool RKAvatarTable::voiceProximal()
 
 bool RKAvatarTable::voiceEnabled(const LLVOAvatar* av)
 {
-    static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+    static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
     const Row* r = row(av);
     if (!r)
     {
@@ -7445,7 +7445,7 @@ bool RKAvatarTable::voiceEnabled(const LLVOAvatar* av)
 
 bool RKAvatarTable::voiceSpeaking(const LLVOAvatar* av)
 {
-    static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+    static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
     const Row* r = row(av);
     if (!r)
     {
@@ -7563,8 +7563,8 @@ static F32 far_update_distance()
 
 U32 LLVOAvatar::farUpdatePeriod()
 {
-    // census (LL_VK_SCENECENSUS): why the avatars the rule looked at did or did not get a longer period, per frame over 600 frames
-    static const bool census_on = getenv("LL_VK_SCENECENSUS") != nullptr;
+    // census (RK_VK_SCENECENSUS): why the avatars the rule looked at did or did not get a longer period, per frame over 600 frames
+    static const bool census_on = getenv("RK_VK_SCENECENSUS") != nullptr;
     static U64 reasons[9] = {}, calls = 0;
     auto done = [&](int reason, U32 period) -> U32
     {
@@ -7743,13 +7743,13 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // In some cases, calls updateOrientation() for a lot of the
     // work
     // --------------------------------------------------------------------
-    // <FS> PLAN-avatars.md stage B3d (LL_VK_ROOTJOB: 1 default, 0 inline as before): an avatar that goes into the motion batch has its root position and rotation worked out at the start of its pool job, not here on the main
+    // <FS> PLAN-avatars.md stage B3d (RK_VK_ROOTJOB: 1 default, 0 inline as before): an avatar that goes into the motion batch has its root position and rotation worked out at the start of its pool job, not here on the main
     // thread: the root only feeds the pose job's world pass (nothing between here and the batch reads it: begin and the hidden motion update do not), and it reads the terrain and writes the avatar's own fields.
     // The viewer's own avatar, animesh, UI avatars, special render modes and an avatar sitting on an object keep the inline form.
     int can_defer_known = -1;
     bool root_in_job = false;
     {
-        static const bool root_job_on = !getenv("LL_VK_ROOTJOB") || atoi(getenv("LL_VK_ROOTJOB")) != 0;
+        static const bool root_job_on = !getenv("RK_VK_ROOTJOB") || atoi(getenv("RK_VK_ROOTJOB")) != 0;
         if (root_job_on && !gRKAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !(isSitting() && getParent()))
         {
             if (!visible)
@@ -12069,7 +12069,7 @@ bool LLVOAvatar::isTooSlow() const
     // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
     if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
-        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
             RKAvatarTable::noteCheck(1, row->mTooSlow == computeTooSlowLive());
@@ -13668,7 +13668,7 @@ static void rk_flat_fill(LLVOAvatar* av, RKFlatSkeleton& flat)
 }
 
 // <FS> avatar relative skinning: the chain of the flat world pass, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
-// subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when LL_VK_RIGREBASE_CHECK=1.
+// subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when RK_VK_RIGREBASE_CHECK=1.
 static bool rk_flat_rel_fill(RKFlatSkeleton& flat, const F32* anchor)
 {
     if (flat.mOrder.empty() || flat.mWorld.empty())
@@ -13730,7 +13730,7 @@ static bool rk_flat_rel_fill(RKFlatSkeleton& flat, const F32* anchor)
     flat.mRelAnchor[1] = anchor[1];
     flat.mRelAnchor[2] = anchor[2];
     flat.mRelOk = true;
-    static const bool check = getenv("LL_VK_RIGREBASE_CHECK") != nullptr;
+    static const bool check = getenv("RK_VK_RIGREBASE_CHECK") != nullptr;
     if (check)
     {
         // the relative array against the plain one: the same matrices but for the translation, which differs by the anchor (to the float step of the plain one)
@@ -13807,23 +13807,23 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     rk_flat_report();
 }
 
-// <FS> PLAN-avatars.md stage B3a: LL_VK_PALJOB 1 (default) the palettes are rebuilt by a pool job per avatar after the frame's completions, 0 only on request, 2 job and compared with a rebuild at the first request
+// <FS> PLAN-avatars.md stage B3a: RK_VK_PALJOB 1 (default) the palettes are rebuilt by a pool job per avatar after the frame's completions, 0 only on request, 2 job and compared with a rebuild at the first request
 static int rk_paljob_mode()
 {
-    static const int mode = getenv("LL_VK_PALJOB") ? atoi(getenv("LL_VK_PALJOB")) : 1;
+    static const int mode = getenv("RK_VK_PALJOB") ? atoi(getenv("RK_VK_PALJOB")) : 1;
     return mode;
 }
 
 namespace
 {
-// LL_VK_PALTIME=1: where the palette time goes. 0 built on request, 1 built by the job; per frame: builds, build time (all threads), time waiting for the global palette lock, hits
+// RK_VK_PALTIME=1: where the palette time goes. 0 built on request, 1 built by the job; per frame: builds, build time (all threads), time waiting for the global palette lock, hits
 std::atomic<U64> sPalBuildNs[2], sPalBuilds[2], sPalWaitNs{ 0 }, sPalRequests2{ 0 }, sPalHits{ 0 }, sPalJobWallNs{ 0 }, sPalJobRuns{ 0 };
 std::atomic<U64> sPalCompared{ 0 }, sPalDiffer{ 0 }, sPalSkippedUninit{ 0 }, sPalStaleByTouch{ 0 }, sPalDifferUntouched{ 0 };
 std::atomic<U32> sPalJobTouchSerial{ 0 };       // LLJoint::sTouchSerial when the palette jobs of the last batch were done: a joint touched after that makes the job's palettes suspect for the frame
 std::atomic<U32> sPalTimeLast{ 0 };
 bool rk_paltime_on()
 {
-    static const bool on = getenv("LL_VK_PALTIME") != nullptr;
+    static const bool on = getenv("RK_VK_PALTIME") != nullptr;
     return on;
 }
 inline U64 rk_pal_now()
@@ -14528,10 +14528,10 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
         }
         memcpy(entry.mPrevAnchor, entry.mAnchor, sizeof(entry.mAnchor));
         entry.mPrevRebased = entry.mRebased;
-        // LL_VK_PALSTATS=1: how much of the rigged palettes changes from one frame to the next (what a skinning cache could keep). Per palette (avatar and skin) and per joint matrix, exact and within 1e-4;
+        // RK_VK_PALSTATS=1: how much of the rigged palettes changes from one frame to the next (what a skinning cache could keep). Per palette (avatar and skin) and per joint matrix, exact and within 1e-4;
         // per avatar: the avatars whose palettes are all unchanged. Logged every 600 frames in which a palette was computed.
         {
-            static const bool pal_stats = getenv("LL_VK_PALSTATS") != nullptr;
+            static const bool pal_stats = getenv("RK_VK_PALSTATS") != nullptr;
             if (pal_stats)
             {
                 struct PalStats
@@ -15507,7 +15507,7 @@ bool LLVOAvatar::isImpostor()
     // <FS> PLAN-avatars.md stage A step 4: after the avatars' update the table holds the answer (one owner for the decision; the 30 readers of the render side, the pools and the cull, read it)
     if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
-        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
         if (verify && !isControlAvatar())
         {
             RKAvatarTable::noteCheck(0, row->mImpostor == computeImpostorLive());
@@ -16557,7 +16557,7 @@ LLVOAvatar::AvatarOverallAppearance LLVOAvatar::getOverallAppearance() const
     // <FS> PLAN-avatars.md stage A step 5: after the avatars' update the table holds the answer (jellydoll / invisible decisions of the avatar pool, the cull, the velocity pass, the ray scene)
     if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
-        static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
+        static const bool verify = getenv("RK_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
             RKAvatarTable::noteCheck(3, row->mAppearance == (U8)computeOverallAppearanceLive());

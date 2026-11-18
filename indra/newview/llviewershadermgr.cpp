@@ -450,7 +450,7 @@ void LLViewerShaderMgr::setShaders()
     static LLCachedControl<S32> reserved_texture_units(gSavedSettings, "RenderReservedTextureIndices", 14);
 
     RKShaderProgram::sIndexedTextureChannels = 4;
-    if (const char* channels = getenv("LL_VK_INDEXED_CHANNELS"))      // test switch: 1 = every draw one texture, no per-vertex texture index
+    if (const char* channels = getenv("RK_VK_INDEXED_CHANNELS"))      // test switch: 1 = every draw one texture, no per-vertex texture index
     {
         RKShaderProgram::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
     }
@@ -613,7 +613,7 @@ void LLViewerShaderMgr::setShaders()
 
 void LLViewerShaderMgr::unloadShaders()
 {
-    RKShaderProgram::dumpProgramCensus();       // <FS> LL_VK_PROGRAM_CENSUS=1: what was loaded and bound (before the programs forget their files)
+    RKShaderProgram::dumpProgramCensus();       // <FS> RK_VK_PROGRAM_CENSUS=1: what was loaded and bound (before the programs forget their files)
     while (!RKShaderProgram::sInstances.empty())
     {
         RKShaderProgram* shader = *(RKShaderProgram::sInstances.begin());
@@ -661,12 +661,12 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     {
         attribs["SUN_SHADOW"] = "1";
 
-        // <FS> ray query sun shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 4 and 5 debug views (2 split screen and 3 disagreement map are retired)
+        // <FS> ray query sun shadows (RK_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 4 and 5 debug views (2 split screen and 3 disagreement map are retired)
         if (const U32 rt_mode = RKVkBridge::rtShadowMode())
         {
             attribs["RK_RT_SHADOWS"] = std::to_string(rt_mode);
             // <FS> the sun ray's limit of masked candidates (see shadowUtil.glsl) and the debug that shows the rays that stopped at it
-            if (const char* cand = getenv("LL_VK_RT_CANDIDATES"))
+            if (const char* cand = getenv("RK_VK_RT_CANDIDATES"))
             {
                 const S32 n = atoi(cand);
                 if (n >= 8 && n <= 4096)
@@ -674,7 +674,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_MAX_CANDIDATES"] = std::to_string(n) + "u";
                 }
             }
-            if (const char* bias = getenv("LL_VK_RT_SUN_BIAS"))
+            if (const char* bias = getenv("RK_VK_RT_SUN_BIAS"))
             {
                 const F32 b = (F32)atof(bias);
                 if (b > 0.f && b < 5.f)
@@ -682,7 +682,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_BIAS"] = llformat("%.4f", b);
                 }
             }
-            if (const char* strength = getenv("LL_VK_RT_SUN_ALPHA_STRENGTH"))
+            if (const char* strength = getenv("RK_VK_RT_SUN_ALPHA_STRENGTH"))
             {
                 const F32 s = (F32)atof(strength);
                 if (s > 0.f && s <= 1.f)
@@ -690,7 +690,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_ALPHA_STRENGTH"] = llformat("%.3f", s);     // how much of its coverage a hair card blocks (soft alpha sun ray)
                 }
             }
-            if (const char* pen = getenv("LL_VK_RT_SUN_PENUMBRA"))
+            if (const char* pen = getenv("RK_VK_RT_SUN_PENUMBRA"))
             {
                 const F32 w = (F32)atof(pen);
                 if (w >= 0.f && w < 1.f)
@@ -698,7 +698,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_PENUMBRA"] = llformat("%.4f", w);       // metres: the penumbra width of a close avatar self shadow on the skin (0 = off)
                 }
             }
-            if (const char* pen_rays = getenv("LL_VK_RT_SUN_PENUMBRA_RAYS"))
+            if (const char* pen_rays = getenv("RK_VK_RT_SUN_PENUMBRA_RAYS"))
             {
                 const S32 n = atoi(pen_rays);
                 if (n >= 1 && n <= 16)
@@ -706,7 +706,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_PENUMBRA_RAYS"] = std::to_string(n);    // the rays of a pixel whose first ray met a close avatar surface
                 }
             }
-            if (const char* fade = getenv("LL_VK_RT_SUN_SELFFADE"))
+            if (const char* fade = getenv("RK_VK_RT_SUN_SELFFADE"))
             {
                 const F32 f = (F32)atof(fade);
                 if (f > 0.f && f <= 1.f)
@@ -714,7 +714,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_SELF_FADE"] = llformat("%.3f", f);      // fraction of SELFNEAR where the floor starts to fade (1 = no fade)
                 }
             }
-            if (const char* near_s = getenv("LL_VK_RT_SUN_SELFNEAR"))
+            if (const char* near_s = getenv("RK_VK_RT_SUN_SELFNEAR"))
             {
                 const F32 n = (F32)atof(near_s);
                 if (n > 0.f && n < 20.f)
@@ -722,7 +722,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_SELF_NEAR"] = llformat("%.3f", n);      // metres: a skinned avatar surface this close to the pixel it shadows counts as a translucent self shadow
                 }
             }
-            if (const char* dbg = getenv("LL_VK_RT_SUN_DEBUG"))
+            if (const char* dbg = getenv("RK_VK_RT_SUN_DEBUG"))
             {
                 const S32 d = atoi(dbg);
                 if (d == 1 || d == 2)
@@ -730,7 +730,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_DEBUG"] = std::to_string(d);        // test: 1 only solid hits make a sun shadow, 2 only what the alpha loop of the soft ray found
                 }
             }
-            if (const char* recv = getenv("LL_VK_RT_SUN_SELFRECV"))
+            if (const char* recv = getenv("RK_VK_RT_SUN_SELFRECV"))
             {
                 const F32 r = (F32)atof(recv);
                 if (r >= 0.f && r < 1.f)
@@ -738,7 +738,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_SELF_RECV"] = llformat("%.4f", r);       // metres: the probe through the receiver's surface that says it is an avatar (the floor applies only then); 0 = off
                 }
             }
-            if (const char* sss = getenv("LL_VK_RT_SUN_SSS"))
+            if (const char* sss = getenv("RK_VK_RT_SUN_SSS"))
             {
                 const F32 s = (F32)atof(sss);
                 if (s >= 0.f && s < 0.1f)
@@ -746,18 +746,18 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_SSS"] = llformat("%.4f", s);             // metres: radius of the disc on the receiver where a pixel's rays start (skin scattering: a soft edge on both sides); 0 = off
                 }
             }
-            if (const char* blend = getenv("LL_VK_RT_SUN_BLENDCOVER"))
+            if (const char* blend = getenv("RK_VK_RT_SUN_BLENDCOVER"))
             {
                 attribs["RK_RT_SUN_BLEND_COVER"] = (blend[0] && blend[0] != '0') ? "1" : "0";     // 0: a blended card covers by the masked ramp around the cutoff again (the look before)
             }
-            if (const char* all = getenv("LL_VK_RT_SUN_STRENGTH_ALL"))
+            if (const char* all = getenv("RK_VK_RT_SUN_STRENGTH_ALL"))
             {
                 if (all[0] && all[0] != '0')
                 {
                     attribs["RK_RT_SUN_STRENGTH_ALL"] = "1";
                 }
             }
-            if (const char* fill = getenv("LL_VK_RT_SUN_HAIRFILL"))
+            if (const char* fill = getenv("RK_VK_RT_SUN_HAIRFILL"))
             {
                 const F32 f = (F32)atof(fill);
                 if (f > 0.f && f <= 1.f)
@@ -765,7 +765,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_HAIRFILL"] = llformat("%.3f", f);           // how much of the shadow on a blended surface (hair) is filled in
                 }
             }
-            if (const char* bias_alpha = getenv("LL_VK_RT_SUN_BIAS_ALPHA"))
+            if (const char* bias_alpha = getenv("RK_VK_RT_SUN_BIAS_ALPHA"))
             {
                 const F32 b = (F32)atof(bias_alpha);
                 if (b > 0.f && b < 5.f)
@@ -773,7 +773,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_BIAS_ALPHA"] = llformat("%.4f", b);
                 }
             }
-            if (const char* tmin = getenv("LL_VK_RT_SUN_TMIN"))
+            if (const char* tmin = getenv("RK_VK_RT_SUN_TMIN"))
             {
                 const F32 t = (F32)atof(tmin);
                 if (t >= 0.f && t < 5.f)            // (0 switches the minimum distance off)
@@ -781,7 +781,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_TMIN"] = llformat("%.4f", t);
                 }
             }
-            if (const char* soft = getenv("LL_VK_RT_SUN_SOFTALPHA"))
+            if (const char* soft = getenv("RK_VK_RT_SUN_SOFTALPHA"))
             {
                 const F32 d = (F32)atof(soft);
                 if (d >= 0.f && d < 5000.f)
@@ -789,14 +789,14 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                     attribs["RK_RT_SUN_SOFTALPHA"] = llformat("%.1f", d);      // metres (0 = off): up to this view distance the sun ray lets masked and blended cards through by their alpha
                 }
             }
-            if (const char* noface = getenv("LL_VK_RT_SUN_NOFACE"))
+            if (const char* noface = getenv("RK_VK_RT_SUN_NOFACE"))
             {
                 if (noface[0] && noface[0] != '0')
                 {
                     attribs["RK_RT_SUN_NOFACE"] = "1";
                 }
             }
-            if (const char* cap = getenv("LL_VK_RT_CAPDEBUG"))
+            if (const char* cap = getenv("RK_VK_RT_CAPDEBUG"))
             {
                 if (cap[0] && cap[0] != '0')
                 {
@@ -874,7 +874,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
             native_defines.push_back({ "MAX_MATERIALS_PER_GLTF_OBJECT", std::to_string(ubo_bytes / (16 * 12)) });
             native_defines.push_back({ "MAX_UBO_VEC4S", std::to_string(ubo_bytes / 16) });
         }
-        if (getenv("LL_VK_RTREFL_DEBUG"))
+        if (getenv("RK_VK_RTREFL_DEBUG"))
         {
             native_defines.push_back({ "RT_REFL_DEBUG", "1" });        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
         }
@@ -889,8 +889,8 @@ std::string LLViewerShaderMgr::loadBasicShaders()
 // (RKVkBridge::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
 static bool rt_reflections_possible()
 {
-    const char* rt_env = getenv("LL_VK_RT_SHADOWS");
-    const char* rt_materials_env = getenv("LL_VK_RT_MATERIALS");
+    const char* rt_env = getenv("RK_VK_RT_SHADOWS");
+    const char* rt_materials_env = getenv("RK_VK_RT_MATERIALS");
     return rt_env && rt_env[0] && rt_env[0] != '0' && rt_materials_env && rt_materials_env[0] == '1';
 }
 
@@ -1806,7 +1806,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDiffusePullSkinProgram.mName = "Deferred Diffuse Pull Skin Shader";
         // <FS> a native only program (native/manifest.txt, family gbuffer): no stock files
         gDeferredDiffusePullSkinProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        if (getenv("LL_VK_SKIN_TEST"))
+        if (getenv("RK_VK_SKIN_TEST"))
         {
         }
         add_common_permutations(&gDeferredDiffusePullSkinProgram);
@@ -1879,7 +1879,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 if (use_sun_shadow)
                 {
                 }
-                if (getenv("LL_VK_SKIN_TEST"))
+                if (getenv("RK_VK_SKIN_TEST"))
                 {
                 }
                 add_common_permutations(&skin);

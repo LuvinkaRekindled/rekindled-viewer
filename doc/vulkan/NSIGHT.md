@@ -4,13 +4,13 @@ Written 2026-11-08 so the commands and the lessons are not lost. Tool: `<work>\n
 
 ## Capture
 
-Launchers (all in `<work>`, CRLF): `run-viewer-gputrace-shaders-rtoff.bat` (RT off; edit `LL_VK_RT=0; LL_VK_RT_SHADOWS=0` to `1` in its `--env` for RT on), older `run-viewer-gputrace.bat`, `run-viewer-gputrace-sun.bat`.
+Launchers (all in `<work>`, CRLF): `run-viewer-gputrace-shaders-rtoff.bat` (RT off; edit `RK_VK_RT=0; RK_VK_RT_SHADOWS=0` to `1` in its `--env` for RT on), older `run-viewer-gputrace.bat`, `run-viewer-gputrace-sun.bat`.
 They start the viewer THROUGH `ngfx.exe` (Nsight Graphics 2026.3.1, `C:\Program Files\NVIDIA Corporation\Nsight Graphics 2026.3.1\host\windows-desktop-nomad-x64\ngfx.exe`):
 
 1. Check no `rekindled-bin` is running, then run the launcher (PowerShell: `cmd /c "<work>\run-viewer-gputrace-shaders-rtoff.bat"`, in the background).
 2. Log in by hand, stand at the crowd spot at your own yaw, let it settle (about a minute).
 3. Press F11 ONCE. 3 frames (`--limit-to-frames 3`, 1000 ms max) are traced. ngfx ends the viewer itself afterwards; do not quit it by hand, do not kill it.
-4. Flags that matter: `--activity "GPU Trace Profiler" --start-after-hotkey --limit-to-frames 3 --auto-export --multi-pass-metrics --real-time-shader-profiler --set-gpu-clocks unaltered --output-dir <work>\nsight-traces`. The viewer env has `LL_VK_LABELS=1` (debug labels) and `--set FSGpuZoneTimers 1` (zone names); every other `LL_VK_*` variable of the shell is cleared first by the launcher.
+4. Flags that matter: `--activity "GPU Trace Profiler" --start-after-hotkey --limit-to-frames 3 --auto-export --multi-pass-metrics --real-time-shader-profiler --set-gpu-clocks unaltered --output-dir <work>\nsight-traces`. The viewer env has `RK_VK_LABELS=1` (debug labels) and `--set FSGpuZoneTimers 1` (zone names); every other `RK_VK_*` variable of the shell is cleared first by the launcher.
 5. The zone timers slow the main thread, so the GPU idles part of the window: whole-frame percentages come out low (SM 13.7%). Use the shares, not the absolute percentages.
 
 ## Where the data is

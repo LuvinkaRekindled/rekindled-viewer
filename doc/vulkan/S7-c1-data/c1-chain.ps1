@@ -4,14 +4,14 @@ param([string[]]$Runs = @('still1'), [int]$Wait = 200)
 foreach ($r in $Runs) {
   $name = 'c1-' + $r
   $script = if ($r -like 'move*') { '<work>\run-move.ps1' } else { '<work>\run-s1.ps1' }
-  $vars = 'LL_VK_AB_MARK=1;LL_VK_CULL_SHADOW=1;LL_VK_CULL_FACTORS=0.25,0.5,1'
+  $vars = 'RK_VK_AB_MARK=1;RK_VK_CULL_SHADOW=1;RK_VK_CULL_FACTORS=0.25,0.5,1'
   $isplain = $r -like '*plain*'
-  if ($isplain) { $vars = 'LL_VK_AB_MARK=1;LL_VK_POSE_LOG=1' }
-  if (-not $isplain -and $r -like '*verify*') { $vars += ';LL_VK_CULL_VERIFY=1' }
-  if (-not $isplain -and $r -like '*nocmp*') { $vars += ';LL_VK_CULL_COMPARE=0' }
-  if (-not $isplain -and $r -like '*derive*') { $vars += ';LL_VK_CULL_USE=1;LL_VK_CULL_USE_VARIANT=3' }
-  if (-not $isplain -and $r -like '*cuse*') { $vars += ';LL_VK_CULL_USE=2;LL_VK_CULL_USE_VARIANT=3' }
-  if ($r -like '*lap*') { $vars += ';LL_VK_VISCENSUS=1;LL_VK_VISCENSUS_BOXES=0' }      # the laps of updateCull / stateSort / postSort
+  if ($isplain) { $vars = 'RK_VK_AB_MARK=1;RK_VK_POSE_LOG=1' }
+  if (-not $isplain -and $r -like '*verify*') { $vars += ';RK_VK_CULL_VERIFY=1' }
+  if (-not $isplain -and $r -like '*nocmp*') { $vars += ';RK_VK_CULL_COMPARE=0' }
+  if (-not $isplain -and $r -like '*derive*') { $vars += ';RK_VK_CULL_USE=1;RK_VK_CULL_USE_VARIANT=3' }
+  if (-not $isplain -and $r -like '*cuse*') { $vars += ';RK_VK_CULL_USE=2;RK_VK_CULL_USE_VARIANT=3' }
+  if ($r -like '*lap*') { $vars += ';RK_VK_VISCENSUS=1;RK_VK_VISCENSUS_BOXES=0' }      # the laps of updateCull / stateSort / postSort
   "starting $name " + (Get-Date -Format 'HH:mm:ss')
   $smi = Start-Process -FilePath nvidia-smi -ArgumentList '--query-gpu=timestamp,utilization.gpu,memory.used,memory.total --format=csv,noheader -l 1' -RedirectStandardOutput ("<work>\run-logs\$name.smi.csv") -WindowStyle Hidden -PassThru
   $w = if ($r -like '*settle*') { 300 } else { $Wait }

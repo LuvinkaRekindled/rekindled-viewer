@@ -49,7 +49,7 @@ In the code the level is one integer uniform of the lighting pass (the same plac
 
 - Compare the same view in the stock mirror and the traced mirror: `rt-phases.ps1` switches `glossyrt` live in a running viewer and beeps the phase number; screenshots with `vk-burst.ps1` (PrintWindow, timestamped) and difference images with PIL (see `strobe-glossy` for examples). The stock mirror is the reference for how bright and how detailed the room should look.
 - Locked 'Afternoon' sky for daylight, the Larsson mirror room, avatar standing in front of the mirror; also a night sky (the moon) and the projector circle for the local lights.
-- fps cost per level: `hunt.ps1 -Lean -Configs "glossyrt=1|..." -Hold 45 -Settle 60` and `python <work>\ab-fps-report.py <name> --skip 1` (per-setting medians); GPU ms per pass needs the diagnostic config (`LL_VK_PHASES=1`, drop `-Lean`).
+- fps cost per level: `hunt.ps1 -Lean -Configs "glossyrt=1|..." -Hold 45 -Settle 60` and `python <work>\ab-fps-report.py <name> --skip 1` (per-setting medians); GPU ms per pass needs the diagnostic config (`RK_VK_PHASES=1`, drop `-Lean`).
 - Do not touch the viewer window during a session (an unfocused viewer drops to single-digit fps).
 
 ## 6. Files

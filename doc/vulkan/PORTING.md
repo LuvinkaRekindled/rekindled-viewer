@@ -11,7 +11,7 @@ Nothing in it has been pushed anywhere. This note says what is in it, what usual
 | B. Preparation in stock code | `32080045`, `bef42ad8` | every raw `gl*` call outside `llrender`/`llwindow` now goes through a `gGL` wrapper, so the mirror can see it | **high**: any new upstream code that calls GL directly must get the same treatment |
 | C. The Vulkan backend ("mirror") | `9d87e2ba`, `bbc091b8` .. `a48442a6` | `indra/llrender/rkvk*` (new files), `llglslshader.cpp` hooks, settings, Preferences tab, SPIR-V and pipeline caches, async worker thread, device-local buffers | low for the new files, medium for `llglslshader.cpp`, `llrender.cpp`, `llappviewer.cpp`, `llviewerwindow.cpp` |
 | D. DLSS upscaling | `b3c2c121`, `f28c5793`, `bc9ba461` | jitter, motion vectors, NGX call, Preferences checkbox + quality | medium (llviewercamera, pipeline.cpp, llviewerdisplay.cpp, llhudnametag/llhudtext/llhudrender) |
-| E. Measurement and tuning | `b01f35c4`, `2107733f`, and parts of `af505128` | `LL_VK_PHASES` statistics, pipeline cache, barriers, GPU timestamps | low |
+| E. Measurement and tuning | `b01f35c4`, `2107733f`, and parts of `af505128` | `RK_VK_PHASES` statistics, pipeline cache, barriers, GPU timestamps | low |
 
 Group A is independent of Vulkan: if the Vulkan part ever has to be dropped, A can be carried alone.
 99 files differ from the base: 26 are new (almost all in `indra/llrender`, they cannot conflict), 73 are edits to stock files, most of them a few lines.
@@ -42,13 +42,13 @@ Since F2.1 nothing is generated and no GL function is intercepted: the viewer wr
 2. `<work>\run-viewer-vulkan.bat`: login, a busy region, teleport, resize and maximise the window, snapshot preview and save, shadows/ambient occlusion on and off.
 3. DLSS from the Preferences > Graphics > Vulkan tab (needs restart): name tags, crosshairs and their boxes hold still when you stand still; the log has `DLSS is ready` and `DLSS feature created`.
 4. `run-viewer-vulkan-syncval.bat`: no new synchronization hazards in the `VulkanValidation` log lines (two known harmless ones: the shadow shader's unused colour output, and the PBR glow shader's unused input at location 3).
-5. `run-viewer-vulkan-phases.bat` for numbers (`LL_VK_PHASES`): frame pacing, GPU time by pass, pipelines built.
-6. Environment switches that revert behaviour if something looks wrong: `LL_VK_ASYNC=0` (inline mirror), `LL_VK_COARSE_BARRIERS=1`, `LL_VK_NO_DEVICE_BUFFERS=1`, `LL_VK_PIPELINE_CACHE=0`, `LL_VK_SPIRV_CACHE=0`.
+5. `run-viewer-vulkan-phases.bat` for numbers (`RK_VK_PHASES`): frame pacing, GPU time by pass, pipelines built.
+6. Environment switches that revert behaviour if something looks wrong: `RK_VK_ASYNC=0` (inline mirror), `RK_VK_COARSE_BARRIERS=1`, `RK_VK_NO_DEVICE_BUFFERS=1`, `RK_VK_PIPELINE_CACHE=0`, `RK_VK_SPIRV_CACHE=0`.
 
 ## Known facts that save time
 
 - The viewer can only be relinked with the viewer closed; the build also fails at the copy step (`media_plugin_cef.dll`) if it is running.
 - The mirror presents into the main window and uses two command buffers per viewer frame (the frame and a small off-screen one after the present).
 - The first DLSS run needs the NGX DLL; the DLSS checkbox only takes effect after a restart.
-- `LL_VK_PHASES` timers slow the Vulkan thread and flip which thread is the bottleneck; use a plain run (and the stack sampler) when judging fps.
+- `RK_VK_PHASES` timers slow the Vulkan thread and flip which thread is the bottleneck; use a plain run (and the stack sampler) when judging fps.
 - Frame generation is not done; see `doc/vulkan/dlss-frame-generation-checklist.md`.

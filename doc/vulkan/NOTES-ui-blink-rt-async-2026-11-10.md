@@ -5,14 +5,14 @@ Status: **cause narrowed to the async compute split (E2) with ray scene material
 ## The symptom (Adam)
 
 - The UI, the name tags and "everything in the UI group" blink together, once in a while, for about a frame: they look bold, perhaps one pixel off, "like drawn twice over its already translucent self". Not one element at a time: all of them at once, in a cluster.
-- Only with ray tracing on (RT mode 1, `LL_VK_RT_SHADOWS=1`) **and ray scene materials on** (`LL_VK_RT_MATERIALS=1`, the launcher `run-viewer-clean-rtmaterials.bat`). Not with RT off. Seen once earlier when materials were first tested, not in a while with RT on and materials off.
+- Only with ray tracing on (RT mode 1, `RK_VK_RT_SHADOWS=1`) **and ray scene materials on** (`RK_VK_RT_MATERIALS=1`, the launcher `run-viewer-clean-rtmaterials.bat`). Not with RT off. Seen once earlier when materials were first tested, not in a while with RT on and materials off.
 - Setup of the runs: DLSS 67%, ray reconstruction off, build of 2026-11-10 21:09 (steps 3a and 3b of the shadow walk removal, nothing that touches the UI), the 21:45 and later runs also had the RT penumbra filter shader change.
 
 ## Confirmed
 
-- **The async compute split causes it.** In one session (21:53-22:02, log times local = UTC-6; the log's own timestamps are UTC): default (`rtearly=3`, ray scene built on the compute queue) blinked; live `rtearly=1` in `<work>\rt-debug.txt` at 21:55:28 (frame 9962): no blink for 2.4 minutes; `rtearly=3` again at 21:57:52 (frame 23377): the blink came back. An earlier run with `LL_VK_RT_EARLY=1` set at start (21:34-21:44, no compute queue at all) had no blink in about 10 minutes.
+- **The async compute split causes it.** In one session (21:53-22:02, log times local = UTC-6; the log's own timestamps are UTC): default (`rtearly=3`, ray scene built on the compute queue) blinked; live `rtearly=1` in `<work>\rt-debug.txt` at 21:55:28 (frame 9962): no blink for 2.4 minutes; `rtearly=3` again at 21:57:52 (frame 23377): the blink came back. An earlier run with `RK_VK_RT_EARLY=1` set at start (21:34-21:44, no compute queue at all) had no blink in about 10 minutes.
 - It also happens with DLSS off (the sync validation run, below), so the upscaler is not involved.
-- `LL_VK_RT_EARLY=1` hides the blink (it costs about 0.35 ms of GPU a frame, the A/B figure from 2026-11-05 recorded in the source and in the async compute memory note); it is a test switch, not a fix: Adam does not want the issue masked and the default stays at 3.
+- `RK_VK_RT_EARLY=1` hides the blink (it costs about 0.35 ms of GPU a frame, the A/B figure from 2026-11-05 recorded in the source and in the async compute memory note); it is a test switch, not a fix: Adam does not want the issue masked and the default stays at 3.
 
 ## Ruled out (with the evidence)
 
@@ -32,7 +32,7 @@ Adam's own reasoning that mattered: the sections of the UI are drawn at differen
 
 Files: `rkvkcontext.cpp` (`createDevice`, `splitFrame`, `submitCompute`, `endFrame`, `flushFrameAndWait`), `rkvkrenderer.cpp` (`Renderer::splitFrame`, `recordExternal`, `handleSet`, `bindlessFlush`), `rkvkworker.cpp` (~11925, the scene call phases), `rkvkrt.cpp` (`buildScene`, `sceneReadyBarrier`), `rkvkbridge.cpp` (the mirror frame), `llappviewer.cpp:1942`.
 
-- E2 is on whenever RT is on, the device has a compute-only family and timeline semaphores, and `LL_VK_RT_EARLY` is unset or 3 (`rkvkcontext.cpp:946`). The frame is split into up to three command buffers: part 1 is submitted at the scene call (phase 1) with a timeline signal; the compute queue waits for that value, builds the ray scene (skin dispatch, BLAS builds, TLAS) in its own command buffer (`setComputeRedirect`), and signals; the join (phase 2) submits part 2 and sets the next submit to wait for the build's value; the last part (the lighting, the post chain, the UI) waits for it and also waits for the acquire semaphore; the frame's fence is on that last submit.
+- E2 is on whenever RT is on, the device has a compute-only family and timeline semaphores, and `RK_VK_RT_EARLY` is unset or 3 (`rkvkcontext.cpp:946`). The frame is split into up to three command buffers: part 1 is submitted at the scene call (phase 1) with a timeline signal; the compute queue waits for that value, builds the ray scene (skin dispatch, BLAS builds, TLAS) in its own command buffer (`setComputeRedirect`), and signals; the join (phase 2) submits part 2 and sets the next submit to wait for the build's value; the last part (the lighting, the post chain, the UI) waits for it and also waits for the acquire semaphore; the frame's fence is on that last submit.
 - Every buffer is created with concurrent sharing between the two queue families when async is on (`createBuffer`, `rkvkcontext.cpp:2507` and `:2802`); images are exclusive but the build does not use images.
 - The build starts with a full barrier inside the compute command buffer; it orders the compute queue only, the cross-queue order comes from the timeline wait on the first split's signal (which covers the earlier graphics submissions).
 - The frame draws into a persistent offscreen backbuffer (`sMirror.mBackbuffer`) and blits it to the swapchain image at the end (`endFrameImpl`); the present pass and the UI both draw into that backbuffer. One mirror frame is held open across `display()`, the reflection probe update and the snapshot floaters (`holdFrame`, `llappviewer.cpp:1942`).
@@ -107,10 +107,10 @@ So in those runs the scene draw was not dropped. If the UI did stand on the last
 
 ## How to resume
 
-- **No stop-gap.** Setting `LL_VK_RT_EARLY=1` when materials are on was suggested and Adam refused it (2026-11-10): it masks the issue, and he did not ask for it. The default stays at 3 and the ordering problem is to be found. `rtearly=1` stays a test switch only.
+- **No stop-gap.** Setting `RK_VK_RT_EARLY=1` when materials are on was suggested and Adam refused it (2026-11-10): it masks the issue, and he did not ask for it. The default stays at 3 and the ordering problem is to be found. `rtearly=1` stays a test switch only.
 - To confirm a blink live: start the normal materials launcher, add `rtearly=1` to `rt-debug.txt` when it blinks, remove it again.
 - The next code reading, if the cause is still wanted: what the compute build reads and writes through addresses, and what the graphics parts between the split and the join write to the same buffers, material table and record buffers first; the arena block free path against the in-flight compute work.
-- Launchers kept: `run-viewer-clean-rtmaterials.bat`, `-noasync.bat` (`LL_VK_RT_EARLY=1`), `-syncval.bat`, `-handlelog.bat` (only meaningful with the diagnostic build).
+- Launchers kept: `run-viewer-clean-rtmaterials.bat`, `-noasync.bat` (`RK_VK_RT_EARLY=1`), `-syncval.bat`, `-handlelog.bat` (only meaningful with the diagnostic build).
 
 ## State of the tree
 

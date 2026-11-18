@@ -206,7 +206,7 @@ public:
 
     // Unbinds the currently bound texture of the given type
     // (only if there's a texture of the given type currently bound)
-    void unbind(eTextureType type, const char* file = __builtin_FILE(), int line = __builtin_LINE());      // file and line: LL_VK_TEXUNIT_VERIFY names the site that last wrote unit 0
+    void unbind(eTextureType type, const char* file = __builtin_FILE(), int line = __builtin_LINE());      // file and line: RK_VK_TEXUNIT_VERIFY names the site that last wrote unit 0
 
     // Fast but unsafe version of unbind
     void unbindFast(eTextureType type, const char* file = __builtin_FILE(), int line = __builtin_LINE());
@@ -556,7 +556,7 @@ public:
     static void segmentBoundary();
     static U32 sSegmentEpoch;
     static U64 sUiHashAccum;
-    // LL_VK_ITEMCENSUS: inclusive time (processor cycles) and calls of the UI drawing entry points while sUiHashing is on: 0 text (LLFontGL::render), 1 images, 2 rects / lines, 3 flush
+    // RK_VK_ITEMCENSUS: inclusive time (processor cycles) and calls of the UI drawing entry points while sUiHashing is on: 0 text (LLFontGL::render), 1 images, 2 rects / lines, 3 flush
     enum { UI_CENSUS_SLOTS = 11 };      // 0 text, 1 images, 2 rects, 3 flush with vertices, 4 matrix push/pop/translate, 5 clip rects, 6 texture binds, 7 calcScreenRect, 8 views drawn (calls only), 9 empty flush calls (calls only), 10 views drawn entirely outside the clip rect (inclusive draw time)
     static U64 sUiCensusCycles[UI_CENSUS_SLOTS];
     static U64 sUiCensusCalls[UI_CENSUS_SLOTS];
@@ -590,7 +590,7 @@ private:
 
     bool            mDirty;
     U32             mCount;
-    const char*     mBatchTexFile = nullptr;        // F3.4: where the first texCoord call of the batch came from (LL_VK_TEXUNIT_VERIFY)
+    const char*     mBatchTexFile = nullptr;        // F3.4: where the first texCoord call of the batch came from (RK_VK_TEXUNIT_VERIFY)
     int             mBatchTexLine = 0;
     bool            mBatchHasTexCoord = false;     // F3.4: a texCoord call since the last flush (an untextured batch gets white from its draw record)
     U32             mMode;

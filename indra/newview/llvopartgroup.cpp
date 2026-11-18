@@ -43,7 +43,7 @@
 #include "llviewerregion.h"
 #include "pipeline.h"
 #include "llspatialpartition.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 extern U64MicrosecondsImplicit gFrameTime;
 
@@ -279,10 +279,10 @@ static struct ParticleRebuildStats
 
 bool rk_particle_sort_on();
 
-// GPU particles stage 1: LL_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
+// GPU particles stage 1: RK_VK_GPU_PARTICLES=0 builds the quads on the CPU as before (default on)
 static bool rk_gpu_particles_on()
 {
-    static const bool on = []() { const char* v = getenv("LL_VK_GPU_PARTICLES"); return !v || atoi(v) != 0; }();
+    static const bool on = []() { const char* v = getenv("RK_VK_GPU_PARTICLES"); return !v || atoi(v) != 0; }();
     return on;
 }
 

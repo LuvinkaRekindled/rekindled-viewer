@@ -73,7 +73,7 @@ The guide is explicit: "The DLSS-FG feature itself does not handle timing or pre
 - [ ] Pacing runs asynchronously from the main render thread: a small pacer thread (or the mirror worker) that times presents against the measured real-frame interval.
 - [ ] Swapchain needs enough images for the extra presents (probably `minImageCount + 2` or more) and a plan for the FIFO queue depth and vsync / VRR behaviour.
 - [ ] Reflex-style latency management is recommended by NVIDIA (the held-back real frame adds latency). In raw Vulkan that is `VK_NV_low_latency2`; investigate whether it is needed.
-- [ ] Interaction with the mirror: its backbuffer, the off-screen frames used for probes and snapshots, `holdFrame`, resize (FG must be recreated), and the async depth (`LL_VK_ASYNC_DEPTH`).
+- [ ] Interaction with the mirror: its backbuffer, the off-screen frames used for probes and snapshots, `holdFrame`, resize (FG must be recreated), and the async depth (`RK_VK_ASYNC_DEPTH`).
 - [ ] Snapshots, previews and the login screen must not generate frames.
 - [ ] Turn off Smooth Motion in the NVIDIA app while testing (two interpolators fighting each other would give nonsense).
 

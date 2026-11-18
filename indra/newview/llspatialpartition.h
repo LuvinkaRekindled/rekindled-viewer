@@ -86,8 +86,8 @@ void rk_scene_fragment_free(RKSceneFragment*& fragment);        // pipeline.cpp 
 class LLSpatialGroup;
 void rk_scene_fragment_build(LLSpatialGroup* group);
 class LLCullResult;
-bool rk_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
-bool rk_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this framebool rk_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
+bool rk_scene_geo_on();                                         // pipeline.cpp (S3): RK_VK_SCENE_GEO=1 or 2
+bool rk_scene_geo_serving();                                    // RK_VK_SCENE_GEO=2 and the table draws this framebool rk_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
 bool rk_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
 bool rk_scene_geo_hud_view();                                   // J1 K6 S1: the HUD pass (its own cull result: the table is told about it before the HUD's post deferred passes)
 bool rk_scene_geo_hud_any();                                    // ... any of them
@@ -100,7 +100,7 @@ void rk_scene_geo_frame(LLCullResult* cull);                    // main view, on
 void rk_scene_geo_frame_end();                                  // main view, after the passes: releases of fragments that went during the frame
 void rk_scene_geo_count(U32 what, U64 n);                       // 0 builder draws left out, 1 table draw records sent, 2 builds made again for want of a prepare            // pipeline.cpp (S2): after a group's rebuild
 
-// <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (LL_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
+// <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (RK_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
 // draws a table can serve (mServed, equal mKey: one run) and draws it cannot (the old path draws them in place)
 struct RKAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; U32 mRank; };      // mRank: served segments: the number of the first item among the fragment's alpha items
 struct RKAlphaPlanView
@@ -119,7 +119,7 @@ struct RKAlphaPlanView
 int rk_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged = false);
 bool rk_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
 bool rk_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second draw of the alpha items is drawn from the table (plain / glTF items)
-bool rk_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (LL_VK_SCENE_ALPHA=1 and the AB phase)
+bool rk_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (RK_VK_SCENE_ALPHA=1 and the AB phase)
 bool rk_alpha_serving();      // pipeline.cpp (S5a): the static main-view alpha pass is drawn from the scene table this frame      // pipeline.cpp: 0 no plan, 1 the plan (current), 2 the group's fragment is not current
 
 // what the group's fragment says of its draw map (made with the fragment, 2026-11-12: the debug views and the alpha sort read these, not the draw infos)
@@ -421,8 +421,8 @@ public:
 
     void updateDistance(LLCamera& camera);
     F32 getUpdateUrgency() const;
-    F32 distanceNow() const;                    // <FS> stage 8e (LL_VK_DIST): the group's distance to the camera as updateDistance would make it now: the walk no longer writes row().distance for the groups the table owns
-    static inline bool sDistOwned = false;       // (set by pipeline.cpp with LL_VK_DIST)
+    F32 distanceNow() const;                    // <FS> stage 8e (RK_VK_DIST): the group's distance to the camera as updateDistance would make it now: the walk no longer writes row().distance for the groups the table owns
+    static inline bool sDistOwned = false;       // (set by pipeline.cpp with RK_VK_DIST)
     bool changeLOD();
     void rebuildGeom();
     void rebuildMesh();
@@ -466,7 +466,7 @@ public:
     draw_map_t mPendingDraws;
     std::vector<RKParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mPendingDraws[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
     // <FS> S1 phase 0 (doc/vulkan/PLAN-retained-records.md): bumped whenever the draw infos are cleared (every creation of draw infos follows a clear), so the same serial on two frames
-    // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
+    // means the same draw info set. mSceneSeenSerial: what the main view saw last (RK_VK_SCENE_STATS counters only).
     U32 mGeometrySerial = 1;
     S32 mReleaseDeadline = 0;                  // <FS> expiry (cold mode 3): the frame at which the group's geometry is looked at for release (0 = not queued: LLPipeline::scheduleRelease / releaseForget, pipeline.cpp)
     U32 mSceneSeenSerial = 0;
@@ -483,7 +483,7 @@ public:
     U32 mDirtyIdx = 0;
     U32 mGeoHandle = 0;                 // <FS> S3 G3: the worker's handle of this group's scene geometry fragment (0 = none, or the table does not hold it): what postSort lists for the passes
     static U32 sGuardFragmentOnly;      // <FS> clearDrawMap calls that found a fragment and an empty draw map (the normal case since the map is emptied after the build): the builder guard fired for the fragment alone
-    static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
+    static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by RK_VK_SCENE_STATS
 
     bridge_list_t mBridgeList;
 
@@ -544,9 +544,9 @@ public:
 
     /*virtual*/ S32 cull(LLCamera &camera, bool do_occlusion=false); // Cull on arbitrary frustum
     S32 cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select); // Cull on arbitrary frustum
-    // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullShadowSplit and cullShadowTask cut the cascades' cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
+    // <FS> the cascades' point cloud (RK_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullShadowSplit and cullShadowTask cut the cascades' cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
     // on its own thread, before any of these run: rebound() writes); empty is cleared when the walk found a visible group.
-    // <FS> the cascades' cull (LL_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
+    // <FS> the cascades' cull (RK_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
     void cullShadowWhole(LLCamera& camera);
     void cullShadowSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
     void cullShadowTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
@@ -718,7 +718,7 @@ public:
     // (shadowPrepMark) still has to look at (a few dozen of ~1800 a frame). Filled by LLPipeline::markNotCulled for the cascade culls; cleared with the lists.
     std::vector<LLSpatialGroup*> mLodGroups;
     bool mGeoElided = false;                            // S3 G4: postSort left the table's draws out of this cull result's render map (the passes must be prepared)
-    std::vector<U32> mGeoHandles;                       // S3 G3 (LL_VK_SCENE_GEO=2 serving): the scene geometry handles of the groups that passed postSort's filters: the list the worker draws from
+    std::vector<U32> mGeoHandles;                       // S3 G3 (RK_VK_SCENE_GEO=2 serving): the scene geometry handles of the groups that passed postSort's filters: the list the worker draws from
 
 private:
 
@@ -840,7 +840,7 @@ class LLVolumeGeometryManager: public LLGeometryManager
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count);
     // <FS> group rebuild R3b2: the fill and registration of one render batch as a task of its own. genDrawInfo plans the batches of a kind and allocates their buffers (the main thread), and either runs the
-    // tasks at once or hands them to the caller (deferred), which runs the tasks of all the kinds of a group together, on the pool when LL_VK_REBUILD_PARALLEL is set, and appends their draw maps to the group's in order.
+    // tasks at once or hands them to the caller (deferred), which runs the tasks of all the kinds of a group together, on the pool when RK_VK_REBUILD_PARALLEL is set, and appends their draw maps to the group's in order.
     struct FillTask
     {
         LLSpatialGroup* mGroup = nullptr;
@@ -880,7 +880,7 @@ private:
     static thread_local LLFace** sAlphaFaces[2];
 };
 
-// <FS> group rebuild R3b3: the fills of the groups a loop rebuilds, launched on the pool once instead of once a group (LL_VK_REBUILD_PARALLEL=2). While a scope is open, a volume group's rebuild plans its batches and allocates
+// <FS> group rebuild R3b3: the fills of the groups a loop rebuilds, launched on the pool once instead of once a group (RK_VK_REBUILD_PARALLEL=2). While a scope is open, a volume group's rebuild plans its batches and allocates
 // their buffers as it always did, and hands the fill tasks to the batch; the group's state is as after a rebuild at once, but its draw map and the scene fragment wait for flush(), which the scope's owner calls after the loop
 // (and which a rebuild or a mesh rebuild of a pending group calls first). Main thread only.
 class RKRebuildBatch

@@ -32,7 +32,7 @@ S32 velIdx();              // velidx=0/1 (default 1): the avatar velocity record
 S32 sunSamples();          // sunsamples=N (default 0: RenderRTShadowSamples decides): rays per pixel of the sun lightmap pass, a same-lap A/B
 S32 texAnim();            // texanim=0/1/2 (default -1: the setting decides): texture animation by the CPU / by the vertex shader / CPU with the shader's twin compared
 S32 sunNoise();             // sunnoise=0/1/2 (default 1): 1 the noise of the sun rays moves every frame, 2 every 4th frame, 0 never
-S32 rtEarly();             // rtearly=0/1/3 (default -1: LL_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
+S32 rtEarly();             // rtearly=0/1/3 (default -1: RK_VK_RT_EARLY decides): where the ray scene is built, a same-session A/B
 S32 sunFilter();          // sunfilter=0/1 (default 1): the penumbra filter sized by the blocker distance runs on the centre ray's shadow
 S32 sunPenMax();            // penmax=N (default 8): the filter's widest penumbra half-width in render pixels
 S32 sunPenLod();            // penlod=N (default 1): a bias in mip levels on the filter taps' level
@@ -43,7 +43,7 @@ S32 debugView();        // view=N: the material debug view mode to show (0 = the
 bool bodyRename();
 U32 skinPeriod(float distance);        // viewer frames between two new poses of an avatar this far from the eye (1 near, up to the skinperiod switch): the scene call skins an avatar no more often
 
-// LL_VK_RT_SHADOWS: 0 off, 1 ray query shadows replace the cascades, 2 split screen (left cascades, right rays), 3 disagreement map. Decided once, before the shaders compile.
+// RK_VK_RT_SHADOWS: 0 off, 1 ray query shadows replace the cascades, 2 split screen (left cascades, right rays), 3 disagreement map. Decided once, before the shaders compile.
 U32 shadowMode();
 
 // A shadow caster draw as the shadow passes name it. mKind 0 = opaque casters, 1 = alpha masked or blended. mModel: 16 floats column-major (null = identity),
@@ -97,7 +97,7 @@ struct SkinCaster
 };
 void noteSkinned(const SkinCaster& c);
 
-// the ray scene keeps a table of materials (LL_VK_RT_MATERIALS=1): the viewer's definitions (kind 10 records) are stored here, and every geometry of the scene gets a record that names its material
+// the ray scene keeps a table of materials (RK_VK_RT_MATERIALS=1): the viewer's definitions (kind 10 records) are stored here, and every geometry of the scene gets a record that names its material
 bool materialsOn();
 void updateMaterials(const RKVkBridge::RtMaterialDef* defs, U32 count);
 // the bindless slot of a pinned texture (by pin index, see RKVkWorker::rtPinAcquire) changed: the GPU reads it from the pin table

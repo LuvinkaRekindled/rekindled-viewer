@@ -357,8 +357,8 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     }
     context->mLastFrame = Context::instance().getFrameNumber();
 
-    // LL_VK_FSR_MVX / MVY / JX / JY (default 1): multipliers for the signs, to find out which way round FSR wants them without rebuilding
-    static const float mv_x = env_float("LL_VK_FSR_MVX"), mv_y = env_float("LL_VK_FSR_MVY"), j_x = env_float("LL_VK_FSR_JX"), j_y = env_float("LL_VK_FSR_JY");
+    // RK_VK_FSR_MVX / MVY / JX / JY (default 1): multipliers for the signs, to find out which way round FSR wants them without rebuilding
+    static const float mv_x = env_float("RK_VK_FSR_MVX"), mv_y = env_float("RK_VK_FSR_MVY"), j_x = env_float("RK_VK_FSR_JX"), j_y = env_float("RK_VK_FSR_JY");
     static U32 logged = 0;
     if (logged++ < 3)
     {

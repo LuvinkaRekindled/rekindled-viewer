@@ -66,7 +66,7 @@ public:
 
     /*virtual*/ void updateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax);
     /*virtual*/ bool isActive() const; // Whether this object needs to do an idleUpdate.
-    // <FS> LL_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
+    // <FS> RK_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): nothing reads the drawable distance of this kind of object
     /*virtual*/ bool usesDistance() const { return false; }
 
     void setPatch(LLSurfacePatch *patchp);

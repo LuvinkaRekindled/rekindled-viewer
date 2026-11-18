@@ -958,9 +958,9 @@ bool RKShaderProgram::createShader()
 #if defined(RK_VULKAN)
     if (success)
     {
-        // LL_VK_PROGRAM_MAP=<tag>: appends what the viewer sees of this program (which reserved uniform / attribute exists, the program's own uniform index behind it and the
+        // RK_VK_PROGRAM_MAP=<tag>: appends what the viewer sees of this program (which reserved uniform / attribute exists, the program's own uniform index behind it and the
         // texture channel) to run-logs/program-map-<tag>.txt, to compare two builds of the program front end
-        static const char* map_tag = getenv("LL_VK_PROGRAM_MAP");
+        static const char* map_tag = getenv("RK_VK_PROGRAM_MAP");
         if (map_tag && mVkProgram)
         {
             static FILE* map_file = nullptr;
@@ -1473,11 +1473,11 @@ int RKShaderProgram::censusUniformClass(size_t index) const
     return (int)mVkProgram->getInfo().mUniforms[index].mClass;
 }
 
-// <FS> shader cleanup (stage 4): what the viewer loaded and what it bound in this run (LL_VK_PROGRAM_CENSUS=1). Called before the programs are unloaded (a shader reload or the end of the run).
+// <FS> shader cleanup (stage 4): what the viewer loaded and what it bound in this run (RK_VK_PROGRAM_CENSUS=1). Called before the programs are unloaded (a shader reload or the end of the run).
 // The program's own name, the files it lists (the stock GLSL paths below shaders/class<N>/, libraries included), the native files that stand in for it, its shader level and how often it was bound.
 void RKShaderProgram::dumpProgramCensus()
 {
-    static const bool on = getenv("LL_VK_PROGRAM_CENSUS") != nullptr;
+    static const bool on = getenv("RK_VK_PROGRAM_CENSUS") != nullptr;
     if (!on)
     {
         return;

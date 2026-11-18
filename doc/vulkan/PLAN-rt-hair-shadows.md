@@ -15,10 +15,10 @@ The knobs that exist and are off (compile-time, `llviewershadermgr.cpp` about 10
 
 | define | env | default | what |
 |---|---|---|---|
-| `RK_RT_SUN_ALPHA_STRENGTH` | `LL_VK_RT_SUN_ALPHA_STRENGTH` | 1.0 | the most light all skinned cards together may block (0.65 = a lock of hair blocks at most 65 %) |
-| `RK_RT_SUN_HAIRFILL` | `LL_VK_RT_SUN_HAIRFILL` | 0.0 | the shadow on a blended receiver (the hair itself) lifted toward lit by this fraction |
-| `RK_RT_SUN_SOFTALPHA` | `LL_VK_RT_SUN_SOFTALPHA` | 12 m | view distance up to which the soft coverage walk runs |
-| `RK_RT_SUN_BIAS_ALPHA` | `LL_VK_RT_SUN_BIAS_ALPHA` | 0.015 | ray start offset for blended receivers |
+| `RK_RT_SUN_ALPHA_STRENGTH` | `RK_VK_RT_SUN_ALPHA_STRENGTH` | 1.0 | the most light all skinned cards together may block (0.65 = a lock of hair blocks at most 65 %) |
+| `RK_RT_SUN_HAIRFILL` | `RK_VK_RT_SUN_HAIRFILL` | 0.0 | the shadow on a blended receiver (the hair itself) lifted toward lit by this fraction |
+| `RK_RT_SUN_SOFTALPHA` | `RK_VK_RT_SUN_SOFTALPHA` | 12 m | view distance up to which the soft coverage walk runs |
+| `RK_RT_SUN_BIAS_ALPHA` | `RK_VK_RT_SUN_BIAS_ALPHA` | 0.015 | ray start offset for blended receivers |
 
 Why the result is hard and dark:
 

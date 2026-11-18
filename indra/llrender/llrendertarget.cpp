@@ -451,7 +451,7 @@ U32 LLRenderTarget::getTexture(U32 attachment) const
 {
     if (attachment >= mTex.size())
     {
-        // <FS> this was logged on every call (a million times in a few minutes with LL_VK_NOGL): the first few with the caller, then now and then
+        // <FS> this was logged on every call (a million times in a few minutes with RK_VK_NOGL): the first few with the caller, then now and then
         static std::atomic<U32> sInvalidCount(0);
         const U32 n = sInvalidCount.fetch_add(1);
         if (n < 4)
@@ -574,7 +574,7 @@ void LLRenderTarget::swapFBORefs(LLRenderTarget& other)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-// F3.5a: the counters of the render target entry points (LL_VK_OPSTATS) and the pass check (LL_VK_PASS_CHECK=1); see rkrenderpass.h.
+// F3.5a: the counters of the render target entry points (RK_VK_OPSTATS) and the pass check (RK_VK_PASS_CHECK=1); see rkrenderpass.h.
 // Both only look at the main thread's producer (the targets of the frame); a target bound on another thread is not counted.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 namespace
@@ -590,11 +590,11 @@ unsigned gPassMaxDepth = 0;
 bool pass_check()
 {
     static const bool on = []() {
-        const char* e = getenv("LL_VK_PASS_CHECK");
+        const char* e = getenv("RK_VK_PASS_CHECK");
         const bool v = e && e[0] && e[0] != '0';
         if (v)
         {
-            LL_INFOS("PassCheck") << "LL_VK_PASS_CHECK is on: warnings name the call site of the first occurrence" << LL_ENDL;
+            LL_INFOS("PassCheck") << "RK_VK_PASS_CHECK is on: warnings name the call site of the first occurrence" << LL_ENDL;
         }
         return v;
     }();

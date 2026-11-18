@@ -1,7 +1,7 @@
 # Plan: particles on the GPU (2026-10-27) — decided by Adam; stages 1, 1b, 2 and the GPU evaluate-and-sort are built and on by default (status 2026-11-07 below)
 
 ## Status (2026-11-07, checked against the git history and the code; Adam asked whether this was still "not started")
-**Built, committed and on by default:** stage 1 and 1b (rows for the pull shaders, `LL_VK_GPU_PARTICLES`), stage 2 step 1 (the closed form, compare lap), step 2.1 (records, `LL_VK_GPU_PARTICLE_SIM`, default on since 2026-11-02), step 3 (follow source, target linear, target position and bounce as record laws: the beach goes from 1,650-2,000 stepped particles a frame to 14), G0 and G1 of `PLAN-gpu-particles-gpu-sort.md` (the sort pass evaluates the records once and writes the sorted rows; `LL_VK_GPU_PARTICLE_SORT`, default on; the vertex-shader evaluation of G0 and `LL_VK_GPU_PARTICLE_EVAL` were deleted: "step 2.2" below is superseded by it) and C5 J2 (a group keeps runs of rows, `RKParticleRun`, instead of draw infos).
+**Built, committed and on by default:** stage 1 and 1b (rows for the pull shaders, `RK_VK_GPU_PARTICLES`), stage 2 step 1 (the closed form, compare lap), step 2.1 (records, `RK_VK_GPU_PARTICLE_SIM`, default on since 2026-11-02), step 3 (follow source, target linear, target position and bounce as record laws: the beach goes from 1,650-2,000 stepped particles a frame to 14), G0 and G1 of `PLAN-gpu-particles-gpu-sort.md` (the sort pass evaluates the records once and writes the sorted rows; `RK_VK_GPU_PARTICLE_SORT`, default on; the vertex-shader evaluation of G0 and `RK_VK_GPU_PARTICLE_EVAL` were deleted: "step 2.2" below is superseded by it) and C5 J2 (a group keeps runs of rows, `RKParticleRun`, instead of draw infos).
 **Not on the GPU, by design (gpu-sort plan section 4):** wind particles, particles of callback sources (spiral, beam, chat patterns) and ribbons stay stepped on the CPU and are drawn as stage 1 rows: 14 a frame at the beach, a few hundred in the plaza where ribbons are 17% of the stepped particles. What would move them: ribbons as records that name their parent's record (the original stage 2 step 4), wind from a per-region wind field read by the evaluation, callbacks stay CPU (they run script-driven code). Not started; the plaza number is the one that says whether ribbons are worth it.
 **Stale in the text below:** the title says "not started", the "Why not now" and the stage 1 paragraphs predate the built stages, and the last paragraph's "Next: step 2.2" is superseded.
 
@@ -15,7 +15,7 @@ Decision: particles move to the GPU. Reasons given: no real downside, sims full 
 
 ## Stages
 
-0. **Census** (optional, for ordering and for the club numbers): particles alive, sources, simulation ms, geometry ms every 600 frames under `LL_VK_ITEMCENSUS`; run once in a particle-heavy place.
+0. **Census** (optional, for ordering and for the club numbers): particles alive, sources, simulation ms, geometry ms every 600 frames under `RK_VK_ITEMCENSUS`; run once in a particle-heavy place.
 1. **GPU quads, CPU simulation.** The simulation stays; its output (position, size, color, texture frame, orientation) goes into a GPU-resident per-group particle buffer (written as rows, delta only), and a vertex shader expands each particle into a quad (6 vertices from `gl_VertexIndex`). Removes quad building, vertex buffer writes and index data; the alpha entry draws N particles instead of a vertex range. Low risk: semantics stay on the CPU.
 2. **GPU simulation of the common behaviours.** Source parameters (pattern, burst rate and radius, angles, velocity, acceleration, lifetime, color/scale start-end, glow, texture, flags) in a small table; a compute pass spawns and steps particles in a persistent pool: wind, gravity, interpolation of color and scale, texture animation frame, emissive, follow-velocity, "follow source" (source matrices from the CPU per frame). Ground bounce reads a coarse height texture of the region (or CPU keeps bounce particles).
 3. **The rest of the semantics** (target tracking, ribbons, beams, particle sources attached to avatars and linksets, HUD particles), then retire the CPU path behind a switch.
@@ -31,7 +31,7 @@ About 0.3 ms of main thread in the plaza, GPU draw negligible: the plaza alone d
 
 **Update 2026-11-02:** measured again with the census (`mt3-`, `mt4-`, plan 8.35): the particle partition rebuild is about 0.6 ms a frame (about 16 different groups at 40 us, none rebuilt twice) and `updateParticles` 0.36 ms: about 1.0 ms of the main thread in the plaza, not 0.3 ms. Stage 1 alone removes the 0.6 ms.
 
-**Stage 1 and 1b built 2026-11-02 (plan 8.36):** rows for the pull shaders, ribbons included, no face a particle, switch `LL_VK_GPU_PARTICLES`. A group costs 93 -> 20 kcycles on the main thread (about 0.45 ms in the plaza). Stage 2 (the simulation, `updateParticles` 0.36 ms) is next. Visuals not yet looked at by Adam.
+**Stage 1 and 1b built 2026-11-02 (plan 8.36):** rows for the pull shaders, ribbons included, no face a particle, switch `RK_VK_GPU_PARTICLES`. A group costs 93 -> 20 kcycles on the main thread (about 0.45 ms in the plaza). Stage 2 (the simulation, `updateParticles` 0.36 ms) is next. Visuals not yet looked at by Adam.
 
 ## Stage 2 plan: the simulation (2026-11-02)
 
@@ -65,7 +65,7 @@ Classes:
 
 0. Census: done (numbers above).
 1. **Compare mode:** the record and the closed form on the CPU, run next to the stepping for class A particles; a log of the largest position, colour, scale and glow difference a frame. Gate: differences below a visible size (1 mm, 1/255) over a lap.
-2. **GPU evaluation** for class A (the CPU order from the closed form), switch `LL_VK_GPU_PARTICLE_SIM` (default off at first, A/B launcher): the group rebuild writes only the index/order, spawn writes records. Gate: `updateParticles` + group cost, Adam's look at the same places as for stage 1.
+2. **GPU evaluation** for class A (the CPU order from the closed form), switch `RK_VK_GPU_PARTICLE_SIM` (default off at first, A/B launcher): the group rebuild writes only the index/order, spawn writes records. Gate: `updateParticles` + group cost, Adam's look at the same places as for stage 1.
 3. Class B (source table, follow source, target linear).
 4. Ribbons (parent record index).
 5. Group extents from path boxes, expiry queues, no group transfers; the old stepping of class A is deleted (one path after a move).
@@ -89,11 +89,11 @@ Plaza: the groups loop (0.24 ms) and the stage 1 rows work (0.12 ms) shrink by t
 
 ### Step 1 (compare mode), built 2026-11-02
 
-`LLViewerPart` keeps its spawn state (`mSpawnPos`, `mSpawnVel`, set in `LLViewerPartSim::addPart`, moved by `LLViewerPartGroup::shift`). With `LL_VK_PARTSIM_COMPARE=1` every particle with no per-frame input (no wind, target, bounce, follow source, callback) is compared after each step with `pos0 + v0*age + 0.5*a*age^2`, the velocity, and the colour, scale and glow at `age / maxAge`; the largest differences of each 600 frames go to the `Q1Census` log. Launch mode `partcmp` in `h6-fixed.ps1`.
+`LLViewerPart` keeps its spawn state (`mSpawnPos`, `mSpawnVel`, set in `LLViewerPartSim::addPart`, moved by `LLViewerPartGroup::shift`). With `RK_VK_PARTSIM_COMPARE=1` every particle with no per-frame input (no wind, target, bounce, follow source, callback) is compared after each step with `pos0 + v0*age + 0.5*a*age^2`, the velocity, and the colour, scale and glow at `age / maxAge`; the largest differences of each 600 frames go to the `Q1Census` log. Launch mode `partcmp` in `h6-fixed.ps1`.
 
 **Step 1 result (lap `pt9-partcmp1`, 2026-11-02; 3.8 million particle steps compared over the lap, about 650,000 per 600 frames):** colour 0, scale 0, glow 0 of 255 (exactly equal), velocity 1e-6 m/s. Position: the largest difference grows with age, 1.5 mm at age 2.5 s, 4 mm at 7.9 s, 15 mm at 30 s (ages up to 30 s exist in the plaza), and 4-7% of the steps in the later windows are over 1 mm. That is the old stepping's rounding, not the closed form's: it sums `dt*vel` in 32 bit floats, thousands of times, at coordinates around 100 m (a float step there is 8 um, a random walk over 1,800 steps is a few mm), while the closed form rounds once. A centimetre of a particle that is itself decimetres wide at 30 s of age is not visible. The gate I wrote (1 mm) is too tight for ages over 3 s; the gate that matters is met: no difference that shows, none that grows apart from the age. The closed form is the more accurate of the two.
 
-### Step 2.1 built (2026-11-02, switch `LL_VK_GPU_PARTICLE_SIM=1`, default off; launcher `run-viewer-partsim.bat`, lap mode `partrec`)
+### Step 2.1 built (2026-11-02, switch `RK_VK_GPU_PARTICLE_SIM=1`, default off; launcher `run-viewer-partsim.bat`, lap mode `partrec`)
 
 Split of step 2: 2.1 keeps the particles with no per-frame input as **records** on the CPU and evaluates them at the frame's clock (the draw path stays stage 1's rows), 2.2 would evaluate them in the vertex shader.
 
@@ -101,7 +101,7 @@ What 2.1 is: `LLViewerPartSim::addPart` turns a particle without wind, target, b
 
 Lap `pta-partrec1` (plaza, RT off): stepped 750-1000 a frame and 1300 records (before: 2,000 stepped); groups loop 290-390 kcycles (before 620); `updateGeometry` 9.1 kcycles a call, rebuild 8.4-9.1 (before 11.3); no count mismatch lines; loop 9.15 ms (109 fps, GPU bound, the world differs from earlier laps). The main thread's particle total is about 0.3-0.35 ms now (sources 0.07, groups loop 0.11-0.15, updateGeometry and rebuild 0.11): the 1.0 ms + 0.36 ms of the start of stage 1, less than a quarter. The rest is per group (29 groups: `markRebuild`, count checks, the camera lookups) and the 750 stepped particles. 2.2 (records in the vertex shader) would take about 0.1 ms more in the plaza; whether it is worth its risk is for the census of a particle-heavy sim to say.
 
-**Records on by default (2026-11-02):** Adam looked at `run-viewer-partsim.bat` ("they looked fine") and said default on. `LL_VK_GPU_PARTICLE_SIM=0` (launcher `run-viewer-partsstep.bat`) steps them again; `LL_VK_GPU_PARTICLES=0` is the quads. Sanity lap with the defaults (`ptb-zonesoff1`): 1,100 records and 1,100 stepped, no count mismatch lines, no crash, 109 fps (GPU bound). The estimate of the whole stage 1 + 1b + 2.1 gain is about 1.1 ms of main thread in the plaza (1.4 -> 0.3 ms; the 1.4 adds the 0.4 ms of `updateGeometry` that the earlier 1.0 ms did not contain); stitched from separate laps with different particle populations, not one A/B. Adam: the approximation is fine, the trade is good (the GPU will be faster anyway). Step 2.2 (records in the vertex shader) waits for a census of a particle-heavy sim.
+**Records on by default (2026-11-02):** Adam looked at `run-viewer-partsim.bat` ("they looked fine") and said default on. `RK_VK_GPU_PARTICLE_SIM=0` (launcher `run-viewer-partsstep.bat`) steps them again; `RK_VK_GPU_PARTICLES=0` is the quads. Sanity lap with the defaults (`ptb-zonesoff1`): 1,100 records and 1,100 stepped, no count mismatch lines, no crash, 109 fps (GPU bound). The estimate of the whole stage 1 + 1b + 2.1 gain is about 1.1 ms of main thread in the plaza (1.4 -> 0.3 ms; the 1.4 adds the 0.4 ms of `updateGeometry` that the earlier 1.0 ms did not contain); stitched from separate laps with different particle populations, not one A/B. Adam: the approximation is fine, the trade is good (the GPU will be faster anyway). Step 2.2 (records in the vertex shader) waits for a census of a particle-heavy sim.
 
 ### Step 3 built (2026-11-02): every law that is not wind, a callback or a ribbon is a record
 

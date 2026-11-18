@@ -183,7 +183,7 @@ protected:
 
 //defines an octree group for an octree node, which contains multiple entries.
 //LL_ALIGN_PREFIX(16)
-// stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group in the worker's kept set is the frame the set was applied, derived from the set's bits by the group's slot (mCullId - 1), not written per group; a group that leaves
+// stage 8b (RK_VK_KSTAMP=1, needs RK_VK_KEPT=2): the world stamp of a group in the worker's kept set is the frame the set was applied, derived from the set's bits by the group's slot (mCullId - 1), not written per group; a group that leaves
 // the set has its stamp written back by the pass that applies the next set
 struct RKKeptStamps
 {
@@ -297,7 +297,7 @@ protected:
     OctreeNode* mOctreeNode;
 
 public:
-    // <FS> S7 C1 (LL_VK_CULL_SHADOW, rkcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
+    // <FS> S7 C1 (RK_VK_CULL_SHADOW, rkcullshadow.h): the group's id in the flat table, the build it first appeared in, the stamp of the last frame the CPU cull kept it
     U32         mCullId = 0;                // slot + 1 in the table (0: none)
     bool        mCullDirty = false;         // in the list of rows to refresh
     U32         mCullFirstSerial = 0;

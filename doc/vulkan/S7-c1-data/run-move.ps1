@@ -1,4 +1,4 @@
-param([string]$Name, [int]$Wait = 90, [string]$Vars = 'LL_VK_SCENE_VERIFY=1;LL_VK_SCENE_FRAGMENTS=1', [switch]$Zones, [string]$ExtraArgs = '', [switch]$Phases, [int]$BurstAt = 0, [string]$BurstDir = '<work>\strobe-s1')
+param([string]$Name, [int]$Wait = 90, [string]$Vars = 'RK_VK_SCENE_VERIFY=1;RK_VK_SCENE_FRAGMENTS=1', [switch]$Zones, [string]$ExtraArgs = '', [switch]$Phases, [int]$BurstAt = 0, [string]$BurstDir = '<work>\strobe-s1')
 $env:RT_OFF = '1'
 if (-not $Phases) { $env:RT_NO_PHASES = '1' } else { Remove-Item Env:RT_NO_PHASES -ErrorAction SilentlyContinue }
 $env:RT_OPSTATS = '1'

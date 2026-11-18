@@ -199,7 +199,7 @@ namespace
 
     bool ring_on()
     {
-        static const bool on = getenv("LL_VK_DRAWABLE_RING") ? atoi(getenv("LL_VK_DRAWABLE_RING")) != 0 : true;
+        static const bool on = getenv("RK_VK_DRAWABLE_RING") ? atoi(getenv("RK_VK_DRAWABLE_RING")) != 0 : true;
         return on;
     }
 
@@ -267,7 +267,7 @@ std::string rk_drawable_destroy_info(const void* p)
 {
     if (!ring_on())
     {
-        return "(the ring is off: LL_VK_DRAWABLE_RING=0)";
+        return "(the ring is off: RK_VK_DRAWABLE_RING=0)";
     }
     const U32 newest = sDestroyNext.load();
     const U32 count = std::min(newest, kDestroyRing);
@@ -293,9 +293,9 @@ void LLDrawable::destroy()
     {
         ring_note(this);
     }
-    // <FS> LL_VK_DRAWABLE_TRACE (default on while the moved list crash of 2026-11-01 is open, 0 = off): a drawable freed while the moved list still holds it. The list holds a counted pointer, so this is a reference
+    // <FS> RK_VK_DRAWABLE_TRACE (default on while the moved list crash of 2026-11-01 is open, 0 = off): a drawable freed while the moved list still holds it. The list holds a counted pointer, so this is a reference
     // released one time too many; the stack is the code that released the last one. (lap rp4-scchk1: updateMovedListSerial read entry 0 of 89 after it was freed)
-    static const bool trace = getenv("LL_VK_DRAWABLE_TRACE") ? atoi(getenv("LL_VK_DRAWABLE_TRACE")) != 0 : true;
+    static const bool trace = getenv("RK_VK_DRAWABLE_TRACE") ? atoi(getenv("RK_VK_DRAWABLE_TRACE")) != 0 : true;
     if (trace && isState(ON_MOVE_LIST) && gPipeline.mInitialized && gPipeline.inMovedList(this))
     {
         static std::atomic<int> logged{0};
@@ -1173,7 +1173,7 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
         }
         else
         {
-            // <FS> T6 of doc/vulkan/PLAN-visible-set-owner.md (the old T1 of PLAN-change-driven-sort.md, no longer behind LL_VK_SORT_CHANGE): an object nothing reads the distance of gets neither the distance nor the OBJECT_LOD effect nor
+            // <FS> T6 of doc/vulkan/PLAN-visible-set-owner.md (the old T1 of PLAN-change-driven-sort.md, no longer behind RK_VK_SORT_CHANGE): an object nothing reads the distance of gets neither the distance nor the OBJECT_LOD effect nor
             // updateLOD: the classes that say so (usesDistance: the particle groups, the sky, the surface patches, the water, the WL sky). They were 247 of the 266 object LOD effects a sort (lap ef2-def1, 93 percent; the particle groups 214).
             if (mVObjp && !mVObjp->usesDistance())
             {

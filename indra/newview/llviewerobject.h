@@ -250,7 +250,7 @@ public:
     virtual void        updateResources();
     virtual void        updateFaceSize(S32 idx);
     virtual bool        updateLOD();
-    // <FS> LL_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): false for an object whose LOD and everything else ignore LLDrawable::mDistanceWRTCamera (terrain patch, water, sky, particle group): the
+    // <FS> RK_VK_SORT_CHANGE bit 1 (doc/vulkan/PLAN-change-driven-sort.md, T1): false for an object whose LOD and everything else ignore LLDrawable::mDistanceWRTCamera (terrain patch, water, sky, particle group): the
     // stateSort does not compute the distance of its drawable (and does not queue the OBJECT_LOD delta for it). Volumes, grass, trees, avatars and flexible objects read it and keep the default.
     virtual bool        usesDistance() const { return true; }
     virtual bool        setDrawableParent(LLDrawable* parentp);

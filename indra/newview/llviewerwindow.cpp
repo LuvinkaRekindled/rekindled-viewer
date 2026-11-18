@@ -6489,9 +6489,9 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
         output_buffer_offset_y += subimage_y_offset;
     }
 
-    // <FS> LL_VK_SNAPDUMP=<folder>: write what every snapshot render read back as a PNG, to compare the renders with each other
+    // <FS> RK_VK_SNAPDUMP=<folder>: write what every snapshot render read back as a PNG, to compare the renders with each other
     LL_INFOS("VkSnap") << "rawSnapshot timing: render and readback loops finished at " << snap_ms() << " ms (the readback loop took " << snap_ms() - read_start_ms << " ms)" << LL_ENDL;
-    if (const char* dump_dir = getenv("LL_VK_SNAPDUMP"))
+    if (const char* dump_dir = getenv("RK_VK_SNAPDUMP"))
     {
         static S32 dump_count = 0;
         LLPointer<LLImagePNG> png = new LLImagePNG;

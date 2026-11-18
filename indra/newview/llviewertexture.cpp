@@ -78,13 +78,13 @@
 #include "llwindow.h"
 #include "rkvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 #include "rktexturearrivaltrace.h"
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 #include <unordered_map>
 
 std::string rk_stack_here(int skip, int max_frames);       // (rkgpuzonetimer.cpp)
 namespace
 {
-// <FS> 2026-11-16 (LL_VK_DIAG=1): the discard level and the size of the last image a texture was created with, to see a texture created again for the same data (createTexture, scheduleCreateTexture)
+// <FS> 2026-11-16 (RK_VK_DIAG=1): the discard level and the size of the last image a texture was created with, to see a texture created again for the same data (createTexture, scheduleCreateTexture)
 struct TexCreateLast { bool mValid = false; S32 mDiscard = 0; S64 mBytes = 0; std::chrono::steady_clock::time_point mWhen; };
 std::mutex sTexCreateMutex;
 std::unordered_map<LLUUID, TexCreateLast> sTexCreateLast;
@@ -587,7 +587,7 @@ void LLViewerTexture::updateClass()
     {
         // <FS> native-vk: the budget logic over time (texture thrash investigation): used / budget / target in MB, the bias, how far over the target, and the texture bytes the viewer counts
         static LLFrameTimer budget_log_timer;
-        static bool budget_log = getenv("LL_VK_BUDGET_LOG") != nullptr;
+        static bool budget_log = getenv("RK_VK_BUDGET_LOG") != nullptr;
         if (budget_log && budget_log_timer.getElapsedTimeF32() >= 2.f)
         {
             budget_log_timer.reset();
@@ -942,7 +942,7 @@ bool LLViewerTexture::retireOnLastRef() const
 void RKTexRetire::pump()
 {
     RKRetireList::pump();
-    RKForkJoinPool::reportLabels(LLFrameTimer::getFrameCount());       // <FS> LL_VK_POOL_LABELS: the pool job time a frame by family (rkforkjoinpool.h)
+    RKForkJoinPool::reportLabels(LLFrameTimer::getFrameCount());       // <FS> RK_VK_POOL_LABELS: the pool job time a frame by family (rkforkjoinpool.h)
     static U64 sLastLog = 0;
     const U64 now = LLFrameTimer::getFrameCount();
     if (now - sLastLog >= 3600)
@@ -1939,7 +1939,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     // <FS> the sampled hash of every level of a BC7 upload, finest first: entered in the registry of recent BC7 levels (so that a level found in a GPU image that was not uploaded to it can be named: id, level,
     // size, discard), and kept by the texture object of a server bake for Show Textures and the periodic check
     std::vector<U64> bc7_level_hashes;
-    if (mRawImage->isCompressed() && rk_diag_on())        // (the hashes are the ears bug hunt of 2026-11-14: Show Textures, the periodic check and the BakeTex log: off unless LL_VK_DIAG)
+    if (mRawImage->isCompressed() && rk_diag_on())        // (the hashes are the ears bug hunt of 2026-11-14: Show Textures, the periodic check and the BakeTex log: off unless RK_VK_DIAG)
     {
         RKImageBC7::levelHashes(mRawImage, bc7_level_hashes);
         RKImageBC7::registerLevels(bc7_level_hashes, mID.asString().substr(0, 8), mRawDiscardLevel, (U32)mRawImage->getWidth(), (U32)mRawImage->getHeight());
@@ -1966,7 +1966,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
     if (rk_diag_on() && res && mRawImage.notNull())
     {
-        // <FS> 2026-11-16 (LL_VK_DIAG=1; Adam: images that already show flash white again for a frame on the first load): a texture created again with the discard level and the size of the one it was created with before. A new GPU image
+        // <FS> 2026-11-16 (RK_VK_DIAG=1; Adam: images that already show flash white again for a frame on the first load): a texture created again with the discard level and the size of the one it was created with before. A new GPU image
         // for data the old one holds (a loader's re-decode, a second schedule) is one more chance for the handle to read the stand-in; scheduleCreateTexture says who asked.
         std::lock_guard<std::mutex> lock(sTexCreateMutex);
         TexCreateLast& l = sTexCreateLast[mID];
@@ -3121,7 +3121,7 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
     if (need_readback)
     {
         // <FS> A read back waits for the render worker to replay everything queued before it (two waits: the level query and the image): in a login 50 textures asked for one in 10 s, 430 ms of the main
-        // thread's time (LL_VK_SYNC_LOG). When the worker is far behind, or enough were made this frame, the callbacks stay in the list and are tried again in a later frame (the entries are not run, so
+        // thread's time (RK_VK_SYNC_LOG). When the worker is far behind, or enough were made this frame, the callbacks stay in the list and are tried again in a later frame (the entries are not run, so
         // nothing is lost: this function is called again for a texture that still has callbacks).
         if (!RKVkBridge::readbackAffordable())
         {
@@ -3638,8 +3638,8 @@ extern RKShaderProgram gCopyProgram;
 
 bool LLViewerLODTexture::scaleDown()
 {
-    // <FS> native-vk diagnostic (LL_VK_NO_SCALEDOWN=1): no texture is shrunk in place (to find out whether the white textures of the unfocus downgrade are the shrunk copies)
-    static const bool no_scale_down = getenv("LL_VK_NO_SCALEDOWN") != nullptr;
+    // <FS> native-vk diagnostic (RK_VK_NO_SCALEDOWN=1): no texture is shrunk in place (to find out whether the white textures of the unfocus downgrade are the shrunk copies)
+    static const bool no_scale_down = getenv("RK_VK_NO_SCALEDOWN") != nullptr;
     if (no_scale_down)
     {
         return false;
@@ -3653,8 +3653,8 @@ bool LLViewerLODTexture::scaleDown()
     // reach for one frame (a group out of the walk, a face not updated yet, an object not rezzed) is created at full size and shrunk in the same frame (LLViewerTextureList::updateImages: "Texture will be downscaled
     // immediately after loading"), and created again at full size when a face asks for it (lap tr2: 5 percent of the creations repeat the level and size of the last one, the GPU image reading a level of 5 a median 68 ms
     // after the creation at 0). Each step is a new GPU image under the handle. A texture is now shrunk when memory is short (the budget logic's bias is up: the stock reason for shrinking) or when it has wanted to be
-    // smaller without a break for LL_VK_SHRINK_HOLD seconds (30; 0 = as before).
-    static const F32 hold = getenv("LL_VK_SHRINK_HOLD") ? (F32)atof(getenv("LL_VK_SHRINK_HOLD")) : 30.f;
+    // smaller without a break for RK_VK_SHRINK_HOLD seconds (30; 0 = as before).
+    static const F32 hold = getenv("RK_VK_SHRINK_HOLD") ? (F32)atof(getenv("RK_VK_SHRINK_HOLD")) : 30.f;
     if (hold > 0.f && sDesiredDiscardBias <= 1.05f)
     {
         const F32 now = llmax(sCurrentTime, 0.001f);

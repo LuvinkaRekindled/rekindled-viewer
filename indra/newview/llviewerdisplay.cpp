@@ -180,7 +180,7 @@ void display_startup()
 
     { RK_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
 
-    // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
+    // <FS> Vulkan mirror frame (does nothing unless RK_VK_MIRROR is set)
     RKVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
 
     // Written as branch to appease GCC which doesn't like different
@@ -517,7 +517,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     // Done first, before any zone of this frame opens, so the previous frame is complete.
     RKGpuZoneTimer::onFrameEnd();
 
-    // <FS> A/B of the early sort inside one run (LL_VK_EARLY_SORT=alt: 60 frames on, 60 off): the interval between two display() calls, summed per mode of the frame it ended
+    // <FS> A/B of the early sort inside one run (RK_VK_EARLY_SORT=alt: 60 frames on, 60 off): the interval between two display() calls, summed per mode of the frame it ended
     static int sFrameMode = -1;
     static std::chrono::steady_clock::time_point sLastDisplay;
     static double sModeMs[2] = {0, 0};
@@ -537,7 +537,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         sLastDisplay = now;
     }
 
-    // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
+    // <FS> Vulkan mirror frame (does nothing unless RK_VK_MIRROR is set)
     if (gViewerWindow)
     {
         RKVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
@@ -979,8 +979,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         // <FS> The sort of the main view runs before the shadow passes (and the impostors): what it builds (the render map, the rebuilt groups) does not depend on them, and the packet
         // builders of the deferred passes can start on the async pool while the main thread draws the shadows. The pool face lists, which the shadow passes reset and refill for
-        // themselves, are filled again after them (refillPools). LL_VK_EARLY_SORT=0 puts it back where it was.
-        static const char* early_env = getenv("LL_VK_EARLY_SORT");
+        // themselves, are filled again after them (refillPools). RK_VK_EARLY_SORT=0 puts it back where it was.
+        static const char* early_env = getenv("RK_VK_EARLY_SORT");
         static const bool early_alternate = early_env && early_env[0] == 'a';
         static const bool early_env_enabled = !(early_env && early_env[0] == '0');
         static LLCachedControl<bool> early_sort_setting(gSavedSettings, "FSEarlySort", true);        // live: Debug Settings
@@ -1127,9 +1127,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         }
 
         {
-            // <FS> debug (LL_VK_VISDIP=1): what the main view's cull left each frame (visible groups and drawables), the frames where either fell below 80 % of the median of the window are listed: an object
+            // <FS> debug (RK_VK_VISDIP=1): what the main view's cull left each frame (visible groups and drawables), the frames where either fell below 80 % of the median of the window are listed: an object
             // that blinks out of the scene shows as a dip here (the draw path is not involved: the cull has not drawn anything yet)
-            static const bool wanted = getenv("LL_VK_VISDIP") != nullptr;
+            static const bool wanted = getenv("RK_VK_VISDIP") != nullptr;
             if (wanted && !for_snapshot)
             {
                 // the groups of the last frame and what they were, to say which ones left at the start of a dip
@@ -1352,7 +1352,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gRender.setColorMask(true, true);
 
-        gPipeline.rtSceneEarly(1);      // <FS> LL_VK_RT_EARLY=1: the ray scene is built here (before the world pass) when the switch is on
+        gPipeline.rtSceneEarly(1);      // <FS> RK_VK_RT_EARLY=1: the ray scene is built here (before the world pass) when the switch is on
 
         RenderPassScope world_pass;     // F3.5b: the world pass on the deferred screen target: begun here, ended after the render flush below
         {
@@ -1414,7 +1414,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
         (void)rt;
         { RK_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
-        gPipeline.rtSceneEarly(2);      // <FS> LL_VK_RT_EARLY=2: after the G-buffer (diagnostic)
+        gPipeline.rtSceneEarly(2);      // <FS> RK_VK_RT_EARLY=2: after the G-buffer (diagnostic)
 
         if (LLPipeline::sRenderDeferred)
         {
@@ -1956,8 +1956,8 @@ void swap()
     LL_PROFILE_GPU_ZONE("swap");
     if (gDisplaySwapBuffers)
     {
-        RenderPass::frameEnd(); // <FS> F3.5a: a render target still bound at the end of the frame (LL_VK_PASS_CHECK=1)
-        RKRenderMatrix::checkFrameEnd(); // <FS> F3.3: matrix stacks that are not empty at the end of the frame (LL_VK_MATRIX_GUARD_CHECK=1)
+        RenderPass::frameEnd(); // <FS> F3.5a: a render target still bound at the end of the frame (RK_VK_PASS_CHECK=1)
+        RKRenderMatrix::checkFrameEnd(); // <FS> F3.3: matrix stacks that are not empty at the end of the frame (RK_VK_MATRIX_GUARD_CHECK=1)
         RKVkBridge::presentFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
     }

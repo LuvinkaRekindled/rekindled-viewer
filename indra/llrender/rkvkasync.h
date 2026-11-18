@@ -1,6 +1,6 @@
 /**
  * @file rkvkasync.h
- * @brief Runs the Vulkan mirror on its own thread (LL_VK_ASYNC=1, Vulkan-only mode).
+ * @brief Runs the Vulkan mirror on its own thread (RK_VK_ASYNC=1, Vulkan-only mode).
  *
  * The viewer's main thread no longer translates GL calls: every call the mirror owns is written into a queue (with copies of the data
  * it points to) and a worker thread replays the queue in order through the same translation code that ran inline before. It is what
@@ -28,7 +28,7 @@ namespace RKVkAsync
     extern bool gEnabled;
     long long lastPresentTicks();       // QueryPerformanceCounter ticks of the last present the worker made (0 before the first)
 
-    // LL_VK_ASYNC is set (and the mirror owns the resources)
+    // RK_VK_ASYNC is set (and the mirror owns the resources)
     bool requested();
     // starts the worker thread; the calling thread becomes the queue's main producer. Call between two frames.
     bool start();
@@ -42,7 +42,7 @@ namespace RKVkAsync
     void syncCall(const std::function<void()>& fn);
     // <FS> runs fn on the worker after everything queued before it, and does NOT wait (hitchless loading: a read of a render target for the avatar bake). fn must own what it touches.
     void postCall(std::function<void()> fn);
-    // <FS> LL_VK_SYNC_LOG (default on): the main thread's waits in syncCall are timed by the function that called it and reported every 10 s (VkSync); the symbolizer names an address
+    // <FS> RK_VK_SYNC_LOG (default on): the main thread's waits in syncCall are timed by the function that called it and reported every 10 s (VkSync); the symbolizer names an address
     void setSymbolizer(std::string (*fn)(const void*));
     // <FS> the calling thread's stack as text, one function a line (the symbolizer above; addresses without it)
     std::string stackHere(int skip, int frames);
@@ -143,10 +143,10 @@ namespace RKVkAsync
     // the pass being played (worker thread): what the last pass record said
     struct PassInfo { U32 mId = 0, mParent = 0, mFbo = 0; S32 mBuffers = 0; U32 mSite = 0, mKind = 0; };
     const PassInfo& currentPass();
-    // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + LL_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
+    // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + RK_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
 
-    // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with LL_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
+    // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with RK_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
     enum FrontPoint { FP_SHADER_BIND, FP_UNIFORM, FP_UNIFORM_MATRIX, FP_UNIFORM_SENT, FP_TEXUNIT_BIND, FP_BLEND, FP_GLSTATE, FP_SET_BUFFER, FP_DRAW, FP_SYNC_MATRICES, FP_FLUSH, FP_MATRIX_STACK, FP_MATRIX_LOAD, FP_MATRIX_XFORM, FP_MATRIX_MODE, FP_TEXUNIT_UNBIND, FP_TEXUNIT_STATE, FP_TEXUNIT_MANUAL, FP_TEXUNIT_OPTIONS, FP_COUNT };
     extern bool gFrontStats;
     unsigned long long frontStart(int id);                 // counts the call (main thread only); returns a timestamp when this call is timed, else 0
@@ -292,7 +292,7 @@ namespace RKVkAsync
     void queryResultStats(unsigned long long out[2]);
     // frame pacing since the last call: spacing of the main thread's frame starts and of the worker's presents (ms: n, avg, p50, p95, p99, max), and how long each side waited for the other
     std::string pacingReport();
-    // LL_VK_PHASES: what the worker thread spent its time on since the last call, per GL / command operation (calls, ms per frame, ns per call)
+    // RK_VK_PHASES: what the worker thread spent its time on since the last call, per GL / command operation (calls, ms per frame, ns per call)
     std::string opStatsReport(size_t frames);
 }
 

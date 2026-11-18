@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shader inventory (PLAN-draw-info-removal.md stage 4).
 
-Reads the program census of one or more laps (LL_VK_PROGRAM_CENSUS=1, lines "name | loaded | binds | level | files | native") and the code
+Reads the program census of one or more laps (RK_VK_PROGRAM_CENSUS=1, lines "name | loaded | binds | level | files | native") and the code
 (indra/newview/llviewershadermgr.cpp assigns every program's name to a C++ global), and writes doc/vulkan/INVENTORY-shaders.md:
 
   * every program name: bound in a lap or not, the files, native or stock;

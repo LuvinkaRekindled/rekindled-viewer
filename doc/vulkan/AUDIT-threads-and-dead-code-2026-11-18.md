@@ -8,7 +8,7 @@ Builds on `PLAN-thread-organization.md` (T0 to T5) and `PLAN-visible-set-owner.m
 
 ## 1. Read this first: the main thread's 100 percent includes spinning
 
-**(C)** `frameBegin` (`llrender/rkvkasync.cpp:1404-1420`) loops while the main thread is more than `LL_VK_ASYNC_DEPTH` (default 1) frames ahead of the render worker: 200 `YieldProcessor`, then `SwitchToThread` without end, and a `wake()` every turn. The same pattern is at ring full (`:248-254`, 64 MB ring) and `wait_drained` (`:3120`). The time is added to `gMainWaitTicks` and printed only under `LL_VK_PHASES` (`:1394-1401`).
+**(C)** `frameBegin` (`llrender/rkvkasync.cpp:1404-1420`) loops while the main thread is more than `RK_VK_ASYNC_DEPTH` (default 1) frames ahead of the render worker: 200 `YieldProcessor`, then `SwitchToThread` without end, and a `wake()` every turn. The same pattern is at ring full (`:248-254`, 64 MB ring) and `wait_drained` (`:3120`). The time is added to `gMainWaitTicks` and printed only under `RK_VK_PHASES` (`:1394-1401`).
 
 So "main 100 to 101 percent in every phase" cannot tell work from waiting for the worker. If the wait is large in the turn and the second still, the render worker is the cap there and section 3 comes before section 4.
 
@@ -16,13 +16,13 @@ To do: read `gMainWaitTicks` in a no-zones lap (ms a frame, per phase). A `WaitO
 
 ## 2. The threads as they are
 
-Correction to earlier notes: the render worker is created at `llrender/rkvkasync.cpp:3219` (`workerMain`); `llrender/rkvkworker.cpp:11805` starts the derive thread; `newview/pipeline.cpp:14667` is the shadow LOD thread (only with `LL_VK_SHADOWLOD`); the thread at `llrender/llvertexbuffer.cpp:231` is compiled out (`ENABLE_GL_WORK_QUEUE 0`).
+Correction to earlier notes: the render worker is created at `llrender/rkvkasync.cpp:3219` (`workerMain`); `llrender/rkvkworker.cpp:11805` starts the derive thread; `newview/pipeline.cpp:14667` is the shadow LOD thread (only with `RK_VK_SHADOWLOD`); the thread at `llrender/llvertexbuffer.cpp:231` is compiled out (`ENABLE_GL_WORK_QUEUE 0`).
 
 | Thread or pool | Created | Wake | Priority | Notes |
 |---|---|---|---|---|
-| Main | process | | normal | `LL_VK_PIN_MAIN` |
-| Render worker | rkvkasync.cpp:3219 | 300 pause spins, `SwitchToThread`, `WaitOnAddress` 1 ms (`:2954`) | normal | `LL_VK_PIN_WORKER` |
-| Derive thread | rkvkworker.cpp:11805, detached | condition variable | normal | no off switch; the comment about `LL_VK_DERIVE_THREAD=0` at `:11772` is stale (no getenv) |
+| Main | process | | normal | `RK_VK_PIN_MAIN` |
+| Render worker | rkvkasync.cpp:3219 | 300 pause spins, `SwitchToThread`, `WaitOnAddress` 1 ms (`:2954`) | normal | `RK_VK_PIN_WORKER` |
+| Derive thread | rkvkworker.cpp:11805, detached | condition variable | normal | no off switch; the comment about `RK_VK_DERIVE_THREAD=0` at `:11772` is stale (no getenv) |
 | Fork-join pool | rkforkjoinpool.h:308-325, min(hw/2, 8) - 1 workers | 150 us spin, condition variable | normal | |
 | Async pool, 2 | rkasyncpool.h:187 | condition variable | normal | bind job pipeline.cpp:13139, shadow skin and alpha :20130, :20137 |
 | Pipeline build pool, 2 | rkvkrenderer.cpp:189-195 | condition variable | below normal | |
@@ -46,8 +46,8 @@ Findings on the organization:
 5. **Streaming is not below the frame threads (C for the priorities).** The only `SetThreadPriority` calls below normal are the pipeline build pool and the shadow LOD thread. On 16 logical cores: main, worker, derive, 7 pool, 2 async, RKImageTex = 13 frame path threads, then 8 ImageDecode, 3 General, 2 mesh LOD, fetch, cache, LFS, HTTP, texture recs at normal. The pool budget (hw/2) does not count the other frame threads. U: the effect while textures load in the turn.
 6. **Two pools on the frame path (V use, U merge).** The async pool runs 2 to 4 jobs a frame; the fork-join pool's `launch()` / `join()` has the same contract. Not checked: whether `quiesce()` or job lifetime blocks a merge.
 7. **Two threads woken every frame for nothing (C).** `LLQueuedThread::updateQueue` (`llcommon/llqueuedthread.cpp:164`) posts a `threadedUpdate` lambda on every call from `llappviewer.cpp:2076`, `:2081`. Only `LLTextureFetch` overrides `threadedUpdate`; the texture cache and LFS threads wake and do nothing.
-8. **Locks shared by main and the worker each frame (V), low.** `gPaceMutex` twice in `frameBegin` and at each present and idle wait; the gap vectors it guards are read only under `LL_VK_PHASES`. `gLodMutex` is held across a copy of table/32 words on both sides (rkvkbridge.cpp:1728-1742).
-9. **`syncCall` (V), low unless something syncs every frame.** `CaptureStackBackTrace` and two clock reads on every call (rkvkasync.cpp:1121-1131). Not established which callers run per frame; `LL_VK_SYNC_LOG` says.
+8. **Locks shared by main and the worker each frame (V), low.** `gPaceMutex` twice in `frameBegin` and at each present and idle wait; the gap vectors it guards are read only under `RK_VK_PHASES`. `gLodMutex` is held across a copy of table/32 words on both sides (rkvkbridge.cpp:1728-1742).
+9. **`syncCall` (V), low unless something syncs every frame.** `CaptureStackBackTrace` and two clock reads on every call (rkvkasync.cpp:1121-1131). Not established which callers run per frame; `RK_VK_SYNC_LOG` says.
 
 ## 3. The render worker: work that is not recording
 
@@ -60,8 +60,8 @@ By estimated value:
 3. **`geo_prepare` makes the static list from nothing each frame.** For each listed fragment a 160 byte `GeoGpuG` row and a command per command into write-combined scratch (:9300-9330), again for rigged (:9338-9410). It reads worker state (buffer addresses, pin slots), so it stays on the worker. Change: keep the copy per frame slot and patch the changed fragments (a hash of the listed set plus a row version).
 4. **Kind 29 pass begin is sized by the largest slot ever.** `slots = max(mMaxSlot, mMaxSlotAll) + 1` (:9974), `mMaxSlotAll` never shrinks (:8470); each begin clears 176 bytes a slot, writes 64, and makes `geo_matrix` again for every sent slot that `geo_draw` made for the same view (:9541-9575). Two uncached `sGL.mBuffers.find` a pair (:9992-10002). A second pass over every command for `mZeroStatic` / `mZeroRigged`, read by an `RK_DIAG` line, not gated (:10116, :10157).
 5. **Kind 15 is the same for every view and is sent every shadow pass** (pipeline.cpp:14342-14365; main also builds an `unordered_set` and a vector each pass).
-6. **`geo_stale_check` is on by default (C)**: every 16th prepare over all listed fragments, pairs and textures (:9272, :9024; `LL_VK_SCENE_GEO_STALECHECK=0` turns it off). Behind `rk_diag_on()` if its counters read 0.
-7. **Small, per record (V):** two rdtsc in `execute()` for the slow command log (rkvkasync.cpp:2899-2911); about ten `steady_clock::now()` a record in kinds 21 and 29 whether timed or not. The `LL_VK_OPSTATS` census leaves out kinds 40, 41 and 43 (`>= 40`, :12457), so the view requests never show in it.
+6. **`geo_stale_check` is on by default (C)**: every 16th prepare over all listed fragments, pairs and textures (:9272, :9024; `RK_VK_SCENE_GEO_STALECHECK=0` turns it off). Behind `rk_diag_on()` if its counters read 0.
+7. **Small, per record (V):** two rdtsc in `execute()` for the slow command log (rkvkasync.cpp:2899-2911); about ten `steady_clock::now()` a record in kinds 21 and 29 whether timed or not. The `RK_VK_OPSTATS` census leaves out kinds 40, 41 and 43 (`>= 40`, :12457), so the view requests never show in it.
 
 Secondary command buffers (R3): kind 22 is the best candidate (commands, rows and matrices are in scratch by address after kind 21); the cascades (16, 37) next. Blocked today by one `mCmd` and one applied-state cache in `Renderer` (rkvkrenderer.cpp:2213-2300), `Program` uniform state changed per record, the bump allocators without a lock, `flush_buffer_updates` ending the pass mid stream (:1956), and the per frame statics (`sGeo`, `gPassState`).
 
@@ -106,12 +106,12 @@ Runs by default:
 
 1. **`LLPipeline::mNumVisibleFaces` (C)**: an atomic `fetch_add` per visible drawable from every pool thread (pipeline.cpp:6570), reset at :2293, no reader: one cache line contended for nothing. **`mLightMovingMask` (C)**: written at :17991, :18017, no reader.
 2. **`LLSpatialGroup::mBufferMap` (C)**: built on every volume rebuild (llvovolume.cpp:8007-8010, a map of maps of pointer vectors), read only by the debug `pushVerts` (llspatialpartition.cpp:1762). U: the faces hold their own buffer references. Needs a look at the octree debug views after removal.
-3. **Three position scans, default on.** `LL_VK_GEOMCHECK` (**(C)** default on, llface.cpp:1458; `geom_check_positions` :1504, `geom_check_indices` :1801) loops over every source vertex and written slot per face fill; `LL_VK_VBCHECK` (llvertexbuffer.cpp:1441) scans every flush again with three clock calls and a 10 s log line, and carries `LL_VK_VBFIX`, so its scan does work; `LL_VK_RT_CHECK` (rkvkrt.cpp:363) scans again at the structure build. GEOMCHECK is the redundant one (about 100 lines; only the owner's name in the warning is lost).
-4. **The drawable destroy ring (C)**: `LL_VK_DRAWABLE_RING` default on, `CaptureStackBackTrace(2, 18)` for every drawable freed (lldrawable.cpp:202-216), read only by a crash report. A burst on teleport or region unload. Marked "while the crash of 2026-11-01 is open": Adam's call. `LL_VK_DRAWABLE_TRACE` is also default on.
+3. **Three position scans, default on.** `RK_VK_GEOMCHECK` (**(C)** default on, llface.cpp:1458; `geom_check_positions` :1504, `geom_check_indices` :1801) loops over every source vertex and written slot per face fill; `RK_VK_VBCHECK` (llvertexbuffer.cpp:1441) scans every flush again with three clock calls and a 10 s log line, and carries `RK_VK_VBFIX`, so its scan does work; `RK_VK_RT_CHECK` (rkvkrt.cpp:363) scans again at the structure build. GEOMCHECK is the redundant one (about 100 lines; only the owner's name in the warning is lost).
+4. **The drawable destroy ring (C)**: `RK_VK_DRAWABLE_RING` default on, `CaptureStackBackTrace(2, 18)` for every drawable freed (lldrawable.cpp:202-216), read only by a crash report. A burst on teleport or region unload. Marked "while the crash of 2026-11-01 is open": Adam's call. `RK_VK_DRAWABLE_TRACE` is also default on.
 5. **Logs and timers not behind diagnostics:** `SortSplit` (pipeline.cpp:6270-6360: clock reads per sort, a line every 600); `VkLodCand` prints every 600 sorts with counters that fill only with diagnostics on, so it prints zeros (:11979-11994); the `PhaseCheck` summary every 600 frames (:12103-12107); `PcRetain` (:27089); the `VkRt` sun line (:23554); the 10 s `VkTexIdx` and `VkTexRec` lines (llviewertexturelist.cpp:1015-1034); `VkCullDerive` (rkvkworker.cpp:11763); the early sort A/B clock every frame (llviewerdisplay.cpp:522-539); `note_pool_draws` counts always and reports under `RK_DIAG` (pipeline.cpp:15548-15595). `CullPose` every 60 builds is read by the lap scripts: an env switch, not a deletion.
 6. **The group row's `viewAngle`**: 16 of the row's 288 bytes; its one write stores the same value as `lastUpdateViewAngle` on the next line (llspatialpartition.cpp:869) and its reads copy it back (llspatialpartition.cpp:548, llvopartgroup.cpp:1191, 1379, 1406, llvovolume.cpp:6389).
 7. **Fields with a diagnostic reader only, or none:** `LLSpatialGroup::mGeometryBytes` (read by `sceneStateCensus` behind a switch), `mMapPlan` (declaration only), `LLFacePool::mMoveFace` (declaration only), `LLSpatialGroup::mBuilt` (debug render).
-8. **`LL_VK_DRAW_RING` default on** (rkvkrenderer.cpp:4333): a record per draw when the device has checkpoints, read after a device loss. Kept on purpose, listed because it is per draw.
+8. **`RK_VK_DRAW_RING` default on** (rkvkrenderer.cpp:4333): a record per draw when the device has checkpoints, read after a device loss. Kept on purpose, listed because it is per draw.
 
 Dead behind a switch (the default never takes it):
 
@@ -126,9 +126,9 @@ Compiled, never called (V):
 - `llvertexbuffer.cpp:84-256`: `GLWorkQueue` and `RKRenderWorkerThread` (about 190 lines) under `ENABLE_GL_WORK_QUEUE 0`.
 - `LLPipeline::replayMember`, `replayAdopted` (pipeline.cpp:4034-4060), `clearRebuildDrawables` (:4348), `bindScreenToTexture` (:20171). `replayMemberShadow` is live.
 - The render worker's dead kinds of section 3.
-- Stale header: `rkcullshadow.h` says "Measurement only... Off unless LL_VK_CULL_SHADOW=1"; `RKCullShadow::build` runs at the end of every world cull (pipeline.cpp:3852).
+- Stale header: `rkcullshadow.h` says "Measurement only... Off unless RK_VK_CULL_SHADOW=1"; `RKCullShadow::build` runs at the end of every world cull (pipeline.cpp:3852).
 
-Switches: 292 `getenv("LL_VK_` / `"FS_` sites (pipeline.cpp 67, rkvkworker.cpp 30, llviewershadermgr.cpp 24, rkvkrenderer.cpp 23, llvoavatar.cpp 18), plus 43 `GetEnvironmentVariableA` and about 22 `env_u64`. No uncached per frame read was found; no compare mode is on by default; not all 292 were opened.
+Switches: 292 `getenv("RK_VK_` / `"FS_` sites (pipeline.cpp 67, rkvkworker.cpp 30, llviewershadermgr.cpp 24, rkvkrenderer.cpp 23, llvoavatar.cpp 18), plus 43 `GetEnvironmentVariableA` and about 22 `env_u64`. No uncached per frame read was found; no compare mode is on by default; not all 292 were opened.
 
 The octrees: all 13 partition types are still created. The seven covered types are not walked by the main view but are still kept up to date on the main thread on every object move (`markPartitionMove`, `processPartitionQ`, llviewerdisplay.cpp:946) for their other readers: the cascades' cull, every other view (probe faces, impostors, mirrors, snapshots, HUD), picking, rectangle select, and the group to slot table.
 

@@ -326,7 +326,7 @@ template <size_t N> const char* name_of(const char* const (&names)[N], U8 v) { r
 
 bool formatVerify()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_FORMAT_VERIFY"); return e && e[0] == '1'; }();
+    static const bool on = []() { const char* e = getenv("RK_VK_FORMAT_VERIFY"); return e && e[0] == '1'; }();
     return on;
 }
 

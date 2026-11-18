@@ -22,7 +22,7 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 | Cheaper recording of GL calls into Vulkan | 25-29 ms -> 5 ms per iteration |
 | Draw-path work (state/sampler/vertex-input caching, spin mutex) | crowded shadowed sim **about 65 -> about 100 fps**; 20.1 -> 15.4 ms/frame |
 | Worker thread replays the queued GL calls (FSVulkanAsync) | heavy sim: OpenGL about 50 fps, inline Vulkan about 25, threaded Vulkan **60 fps standing, 78 fps moving** |
-| Coalescing queue records (LL_VK_COALESCE) | records 154k -> 70k per frame, frame 16.4 -> 14.9 ms |
+| Coalescing queue records (RK_VK_COALESCE) | records 154k -> 70k per frame, frame 16.4 -> 14.9 ms |
 | Pool spin-before-sleep | about 14.5 ms |
 | Post-teleport stall (about 55 s) | fixed (buffer rename copied from video memory) |
 | Device-local buffers | shadow copies 551 MB -> about 230 MB |
@@ -55,7 +55,7 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 |---|---|
 | No OpenGL at all (no context, no GL imports in the exe, dead GL code deleted) | runs at ~228 fps in an empty scene; GPU class 5; small clean log |
 | Tracy GPU zones from Vulkan timestamps | context created; zone count logged (not yet seen in the Tracy UI) |
-| N1b typed records: vertex array state, texture binds, draws (`LL_VK_TYPED=0` turns them off) | same spot, same 20 s: main-thread queue writing 0.68-0.70 -> 0.51 ms/frame (53k -> 38k calls/frame), frame 10.9-11.2 -> 10.7 ms. About 3% of the frame; not visible as fps |
+| N1b typed records: vertex array state, texture binds, draws (`RK_VK_TYPED=0` turns them off) | same spot, same 20 s: main-thread queue writing 0.68-0.70 -> 0.51 ms/frame (53k -> 38k calls/frame), frame 10.9-11.2 -> 10.7 ms. About 3% of the frame; not visible as fps |
 
 ### native-vk, continued (2026-10-07, evening)
 
@@ -70,7 +70,7 @@ Tried and dropped (no gain): shadow skin-once, shadow receiver cull, multi-draw-
 
 Since the start of the 2026-10-07 evening session the loop at Adam's spot went from 14.5-15.0 ms to 7.7 ms.
 
-GPU time at Adam's spot after the fixes (LL_VK_PHASES + FSGpuZoneTimers, run-viewer-clean-gpuzones.bat; GPU 6.5-6.7 ms per frame, GPU busy about 80-90%): alpha pass (post water) 1.47 ms (22%), DLSS 1.17 (18%), water 0.82 (12%), G-buffer materials 0.46 (7%), sun lighting program 0.33, sky 0.31, atmospherics 0.23, soften shadow 0.23, alpha (pre water) 0.21, all sun shadow maps about 0.35, local lights 0.01. The CPU side is about 7.5 ms (display 5.1, idle 2.4). Both sides are now close to balanced.
+GPU time at Adam's spot after the fixes (RK_VK_PHASES + FSGpuZoneTimers, run-viewer-clean-gpuzones.bat; GPU 6.5-6.7 ms per frame, GPU busy about 80-90%): alpha pass (post water) 1.47 ms (22%), DLSS 1.17 (18%), water 0.82 (12%), G-buffer materials 0.46 (7%), sun lighting program 0.33, sky 0.31, atmospherics 0.23, soften shadow 0.23, alpha (pre water) 0.21, all sun shadow maps about 0.35, local lights 0.01. The CPU side is about 7.5 ms (display 5.1, idle 2.4). Both sides are now close to balanced.
 
 | Alpha shader: sun shadow lookup after the alpha discards (identical output) | alpha pass 1.47 -> 1.40 ms GPU |
 | Texture refresh slows again after 10 s of a steady view (FSTextureUpdateSteadyFactor) + object texture priority pass every other frame then | about 0.18 ms of main-thread time |

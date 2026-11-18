@@ -59,7 +59,7 @@
 #include <cmath>
 #include <algorithm>
 #include <string>
-#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 
 std::atomic<int> gRkWorkerCpu{ -1 };
 std::atomic<unsigned> gRkWorkerTid{ 0 };
@@ -79,7 +79,7 @@ namespace
 struct HookTimer
 {
     LARGE_INTEGER mStart;
-    const bool mOn = RKVkBridge::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
+    const bool mOn = RKVkBridge::gPhaseTiming;      // the total only goes into the RK_VK_PHASES report: no clock reads (two per draw) otherwise
     HookTimer() { if (mOn) QueryPerformanceCounter(&mStart); }
     ~HookTimer()
     {
@@ -458,7 +458,7 @@ struct Buf
     // buffers (and uniform / pixel buffers) keep the host-visible path below.
     bool mDevicePath = false;
     bool mPending = false;              // device path: a write has not been recorded into the command stream yet
-    // Device path with the buffer arena (LL_VK_ARENA, default on): mVk is a view of mArena's range (mBuffer = the block's buffer, mAddress = the range's address,
+    // Device path with the buffer arena (RK_VK_ARENA, default on): mVk is a view of mArena's range (mBuffer = the block's buffer, mAddress = the range's address,
     // mSize = the data size; it owns nothing) and draws bind mVk.mBuffer at mArena.mOffset. Without the arena mArena is empty and mVk is a buffer of its own.
     ArenaRef mArena;
     // mEpoch changes when the name gets other contents altogether (re-specified with another size, deleted, recycled by the vertex buffer pool); mVersion on every write;
@@ -472,7 +472,7 @@ struct Buf
     U32 mResName = 0;
     bool mResPair = false;              // a resident pair reads it (set where the pair finds it): a change of its storage (epoch, moves) is logged by name (sResPairChanged) and the refresh looks at the pairs of that name
     U32 mRenamesInFrame = 0;            // the renames of this buffer in the frame mRenamedFrame (a chain: every write of a frame renamed again)
-    U64 mRenamedFrame = ~0ull;          // the frame of the last rename of this buffer (LL_VK_RENAME_ONCE: a range allocated this frame has not been listed by any fragment yet)
+    U64 mRenamedFrame = ~0ull;          // the frame of the last rename of this buffer (RK_VK_RENAME_ONCE: a range allocated this frame has not been listed by any fragment yet)
     bool mGeoWatched = false;           // S3: a scene geometry fragment reads it: a change of its storage (epoch, moves) is logged by name (sGeoChanged), and the write path asks whether the fragments listed it lately
     bool mRtWatched = false;            // the ray scene reads this buffer at trace time (alpha records): a change of its storage is counted (sBufferTopology)
     // The Vulkan buffer lives in write-combined video memory, which is very slow to read from the CPU. This copy in ordinary memory
@@ -499,7 +499,7 @@ struct BoundVertices
     U32 mElementBuffer = 0;
 };
 // ---- S6.4: the worker's state, by owner (doc/vulkan/S6-design.md section 7) ----
-// PassState: what the records of a pass read and write that the pass before left behind. Passes are closed (every pass announces again what it reads: LL_VK_PASSCLOSE), poison mode forgets all of it at
+// PassState: what the records of a pass read and write that the pass before left behind. Passes are closed (every pass announces again what it reads: RK_VK_PASSCLOSE), poison mode forgets all of it at
 // every pass (RKVkWorker::pass_poison). One instance: the stream is played by one thread; passes decoded on several threads would each have their own.
 struct PassState
 {
@@ -613,13 +613,13 @@ std::unordered_set<U32> sSeenNames;       // <FS> diagnostic: GL names of textur
 U64 sCopyDropFrame = 0, sCopyDropTex = 0, sCopyDropSrc = 0, sRespecs = 0, sGrows = 0, sLevelDrops = 0, sLevelDropsRefused = 0, sSampleNoName = 0, sSampleNoImage = 0, sSampleBlank = 0, sPinNoSlot = 0, sCommits = 0;     // <FS> texture copies from targets that were dropped (and why), images re-specified, mip chains grown: the downscale of textures shows in these
 U64 sOutOfRangeDraws = 0;           // indexed draws left out because their index or vertex range was not inside their buffers (since the start)
 U64 sDrawsTotal = 0;
-std::map<std::string, U32> sPhaseProgramDraws;      // LL_VK_PHASES: draws by program name, reported with the phase line
-std::map<std::string, long long> sPhaseProgramTicks; // LL_VK_PHASES: the thread's time from the previous draw to this one (the state calls in between included), by program
+std::map<std::string, U32> sPhaseProgramDraws;      // RK_VK_PHASES: draws by program name, reported with the phase line
+std::map<std::string, long long> sPhaseProgramTicks; // RK_VK_PHASES: the thread's time from the previous draw to this one (the state calls in between included), by program
 std::map<std::string, long long> sPhaseTargetTicks;  // the same, by the render target being drawn into (one entry per shadow cascade, the G-buffer, ...)
 std::map<std::string, U32> sPhaseTargetDraws;
 long long sPhaseLastDrawTick = 0;
 
-// LL_VK_PHASES: charges the time since the previous draw to the program of this one. Gaps over 2 ms (a frame boundary, a wait) are not counted.
+// RK_VK_PHASES: charges the time since the previous draw to the program of this one. Gaps over 2 ms (a frame boundary, a wait) are not counted.
 void note_draw_time(const std::string& program_name)
 {
     LARGE_INTEGER now, freq;
@@ -652,7 +652,7 @@ struct DrawStats
 DrawStats sStats, sStatsLast;
 bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
-const bool sStatsEnabled = getenv("LL_VK_STATS") != nullptr || getenv("LL_VK_DEBUG_SHADERS") != nullptr || getenv("LL_VK_VALIDATION") != nullptr;
+const bool sStatsEnabled = getenv("RK_VK_STATS") != nullptr || getenv("RK_VK_DEBUG_SHADERS") != nullptr || getenv("RK_VK_VALIDATION") != nullptr;
 bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
 bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDbgNoBlend = false, sDbgNoCull = false, sDbgNoScissor = false,
      sDbgFullMask = false, sDbgNoFeedback = false;      // debug draw state overrides from <work>\vk-debug.txt
@@ -1189,8 +1189,8 @@ bool sync_target()
             return false;
         }
         {
-            // LL_VK_SIZELOG: what the viewer draws into the default framebuffer, logged when it changes
-            static const bool size_log = getenv("LL_VK_SIZELOG") != nullptr;
+            // RK_VK_SIZELOG: what the viewer draws into the default framebuffer, logged when it changes
+            static const bool size_log = getenv("RK_VK_SIZELOG") != nullptr;
             static S32 last[9] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
             if (size_log)
             {
@@ -2006,14 +2006,14 @@ void ensure_buffers_current(const std::vector<U32>& used, U32 element)
 
 bool arena_enabled()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_ARENA"); return !(e && e[0] == '0'); }();
+    static const bool on = []() { const char* e = getenv("RK_VK_ARENA"); return !(e && e[0] == '0'); }();
     return on;
 }
 
-// LL_VK_ARENA_POISON=1: a range that is given up is filled with 0xDEADBEEF in command order, so a draw or packet that still reads it shows garbage (not a stale picture)
+// RK_VK_ARENA_POISON=1: a range that is given up is filled with 0xDEADBEEF in command order, so a draw or packet that still reads it shows garbage (not a stale picture)
 bool arena_poison()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_ARENA_POISON"); return e && e[0] == '1'; }();
+    static const bool on = []() { const char* e = getenv("RK_VK_ARENA_POISON"); return e && e[0] == '1'; }();
     return on;
 }
 
@@ -2026,8 +2026,8 @@ void retire_range(ArenaRef& r)
         if (!warned && Context::instance().asyncOn())
         {
             warned = true;
-            LL_WARNS("Vulkan") << "LL_VK_ARENA_POISON with the ray scene on the compute queue (LL_VK_RT_EARLY 3): the fill is ordered against the graphics queue only, so a structure build running beside it can read the poison "
-                               << "(a device lost in a build or a flicker of avatar shadows is then not proof of a late read). Use LL_VK_RT_EARLY=1 for the poison lap." << LL_ENDL;
+            LL_WARNS("Vulkan") << "RK_VK_ARENA_POISON with the ray scene on the compute queue (RK_VK_RT_EARLY 3): the fill is ordered against the graphics queue only, so a structure build running beside it can read the poison "
+                               << "(a device lost in a build or a flicker of avatar shadows is then not proof of a late read). Use RK_VK_RT_EARLY=1 for the poison lap." << LL_ENDL;
         }
         Renderer::instance().fillBuffer(r.mBuffer, r.mOffset, (r.mSize + 3) & ~(VkDeviceSize)3, 0xDEADBEEFu);
         // the fill must be recorded before the range can be handed out again (a host range is rewritten by the CPU): name 0 makes the frame-end flush run
@@ -2081,17 +2081,17 @@ bool acquire_arena_storage(Buf& b, U64 size, ArenaKind kind)
     return true;
 }
 
-// small vertex / index buffers (not uniform or pixel buffers) are ranges of host-written arena blocks; LL_VK_ARENA_HOST=0 gives each its own VkBuffer again
+// small vertex / index buffers (not uniform or pixel buffers) are ranges of host-written arena blocks; RK_VK_ARENA_HOST=0 gives each its own VkBuffer again
 bool arena_host_enabled()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_ARENA_HOST"); return arena_enabled() && !(e && e[0] == '0'); }();
+    static const bool on = []() { const char* e = getenv("RK_VK_ARENA_HOST"); return arena_enabled() && !(e && e[0] == '0'); }();
     return on;
 }
 
 U64 device_buffer_min_bytes()
 {
     static const U64 v = []() {
-        const char* e = getenv("LL_VK_DEVICE_BUF_MIN");
+        const char* e = getenv("RK_VK_DEVICE_BUF_MIN");
         return e ? (U64)atoll(e) : (U64)(128 * 1024);
     }();
     return v;
@@ -2142,10 +2142,10 @@ void note_flush(bool frame_end, size_t buffers)
     sBufTraffic.mFlushBuffers += buffers;
 }
 
-// LL_VK_PHASES: bytes written per buffer name in the interval, to find who writes every frame
+// RK_VK_PHASES: bytes written per buffer name in the interval, to find who writes every frame
 struct WriterStat { U32 mWrites = 0; U64 mBytes = 0; U32 mFrames = 0; U64 mLastFrame = ~0ull; };      // mFrames: in how many different frames it was written
 std::unordered_map<U32, WriterStat> sWriters;
-const bool sWriterStatsOn = getenv("LL_VK_PHASES") != nullptr;
+const bool sWriterStatsOn = getenv("RK_VK_PHASES") != nullptr;
 
 void report_renames()
 {
@@ -3109,12 +3109,12 @@ void draw_arrays(unsigned topo, int first, int count)
 }
 
 
-// <FS> native-vk diagnostic (LL_VK_UIDIFF=1): the immediate-mode draws of every frame (the UI, the name tags and floating text, the crosshair) are kept as a list of hashes (program, texture, vertex
+// <FS> native-vk diagnostic (RK_VK_UIDIFF=1): the immediate-mode draws of every frame (the UI, the name tags and floating text, the crosshair) are kept as a list of hashes (program, texture, vertex
 // count, positions, texture coordinates, colours, box); a frame that differs from the frames on both sides of it (one frame A B A, or two frames A B B A) is logged with the draws that differ, tag VkUiDiff.
 // Equal data with a different picture means the renderer, different data means the viewer sent it.
 namespace
 {
-const bool sUiDiff = getenv("LL_VK_UIDIFF") != nullptr;
+const bool sUiDiff = getenv("RK_VK_UIDIFF") != nullptr;
 struct UiRec
 {
     U64 mProg = 0, mPos = 0, mUv = 0, mCol = 0;
@@ -3370,7 +3370,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
     {
         // A draw reads the index range and the vertices up to `end` from the buffers it names; a range that is not inside them (a name that was recycled or deleted since the draw was recorded, a
         // record from before a buffer changed) would read memory that belongs to something else, and a bad index there is a page fault: the device is lost. Left out and reported instead.
-        static const bool check_on = getenv("LL_VK_DRAW_RANGE_CHECK") ? atoi(getenv("LL_VK_DRAW_RANGE_CHECK")) != 0 : (getenv("LL_VK_DIAG") && atoi(getenv("LL_VK_DIAG")) != 0);       // (on with LL_VK_DIAG)
+        static const bool check_on = getenv("RK_VK_DRAW_RANGE_CHECK") ? atoi(getenv("RK_VK_DRAW_RANGE_CHECK")) != 0 : (getenv("RK_VK_DIAG") && atoi(getenv("RK_VK_DIAG")) != 0);       // (on with RK_VK_DIAG)
         if (check_on)
         {
             const U64 index_end = (U64)indices + (U64)count * index_bytes;
@@ -4158,7 +4158,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
 
 
 //-----------------------------------------------------------------------------------------------------
-// Arena phase 3: BLAS probe (LL_VK_BLAS_PROBE=1, needs LL_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
+// Arena phase 3: BLAS probe (RK_VK_BLAS_PROBE=1, needs RK_VK_RT=1 and the arena). One bottom-level acceleration structure per (vertex buffer, index buffer) pair, one geometry per
 // distinct drawn index range, built or refitted at the end of the frame the buffer was drawn in. Nothing traces: the probe only measures what per-buffer structures cost
 // (count, memory, build and refit rates, GPU time of the block, CPU time) while walking around and during a teleport. The positions are the vec4 array at the start of the
 // vertex buffer (stride 16), the indices 16 bit.
@@ -4168,7 +4168,7 @@ namespace
 
 bool probe_on()
 {
-    static const bool on = []() { const char* e = getenv("LL_VK_BLAS_PROBE"); return e && e[0] == '1'; }();
+    static const bool on = []() { const char* e = getenv("RK_VK_BLAS_PROBE"); return e && e[0] == '1'; }();
     return on;
 }
 
@@ -4312,7 +4312,7 @@ void probe_run()
         if (!said)
         {
             said = true;
-            LL_WARNS("VkGL") << "LL_VK_BLAS_PROBE: the device has no ray tracing enabled (LL_VK_RT=1)" << LL_ENDL;
+            LL_WARNS("VkGL") << "RK_VK_BLAS_PROBE: the device has no ray tracing enabled (RK_VK_RT=1)" << LL_ENDL;
         }
         for (U64 k : sProbeTouched) sProbe[k].mQueued = false;
         sProbeTouched.clear();
@@ -4320,8 +4320,8 @@ void probe_run()
     }
     const auto t0 = std::chrono::steady_clock::now();
     VkDevice dev = ctx.getDevice();
-    static const U64 max_jobs = probe_env("LL_VK_BLAS_PROBE_MAX_BUILDS", 64);
-    static const U64 max_storage = probe_env("LL_VK_BLAS_PROBE_MB", 2048) << 20;
+    static const U64 max_jobs = probe_env("RK_VK_BLAS_PROBE_MAX_BUILDS", 64);
+    static const U64 max_storage = probe_env("RK_VK_BLAS_PROBE_MB", 2048) << 20;
     const VkDeviceSize align = std::max<VkDeviceSize>(caps.mRt.mScratchAlignment, 128);
     const U64 frame_now = ctx.getFrameNumber();
 
@@ -5108,7 +5108,7 @@ static void on_body_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* 
 }
 
 // the worker side of a record of alpha masked casters (shadowAlphaPullV.glsl / shadowAlphaPullF.glsl): the entries also name their textures
-// <FS> a key=value line of the live switch file (rt-debug.txt, LL_VK_RT_DEBUG_FILE) for the worker thread's own use: the ray scene reads its switches only while it runs, and the cascade shadows
+// <FS> a key=value line of the live switch file (rt-debug.txt, RK_VK_RT_DEBUG_FILE) for the worker thread's own use: the ray scene reads its switches only while it runs, and the cascade shadows
 // (this record) are drawn only with ray shadows off. Read again every half second; worker thread only.
 struct WorkerDebugKey
 {
@@ -5124,7 +5124,7 @@ static S32 worker_debug_key(WorkerDebugKey& k)
         return k.mValue;
     }
     k.mRead = now;
-    static const char* path = []() { const char* e = getenv("LL_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>/rt-debug.txt"; }();
+    static const char* path = []() { const char* e = getenv("RK_VK_RT_DEBUG_FILE"); return e && e[0] ? e : "<work>/rt-debug.txt"; }();
     S32 value = k.mValue;
     bool found = false;
     if (FILE* f = fopen(path, "r"))
@@ -5188,11 +5188,11 @@ static U32 draw_packet_runs(Renderer& r, U32 entries, const U32* counts, const U
     return drawn;
 }
 
-// LL_VK_OPSTATS=1: where the worker's time of a kind 1 record goes: the entries (buffer and texture lookups, the table row), the state set-up (program, buffers current, bindless), the draws.
+// RK_VK_OPSTATS=1: where the worker's time of a kind 1 record goes: the entries (buffer and texture lookups, the table row), the state set-up (program, buffers current, bindless), the draws.
 // Logged every 600 calls with the entry count.
 static void alpha_split_note(int part, std::chrono::steady_clock::time_point since, U32 entries)
 {
-    static const bool census = getenv("LL_VK_OPSTATS") != nullptr;
+    static const bool census = getenv("RK_VK_OPSTATS") != nullptr;
     if (!census)
     {
         return;
@@ -5466,8 +5466,8 @@ static void on_geometry_packets(const RKVkBridge::ShadowPacketsHeader& h, const 
         F32 mEnvIntensity, mCutoff, mBrightness, mPad2;
     };
     static_assert(sizeof(GeoGpu) == 128, "geometry packet entry");
-    // S3 G0 (LL_VK_SCENE_TIMES=1): what this record costs the worker: the table build (entries, buffer and texture lookups), and the rest (matrices, state, draw)
-    static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    // S3 G0 (RK_VK_SCENE_TIMES=1): what this record costs the worker: the table build (entries, buffer and texture lookups), and the rest (matrices, state, draw)
+    static const bool timed = getenv("RK_VK_SCENE_TIMES") != nullptr;
     static U64 ns_table_a[2] = {}, ns_rest_a[2] = {}, records_a[2] = {}, entries_total_a[2] = {};       // [0] static, [1] rigged (S4 A1, kind 25)
     const auto t_begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     std::chrono::steady_clock::time_point t_table_end = t_begin;
@@ -5986,7 +5986,7 @@ struct ResFrag
     std::vector<RKVk::Rt::CasterRef> mAlphaRefs;
     std::vector<U32> mAlphaPairOf;
     std::vector<U8> mAlphaHeld;
-    // resident alpha masked casters the worker draws itself (LL_VK_ALPHARES, kinds 38 and 37): a row of the alpha table and a range of the index pool for each alpha entry
+    // resident alpha masked casters the worker draws itself (RK_VK_ALPHARES, kinds 38 and 37): a row of the alpha table and a range of the index pool for each alpha entry
     std::vector<U32> mAlphaSlot;            // the row (~0u: none)
     std::vector<U32> mAlphaPoolFirst, mAlphaPoolCount;      // its indices in the pool
     std::vector<U32> mAlphaPin, mAlphaPinName;              // 4 pins (and the names they were made for) per entry
@@ -6124,12 +6124,12 @@ static int res_pair_check(ResPair& p)
     {
         return 0;
     }
-    // <FS> LL_VK_RES_EPOCH_LOG (default on): the entries of a resident fragment or the scene geometry table keep the ranges (first, count) they were made with and only get the addresses written again; an epoch that changed
+    // <FS> RK_VK_RES_EPOCH_LOG (default on): the entries of a resident fragment or the scene geometry table keep the ranges (first, count) they were made with and only get the addresses written again; an epoch that changed
     // since the entries were last written means the buffer name holds other contents (respecified, deleted, recycled), the ranges may not fit them, and the viewer's renewal of the fragment is still to come. Counted and logged.
     if (p.mBaseEvb != ~0ull && (p.mBaseEvb != p.mPvb->mEpoch || p.mBaseEib != p.mPib->mEpoch))
     {
         static U64 epoch_changed = 0;
-        static const bool log_on = getenv("LL_VK_RES_EPOCH_LOG") == nullptr || atoi(getenv("LL_VK_RES_EPOCH_LOG")) != 0;
+        static const bool log_on = getenv("RK_VK_RES_EPOCH_LOG") == nullptr || atoi(getenv("RK_VK_RES_EPOCH_LOG")) != 0;
         ++epoch_changed;
         if (log_on && (epoch_changed <= 40 || epoch_changed % 1000 == 0))
         {
@@ -6799,9 +6799,9 @@ void alpha_res_reclaim(U64 frame)
 {
     // <FS> device lost audit (2026-11-09): the resident rows of the shadow alpha casters carry the texture handles of their draws for as long as the object is resident (minutes). Every 120 frames each live row's
     // handles are asked of the renderer: a handle that has been released, or whose descriptor holds the view of an image destroyed lately, is a row that would sample the placeholder or freed memory.
-    // (LL_VK_ROWAUDIT=1 turns it on: it asked the context's destroyed-view ring (a linear search of 16 thousand entries) for every handle of every row, a few hundred milliseconds to seconds a time
+    // (RK_VK_ROWAUDIT=1 turns it on: it asked the context's destroyed-view ring (a linear search of 16 thousand entries) for every handle of every row, a few hundred milliseconds to seconds a time
     // while a world loads; the race it looked for is fixed, see Renderer::handleSet)
-    static const bool row_audit = getenv("LL_VK_ROWAUDIT") != nullptr;
+    static const bool row_audit = getenv("RK_VK_ROWAUDIT") != nullptr;
     if (row_audit && sAR.mReady && frame % 120 == 0)
     {
         U32 rows = 0, released = 0, destroyed = 0, shown = 0;
@@ -7525,7 +7525,7 @@ static void res_note(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     {
         return;
     }
-    static const bool range = getenv("LL_VK_SCENE_RAYRANGE") && getenv("LL_VK_SCENE_RAYRANGE")[0] == '1';
+    static const bool range = getenv("RK_VK_SCENE_RAYRANGE") && getenv("RK_VK_SCENE_RAYRANGE")[0] == '1';
     if (range)
     {
         // membership by residency: the pass only tells where its frustum is; which fragments are in the scene is decided once a frame, before the scene call (res_ray_membership)
@@ -7541,7 +7541,7 @@ static void res_note(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const F32* planes = (const F32*)blob;
     static U64 passes = 0, noted = 0, fragments_in = 0;
     static U64 ns_refresh = 0, ns_sweep = 0, ns_notes = 0;
-    static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    static const bool timed = getenv("RK_VK_SCENE_TIMES") != nullptr;
     const auto t_start = std::chrono::steady_clock::now();
     for (const ResCullItem& item : sRes.mCull)
     {
@@ -7585,13 +7585,13 @@ static void res_note(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
-// S2 stage 2 (LL_VK_SCENE_RAYRANGE=1): once a frame, before the scene call: a resident fragment is in the ray scene while its sphere is inside the frustum of any sun cascade pass (the planes
+// S2 stage 2 (RK_VK_SCENE_RAYRANGE=1): once a frame, before the scene call: a resident fragment is in the ray scene while its sphere is inside the frustum of any sun cascade pass (the planes
 // each pass last named: a cascade that does not render this frame keeps its last frustum, as its cached shadow map kept its casters). Only the fragments that change sides are touched
 // (their groups are held or released); the groups of unchanged fragments are not named at all. Changes of what a held fragment was made from arrive as events: a buffer it reads changed (the
 // worker's write sites log its name), or a region matrix changed value (a region shift).
 static void res_ray_membership(U64 frame)
 {
-    static const bool range = getenv("LL_VK_SCENE_RAYRANGE") && getenv("LL_VK_SCENE_RAYRANGE")[0] == '1';
+    static const bool range = getenv("RK_VK_SCENE_RAYRANGE") && getenv("RK_VK_SCENE_RAYRANGE")[0] == '1';
     static U64 last = ~0ull;
     if (!range || !Rt::active() || !sRes.mReady || last == frame)
     {
@@ -7674,7 +7674,7 @@ static void res_ray_membership(U64 frame)
                     continue;
                 }
                 // a changed buffer refreshes the buffer info of the groups its entries belong to: the entries that share a group need one note, not one each
-                static const bool dedupe = !(getenv("LL_VK_SCENE_EVDEDUPE") && getenv("LL_VK_SCENE_EVDEDUPE")[0] == '0');
+                static const bool dedupe = !(getenv("RK_VK_SCENE_EVDEDUPE") && getenv("RK_VK_SCENE_EVDEDUPE")[0] == '0');
                 void* noted[8];
                 size_t noted_count = 0;
                 auto already = [&](void* group) -> bool
@@ -7885,7 +7885,7 @@ bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* v
 // so (a buffer it reads got other storage or went, one of its textures was named otherwise by the viewer (kind 24), a pin of its textures got another bindless slot) and its entries are then
 // written again, with its draw commands. The per-frame work is per listed fragment: one dirty test and a copy of its commands. The textures of the entries are PINNED slots (permanent in every
 // frame's descriptor set, rtPinAcquire), so the single buffered, write-combined table never names a slot an earlier frame in flight cannot see. A buffer a fragment reads is marked used by the
-// fragment's listed frame (geo_buffer_in_flight, asked by the write path), not by touching it every frame. LL_VK_SCENE_GEO_STALECHECK (default on, every 16th prepare) compares what the table
+// fragment's listed frame (geo_buffer_in_flight, asked by the write path), not by touching it every frame. RK_VK_SCENE_GEO_STALECHECK (default on, every 16th prepare) compares what the table
 // holds against a fresh lookup and heals it, counting what the events missed.
 namespace
 {
@@ -8044,13 +8044,13 @@ static struct GeoState
 
 bool geo_timed()
 {
-    static const bool on = getenv("LL_VK_SCENE_TIMES") != nullptr;
+    static const bool on = getenv("RK_VK_SCENE_TIMES") != nullptr;
     return on;
 }
 bool geo_stale_check_on()
 {
-    // a diagnostic (LL_VK_DIAG=1, or LL_VK_SCENE_GEO_STALECHECK=1): the events are the mechanism and the check found nothing in 40 laps (millions of fragments looked at); about 27 us of a prepare. =0 turns it off in a diagnostic run.
-    static const bool on = getenv("LL_VK_SCENE_GEO_STALECHECK") ? getenv("LL_VK_SCENE_GEO_STALECHECK")[0] != '0' : rk_diag_on();
+    // a diagnostic (RK_VK_DIAG=1, or RK_VK_SCENE_GEO_STALECHECK=1): the events are the mechanism and the check found nothing in 40 laps (millions of fragments looked at); about 27 us of a prepare. =0 turns it off in a diagnostic run.
+    static const bool on = getenv("RK_VK_SCENE_GEO_STALECHECK") ? getenv("RK_VK_SCENE_GEO_STALECHECK")[0] != '0' : rk_diag_on();
     return on;
 }
 U64 geo_ns(const std::chrono::steady_clock::time_point& since)
@@ -8511,7 +8511,7 @@ void geo_write_items(GeoFrag& f)
                     }
                 }
             }
-            static const bool clamp_on = getenv("LL_VK_VERTEX_CLAMP") == nullptr || atoi(getenv("LL_VK_VERTEX_CLAMP")) != 0;       // 0: no limit (the clamp of the pull shaders does nothing): an A/B for a rigged draw that goes missing
+            static const bool clamp_on = getenv("RK_VK_VERTEX_CLAMP") == nullptr || atoi(getenv("RK_VK_VERTEX_CLAMP")) != 0;       // 0: no limit (the clamp of the pull shaders does nothing): an A/B for a rigged draw that goes missing
             g.mSkinPad[1] = clamp_on ? first_array / 16u : 0u;
         }
         if (e.mFlags & RKVkBridge::GEO_RIGGED)
@@ -8934,7 +8934,7 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     static thread_local std::vector<U32> own_handles;
     if (h.mCullView)
     {
-        // stage 3: the listed set from the worker's own rows, against the handles of this record. Stage 5 (the viewer's switch, LL_VK_CULL_OWN=1): when the record says so and the table is up to date, the main view is drawn
+        // stage 3: the listed set from the worker's own rows, against the handles of this record. Stage 5 (the viewer's switch, RK_VK_CULL_OWN=1): when the record says so and the table is up to date, the main view is drawn
         // from that derived list and the record's list is only compared (the matrices and bindings above were taken from the record's own blob positions, which do not move)
         if (cull_derive_main_view(h, (const U8*)(bindings + h.mPaletteFloats), &own_handles))
         {
@@ -9681,7 +9681,7 @@ static struct AlphaPass
 // <FS> item C (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rows the runs of a frame draw are copies (the table is read by frames in flight). Each run used to copy its own into a scratch of its own, so the
 // table address the pull program reads changed with every run, which made its whole loose uniform block (about 2 KB) dirty and copied into the ring again for every run (about 1,100 copies and 1.9 MB a
 // frame in the crowd lap of 2026-11-04). Now the runs of a frame share one chunk: the rows are appended, the commands' first instance counts from the run's first row, and the address stays the same.
-// LL_VK_ALPHA_ROWCHUNK=0 goes back to a scratch for each run.
+// RK_VK_ALPHA_ROWCHUNK=0 goes back to a scratch for each run.
 static struct AlphaRowChunk
 {
     Renderer::ScratchAlloc mAlloc;
@@ -9691,7 +9691,7 @@ static struct AlphaRowChunk
 
 static bool alpha_rows_reserve(Renderer& r, U32 rows, U32& base, Renderer::ScratchAlloc& out)
 {
-    static const bool chunked = !(getenv("LL_VK_ALPHA_ROWCHUNK") && getenv("LL_VK_ALPHA_ROWCHUNK")[0] == '0');
+    static const bool chunked = !(getenv("RK_VK_ALPHA_ROWCHUNK") && getenv("RK_VK_ALPHA_ROWCHUNK")[0] == '0');
     if (!chunked)
     {
         base = 0;
@@ -10744,7 +10744,7 @@ void on_hiz_boxes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     tpc.mCount = h.mEntries;
     tpc.mLevels = levels;
     tpc.mDepth[0] = (F32)w; tpc.mDepth[1] = (F32)hgt;
-    static const U32 fine = []() { const char* e = getenv("LL_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
+    static const U32 fine = []() { const char* e = getenv("RK_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
     tpc.mFine = fine;
     tpc.mPad[0] = tpc.mPad[1] = tpc.mPad[2] = 0;
     const bool init = !s.mPyramidInit;
@@ -10887,7 +10887,7 @@ int cull_sphere_res(const RKVkBridge::CullParams& P, const F32* mn, const F32* m
 {
     if (P.mCornerDist <= 0.f)
     {
-        return 2;       // stage 10a: a view that says it has no far limit (a probe cube face asked for in the test LL_VK_CUBE_NOSPHERE): the sphere test passes everything
+        return 2;       // stage 10a: a view that says it has no far limit (a probe cube face asked for in the test RK_VK_CUBE_NOSPHERE): the sphere test passes everything
     }
     const F32 r2 = P.mCornerDist * P.mCornerDist;
     F32 a = 0.f, b = 0.f, d = 0.f;
@@ -11303,7 +11303,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             const RKVkBridge::CullMapRow& m = s.mMap[slot];
             const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
             // the whole of changeLOD(): the dirty bits, the round robin of needsUpdate() (every period frames, staggered by the group's hash), the slop test below
-            // (the viewer reads this set one to three frames after the record's own: the turns of the three frames after it are in the set, its own live changeLOD() drops the ones that are not due yet; stage 8's LOD switch, LL_VK_LOD_CAND)
+            // (the viewer reads this set one to three frames after the record's own: the turns of the three frames after it are in the set, its own live changeLOD() drops the ones that are not due yet; stage 8's LOD switch, RK_VK_LOD_CAND)
             bool change = (m.mLodFlags & 1u) != 0 || (period && ((lod_frame + 1) % period == hash || (lod_frame + 2) % period == hash || (lod_frame + 3) % period == hash));
             const F32 dx = m.mObjCenter[0] - P.mOrigin[0], dy = m.mObjCenter[1] - P.mOrigin[1], dz = m.mObjCenter[2] - P.mOrigin[2];
             F32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -11332,13 +11332,13 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
 
 void derive_publish_dispatch(DerivePub&& job);
 
-// VkFlash (LL_VK_DIAG=1 only), on the worker where the drawn list is made: a view whose derived set changes by far more than a camera move changes it, while the scene is the same (geometry missing or doubled for a view or two).
-// The test is the number of groups the derive lists against the view before: a sweep to a sparse direction moves it a few percent a view, a flash by a fifth or more (LL_VK_FLASH_TEST=1: 3 percent, to make events to read). A change
+// VkFlash (RK_VK_DIAG=1 only), on the worker where the drawn list is made: a view whose derived set changes by far more than a camera move changes it, while the scene is the same (geometry missing or doubled for a view or two).
+// The test is the number of groups the derive lists against the view before: a sweep to a sparse direction moves it a few percent a view, a flash by a fifth or more (RK_VK_FLASH_TEST=1: 3 percent, to make events to read). A change
 // starts an event: one line with the groups that left the set or joined it and why (the derive's own verdict of each row now: occluded, outside the frustum, its objects outside, no fragment, auto-hidden, dead, a bridge not marked), the
 // camera's move and turn since the view before; and one line at its end: the count back within 10 percent of the one before inside 6 views is a flash, else a step. A status line every 600 views says it ran.
 void flash_watch(const CullShadowState& s, const RKVkBridge::CullParams& P, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, const std::vector<U32>& vis_words, U64 count)
 {
-    static const bool test = getenv("LL_VK_FLASH_TEST") != nullptr;
+    static const bool test = getenv("RK_VK_FLASH_TEST") != nullptr;
     const double jump = test ? 0.03 : 0.20;
     static std::vector<U32> prev_vis;
     static U64 prev_count = 0, views = 0, events = 0, said = 0, base = 0, start_view = 0;
@@ -11400,7 +11400,7 @@ void flash_watch(const CullShadowState& s, const RKVkBridge::CullParams& P, bool
     }
     if (views % 600 == 0)
     {
-        LL_INFOS("VkFlash") << "watching: " << views << " views of the main view's derive, " << count << " groups now, " << events << " changes beyond " << jump * 100.0 << " percent so far" << (test ? " (LL_VK_FLASH_TEST)" : "") << LL_ENDL;
+        LL_INFOS("VkFlash") << "watching: " << views << " views of the main view's derive, " << count << " groups now, " << events << " changes beyond " << jump * 100.0 << " percent so far" << (test ? " (RK_VK_FLASH_TEST)" : "") << LL_ENDL;
     }
     prev_vis = vis_words;
     prev_count = count;
@@ -12152,8 +12152,8 @@ static void on_shadow_fragments(const RKVkBridge::ShadowPacketsHeader& h, const 
     if (h.mKind == 19) { res_tex_update(h, blob); return; }
     if (h.mKind >= 14 && h.mKind <= 17)
     {
-        // timing per kind (LL_VK_SCENE_TIMES=1): what the resident records cost the worker
-        static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
+        // timing per kind (RK_VK_SCENE_TIMES=1): what the resident records cost the worker
+        static const bool timed = getenv("RK_VK_SCENE_TIMES") != nullptr;
         static U64 ns[4] = {}, calls[4] = {}, last_log = 0;
         const auto t0 = std::chrono::steady_clock::now();
         if (h.mKind == 14) res_retain(h, blob);
@@ -12234,10 +12234,10 @@ static void on_shadow_fragments(const RKVkBridge::ShadowPacketsHeader& h, const 
 // <FS> Render packets: the worker side of RKVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
 void on_shadow_packets_impl(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob);
-// S6 census (LL_VK_OPSTATS): what the worker spends in each packet kind (calls and time per command buffer submit, which is 2 a presented frame; logged every 600 submits)
+// S6 census (RK_VK_OPSTATS): what the worker spends in each packet kind (calls and time per command buffer submit, which is 2 a presented frame; logged every 600 submits)
 void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    static const bool census = getenv("LL_VK_OPSTATS") != nullptr;
+    static const bool census = getenv("RK_VK_OPSTATS") != nullptr;
     if (!census || h.mKind >= 40)
     {
         on_shadow_packets_impl(h, blob);
@@ -12658,14 +12658,14 @@ void rtPinUpdate()
             }
             if (sPins[sPinCheckCursor].mName && sPins[sPinCheckCursor].mSlot)
             {
-                // <FS> LL_VK_PIN_SWEEP_LOG (default on): a slot that differs from the pin's here is a change of the texture that no pin_touch told (the event path missed it), found up to 32 frames late
+                // <FS> RK_VK_PIN_SWEEP_LOG (default on): a slot that differs from the pin's here is a change of the texture that no pin_touch told (the event path missed it), found up to 32 frames late
                 const U32 before_slot = sPins[sPinCheckCursor].mSlot;
                 const U32 pin_name = sPins[sPinCheckCursor].mName;
                 pin_resolve((U32)sPinCheckCursor);
                 if (sPins[sPinCheckCursor].mSlot != before_slot)
                 {
                     static U64 swept = 0;
-                    static const bool log_on = getenv("LL_VK_PIN_SWEEP_LOG") == nullptr || atoi(getenv("LL_VK_PIN_SWEEP_LOG")) != 0;
+                    static const bool log_on = getenv("RK_VK_PIN_SWEEP_LOG") == nullptr || atoi(getenv("RK_VK_PIN_SWEEP_LOG")) != 0;
                     ++swept;
                     if (log_on && (swept <= 30 || swept % 200 == 0))
                     {
@@ -12717,7 +12717,7 @@ void on_rt_scene(const RKVkBridge::RtSceneArgs& args)
     {
         return;
     }
-    // E2 (LL_VK_RT_EARLY=3): the value of the timeline semaphore at which the compute queue has built this frame's scene (0: nothing pending)
+    // E2 (RK_VK_RT_EARLY=3): the value of the timeline semaphore at which the compute queue has built this frame's scene (0: nothing pending)
     static U64 sAsyncScene = 0;
     if (args.mPhase == 2)
     {
@@ -12730,7 +12730,7 @@ void on_rt_scene(const RKVkBridge::RtSceneArgs& args)
             sAsyncScene = 0;
             return;
         }
-        Rt::sceneReadyBarrier();        // LL_VK_RT_EARLY: the scene was built before the G-buffer; the lighting waits for it here
+        Rt::sceneReadyBarrier();        // RK_VK_RT_EARLY: the scene was built before the G-buffer; the lighting waits for it here
         return;
     }
     flush_buffer_updates();         // the structures are built over the vertex data: writes that are still pending are recorded first
@@ -12855,13 +12855,13 @@ void before_end_frame()
 void after_frame()
 {
     {
-        // <FS> LL_VK_PIN_WORKER=<logical cpu>: a test of what a core of its own does for the render worker (doc/vulkan/PLAN-texture-handles.md section 17.22)
+        // <FS> RK_VK_PIN_WORKER=<logical cpu>: a test of what a core of its own does for the render worker (doc/vulkan/PLAN-texture-handles.md section 17.22)
         static bool pinned = false;
         if (!pinned)
         {
             pinned = true;
             char pin[16] = {};
-            if (GetEnvironmentVariableA("LL_VK_PIN_WORKER", pin, sizeof(pin)) > 0)
+            if (GetEnvironmentVariableA("RK_VK_PIN_WORKER", pin, sizeof(pin)) > 0)
             {
                 const int cpu = atoi(pin);
                 const DWORD_PTR previous = SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << cpu);
@@ -12869,9 +12869,9 @@ void after_frame()
             }
         }
     }
-    gRkWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
+    gRkWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> RK_VK_CPUPROBE core census (pipeline.cpp)
     gRkWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
-    RKVk::Context::instance().arenaPrepareTick();        // <FS> LL_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
+    RKVk::Context::instance().arenaPrepareTick();        // <FS> RK_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
     std::lock_guard<RKVkBridge::Mutex> lock(gMutex);
     if (sUiDiff)
     {
@@ -12925,8 +12925,8 @@ void after_frame()
         }
     }
     {
-        // LL_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
-        static const bool phases = getenv("LL_VK_PHASES") != nullptr;
+        // RK_VK_PHASES=1: where the main thread's time goes inside the translation layer, averaged over 600 frames
+        static const bool phases = getenv("RK_VK_PHASES") != nullptr;
         if (phases)
         {
             static U32 frames = 0;
@@ -13034,7 +13034,7 @@ void after_frame()
                                              << (host_bytes >> 20) << " MB), system-memory shadow copies " << (shadow_bytes >> 20) << " MB" << LL_ENDL;
                         {
                             const ArenaStats as = Context::instance().arenaStats();
-                            LL_INFOS("VkPhases") << "buffer arena (" << (arena_enabled() ? "on" : "off, LL_VK_ARENA=0") << "): " << as.mBlocks << " blocks, " << (as.mBlockBytes >> 20) << " MB reserved, "
+                            LL_INFOS("VkPhases") << "buffer arena (" << (arena_enabled() ? "on" : "off, RK_VK_ARENA=0") << "): " << as.mBlocks << " blocks, " << (as.mBlockBytes >> 20) << " MB reserved, "
                                                  << as.mAllocs << " ranges, " << (as.mUsedBytes >> 20) << " MB in use, largest free range " << (as.mLargestFree >> 20) << " MB; host-written (small buffers): "
                                                  << as.mHostBlocks << " blocks, " << (as.mHostBlockBytes >> 20) << " MB reserved, " << as.mHostAllocs << " ranges, " << (as.mHostUsedBytes >> 20)
                                                  << " MB in use; blocks created " << as.mBlocksCreated << ", released " << as.mBlocksReleased << LL_ENDL;
@@ -13483,7 +13483,7 @@ VerifyCounters sVerify;
 
 
 //-----------------------------------------------------------------------------------------------------
-// LL_VK_OWN: the mirror owns the resources. The wrappers no longer make the sink calls in real OpenGL; the objects exist only
+// RK_VK_OWN: the mirror owns the resources. The wrappers no longer make the sink calls in real OpenGL; the objects exist only
 // in Vulkan, and the calls that return something are answered here.
 //-----------------------------------------------------------------------------------------------------
 

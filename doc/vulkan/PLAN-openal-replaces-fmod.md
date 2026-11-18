@@ -26,7 +26,7 @@ One path after the move: a temporary switch `FSAudioThread` (and `RK_AUDIO_BACKE
 
 ## Stages
 
-**0. Build and play (half a day, needs Adam's go for the package download).** `autobuild install` the openal package (a download from GitHub; ask first), `USE_OPENAL=ON`, `RK_AUDIO_BACKEND=openal` picks it at startup. Log in, check the log lines (version, device), sounds, wind, device switch, mute, quit. Measure `idle: audio` with `FS_CPU_ZONES` against FMOD on the same lap (stage 0 timers from the old plan are still wanted for the load burst).
+**0. Build and play (half a day, needs Adam's go for the package download).** `autobuild install` the openal package (a download from GitHub; ask first), `USE_OPENAL=ON`, `RK_AUDIO_BACKEND=openal` picks it at startup. Log in, check the log lines (version, device), sounds, wind, device switch, mute, quit. Measure `idle: audio` with `RK_CPU_ZONES` against FMOD on the same lap (stage 0 timers from the old plan are still wanted for the load burst).
 
 **1. Drop ALUT.** Read the WAV the decoder wrote (16-bit PCM, mono/stereo, the header we write ourselves), `alBufferData`; `alcOpenDevice`/context directly. Small, behaviour-neutral. Clears the "ALUT missing" risk and the `alut.dll`.
 
