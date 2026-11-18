@@ -26,8 +26,6 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llvieweroctree.h"
-#include "lloccensus.h"
-#include "llviscensus.h"
 #include "llcullshadow.h"
 #include <deque>
 #include <intrin.h>
@@ -844,12 +842,7 @@ U32 sHizNextId = 0;
 U32 sHizBatchSeq = 0;
 std::vector<LLVkBridge::HizBox> sHizBoxes;
 std::vector<LLHizTarget*> sHizBoxTargets;
-struct HizItemInfo { U8 mType; bool mCpuOutside; U32 mTris; };
-std::vector<LLVkBridge::HizBox> sHizItemBoxes;       // S7 B0: the table items' boxes of the pass, and their item type, CPU frustum verdict and triangle count
-std::vector<HizItemInfo> sHizItemInfo;
-F32 sHizPrevVp[16] = {};
-bool sHizHavePrev = false;
-struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; std::vector<HizItemInfo> mItems; bool mPrev = false; F32 mEye[3] = {}; F32 mAt[3] = {}; };     // mEye, mAt: the camera the boxes were tested with (plan 8.38)
+struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; F32 mEye[3] = {}; F32 mAt[3] = {}; };     // mEye, mAt: the camera the boxes were tested with (plan 8.38)
 std::deque<HizPending> sHizPending;
 }
 
@@ -861,23 +854,10 @@ LLHizTarget::~LLHizTarget()
     }
 }
 
-void LLHiz::addItem(const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, U8 item_type, U32 tris, bool cpu_outside)
-{
-    LLVkBridge::HizBox box;
-    box.mCenter[0] = center[0]; box.mCenter[1] = center[1]; box.mCenter[2] = center[2];
-    box.mFlags = 0u;
-    box.mHalf[0] = half_x; box.mHalf[1] = half_y; box.mHalf[2] = half_z;
-    box.mPad = 0.f;
-    sHizItemBoxes.push_back(box);
-    sHizItemInfo.push_back({ item_type, cpu_outside, tris });
-}
-
 void LLHiz::begin()
 {
     sHizBoxes.clear();
     sHizBoxTargets.clear();
-    sHizItemBoxes.clear();
-    sHizItemInfo.clear();
     ++sHizBatchSeq;
 }
 
@@ -904,32 +884,11 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
 
 void LLHiz::send(const F32* view_proj)
 {
-    struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
-    if (sHizBoxes.empty() && sHizItemBoxes.empty())
+    if (sHizBoxes.empty())
     {
         return;
     }
-    const U32 target_count = (U32)sHizBoxes.size();
-    const bool items = !sHizItemBoxes.empty() && target_count + sHizItemBoxes.size() <= 32768;
-    if (items)
-    {
-        sHizBoxes.insert(sHizBoxes.end(), sHizItemBoxes.begin(), sHizItemBoxes.end());
-    }
-    else
-    {
-        sHizItemInfo.clear();
-    }
-    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj, items && sHizHavePrev ? sHizPrevVp : nullptr, target_count);
-    if (items && serial)
-    {
-        memcpy(sHizPrevVp, view_proj, sizeof(sHizPrevVp));
-        sHizHavePrev = true;
-    }
-    if (LLOccCensus::sOn)
-    {
-        ++(serial ? LLOccCensus::sHizSends : LLOccCensus::sHizRefused);
-        LLOccCensus::sHizBoxes += sHizBoxes.size();
-    }
+    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj);
     if (!serial)
     {
         return;         // nothing was sent: the targets are not awaiting anything, the next pass adds them again
@@ -945,8 +904,6 @@ void LLHiz::send(const F32* view_proj)
         for (int a = 0; a < 3; ++a) { p.mEye[a] = eye.mV[a]; p.mAt[a] = at.mV[a]; }
     }
     p.mIds.reserve(sHizBoxTargets.size());
-    p.mItems.swap(sHizItemInfo);
-    p.mPrev = items && sHizHavePrev;
     for (LLHizTarget* t : sHizBoxTargets)
     {
         p.mIds.push_back(t->mHizId);
@@ -985,13 +942,11 @@ void LLHiz::apply()
     {
         return;
     }
-    struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksApply += LLOccCensus::now() - mT0; } } lap;
     static std::vector<U32> words;
-    const bool census = LLOccCensus::sOn;
     while (!sHizPending.empty())
     {
         HizPending& p = sHizPending.front();
-        const size_t all_boxes = p.mIds.size() + p.mItems.size();
+        const size_t all_boxes = p.mIds.size();
         words.resize(3 * all_boxes);
         S32 r = LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
         if (r == 0)
@@ -1002,7 +957,7 @@ void LLHiz::apply()
             {
                 const HizPending& q = sHizPending[k];
                 static std::vector<U32> probe;
-                const size_t q_boxes = q.mIds.size() + q.mItems.size();
+                const size_t q_boxes = q.mIds.size();
                 probe.resize(3 * q_boxes);
                 later_published = LLVkBridge::hizRead(q.mSerial, (U32)q_boxes, probe.data()) == 1;
             }
@@ -1017,10 +972,6 @@ void LLHiz::apply()
         }
         if (r < 0)
         {
-            if (census)
-            {
-                ++LLOccCensus::sHizLost;
-            }
             for (U32 id : p.mIds)
             {
                 auto it = sHizTargets.find(id);
@@ -1032,11 +983,6 @@ void LLHiz::apply()
             LLVkBridge::hizDone(p.mSerial);
             sHizPending.pop_front();
             continue;
-        }
-        if (census)
-        {
-            ++LLOccCensus::sHizApplied;
-            ++LLOccCensus::sHizLag[LLOccCensus::age_slot((U32)gFrameCount, p.mFrame)];
         }
         // <FS> plan 8.38: a verdict is only good for the camera it was tested with. The results arrive 2 to 4 frames after the boxes were sent; while the camera moves fast (a zoom, a flight through foliage)
         // an occluded verdict that was right for its frame is applied where the camera is now, and the group vanishes for a few frames (the own avatar for 15 frames, 2026-11-02). A batch whose camera has
@@ -1051,87 +997,28 @@ void LLHiz::apply()
             const F32 dx = eye.mV[0] - p.mEye[0], dy = eye.mV[1] - p.mEye[1], dz = eye.mV[2] - p.mEye[2];
             const F32 dot = at.mV[0] * p.mAt[0] + at.mV[1] * p.mAt[1] + at.mV[2] * p.mAt[2];
             stale = (dx * dx + dy * dy + dz * dz > stale_m * stale_m) || dot < stale_cos;
-            if (census && stale)
-            {
-                ++LLOccCensus::sHizStale;
-            }
         }
         for (size_t i = 0; i < p.mIds.size(); ++i)
         {
             auto it = sHizTargets.find(p.mIds[i]);
             if (it == sHizTargets.end())
             {
-                if (census)
-                {
-                    ++LLOccCensus::sHizDead;
-                }
                 continue;
             }
             LLHizTarget* t = it->second;
             if (t->mHizSerial != p.mSerial)
             {
-                if (census)
-                {
-                    ++LLOccCensus::sHizSuperseded;      // a later box of the target is the one awaited (it was discarded and added again)
-                }
-                continue;
+                continue;       // a later box of the target is the one awaited (it was discarded and added again)
             }
             t->mHizSerial = 0;
             const U32 word = words[3 * i];
             const bool occluded = (word & 1u) != 0 && !stale;
-            if (census)
-            {
-                LLOccCensus::sHizOccluded += (word & 1u) != 0;
-                ++LLOccCensus::sHizLod[std::min<U32>((word >> 8) & 0xff, 15)];
-                LLOccCensus::sHizWhy[0] += (word >> 16) & 1u;
-                LLOccCensus::sHizWhy[1] += (word >> 17) & 1u;
-                LLOccCensus::sHizWhy[2] += (word >> 18) & 1u;
-                LLOccCensus::sHizWhy[3] += (word >> 19) & 1u;
-            }
             if (sHizKeepVerdicts)
             {
                 sHizLastVerdict[p.mIds[i]] = { word, words[3 * i + 1], words[3 * i + 2], (U32)gFrameCount, stale ? 1u : 0u };
             }
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
-        }
-        if (!p.mItems.empty())
-        {
-            // S7 B0: the verdicts for the table items. Frustum = bits 17 (rectangle off the screen) / 19 (wholly behind the camera) of the test against this record's own view-projection; hidden A = occluded by the pyramid
-            // of this record (built at the occlusion point of the pass); hidden B = occluded by the pyramid of the record before, tested with the view-projection of that record (bit 31 of its word = a verdict was made)
-            static std::vector<U32> prev_words;
-            prev_words.resize(words.size());
-            const bool have_b = p.mPrev && LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, prev_words.data(), true) == 1;
-            ++LLVisCensus::sBBatches;
-            LLVisCensus::sBBatchesValidB += have_b;
-            const U32 outside_bits = (1u << 17) | (1u << 19);
-            for (size_t k = 0; k < p.mItems.size(); ++k)
-            {
-                using namespace LLVisCensus;
-                const HizItemInfo& it = p.mItems[k];
-                const U32 type = it.mType;
-                const U32 tris = it.mTris;
-                const U32 wa = words[3 * (p.mIds.size() + k)];
-                const bool gpu_out = (wa & 1u) && (wa & outside_bits);
-                ++sBTested[type];
-                sBTestedTris[type] += tris;
-                if (gpu_out) { ++sBGpuOut[type]; sBGpuOutTris[type] += tris; }
-                if (it.mCpuOutside) { ++sBCpuOut[type]; sBCpuOutNotGpu[type] += !gpu_out; }
-                else if (gpu_out) { ++sBGpuOutNotCpu[type]; }
-                if ((wa & 1u) && !gpu_out) { ++sBHidA[type]; sBHidATris[type] += tris; }
-                bool hid_b = false;
-                if (have_b)
-                {
-                    const U32 wb = prev_words[3 * (p.mIds.size() + k)];
-                    if (wb & 0x80000000u)
-                    {
-                        ++sBValidB[type];
-                        hid_b = (wb & 1u) && !(wb & outside_bits);
-                        if (hid_b) { ++sBHidB[type]; sBHidBTris[type] += tris; }
-                    }
-                }
-                if (gpu_out || hid_b) { ++sBDropB[type]; sBDropBTris[type] += tris; }
-            }
         }
         LLVkBridge::hizDone(p.mSerial);
         sHizPending.pop_front();
@@ -1483,13 +1370,6 @@ void LLOcclusionCullingGroup::checkOcclusion()
     if (LLPipeline::useOcclusion() < 2) return;  // 0 - NoOcclusion, 1 = ReadOnly, 2 = ModifyOcclusionState  TODO: DJH 11-2021 ENUM this
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_OCTREE;
-    if (LLOccCensus::sOn)
-    {
-        if (LLOccCensus::Cam* census = LLOccCensus::cam(LLViewerCamera::sCurCameraID))
-        {
-            ++census->mChkCalls;
-        }
-    }
     LLOcclusionCullingGroup* parent = (LLOcclusionCullingGroup*)getParent();
     if (parent && parent->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
     {   //if the parent has been marked as occluded, the child is implicitly occluded: no verdict of its own is awaited
@@ -1500,13 +1380,7 @@ void LLOcclusionCullingGroup::checkOcclusion()
 
     if (mHizStale && mHizSerial)
     {   // a verdict is awaited and the group asked to be discarded (an object was added): visible until the next box has a result
-        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
-        if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
-        {
-            LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
-            LLCullCensus::noteOcc(this, false, 1);
-        }
         mHizSerial = 0;
         mHizStale = false;
     }
@@ -1538,13 +1412,7 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     {   // the camera is inside the box: nothing to test, visible
         mHizSerial = 0;
         mHizStale = true;
-        const bool was_occluded = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED);
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
-        if (was_occluded && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && mSpatialPartition)
-        {
-            LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
-            LLCullCensus::noteOcc(this, false, 2);
-        }
         return;
     }
     if (mHizSerial && !mHizStale)
@@ -1583,11 +1451,6 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
         {
             o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
             o->mHizOccludedOnce = false;
-            if (LLCullCensus::sOn && o->mSpatialPartition)
-            {
-                LLCullCensus::sOccChanges[std::min<U32>(o->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
-                LLCullCensus::noteOcc(o, false, 3);
-            }
         }
     }
     LLViewerCamera::sCurCameraID = saved_camera;
@@ -1598,19 +1461,6 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
 {
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
-    const bool census_was = LLCullCensus::sOn && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED);
-    struct CensusEnd
-    {
-        LLOcclusionCullingGroup* mG; bool mWas;
-        ~CensusEnd()
-        {
-            if (LLCullCensus::sOn && mG->mSpatialPartition && mWas != ((mG->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0))
-            {
-                LLCullCensus::sOccChanges[std::min<U32>(mG->mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
-                LLCullCensus::noteOcc(mG, !mWas, 0);
-            }
-        }
-    } census_end = { this, census_was };
     if (occluded)
     {
         // <FS> plan 8.38: occluded on two agreeing verdicts, so one wrong or stale answer never hides the group; visible on one
@@ -1628,68 +1478,6 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
     LLViewerCamera::sCurCameraID = saved_camera;
 }
 
-// <FS> S7 (doc/vulkan/S7-design.md sections 9-11): the per frame numbers of the occlusion pass, one log line per camera that did anything (LL_VK_OCC_CENSUS=1)
-void LLOccCensus::report()
-{
-    using namespace LLOccCensus;
-    LARGE_INTEGER qf, qn;
-    QueryPerformanceFrequency(&qf);
-    QueryPerformanceCounter(&qn);
-    const U64 tsc = __rdtsc();
-    const double window_qpc = (double)std::max<long long>(1, qn.QuadPart - sQpc0);
-    const double ms_per_tick = 1000.0 * window_qpc / (double)qf.QuadPart / (double)std::max<U64>(1, tsc - sTsc0);
-    const double frames = (double)std::max<U64>(1, sFrames);
-    {
-        std::string lag, lod;
-        for (int a = 0; a < AGES; ++a)
-        {
-            lag += llformat("%s%.1f", a ? " " : "", (double)sHizLag[a] / frames);
-        }
-        for (int a = 0; a < 12; ++a)
-        {
-            lod += llformat("%s%.1f", a ? " " : "", (double)sHizLod[a] / frames);
-        }
-        LL_INFOS("OccCensus") << "Hi-Z window: " << sFrames << " world passes, " << window_qpc * 1000.0 / (double)qf.QuadPart / frames << " ms wall each; main thread ms per frame: probe boxes " << (double)sTicksProbes * ms_per_tick / frames
-            << ", object cache boxes " << (double)sTicksCache * ms_per_tick / frames << " (" << (double)sCachePasses / frames << " calls with groups), collect group boxes " << (double)sHizTicksCollect * ms_per_tick / frames
-            << ", send " << (double)sHizTicksSend * ms_per_tick / frames << ", apply results " << (double)sHizTicksApply * ms_per_tick / frames
-            << " | per frame: batches sent " << (double)sHizSends / frames << " (refused " << (double)sHizRefused / frames << "), boxes " << (double)sHizBoxes / frames
-            << ", results applied " << (double)sHizApplied / frames << " batches, lost " << (double)sHizLost / frames << ", targets gone " << (double)sHizDead / frames << ", superseded " << (double)sHizSuperseded / frames
-            << ", OCCLUDED " << (double)sHizOccluded / frames << ", batches stale for the camera (their occluded verdicts counted visible) " << (double)sHizStale / frames << "; special cases: cut by the near plane (visible) " << (double)sHizWhy[0] / frames << ", off screen (occluded) " << (double)sHizWhy[1] / frames << ", beyond far (visible) " << (double)sHizWhy[2] / frames << ", wholly behind the camera (occluded) " << (double)sHizWhy[3] / frames
-            << " | result age in frames when applied (0 1 2 3 4 5 6 7+): " << lag << " | pyramid level used (0..11): " << lod
-            << " | probes: calls " << (double)sProbeCalls / frames << ", eye inside " << (double)sProbeInside / frames << ", boxes " << (double)sProbeAdded / frames << ", still awaiting " << (double)sProbeAwaiting / frames
-            << ", results visible " << (double)sProbeVisible / frames << " occluded " << (double)sProbeOccluded / frames << LL_ENDL;
-        sHizTicksCollect = sHizTicksSend = sHizTicksApply = 0;
-        sHizSends = sHizRefused = sHizBoxes = sHizApplied = sHizOccluded = sHizLost = sHizSuperseded = sHizDead = sHizStale = 0;
-        for (int a = 0; a < AGES; ++a) sHizLag[a] = 0;
-        for (int a = 0; a < 16; ++a) sHizLod[a] = 0;
-        sHizWhy[0] = sHizWhy[1] = sHizWhy[2] = sHizWhy[3] = 0;
-    }
-    static const char* const names[CAMS] = { "world", "cam1", "cam2", "cam3", "cam4", "cam5", "cam6", "cam7", "cam8" };
-    for (int i = 0; i < CAMS; ++i)
-    {
-        const Cam& c = sCam[i];
-        if (!c.mChkCalls && !c.mCullEarlyFail && !c.mSortGroups && !sPasses[i])
-        {
-            continue;
-        }
-        LL_INFOS("OccCensus") << "camera " << i << " (" << names[i] << ") per frame: occlusion passes " << (double)sPasses[i] / frames << ", list " << (double)sListGroups[i] / frames << " groups ("
-            << (double)sListDead[i] / frames << " dead, " << (double)sListOccluded[i] / frames << " OCCLUDED already), time of the pass " << (double)sTicksPass[i] * ms_per_tick / frames << " ms of which the group loop "
-            << (double)sTicksGroups[i] * ms_per_tick / frames << " ms | checkOcclusion calls " << (double)c.mChkCalls / frames
-            << " | cull earlyFail calls " << (double)c.mCullEarlyFail / frames << ", groups dropped as OCCLUDED " << (double)c.mCullDropped / frames
-            << " | stateSort groups " << (double)c.mSortGroups / frames << ", OCCLUDED " << (double)c.mSortOccluded / frames << " (elements " << (double)c.mSortOccludedElems / frames << " of "
-            << (double)c.mSortElems / frames << ")" << LL_ENDL;
-    }
-    for (int i = 0; i < CAMS; ++i)
-    {
-        sCam[i] = Cam();
-        sPasses[i] = sListGroups[i] = sListDead[i] = sListOccluded[i] = sTicksPass[i] = sTicksGroups[i] = 0;
-    }
-    sTicksProbes = sTicksCache = sCachePasses = 0;
-    sProbeCalls = sProbeInside = sProbeAdded = sProbeAwaiting = sProbeVisible = sProbeOccluded = 0;
-    sFrames = 0;
-    sQpc0 = qn.QuadPart;
-    sTsc0 = tsc;
-}
 //-------------------------------------------------------------------------------------------
 //end of occulsion culling functions and classes
 //-------------------------------------------------------------------------------------------
@@ -1745,18 +1533,9 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
 {
     LL_PROFILE_ZONE_SCOPED;
     LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) n->getListener(0);
-    const bool cen = LLCullCensus::sOn && LLCullCensus::sActive.load(std::memory_order_relaxed) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD;      // <FS> C4.5 census
-    if (cen)
-    {
-        LLCullCensus::sNodes.fetch_add(1, std::memory_order_relaxed);
-    }
 
     if (earlyFail(group))
     {
-        if (cen)
-        {
-            LLCullCensus::sEarlyFail.fetch_add(1, std::memory_order_relaxed);
-        }
         return;
     }
 
@@ -1764,24 +1543,12 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
         (mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
     {   //fully in, just add everything
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("AllInside");
-        if (cen)
-        {
-            LLCullCensus::sAllInside.fetch_add(1, std::memory_order_relaxed);
-        }
         OctreeTraveler::traverse(n);
     }
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_OCTREE("Check inside?");
         mRes = frustumCheck(group);
-        if (cen)
-        {
-            LLCullCensus::sFrustumTests.fetch_add(1, std::memory_order_relaxed);
-            if (!mRes)
-            {
-                LLCullCensus::sFrustumOut.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
 
         if (mRes)
         { //at least partially in, run on down
