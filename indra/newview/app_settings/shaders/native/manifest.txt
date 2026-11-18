@@ -174,15 +174,15 @@ override | Deferred Avatar Alpha Shader pull | avatar.vert | avatar_alpha.frag |
 override | Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | default on
 override | Skinned Deferred Alpha Impostor Pull Shader | alpha.vert | alpha_impostor.frag | alpha | define ALPHA_IMPOSTOR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 # the sun lightmap family: the probe snapshot's lightmap (the main view's program without the occlusion) and the two passes of the ray traced sun shadow's penumbra (the stock ray traced sun program stays: the RT track)
-override | Deferred Sun Probe Shader | fullscreen.vert | sun_lightmap.frag | sun | define LL_NO_AO=1 | default on
+override | Deferred Sun Probe Shader | fullscreen.vert | sun_lightmap.frag | sun | define RK_NO_AO=1 | default on
 override | RT Shadow Penumbra Prep | fullscreen.vert | rt_shadow_prep.frag | sun | default on
 override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag | sun | default on
-# the water family: the water surface seen from above and from below; the planes' vertex buffers are read by address (WATER_PULL), and a session with ray queries has its own variant of the surface (LL_RT_QUERY)
+# the water family: the water surface seen from above and from below; the planes' vertex buffers are read by address (WATER_PULL), and a session with ray queries has its own variant of the surface (RK_RT_QUERY)
 override | Water Pull Shader | water.vert | water.frag | water | define WATER_PULL=1 | default on
-# the same program with the ray queries of the stock water (LL_RT_QUERY: the loader adds the extension, the draw binds set 3), code from lib/rt.glsl (the stock text as it is): the sun shadow ray; and the variant that also traces the reflection of the water
-# (LL_RT_WATER_REFLECTION: a program of its own, much larger: the water draws with it when the setting FSVkRTWater is on). Made only in a session with ray queries (the reflection variant when the material table is on)
-override | Water Pull RT Shader | water.vert | water.frag | water | define WATER_PULL=1 | define LL_RT_QUERY=1 | default on
-override | Water Pull RT Reflection Shader | water.vert | water.frag | water | define WATER_PULL=1 | define LL_RT_QUERY=1 | define LL_RT_WATER_REFLECTION=1 | default on
+# the same program with the ray queries of the stock water (RK_RT_QUERY: the loader adds the extension, the draw binds set 3), code from lib/rt.glsl (the stock text as it is): the sun shadow ray; and the variant that also traces the reflection of the water
+# (RK_RT_WATER_REFLECTION: a program of its own, much larger: the water draws with it when the setting FSVkRTWater is on). Made only in a session with ray queries (the reflection variant when the material table is on)
+override | Water Pull RT Shader | water.vert | water.frag | water | define WATER_PULL=1 | define RK_RT_QUERY=1 | default on
+override | Water Pull RT Reflection Shader | water.vert | water.frag | water | define WATER_PULL=1 | define RK_RT_QUERY=1 | define RK_RT_WATER_REFLECTION=1 | default on
 override | Underwater Pull Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | define WATER_PULL=1 | default on
 # the selection highlight: the selected faces, the "paint em red" faces, the normal map and specular map views (the face's own texture coordinate: HL_UV 0, 1, 2) and the parcel owners' tint of the terrain (HL_GBUFFER). The skinned form of Highlight Shader is the old rigged draws of the alpha pool's debug view
 override | Highlight Shader | highlight_face.vert | highlight_face.frag | post | define HL_UV=0 | default on
@@ -241,12 +241,12 @@ override | Impostor Shader | impostor_forward.vert | impostor_forward.frag | pos
 # the forward lit programs of the avatar previews (PLAN-native-only-end-state.md, step 3)
 override | Avatar Shader | forward_lit.vert | forward_lit.frag | post | define FWD_AVATAR=1 | default on
 override | No color alpha mask Shader | forward_lit.vert | forward_lit.frag | post | default on
-# the ray scene material debug view (PLAN-native-only-end-state.md): the line itself defines LL_RT_QUERY (made only in a session with the material table)
-override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag | post | define LL_RT_QUERY=1 | default on
+# the ray scene material debug view (PLAN-native-only-end-state.md): the line itself defines RK_RT_QUERY (made only in a session with the material table)
+override | Ray Scene Material Debug | fullscreen.vert | rt_material_debug.frag | post | define RK_RT_QUERY=1 | default on
 # the material preview floater's glTF blend program (PLAN-native-only-end-state.md): the attribute vertex stage, the scene blend surfaces' fragment stage; no ray query variant: the preview draws with white shadow maps (llgltfmaterialpreviewmgr.cpp)
 override | Deferred PBR Alpha Shader | alpha_pbr_preview.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define PBR_PREVIEW=1 | default on
 # the traced glossy reflection pass (PLAN-native-only-end-state.md): the stock text of rtReflectionF and its library files as one native fragment shader (D:\claude\freeze_stock.py), the vertex stage is fullscreen.vert; made only in a session with ray queries and the material table
-override | Deferred RT Reflection Shader | fullscreen.vert | rt_reflection.frag | post | define HAS_SUN_SHADOW=1 | define LL_RT_REFLECTIONS=1 | define LL_RT_QUERY=1 | default on
+override | Deferred RT Reflection Shader | fullscreen.vert | rt_reflection.frag | post | define HAS_SUN_SHADOW=1 | define RK_RT_REFLECTIONS=1 | define RK_RT_QUERY=1 | default on
 # the glTF scene programs (the glTF objects of the scene manager; PLAN-native-only-end-state.md): the stock text of pbrmetallicroughnessV / F and the library files of the stock loader, 16 variants by define; the blended
 # variants have the ray traced sun shadow in a session with ray queries (rtquery). The names are the variants' (llviewershadermgr.cpp make_gltf_variant)
 override | GLTF PBR Metallic Roughness Shader | gltf_scene.vert | gltf_scene.frag | gbuffer | default on

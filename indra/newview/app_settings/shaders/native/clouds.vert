@@ -1,5 +1,5 @@
 // clouds.vert: the cloud layer: the texture coordinates of the four noise lookups (scaled, scrolled with the sun), the cloud colours from the sky of the pass (the sun's light by the air it crosses, the ambient,
-// attenuated by the haze) and the density. A line for line translation of "Deferred Windlight Cloud Program pull" (deferred/cloudsV.glsl with LL_VERTEX_PULL). Pairs with clouds.frag.
+// attenuated by the haze) and the density. A line for line translation of "Deferred Windlight Cloud Program pull" (deferred/cloudsV.glsl with RK_VERTEX_PULL). Pairs with clouds.frag.
 
 #include "sky_pass.inc"
 #include "lib/rows.glsl"

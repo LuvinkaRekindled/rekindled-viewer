@@ -29,12 +29,12 @@ layout(location = 2) out vec4 frag_data2;       // raw depth
 
 vec4 getNormRaw(vec2 screenpos)
 {
-    return texture(rk_tbl2d[LL_HM(rk_ti_normalMap)], screenpos.xy);
+    return texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], screenpos.xy);
 }
 
 float getDepth(vec2 pos_screen)
 {
-    return texture(rk_tbl2d[LL_HM(rk_ti_depthMap)], pos_screen).r;
+    return texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], pos_screen).r;
 }
 
 void main()
@@ -48,7 +48,7 @@ void main()
     if (depth < 1.0)
     {
         vec4 normInfo = getNormRaw(tc);
-        vec4 specInfo = texture(rk_tbl2d[LL_HM(rk_ti_specularRect)], tc);
+        vec4 specInfo = texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], tc);
         float gbufferFlag = normInfo.w;
         if (GET_GBUFFER_FLAG(gbufferFlag, GBUFFER_FLAG_HAS_HDRI) || GET_GBUFFER_FLAG(gbufferFlag, GBUFFER_FLAG_SKIP_ATMOS))
         {

@@ -471,7 +471,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     gPipeline.mRT = &gPipeline.mHeroProbeRT;
     mViewRendered = true;
 
-    { LL_CPU_ZONE("hero: face render (scene)"); probe->update(mRenderTarget.getWidth(), face, is_dynamic, near_clip); }
+    { RK_CPU_ZONE("hero: face render (scene)"); probe->update(mRenderTarget.getWidth(), face, is_dynamic, near_clip); }
 
     gPipeline.mRT = &gPipeline.mMainRT;
 

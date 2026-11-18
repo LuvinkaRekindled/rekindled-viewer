@@ -1,4 +1,4 @@
-// pbrterrain.vert: the PBR terrain of the G-buffer pass, from the geometry packet path (the pull twin of the viewer's program, pbrterrainV.glsl with LL_VERTEX_PULL). The row names the patch's arrays (positions,
+// pbrterrain.vert: the PBR terrain of the G-buffer pass, from the geometry packet path (the pull twin of the viewer's program, pbrterrainV.glsl with RK_VERTEX_PULL). The row names the patch's arrays (positions,
 // normals, tangents, the second texture coordinate set); the model matrices come from the model block. What is different from the old program, which sends the texture coordinates of every material to the
 // fragment shader (up to 10 vec4 for the triplanar mapping, 4 tangents and 4 signs for the normal maps): the vertex sends what they are made from (the object space position, the normal and the tangent), and the
 // fragment shader makes the coordinates of the materials a pixel really uses (two on most of the terrain). They are affine in the position, so the interpolation is the same.

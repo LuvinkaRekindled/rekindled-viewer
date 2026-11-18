@@ -33,7 +33,7 @@
 #include "rkretirelist.h"
 // #include "llrender.h"
 #include "rkrenderheaders.h"
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include "rkvkasync.h"
 #include "rkvkbuf.h"
 #endif
@@ -691,7 +691,7 @@ void LLVertexBuffer::clone(LLVertexBuffer& target) const
     }
 }
 
-// <FS> S6.6: with a pull program bound (LL_VERTEX_PULL) a draw of this buffer is the one entry of a geometry record (kind 32): the arrays are read by address, the matrices of the stack travel in
+// <FS> S6.6: with a pull program bound (RK_VERTEX_PULL) a draw of this buffer is the one entry of a geometry record (kind 32): the arrays are read by address, the matrices of the stack travel in
 // the record. The uniforms the program keeps besides them are written as before (syncMatrices); the state, texture units and uniforms of the draw ride in the stream in front of the record.
 bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) const
 {
@@ -1539,7 +1539,7 @@ bool LLVertexBuffer::getClothWeightStrider(LLStrider<LLVector4a>& strider, U32 i
 
 
 // <FS> N1b: while setBuffer() writes a typed record, setupVertexBuffer() collects its attribute pointers here instead of calling GL
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 namespace
 {
     struct AttribSink
@@ -1553,7 +1553,7 @@ namespace
 
 static inline void rk_attribPointer(U32 index, S32 size, ComponentType type, bool normalized, S32 stride, const void* pointer)
 {
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (sAttribSink)
     {
         llassert(sAttribSink->mCount < 24);
@@ -1565,7 +1565,7 @@ static inline void rk_attribPointer(U32 index, S32 size, ComponentType type, boo
 
 static inline void rk_attribIPointer(U32 index, S32 size, ComponentType type, S32 stride, const void* pointer)
 {
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (sAttribSink)
     {
         llassert(sAttribSink->mCount < 24);

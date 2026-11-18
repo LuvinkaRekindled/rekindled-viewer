@@ -8,7 +8,7 @@
     vec2 rt_sun_lod;                // <FS> (near, far) metres: the rays of the sun disc go from rt_sun_samples at `near` down to a quarter of them (at least 2) at `far` and beyond; 0 = all of them (set by the alpha pass only)
     float rt_noise_frame;
     float rt_sun_strength;         // <FS> sun lightmap pass only (rt-debug.txt sunstrength, percent, default 65): the most light an avatar's own close surfaces may block on that avatar
-    int rt_sun_pen_rays;           // <FS> the rays of a pixel whose first sun ray met a close skinned surface (rt-debug.txt penrays=N); 0 (unset) = LL_RT_SUN_PENUMBRA_RAYS
+    int rt_sun_pen_rays;           // <FS> the rays of a pixel whose first sun ray met a close skinned surface (rt-debug.txt penrays=N); 0 (unset) = RK_RT_SUN_PENUMBRA_RAYS
     float rt_sun_self_off;        // <FS> 1: the avatar self shadow work off (an avatar blocks fully, no receiver probe, no start disc); rt-debug.txt sunself=0, a same-lap cost A/B. 0 (unset) = as the defines say;
     int rt_hit_shadow_variant;
     int rt_hair_soft;

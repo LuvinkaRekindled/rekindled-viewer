@@ -17,7 +17,7 @@ layout(location = 0) out vec4 frag_color;
 
 void dofSample(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 {
-    vec4 s = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc);
+    vec4 s = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc);
 
     float sc = abs(s.a*2.0-1.0)*max_cof;
 
@@ -36,7 +36,7 @@ void dofSample(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 
 void dofSampleNear(inout vec4 diff, inout float w, float min_sc, vec2 tc)
 {
-    vec4 s = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc);
+    vec4 s = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc);
 
     float wg = 0.25;
 
@@ -60,7 +60,7 @@ void main()
 {
     vec2 tc = vary_fragcoord.xy;
 
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord.xy);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord.xy);
 
     {
         float w = 1.0;

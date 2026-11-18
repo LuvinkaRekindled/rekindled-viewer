@@ -13,8 +13,8 @@
  * Independent of the viewer classes: plain types only.
  */
 
-#ifndef LL_LLROWTABLE_H
-#define LL_LLROWTABLE_H
+#ifndef RK_RKROWTABLE_H
+#define RK_RKROWTABLE_H
 
 #include "stdtypes.h"
 #include "llframetimer.h"
@@ -147,4 +147,4 @@ private:
     }
 };
 
-#endif // LL_LLROWTABLE_H
+#endif // RK_RKROWTABLE_H

@@ -763,7 +763,7 @@ static void texanim_matrix(LLMatrix4& m, F32 off_s, F32 off_t, F32 scale_s, F32 
 
 void LLVOVolume::animateTextures()
 {
-    LL_CPU_ZONE("texanim: per object");
+    RK_CPU_ZONE("texanim: per object");
     if (!mDead && mDrawable) // <FS:Beq/> FIRE-34601 - bugsplat accessing null drawable.
     {
         if (LLPipeline::coldMode() > 0 && !isAttachment() && !isAvatar())
@@ -779,14 +779,14 @@ void LLVOVolume::animateTextures()
                 }
             }
         }
-        { LL_CPU_ZONE("texanim: shrinkWrap"); shrinkWrap(); }
+        { RK_CPU_ZONE("texanim: shrinkWrap"); shrinkWrap(); }
         F32 off_s = 0.f, off_t = 0.f, scale_s = 1.f, scale_t = 1.f, rot = 0.f;
         S32 result;
-        { LL_CPU_ZONE("texanim: frame calculation"); result = mTextureAnimp->animateTextures(off_s, off_t, scale_s, scale_t, rot); }
+        { RK_CPU_ZONE("texanim: frame calculation"); result = mTextureAnimp->animateTextures(off_s, off_t, scale_s, scale_t, rot); }
 
         if (result)
         {
-            LL_CPU_ZONE("texanim: changed (face matrices)");
+            RK_CPU_ZONE("texanim: changed (face matrices)");
             if (!mTexAnimMode)
             {
                 mFaceMappingChanged = true;
@@ -6462,7 +6462,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_VOLUME("rebuildGeom - face list");
-        LL_CPU_ZONE("rebuild: prepare (face list, sorted into the static scratch)");        // <FS> group rebuild audit (plan 8.6): where the time of a rebuild goes
+        RK_CPU_ZONE("rebuild: prepare (face list, sorted into the static scratch)");        // <FS> group rebuild audit (plan 8.6): where the time of a rebuild goes
 
         //get all the faces into a list
         for (LLSpatialGroup::element_iter drawable_iter = group->getDataBegin();
@@ -6913,7 +6913,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
     U32 extra_mask = LLVertexBuffer::MAP_TEXTURE_INDEX;
     bool alpha_sort = true;
     bool rigged = false;
-    { LL_CPU_ZONE("rebuild: genDrawInfo (all masks, static and rigged)");
+    { RK_CPU_ZONE("rebuild: genDrawInfo (all masks, static and rigged)");
     std::vector<FillTask> fill_tasks;       // <FS> R3b2: the fill of every batch of every kind, run together below
     for (int i = 0; i < 2; ++i) //two sets, static and rigged)
     {
@@ -7197,7 +7197,7 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                     U32 te_idx = facep->getTEOffset();
 
                     bool geometry_ok;
-                    { LL_CPU_ZONE("rebuild: face geometry (getGeometryVolume)");
+                    { RK_CPU_ZONE("rebuild: face geometry (getGeometryVolume)");
                     geometry_ok = facep->getGeometryVolume(*volume, te_idx,
                         vobj->getRelativeXform(), vobj->getRelativeXformInvTrans(), index_offset,true); }
                     if (!geometry_ok)
@@ -7575,7 +7575,7 @@ static int rebuild_parallel_mode()
 // the tasks of the kinds of one group, in the order genDrawInfo made them: on the pool when LL_VK_REBUILD_PARALLEL is set (the tasks of animated children stay on this thread), then the draw maps appended to the group's in that order
 void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<FillTask>& tasks)
 {
-    LL_CPU_ZONE("rebuild: fill tasks (geometry and registration)");
+    RK_CPU_ZONE("rebuild: fill tasks (geometry and registration)");
     static const bool parallel_on = rebuild_parallel_mode() == 1;
     RKForkJoinPool* pool = parallel_on && !RKGpuZoneTimer::isActive() ? RKForkJoinPool::shared() : nullptr;
     std::vector<size_t> parallel;
@@ -7677,7 +7677,7 @@ void RKRebuildBatch::flush()
     {
         return;
     }
-    LL_CPU_ZONE("rebuild batch: flush (fills of all the groups, draw maps, fragments)");
+    RK_CPU_ZONE("rebuild batch: flush (fills of all the groups, draw maps, fragments)");
     std::vector<Entry> entries;
     entries.swap(mEntries);         // (nothing below rebuilds a group, but a flush from inside a fill would find the batch empty)
     mIndex.clear();
@@ -7721,7 +7721,7 @@ void RKRebuildBatch::flush()
         }
         if (entry.mFragment && !group->isDead())
         {
-            LL_CPU_ZONE("rebuild: scene geometry fragment build");
+            RK_CPU_ZONE("rebuild: scene geometry fragment build");
             rk_scene_fragment_build(group);
         }
     }

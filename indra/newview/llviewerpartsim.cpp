@@ -46,7 +46,7 @@
 #include "llviewertexture.h"
 #include "llvertexbuffer.h"
 #include "llvopartgroup.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 const F32 PART_SIM_BOX_SIDE = 16.f;
 
@@ -857,7 +857,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     {
         LLVector3 a(0.f, 0.f, 0.f);
         LLViewerPart* part = mParticles[i] ;
-        if (rk_diag_on())       // (the census: its only reader is LL_DIAG Q1Census)
+        if (rk_diag_on())       // (the census: its only reader is RK_DIAG Q1Census)
         {
             const U32 fl = part->mFlags;
             ++sSimCensus.mStepped;
@@ -1245,7 +1245,7 @@ void LLViewerPartSim::sortStores()
     ++calls;
     if (calls % 600 == 1)
     {
-        LL_DIAG("Q1Census") << "particle sort: sortStores entered " << calls << " times; frame " << gFrameCount << " last " << last_frame << ", render particles " << (int)gPipeline.sRenderParticles << ", render type " << (int)gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES) << LL_ENDL;
+        RK_DIAG("Q1Census") << "particle sort: sortStores entered " << calls << " times; frame " << gFrameCount << " last " << last_frame << ", render particles " << (int)gPipeline.sRenderParticles << ", render type " << (int)gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES) << LL_ENDL;
     }
     if (last_frame == gFrameCount || !gPipeline.sRenderParticles)       // (not the render type mask: it is the pool's own while the alpha pass runs)
     {
@@ -1308,13 +1308,13 @@ void LLViewerPartSim::sortStores()
         static U64 none = 0;
         if (++none % 600 == 1)
         {
-            LL_DIAG("Q1Census") << "particle sort: no store to sort (" << none << " frames), groups seen " << groups_seen << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
+            RK_DIAG("Q1Census") << "particle sort: no store to sort (" << none << " frames), groups seen " << groups_seen << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
         }
         return;
     }
     if (++sent % 600 == 1)
     {
-        LL_DIAG("Q1Census") << "particle sort jobs sent: " << sent << " frames, " << calls << " calls from the alpha pass; groups seen " << groups_seen << ", sent " << groups_sent << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
+        RK_DIAG("Q1Census") << "particle sort jobs sent: " << sent << " frames, " << calls << " calls from the alpha pass; groups seen " << groups_seen << ", sent " << groups_sent << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
     }
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     RKVkBridge::ShadowPacketsHeader header;
@@ -1488,7 +1488,7 @@ void LLViewerPartSim::updateSimulation()
         deldir = -1;
     }
 
-    const bool census = rk_diag_on();       // (the census of the simulation: its only reader is LL_DIAG Q1Census)
+    const bool census = rk_diag_on();       // (the census of the simulation: its only reader is RK_DIAG Q1Census)
     const unsigned long long census_t0 = census ? __rdtsc() : 0;
     sSimCensus.mSources += census ? (U64)count : 0;
     S32 num_updates = 0;
@@ -1606,7 +1606,7 @@ void LLViewerPartSim::updateSimulation()
     if (census && ++sSimCensus.mFrames % 600 == 0)
     {
         const double f = 600.0, k = 1000.0, st = std::max<double>(1.0, (double)sSimCensus.mStepped);
-        LL_DIAG("Q1Census") << "particle simulation per frame over 600: sources loop " << sSimCensus.mSrcCycles / f / k << " kcycles (" << sSimCensus.mSources / f << " sources), groups loop " << sSimCensus.mGrpCycles / f / k << " kcycles ("
+        RK_DIAG("Q1Census") << "particle simulation per frame over 600: sources loop " << sSimCensus.mSrcCycles / f / k << " kcycles (" << sSimCensus.mSources / f << " sources), groups loop " << sSimCensus.mGrpCycles / f / k << " kcycles ("
             << sSimCensus.mGroups / f << " groups, " << sSimCensus.mGroupsSkipped / f << " skipped as not visible), particles stepped " << sSimCensus.mStepped / f << ", records " << sSimCensus.mRecs / f << " (free " << sSimCensus.mModeRecs[0] / f << ", follow " << sSimCensus.mModeRecs[1] / f << ", target linear " << sSimCensus.mModeRecs[2] / f << ", target position " << sSimCensus.mModeRecs[3] / f << ", bounce " << sSimCensus.mModeRecs[4] / f << "), spawned " << sSimCensus.mSpawned / f
             << "; share of the stepped particles: analytic (no wind / target / bounce / callback) " << 100.0 * sSimCensus.mAnalytic / st << "%, of those with nothing from the source either " << 100.0 * sSimCensus.mAnalyticSrc / st
             << "%; follow source " << 100.0 * sSimCensus.mFollowSrc / st << "%, wind " << 100.0 * sSimCensus.mWind / st << "%, target pos " << 100.0 * sSimCensus.mTargetPos / st << "%, target linear " << 100.0 * sSimCensus.mTargetLinear / st
@@ -1625,12 +1625,12 @@ void LLViewerPartSim::updateSimulation()
             }
             if (!by_law.empty())
             {
-                LL_DIAG("Q1Census") << "closed form against the stepped state by law:" << by_law << LL_ENDL;
+                RK_DIAG("Q1Census") << "closed form against the stepped state by law:" << by_law << LL_ENDL;
             }
         }
         if (sSimCensus.mCmpN)
         {
-            LL_DIAG("Q1Census") << "closed form against the stepped state, " << sSimCensus.mCmpN << " particle steps compared: largest position difference " << sSimCensus.mCmpPos << " m (at age " << sSimCensus.mCmpPosAge << " s; "
+            RK_DIAG("Q1Census") << "closed form against the stepped state, " << sSimCensus.mCmpN << " particle steps compared: largest position difference " << sSimCensus.mCmpPos << " m (at age " << sSimCensus.mCmpPosAge << " s; "
                 << sSimCensus.mCmpPosOver << " steps over 1 mm), velocity " << sSimCensus.mCmpVel << " m/s, colour " << sSimCensus.mCmpColor << " (1.0 = full scale), scale " << sSimCensus.mCmpScale << " m, glow " << sSimCensus.mCmpGlow << " of 255" << LL_ENDL;
         }
         sSimCensus = PartSimCensus();

@@ -204,7 +204,7 @@ LLSpatialGroup::~LLSpatialGroup()
 
     sNodeCount--;
 
-    if (hasState(FS_WAKING))
+    if (hasState(RK_WAKING))
     {
         gPipeline.wakeForget(this);
     }
@@ -374,7 +374,7 @@ void rk_leave_census_report(double frames)
 
 bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 {
-    LL_CPU_ZONE("octree: group updateInGroup");
+    RK_CPU_ZONE("octree: group updateInGroup");
     LL_PROFILE_ZONE_SCOPED;
     drawablep->updateSpatialExtents();
 
@@ -491,9 +491,9 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
 
 void LLSpatialGroup::rebuildGeom()
 {
-    // <FS> whatever asked for this rebuild, the draw infos are back after it. FS_WAKING stays: a group is in the wake queue exactly when it has that bit (wakeGroups clears it when it takes the group out, and
-    // the destructor takes a waiting group out), so the entry cannot outlive the group; wakeGroups skips a group that is no longer FS_RELEASED.
-    clearState(FS_RELEASED);
+    // <FS> whatever asked for this rebuild, the draw infos are back after it. RK_WAKING stays: a group is in the wake queue exactly when it has that bit (wakeGroups clears it when it takes the group out, and
+    // the destructor takes a waiting group out), so the entry cannot outlive the group; wakeGroups skips a group that is no longer RK_RELEASED.
+    clearState(RK_RELEASED);
     if (!isDead())
     {
         RKRebuildBatch* batch = RKRebuildBatch::current();
@@ -501,7 +501,7 @@ void LLSpatialGroup::rebuildGeom()
         {
             batch->mJustDeferred = nullptr;
         }
-        { LL_CPU_ZONE("rebuild: partition rebuildGeom (the volume or simple geometry manager)"); getSpatialPartition()->rebuildGeom(this); }
+        { RK_CPU_ZONE("rebuild: partition rebuildGeom (the volume or simple geometry manager)"); getSpatialPartition()->rebuildGeom(this); }
         if (batch && batch->mJustDeferred == this)
         {   // its fill waits for the batch: so does the fragment, which reads the draw infos
             batch->mJustDeferred = nullptr;
@@ -509,7 +509,7 @@ void LLSpatialGroup::rebuildGeom()
         }
         else
         {
-            LL_CPU_ZONE("rebuild: scene geometry fragment build");
+            RK_CPU_ZONE("rebuild: scene geometry fragment build");
             rk_scene_fragment_build(this);
         }
 
@@ -536,7 +536,7 @@ void LLSpatialGroup::rebuildMesh()
 
 void LLSpatialPartition::rebuildGeom(LLSpatialGroup* group)
 {
-    LL_CPU_ZONE("octree: partition rebuildGeom");
+    RK_CPU_ZONE("octree: partition rebuildGeom");
     if (group->isDead() || !group->hasState(LLSpatialGroup::GEOM_DIRTY))
     {
         return;
@@ -1155,7 +1155,7 @@ LLSpatialPartition::~LLSpatialPartition()
 
 LLSpatialGroup *LLSpatialPartition::put(LLDrawable *drawablep, bool was_visible)
 {
-    LL_CPU_ZONE("octree: partition put");
+    RK_CPU_ZONE("octree: partition put");
     LL_PROFILE_ZONE_SCOPED;
     drawablep->updateSpatialExtents();
 
@@ -1182,7 +1182,7 @@ LLSpatialGroup *LLSpatialPartition::put(LLDrawable *drawablep, bool was_visible)
 
 bool LLSpatialPartition::remove(LLDrawable *drawablep, LLSpatialGroup *curp)
 {
-    LL_CPU_ZONE("octree: partition remove");
+    RK_CPU_ZONE("octree: partition remove");
     LL_PROFILE_ZONE_SCOPED;
     if (!curp->removeObject(drawablep))
     {
@@ -1200,7 +1200,7 @@ bool LLSpatialPartition::remove(LLDrawable *drawablep, LLSpatialGroup *curp)
 
 void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool immediate)
 {
-    LL_CPU_ZONE("octree: partition move");
+    RK_CPU_ZONE("octree: partition move");
     LL_PROFILE_ZONE_SCOPED;
     RKAttCensus::Scope att_census(RKAttCensus::sPartitionMove, drawablep);
     // sanity check submitted by open source user bushing Spatula
@@ -1269,7 +1269,7 @@ void LLSpatialPartition::shift(const LLVector4a &offset)
     shifter.traverse(mOctree);
     if (rk_diag_on() && shifter.mCount)
     {
-        LL_DIAG("VkShift") << "region shift: partition " << (S32)mPartitionType << " " << shifter.mCount << " groups shifted and touched (their table rows are made again: the worker's copy follows)" << LL_ENDL;
+        RK_DIAG("VkShift") << "region shift: partition " << (S32)mPartitionType << " " << shifter.mCount << " groups shifted and touched (their table rows are made again: the worker's copy follows)" << LL_ENDL;
     }
 }
 
@@ -1607,7 +1607,7 @@ bool LLSpatialPartition::getVisibleExtents(LLCamera& camera, LLVector3& visMin, 
 // <FS> the cascades' cull in pieces (see the declarations in llspatialpartition.h)
 void LLSpatialPartition::cullShadowWhole(LLCamera& camera)
 {
-    LL_CPU_ZONE("updateCull: partition cull");
+    RK_CPU_ZONE("updateCull: partition cull");
     LLOctreeCullShadow culler(&camera);
     culler.traverse(mOctree);
 }
@@ -1620,7 +1620,7 @@ void LLSpatialPartition::cullShadowSplit(LLCamera& camera, S32 levels, const std
 
 void LLSpatialPartition::cullShadowTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task)
 {
-    LL_CPU_ZONE("updateCull: partition cull");
+    RK_CPU_ZONE("updateCull: partition cull");
     LLOctreeCullShadow culler(&camera);
     culler.traverseTask(task);
 }
@@ -1674,7 +1674,7 @@ extern bool gCubeSnapshot;
 
 S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
 {
-    LL_CPU_ZONE("octree: partition cull (render)");
+    RK_CPU_ZONE("octree: partition cull (render)");
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
 #if LL_OCTREE_PARANOIA_CHECK
     ((LLSpatialGroup*)mOctree->getListener(0))->checkStates();

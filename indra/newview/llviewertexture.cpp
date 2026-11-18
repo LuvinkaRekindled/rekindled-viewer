@@ -78,7 +78,7 @@
 #include "llwindow.h"
 #include "rkvkbridge.h"     // <FS> Vulkan: the OS's video memory numbers for the texture budget
 #include "rktexturearrivaltrace.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 #include <unordered_map>
 
 std::string rk_stack_here(int skip, int max_frames);       // (rkgpuzonetimer.cpp)
@@ -1960,7 +1960,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     if (mFTType == FTT_SERVER_BAKE)
     {
         // <FS> a server bake's image was created: the id with the GL name its texture object has now (a loader thread's new image takes the name over a moment later), so a GL name seen in a failing check can be tied to an id
-        LL_DIAG("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
+        RK_DIAG("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
                           << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
     }
     if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);

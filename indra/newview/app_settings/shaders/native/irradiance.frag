@@ -151,7 +151,7 @@ vec4 filterColor(vec3 N)
         lod = clamp(lod, 0, max_probe_lod);
 
         // sample lambertian at a lower resolution to avoid fireflies
-        vec4 lambertian = textureLod(rk_tblcubearray[nonuniformEXT(LL_HM(rk_ti_cubearray_reflectionProbes))], vec4(H, sourceIdx), lod);
+        vec4 lambertian = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(H, sourceIdx), lod);
 
         color += lambertian;
     }

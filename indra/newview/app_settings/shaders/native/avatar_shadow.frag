@@ -19,7 +19,7 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
 #ifdef SHADOW_ALPHA
-    float alpha = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0).a;
+    float alpha = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_diffuseMap))], vary_texcoord0).a;
 #ifdef SHADOW_COLOR_ALPHA
     alpha *= color.a;
 #endif

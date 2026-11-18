@@ -11,8 +11,8 @@
  * Faces whose position comes from something only the main thread has (rigged, media, particles, a moving object) are marked volatile: their textures keep the face loop.
  */
 
-#ifndef LL_LLVIEWERTEXTURERECS_H
-#define LL_LLVIEWERTEXTURERECS_H
+#ifndef RK_RKVIEWERTEXTURERECS_H
+#define RK_RKVIEWERTEXTURERECS_H
 
 #include "stdtypes.h"
 
@@ -65,4 +65,4 @@ public:
     static Stats stats();
 };
 
-#endif // LL_LLVIEWERTEXTURERECS_H
+#endif // RK_RKVIEWERTEXTURERECS_H

@@ -35,7 +35,7 @@
 #include "llrender.h"
 #include "llvertexbuffer.h"
 #include "llrendertarget.h"
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include "rkvkshader.h"
 #include "rkvknative.h"
 #include "rkvkrenderer.h"
@@ -361,7 +361,7 @@ void RKShaderProgram::unloadInternal()
 
 }
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 void RKShaderProgram::mirrorDestroy()
 {
     if (!mVkProgram && !mVkProgramPending && !RKVkBridge::isReady()) return;   // cheap exit when the mirror is off
@@ -856,7 +856,7 @@ bool RKShaderProgram::createShader()
     sInstances.insert(this);
     mCensusBinds = 0;
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (mNativeFragment.empty() || mNativeFromManifest)
     {
         // <FS> stage 4 step 1: a program of a converted family is built from its manifest line (no stock files behind it)
@@ -948,14 +948,14 @@ bool RKShaderProgram::createShader()
 
     mCensusBinds = 0;       // <FS> the binds a program makes while it is made (uniform mapping, texture channels) are not use
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (success)
     {
         mirrorCreate();
     }
 #endif
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (success)
     {
         // LL_VK_PROGRAM_MAP=<tag>: appends what the viewer sees of this program (which reserved uniform / attribute exists, the program's own uniform index behind it and the
@@ -1160,7 +1160,7 @@ void RKShaderProgram::clearPermutations()
 void RKShaderProgram::addPermutation(std::string name, std::string value)
 {
     mDefines[name] = value;
-    if (name == "LL_VERTEX_PULL")
+    if (name == "RK_VERTEX_PULL")
     {
         mVertexPull = true;
     }
@@ -1574,7 +1574,7 @@ void RKShaderProgram::unbind(void)
 
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
     if (RKVkBridge::isReady())
     {
         if (RKVkAsync::gEnabled)

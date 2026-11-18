@@ -34,7 +34,7 @@ void main()
     frag_velocity = vec2(1.0, 0.0);
 #endif
     mirror_clip(vary_position);
-    const vec4 col = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0) * vertex_color;
+    const vec4 col = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0) * vertex_color;
     if (col.a < vary_cutoff)
     {
         discard;

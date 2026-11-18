@@ -11,8 +11,8 @@
  * the texture raw: on the user's 2676 cached textures (2026-10-29) that kept 10.6 % of the textures and 4.8 % of the pixels raw, all of the visible cases fine-grained normal maps.
  */
 
-#ifndef LL_LLIMAGEBC7_H
-#define LL_LLIMAGEBC7_H
+#ifndef RK_RKIMAGEBC7_H
+#define RK_RKIMAGEBC7_H
 
 #include "stdtypes.h"
 #include "llpointer.h"
@@ -69,4 +69,4 @@ namespace RKImageBC7
     Stats takeStats();
 }
 
-#endif // LL_LLIMAGEBC7_H
+#endif // RK_RKIMAGEBC7_H

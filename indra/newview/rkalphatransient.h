@@ -3,8 +3,8 @@
  * @brief S5f F3 (doc/vulkan/S5-design.md section 17): one alpha draw the scene table does not keep, as the worker's transient record (kind 32) takes it: the entry (arrays, flags), the run key, the
  *        textures it names (as pointers: the caller makes the GL names), its PBR values.
  */
-#ifndef LL_LLALPHATRANSIENT_H
-#define LL_LLALPHATRANSIENT_H
+#ifndef RK_RKALPHATRANSIENT_H
+#define RK_RKALPHATRANSIENT_H
 
 #include "rkvkbridge.h"
 

@@ -18,9 +18,9 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     // the wave maps (mipmapped: the level comes from the pixels around)
-    const vec3 wave1 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], vec2(refCoord.w, view.w)).xyz * 2.0 - 1.0;
-    const vec3 wave2 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], littleWave.xy).xyz * 2.0 - 1.0;
-    const vec3 wave3 = texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], littleWave.zw).xyz * 2.0 - 1.0;
+    const vec3 wave1 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], vec2(refCoord.w, view.w)).xyz * 2.0 - 1.0;
+    const vec3 wave2 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], littleWave.xy).xyz * 2.0 - 1.0;
+    const vec3 wave3 = texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], littleWave.zw).xyz * 2.0 - 1.0;
 
     if (mirror_flag > 0.0 && dot(vary_position, clipPlane.xyz) + clipPlane.w < 0.0)
     {
@@ -28,14 +28,14 @@ void main()
     }
 
     const vec2 screen_tc = (refCoord.xy / refCoord.z) * 0.5 + 0.5;
-    const float water_mask = textureLod(rk_tbl2d[LL_HM(rk_ti_exclusionTex)], screen_tc, 0.0).r;
+    const float water_mask = textureLod(rk_tbl2d[RK_HM(rk_ti_exclusionTex)], screen_tc, 0.0).r;
 
     // the ripples push the picture below (not where an exclusion surface cuts the water out)
     const vec3 wavef = normalize(wave1 + wave2 + wave3);
     const vec2 distort = mix(screen_tc, screen_tc + wavef.xy * refScale, water_mask);
 
 #ifdef TRANSPARENT_WATER
-    const vec4 fb = textureLod(rk_tbl2d[LL_HM(rk_ti_screenTex)], distort, 0.0);
+    const vec4 fb = textureLod(rk_tbl2d[RK_HM(rk_ti_screenTex)], distort, 0.0);
 #else
     const vec4 fb = vec4(waterFogColorLinear, 0.0);
 #endif

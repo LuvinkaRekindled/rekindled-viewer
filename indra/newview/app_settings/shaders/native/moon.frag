@@ -23,7 +23,7 @@ void main()
     if (moon_dir.z > 0)
         fade = clamp(moon_dir.z * moon_dir.z * 4.0, 0.0, 1.0);
 
-    vec4 c      = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
+    vec4 c      = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_texcoord0.xy);
 
     // SL-14113 Don't write to depth; prevent moon's quad from hiding stars which should be visible
     // Moon texture has transparent pixels <0x55,0x55,0x55,0x00>

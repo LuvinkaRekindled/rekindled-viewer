@@ -16,8 +16,8 @@
  * $/LicenseInfo$
  */
 
-#ifndef LL_LLFORKJOINPOOL_H
-#define LL_LLFORKJOINPOOL_H
+#ifndef RK_RKFORKJOINPOOL_H
+#define RK_RKFORKJOINPOOL_H
 
 #include "llthread.h"
 #include "rkphasecheck.h"       // GPU-LIFETIMES.md step 4: the phase counter
@@ -546,4 +546,4 @@ inline void RKForkJoinPool::reportLabels(unsigned frame_count)
     LL_INFOS("PoolLabels") << "pool job time per frame over " << frames << " frames (ms on all threads, of it on the main thread): total " << total << " (main " << total_main << ")" << lines << LL_ENDL;
 }
 
-#endif // LL_LLFORKJOINPOOL_H
+#endif // RK_RKFORKJOINPOOL_H

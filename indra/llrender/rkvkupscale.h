@@ -5,10 +5,10 @@
  *        The facade stays so the callers need not know which library is behind it.
  */
 
-#ifndef LL_LLVKUPSCALE_H
-#define LL_LLVKUPSCALE_H
+#ifndef RK_RKVKUPSCALE_H
+#define RK_RKVKUPSCALE_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkcontext.h"
 
@@ -60,5 +60,5 @@ namespace RKVkUpscale
     VkImageLayout outputLayout();
 }
 
-#endif // LL_VULKAN
-#endif // LL_LLVKUPSCALE_H
+#endif // RK_VULKAN
+#endif // RK_RKVKUPSCALE_H

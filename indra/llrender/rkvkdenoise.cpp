@@ -8,11 +8,11 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkdenoise.h"
 
-#if defined(LL_FFX_DENOISER)
+#if defined(RK_FFX_DENOISER)
 #include <vulkan/vulkan.h>
 #include <FidelityFX/host/ffx_denoiser.h>
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
@@ -26,7 +26,7 @@ namespace RKVkDenoise
 
 using namespace RKVk;       // the loaded Vulkan entry points live there
 
-#if defined(LL_FFX_DENOISER)
+#if defined(RK_FFX_DENOISER)
 
 namespace
 {
@@ -414,4 +414,4 @@ bool shadows(VkCommandBuffer, const ShadowParams&) { return false; }
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

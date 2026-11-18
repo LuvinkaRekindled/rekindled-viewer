@@ -19,7 +19,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord);
     vec2 tc = vary_fragcoord * screen_res;
 
     // Convert normalized frame_rect to pixel values
@@ -44,7 +44,7 @@ void main()
             for (int y = -1; y <= 1; ++y)
             {
                 vec2 offset = vec2(x, y) * blur_size / screen_res;
-                blur_color += texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord + offset).rgb;
+                blur_color += texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord + offset).rgb;
             }
         }
 

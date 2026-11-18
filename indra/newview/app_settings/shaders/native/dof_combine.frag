@@ -24,7 +24,7 @@ vec4 dofSample(vec2 tc)
     tc.x = min(tc.x, dof_width);
     tc.y = min(tc.y, dof_height);
 
-    return texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc);
+    return texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc);
 }
 
 void main()
@@ -33,7 +33,7 @@ void main()
 
     vec4 dof = dofSample(vary_fragcoord.xy*res_scale);
 
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], vary_fragcoord.xy);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], vary_fragcoord.xy);
 
     float a = min(abs(diff.a*2.0-1.0) * max_cof*res_scale*res_scale, 1.0);
 
@@ -42,10 +42,10 @@ void main()
         float sc = a/res_scale;
 
         vec4 col;
-        col = texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(sc,sc)/screen_res);
-        col += texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(-sc,sc)/screen_res);
-        col += texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(sc,-sc)/screen_res);
-        col += texture(rk_tbl2d[LL_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(-sc,-sc)/screen_res);
+        col = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(sc,sc)/screen_res);
+        col += texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(-sc,sc)/screen_res);
+        col += texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(sc,-sc)/screen_res);
+        col += texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], vary_fragcoord.xy+vec2(-sc,-sc)/screen_res);
 
         diff = mix(diff, col*0.25, a);
     }

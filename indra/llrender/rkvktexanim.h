@@ -17,8 +17,8 @@
  * evaluate() below is the CPU twin of rk_texanim_core in llshadermgr.cpp (line for line): the compare mode of FSTexAnimOnGPU, the faces that bake their matrix into texture
  * coordinates, and the programs that are not pull programs use it.
  */
-#ifndef LL_LLVKTEXANIM_H
-#define LL_LLVKTEXANIM_H
+#ifndef RK_RKVKTEXANIM_H
+#define RK_RKVKTEXANIM_H
 
 #include "linden_common.h"
 #include <atomic>

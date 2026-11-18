@@ -141,7 +141,7 @@ struct RKGeometryPassInfo
 
 // <FS> S4 A1: the rigged draws of the diffuse and the materials passes as geometry records (kind 25, skinned pull programs): whether the skinned diffuse pull program and the packet path exist
 bool rk_rigged_packets_enabled();
-enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4, LL_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
+enum { RK_PASS_ARRAY_NORMALS = 1, RK_PASS_ARRAY_EMISSIVE = 2, RK_PASS_ARRAY_BUMP = 4, RK_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
 U32 rk_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
 int rk_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
@@ -410,7 +410,7 @@ public:
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
     static bool pbrAlphaEntry(const RKDrawBatch& params, RKVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
-    static bool geometryEntry(const RKDrawBatch& params, const RKGeometryPassInfo* materials, RKVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
+    static bool geometryEntry(const RKDrawBatch& params, const RKGeometryPassInfo* materials, RKVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = RK_PASS_ARRAY_NORMALS);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     // <FS:Beq> be defensive about UAF with skinInfo during LocalMesh
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo);

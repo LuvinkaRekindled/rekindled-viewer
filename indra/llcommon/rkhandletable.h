@@ -13,8 +13,8 @@
  * Independent of the viewer on purpose (the texture core must be reusable by a native renderer): T is only a tag and a pointer type.
  */
 
-#ifndef LL_LLHANDLETABLE_H
-#define LL_LLHANDLETABLE_H
+#ifndef RK_RKHANDLETABLE_H
+#define RK_RKHANDLETABLE_H
 
 #include "stdtypes.h"
 #include <atomic>
@@ -125,4 +125,4 @@ private:
     }
 };
 
-#endif // LL_LLHANDLETABLE_H
+#endif // RK_RKHANDLETABLE_H

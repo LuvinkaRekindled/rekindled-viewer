@@ -1,6 +1,6 @@
 // avatar.vert: the system avatar (the legacy body: skin, hair, eyes, eyelashes of LLViewerJointMesh) in the G-buffer pass, from the geometry packet path (the draw of one joint mesh range, rk_pull_draw_range): the
 // row names the mesh's arrays; the vertex is skinned in eye space by the joint palette uniform (matrixPalette, 15 joints, three rows each) with the weight of the vertex (the joint in the integer part, the blend
-// with the next one in the fraction), then projected. Stands in for "Deferred Avatar Shader pull" (deferred/avatarV.glsl with LL_VERTEX_PULL, avatar/avatarSkinV.glsl). Defines: AVATAR_PASS, AVATAR_CLOTH (the wind of
+// with the next one in the fraction), then projected. Stands in for "Deferred Avatar Shader pull" (deferred/avatarV.glsl with RK_VERTEX_PULL, avatar/avatarSkinV.glsl). Defines: AVATAR_PASS, AVATAR_CLOTH (the wind of
 // the clothing, only for the old program that has the wind uniforms).
 
 #include "alpha_pass.inc"

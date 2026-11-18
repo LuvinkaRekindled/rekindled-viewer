@@ -7,7 +7,7 @@
 
 #include "rkvkbridge.h"
 
-#if !defined(LL_VULKAN)
+#if !defined(RK_VULKAN)
 
 bool RKVkBridge::isReady() { return false; }
 void RKVkBridge::setSymbolizer(std::string (*)(const void*)) {}
@@ -75,7 +75,7 @@ void RKVkBridge::setBindlessPersistent(bool) {}
 void RKVkBridge::stopAsync() {}
 void RKVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&, const std::vector<U64>&, const std::vector<std::vector<U64>>&, bool) {}
 
-#else // LL_VULKAN
+#else // RK_VULKAN
 
 #include "rkrenderheaders.h"
 #if LL_WINDOWS
@@ -1807,4 +1807,4 @@ void RKVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* 
     RKVkWorker::on_shadow_packets(header, blob);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

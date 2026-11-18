@@ -5,8 +5,8 @@
 // whatever its glossiness, then multiplied the answer by that glossiness: here it traces once, and not at all when the surface is not glossy. Same result, a quarter of the work or none.
 
 // (explicit level 0: the loops below end at a different step for each pixel, and an implicit level needs the neighbouring pixels' derivatives; both textures have one level)
-#define SCENE_MAP rk_tbl2d[LL_HM(rk_ti_sceneMap)]
-#define SCENE_DEPTH rk_tbl2d[LL_HM(rk_ti_sceneDepth)]
+#define SCENE_MAP rk_tbl2d[RK_HM(rk_ti_sceneMap)]
+#define SCENE_DEPTH rk_tbl2d[RK_HM(rk_ti_sceneDepth)]
 
 // the eye space depth of the previous frame at a screen position
 float ssr_scene_depth(vec2 uv)

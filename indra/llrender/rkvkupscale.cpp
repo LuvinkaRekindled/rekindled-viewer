@@ -5,7 +5,7 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkupscale.h"
 #include "rkvkfsr.h"
@@ -135,4 +135,4 @@ VkImageLayout outputLayout()
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

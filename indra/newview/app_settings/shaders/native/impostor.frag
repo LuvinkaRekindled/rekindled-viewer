@@ -24,14 +24,14 @@ layout(location = 4) out vec2 frag_velocity;
 void main()
 {
     frag_velocity = vec2(1.0, 0.0);
-    const vec4 col = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_diffuse))], vary_texcoord0);
+    const vec4 col = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot_diffuse))], vary_texcoord0);
     if (col.a < minimum_alpha)
     {
         discard;
     }
     frag_albedo = vec4(col.rgb, 0.0);
-    frag_spec = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_specular))], vary_texcoord0);
-    frag_normal = vec4(texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_normal))], vary_texcoord0).xyz, 0.34);
+    frag_spec = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot_specular))], vary_texcoord0);
+    frag_normal = vec4(texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot_normal))], vary_texcoord0).xyz, 0.34);
 #if defined(HAS_EMISSIVE)
     frag_emissive = vec4(0.0);
 #endif

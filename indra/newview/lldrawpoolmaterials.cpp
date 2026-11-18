@@ -54,7 +54,7 @@ S32 LLDrawPoolMaterials::getNumDeferredPasses()
 void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
-    LL_CPU_ZONE("materials: beginDeferredPass");
+    RK_CPU_ZONE("materials: beginDeferredPass");
 
     bool rigged = false;
     if (pass >= 12)
@@ -81,7 +81,7 @@ void LLDrawPoolMaterials::beginDeferredPass(S32 pass)
 void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
-    LL_CPU_ZONE("materials: endDeferredPass");
+    RK_CPU_ZONE("materials: endDeferredPass");
 
     if (!mUntouched)
     {
@@ -99,7 +99,7 @@ static const U32 sMaterialPassShader[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 
 void LLDrawPoolMaterials::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MATERIAL;
-    LL_CPU_ZONE("materials: renderDeferred");
+    RK_CPU_ZONE("materials: renderDeferred");
     static const U32 type_list[] =
     {
         LLRenderPass::PASS_MATERIAL,
@@ -145,13 +145,13 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         const U32 idx = sMaterialPassShader[pass];
         RKShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
         {
-            LL_CPU_ZONE("materials: bind pull program");
+            RK_CPU_ZONE("materials: bind pull program");
             // the native G-buffer programs have no texture slot and read none of what bindDeferredShader sets (shadow matrices, clip planes, SSAO, sun and moon direction, probe LOD; sunlight_color and
             // moonlight_color are in the block but no G-buffer file reads them): the plain bind, as the simple pool has it (AUDIT-shaders-2026-11-18.md section 1 item 10)
             pull->bind();
         }
         {
-            LL_CPU_ZONE("materials: push packets");
+            RK_CPU_ZONE("materials: push packets");
             pushGeometryPackets(type, rigged);
         }
     }

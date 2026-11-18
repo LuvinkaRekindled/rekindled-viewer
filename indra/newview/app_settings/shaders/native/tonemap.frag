@@ -99,7 +99,7 @@ vec3 toneMap(vec3 color)
 #ifndef NO_POST
     vec3 linear_input_color = color;
 
-    float exp_scale = texture(rk_tbl2d[LL_HM(rk_ti_exposureMap)], vec2(0.5, 0.5)).r;
+    float exp_scale = texture(rk_tbl2d[RK_HM(rk_ti_exposureMap)], vec2(0.5, 0.5)).r;
     float final_exposure = exposure * exp_scale;
 
     vec3 exposed_color = color * final_exposure;
@@ -120,7 +120,7 @@ vec3 toneMap(vec3 color)
     color = mix(exposed_linear_input, tonemapped_color, tonemap_mix);
     color = clamp(color, 0.0, 1.0);
 #else
-    color *= exposure * texture(rk_tbl2d[LL_HM(rk_ti_exposureMap)], vec2(0.5, 0.5)).r;
+    color *= exposure * texture(rk_tbl2d[RK_HM(rk_ti_exposureMap)], vec2(0.5, 0.5)).r;
     color = clamp(color, 0.0, 1.0);
 #endif
     return color;
@@ -138,7 +138,7 @@ vec3 legacyGamma(vec3 color)
 void main()
 {
     // this is the one of the rare spots where diffuseRect contains linear color values (not sRGB)
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord);
 
 #ifndef NO_POST
     diff.rgb = toneMap(diff.rgb);

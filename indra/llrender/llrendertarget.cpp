@@ -37,7 +37,7 @@
 #include <string>
 #include <cstring>
 #include "rkvkplatform.h"
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include "rkvkasync.h"
 #include "rkvkstate.h"
 #include "rkvktex.h"

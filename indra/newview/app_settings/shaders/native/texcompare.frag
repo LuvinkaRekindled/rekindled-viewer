@@ -21,10 +21,10 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    frag_color = abs(texture(rk_tbl2d[LL_HM(rk_ti_tex0)], vary_texcoord0.xy) - texture(rk_tbl2d[LL_HM(rk_ti_tex1)], vary_texcoord0.xy));
+    frag_color = abs(texture(rk_tbl2d[RK_HM(rk_ti_tex0)], vary_texcoord0.xy) - texture(rk_tbl2d[RK_HM(rk_ti_tex1)], vary_texcoord0.xy));
 
     const vec2 dither_coord = vec2(vary_texcoord0[0] * dither_scale_s, vary_texcoord0[1] * dither_scale_t);
-    const vec4 dither_vec = texture(rk_tbl2d[LL_HM(rk_ti_dither_tex)], dither_coord.xy);
+    const vec4 dither_vec = texture(rk_tbl2d[RK_HM(rk_ti_dither_tex)], dither_coord.xy);
 
     for (int i = 0; i < 3; i++)
     {

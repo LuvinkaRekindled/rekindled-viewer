@@ -7,8 +7,8 @@
  * window, so these timers name the call and the sound the moment it happens ("AudioStall" tag). doc/vulkan/PLAN-audio-main-thread.md.
  */
 
-#ifndef LL_LLAUDIOSTALL_H
-#define LL_LLAUDIOSTALL_H
+#ifndef RK_RKAUDIOSTALL_H
+#define RK_RKAUDIOSTALL_H
 
 #include "linden_common.h"
 #include "lluuid.h"
@@ -49,4 +49,4 @@ private:
     std::string mDetail;
 };
 
-#endif // LL_LLAUDIOSTALL_H
+#endif // RK_RKAUDIOSTALL_H

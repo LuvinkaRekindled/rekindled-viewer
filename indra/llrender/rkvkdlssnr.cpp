@@ -5,11 +5,11 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkdlssnr.h"
 
-#if defined(LL_NGX_NR)
+#if defined(RK_NGX_NR)
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
@@ -38,7 +38,7 @@ int featureId()
     return 18;
 }
 
-#if !defined(LL_NGX_NR)
+#if !defined(RK_NGX_NR)
 
 void probe(VkInstance, VkPhysicalDevice, VkDevice, NVSDK_NGX_Parameter*, const NVSDK_NGX_FeatureDiscoveryInfo&)
 {
@@ -472,8 +472,8 @@ void shutdown()
     gDevice = VK_NULL_HANDLE;
 }
 
-#endif // LL_NGX_NR
+#endif // RK_NGX_NR
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

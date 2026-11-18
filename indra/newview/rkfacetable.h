@@ -8,8 +8,8 @@
  * handles and matrix ids, the vertex buffer slice as an arena reference: they get their own row (a second table), this one stays one cache line.
  */
 
-#ifndef LL_LLFACETABLE_H
-#define LL_LLFACETABLE_H
+#ifndef RK_RKFACETABLE_H
+#define RK_RKFACETABLE_H
 
 #include <cstddef>
 #include "rkrowtable.h"
@@ -63,4 +63,4 @@ static_assert(offsetof(RKFaceRow, owner) == 56 && offsetof(RKFaceRow, distance) 
 
 using RKFaceRows = RKRowTable<RKFaceRow, (1u << 20), 10>;
 
-#endif // LL_LLFACETABLE_H
+#endif // RK_RKFACETABLE_H

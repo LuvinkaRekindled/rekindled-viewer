@@ -14,5 +14,5 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    frag_color = max(texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)],vary_texcoord0.xy) * color, vec4(0));
+    frag_color = max(texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)],vary_texcoord0.xy) * color, vec4(0));
 }

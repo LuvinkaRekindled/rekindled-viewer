@@ -1,4 +1,4 @@
-// rt_scene.glsl: what a native program that traces rays (the manifest define LL_RT_QUERY: the loader adds `#extension GL_EXT_ray_query` to the head and the draw binds set 3) sees of the frame's ray scene:
+// rt_scene.glsl: what a native program that traces rays (the manifest define RK_RT_QUERY: the loader adds `#extension GL_EXT_ray_query` to the head and the draw binds set 3) sees of the frame's ray scene:
 // set 3 binding 0 the acceleration structure, binding 1 the geometry records of its masked structures (RKRtGeom: record 0 is the header, see rtSceneFrame in lib/rt.glsl), and the materials the records point at.
 // The declarations are the loader's own for the stock shaders (rkvkshader.cpp, `w.mUsesRt`), as text: the layouts are the renderer's (rkvkrt.cpp, GpuGeom and the material table). The frame's 2D table of
 // textures is the native one (rk_tbl2d, set 2 binding 0): `rk_rt_tex` is a name for it, so the stock code reads textures as it did.

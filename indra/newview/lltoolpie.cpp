@@ -870,7 +870,7 @@ bool LLToolPie::handleHover(S32 x, S32 y, MASK mask)
         }
     }
     // <FS:minerjr> [FIRE-35019]
-    { LL_CPU_ZONE("tool: hover pick"); mHoverPick = gViewerWindow->pickImmediate(x, y, false, pick_rigged); }
+    { RK_CPU_ZONE("tool: hover pick"); mHoverPick = gViewerWindow->pickImmediate(x, y, false, pick_rigged); }
     LLViewerObject *parent = NULL;
     LLViewerObject *object = mHoverPick.getObject();
 // [RLVa:KB] - Checked: RLVa-1.1.0

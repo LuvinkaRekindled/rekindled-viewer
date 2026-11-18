@@ -25,12 +25,12 @@ layout(location = 4) out vec2 frag_velocity;
 
 vec4 cloudNoise(vec2 uv)
 {
-    vec4 a = texture(rk_tbl2d[LL_HM(rk_ti_cloud_noise_texture)], uv);
+    vec4 a = texture(rk_tbl2d[RK_HM(rk_ti_cloud_noise_texture)], uv);
     if (blend_factor <= 0.0)
     {
         return a;       // (mix(a, b, 0) is a: the driver sets the factor to 0 with one noise texture or no scroll; the second image is not read then)
     }
-    vec4 b = texture(rk_tbl2d[LL_HM(rk_ti_cloud_noise_texture_next)], uv);
+    vec4 b = texture(rk_tbl2d[RK_HM(rk_ti_cloud_noise_texture_next)], uv);
     vec4 cloud_noise_sample = mix(a, b, blend_factor);
     return cloud_noise_sample;
 }

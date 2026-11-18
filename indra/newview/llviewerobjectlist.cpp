@@ -111,7 +111,7 @@
 #include "fsareasearch.h" // <FS:Cron> Added to provide the ability to update the impact costs in area search. </FS:Cron>
 #include "llavataractions.h"
 #include "rkitemcensus.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 extern F32 gMinObjectDistance;
 extern bool gAnimateTextures;
@@ -1232,7 +1232,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("parallel motion blend");
         {
-            LL_CPU_ZONE("motion batch: blend (launch to join)");
+            RK_CPU_ZONE("motion batch: blend (launch to join)");
             const std::function<void(size_t)> blend1 = [&blend](size_t k) { blend(phase1[k]); };
             pool->runLabeled("avatar motion batch", phase1.size(), blend1);
         }
@@ -1256,14 +1256,14 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
                 const std::function<void(size_t)> att_job = [](size_t index) { jobs[index]->runAttachmentJob(); };
                 // (asked here, on this thread: getObjectCount() cleans the selection's node list)
                 { S32 on = 0; LLVOAvatar* owner = nullptr; LLVOAvatar::askAttachmentSelection(on, owner); LLVOAvatar::sAttachmentSelectedAvatar = owner; LLVOAvatar::sAttachmentSelectedForJobs = on; }
-                { LL_CPU_ZONE("motion batch: attachment jobs (launch to join)"); pool->runLabeled("avatar attachments", jobs.size(), att_job); }
+                { RK_CPU_ZONE("motion batch: attachment jobs (launch to join)"); pool->runLabeled("avatar attachments", jobs.size(), att_job); }
                 LLVOAvatar::sAttachmentSelectedForJobs = -1;
                 job_total += jobs.size();
             }
             batch_total += batch.size();
             if (++runs % 6000 == 0)
             {
-                LL_DIAG("AvLedger") << "attachment loops as pool jobs: " << (double)job_total / runs << " avatars a batch run as jobs (of " << (double)batch_total / runs << " in the batch)" << LL_ENDL;
+                RK_DIAG("AvLedger") << "attachment loops as pool jobs: " << (double)job_total / runs << " avatars a batch run as jobs (of " << (double)batch_total / runs << " in the batch)" << LL_ENDL;
             }
         }
     }
@@ -1288,7 +1288,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         }
         if (pool && phase2.size() >= 2)
         {
-            LL_CPU_ZONE("motion batch: blend of animated objects worn (launch to join)");
+            RK_CPU_ZONE("motion batch: blend of animated objects worn (launch to join)");
             const std::function<void(size_t)> blend2 = [&blend](size_t k) { blend(phase2[k]); };
             pool->runLabeled("avatar motion batch (animated objects worn)", phase2.size(), blend2);
         }
@@ -1340,7 +1340,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
     else
     {
-        LL_CPU_ZONE("motion batch: completions (main thread)");
+        RK_CPU_ZONE("motion batch: completions (main thread)");
         for (size_t i : phase1)
         {
             batch[i]->completeDeferredMotionUpdate();
@@ -1358,7 +1358,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         if (pool && batch.size() >= MIN_PARALLEL_BATCH)
         {
-            LL_CPU_ZONE("motion batch: palette jobs (launch to join)");
+            RK_CPU_ZONE("motion batch: palette jobs (launch to join)");
             const std::function<void(size_t)> pal_job = [&batch](size_t index) { batch[index]->buildPalettesInJob(); };
             pool->runLabeled("avatar palettes", batch.size(), pal_job);
         }
@@ -1552,7 +1552,7 @@ void LLViewerObjectList::update(LLAgent &agent)
                     objectp->idleUpdate(agent, frame_time);
                 }
                 else
-                { LL_CPU_ZONE(objectp->isAvatar() ? "objectlist: idleUpdate (avatars)" : "objectlist: idleUpdate (other objects)"); objectp->idleUpdate(agent, frame_time); }
+                { RK_CPU_ZONE(objectp->isAvatar() ? "objectlist: idleUpdate (avatars)" : "objectlist: idleUpdate (other objects)"); objectp->idleUpdate(agent, frame_time); }
         }
         if (gRKAvTimersOn)
         {
@@ -1562,7 +1562,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         LLVOAvatar::sMotionUpdateBatch = nullptr;
         if (!motion_batch.empty())
         {
-            { LL_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }
+            { RK_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }
             motion_batch.clear();
         }
         RKAvatarTable::endFrame();      // <FS> PLAN-avatars.md stage A step 4: the facts of the avatars' update are final: the render side reads them from the rows
@@ -1608,28 +1608,28 @@ void LLViewerObjectList::update(LLAgent &agent)
         }
 
         //update flexible objects
-        { LL_CPU_ZONE("objectlist: flexible objects"); LLVolumeImplFlexible::updateClass(); }
+        { RK_CPU_ZONE("objectlist: flexible objects"); LLVolumeImplFlexible::updateClass(); }
 
         //update animated textures
         if (gAnimateTextures)
         {
-            { LL_CPU_ZONE("objectlist: animated textures"); LLViewerTextureAnim::updateClass(); }
+            { RK_CPU_ZONE("objectlist: animated textures"); LLViewerTextureAnim::updateClass(); }
         }
     }
 
 
 
-    { LL_CPU_ZONE("objectlist: fetchObjectCosts"); fetchObjectCosts(); }
-    { LL_CPU_ZONE("objectlist: fetchPhysicsFlags"); fetchPhysicsFlags(); }
+    { RK_CPU_ZONE("objectlist: fetchObjectCosts"); fetchObjectCosts(); }
+    { RK_CPU_ZONE("objectlist: fetchPhysicsFlags"); fetchPhysicsFlags(); }
 
     // update max computed render cost
-    { LL_CPU_ZONE("objectlist: updateRenderComplexity"); LLVOVolume::updateRenderComplexity(); }
+    { RK_CPU_ZONE("objectlist: updateRenderComplexity"); LLVOVolume::updateRenderComplexity(); }
 
     // compute all sorts of time-based stats
     // don't factor frames that were paused into the stats
     if (! mWasPaused)
     {
-        { LL_CPU_ZONE("objectlist: frame stats"); LLViewerStats::getInstance()->updateFrameStats(time_diff); }
+        { RK_CPU_ZONE("objectlist: frame stats"); LLViewerStats::getInstance()->updateFrameStats(time_diff); }
     }
 
     /*

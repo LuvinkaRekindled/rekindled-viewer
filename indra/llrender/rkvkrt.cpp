@@ -5,7 +5,7 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkrt.h"
 #include <xmmintrin.h>
@@ -5437,4 +5437,4 @@ std::string report(double frames)
 } // namespace Rt
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

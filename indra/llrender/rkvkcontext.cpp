@@ -9,7 +9,7 @@
 #include "rkvkupscale.h"
 #include "rkvkdenoise.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +35,7 @@ namespace RKVk
 #define LL_VK_INSTANCE_FN(name) PFN_##name name = nullptr;
 #define LL_VK_DEVICE_FN(name) PFN_##name name = nullptr;
 #include "rkvkfunctions.inl"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
 const char* gDebugProgram = nullptr;
 bool gDeviceLost = false;
@@ -1094,7 +1094,7 @@ bool Context::createDevice()
     // at the faulting address (an image freed lately, with its debug name "GL texture N"); shader debug info lets the decoder map the faulting instruction when it is given the SPIR-V. LL_VK_DIAG=0 turns it off.
     VkDeviceDiagnosticsConfigCreateInfoNV diag_config = { VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV };
     {
-#if defined(LL_LOCAL_NV_DIAG)
+#if defined(RK_LOCAL_NV_DIAG)
         static const bool diag_on = getenv("LL_VK_DIAG") == nullptr || atoi(getenv("LL_VK_DIAG")) != 0;
 #else
         static const bool diag_on = false;      // a release build asks the driver for nothing NVIDIA specific (REKINDLED_LOCAL_NVIDIA turns it on for a local build)
@@ -2143,7 +2143,7 @@ VkCommandBuffer Context::beginFrame(bool wait)
                 ++bands[band];
                 if (++seen == 600)
                 {
-                    LL_DIAG("VkPhases") << "GPU time of 600 presented frames: up to 12 ms " << bands[0] << ", to 16.7 " << bands[1] << ", to 25 " << bands[2] << ", to 40 " << bands[3]
+                    RK_DIAG("VkPhases") << "GPU time of 600 presented frames: up to 12 ms " << bands[0] << ", to 16.7 " << bands[1] << ", to 25 " << bands[2] << ", to 40 " << bands[3]
                         << ", to 75 " << bands[4] << ", to 150 " << bands[5] << ", over 150 " << bands[6] << LL_ENDL;
                     memset(bands, 0, sizeof(bands));
                     seen = 0;
@@ -4158,4 +4158,4 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

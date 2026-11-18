@@ -8,10 +8,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKFORMAT_H
-#define LL_LLVKFORMAT_H
+#ifndef RK_RKVKFORMAT_H
+#define RK_RKVKFORMAT_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkrenderformat.h"
@@ -118,6 +118,6 @@ namespace RKVkFormat
     Level level(U32 gl_pname);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKFORMAT_H
+#endif // RK_RKVKFORMAT_H

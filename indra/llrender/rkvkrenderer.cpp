@@ -22,7 +22,7 @@
 #include "rkvkbridge.h"
 #include "rkvkrt.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include <chrono>
 #include <condition_variable>
@@ -34,7 +34,7 @@
 #include <cstdlib>
 #include "lldir.h"
 #include "llfile.h"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 namespace RKVk
 {
@@ -4848,7 +4848,7 @@ static void note_upload_log(VkDeviceSize bytes, U64 fill_us, U64 total_us, U32 s
     const auto now = std::chrono::steady_clock::now();
     if (now - a.mT0 >= std::chrono::seconds(2))
     {
-        LL_DIAG("VkUpload") << "texture uploads in " << std::chrono::duration_cast<std::chrono::milliseconds>(now - a.mT0).count() << " ms: " << a.mN << " uploads, "
+        RK_DIAG("VkUpload") << "texture uploads in " << std::chrono::duration_cast<std::chrono::milliseconds>(now - a.mT0).count() << " ms: " << a.mN << " uploads, "
                              << (double)a.mBytes / (1024.0 * 1024.0) << " MB, fill " << (double)a.mFillUs / 1000.0 << " ms, whole calls " << (double)a.mTotalUs / 1000.0
                              << " ms, longest " << (double)a.mMaxUs / 1000.0 << " ms, " << a.mSplits << " ended a render pass, " << a.mOwn << " with a buffer of their own, "
                              << a.mDeferred << " kept for the next frame" << LL_ENDL;
@@ -5110,7 +5110,7 @@ void Renderer::flushDeferredUploads(VkCommandBuffer cmd)
     static const bool log_on = getenv("LL_VK_UPLOADLOG") != nullptr || getenv("LL_VK_HITCHWATCH") != nullptr;
     if (log_on && mDeferredUploads.size() >= 200)
     {
-        LL_DIAG("VkUpload") << "recorded " << mDeferredUploads.size() << " uploads kept from between frames: " << images << " images, " << copies << " copies, "
+        RK_DIAG("VkUpload") << "recorded " << mDeferredUploads.size() << " uploads kept from between frames: " << images << " images, " << copies << " copies, "
                              << (double)mDeferredBytes / (1024.0 * 1024.0) << " MB" << LL_ENDL;
     }
     retireDeferredBlocks();
@@ -5178,7 +5178,7 @@ void Renderer::retargetDeferredUploads(Image* from, Image* to)
     }
     if (asks % 2000 == 0)
     {
-        LL_DIAG("VkUpload") << "deferred upload index: " << asks << " retargets (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
+        RK_DIAG("VkUpload") << "deferred upload index: " << asks << " retargets (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
     }
 }
 
@@ -5192,7 +5192,7 @@ void Renderer::dropDeferredUploads(VkImage handle)
     {
         if (asks % 2000 == 0)
         {
-            LL_DIAG("VkUpload") << "deferred upload index: " << asks << " drops (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
+            RK_DIAG("VkUpload") << "deferred upload index: " << asks << " drops (" << hits << " with uploads queued), " << mDeferredUploads.size() << " queued now" << LL_ENDL;
         }
         return;         // nothing is queued for this image
     }
@@ -5843,4 +5843,4 @@ bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

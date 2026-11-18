@@ -15,8 +15,8 @@
  * warning with the file and line of the constructor), (2) the stacks that are not empty at the end of a frame are reported once per new depth.
  */
 
-#ifndef LL_LLRENDERMATRIX_H
-#define LL_LLRENDERMATRIX_H
+#ifndef RK_RKRENDERMATRIX_H
+#define RK_RKRENDERMATRIX_H
 
 #include "stdtypes.h"
 #include "glm/mat4x4.hpp"
@@ -103,4 +103,4 @@ using Texture0Scope = Scope<Kind::Texture0>;
 
 }
 
-#endif // LL_LLRENDERMATRIX_H
+#endif // RK_RKRENDERMATRIX_H

@@ -27,7 +27,7 @@ vec3 legacyGamma(vec3 color)
 void main()
 {
     //this is the one of the rare spots where diffuseRect contains linear color values (not sRGB)
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord);
     diff.rgb = linear_to_srgb(diff.rgb);
 
 #ifdef LEGACY_GAMMA

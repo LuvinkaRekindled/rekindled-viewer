@@ -23,7 +23,7 @@ layout(location = 0) out vec4 frag_color;
 // get luminance or inverse luminance depending on bump_code
 float getBumpValue(vec2 texcoord)
 {
-    const vec3 c = texture(rk_tbl2d[LL_HM(rk_ti_srcMap)], texcoord).rgb;
+    const vec3 c = texture(rk_tbl2d[RK_HM(rk_ti_srcMap)], texcoord).rgb;
     const vec3 WEIGHT = vec3(0.2995, 0.5875, 0.1145);
     float l = dot(c, WEIGHT);
     if (bump_code == BE_DARKNESS)

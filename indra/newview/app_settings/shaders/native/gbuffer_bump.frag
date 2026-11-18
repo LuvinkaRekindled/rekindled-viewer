@@ -39,14 +39,14 @@ void main()
 #endif
     mirror_clip(vary_position);
 
-    vec4 col = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0);
+    vec4 col = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0);
     if (col.a < vary_cutoff)
     {
         discard;
     }
     col *= vertex_color;
 
-    const vec3 tangent_normal = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot_normal))], vary_texcoord0).rgb * 2.0 - 1.0;
+    const vec3 tangent_normal = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot_normal))], vary_texcoord0).rgb * 2.0 - 1.0;
     const vec3 binormal = vary_sign * cross(vary_normal, vary_tangent);
     const vec3 norm = normalize(tangent_normal.x * vary_tangent + tangent_normal.y * binormal + tangent_normal.z * vary_normal);
 

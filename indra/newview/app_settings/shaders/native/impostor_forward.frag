@@ -18,7 +18,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec4 color = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)],vary_texcoord0.xy);
+    vec4 color = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)],vary_texcoord0.xy);
 
     if (color.a < minimum_alpha)
     {

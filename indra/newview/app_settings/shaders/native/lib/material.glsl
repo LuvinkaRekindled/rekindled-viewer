@@ -4,7 +4,7 @@
 
 // the sun's specular lobe table: x = the half angle, y = glossiness. (Read at level 0 explicitly: it is read inside branches and loops that differ from pixel to pixel, where an implicit level is undefined; on this GPU
 // the same mistake in the screen march hung the shader. The table has one level.)
-#define LIGHT_FUNC rk_tbl2d[LL_HM(rk_ti_lightFunc)]
+#define LIGHT_FUNC rk_tbl2d[RK_HM(rk_ti_lightFunc)]
 
 #include "lib/glossenv.glsl"
 
@@ -105,7 +105,7 @@ vec4 shade_material(vec3 pos, vec4 texel, vec4 vcolor, vec3 vnorm, vec3 vtangent
     vec4 spec;
     if ((material & 4u) != 0u)
     {
-        spec = texture(rk_tbl2d[nonuniformEXT(LL_HM(slot_specular))], tc2);
+        spec = texture(rk_tbl2d[nonuniformEXT(RK_HM(slot_specular))], tc2);
         spec.rgb *= vspec.rgb;
     }
     else
@@ -117,7 +117,7 @@ vec4 shade_material(vec3 pos, vec4 texel, vec4 vcolor, vec3 vnorm, vec3 vtangent
     vec3 norm;
     if ((material & 2u) != 0u)
     {
-        vec4 map = texture(rk_tbl2d[nonuniformEXT(LL_HM(slot_normal))], tc1);
+        vec4 map = texture(rk_tbl2d[nonuniformEXT(RK_HM(slot_normal))], tc1);
         glossiness *= map.a;
         map.xyz = map.xyz * 2.0 - 1.0;
         const vec3 bitangent = vsign * cross(vnorm, vtangent);

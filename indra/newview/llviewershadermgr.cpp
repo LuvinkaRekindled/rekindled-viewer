@@ -108,7 +108,7 @@ RKShaderProgram        gObjectAlphaMaskNoColorProgram;
 RKShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
 RKShaderProgram        gUnderWaterPullProgram;
 RKShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting FSVkRTWater; needs the material table)
-RKShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, LL_RT_QUERY), made in a session with ray queries
+RKShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, RK_RT_QUERY), made in a session with ray queries
 static bool            sWaterRtReflectionMade = false;
 static bool            sWaterRtMade = false;       // the program above was made in this session
 static bool            sRtSessionShaders = false;     // the stock programs of this session carry ray query code (the `rt` lines of the manifest keep them): the water planes keep the stock water program then
@@ -664,14 +664,14 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         // <FS> ray query sun shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 4 and 5 debug views (2 split screen and 3 disagreement map are retired)
         if (const U32 rt_mode = RKVkBridge::rtShadowMode())
         {
-            attribs["LL_RT_SHADOWS"] = std::to_string(rt_mode);
+            attribs["RK_RT_SHADOWS"] = std::to_string(rt_mode);
             // <FS> the sun ray's limit of masked candidates (see shadowUtil.glsl) and the debug that shows the rays that stopped at it
             if (const char* cand = getenv("LL_VK_RT_CANDIDATES"))
             {
                 const S32 n = atoi(cand);
                 if (n >= 8 && n <= 4096)
                 {
-                    attribs["LL_RT_MAX_CANDIDATES"] = std::to_string(n) + "u";
+                    attribs["RK_RT_MAX_CANDIDATES"] = std::to_string(n) + "u";
                 }
             }
             if (const char* bias = getenv("LL_VK_RT_SUN_BIAS"))
@@ -679,7 +679,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 b = (F32)atof(bias);
                 if (b > 0.f && b < 5.f)
                 {
-                    attribs["LL_RT_SUN_BIAS"] = llformat("%.4f", b);
+                    attribs["RK_RT_SUN_BIAS"] = llformat("%.4f", b);
                 }
             }
             if (const char* strength = getenv("LL_VK_RT_SUN_ALPHA_STRENGTH"))
@@ -687,7 +687,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 s = (F32)atof(strength);
                 if (s > 0.f && s <= 1.f)
                 {
-                    attribs["LL_RT_SUN_ALPHA_STRENGTH"] = llformat("%.3f", s);     // how much of its coverage a hair card blocks (soft alpha sun ray)
+                    attribs["RK_RT_SUN_ALPHA_STRENGTH"] = llformat("%.3f", s);     // how much of its coverage a hair card blocks (soft alpha sun ray)
                 }
             }
             if (const char* pen = getenv("LL_VK_RT_SUN_PENUMBRA"))
@@ -695,7 +695,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 w = (F32)atof(pen);
                 if (w >= 0.f && w < 1.f)
                 {
-                    attribs["LL_RT_SUN_PENUMBRA"] = llformat("%.4f", w);       // metres: the penumbra width of a close avatar self shadow on the skin (0 = off)
+                    attribs["RK_RT_SUN_PENUMBRA"] = llformat("%.4f", w);       // metres: the penumbra width of a close avatar self shadow on the skin (0 = off)
                 }
             }
             if (const char* pen_rays = getenv("LL_VK_RT_SUN_PENUMBRA_RAYS"))
@@ -703,7 +703,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const S32 n = atoi(pen_rays);
                 if (n >= 1 && n <= 16)
                 {
-                    attribs["LL_RT_SUN_PENUMBRA_RAYS"] = std::to_string(n);    // the rays of a pixel whose first ray met a close avatar surface
+                    attribs["RK_RT_SUN_PENUMBRA_RAYS"] = std::to_string(n);    // the rays of a pixel whose first ray met a close avatar surface
                 }
             }
             if (const char* fade = getenv("LL_VK_RT_SUN_SELFFADE"))
@@ -711,7 +711,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 f = (F32)atof(fade);
                 if (f > 0.f && f <= 1.f)
                 {
-                    attribs["LL_RT_SUN_SELF_FADE"] = llformat("%.3f", f);      // fraction of SELFNEAR where the floor starts to fade (1 = no fade)
+                    attribs["RK_RT_SUN_SELF_FADE"] = llformat("%.3f", f);      // fraction of SELFNEAR where the floor starts to fade (1 = no fade)
                 }
             }
             if (const char* near_s = getenv("LL_VK_RT_SUN_SELFNEAR"))
@@ -719,7 +719,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 n = (F32)atof(near_s);
                 if (n > 0.f && n < 20.f)
                 {
-                    attribs["LL_RT_SUN_SELF_NEAR"] = llformat("%.3f", n);      // metres: a skinned avatar surface this close to the pixel it shadows counts as a translucent self shadow
+                    attribs["RK_RT_SUN_SELF_NEAR"] = llformat("%.3f", n);      // metres: a skinned avatar surface this close to the pixel it shadows counts as a translucent self shadow
                 }
             }
             if (const char* dbg = getenv("LL_VK_RT_SUN_DEBUG"))
@@ -727,7 +727,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const S32 d = atoi(dbg);
                 if (d == 1 || d == 2)
                 {
-                    attribs["LL_RT_SUN_DEBUG"] = std::to_string(d);        // test: 1 only solid hits make a sun shadow, 2 only what the alpha loop of the soft ray found
+                    attribs["RK_RT_SUN_DEBUG"] = std::to_string(d);        // test: 1 only solid hits make a sun shadow, 2 only what the alpha loop of the soft ray found
                 }
             }
             if (const char* recv = getenv("LL_VK_RT_SUN_SELFRECV"))
@@ -735,7 +735,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 r = (F32)atof(recv);
                 if (r >= 0.f && r < 1.f)
                 {
-                    attribs["LL_RT_SUN_SELF_RECV"] = llformat("%.4f", r);       // metres: the probe through the receiver's surface that says it is an avatar (the floor applies only then); 0 = off
+                    attribs["RK_RT_SUN_SELF_RECV"] = llformat("%.4f", r);       // metres: the probe through the receiver's surface that says it is an avatar (the floor applies only then); 0 = off
                 }
             }
             if (const char* sss = getenv("LL_VK_RT_SUN_SSS"))
@@ -743,18 +743,18 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 s = (F32)atof(sss);
                 if (s >= 0.f && s < 0.1f)
                 {
-                    attribs["LL_RT_SUN_SSS"] = llformat("%.4f", s);             // metres: radius of the disc on the receiver where a pixel's rays start (skin scattering: a soft edge on both sides); 0 = off
+                    attribs["RK_RT_SUN_SSS"] = llformat("%.4f", s);             // metres: radius of the disc on the receiver where a pixel's rays start (skin scattering: a soft edge on both sides); 0 = off
                 }
             }
             if (const char* blend = getenv("LL_VK_RT_SUN_BLENDCOVER"))
             {
-                attribs["LL_RT_SUN_BLEND_COVER"] = (blend[0] && blend[0] != '0') ? "1" : "0";     // 0: a blended card covers by the masked ramp around the cutoff again (the look before)
+                attribs["RK_RT_SUN_BLEND_COVER"] = (blend[0] && blend[0] != '0') ? "1" : "0";     // 0: a blended card covers by the masked ramp around the cutoff again (the look before)
             }
             if (const char* all = getenv("LL_VK_RT_SUN_STRENGTH_ALL"))
             {
                 if (all[0] && all[0] != '0')
                 {
-                    attribs["LL_RT_SUN_STRENGTH_ALL"] = "1";
+                    attribs["RK_RT_SUN_STRENGTH_ALL"] = "1";
                 }
             }
             if (const char* fill = getenv("LL_VK_RT_SUN_HAIRFILL"))
@@ -762,7 +762,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 f = (F32)atof(fill);
                 if (f > 0.f && f <= 1.f)
                 {
-                    attribs["LL_RT_SUN_HAIRFILL"] = llformat("%.3f", f);           // how much of the shadow on a blended surface (hair) is filled in
+                    attribs["RK_RT_SUN_HAIRFILL"] = llformat("%.3f", f);           // how much of the shadow on a blended surface (hair) is filled in
                 }
             }
             if (const char* bias_alpha = getenv("LL_VK_RT_SUN_BIAS_ALPHA"))
@@ -770,7 +770,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 b = (F32)atof(bias_alpha);
                 if (b > 0.f && b < 5.f)
                 {
-                    attribs["LL_RT_SUN_BIAS_ALPHA"] = llformat("%.4f", b);
+                    attribs["RK_RT_SUN_BIAS_ALPHA"] = llformat("%.4f", b);
                 }
             }
             if (const char* tmin = getenv("LL_VK_RT_SUN_TMIN"))
@@ -778,7 +778,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 t = (F32)atof(tmin);
                 if (t >= 0.f && t < 5.f)            // (0 switches the minimum distance off)
                 {
-                    attribs["LL_RT_SUN_TMIN"] = llformat("%.4f", t);
+                    attribs["RK_RT_SUN_TMIN"] = llformat("%.4f", t);
                 }
             }
             if (const char* soft = getenv("LL_VK_RT_SUN_SOFTALPHA"))
@@ -786,21 +786,21 @@ std::string LLViewerShaderMgr::loadBasicShaders()
                 const F32 d = (F32)atof(soft);
                 if (d >= 0.f && d < 5000.f)
                 {
-                    attribs["LL_RT_SUN_SOFTALPHA"] = llformat("%.1f", d);      // metres (0 = off): up to this view distance the sun ray lets masked and blended cards through by their alpha
+                    attribs["RK_RT_SUN_SOFTALPHA"] = llformat("%.1f", d);      // metres (0 = off): up to this view distance the sun ray lets masked and blended cards through by their alpha
                 }
             }
             if (const char* noface = getenv("LL_VK_RT_SUN_NOFACE"))
             {
                 if (noface[0] && noface[0] != '0')
                 {
-                    attribs["LL_RT_SUN_NOFACE"] = "1";
+                    attribs["RK_RT_SUN_NOFACE"] = "1";
                 }
             }
             if (const char* cap = getenv("LL_VK_RT_CAPDEBUG"))
             {
                 if (cap[0] && cap[0] != '0')
                 {
-                    attribs["LL_RT_CAP_DEBUG"] = "1";
+                    attribs["RK_RT_CAP_DEBUG"] = "1";
                 }
             }
         }
@@ -857,12 +857,12 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         {
             native_defines.push_back({ "HAS_SSAO", "1" });      // (the native lighting resolve reads the occlusion half of the lightmap only then. Not put in `attribs`: the stock shaders would take it for their own HAS_SSAO)
         }
-        sRtSessionShaders = attribs.find("LL_RT_SHADOWS") != attribs.end();
-        // the ray query code's own defines (LL_RT_SHADOWS: the mode of the traced sun shadow, 1 the rays, 4 and 5 the test views of lib/rt.glsl rt_sun_shadow; LL_RT_SUN_*, LL_RT_MAX_CANDIDATES, LL_RT_CAP_DEBUG: the tuning
+        sRtSessionShaders = attribs.find("RK_RT_SHADOWS") != attribs.end();
+        // the ray query code's own defines (RK_RT_SHADOWS: the mode of the traced sun shadow, 1 the rays, 4 and 5 the test views of lib/rt.glsl rt_sun_shadow; RK_RT_SUN_*, RK_RT_MAX_CANDIDATES, RK_RT_CAP_DEBUG: the tuning
         // and test switches of the environment, set only when the environment asks) and the spot shadow switch: what the stock programs' library files saw, the native ones see too
         for (const auto& a : attribs)
         {
-            if (a.first.compare(0, 6, "LL_RT_") == 0 || a.first == "SPOT_SHADOW")
+            if (a.first.compare(0, 6, "RK_RT_") == 0 || a.first == "SPOT_SHADOW")
             {
                 native_defines.push_back({ a.first, a.second });
             }
@@ -885,7 +885,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     return std::string();
 }
 
-// <FS> ray traced reflections (rtReflection in shadowUtil.glsl): the programs that use it see them as the permutation LL_RT_REFLECTIONS. The device is not up yet when the water is configured
+// <FS> ray traced reflections (rtReflection in shadowUtil.glsl): the programs that use it see them as the permutation RK_RT_REFLECTIONS. The device is not up yet when the water is configured
 // (RKVkBridge::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
 static bool rt_reflections_possible()
 {
@@ -913,14 +913,14 @@ bool LLViewerShaderMgr::loadShadersWater()
     }
 
     // <FS> the water programs are native only (native/manifest.txt, family water: water.vert + water.frag / underwater.frag): no stock files, no stock program. The planes are drawn as one record of table
-    // entries (WATER_PULL: their vertex buffers read by address); in a session with ray queries the water seen from above has the ray traced sun shadow and reflection (Water Pull RT Shader, LL_RT_QUERY).
+    // entries (WATER_PULL: their vertex buffers read by address); in a session with ray queries the water seen from above has the ray traced sun shadow and reflection (Water Pull RT Shader, RK_RT_QUERY).
     // The global defines (SUN_SHADOW, TRANSPARENT_WATER, ...) are pushed with the native defines
     if (success)
     {
         gWaterPullProgram.mName = "Water Pull Shader";
         gWaterPullProgram.mFeatures.calculatesAtmospherics = true;
         gWaterPullProgram.mFeatures.hasReflectionProbes = true;
-        gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullProgram.addPermutation("RK_VERTEX_PULL", "1");
         gWaterPullProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullProgram.createShader();
@@ -932,7 +932,7 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gWaterPullRtProgram.mName = "Water Pull RT Shader";
         gWaterPullRtProgram.mFeatures = gWaterPullProgram.mFeatures;
-        gWaterPullRtProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullRtProgram.addPermutation("RK_VERTEX_PULL", "1");
         gWaterPullRtProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullRtProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullRtProgram.createShader();
@@ -946,7 +946,7 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gWaterPullRtReflectionProgram.mName = "Water Pull RT Reflection Shader";
         gWaterPullRtReflectionProgram.mFeatures = gWaterPullProgram.mFeatures;
-        gWaterPullRtReflectionProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterPullRtReflectionProgram.addPermutation("RK_VERTEX_PULL", "1");
         gWaterPullRtReflectionProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullRtReflectionProgram.createShader();
@@ -958,7 +958,7 @@ bool LLViewerShaderMgr::loadShadersWater()
     {
         gUnderWaterPullProgram.mName = "Underwater Pull Shader";
         gUnderWaterPullProgram.mFeatures.calculatesAtmospherics = true;
-        gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gUnderWaterPullProgram.addPermutation("RK_VERTEX_PULL", "1");
         gUnderWaterPullProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gUnderWaterPullProgram.createShader();
@@ -1075,7 +1075,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family alpha: mask_nocolor.vert + mask_nocolor.frag): no stock files (it was the pull twin of a stock program of this name, deleted)
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mName = "Deferred Diffuse Non-Indexed Alpha Mask No Color Shader pull";
-        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram.createShader();
         llassert(success);
@@ -1143,7 +1143,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
                     (mapping == 1 ? "flat" : "triplanar"));
             shader->mFeatures.calculatesAtmospherics = true;
-            shader->addPermutation("LL_VERTEX_PULL", "1");       // (as the pull twin had it: a draw of a vertex buffer under it is one entry of a geometry record)
+            shader->addPermutation("RK_VERTEX_PULL", "1");       // (as the pull twin had it: a draw of a vertex buffer under it is one entry of a geometry record)
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             success = shader->createShader();
             if (!success)
@@ -1200,7 +1200,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gDeferredSunProgram.mName = "Deferred Sun Shader";
 
-        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag; the ray traced sun lightmap is its rtquery variant, a session without occlusion its LL_NO_AO one): no stock files
+        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag; the ray traced sun lightmap is its rtquery variant, a session without occlusion its RK_NO_AO one): no stock files
         gDeferredSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         add_common_permutations(&gDeferredSunProgram);
 
@@ -1212,7 +1212,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         gDeferredSunProbeProgram.mName = "Deferred Sun Probe Shader";
 
-        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag with LL_NO_AO): no stock files
+        // <FS> a native only program (native/manifest.txt, family sun: sun_lightmap.frag with RK_NO_AO): no stock files
         gDeferredSunProbeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         success = gDeferredSunProbeProgram.createShader();
@@ -1233,7 +1233,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNativeSunHalfProgram.mName = "Native Sun Lightmap Half";
         gNativeSunHalfProgram.mNativeVertex = "fullscreen.vert";
         gNativeSunHalfProgram.mNativeFragment = "sun_lightmap.frag";
-        gNativeSunHalfProgram.mNativeDefines = { { "LL_HALF", "1" } };
+        gNativeSunHalfProgram.mNativeDefines = { { "RK_HALF", "1" } };
         gNativeSunHalfProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gNativeSunHalfProgram.createShader();
 
@@ -1282,7 +1282,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    // <FS> S5c: the PBR (glTF) blend program with the vertices read by address (pbrAlphaPullV + pbralphaF with LL_BINDLESS_PBR). Required.
+    // <FS> S5c: the PBR (glTF) blend program with the vertices read by address (pbrAlphaPullV + pbralphaF with RK_BINDLESS_PBR). Required.
     if (success)
     {
         RKShaderProgram* shader = &gDeferredPBRAlphaPullProgram;
@@ -1503,7 +1503,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> J1 K4: the deferred bump pass from the table: the pull vertex shader with the tangent frame (IS_BUMP_PULL) and bumpF with its diffuse and bump images from the bindless table by the row's slots
-    // (the materials rewrite, LL_BINDLESS_MATERIAL), the cutoff of each draw from its row (LL_MASK_CUTOFF). Required, static and rigged.
+    // (the materials rewrite, RK_BINDLESS_MATERIAL), the cutoff of each draw from its row (RK_MASK_CUTOFF). Required, static and rigged.
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
@@ -1537,7 +1537,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> S6 X3: the alpha masked passes from the table: the diffuse mask G-buffer pass (diffusePullV + diffuseAlphaMaskIndexedF) and the fullbright mask pass (alphaPullV + fullbrightF with HAS_ALPHA_MASK), the cutoff
-    // of each draw read from its row (LL_MASK_CUTOFF: a flat varying instead of the uniform). Required (PLAN-twin-removal.md, section 8).
+    // of each draw read from its row (RK_MASK_CUTOFF: a flat varying instead of the uniform). Required (PLAN-twin-removal.md, section 8).
     if (success)
     {
         // <FS> all of these are native only programs (native/manifest.txt, families gbuffer and post: the diffuse and the fullbright alpha mask pull programs, static, rigged and the HUD's): no stock files
@@ -1567,7 +1567,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
-    // <FS> S6 X4: the glTF opaque and mask G-buffer pass from the table: the PBR alpha pull vertex shader (the same rows) with pbropaqueF rewritten like pbralphaF (LL_BINDLESS_PBR). Required, static and rigged.
+    // <FS> S6 X4: the glTF opaque and mask G-buffer pass from the table: the PBR alpha pull vertex shader (the same rows) with pbropaqueF rewritten like pbralphaF (RK_BINDLESS_PBR). Required, static and rigged.
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
@@ -1621,10 +1621,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
             return true;
         };
-        success = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", "LL_BINDLESS_DIFFUSE", false, false)
-            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", "LL_BINDLESS_DIFFUSE", true, false)
-            && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "LL_BINDLESS_PBR", false, true)
-            && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "LL_BINDLESS_PBR", true, true);
+        success = make_glow(&gDeferredEmissivePullProgram, "Deferred Emissive Pull Shader", "RK_BINDLESS_DIFFUSE", false, false)
+            && make_glow(&gDeferredEmissivePullSkinProgram, "Deferred Emissive Pull Skin Shader", "RK_BINDLESS_DIFFUSE", true, false)
+            && make_glow(&gPBRGlowPullProgram, "PBR Glow Pull Shader", "RK_BINDLESS_PBR", false, true)
+            && make_glow(&gPBRGlowPullSkinProgram, "PBR Glow Pull Skin Shader", "RK_BINDLESS_PBR", true, true);
         llassert(success);
     }
 
@@ -1743,7 +1743,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gWaterHazePullProgram.mShaderGroup           = RKShaderProgram::SG_WATER;
         gWaterHazePullProgram.mFeatures.calculatesAtmospherics = true;
         gWaterHazePullProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
-        gWaterHazePullProgram.addPermutation("LL_VERTEX_PULL", "1");
+        gWaterHazePullProgram.addPermutation("RK_VERTEX_PULL", "1");
         gWaterHazePullProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gWaterHazePullProgram.createShader();
         llassert(success);
@@ -1905,7 +1905,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family shadow: avatar_shadow.vert + avatar_shadow.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
         gDeferredAvatarShadowProgram.mName = "Deferred Avatar Shadow Shader pull";
-        gDeferredAvatarShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredAvatarShadowProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarShadowProgram.createShader();
         llassert(success);
@@ -1914,7 +1914,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredAvatarAlphaShadowProgram.mName = "Deferred Avatar Alpha Shadow Shader pull";       // <FS> a native only program (family shadow), as above
-        gDeferredAvatarAlphaShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredAvatarAlphaShadowProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaShadowProgram.createShader();
         llassert(success);
@@ -1922,7 +1922,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         gDeferredAvatarAlphaMaskShadowProgram.mName = "Deferred Avatar Alpha Mask Shadow Shader pull";       // <FS> a native only program (family shadow), as above
-        gDeferredAvatarAlphaMaskShadowProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredAvatarAlphaMaskShadowProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarAlphaMaskShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredAvatarAlphaMaskShadowProgram.createShader();
         llassert(success);
@@ -1947,7 +1947,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: avatar.vert + avatar.frag): the system avatar's parts read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
         gDeferredAvatarProgram.mName = "Deferred Avatar Shader pull";
-        gDeferredAvatarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredAvatarProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDeferredAvatarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
         success = gDeferredAvatarProgram.createShader();
@@ -1965,7 +1965,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.mFeatures.hasReflectionProbes = true;
 
 
-        gDeferredAvatarAlphaProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDeferredAvatarAlphaProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         if (use_sun_shadow)
         {
         }
@@ -2374,7 +2374,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> the HDRI sky (use_hdri_sky(): an HDRI image is loaded): a native only program (native/manifest.txt, family gbuffer: sky.vert + sky.frag with HDRI), read by address like the sky: no stock files
         gEnvironmentMapProgram.mName = "Environment Map Program pull";
         gEnvironmentMapProgram.mFeatures.calculatesAtmospherics = true;
-        gEnvironmentMapProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gEnvironmentMapProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gEnvironmentMapProgram.mShaderGroup = RKShaderProgram::SG_SKY;
 
@@ -2386,7 +2386,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: sky.vert + sky.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
         gDeferredWLSkyProgram.mName = "Deferred Windlight Sky Shader pull";
-        gDeferredWLSkyProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
+        gDeferredWLSkyProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSkyProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSkyProgram.mShaderGroup = RKShaderProgram::SG_SKY;
@@ -2398,7 +2398,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: clouds.vert + clouds.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
         gDeferredWLCloudProgram.mName = "Deferred Windlight Cloud Program pull";
-        gDeferredWLCloudProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
+        gDeferredWLCloudProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLCloudProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLCloudProgram.mShaderGroup = RKShaderProgram::SG_SKY;
@@ -2410,7 +2410,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: sundisc.vert + sundisc.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
         gDeferredWLSunProgram.mName = "Deferred Windlight Sun Program pull";
-        gDeferredWLSunProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
+        gDeferredWLSunProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSunProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLSunProgram.mShaderGroup = RKShaderProgram::SG_SKY;
@@ -2422,7 +2422,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: moon.vert + moon.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
         gDeferredWLMoonProgram.mName = "Deferred Windlight Moon Program pull";
-        gDeferredWLMoonProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
+        gDeferredWLMoonProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLMoonProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredWLMoonProgram.mShaderGroup = RKShaderProgram::SG_SKY;
@@ -2434,7 +2434,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         // <FS> a native only program (native/manifest.txt, family gbuffer: stars.vert + stars.frag): it reads the vertices by address and has no other form (it was the pull twin of a stock program of this name, deleted)
         gDeferredStarProgram.mName = "Deferred Star Program pull";
-        gDeferredStarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
+        gDeferredStarProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredStarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         gDeferredStarProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredStarProgram.createShader();
@@ -2793,7 +2793,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         // <FS> a native only program (native/manifest.txt, family alpha: alpha.vert + highlight.frag with HIGHLIGHT_PASS): the flat colour of the water exclusion and the highlight views, read by address; no stock files (it was the pull twin of a stock program of this name, deleted)
         gDrawColorProgram.mName = "Draw Color Shader pull";
-        gDrawColorProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
+        gDrawColorProgram.addPermutation("RK_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gDrawColorProgram.mShaderLevel = mShaderLevel[SHADER_OBJECT];
         success = gDrawColorProgram.createShader();
     }

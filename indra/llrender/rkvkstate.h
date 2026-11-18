@@ -12,10 +12,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKSTATE_H
-#define LL_LLVKSTATE_H
+#ifndef RK_RKVKSTATE_H
+#define RK_RKVKSTATE_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkvkrenderer.h"
@@ -98,6 +98,6 @@ namespace RKVkState
     std::string statsReport();
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKSTATE_H
+#endif // RK_RKVKSTATE_H

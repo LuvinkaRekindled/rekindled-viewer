@@ -15,7 +15,7 @@ layout(location = 0) out vec4 frag_color;
 
 void main ()
 {
-    vec4 diff = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_fragcoord.xy);
+    vec4 diff = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord.xy);
     vec2 tc = vary_fragcoord - 0.5f;
     float vignette_val = 1 - dot(tc, tc);
     diff.rgb *= clamp(pow(mix(1, vignette_val * vignette_val * vignette_val * vignette_val * vignette.z, vignette.x), vignette.y), 0, 1);

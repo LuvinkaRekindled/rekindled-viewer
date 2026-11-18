@@ -14,10 +14,10 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     vec2 tc = vary_fragcoord.xy;
-    vec4 orig = texture(rk_tbl2d[LL_HM(rk_ti_diffuseMap)], tc);
+    vec4 orig = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], tc);
     if (orig.r <= 0.02 || orig.r >= 0.98)
     {
-        orig.r = clamp(texture(rk_tbl2d[LL_HM(rk_ti_bumpMap)], tc).r, 0.0, 1.0);
+        orig.r = clamp(texture(rk_tbl2d[RK_HM(rk_ti_bumpMap)], tc).r, 0.0, 1.0);
     }
     frag_color = orig;
 }

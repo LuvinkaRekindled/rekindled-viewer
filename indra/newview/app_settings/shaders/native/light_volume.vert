@@ -1,6 +1,6 @@
 // light_volume.vert: the box of a light's volume, one instance a light, the light read from the record's table by the instance number (the light's centre, size, colour, falloff, and which of the box's
 // eight fans the camera sees it from). The corners are made from the vertex number (the fan of get_box_fan_indices, the same as sOcclusionIndices and the cube of ll_create_cube_vb), nothing is bound but the table.
-// A line for line translation of "Deferred Light Pull Shader" and "Deferred SpotLight Pull Shader" (deferred/pointLightV.glsl with LL_LIGHT_PULL, LL_PROJECTOR_PULL); pairs with light_point.frag / light_spot.frag.
+// A line for line translation of "Deferred Light Pull Shader" and "Deferred SpotLight Pull Shader" (deferred/pointLightV.glsl with RK_LIGHT_PULL, RK_PROJECTOR_PULL); pairs with light_point.frag / light_spot.frag.
 // What is different: the vertex shader no longer sends the projector's thirty values as flat varyings (a projector's matrix alone was four locations, 27 in all, for every corner of every box): it sends what every
 // light needs (the light and its eye space centre, 2 locations) and the instance, and the projector's fragment shader reads its row itself, after the pixels the volume does not reach are gone.
 

@@ -9,10 +9,10 @@
  * counter-clockwise front faces, z remapped in the vertex shader (see rkvkshader.h).
  */
 
-#ifndef LL_LLVKRENDERER_H
-#define LL_LLVKRENDERER_H
+#ifndef RK_RKVKRENDERER_H
+#define RK_RKVKRENDERER_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include <deque>
 #include "rkvkcontext.h"
@@ -790,6 +790,6 @@ private:
 
 } // namespace RKVk
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKRENDERER_H
+#endif // RK_RKVKRENDERER_H

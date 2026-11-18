@@ -321,7 +321,7 @@ void RKDeviceCaps::shutdownRenderDevice()
     }
 }
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 #include "rkvkworker.h"
 #include "rkvkstate.h"
 #endif

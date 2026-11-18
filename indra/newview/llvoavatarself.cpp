@@ -82,7 +82,7 @@
 // </FS:Ansariel> [Legacy Bake]
 
 #include <boost/lexical_cast.hpp>
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 LLPointer<LLVOAvatarSelf> gAgentAvatarp = NULL;
 
@@ -2554,7 +2554,7 @@ void LLVOAvatarSelf::monitorBakeSlots()
         {
             if (logged++ < 600)
             {
-                LL_DIAG("VkTex") << "bake slot " << baked->mName << " changed: TE id " << (p.mSeen ? p.mTeId.asString().substr(0, 8) : "-") << " -> " << now.mTeId.asString().substr(0, 8)
+                RK_DIAG("VkTex") << "bake slot " << baked->mName << " changed: TE id " << (p.mSeen ? p.mTeId.asString().substr(0, 8) : "-") << " -> " << now.mTeId.asString().substr(0, 8)
                                   << "; the avatar's texture " << (p.mSeen ? p.mTexId.asString().substr(0, 8) : "-") << " GL " << p.mGl << " discard " << p.mDiscard << (p.mMissing ? " MISSING" : "") << " -> "
                                   << now.mTexId.asString().substr(0, 8) << " GL " << now.mGl << " discard " << now.mDiscard << (now.mMissing ? " MISSING" : "")
                                   << "; the floater's lookup by the TE id: " << (now.mTile ? (now.mTile == fetched ? "the same object" : "ANOTHER object") : "none") << " GL " << now.mTileGl << " discard " << now.mTileDiscard
@@ -2685,7 +2685,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
         }
         if (!quiet || differs)
         {
-            LL_DIAG("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold or draw another texture object than the avatar's slot (" << face_differs << " DRAW another one: the face's own texture)" << examples << LL_ENDL;
+            RK_DIAG("VkTex") << (quiet ? "own avatar attachment faces CHECK: " : "own avatar attachment faces: ") << faces << " name a bake by its magic id, " << differs << " hold or draw another texture object than the avatar's slot (" << face_differs << " DRAW another one: the face's own texture)" << examples << LL_ENDL;
         }
     }
 }

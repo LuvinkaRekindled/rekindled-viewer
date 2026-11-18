@@ -25,7 +25,7 @@ void main()
     for (int i = 0; i < 9; ++i)
     {
         vec2 tc = vary_texcoord0 + (i - 4) * direction * resScale;
-        col += texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], tc).rgb * w[i];
+        col += texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], tc).rgb * w[i];
     }
 
     frag_color = max(vec4(col, 0.0), vec4(0));

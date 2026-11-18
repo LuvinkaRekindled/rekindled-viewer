@@ -6,10 +6,10 @@
  * Worker thread only, like the buffer table it reads (RKVkWorker::getBufferInfo).
  */
 
-#ifndef LL_LLVKRT_H
-#define LL_LLVKRT_H
+#ifndef RK_RKVKRT_H
+#define RK_RKVKRT_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkcontext.h"
 #include "rkvkbridge.h"
@@ -154,5 +154,5 @@ void resetStats();
 } // namespace Rt
 } // namespace RKVk
 
-#endif // LL_VULKAN
-#endif // LL_LLVKRT_H
+#endif // RK_VULKAN
+#endif // RK_RKVKRT_H

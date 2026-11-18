@@ -10,10 +10,10 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#ifndef LL_LLVKASYNC_H
-#define LL_LLVKASYNC_H
+#ifndef RK_RKVKASYNC_H
+#define RK_RKVKASYNC_H
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "linden_common.h"
 #include "rkrenderformat.h"
@@ -296,6 +296,6 @@ namespace RKVkAsync
     std::string opStatsReport(size_t frames);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN
 
-#endif // LL_LLVKASYNC_H
+#endif // RK_RKVKASYNC_H

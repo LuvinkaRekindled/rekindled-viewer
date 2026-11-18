@@ -5,7 +5,7 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkasync.h"
 #include "rkrenderpass.h"
@@ -3675,4 +3675,4 @@ bool RKVkSubStream::stateEqual(const std::vector<unsigned char>& snapshot)
     return old == RKVkState::current();
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

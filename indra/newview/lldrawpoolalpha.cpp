@@ -62,7 +62,7 @@
 
 #include "llenvironment.h"
 #include "glm/gtc/type_ptr.hpp"
-#include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
+#include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
@@ -155,7 +155,7 @@ static void prepare_alpha_shader(RKShaderProgram* shader, bool deferredEnvironme
         static LLStaticHashedString maxdist_s("rt_sun_maxdist");
         shader->uniform1f(maxdist_s, rt_max_dist());
         static LLStaticHashedString alpha_pass_s("rt_sun_alpha");
-        shader->uniform1f(alpha_pass_s, 1.f);        // <FS> a blended surface (hair): its sun ray starts off the surface by LL_RT_SUN_BIAS_ALPHA, not LL_RT_SUN_BIAS (cards must not shade the cards next to them)
+        shader->uniform1f(alpha_pass_s, 1.f);        // <FS> a blended surface (hair): its sun ray starts off the surface by RK_RT_SUN_BIAS_ALPHA, not RK_RT_SUN_BIAS (cards must not shade the cards next to them)
         static LLStaticHashedString self_off_s("rt_sun_self_off");
         const S32 self = RKVkBridge::rtSunSelfShadow();
         shader->uniform1f(self_off_s, self == 0 ? 1.f : (self == 2 ? 2.f : 0.f));      // rt-debug.txt sunself=0: the avatar self shadow work off, 2: on with the full hair walk (same-lap cost A/Bs)
@@ -322,7 +322,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 
     if (rigged && !fringe && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
     { // draw GLTF scene to depth buffer before rigged alpha
-        LL_GPU_TIMER_ZONE("alpha: gltf scene depth"); // <FS>
+        RK_GPU_TIMER_ZONE("alpha: gltf scene depth"); // <FS>
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
@@ -331,7 +331,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 
     if (depth_prepass)
     {
-        LL_GPU_TIMER_ZONE("alpha: rigged depth");
+        RK_GPU_TIMER_ZONE("alpha: rigged depth");
         gRender.setColorMask(false, false);
         {
             RKRenderState::DepthScope prepass_depth(true, true);
@@ -350,7 +350,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
     // We don't want the nearly invisible objects to cause of DoF effects
     {
         // <FS> GPU timer zone per alpha pass
-        LL_GPU_TIMER_ZONE(fringe ? "alpha: rigged fringe" : rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
+        RK_GPU_TIMER_ZONE(fringe ? "alpha: rigged fringe" : rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
                                  : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
         // the soft part: drawn a little farther than the depth only pass wrote the same triangles, so that what wrote depth there fails the strict test
         RKRenderState::PolygonOffsetScope fringe_offset(true, fringe);
@@ -1131,7 +1131,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 for (size_t k = 0; k < topk.size() && k < 8; ++k) text += " [" + name(topk[k].second) + " " + std::to_string(topk[k].first) + "]";
                 text += "; top transitions:";
                 for (size_t k = 0; k < topt.size() && k < 10; ++k) text += " [" + name(topt[k].second.first) + " > " + name(topt[k].second.second) + " " + std::to_string(topt[k].first) + "]";
-                LL_DIAG("VkScene") << text << LL_ENDL;
+                RK_DIAG("VkScene") << text << LL_ENDL;
             }
         }
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_BEGIN);
@@ -1543,7 +1543,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     {
         const double frames = (double)std::max<U32>(1, gFrameCount - sAlphaScene.mLast);
         sAlphaScene.mLast = gFrameCount;
-        LL_DIAG("VkScene") << "alpha from the scene table, viewer side per frame (main view's passes): " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
+        RK_DIAG("VkScene") << "alpha from the scene table, viewer side per frame (main view's passes): " << (double)sAlphaScene.mCalls / frames << " passes, " << (double)sAlphaScene.mRecords / frames << " records, "
             << (double)sAlphaScene.mRanges / frames << " ranges, " << (double)sAlphaScene.mServed / frames << " draws served from fragments, " << (double)sAlphaScene.mBytes / frames << " bytes sent, glow draws served "
             << (double)sAlphaScene.mGlowServed / frames << ", transient " << (double)sAlphaScene.mTrEntries / frames << " draws in " << (double)sAlphaScene.mTrRecords / frames << " records, plan mismatches "
             << sAlphaScene.mMismatch << ", draws not drawn (neither fragment nor transient) " << (double)sAlphaScene.mDropped / frames << "; transient entries made from draw infos (not particle runs) " << (double)sAlphaScene.mTrFromInfo / frames << LL_ENDL;

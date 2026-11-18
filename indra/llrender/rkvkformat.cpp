@@ -6,7 +6,7 @@
 #include "linden_common.h"
 #include "rkrenderheaders.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkformat.h"
 
@@ -385,4 +385,4 @@ Level level(U32 pname)
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

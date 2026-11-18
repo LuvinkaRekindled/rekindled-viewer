@@ -37,14 +37,14 @@ void main()
     mirror_clip(vary_position);
     water_clip(vary_position);
 
-    const vec4 base = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.x))], vary_tc_base);
+    const vec4 base = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.x))], vary_tc_base);
     const vec3 color_factor = vertex_color.rgb * srgb_to_linear(base.rgb);      // (the vertex colour is not converted: the viewer's glTF blend does not either)
 
     // the normal map (a draw without one has slot 0: the flat normal)
     vec3 tangent_normal = vec3(0.0, 0.0, 1.0);
     if (vary_slots.y != 0u)
     {
-        tangent_normal = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.y))], vary_tc_normal).xyz * 2.0 - 1.0;
+        tangent_normal = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.y))], vary_tc_normal).xyz * 2.0 - 1.0;
     }
     const vec3 binormal = vary_sign * cross(vary_normal, vary_tangent);
     vec3 norm = normalize(tangent_normal.x * vary_tangent + tangent_normal.y * binormal + tangent_normal.z * vary_normal);
@@ -62,7 +62,7 @@ void main()
     }
 
     // occlusion (r), roughness (g), metallic (b); the emissive map is sRGB, its factor linear
-    const vec3 orm = texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.z))], vary_tc_orm).rgb;
+    const vec3 orm = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.z))], vary_tc_orm).rgb;
     const float roughness = orm.g * vary_factors.x;
     const float metallic = orm.b * vary_factors.y;
     // (no emissive colour, no emissive: the map is not read then; the lookup is in a branch, so it takes the derivatives from outside it)
@@ -70,7 +70,7 @@ void main()
     vec3 emissive = vec3(0.0);
     if (vary_emissive != vec3(0.0))
     {
-        emissive = vary_emissive * srgb_to_linear(textureGrad(rk_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive, emissive_dx, emissive_dy).rgb);
+        emissive = vary_emissive * srgb_to_linear(textureGrad(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.w))], vary_tc_emissive, emissive_dx, emissive_dy).rgb);
     }
 
     // the image based light: the ambient (other skies; a classic sky's own ambient light is kept) and the reflection of the world, blurred by the roughness

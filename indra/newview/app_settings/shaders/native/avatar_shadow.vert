@@ -1,6 +1,6 @@
 // avatar_shadow.vert: the system avatar's body parts (skin, hair, eyes, eyelashes) in the shadow passes, from the geometry packet path: one row of the scene table a joint mesh range, skinned by the joint
 // palette uniform (lib/avatarskin.glsl, the same code as the G-buffer pass avatar.vert) and projected by the shadow camera's matrix. Stands in for the pull programs "Deferred Avatar Shadow Shader pull",
-// "Deferred Avatar Alpha Shadow Shader pull" and "Deferred Avatar Alpha Mask Shadow Shader pull" (deferred/avatarShadowV.glsl and avatarAlphaShadowV.glsl with LL_VERTEX_PULL). Define SHADOW_ALPHA: the two
+// "Deferred Avatar Alpha Shadow Shader pull" and "Deferred Avatar Alpha Mask Shadow Shader pull" (deferred/avatarShadowV.glsl and avatarAlphaShadowV.glsl with RK_VERTEX_PULL). Define SHADOW_ALPHA: the two
 // alpha tested ones, which need the texture coordinate (avatar_shadow.frag). The old programs also skinned the normal (three dot products and a normalize that nothing read) and handed the fragment stage
 // `pos_w` and `target_pos_x` for the dither of the semi transparent parts: the fragment stage takes the pixel column from gl_FragCoord now, so the vertex stage hands over the texture coordinate only.
 

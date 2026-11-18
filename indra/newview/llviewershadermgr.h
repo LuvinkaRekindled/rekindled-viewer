@@ -177,7 +177,7 @@ extern RKShaderProgram         gDeferredAlphaUberPullSkinProgram;
 extern RKShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws
 extern RKShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
 extern RKShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
-extern RKShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
+extern RKShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with RK_VERTEX_PULL)
 extern RKShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
 extern RKShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
 extern RKShaderProgram         gDeferredFullbrightPullSkinProgram;

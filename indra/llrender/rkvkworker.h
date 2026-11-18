@@ -8,8 +8,8 @@
  * Compiled only with -DUSE_VULKAN=ON.
  */
 
-#if defined(LL_VULKAN) && !defined(LL_LLVKGL_H)
-#define LL_LLVKGL_H
+#if defined(RK_VULKAN) && !defined(RK_RKVKGL_H)
+#define RK_RKVKGL_H
 
 #include <mutex>
 #include "rkvkbridge.h"
@@ -47,4 +47,4 @@ namespace RKVkWorker
     void describe_textures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet);
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

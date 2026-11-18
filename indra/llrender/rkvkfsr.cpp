@@ -9,11 +9,11 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkfsr.h"
 
-#if defined(LL_FSR)
+#if defined(RK_FSR)
 #include <vulkan/vulkan.h>
 #include <FidelityFX/host/ffx_fsr3upscaler.h>
 #include <FidelityFX/host/backends/vk/ffx_vk.h>
@@ -58,7 +58,7 @@ void addDeviceExtensions(VkPhysicalDevice device, std::vector<const char*>& out)
     }
 }
 
-#if !defined(LL_FSR)
+#if !defined(RK_FSR)
 
 bool init(VkInstance, VkPhysicalDevice, VkDevice)
 {
@@ -394,8 +394,8 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     return fsr_ok(ffxFsr3UpscalerContextDispatch(&context->mContext, &d), "ffxFsr3UpscalerContextDispatch");
 }
 
-#endif // LL_FSR
+#endif // RK_FSR
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

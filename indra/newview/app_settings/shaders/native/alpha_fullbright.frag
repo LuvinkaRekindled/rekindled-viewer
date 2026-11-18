@@ -19,5 +19,5 @@ void main()
 {
     mirror_clip(vary_position);
     water_clip(vary_position);
-    frag_color = shade_fullbright(vary_position, texture(rk_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0), vertex_color);
+    frag_color = shade_fullbright(vary_position, texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0), vertex_color);
 }

@@ -24,8 +24,8 @@
  * Independent of the viewer classes on purpose (the instance data must be reusable by a native renderer): only plain types.
  */
 
-#ifndef LL_LLINSTANCETABLE_H
-#define LL_LLINSTANCETABLE_H
+#ifndef RK_RKINSTANCETABLE_H
+#define RK_RKINSTANCETABLE_H
 
 #include "stdtypes.h"
 #include "v3math.h"
@@ -182,4 +182,4 @@ private:
     }
 };
 
-#endif // LL_LLINSTANCETABLE_H
+#endif // RK_RKINSTANCETABLE_H

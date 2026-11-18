@@ -4,8 +4,8 @@
  *        Always on. LL_VK_CULL_FACTORS="a,b,c" sets the three margin factors (default 1,1.5,2.5). The table is kept up to date by the groups (C1b) and sent to the worker as delta rows (C1c). LL_VK_CULL_VERIFY=1: every 60 frames the full walk is compared with the kept table. The camera's yaw is logged once a second while the table is built (poseLog; for the run scripts).
  *        The code is in pipeline.cpp (build, send, apply, the hooks' functions), the hooks themselves in llvieweroctree.cpp, the worker side is kind 35.
  */
-#ifndef LL_LLCULLSHADOW_H
-#define LL_LLCULLSHADOW_H
+#ifndef RK_RKCULLSHADOW_H
+#define RK_RKCULLSHADOW_H
 
 #include "stdtypes.h"
 #include <atomic>
@@ -29,4 +29,4 @@ namespace RKCullShadow
     void send(LLCamera& camera);        // the occlusion point of the world pass: the table to the worker
 }
 
-#endif // LL_LLCULLSHADOW_H
+#endif // RK_RKCULLSHADOW_H

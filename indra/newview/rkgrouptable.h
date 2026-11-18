@@ -15,8 +15,8 @@
  * Independent of the viewer classes on purpose: only plain types and LLVector4a. The camera count is a template-free constant checked against LLViewerCamera::NUM_CAMERAS where the group uses it.
  */
 
-#ifndef LL_LLGROUPTABLE_H
-#define LL_LLGROUPTABLE_H
+#ifndef RK_RKGROUPTABLE_H
+#define RK_RKGROUPTABLE_H
 
 #include "stdtypes.h"
 #include "llvector4a.h"
@@ -176,4 +176,4 @@ private:
     }
 };
 
-#endif // LL_LLGROUPTABLE_H
+#endif // RK_RKGROUPTABLE_H

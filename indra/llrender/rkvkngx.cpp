@@ -5,12 +5,12 @@
 
 #include "linden_common.h"
 
-#if defined(LL_VULKAN)
+#if defined(RK_VULKAN)
 
 #include "rkvkngx.h"
 #include "rkvkdlssnr.h"
 
-#if defined(LL_NGX_NR)
+#if defined(RK_NGX_NR)
 #include "nvsdk_ngx_vk.h"
 #include "nvsdk_ngx_helpers_vk.h"
 #endif
@@ -24,7 +24,7 @@ namespace RKVkNgx
 
 using namespace RKVk;       // the loaded Vulkan entry points live there
 
-#if !defined(LL_NGX_NR)
+#if !defined(RK_NGX_NR)
 
 void addInstanceExtensions(std::vector<const char*>&) {}
 void addDeviceExtensions(VkInstance, VkPhysicalDevice, std::vector<const char*>&) {}
@@ -229,8 +229,8 @@ VkImageLayout outputLayout()
     return VK_IMAGE_LAYOUT_GENERAL;
 }
 
-#endif // LL_NGX_NR
+#endif // RK_NGX_NR
 
 }
 
-#endif // LL_VULKAN
+#endif // RK_VULKAN

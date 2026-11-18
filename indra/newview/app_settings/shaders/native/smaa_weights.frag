@@ -21,9 +21,9 @@ layout(location = 0) out vec4 frag_color;
 #include "lib/smaa.glsl"
 
 // (after the library: its functions have parameters of these names)
-#define edgesTex rk_tbl2d[LL_HM(rk_ti_edgesTex)]
-#define areaTex rk_tbl2d[LL_HM(rk_ti_areaTex)]
-#define searchTex rk_tbl2d[LL_HM(rk_ti_searchTex)]
+#define edgesTex rk_tbl2d[RK_HM(rk_ti_edgesTex)]
+#define areaTex rk_tbl2d[RK_HM(rk_ti_areaTex)]
+#define searchTex rk_tbl2d[RK_HM(rk_ti_searchTex)]
 
 void main()
 {

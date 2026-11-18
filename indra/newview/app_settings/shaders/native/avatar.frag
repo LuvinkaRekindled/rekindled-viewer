@@ -31,7 +31,7 @@ void main()
     frag_velocity = vec2(1.0, 0.0);
 #endif
     mirror_clip(vary_position);
-    const vec4 diff = texture(rk_tbl2d[nonuniformEXT(LL_HM(rk_ti_diffuseMap))], vary_texcoord0);
+    const vec4 diff = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_diffuseMap))], vary_texcoord0);
     if (diff.a < minimum_alpha)
     {
         discard;

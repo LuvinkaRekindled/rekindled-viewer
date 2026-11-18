@@ -10,8 +10,8 @@
  * The model matrices of the draw infos point into the instance table's transforms (rkinstancetable.h), which are quarantined the same way since C1.
  */
 
-#ifndef LL_LLMATRIXTABLE_H
-#define LL_LLMATRIXTABLE_H
+#ifndef RK_RKMATRIXTABLE_H
+#define RK_RKMATRIXTABLE_H
 
 #include "rkrowtable.h"
 #include "m4math.h"
@@ -61,4 +61,4 @@ namespace RKMatrixTable
     }
 }
 
-#endif // LL_LLMATRIXTABLE_H
+#endif // RK_RKMATRIXTABLE_H

@@ -12,8 +12,8 @@
  * Header only; the state lives in function-local statics. Independent of the viewer classes: an object is an LLThreadSafeRefCount with the hooks in llrefcount.h (onRetire, retireKind, mParked).
  */
 
-#ifndef LL_LLRETIRELIST_H
-#define LL_LLRETIRELIST_H
+#ifndef RK_RKRETIRELIST_H
+#define RK_RKRETIRELIST_H
 
 #include "llrefcount.h"
 #include "llframetimer.h"
@@ -210,4 +210,4 @@ private:
     }
 };
 
-#endif // LL_LLRETIRELIST_H
+#endif // RK_RKRETIRELIST_H

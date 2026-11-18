@@ -10,8 +10,8 @@
  * Cost when off: one relaxed atomic load per call site. When on: a mutex and a small record per event, written out once a frame by the main thread.
  */
 
-#ifndef FS_TEXTUREARRIVALTRACE_H
-#define FS_TEXTUREARRIVALTRACE_H
+#ifndef RK_TEXTUREARRIVALTRACE_H
+#define RK_TEXTUREARRIVALTRACE_H
 
 #include "lluuid.h"
 #include <atomic>
@@ -29,4 +29,4 @@ namespace FSTextureArrivalTrace
     void shutdown();
 }
 
-#endif // FS_TEXTUREARRIVALTRACE_H
+#endif // RK_TEXTUREARRIVALTRACE_H

@@ -11,6 +11,6 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec3 col = texture(rk_tbl2d[LL_HM(rk_ti_diffuseRect)], vary_texcoord0.xy).rgb;
+    vec3 col = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_texcoord0.xy).rgb;
     frag_color = vec4(col, 0.0);
 }

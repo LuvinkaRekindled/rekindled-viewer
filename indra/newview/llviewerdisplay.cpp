@@ -178,7 +178,7 @@ void display_startup()
         return;
     }
 
-    { LL_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
+    { RK_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
 
     // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
     RKVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
@@ -214,7 +214,7 @@ void display_startup()
     if (gViewerWindow)
     gViewerWindow->setup2DRender();
     if (gViewerWindow)
-    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
+    { RK_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
     gRender.flush();
 
     LLVertexBuffer::unbind();
@@ -598,7 +598,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         // Clean up memory the pools may have allocated
         if (rebuild)
         {
-            { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
+            { RK_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
         }
 
         // <FS:ND> FIRE-15789; Make sure there's not backlog for thousands and thousands of beam objects
@@ -628,14 +628,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
-                { LL_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
+                { RK_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
             }
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("List");
                 F32 max_image_decode_time = 0.050f * gFrameIntervalSeconds.value();          // 50 ms/second decode time
                 max_image_decode_time     = llclamp(max_image_decode_time, 0.002f, 0.005f);  // min 2ms/frame, max 5ms/frame)
-                { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
+                { RK_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
                 RKImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
@@ -847,8 +847,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     if (gDisconnected)
     {
         LLAppViewer::instance()->pingMainloopTimeout("Display:Disconnected");
-        { LL_CPU_ZONE("display: render_ui"); render_ui(); }
-        { LL_CPU_ZONE("display: swap"); swap(); }
+        { RK_CPU_ZONE("display: render_ui"); render_ui(); }
+        { RK_CPU_ZONE("display: swap"); swap(); }
     }
 
     //////////////////////////
@@ -903,7 +903,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gPipeline.toggleRenderType(LLPipeline::RENDER_TYPE_HUD_PARTICLES);
         }
 
-        { LL_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
+        { RK_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -919,11 +919,11 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update hero probes");
             LL_PROFILE_GPU_ZONE("hero manager")
-            { LL_CPU_ZONE("hero: update"); gPipeline.mHeroProbeManager.update(); }
-            { LL_CPU_ZONE("hero: renderProbes"); gPipeline.mHeroProbeManager.renderProbes(); }
+            { RK_CPU_ZONE("hero: update"); gPipeline.mHeroProbeManager.update(); }
+            { RK_CPU_ZONE("hero: renderProbes"); gPipeline.mHeroProbeManager.renderProbes(); }
             if (gPipeline.mHeroProbeManager.viewRenderedThisFrame())
             {   // the mirror's view left its camera, matrices, viewport and the environment's eye space planes (the water and mirror planes follow the modelview of the last update) behind: the main view's again
-                { LL_CPU_ZONE("display: display_update_camera (after the mirror)"); display_update_camera(); }
+                { RK_CPU_ZONE("display: display_update_camera (after the mirror)"); display_update_camera(); }
                 LLEnvironment::instance().update(&camera);
             }
         }
@@ -932,24 +932,24 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("HUD Update");
             LLHUDManager::getInstance()->updateEffects();
-            { LL_CPU_ZONE("display: HUD objects update"); LLHUDObject::updateAll(); }
+            { RK_CPU_ZONE("display: HUD objects update"); LLHUDObject::updateAll(); }
         }
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Update Geom");
             const F32 max_geom_update_time = 0.005f*10.f*gFrameIntervalSeconds.value(); // 50 ms/second update time
             {
-                LL_CPU_ZONE("display: createObjects");
+                RK_CPU_ZONE("display: createObjects");
                 gPipeline.createObjects(max_geom_update_time);
             }
-            { LL_CPU_ZONE("display: processPartitionQ"); gPipeline.processPartitionQ(); }
+            { RK_CPU_ZONE("display: processPartitionQ"); gPipeline.processPartitionQ(); }
             {
-                LL_CPU_ZONE("display: updateGeom");
+                RK_CPU_ZONE("display: updateGeom");
                 gPipeline.updateGeom(max_geom_update_time);
             }
         }
 
-        { LL_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
+        { RK_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
 
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:Cull");
@@ -973,7 +973,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
         RKBuilderGuard::sMainMapLive = false;
         {
-            LL_CPU_ZONE("display: updateCull");
+            RK_CPU_ZONE("display: updateCull");
             gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
         }
 
@@ -991,7 +991,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         unsigned early_epoch = 0;
         if (early_sort)
         {
-            LL_CPU_ZONE("display: stateSort (early)");
+            RK_CPU_ZONE("display: stateSort (early)");
             gPipeline.stateSort(camera, result, true);
             early_epoch = RKBuilderGuard::sEpoch.load();
             RKBuilderGuard::sMainMapLive = true;        // from here a change to a group of the main view is noticed (see RKBuilderGuard)
@@ -1017,7 +1017,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 if (gFrameCount > 1 && !for_snapshot)
                 { //for some reason, ATI 4800 series will error out if you
                   //try to generate a shadow before the first frame is through
-                    LL_CPU_ZONE("display: generateSunShadow");
+                    RK_CPU_ZONE("display: generateSunShadow");
                     gPipeline.generateSunShadow(*LLViewerCamera::getInstance());
                 }
 
@@ -1059,14 +1059,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
-                { LL_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
+                { RK_CPU_ZONE("display: bump image list"); gBumpImageList.updateImages(); }  // must be called before gTextureList version so that it's textures are thrown out first.
             }
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("List");
                 F32 max_image_decode_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
-                { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
+                { RK_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
                 RKImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
@@ -1104,14 +1104,14 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 }
                 RKBuilderGuard::sMainMapLive = false;
                 gPipeline.dropOcclusionMarks(result);       // the groups marked for a query by the first cull would never be queried again
-                LL_CPU_ZONE("display: cull + stateSort (again)");
+                RK_CPU_ZONE("display: cull + stateSort (again)");
                 LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
                 gPipeline.updateCull(camera, result);       // the sort pushes into the cull result as well (bridges, drawables): it starts from a clean one
                 gPipeline.stateSort(camera, result);
             }
             else
             {
-                LL_CPU_ZONE("display: stateSort");
+                RK_CPU_ZONE("display: stateSort");
                 gPipeline.stateSort(camera, result); // <FS:Ansariel> Factor out calls to getInstance
             }
 
@@ -1122,7 +1122,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 // rebuildPools
                 //
                 //
-                { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
+                { RK_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
             }
         }
 
@@ -1292,7 +1292,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LLAppViewer::instance()->pingMainloopTimeout("Display:Sky");
             LL_PROFILE_ZONE_NAMED_CATEGORY_ENVIRONMENT("update sky"); //LL_RECORD_BLOCK_TIME(FTM_UPDATE_SKY);
-            { LL_CPU_ZONE("display: updateSky"); gSky.updateSky(); }
+            { RK_CPU_ZONE("display: updateSky"); gSky.updateSky(); }
         }
 
         if(gUseWireframe)
@@ -1356,7 +1356,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         RenderPassScope world_pass;     // F3.5b: the world pass on the deferred screen target: begun here, ended after the render flush below
         {
-        LL_CPU_ZONE("display: deferredScreen bind + clear");
+        RK_CPU_ZONE("display: deferredScreen bind + clear");
         world_pass.begin(gPipeline.mRT->deferredScreen, gUseWireframe ? RenderPass::Clear(0.5f, 0.5f, 0.5f, 1.f) : RenderPass::Clear(1, 0, 1, 1));
         }
 
@@ -1372,7 +1372,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
             gRender.setColorMask(true, true);
             {
-                LL_CPU_ZONE("display: renderGeomDeferred");
+                RK_CPU_ZONE("display: renderGeomDeferred");
                 gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
             }
             RKBuilderGuard::sMainMapLive = false;
@@ -1380,7 +1380,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Texture Unbind");
-            LL_CPU_ZONE("display: texture unbind");
+            RK_CPU_ZONE("display: texture unbind");
             static U32 sUnbindLogged = 0;
             U32 unbound = 0;
             for (S32 i = 0; i < gDeviceCaps.mNumTextureImageUnits; i++)
@@ -1413,12 +1413,12 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
         (void)rt;
-        { LL_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
+        { RK_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
         gPipeline.rtSceneEarly(2);      // <FS> LL_VK_RT_EARLY=2: after the G-buffer (diagnostic)
 
         if (LLPipeline::sRenderDeferred)
         {
-            LL_CPU_ZONE("display: renderDeferredLighting (incl. post-deferred)");
+            RK_CPU_ZONE("display: renderDeferredLighting (incl. post-deferred)");
             gPipeline.renderDeferredLighting();
         }
 
@@ -1426,27 +1426,27 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             //capture the frame buffer.
-            LL_CPU_ZONE("display: scene monitor capture");
+            RK_CPU_ZONE("display: scene monitor capture");
             LLSceneMonitor::getInstance()->capture();
         }
 
         LLAppViewer::instance()->pingMainloopTimeout("Display:RenderUI");
         if (!for_snapshot)
         {
-            { LL_CPU_ZONE("display: render_ui"); render_ui(); }
-            { LL_CPU_ZONE("display: swap"); swap(); }
+            { RK_CPU_ZONE("display: render_ui"); render_ui(); }
+            { RK_CPU_ZONE("display: swap"); swap(); }
         }
 
 
         LLSpatialGroup::sNoDelete = false;
 
-        { LL_CPU_ZONE("display: clearReferences"); gPipeline.clearReferences(); }
+        { RK_CPU_ZONE("display: clearReferences"); gPipeline.clearReferences(); }
     }
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
 
 
-    { LL_CPU_ZONE("display: display_stats"); display_stats(); }
+    { RK_CPU_ZONE("display: display_stats"); display_stats(); }
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:Done");
 
@@ -1573,7 +1573,7 @@ void display_cube_face()
         gPipeline.toggleRenderType(LLPipeline::RENDER_TYPE_HUD_PARTICLES);
     }
 
-    { LL_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
+    { RK_CPU_ZONE("display: display_update_camera"); display_update_camera(); }
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -1590,18 +1590,18 @@ void display_cube_face()
     static LLCullResult result;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
     LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
-    { LL_CPU_ZONE("probe face: updateCull"); gPipeline.updateCull(*LLViewerCamera::getInstance(), result); }       // <FS> zones (2026-11-16): where the 0.36 to 0.62 ms of 'probes + snapshots' goes
+    { RK_CPU_ZONE("probe face: updateCull"); gPipeline.updateCull(*LLViewerCamera::getInstance(), result); }       // <FS> zones (2026-11-16): where the 0.36 to 0.62 ms of 'probes + snapshots' goes
 
     gRender.setColorMask(true, true);
 
     gRender.setClearColor(0.f, 0.f, 0.f, 0.f);
-    { LL_CPU_ZONE("probe face: generateSunShadow"); gPipeline.generateSunShadow(*LLViewerCamera::getInstance()); }
+    { RK_CPU_ZONE("probe face: generateSunShadow"); gPipeline.generateSunShadow(*LLViewerCamera::getInstance()); }
 
     gRender.clearBuffers(ClearBits::Depth); // | ClearBits::Stencil);
 
     {
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-        { LL_CPU_ZONE("probe face: stateSort"); gPipeline.stateSort(*LLViewerCamera::getInstance(), result); }
+        { RK_CPU_ZONE("probe face: stateSort"); gPipeline.stateSort(*LLViewerCamera::getInstance(), result); }
 
         if (rebuild)
         {
@@ -1610,7 +1610,7 @@ void display_cube_face()
             // rebuildPools
             //
             //
-            { LL_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
+            { RK_CPU_ZONE("display: rebuildPools"); gPipeline.rebuildPools(); }
         }
     }
 
@@ -1737,7 +1737,7 @@ void render_hud_attachments()
         LLSpatialGroup::sNoDelete = false;
         //gPipeline.clearReferences();
 
-        { LL_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
+        { RK_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
 
         //restore type mask
         gPipeline.popRenderTypeMask();
@@ -1876,7 +1876,7 @@ void render_ui(F32 zoom_factor, int subfield)
 
     // apply gamma correction and post effects
     {
-        LL_CPU_ZONE("display: renderFinalize");
+        RK_CPU_ZONE("display: renderFinalize");
         gPipeline.renderFinalize();
     }
 
@@ -1888,14 +1888,14 @@ void render_ui(F32 zoom_factor, int subfield)
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
-    { LL_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
+    { RK_CPU_ZONE("ui: render_hud_elements"); render_hud_elements(); }
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
         if (RlvActions::hasBehaviour(RLV_BHVR_SETOVERLAY))
         {
             LLVfxManager::instance().runEffect(EVisualEffect::RlvOverlay);
         }
 // [/RLVa:KB]
-        { LL_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
+        { RK_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
 
 
         RKRenderPresetDefault gls_default;
@@ -1910,7 +1910,7 @@ void render_ui(F32 zoom_factor, int subfield)
             if (!gDisconnected)
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 3D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_3D);
-                { LL_CPU_ZONE("ui: render_ui_3d"); render_ui_3d(); }
+                { RK_CPU_ZONE("ui: render_ui_3d"); render_ui_3d(); }
             }
             else
             {
@@ -1926,7 +1926,7 @@ void render_ui(F32 zoom_factor, int subfield)
         if (render_ui)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 2D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_2D);
-            { LL_CPU_ZONE("ui: LLHUDObject::renderAll (name tags)"); LLHUDObject::renderAll(); }
+            { RK_CPU_ZONE("ui: LLHUDObject::renderAll (name tags)"); LLHUDObject::renderAll(); }
             render_ui_2d();
         }
         // <FS:Beq> FIRE-33239 - particles do not sie when UI is disabled
@@ -1938,8 +1938,8 @@ void render_ui(F32 zoom_factor, int subfield)
         // </FS:Beq>
 
         gViewerWindow->setup2DRender();
-        { LL_CPU_ZONE("ui: updateDebugText"); gViewerWindow->updateDebugText(); }
-        { LL_CPU_ZONE("ui: drawDebugText"); gViewerWindow->drawDebugText(); }
+        { RK_CPU_ZONE("ui: updateDebugText"); gViewerWindow->updateDebugText(); }
+        { RK_CPU_ZONE("ui: drawDebugText"); gViewerWindow->drawDebugText(); }
     }
 
     if (!gSnapshot)
@@ -2119,12 +2119,12 @@ void render_ui_3d()
     }
     // </FS:PP>
 
-    { LL_CPU_ZONE("ui: renderSelections"); gViewerWindow->renderSelections(false, false, true); } // Non HUD call in render_hud_elements
+    { RK_CPU_ZONE("ui: renderSelections"); gViewerWindow->renderSelections(false, false, true); } // Non HUD call in render_hud_elements
 
     if (gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
         // Render debugging beacons.
-        { LL_CPU_ZONE("ui: object beacons"); gObjectList.renderObjectBeacons(); }
+        { RK_CPU_ZONE("ui: object beacons"); gObjectList.renderObjectBeacons(); }
         gObjectList.resetObjectBeacons();
         gSky.addSunMoonBeacons();
     }
@@ -2230,7 +2230,7 @@ void render_ui_2d()
 
                     gRender.clearBuffers(ClearBits::Color);
 
-                    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
+                    { RK_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
                 }
 
             }
@@ -2254,7 +2254,7 @@ void render_ui_2d()
     }
     else
     {
-        { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
+        { RK_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
     }
 
     // reset current origin for font rendering, in case of tiling render
