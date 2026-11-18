@@ -30,6 +30,7 @@
 #include "llviscensus.h"
 #include "llcullshadow.h"
 #include <deque>
+#include <intrin.h>
 #include <array>
 #include <unordered_map>
 #include "llviewerregion.h"
@@ -995,7 +996,17 @@ void LLHiz::apply()
         S32 r = LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
         if (r == 0)
         {
-            if ((U32)gFrameCount - p.mFrame > 60)
+            // (2026-11-17: the worker takes the records in order: one that a later record has been published for is lost, not late. It held every verdict behind it for up to 60 frames)
+            bool later_published = false;
+            for (size_t k = 1; k < sHizPending.size() && !later_published; ++k)
+            {
+                const HizPending& q = sHizPending[k];
+                static std::vector<U32> probe;
+                const size_t q_boxes = q.mIds.size() + q.mItems.size();
+                probe.resize(3 * q_boxes);
+                later_published = LLVkBridge::hizRead(q.mSerial, (U32)q_boxes, probe.data()) == 1;
+            }
+            if (later_published || (U32)gFrameCount - p.mFrame > 60)
             {
                 r = -1;         // never published (the worker could not run the record)
             }
@@ -1206,6 +1217,49 @@ public:
 };
 
 
+namespace
+{
+// <FS> one bit per group row: the world camera's OCCLUDED state is set (see LLOcclusionCullingGroup::worldOccluded)
+std::atomic<U64> sWorldOccBits[LLGroupRows::kCapacity / 64];
+inline void world_occ_bit(U32 row_id, bool on)
+{
+    if (row_id && row_id < LLGroupRows::kCapacity)
+    {
+        const U64 bit = 1ull << (row_id & 63u);
+        if (on) { sWorldOccBits[row_id >> 6].fetch_or(bit, std::memory_order_relaxed); }
+        else { sWorldOccBits[row_id >> 6].fetch_and(~bit, std::memory_order_relaxed); }
+    }
+}
+}
+
+void LLOcclusionCullingGroup::worldOccluded(std::vector<LLOcclusionCullingGroup*>& out)
+{
+    out.clear();
+    if (!LLGroupRows::sChunks)
+    {
+        return;
+    }
+    for (U32 w = 0; w < LLGroupRows::kCapacity / 64; ++w)
+    {
+        U64 bits = sWorldOccBits[w].load(std::memory_order_relaxed);
+        while (bits)
+        {
+            unsigned long b;
+            _BitScanForward64(&b, bits);
+            bits &= bits - 1;
+            const U32 id = (w << 6) + (U32)b;
+            LLGroupRows::Row* chunk = LLGroupRows::sChunks[id >> LLGroupRows::kChunkShift];
+            const void* owner = chunk ? chunk[id & (LLGroupRows::kChunkRows - 1)].owner : nullptr;
+            if (!owner || !(chunk[id & (LLGroupRows::kChunkRows - 1)].occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            {
+                world_occ_bit(id, false);       // (a group that is gone, a row handed out again, a state cleared where nothing noted it)
+                continue;
+            }
+            out.push_back(static_cast<LLOcclusionCullingGroup*>(const_cast<LLViewerOctreeGroup*>(static_cast<const LLViewerOctreeGroup*>(owner))));
+        }
+    }
+}
+
 LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctreePartition* part) :
     LLViewerOctreeGroup(node),
     mSpatialPartition(part)
@@ -1221,6 +1275,7 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
         row().occlusion[i] = parent ? SG_STATE_INHERIT_MASK & parent->row().occlusion[i] : 0;
         row().visible[i] = 0;
     }
+    world_occ_bit(mRowId, (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0);
 }
 
 LLOcclusionCullingGroup::~LLOcclusionCullingGroup()
@@ -1279,6 +1334,10 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
             LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
         }
         row().occlusion[LLViewerCamera::sCurCameraID] |= state;
+        if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
+        {
+            world_occ_bit(mRowId, true);
+        }
         if (LLHizRows::sHizRows && mCullId && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
         {
             LLHizRows::hizRowsState(this, true);        // <FS> stage 8d: the mirror of what the worker's verdicts have applied follows every setter
@@ -1313,6 +1372,10 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
             row().occlusion[i] |= state;
+        }
+        if (state & OCCLUDED)
+        {
+            world_occ_bit(mRowId, true);
         }
         break;
 
@@ -1372,6 +1435,10 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
                 LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             row().occlusion[LLViewerCamera::sCurCameraID] &= ~state;
+            if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
+            {
+                world_occ_bit(mRowId, false);
+            }
             if (LLHizRows::sHizRows && mCullId && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
             {
                 LLHizRows::hizRowsState(this, false);       // <FS> stage 8d
@@ -1407,6 +1474,10 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {
                 row().occlusion[i] &= ~state;
+            }
+            if (state & OCCLUDED)
+            {
+                world_occ_bit(mRowId, false);
             }
             break;
 

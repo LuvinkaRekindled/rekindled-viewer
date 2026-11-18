@@ -4726,6 +4726,7 @@ static void main_cull_census(LLCamera& camera)
 }
 
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
+static void ll_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok);    // the groups of the kept set go through markNotCulled (on the pool when parallel_ok; bits: a set of a view's own, stage 10a)
@@ -4802,6 +4803,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLHiz::apply();        // <FS> S7 H3: the verdicts of the boxes sent a few frames ago
     }
 
+    if (view.isMainWorldSort() && !gCubeSnapshot)
+    {
+        dropOcclusionMarks(*sCull);     // (2026-11-17: the last sort's occlusion list is about to be cleared; a group of it that the occlusion pass did not take (no pass ran) keeps its flag, and markOccluder skips a flagged group for good)
+    }
     sCull->clear();
     sCull->mMainView = view.isMainWorldSort() && !gCubeSnapshot;        // (T3: the main view's result stamps the groups it lists, see LLCullResult::pushVisibleGroup)
     struct MarkAtCullScope
@@ -4899,6 +4904,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
     {
         LL_CPU_ZONE("updateCull: kept groups");
         ll_cull_derived_pass(camera, view, view.isMainWorld() && !vis_cull && !LLOccCensus::sOn && !LLGpuZoneTimer::isActive());
+        ll_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not run: this does
     }
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -5108,7 +5114,7 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
                 parent->getElementCount() == 0 &&
                 parent->needsUpdate())
             {
-                sCull->pushOcclusionGroup(group);
+                sCull->pushOcclusionGroup(parent);      // (2026-11-17: this pushed `group` a second time and flagged the parent: a parent that is flagged and listed nowhere is never cleared, so markOccluder skipped it for good)
                 parent->setOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
@@ -13695,6 +13701,61 @@ void ll_cull_stamps_release()
 static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
 {
     gPipeline.markNotCulled(g, camera);
+}
+
+// 2026-11-17: the walk of the covered partitions is not made while the worker's kept set is the list (stage 8f), and a group the CPU holds occluded is not in that set. The walk's earlyFail was what asked for such a
+// group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
+// stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
+// groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
+static void ll_occluded_retest(LLCamera& camera)
+{
+    static std::vector<LLOcclusionCullingGroup*> occluded;
+    LLOcclusionCullingGroup::worldOccluded(occluded);
+    U32 tops = 0, asked = 0;
+    for (LLOcclusionCullingGroup* o : occluded)
+    {
+        LLSpatialGroup* g = static_cast<LLSpatialGroup*>(o);
+        OctreeNode* node = g->getOctreeNode();
+        if (g->isDead() || !node || !node->getParent())      // (never the root: the walk never occlusion culls it)
+        {
+            continue;
+        }
+        LLSpatialPartition* part = g->getSpatialPartition();
+        if (!part || part->asBridge() || !ll_cull_derived_covers(part) || !part->isOcclusionEnabled())
+        {
+            continue;
+        }
+        LLSpatialGroup* parent = g->getParent();
+        if (parent && parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            continue;
+        }
+        const LLVector4a* bb = g->getBounds();
+        if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+        {
+            continue;
+        }
+        ++tops;
+        g->checkOcclusion();        // (what earlyFail did first: a verdict that was discarded clears the state)
+        if (g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        {
+            gPipeline.markOccluder(g);
+            ++asked;
+        }
+    }
+    if (ll_diag_on())
+    {
+        static U64 frames = 0, sum_all = 0, sum_tops = 0, sum_asked = 0;
+        ++frames;
+        sum_all += occluded.size();
+        sum_tops += tops;
+        sum_asked += asked;
+        if (frames % 600 == 0)
+        {
+            LL_DIAG("VkOccRetest") << "groups held occluded (world) " << (F64)sum_all / 600.0 << " a frame, top-most inside the frustum " << (F64)sum_tops / 600.0 << ", asked for a verdict " << (F64)sum_asked / 600.0 << LL_ENDL;
+            sum_all = sum_tops = sum_asked = 0;
+        }
+    }
 }
 
 void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
