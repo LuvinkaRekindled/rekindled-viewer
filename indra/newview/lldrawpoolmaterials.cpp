@@ -146,7 +146,9 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
         LLShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
         {
             LL_CPU_ZONE("materials: bind pull program");
-            gPipeline.bindDeferredShader(*pull);
+            // the native G-buffer programs have no texture slot and read none of what bindDeferredShader sets (shadow matrices, clip planes, SSAO, sun and moon direction, probe LOD; sunlight_color and
+            // moonlight_color are in the block but no G-buffer file reads them): the plain bind, as the simple pool has it (AUDIT-shaders-2026-11-18.md section 1 item 10)
+            pull->bind();
         }
         {
             LL_CPU_ZONE("materials: push packets");

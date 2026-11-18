@@ -5289,7 +5289,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table") || !r.bindlessAvailable())
+    if (h.mEntries == 0 || !program || !program->isValid() || program->packetUniforms().mTable == ~0u || !r.bindlessAvailable())
     {
         ++sStats.mNoProgram;
         return;
@@ -5418,13 +5418,22 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
-    if (texmats.mAddress && program->hasUniform("ll_packet_texmats"))
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
+    if (texmats.mAddress && program->packetUniforms().mTexmats != ~0u)
     {
         const U64 texmats_address = (U64)texmats.mAddress;
         const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
-        program->setInts("ll_packet_texmats", texmats_words, 2);
+        program->setFloatsAt(program->packetUniforms().mTexmats, reinterpret_cast<const F32*>(texmats_words), 2, 1);
     }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     program->setFloats("ll_target_width", &h.mTargetWidth, 1);
@@ -5552,11 +5561,11 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table") || !r.bindlessAvailable())
+    if (h.mEntries == 0 || !program || !program->isValid() || program->packetUniforms().mTable == ~0u || !r.bindlessAvailable())
     {
         ++sStats.mNoProgram;
         static std::set<std::string> told;
-        const std::string why = program ? program->getName() + (!program->isValid() ? ": program not valid" : !program->hasUniform("ll_packet_table") ? ": no packet table" : ": bindless not available") : std::string("no program");
+        const std::string why = program ? program->getName() + (!program->isValid() ? ": program not valid" : program->packetUniforms().mTable == ~0u ? ": no packet table" : ": bindless not available") : std::string("no program");
         if (h.mEntries && told.insert(why).second)
         {
             LL_WARNS("VkScene") << "a geometry packet record is not drawn (" << why << ")" << LL_ENDL;
@@ -5688,8 +5697,17 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
     {
         // S5f F3: the record's texture matrices (number 0 = identity) and PBR rows, in scratch memory of their own
         const U32 texmat_count = h.mFragment, pbr_count = h.mPaletteFloats;
@@ -5709,13 +5727,14 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         const U64 texmats_address = (U64)texmats.mAddress, pbr_address = (U64)pbr_rows.mAddress;
         const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
         const S32 pbr_words[2] = { (S32)(U32)pbr_address, (S32)(U32)(pbr_address >> 32) };
-        if (program->hasUniform("ll_packet_texmats"))
+        const Program::PacketUniforms& pu2 = program->packetUniforms();
+        if (pu2.mTexmats != ~0u)
         {
-            program->setInts("ll_packet_texmats", texmats_words, 2);
+            program->setFloatsAt(pu2.mTexmats, reinterpret_cast<const F32*>(texmats_words), 2, 1);
         }
-        if (program->hasUniform("ll_packet_pbr"))
+        if (pu2.mPbr != ~0u)
         {
-            program->setInts("ll_packet_pbr", pbr_words, 2);
+            program->setFloatsAt(pu2.mPbr, reinterpret_cast<const F32*>(pbr_words), 2, 1);
         }
     }
 
@@ -5836,7 +5855,7 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    if (h.mEntries == 0 || !program || !program->isValid() || program->packetUniforms().mTable == ~0u)
     {
         ++sStats.mNoProgram;
         return;
@@ -5919,8 +5938,17 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     // rt-debug.txt shadowidx=1 (the default): the entries are drawn indexed, a run for each index buffer (the hardware reads the indices: the vertex shader runs once for a vertex, not once for each corner of a triangle)
     static WorkerDebugKey shadow_idx_key = { "shadowidx", 1, {} };
@@ -7310,7 +7338,7 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     }
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    if (!program || !program->isValid() || program->packetUniforms().mTable == ~0u)
     {
         ++sStats.mNoProgram;
         return;
@@ -7383,8 +7411,17 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     used_cache.clear();
     const S32 table_words[2] = { (S32)(U32)ta, (S32)(U32)(ta >> 32) };
     const S32 models_words[2] = { (S32)(U32)ma, (S32)(U32)(ma >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     program->setFloats("ll_target_width", &h.mTargetWidth, 1);
     if (program->hasUniform("shadow_alpha_indexed"))
@@ -7798,7 +7835,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (!program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    if (!program || !program->isValid() || program->packetUniforms().mTable == ~0u)
     {
         ++sStats.mNoProgram;
         return;
@@ -7867,8 +7904,17 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     used_cache.clear();
     const S32 table_words[2] = { (S32)(U32)ta, (S32)(U32)(ta >> 32) };
     const S32 models_words[2] = { (S32)(U32)ma, (S32)(U32)(ma >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
     if (!prepare_draw(vi, used_cache))
     {
@@ -12443,7 +12489,7 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
 
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
-    if (h.mEntries == 0 || !program || !program->isValid() || !program->hasUniform("ll_packet_table"))
+    if (h.mEntries == 0 || !program || !program->isValid() || program->packetUniforms().mTable == ~0u)
     {
         ++sStats.mNoProgram;
         return;
@@ -12506,8 +12552,17 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     const U64 table_address = (U64)table.mAddress, models_address = (U64)models.mAddress;
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
-    program->setInts("ll_packet_table", table_words, 2);
-    program->setInts("ll_packet_models", models_words, 2);
+    {
+        const Program::PacketUniforms& pu = program->packetUniforms();       // (the indices are found once for the program: no lookup by name for each record)
+        if (pu.mTable != ~0u)
+        {
+            program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+        }
+        if (pu.mModels != ~0u)
+        {
+            program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+        }
+    }
     program->setMatrices("ll_view_proj", h.mViewProj, 4, 4, 1);
 
     if (!prepare_draw(vi, used_cache))
