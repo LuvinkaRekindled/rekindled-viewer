@@ -101,7 +101,7 @@ using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handl
 // <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): the retire list. A texture whose last counted reference goes is not deleted at once: it is parked here and destroyed a few frames later,
 // so that anything that still READS it through a handle (the render map, the packet builders, the render worker, a few frames behind the main thread) finds it intact. What must not wait
 // for the list (the fetch request, the texture lists) is done when the texture is parked (onRetire). A parked texture whose reference count rose again in the meantime is left alone.
-// LL_VK_TEX_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
+// LL_VK_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
 // <FS> C2.4: the list itself is generic now (llcommon/llretirelist.h, LLRetireList, shared with the glTF materials); this is what is texture specific: the pump and the shutdown call it, the counter and the log line are ours
 class LLTexRetire
 {
