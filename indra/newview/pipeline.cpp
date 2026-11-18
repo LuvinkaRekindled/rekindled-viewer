@@ -5095,11 +5095,6 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
-    if (LLHizRows::sHizRows && group && group->mCullId && group->getSpatialPartition() && !group->getSpatialPartition()->asBridge() && group->getSpatialPartition()->isOcclusionEnabled()
-        && group->getOctreeNode() && group->getOctreeNode()->getParent())
-    {
-        return;         // stage 8d (LL_VK_HIZROWS=2): the worker tests this group's row every frame; nothing is named, no box collected, no verdict awaited
-    }
     if (LLPipeline::useOcclusion() > 1 && group && !group->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION))
     {
         LLSpatialGroup* parent = group->getParent();
@@ -13205,12 +13200,6 @@ void cull_process()
             sSlotPartType.resize(sSlotGroup.size() + 64, 255);
         }
         sSlotPartType[slot] = (sg->getSpatialPartition() && sg->getSpatialPartition()->mPartitionType < 32) ? (U8)sg->getSpatialPartition()->mPartitionType : (U8)255;
-        if (LLHizRows::sHizRows)
-        {
-            // stage 8d: a new group starts with the state it inherited from its parent; no verdict history
-            LLHizRows::hizRowsState(g, (g->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED) != 0);
-            LLHizRows::hizRowsReset(g);
-        }
         sDirtySlots.push_back(slot);
     }
     sNewGroups.clear();
@@ -13295,11 +13284,6 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
         const U32 slot = group->mCullId - 1;
         if (slot < sSlotGroup.size() && sSlotGroup[slot] == group)
         {
-            if (LLHizRows::sHizRows)
-            {
-                LLHizRows::hizRowsState(group, false);       // stage 8d
-                LLHizRows::hizRowsReset(group);
-            }
             sSlotGroup[slot] = nullptr;
             ++sSlotGen[slot];
             sFreeSlots.push_back(slot);
@@ -13932,155 +13916,6 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     }
     gPipeline.applySortDeltas(ledger);
     gPipeline.mNumVisibleNodes += (S32)pushed;
-}
-
-// stage 8d of doc/vulkan/PLAN-visible-set-owner.md (LL_VK_HIZROWS=2, with LL_VK_CULL_SHADOW=1): the OCCLUDED state of the table's groups follows the worker's verdicts of their rows. The worker tests the box of every row in the packet
-// of the occlusion point and publishes two bit sets by slot (LLVkBridge::hizRowsPublish): which rows have a verdict that says something about occlusion, and which of those are occluded. Here, per batch, only word operations:
-// occluded on two agreeing verdicts (the old rule, mHizOccludedOnce), visible on one, a batch the camera has left behind counts as visible (the old stale rule); only the groups whose state changes are touched. Two bit sets by slot
-// keep the state: what is applied (every setter of OCCLUDED reports it: hizRowsState) and the occluded verdicts of the batch before. markOccluder no longer names these groups, so no box is collected, no verdict awaited.
-static std::vector<U32> sHizState, sHizPrevOcc;
-
-static inline void hiz_bit(std::vector<U32>& v, U32 slot, bool on)
-{
-    if (v.size() <= (slot >> 5))
-    {
-        v.resize((slot >> 5) + 64, 0u);
-    }
-    if (on) { v[slot >> 5] |= 1u << (slot & 31u); } else { v[slot >> 5] &= ~(1u << (slot & 31u)); }
-}
-
-void LLHizRows::hizRowsState(LLViewerOctreeGroup* group, bool occluded)
-{
-    hiz_bit(sHizState, group->mCullId - 1, occluded);
-}
-
-void LLHizRows::hizRowsReset(LLViewerOctreeGroup* group)
-{
-    hiz_bit(sHizPrevOcc, group->mCullId - 1, false);
-}
-
-void LLHizRows::hizRowsInvalidate(LLViewerOctreeGroup* group)
-{
-    // an object was added to the group: it is visible at once (what the discard of an awaited verdict did, made by the event) and two new agreeing verdicts are needed to occlude it again
-    hizRowsReset(group);
-    if (LLOcclusionCullingGroup* o = dynamic_cast<LLOcclusionCullingGroup*>(group))
-    {
-        if (o->row().occlusion[LLViewerCamera::CAMERA_WORLD] & LLOcclusionCullingGroup::OCCLUDED)
-        {
-            o->hizRowSet(false);
-        }
-    }
-}
-
-void LLHizRows::hizRowsApply(const U32* occ, const U32* info, U32 rows, bool stale)
-{
-    const U32 nw = (rows + 31) / 32;
-    if (sHizState.size() < nw) { sHizState.resize(nw, 0u); }
-    if (sHizPrevOcc.size() < nw) { sHizPrevOcc.resize(nw, 0u); }
-    static std::vector<std::pair<U32, bool>> changes;
-    changes.clear();
-    // (the proof line of this switch and what a turn does to it: batches applied, stale ones, rows with information, rows the batch says are occluded, rows flagged occluded after it, the changes it made)
-    static U64 cnt_batches = 0, cnt_stale = 0, cnt_info = 0, cnt_occ_says = 0, cnt_flagged = 0, cnt_set = 0, cnt_clr = 0;
-    ++cnt_batches;
-    // (a stale batch, the camera moved more than 0.5 m or turned more than 2 degrees since its boxes were sent, is applied as all visible: the rule of 2026-11-02, the own avatar vanished for 15 frames in a flight)
-    cnt_stale += stale;
-    // <FS> 2026-11-16 (Adam: Hi-Z has to work): a stale batch no longer clears every flagged row. Lap hz6b (big batch lines against the VkFlash frames): with the old rule, and with the first three stale batches skipped, the fourth
-    // stale batch in a row cleared 2,000 to 4,600 rows at once and the two agreeing verdicts put them back three frames later: every 60 frames the visible groups jumped from 1,650 to 2,900 for three frames. A batch whose camera has moved
-    // beyond the limit is now only good for what it says is VISIBLE (a visible verdict is safe for any camera): those rows are cleared, and its occluded verdicts are not used (they set nothing, they count for nothing, they clear nothing).
-    // After LL_VK_HIZ_STALE_RUN (8) stale batches in a row the camera is taken to be really moving (a flight, a zoom: the own avatar vanished for 15 frames on 2026-11-02 with the stale verdicts applied) and the batch is applied as a fresh one.
-    static U32 stale_run = 0, cnt_skipped = 0;
-    static const U32 stale_run_max = getenv("LL_VK_HIZ_STALE_RUN") ? (U32)atoi(getenv("LL_VK_HIZ_STALE_RUN")) : 8u;
-    stale_run = stale ? stale_run + 1 : 0;
-    const bool skip = stale && stale_run <= stale_run_max;       // (the name stays: a batch applied for its visible verdicts only)
-    cnt_skipped += skip;
-    for (U32 w = 0; w < nw; ++w)
-    {
-        const U32 i = info[w];
-        cnt_info += (U64)__popcnt(i);
-        cnt_occ_says += (U64)__popcnt(occ[w] & i);
-        const U32 o = occ[w] & i;
-        U32 set_bits = skip ? 0u : (o & sHizPrevOcc[w] & ~sHizState[w]);       // two agreeing occluded verdicts, the state is not occluded yet
-        U32 clr_bits = i & ~o & sHizState[w];                                  // a verdict that says visible, the state is occluded
-        if (skip)
-        {
-            sHizPrevOcc[w] &= ~(i & ~o);       // (a visible verdict ends the agreement; an occluded one of a stale batch neither adds to it nor ends it)
-        }
-        else
-        {
-            sHizPrevOcc[w] = (sHizPrevOcc[w] & ~i) | o;
-        }
-        for (int phase = 0; phase < 2; ++phase)
-        {
-            U32 bits = phase ? clr_bits : set_bits;
-            for (U32 b = 0; bits && b < 32; ++b)
-            {
-                if ((bits >> b) & 1u)
-                {
-                    changes.emplace_back((w << 5) + b, phase == 0);
-                }
-            }
-        }
-    }
-    {
-        // (a batch that changes more than 300 rows at once, the frames the detector of the main view calls flashes: what the batch was; a budget of 80 lines)
-        U32 big_set = 0, big_clr = 0;
-        for (const auto& c : changes)
-        {
-            (c.second ? big_set : big_clr) += 1;
-        }
-        static U32 big_lines = 0;
-        if ((big_set > 300 || big_clr > 300) && big_lines < 80)
-        {
-            ++big_lines;
-            U64 says = 0, inf = 0;
-            for (U32 w = 0; w < nw; ++w)
-            {
-                says += (U64)__popcnt(occ[w] & info[w]);
-                inf += (U64)__popcnt(info[w]);
-            }
-            LL_INFOS("VkHizRows") << "big Hi-Z batch: frame " << gFrameCount << ", set " << big_set << ", cleared " << big_clr << ", stale " << stale << ", skipped " << skip << ", stale run " << stale_run << ", rows with information " << inf
-                                  << ", the batch says occluded " << says << LL_ENDL;
-        }
-    }
-    for (const auto& c : changes)
-    {
-        (c.second ? cnt_set : cnt_clr) += 1;
-    }
-    for (U32 w = 0; w < nw; ++w)
-    {
-        cnt_flagged += (U64)__popcnt(sHizState[w]);       // (before this batch's changes are applied: the state the batch found)
-    }
-    if (cnt_batches % 150 == 0)
-    {
-        const double n = 150.0;
-        LL_INFOS("VkHizRows") << "Hi-Z rows applied (LL_VK_HIZROWS=2), the last 150 batches: " << cnt_batches << " in all, stale " << cnt_stale << " (skipped " << cnt_skipped << ") of the last 150, rows with information " << (double)cnt_info / n << " a batch, the batch says occluded " << (double)cnt_occ_says / n
-                              << ", rows flagged occluded when it came " << (double)cnt_flagged / n << ", set " << (double)cnt_set / n << " and cleared " << (double)cnt_clr / n << " a batch" << LL_ENDL;
-        cnt_stale = cnt_info = cnt_occ_says = cnt_flagged = cnt_set = cnt_clr = 0;
-        cnt_skipped = 0;
-    }
-    if (changes.empty())
-    {
-        return;
-    }
-    static std::vector<std::pair<LLOcclusionCullingGroup*, bool>> targets;
-    targets.clear();
-    {
-        std::lock_guard<std::mutex> lock(sCullMutex);
-        for (const auto& c : changes)
-        {
-            if (c.first < sSlotGroup.size() && sSlotGroup[c.first])
-            {
-                if (LLOcclusionCullingGroup* g = dynamic_cast<LLOcclusionCullingGroup*>(sSlotGroup[c.first]))
-                {
-                    targets.emplace_back(g, c.second);
-                }
-            }
-        }
-    }
-    for (const auto& t : targets)
-    {
-        t.first->hizRowSet(t.second);
-    }
 }
 
 void ll_main_listed_note(LLSpatialGroup* group, U32 serial)

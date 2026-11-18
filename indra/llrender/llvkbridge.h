@@ -396,11 +396,6 @@ namespace LLVkBridge
     bool viewRequest(U32 id, U32 frame, const CullParams& params);
     std::shared_ptr<const ViewSet> viewSetRead(U32 id);
     void viewSetPublish(std::shared_ptr<const ViewSet> set);        // (worker)
-    // stage 8d (LL_VK_HIZROWS): the worker appends the box of every table row to the Hi-Z packet and publishes the verdicts of those boxes by slot, for the serial of the packet, when the frame has finished, as two bit sets by slot:
-    // info = a row the Hi-Z tests (not the root, a bridge's group or one of a partition without occlusion) whose box is neither off the screen nor wholly behind the camera (those say "occluded" and mean no information),
-    // occ = the box is occluded, only where there is information. hizRowsRead copies the serial's two sets (words = ceil(rows / 32)); it returns the number of rows, 0 = none for that serial.
-    void hizRowsPublish(U32 serial, U32 rows, const U32* occ_words, const U32* info_words);
-    U32 hizRowsRead(U32 serial, U32* occ_out, U32* info_out, U32 capacity_words);
     bool sceneGeoAvailable();       // the worker can keep and draw them (buffer addresses, indirect draws with a first instance, bindless textures)
     // ---- ray query shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md) ----
     // 0 = off (or the device cannot), 1 = ray query shadows replace the cascades, 2 = split screen, 3 = disagreement map. Fixed for the run; the shader programs are compiled for it.

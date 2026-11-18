@@ -905,7 +905,7 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
 void LLHiz::send(const F32* view_proj)
 {
     struct Lap { U64 mT0 = LLOccCensus::sOn ? LLOccCensus::now() : 0; ~Lap() { if (LLOccCensus::sOn) LLOccCensus::sHizTicksSend += LLOccCensus::now() - mT0; } } lap;
-    if (sHizBoxes.empty() && sHizItemBoxes.empty() && !(LLHizRows::sHizRows))       // (stage 8d: with the table's rows as the boxes a pass with none of the viewer's is still a pass)
+    if (sHizBoxes.empty() && sHizItemBoxes.empty())
     {
         return;
     }
@@ -1056,22 +1056,6 @@ void LLHiz::apply()
                 ++LLOccCensus::sHizStale;
             }
         }
-        // stage 8d (LL_VK_HIZROWS=1, with LL_VK_CULL_SHADOW=1): the worker tested the box of every table row in the same packet and publishes the verdicts by slot: the verdict of each group's box the viewer sent against the worker's
-        // verdict of that group's row (the same pyramid: a difference is the box, the bounds or the fudge)
-        static const bool rows_compare = getenv("LL_VK_HIZROWS") != nullptr;
-        static std::vector<U32> row_occ(1024), row_info(1024);
-        U32 row_count = 0;
-        if (rows_compare)
-        {
-            row_count = LLVkBridge::hizRowsRead(p.mSerial, row_occ.data(), row_info.data(), (U32)row_occ.size());
-            static U64 batches = 0, no_rows = 0;
-            ++batches;
-            no_rows += row_count == 0;
-            if (batches % 600 == 0)
-            {
-                LL_INFOS("VkHizRows") << "Hi-Z batches with the worker's row verdicts: " << batches - no_rows << " of " << batches << LL_ENDL;
-            }
-        }
         for (size_t i = 0; i < p.mIds.size(); ++i)
         {
             auto it = sHizTargets.find(p.mIds[i]);
@@ -1084,30 +1068,6 @@ void LLHiz::apply()
                 continue;
             }
             LLHizTarget* t = it->second;
-            if (row_count)
-            {
-                static U64 compared = 0, same_occ = 0, same_vis = 0, viewer_occ = 0, rows_occ = 0, bits_differ = 0;
-                if (const LLViewerOctreeGroup* og = dynamic_cast<const LLViewerOctreeGroup*>(t))
-                {
-                    const U32 slot = og->mCullId ? og->mCullId - 1 : ~0u;
-                    if (slot < row_count && ((row_info[slot >> 5] >> (slot & 31u)) & 1u))
-                    {
-                        const U32 a = words[3 * i];
-                        const bool b = (row_occ[slot >> 5] >> (slot & 31u)) & 1u;
-                        ++compared;
-                        if ((a & 1u) && b) { ++same_occ; }
-                        else if (!(a & 1u) && !b) { ++same_vis; }
-                        else if (a & 1u) { ++viewer_occ; }
-                        else { ++rows_occ; }
-                        bits_differ += 0;
-                        if (compared % 20000 == 0)
-                        {
-                            LL_INFOS("VkHizRows") << "Hi-Z verdicts of the groups' boxes the viewer sent against the worker's row verdicts, over " << compared << ": both occluded " << same_occ << ", both visible " << same_vis << ", only the viewer's box occluded " << viewer_occ
-                                                  << ", only the worker's row occluded " << rows_occ << "; the test's other bits differ " << bits_differ << LL_ENDL;
-                        }
-                    }
-                }
-            }
             if (t->mHizSerial != p.mSerial)
             {
                 if (census)
@@ -1134,10 +1094,6 @@ void LLHiz::apply()
             }
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
-        }
-        if (LLHizRows::sHizRows && row_count)
-        {
-            LLHizRows::hizRowsApply(row_occ.data(), row_info.data(), row_count, stale);       // <FS> stage 8d: the worker's verdicts of the table's rows, by slot
         }
         if (!p.mItems.empty())
         {
@@ -1338,10 +1294,6 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             world_occ_bit(mRowId, true);
         }
-        if (LLHizRows::sHizRows && mCullId && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
-        {
-            LLHizRows::hizRowsState(this, true);        // <FS> stage 8d: the mirror of what the worker's verdicts have applied follows every setter
-        }
         break;
 
     case STATE_MODE_DIFF:
@@ -1438,10 +1390,6 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
             {
                 world_occ_bit(mRowId, false);
-            }
-            if (LLHizRows::sHizRows && mCullId && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
-            {
-                LLHizRows::hizRowsState(this, false);       // <FS> stage 8d
             }
             break;
 
@@ -1634,7 +1582,6 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
         if (!inside)
         {
             o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
-            if (LLHizRows::sHizRows && o->mCullId) { LLHizRows::hizRowsReset(o); }       // <FS> stage 8d: the verdicts that occluded it are out of date
             o->mHizOccludedOnce = false;
             if (LLCullCensus::sOn && o->mSpatialPartition)
             {
@@ -1677,35 +1624,6 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
     {
         mHizOccludedOnce = false;
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
-    }
-    LLViewerCamera::sCurCameraID = saved_camera;
-}
-
-// <FS> stage 8d (LL_VK_HIZROWS=2): the worker's verdict of this group's row, applied to the group alone (no subtree: every row has a verdict of its own). The census is told, as hizResult tells it.
-void LLOcclusionCullingGroup::hizRowSet(bool occluded)
-{
-    if (isDead() || !mOctreeNode)
-    {
-        return;         // (a group whose octree node is gone is not destroyed yet and still has its slot: the setters walk its data, a crash in LLTexRecs::groupOcclusion on 2026-11-16 while the world loaded)
-    }
-    const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
-    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-    const bool was = (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0;
-    if (occluded)
-    {
-        setOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_SINGLE);
-    }
-    else
-    {
-        clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_SINGLE);
-    }
-    if (was != occluded && mSpatialPartition)
-    {
-        if (LLCullCensus::sOn)
-        {
-            LLCullCensus::sOccChanges[std::min<U32>(mSpatialPartition->mPartitionType, 15)].fetch_add(1, std::memory_order_relaxed);
-            LLCullCensus::noteOcc(this, !was, 0);
-        }
     }
     LLViewerCamera::sCurCameraID = saved_camera;
 }
