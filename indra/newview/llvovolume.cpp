@@ -7765,8 +7765,6 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
     LLFace** face_iter = faces;
     LLFace** end_faces = faces+face_count;
 
-    LLSpatialGroup::buffer_map_t buffer_map;
-
     LLViewerTexture* last_tex = NULL;
 
     S32 texture_index_channels = LLShaderProgram::sIndexedTextureChannels;
@@ -7969,7 +7967,6 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         if (buffer)
         {
             geometryBytes += buffer->getSize() + buffer->getIndicesSize();
-            buffer_map[mask][*batch.mBegin].push_back(buffer);
         }
 
         batch.mBuffer = buffer;
@@ -8002,12 +7999,6 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
     if (!deferred)
     {
         runFillTasks(group, local_tasks);
-    }
-
-    group->mBufferMap[mask].clear();
-    for (LLSpatialGroup::buffer_texture_map_t::iterator i = buffer_map[mask].begin(); i != buffer_map[mask].end(); ++i)
-    {
-        group->mBufferMap[mask][i->first] = i->second;
     }
 
     return geometryBytes;

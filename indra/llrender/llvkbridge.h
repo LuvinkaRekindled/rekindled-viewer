@@ -267,18 +267,14 @@ namespace LLVkBridge
     // the normal array (0 = none), mMaterial = RtMaterialDef id of the mesh (0 = none)
     struct ShadowBodyEntry { U32 mVertexBuffer, mIndexBuffer, mFirstIndex, mIndexCount, mVertexFirst, mVertexCount, mAvatarId, mMeshId, mWeightOffset, mJoints, mMode, mSelf; F32 mAvatarPos[3]; F32 mModel[16]; U32 mAlphaFlags, mTexture, mTexcoordOffset; F32 mCutoff; U32 mNormalOffset, mMaterial; };
     // kinds 6 and 7 (ray tracing only, nothing is drawn): the rigged draws of the MAIN view named to the ray scene every frame, as kind 2 (ShadowSkinEntry) and kind 1 with
-    // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy.    // kind 8: rigged draws of the avatar velocity pass (avatarVelocityPullV.glsl): ShadowSkinEntry entries (no model matrices), then the palettes of this frame (mPaletteFloats floats, 12 per joint), then
-    // the palettes of the frame before, same layout and offsets. mViewProj is the jittered view-projection (the pixels of the G-buffer); the unjittered ones come as ordinary uniforms
-    // kind 9: draws that move as a whole, for the velocity pass (objectVelocityPullV.glsl): ShadowPacketEntry entries, then mMatrices model matrices of this frame, then mMatrices of the frame before
+    // ALPHA_RIGGED (ShadowAlphaEntry): entries, model matrices, palettes, the layout of the kinds they copy.
     // S5f F3 kind 32 (alpha transient): the draws the scene table does not keep (particle groups, ...) of an alpha pass, drawn with the pull program the viewer bound, in the pass's order. Blob: mEntries GeoEntry
-    //   (mMatrix = number of its model matrix, mPad3 = number of its texture matrix, 0 = none, mPbrRow = its PBR row, textures as GL names), then mMatrices x 44 floats as in kind 3 (matrix 0: the view alone), then
+    //   (mMatrix = number of its model matrix, mPad3 = number of its texture matrix, 0 = none, mPbrRow = its PBR row, textures as GL names), then mMatrices x 44 floats (modelview, modelview * projection, the normal matrix as three vec4 columns; matrix 0: the view alone), then
     //   mFragment texture matrices (16 floats each, numbered from 1), then mPaletteFloats PBR rows (40 floats each, numbered from 0). The pull shaders read the same row layout as for fragment items.
-    // kind 3: a draw of a deferred geometry pass (the colour passes). The matrices after the entries are 44 floats each: modelview, modelview * projection, and the normal
-    // matrix as three vec4 columns (the viewer computes them, once per model matrix). Matrix 0 is the view alone.
     enum GeoFlags : U32
     {
         GEO_ONE_TEXTURE = 1,        // one diffuse texture, mTextures[0]: the vertices carry no texture index
-        GEO_RIGGED = 2,             // A1 (kind 25): a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
+        GEO_RIGGED = 2,             // A1: a rigged draw, mWeightOffset / mPaletteOffset / mJoints are valid
         GEO_NO_INDEX = 4,           // S6.6: no index buffer: mFirstIndex is the first vertex, mIndexCount the vertex count (a drawArrays)
         GEO_STRIP = 8,              // S6.6: the draw is a triangle strip (a record of one entry)
         GEO_PARTICLE_ROWS = 16,     // GPU particles stage 1: the arrays hold one row a particle (position, velocity, half size, colour, glow); mFirstIndex / mIndexCount count 6 vertices a particle (the pull shaders make the quad)
@@ -304,9 +300,7 @@ namespace LLVkBridge
         U32 mDebugColor;            // K6 B1: the Batch Size debug view's colour of the draw (LLDrawBatch::getDebugColor, made when the entry is built; 0 = none), carried in a spare word of the table row
     };
     // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps
-    //   them in scratch memory of the frame (segments by offset); entries of kinds 25 / 26 and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.
-    // S4 A1 (doc/vulkan/S4-design.md) kind 25: the same record as kind 3 for rigged draws (GEO_RIGGED, entries 160 bytes in the table, drawn with the skinned pull program): after the matrices (44 floats each)
-    //   come mPaletteFloats floats of joint matrix palettes (12 per joint), the entries point into them.
+    //   them in scratch memory of the frame (segments by offset); entries of kind 32 (rigged) and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.
     // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
     // The fragments are named by the viewer's dense HANDLE (LLSceneFragment::mGeoHandle, reused only after the release was sent).
     // kind 20 RETAIN_GEO: mFragment = handle, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none),

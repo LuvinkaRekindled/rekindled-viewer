@@ -344,9 +344,6 @@ public:
     typedef std::vector<LLPointer<LLSpatialBridge> > bridge_list_t;
     typedef std::vector<LLPointer<LLDrawBatch> > drawmap_elem_t;
     typedef std::unordered_map<U32, drawmap_elem_t > draw_map_t;
-    typedef std::vector<LLPointer<LLVertexBuffer> > buffer_list_t;
-    typedef std::unordered_map<LLFace*, buffer_list_t> buffer_texture_map_t;
-    typedef std::unordered_map<U32, buffer_texture_map_t> buffer_map_t;
 
     struct CompareDistanceGreater
     {
@@ -489,7 +486,6 @@ public:
     static U32 sDrawMapsCleared;        // non empty draw maps cleared (group rebuilds), counted per frame by LL_VK_SCENE_STATS
 
     bridge_list_t mBridgeList;
-    buffer_map_t mBufferMap; //used by volume buffers to attempt to reuse vertex buffers
 
     U32 mGeometryBytes; //used by volumes to track how many bytes of geometry data are in this node
     F32 mSurfaceArea; //used by volumes to track estimated surface area of geometry in this node

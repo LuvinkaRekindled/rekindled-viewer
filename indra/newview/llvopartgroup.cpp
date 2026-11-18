@@ -1269,7 +1269,6 @@ void LLParticlePartition::rebuildGeom(LLSpatialGroup* group)
     else
     {
         group->mVertexBuffer = NULL;
-        group->mBufferMap.clear();
     }
 
     group->row().lastUpdateTime = gFrameTimeSeconds;
@@ -1394,7 +1393,6 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     if (!n)
     {
         group->mVertexBuffer = NULL;
-        group->mBufferMap.clear();
         return true;
     }
     sPartStats.mRRibbons += ribbons;

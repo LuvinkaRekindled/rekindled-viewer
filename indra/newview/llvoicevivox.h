@@ -678,7 +678,6 @@ private:
     // Introduced while fixing EXT-4313.
     int mSpatialJoiningNum;
 
-    static void idle(void *user_data);
 
     LLHost mDaemonHost;
     LLSocket::ptr_t mSocket;

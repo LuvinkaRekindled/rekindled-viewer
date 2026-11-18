@@ -461,7 +461,6 @@ LLPipeline::LLPipeline() :
     mMatrixOpCount(0),
     mTextureMatrixOps(0),
     mNumVisibleNodes(0),
-    mNumVisibleFaces(0),
     mPoissonOffset(0),
 
     mInitialized(false),
@@ -473,8 +472,7 @@ LLPipeline::LLPipeline() :
     mGroupQ1Locked(false),
     mResetVertexBuffers(false),
     mLastRebuildPool(NULL),
-    mLightMask(0),
-    mLightMovingMask(0)
+    mLightMask(0)
 {
     mNoiseMap = 0;
     mTrueNoiseMap = 0;
@@ -2290,7 +2288,6 @@ void LLPipeline::resetFrameStats()
     assertInitialized();
 
     sCompiles        = 0;
-    mNumVisibleFaces = 0;
 
     // <FS> the views lap (doc/vulkan/PLAN-twin-removal.md, section 4): the live key `views` of rt-debug.txt turns the info displays on without the menus (the lap harness has no way to click them): 0 none,
     // 1 Normals, 2 Update Type, 3 Texture Anim, 4 Render Batches. The display of the key's value is exclusive; a change of the value switches the old one off and the new one on, as the menu entries do.
@@ -4031,34 +4028,6 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
     }
 }
 
-void LLPipeline::replayMember(LLSpatialGroup* group, U8 kind, bool occlude)
-{
-    if (kind == 1)
-    {
-        sCull->pushDrawableGroup(group);
-    }
-    else
-    {
-        sCull->pushVisibleGroup(group);
-    }
-    if (occlude)
-    {
-        markOccluder(group);
-    }
-}
-
-void LLPipeline::replayAdopted(LLSpatialGroup* group, LLCamera& camera, bool world)
-{
-    if (group->hasState(LLSpatialGroup::FS_RELEASED))
-    {
-        wakeRequest(group);
-    }
-    if (world && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
-    {
-        if (!ll_dist_owned(group)) { group->updateDistance(camera); }
-    }
-}
-
 void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 {
     if (kind == 1)
@@ -4343,47 +4312,6 @@ void LLPipeline::clearRebuildGroups()
     // Copy the saved HUD groups back in
     mGroupQ1.assign(hudGroups.begin(), hudGroups.end());
     mGroupQ1Locked = false;
-}
-
-void LLPipeline::clearRebuildDrawables()
-{
-    // Clear all drawables on the priority build queue,
-    for (LLDrawable::drawable_list_t::iterator iter = mBuildQ1.begin();
-         iter != mBuildQ1.end(); ++iter)
-    {
-        LLDrawable* drawablep = *iter;
-        if (drawablep && !drawablep->isDead())
-        {
-            drawablep->clearState(LLDrawable::IN_REBUILD_Q);
-        }
-    }
-    mBuildQ1.clear();
-
-    //clear all moving bridges
-    for (LLDrawable::drawable_vector_t::iterator iter = mMovedBridge.begin();
-         iter != mMovedBridge.end(); ++iter)
-    {
-        LLDrawable *drawablep = *iter;
-        drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED | LLDrawable::ON_MOVE_LIST | LLDrawable::ANIMATED_CHILD);
-    }
-    mMovedBridge.clear();
-
-    //clear all moving drawables
-    for (LLDrawable::drawable_vector_t::iterator iter = mMovedList.begin();
-         iter != mMovedList.end(); ++iter)
-    {
-        LLDrawable *drawablep = *iter;
-        drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED | LLDrawable::ON_MOVE_LIST | LLDrawable::ANIMATED_CHILD);
-    }
-    mMovedList.clear();
-
-    for (LLDrawable::drawable_vector_t::iterator iter = mShiftList.begin();
-        iter != mShiftList.end(); ++iter)
-    {
-        LLDrawable *drawablep = *iter;
-        drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED | LLDrawable::ON_MOVE_LIST | LLDrawable::ANIMATED_CHILD | LLDrawable::ON_SHIFT_LIST);
-    }
-    mShiftList.clear();
 }
 
 void LLPipeline::rebuildPriorityGroups()
@@ -6567,7 +6495,6 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
         }
     }
 
-    mNumVisibleFaces.fetch_add(drawablep->getNumFaces(), std::memory_order_relaxed);
 }
 
 
@@ -11978,7 +11905,7 @@ void ll_lod_cand_note(LLSpatialGroup* group, bool live)
 
 void ll_lod_cand_report()
 {
-    if (LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot)
+    if (!ll_diag_on() || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD || gCubeSnapshot)       // (its counters fill only with diagnostics on: without them the line printed zeros)
     {
         return;
     }
@@ -15666,7 +15593,10 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         {
             //update reflection probe uniform
             mReflectionMapManager.updateUniforms();
-            mHeroProbeManager.updateUniforms();
+            if (!LLPipeline::sReflectionProbesEnabled)
+            {
+                mHeroProbeManager.updateUniforms();        // (the reflection manager's updateUniforms makes the hero uniforms itself when the probes are on)
+            }
         }
 
         U32 cur_type = 0;
@@ -17988,8 +17918,6 @@ void LLPipeline::setupHWLights()
 
     // Nearby lights = LIGHT 2-7
 
-    mLightMovingMask = 0;
-
     static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
 
     if (local_light_count >= 1)
@@ -18010,11 +17938,6 @@ void LLPipeline::setupHWLights()
                 {
                     continue;
                 }
-            }
-
-            if (drawable->isState(LLDrawable::ACTIVE))
-            {
-                mLightMovingMask |= (1<<cur_light);
             }
 
             //send linear light color to shader
@@ -20166,11 +20089,6 @@ void apply_cube_face_rotation(U32 face)
             LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 180, 0, 0, 1);
         break;
     }
-}
-
-void LLPipeline::bindScreenToTexture()
-{
-
 }
 
 static LLTrace::BlockTimerStatHandle FTM_RENDER_BLOOM("Bloom");

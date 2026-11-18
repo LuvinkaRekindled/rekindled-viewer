@@ -22,10 +22,8 @@ set(llrender_SOURCE_FILES
     llshaderprogram.cpp
     llbasetexture.cpp
     llimagetex.cpp
-    llpostprocess.cpp
     llrender.cpp
     llrender2dutils.cpp
-    llrendernavprim.cpp
     llrendersphere.cpp
     llrendertarget.cpp
     llshadermgr.cpp
@@ -70,14 +68,12 @@ set(llrender_HEADER_FILES
     llbasetexture.h
     llgltypes.h
     llimagetex.h
-    llpostprocess.h
     llrender.h
     llrendermatrix.h
     llrenderformat.h
     llrenderpass.h
     llrenderstate.h
     llrender2dutils.h
-    llrendernavprim.h
     llrendersphere.h
     llshadermgr.h
     lltexture.h

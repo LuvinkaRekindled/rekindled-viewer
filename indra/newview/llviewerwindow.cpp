@@ -197,7 +197,6 @@
 #include "llviewerjoystick.h"
 #include "llviewermenufile.h" // LLFilePickerReplyThread
 #include "llviewernetwork.h"
-#include "llpostprocess.h"
 // <FS:Ansariel> [FS communication UI]
 //#include "llfloaterimnearbychat.h"
 // </FS:Ansariel> [FS communication UI]
@@ -7238,11 +7237,6 @@ void LLViewerWindow::stopGL()
         }
 
         gBox.cleanupResources();
-
-        if(gPostProcess)
-        {
-            gPostProcess->invalidate();
-        }
 
         gTextureList.destroyResources();
 

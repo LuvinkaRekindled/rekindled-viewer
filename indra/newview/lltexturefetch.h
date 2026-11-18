@@ -294,6 +294,7 @@ private:
 
     // Threads:  Ttf
     /*virtual*/ void threadedUpdate(void);
+    /*virtual*/ bool hasThreadedUpdate() const { return true; }
 
     // Threads:  Ttf
     void commonUpdate();

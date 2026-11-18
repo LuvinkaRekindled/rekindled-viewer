@@ -857,6 +857,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     {
         LLVector3 a(0.f, 0.f, 0.f);
         LLViewerPart* part = mParticles[i] ;
+        if (ll_diag_on())       // (the census: its only reader is LL_DIAG Q1Census)
         {
             const U32 fl = part->mFlags;
             ++sSimCensus.mStepped;
@@ -1335,7 +1336,7 @@ void LLViewerPartSim::sortStores()
 
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
-    ++sSimCensus.mSpawned;
+    sSimCensus.mSpawned += ll_diag_on();
     part->mSpawnPos = part->mPosAgent;
     part->mSpawnVel = part->mVelocity;
     part->mSpawnKnown = true;
@@ -1487,8 +1488,9 @@ void LLViewerPartSim::updateSimulation()
         deldir = -1;
     }
 
-    const unsigned long long census_t0 = __rdtsc();
-    sSimCensus.mSources += (U64)count;
+    const bool census = ll_diag_on();       // (the census of the simulation: its only reader is LL_DIAG Q1Census)
+    const unsigned long long census_t0 = census ? __rdtsc() : 0;
+    sSimCensus.mSources += census ? (U64)count : 0;
     S32 num_updates = 0;
     for (i = start; num_updates < count;)
     {
@@ -1549,16 +1551,19 @@ void LLViewerPartSim::updateSimulation()
         num_updates++;
     }
 
-    const unsigned long long census_t1 = __rdtsc();
+    const unsigned long long census_t1 = census ? __rdtsc() : 0;
     sSimCensus.mSrcCycles += census_t1 - census_t0;
     count = (S32) mViewerPartGroups.size();
-    sSimCensus.mGroups += (U64)count;
+    sSimCensus.mGroups += census ? (U64)count : 0;
     for (i = 0; i < count; i++)
     {
-        sSimCensus.mRecs += mViewerPartGroups[i]->mRecords.size();
-        for (const LLViewerPartRecord& rec : mViewerPartGroups[i]->mRecords)
+        if (census)
         {
-            ++sSimCensus.mModeRecs[rec.mBounce ? 4 : rec.mMode];
+            sSimCensus.mRecs += mViewerPartGroups[i]->mRecords.size();
+            for (const LLViewerPartRecord& rec : mViewerPartGroups[i]->mRecords)
+            {
+                ++sSimCensus.mModeRecs[rec.mBounce ? 4 : rec.mMode];
+            }
         }
         LLViewerObject* vobj = mViewerPartGroups[i]->mVOPartGroupp;
 
@@ -1593,12 +1598,12 @@ void LLViewerPartSim::updateSimulation()
         else
         {
             mViewerPartGroups[i]->mSkippedTime+=dt;
-            ++sSimCensus.mGroupsSkipped;
+            sSimCensus.mGroupsSkipped += census;
         }
 
     }
-    sSimCensus.mGrpCycles += __rdtsc() - census_t1;
-    if (++sSimCensus.mFrames % 600 == 0)
+    sSimCensus.mGrpCycles += census ? __rdtsc() - census_t1 : 0;
+    if (census && ++sSimCensus.mFrames % 600 == 0)
     {
         const double f = 600.0, k = 1000.0, st = std::max<double>(1.0, (double)sSimCensus.mStepped);
         LL_DIAG("Q1Census") << "particle simulation per frame over 600: sources loop " << sSimCensus.mSrcCycles / f / k << " kcycles (" << sSimCensus.mSources / f << " sources), groups loop " << sSimCensus.mGrpCycles / f / k << " kcycles ("
