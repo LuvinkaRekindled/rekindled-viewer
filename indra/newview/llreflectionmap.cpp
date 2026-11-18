@@ -27,7 +27,6 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llreflectionmap.h"
-#include "lloccensus.h"
 #include "pipeline.h"
 #include "llviewerwindow.h"
 #include "llviewerregion.h"
@@ -356,16 +355,8 @@ void LLReflectionMap::hizCollect(const LLVector4a& eye)
     LLVector4a o;
     o.setSub(mOrigin, eye);
 
-    if (LLOccCensus::sOn)
-    {
-        ++LLOccCensus::sProbeCalls;
-    }
     if (o.getLength3().getF32() < dist)
     { // eye is inside radius, don't attempt to occlude
-        if (LLOccCensus::sOn)
-        {
-            ++LLOccCensus::sProbeInside;
-        }
         mHizSerial = 0;
         mOccluded = false;
         return;
@@ -373,15 +364,7 @@ void LLReflectionMap::hizCollect(const LLVector4a& eye)
 
     if (mHizSerial)
     { // the verdict of the last box is not back yet: the probe keeps what it had
-        if (LLOccCensus::sOn)
-        {
-            ++LLOccCensus::sProbeAwaiting;
-        }
         return;
-    }
-    if (LLOccCensus::sOn)
-    {
-        ++LLOccCensus::sProbeAdded;
     }
     LLHiz::add(this, mOrigin, mRadius, mRadius, mRadius, false);
 }
@@ -390,8 +373,4 @@ void LLReflectionMap::hizCollect(const LLVector4a& eye)
 void LLReflectionMap::hizResult(bool occluded)
 {
     mOccluded = occluded;
-    if (LLOccCensus::sOn)
-    {
-        ++(occluded ? LLOccCensus::sProbeOccluded : LLOccCensus::sProbeVisible);
-    }
 }

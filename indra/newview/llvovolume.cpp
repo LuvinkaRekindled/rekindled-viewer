@@ -99,7 +99,6 @@
 #include "rlvlocks.h"
 // [/RLVa:KB]
 #include "llviewernetwork.h"
-#include "llviscensus.h"
 
 const F32 FORCE_SIMPLE_RENDER_AREA = 512.f;
 const F32 FORCE_CULL_AREA = 8.f;

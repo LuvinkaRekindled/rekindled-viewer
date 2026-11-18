@@ -100,7 +100,6 @@
 #include "llcontrolavatar.h"
 #include "llvktexanim.h"
 #include "llvocache.h"
-#include "lloccensus.h"
 #include "llvosky.h"
 #include "llvowlsky.h"
 #include "llvotree.h"
@@ -156,7 +155,6 @@
 #include "SMAAAreaTex.h"
 #include "SMAASearchTex.h"
 #include "llerror.h"
-#include "llviscensus.h"
 #include "llcullshadow.h"
 #include <deque>
 #include <chrono>
@@ -4492,239 +4490,6 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     return view;
 }
 
-// <FS> C4.5 census (LL_VK_MAINCENSUS=1, off by default; the main view's partition cull, in the production path): the walk's counts (LLCullCensus, written by the walks and markNotCulled on every thread), and
-// per frame a comparison of the groups the cull listed with the last frame's, by the type of the group's partition. A group list a retained cull would replay is exact when the camera is the same, the partition's
-// change epoch is the same and no group of it changed its occlusion state: for each type the frames where that key holds ("hit") and how many groups differed from the last frame on them (it must be 0), the groups that
-// differed on the other frames and which of the three changed. The report is a line every 600 frames (tag MainCull).
-void LLCullCensus::noteOcc(LLOcclusionCullingGroup* g, bool now_occluded, int source)
-{
-    if (!sOn)
-    {
-        return;
-    }
-    sOccSrc[source & 3].fetch_add(1, std::memory_order_relaxed);
-    (now_occluded ? sOccSet : sOccClear).fetch_add(1, std::memory_order_relaxed);
-    static std::mutex mtx;
-    static std::unordered_map<const void*, std::pair<S32, S32>> last;       // group -> (frame of its last change, state after it)
-    const S32 frame = (S32)LLFrameTimer::getFrameCount();
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        auto it = last.find(g);
-        if (it == last.end())
-        {
-            sOccFirst.fetch_add(1, std::memory_order_relaxed);
-            last.emplace(g, std::make_pair(frame, now_occluded ? 1 : 0));
-        }
-        else
-        {
-            const S32 gap = frame - it->second.first;
-            sOccDwell[now_occluded ? 0 : 1][gap <= 2 ? 0 : gap <= 8 ? 1 : gap <= 60 ? 2 : 3].fetch_add(1, std::memory_order_relaxed);      // [the state it left: 0 visible, 1 occluded][how long]
-            it->second = { frame, now_occluded ? 1 : 0 };
-        }
-    }
-    if (LLSpatialGroup* sg = dynamic_cast<LLSpatialGroup*>(g))
-    {
-        if (const OctreeNode* node = sg->getOctreeNode())
-        {
-            if (node->getChildCount() == 0)
-            {
-                sOccLeaf.fetch_add(1, std::memory_order_relaxed);
-            }
-            U64 nodes = 0;
-            std::function<void(const OctreeNode*)> count = [&](const OctreeNode* n)
-            {
-                ++nodes;
-                for (U32 i = 0; i < n->getChildCount(); ++i)
-                {
-                    count(n->getChild(i));
-                }
-            };
-            count(node);
-            sOccSubtree.fetch_add(nodes, std::memory_order_relaxed);
-        }
-        bool avatar = false, active = false;
-        for (LLSpatialGroup::element_iter i = sg->getDataBegin(); i != sg->getDataEnd(); ++i)
-        {
-            LLDrawable* d = (LLDrawable*)(*i)->getDrawable();
-            if (!d)
-            {
-                continue;
-            }
-            if (d->isAvatar() || d->isSpatialBridge())
-            {
-                avatar = true;
-            }
-            else if (d->isActive())
-            {
-                active = true;
-            }
-        }
-        sOccAvatar.fetch_add(avatar ? 1 : 0, std::memory_order_relaxed);
-        sOccActive.fetch_add(active ? 1 : 0, std::memory_order_relaxed);
-    }
-}
-
-static void main_cull_census(LLCamera& camera)
-{
-    using C = LLCullCensus;
-    static const char* const names[16] = { "hud", "terrain", "voidwater", "water", "tree", "particle", "grass", "volume", "bridge", "avatar", "control_av", "hud_particle", "t12", "t13", "t14", "t15" };
-    static LLVector3 prev_origin, prev_at;
-    static bool have_prev = false;
-    static std::unordered_map<const void*, U8> prev_groups;
-    static U64 frames = 0, cam_still_frames = 0, all_hit_frames = 0;
-    static U64 w_nodes = 0, w_early = 0, w_occdrop = 0, w_inside = 0, w_frustum = 0, w_out = 0, w_marks = 0, w_empty = 0, w_pd = 0, w_pv = 0, w_ticks = 0;
-    struct Per { U64 mGroupsB = 0, mHitChangedB = 0, mMissChangedB = 0, mGroups = 0, mHit = 0, mHitChanged = 0, mMiss = 0, mMissChanged = 0, mMissCam = 0, mMissEpoch = 0, mMissOcc = 0, mOccChanges = 0, mPresent = 0; };
-    static Per per[16];
-    static std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    static U64 tsc0 = LLVisCensus::now();
-
-    const LLVector3 origin = camera.getOrigin(), at = camera.getAtAxis();
-    const bool cam_same = have_prev && origin == prev_origin && at == prev_at;
-    prev_origin = origin;
-    prev_at = at;
-    have_prev = true;
-    ++frames;
-    cam_still_frames += cam_same ? 1 : 0;
-
-    w_nodes += C::sNodes.exchange(0); w_early += C::sEarlyFail.exchange(0); w_occdrop += C::sOccDropped.exchange(0); w_inside += C::sAllInside.exchange(0);
-    w_frustum += C::sFrustumTests.exchange(0); w_out += C::sFrustumOut.exchange(0); w_marks += C::sMarkCalls.exchange(0); w_empty += C::sMarkEmpty.exchange(0);
-    w_pd += C::sMarkDrawable.exchange(0); w_pv += C::sMarkVisible.exchange(0); w_ticks += C::sMarkTicks.exchange(0);
-
-    // the partitions' change epochs: the partitions of the regions, and the own partition of every listed group (the bridges' partitions hold the attachments' groups, typed like the region's: they are not in the region's list)
-    static std::unordered_map<const void*, std::pair<U8, U64>> prev_parts;      // partition -> (type, epoch) as last seen
-    std::unordered_map<const void*, std::pair<U8, U64>> cur_parts;
-    auto note_part = [&](LLSpatialPartition* part)
-    {
-        if (part)
-        {
-            cur_parts.emplace((const void*)part, std::make_pair((U8)std::min<U32>(part->mPartitionType, 15), (U64)part->mEpoch.load(std::memory_order_relaxed)));
-        }
-    };
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-    {
-        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-        {
-            note_part((*iter)->getSpatialPartition(i));
-        }
-    }
-    U32 occ[16];
-    for (int t = 0; t < 16; ++t)
-    {
-        occ[t] = C::sOccChanges[t].exchange(0);
-        per[t].mOccChanges += occ[t];
-    }
-
-    std::unordered_map<const void*, U8> cur;
-    cur.reserve(sCull->getDrawableGroupsSize() + sCull->getVisibleGroupsSize());
-    auto take = [&](LLCullResult::sg_iterator b, LLCullResult::sg_iterator e)
-    {
-        for (LLCullResult::sg_iterator g = b; g != e; ++g)
-        {
-            cur.emplace((const void*)*g, (U8)(std::min<U32>((*g)->getSpatialPartition()->mPartitionType, 15) | ((*g)->getSpatialPartition()->isBridge() ? 0x80u : 0u)));      // (bit 7: the group is in a bridge's own partition: the attachments of an avatar)
-            note_part((*g)->getSpatialPartition());
-        }
-    };
-    take(sCull->beginDrawableGroups(), sCull->endDrawableGroups());
-    take(sCull->beginVisibleGroups(), sCull->endVisibleGroups());
-    bool epoch_changed[16] = {};
-    for (const auto& kv : cur_parts)
-    {
-        auto it = prev_parts.find(kv.first);
-        if (it == prev_parts.end() || it->second.second != kv.second.second)
-        {
-            epoch_changed[kv.second.first] = true;
-        }
-        prev_parts[kv.first] = kv.second;
-    }
-    U64 changed[16] = {}, count[16] = {}, changed_b[16] = {}, count_b[16] = {};
-    for (const auto& kv : cur)
-    {
-        ++count[kv.second & 15];
-        count_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
-        if (!prev_groups.count(kv.first))
-        {
-            ++changed[kv.second & 15];
-            changed_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
-        }
-    }
-    for (const auto& kv : prev_groups)
-    {
-        if (!cur.count(kv.first))
-        {
-            ++changed[kv.second & 15];
-            changed_b[kv.second & 15] += (kv.second & 0x80) ? 1 : 0;
-        }
-    }
-    bool all_hit = true;
-    for (int t = 0; t < 16; ++t)
-    {
-        const bool epoch_same = !epoch_changed[t];
-        const bool hit = cam_same && epoch_same && occ[t] == 0;
-        per[t].mGroups += count[t];
-        per[t].mGroupsB += count_b[t];
-        if (count[t] || changed[t])
-        {
-            ++per[t].mPresent;
-            if (hit)
-            {
-                ++per[t].mHit;
-                per[t].mHitChanged += changed[t];
-                per[t].mHitChangedB += changed_b[t];
-            }
-            else
-            {
-                all_hit = false;
-                ++per[t].mMiss;
-                per[t].mMissChanged += changed[t];
-                per[t].mMissChangedB += changed_b[t];
-                per[t].mMissCam += cam_same ? 0 : 1;
-                per[t].mMissEpoch += epoch_same ? 0 : 1;
-                per[t].mMissOcc += occ[t] ? 1 : 0;
-            }
-        }
-    }
-    all_hit_frames += (all_hit && cam_same) ? 1 : 0;
-    prev_groups.swap(cur);
-
-    if (frames % 600 == 0)
-    {
-        const double wall_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        const double ms_per_tick = wall_ms / (double)std::max<U64>(1, LLVisCensus::now() - tsc0);
-        const double n = 600.0;
-        LL_INFOS("MainCull") << "main cull census over 600 frames, per frame: camera unchanged on " << cam_still_frames << " frames, every partition's key held on " << all_hit_frames
-            << " | walk: nodes " << w_nodes / n << " (early fail " << w_early / n << " of them " << w_occdrop / n << " dropped as occluded, fully inside " << w_inside / n << ", frustum tests " << w_frustum / n << " of them out " << w_out / n
-            << ") | markNotCulled: calls " << w_marks / n << " (empty " << w_empty / n << "), drawable groups " << w_pd / n << ", visible groups " << w_pv / n << ", time inside it on all threads " << (double)w_ticks * ms_per_tick / n << " ms" << LL_ENDL;
-        for (int t = 0; t < 16; ++t)
-        {
-            const Per& p = per[t];
-            if (!p.mPresent)
-            {
-                continue;
-            }
-            LL_INFOS("MainCull") << "main cull census, partition " << names[t] << ": groups listed " << p.mGroups / n << " a frame, present on " << p.mPresent << " frames: key held on " << p.mHit << " ("
-                << (p.mHit ? (double)p.mHitChanged / p.mHit : 0.0) << " groups differed from the frame before on those, 0 expected; " << (p.mHit ? (double)p.mHitChangedB / p.mHit : 0.0) << " of them in bridge partitions; " << p.mGroupsB / n << " of the listed groups are in bridge partitions), not held on " << p.mMiss << " (" << (p.mMiss ? (double)p.mMissChanged / p.mMiss : 0.0)
-                << " groups differed a frame; camera changed on " << p.mMissCam << ", epoch on " << p.mMissEpoch << ", occlusion state on " << p.mMissOcc << "), occlusion state changes " << p.mOccChanges << LL_ENDL;
-        }
-        {
-            const U64 set = C::sOccSet.exchange(0), clr = C::sOccClear.exchange(0), leaf = C::sOccLeaf.exchange(0), sub = C::sOccSubtree.exchange(0), av = C::sOccAvatar.exchange(0), act = C::sOccActive.exchange(0), first = C::sOccFirst.exchange(0);
-            const U64 all = std::max<U64>(1, set + clr);
-            U64 dw[2][4];
-            for (int a = 0; a < 2; ++a) { for (int b = 0; b < 4; ++b) { dw[a][b] = C::sOccDwell[a][b].exchange(0); } }
-            LL_INFOS("MainCull") << "main cull census, occlusion state changes over 600 frames: " << set << " set, " << clr << " cleared (by a verdict " << C::sOccSrc[0].exchange(0) << ", a discard in checkOcclusion " << C::sOccSrc[1].exchange(0)
-                << ", the eye inside the box " << C::sOccSrc[2].exchange(0) << ", hizEntryMoved " << C::sOccSrc[3].exchange(0) << "); leaf groups " << leaf << ", nodes below the group on average " << (double)sub / all
-                << "; the group holds an avatar or bridge " << av << ", another moving drawable " << act << "; first change seen of the group " << first
-                << "; how long the group had been in the state it left (frames <= 2 / <= 8 / <= 60 / longer): visible " << dw[0][0] << " / " << dw[0][1] << " / " << dw[0][2] << " / " << dw[0][3]
-                << ", occluded " << dw[1][0] << " / " << dw[1][1] << " / " << dw[1][2] << " / " << dw[1][3] << LL_ENDL;
-        }
-        for (Per& p : per) { p = Per(); }
-        prev_parts.clear();
-        frames = cam_still_frames = all_hit_frames = 0;
-        w_nodes = w_early = w_occdrop = w_inside = w_frustum = w_out = w_marks = w_empty = w_pd = w_pv = w_ticks = 0;
-        t0 = std::chrono::steady_clock::now();
-        tsc0 = LLVisCensus::now();
-    }
-}
-
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
 static void ll_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
@@ -4778,13 +4543,6 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
-    // <FS> S7 C0 (LL_VK_VISCENSUS=1): the main view's cull
-    const bool vis_cull = LLVisCensus::sOn && view.isWorld();
-    struct VisCullEnd
-    {
-        bool mOn; U64 mT0;
-        ~VisCullEnd() { if (mOn) { LLVisCensus::sCullTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sCullFrames; } }
-    } vis_cull_end = { vis_cull, vis_cull ? LLVisCensus::now() : 0 };
     // stage 8f (LL_VK_KEPT=2): the covered partitions are not walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, each group goes through markNotCulled as the walk's own does
     const bool derived_use = view.isMainWorld() && !gCubeSnapshot && ll_cull_derived_on();
     if (!derived_use && view.isMainWorld() && !gCubeSnapshot)
@@ -4815,17 +4573,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         ~MarkAtCullScope() { sMarkAtCull = false; }
     } mark_at_cull_scope(view.isMainWorldSort() && !gCubeSnapshot);
 
-    static const bool main_census_env = (LLCullCensus::sOn = getenv("LL_VK_MAINCENSUS") != nullptr);
-    const bool main_census = main_census_env && view.isMainWorld() && !gCubeSnapshot;
-    if (main_census)
-    {
-        LLCullCensus::sActive.store(true);
-    }
-
     // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
     // (the table keeps the walk serial only while something of it needs that: its comparison with the walk's lists, the flat cull, the LOD compare's notes: with the table's compare off the pool walk runs, the row events go through a mutex)
     const bool main_cull = view.isMainWorld()
-        && !derived_use && !vis_cull && !LLOccCensus::sOn && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
+        && !derived_use && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
     const int cull_mode = main_cull ? cull_split_setting() : 0;
     int cull_done = 0;
     if (cull_mode >= 3)
@@ -4894,16 +4645,10 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         }
     }
 
-    if (main_census)
-    {
-        LLCullCensus::sActive.store(false);
-        main_cull_census(camera);
-    }
-
     if (derived_use)
     {
         LL_CPU_ZONE("updateCull: kept groups");
-        ll_cull_derived_pass(camera, view, view.isMainWorld() && !vis_cull && !LLOccCensus::sOn && !LLGpuZoneTimer::isActive());
+        ll_cull_derived_pass(camera, view, view.isMainWorld() && !LLGpuZoneTimer::isActive());
         ll_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not run: this does
     }
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
@@ -4964,23 +4709,8 @@ static bool sLodSampling = true;            // this sort's loop makes the per-gr
 
 void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 {
-    // <FS> C4.5 census (LL_VK_MAINCENSUS=1): the calls, what they push, and the time inside them (all threads)
-    struct MarkCensus
-    {
-        bool mOn; U64 mT0;
-        ~MarkCensus() { if (mOn) { LLCullCensus::sMarkTicks.fetch_add(LLVisCensus::now() - mT0, std::memory_order_relaxed); } }
-    } census = { LLCullCensus::sOn && LLCullCensus::sActive.load(std::memory_order_relaxed) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot, 0 };
-    if (census.mOn)
-    {
-        census.mT0 = LLVisCensus::now();
-        LLCullCensus::sMarkCalls.fetch_add(1, std::memory_order_relaxed);
-    }
     if (group->isEmpty())
     {
-        if (census.mOn)
-        {
-            LLCullCensus::sMarkEmpty.fetch_add(1, std::memory_order_relaxed);
-        }
         return;
     }
 
@@ -5012,10 +4742,6 @@ void LLPipeline::markNotCulled(LLSpatialGroup* group, LLCamera& camera)
 
     assertInitialized();
 
-    if (census.mOn)
-    {
-        (group->getSpatialPartition()->mRenderByGroup ? LLCullCensus::sMarkVisible : LLCullCensus::sMarkDrawable).fetch_add(1, std::memory_order_relaxed);
-    }
     if (!group->getSpatialPartition()->mRenderByGroup)
     { //render by drawable
         sCull->pushDrawableGroup(group);
@@ -5134,80 +4860,28 @@ void LLPipeline::doOcclusion(LLCamera& camera)
         return;
     }
 
-    // <FS> (LL_VK_OCC_CENSUS=1): the pass and its parts
-    const U64 occ_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
-    if (LLOccCensus::sOn)
-    {
-        ++LLOccCensus::sPasses[LLViewerCamera::CAMERA_WORLD];
-        if (!LLOccCensus::sQpc0)
-        {
-            LARGE_INTEGER q;
-            QueryPerformanceCounter(&q);
-            LLOccCensus::sQpc0 = q.QuadPart;
-            LLOccCensus::sTsc0 = LLOccCensus::now();
-        }
-        ++LLOccCensus::sFrames;
-    }
-    struct OccPassEnd
-    {
-        U64 mT0;
-        ~OccPassEnd()
-        {
-            if (LLOccCensus::sOn)
-            {
-                LLOccCensus::sTicksPass[LLViewerCamera::CAMERA_WORLD] += LLOccCensus::now() - mT0;
-                if (LLOccCensus::sFrames >= 600)
-                {
-                    LLOccCensus::report();
-                }
-            }
-        }
-    } occ_end = { occ_t0 };
-
     LLHiz::begin();
     ll_bridge_hiz_collect();        // stage 9: the bridges' own boxes
 
     if (sReflectionProbesEnabled)
     {
-        const U64 occ_p0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         mReflectionMapManager.doOcclusion();
         mHeroProbeManager.doOcclusion();
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sTicksProbes += LLOccCensus::now() - occ_p0;
-        }
     }
 
     if (sCull->hasOcclusionGroups() || LLVOCachePartition::sNeedsOcclusionCheck)
     {
-        const U64 occ_g0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         for (LLCullResult::sg_iterator iter = sCull->beginOcclusionGroups(); iter != sCull->endOcclusionGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
-            if (LLOccCensus::sOn)
-            {
-                ++LLOccCensus::sListGroups[LLViewerCamera::CAMERA_WORLD];
-                LLOccCensus::sListDead[LLViewerCamera::CAMERA_WORLD] += group->isDead();
-                LLOccCensus::sListOccluded[LLViewerCamera::CAMERA_WORLD] += !group->isDead() && group->isOcclusionState(LLSpatialGroup::OCCLUDED);
-            }
             if (!group->isDead())
             {
-                const U64 hiz_t0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
                 group->hizCollect(&camera);
-                if (LLOccCensus::sOn)
-                {
-                    LLOccCensus::sHizTicksCollect += LLOccCensus::now() - hiz_t0;
-                }
                 group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sTicksGroups[LLViewerCamera::CAMERA_WORLD] += LLOccCensus::now() - occ_g0;
-        }
 
         //apply occlusion culling to object cache tree
-        const U64 occ_c0 = LLOccCensus::sOn ? LLOccCensus::now() : 0;
         for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
             iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
         {
@@ -5216,10 +4890,6 @@ void LLPipeline::doOcclusion(LLCamera& camera)
             {
                 vo_part->processOccluders(&camera);
             }
-        }
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sTicksCache += LLOccCensus::now() - occ_c0;
         }
     }
 
@@ -6361,8 +6031,6 @@ void LLPipeline::markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags f
     }
 }
 
-static bool sVisSortOn = false;     // <FS> S7 C0 (LL_VK_VISCENSUS=1): this stateSort is the main view's
-
 // <FS> ---- the stateSort split (doc/vulkan/PLAN-statesort-offmain.md, stage 1) ----
 // The loops of the main view's stateSort write to state that other code shares: the rebuild queue and the partition move queue (markRebuild, markPartitionMove, called from LLVOVolume::updateLOD),
 // the LOD update of avatars and other objects that are not volumes (LLDrawable::updateDistance), and the mesh rebuilds. With a sink set (sSortSink) those calls only record a SortDelta; the apply
@@ -6473,9 +6141,8 @@ static int sort_split_mode(const LLPipeline::View& view, bool defer_pools)
     {
         return 0;
     }
-    static const bool census = getenv("LL_VK_VISCENSUS") != nullptr || getenv("LL_VK_OCCCENSUS") != nullptr;
     static LLCachedControl<bool> debug_lods(gSavedSettings, "DebugObjectLODs", false);
-    if (census || sVisSortOn || LLOccCensus::sOn || debug_lods || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TRIANGLE_COUNT) || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_LOD_INFO))
+    if (debug_lods || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TRIANGLE_COUNT) || gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_LOD_INFO))
     {
         return 0;
     }
@@ -7204,24 +6871,14 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         {
             continue;
         }
-        {
-            const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            sort_check_occlusion(group);
-            if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortDrawableGroups; }
-        }
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
-        }
+        sort_check_occlusion(group);
         if (LLPipeline::useOcclusion() > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
-            if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
         }
         else
         {
             group->setVisible();
-            const U64 vis_m0 = sVisSortOn ? LLVisCensus::now() : 0;
             for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
             {
                 LLDrawable* drawablep = (LLDrawable*)(*i)->getDrawable();
@@ -7229,15 +6886,7 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
                 {
                     markVisible(drawablep, camera);
                 }
-                if (sVisSortOn)
-                {
-                    ++LLVisCensus::sSortMarkVisN;
-                    LLVisCensus::sMarkActive += drawablep->isActive();
-                    LLVisCensus::sMarkAvatar += drawablep->isAvatar();
-                    LLVisCensus::sMarkBridge += drawablep->isSpatialBridge();
-                }
             }
-            if (sVisSortOn) { LLVisCensus::sSortTicksMarkVis += LLVisCensus::now() - vis_m0; }
 
         }
     }
@@ -7267,13 +6916,11 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
             for (LLCullResult::bridge_iterator i = read.beginVisibleBridge(); i != read.endVisibleBridge(); ++i)
             {
                 LLSpatialBridge* bridge = *i;
-                const U64 vis_b0 = sVisSortOn ? LLVisCensus::now() : 0;
                 if (!bridge->isDead() && ll_bridge_lod_other(bridge, fov_changed, frame_now))
                 {
                     bool force_update = false;
                     bridge->updateDistance(camera, force_update);
                 }
-                if (sVisSortOn) { LLVisCensus::sSortTicksBridge += LLVisCensus::now() - vis_b0; ++LLVisCensus::sSortBridgeCalls; }
             }
         }
     }
@@ -7287,19 +6934,10 @@ void LLPipeline::sortLoops(LLCamera& camera, LLCullResult& read)
         {
             continue;
         }
-        {
-            const U64 vis_k0 = sVisSortOn ? LLVisCensus::now() : 0;
-            sort_check_occlusion(group);
-            if (sVisSortOn) { LLVisCensus::sSortTicksCheck += LLVisCensus::now() - vis_k0; ++LLVisCensus::sSortCheckCalls; ++LLVisCensus::sSortVisibleGroups; }
-        }
-        if (LLOccCensus::sOn)
-        {
-            LLOccCensus::sortNote(LLViewerCamera::sCurCameraID, group->isOcclusionState(LLSpatialGroup::OCCLUDED), group->getElementCount());
-        }
+        sort_check_occlusion(group);
         if (LLPipeline::useOcclusion() > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             markOccluder(group);
-            if (sVisSortOn) { ++LLVisCensus::sSortOccluded; }
         }
         else
         {
@@ -7331,13 +6969,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result, bool defer_po
     LL_PROFILE_GPU_ZONE("stateSort");
 
     const View view = currentView(camera, false);
-    sVisSortOn = LLVisCensus::sOn && view.isMainWorldSort();
     sOwnerA = view.isMainWorldSort() && !gCubeSnapshot;        // stage 9: the avatar and bridge owners' pass makes loop (a)'s lists of the avatars' drawables and the bridges
-    struct VisSortEnd
-    {
-        U64 mT0;
-        ~VisSortEnd() { if (sVisSortOn) { LLVisCensus::sSortTicks += LLVisCensus::now() - mT0; ++LLVisCensus::sSortCalls; sVisSortOn = false; } }
-    } vis_sort_end = { sVisSortOn ? LLVisCensus::now() : 0 };
 
     mEarlySort = defer_pools;
 
@@ -7560,7 +7192,6 @@ void LLPipeline::fillPools(LLCullResult& result, const std::vector<LLDrawable*>*
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
-    const U64 vis_l0 = sVisSortOn ? LLVisCensus::now() : 0;
     if (!sLodCandRunning && !sLodSampling && ll_lod_cand_covers(group))
     {
         return;         // (stage 8, owner 3: the candidate pass of the sort makes this call for the groups whose turn it is, see ll_lod_cand_collect)
@@ -7571,7 +7202,6 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
     }
     const bool vis_lod = group->changeLOD();
     if (!sLodCandRunning) { ll_lod_cand_note(group, vis_lod); }
-    if (sVisSortOn) { LLVisCensus::sSortTicksLod += LLVisCensus::now() - vis_l0; ++LLVisCensus::sSortLodCalls; LLVisCensus::sSortLodTrue += vis_lod; }
     if (vis_lod)
     {
         for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
@@ -7649,11 +7279,6 @@ bool LLPipeline::sortAccepts(LLDrawable* drawablep)
 void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    struct VisDrawableEnd
-    {
-        U64 mT0;
-        ~VisDrawableEnd() { if (sVisSortOn) { LLVisCensus::sSortTicksDrawable += LLVisCensus::now() - mT0; ++LLVisCensus::sSortDrawableCalls; } }
-    } vis_drawable_end = { sVisSortOn ? LLVisCensus::now() : 0 };
     if (!sortAccepts(drawablep))
     {
         return;
@@ -7672,13 +7297,6 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
     {
         //if (drawablep->isVisible()) isVisible() check here is redundant, if it wasn't visible, it wouldn't be here
-        const U64 vis_d0 = sVisSortOn ? LLVisCensus::now() : 0;
-        if (sVisSortOn)
-        {
-            if (drawablep->isAvatar()) { ++LLVisCensus::sDrawAvatar; }
-            else if (drawablep->isActive()) { ++LLVisCensus::sDrawActive; }
-            else { ++LLVisCensus::sDrawStatic; }
-        }
         {
             if (!drawablep->isActive())
             {
@@ -7691,7 +7309,6 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
                 drawablep->updateDistance(camera, force_update); // calls vobj->updateLOD() which calls LLVOAvatar::updateVisibility()
             }
         }
-        if (sVisSortOn) { LLVisCensus::sSortTicksDist += LLVisCensus::now() - vis_d0; ++LLVisCensus::sSortDistCalls; }
     }
 
     mNumVisibleFaces.fetch_add(drawablep->getNumFaces(), std::memory_order_relaxed);
@@ -8354,7 +7971,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     const View view = currentView(camera, false);
-    const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
     assertInitialized();
     sVolumeSAFrame = 0.f; //ZK LBG (the rebuilds below add to it)
 
@@ -8403,7 +8019,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
         {
             LLRebuildBatch::Scope rebuild_batch;       // <FS> R3b3: the fills of the drawable groups and of the priority groups, together
             // rebuild drawable geometry
-            const U64 vis_g0 = vis_post ? LLVisCensus::now() : 0;
             {
             LL_CPU_ZONE("geometry: drawable groups");
             // T5 of doc/vulkan/PLAN-visible-set-owner.md: the groups with GEOM_DIRTY come from the registry of the dirty groups (the events that set the bit add the group), not from a scan of every drawable group the cull kept (rebuildGeom
@@ -8430,7 +8045,6 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
                 }
             }
             }
-            if (vis_post) { LLVisCensus::sPostTicksRebuildGeom += LLVisCensus::now() - vis_g0; }
             LL_PUSH_CALLSTACKS();
             // rebuild groups
 
@@ -8446,12 +8060,10 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
     {
         LL_PROFILE_GPU_ZONE("rebuildMesh");
         LL_CPU_ZONE("geometry: delayed rebuildMesh");
-        const U64 vis_m0 = vis_post ? LLVisCensus::now() : 0;
         for (LLSpatialGroup::sg_vector_t::iterator iter = mMeshDirtyGroup.begin(); iter != mMeshDirtyGroup.end(); ++iter)
         {
             (*iter)->rebuildMesh();
         }
-        if (vis_post) { LLVisCensus::sPostTicksMesh += LLVisCensus::now() - vis_m0; }
     }
     }
     mMeshDirtyGroup.clear();
@@ -8635,12 +8247,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     {
         fs_blink_detect(camera, *sCull);
     }
-    const bool vis_post = LLVisCensus::sOn && view.isMainWorldSort();
-    struct VisPostEnd
-    {
-        bool mOn; U64 mT0;
-        ~VisPostEnd() { if (mOn) { LLVisCensus::sPostTicks += LLVisCensus::now() - mT0; if (++LLVisCensus::sPostCalls % 600 == 0) { LLVisCensus::report(); } } }
-    } vis_post_end = { vis_post, vis_post ? LLVisCensus::now() : 0 };
 
     assertInitialized();
     // <FS> the rebuilds (the drawable groups, the priority groups, the visible groups without draw info, the delayed meshes) are rebuildGeometry's: stateSort runs it before this
@@ -8665,7 +8271,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("build render map");
         LL_CPU_ZONE("render lists: build render map");
-    const U64 vis_r0 = vis_post ? LLVisCensus::now() : 0;
     // <FS> the thread-local state is looked up once here, not once per draw info (a thread_local with a constructor costs a guard check per access)
     const ShadowCascadeCull& cascade_cull = sShadowCascadeCull;
     const bool cascade_cull_active = cascade_cull.mActive;
@@ -8715,44 +8320,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             continue;       // <FS> a far avatar's attachment over its triangle budget (far_avatar_tier)
         }
 
-        if (vis_post)
-        {
-            // S7 C0: the visible group by partition, and its draw infos by pass type: the table's or the render map's
-            const U32 part = group->getSpatialPartition() ? std::min<U32>(group->getSpatialPartition()->mPartitionType, LLVisCensus::PARTS - 1) : LLVisCensus::PARTS - 1;
-            ++LLVisCensus::sPartGroups[part];
-            LLVisCensus::sPartElems[part] += group->getElementCount();
-            LLVisCensus::sPartWithTable[part] += group->mGeoHandle != 0;
-            LLVisCensus::sPartAllServed[part] += group->mGeoAllServed;
-            {
-                // how much of the visible set is the same as in the frame before (a frame is counted once even if the main view is sorted twice)
-                const U32 fc = (U32)gFrameCount;
-                if (LLVisCensus::sChurnFrame != fc)
-                {
-                    if (LLVisCensus::sChurnFrame + 1 == fc && LLVisCensus::sChurnPrevN >= LLVisCensus::sChurnCurKept)
-                    {
-                        LLVisCensus::sChurnLeft += LLVisCensus::sChurnPrevN - LLVisCensus::sChurnCurKept;
-                    }
-                    LLVisCensus::sChurnPrevN = LLVisCensus::sChurnCurN;
-                    LLVisCensus::sChurnCurN = LLVisCensus::sChurnCurKept = 0;
-                    LLVisCensus::sChurnFrame = fc;
-                    ++LLVisCensus::sChurnFrames;
-                }
-                if (group->mChurnFrame != fc)
-                {
-                    ++LLVisCensus::sChurnGroups;
-                    ++LLVisCensus::sChurnCurN;
-                    if (group->mChurnFrame + 1 == fc)
-                    {
-                        ++LLVisCensus::sChurnKept;
-                        ++LLVisCensus::sChurnCurKept;
-                        LLVisCensus::sChurnSerial += group->mChurnSerial != group->mGeometrySerial;
-                    }
-                    LLVisCensus::sChurnNewInfo += group->hasState(LLSpatialGroup::NEW_DRAWINFO);
-                    group->mChurnFrame = fc;
-                    group->mChurnSerial = group->mGeometrySerial;
-                }
-            }
-        }
         if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
         {
             addTrianglesDrawn(ll_group_draw_tris(group) * 3);       // (the statistic of the triangles drawn, from the fragment: the indices of every draw of the group)
@@ -8828,7 +8395,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
             if (ll_group_has_rigged_alpha_key(group))
             {  // store rigged alpha groups for LLDrawPoolAlpha prepass (skip distance update, rigged attachments use depth buffer)
-                if (vis_post) { ++LLVisCensus::sRiggedAlphaGroups; }
                 if (hasRenderType(LLDrawPool::POOL_ALPHA))
                 {
                     sCull->pushRiggedAlphaGroup(group);
@@ -8836,7 +8402,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             }
         }
     }
-    if (vis_post) { LLVisCensus::sPostTicksMap += LLVisCensus::now() - vis_r0; }
     }
 
     /*bool use_transform_feedback = gTransformPositionProgram.mProgramObject && !mMeshDirtyGroup.empty();
@@ -8863,7 +8428,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
     if (!LLPipeline::shadowRender())
     {
         LL_CPU_ZONE("render lists: sort alpha groups");
-        const U64 vis_a0 = vis_post ? LLVisCensus::now() : 0;
         if (alpha_from_set)
         {
             ll_alpha_set_lists(sCull, camera, far_skip);        // (the main view: made from the alpha set, distance and order included)
@@ -8876,7 +8440,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             // order rigged alpha groups by avatar attachment order
             std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
         }
-        if (vis_post) { LLVisCensus::sPostTicksAlpha += LLVisCensus::now() - vis_a0; }
     }
     }
 
@@ -12712,135 +12275,6 @@ void ll_scene_fragment_build(LLSpatialGroup* group)
         scene_fragment_ensure(group);
         gPipeline.scheduleRelease(group);       // <FS> expiry: its geometry is built, it is looked at again when LL_VK_REL_FRAMES frames have passed
     }
-}
-
-// ---- <FS> S7 B0 / C0 (LL_VK_VISCENSUS=1, doc/vulkan/S7-design.md section 13): measurement only ----
-static const char* const kVisPassNames[] =
-{
-    "SIMPLE", "SIMPLE_RIGGED", "GRASS", "FULLBRIGHT", "FULLBRIGHT_RIGGED", "INVISIBLE", "INVISIBLE_RIGGED", "INVISI_SHINY", "INVISI_SHINY_RIGGED", "FULLBRIGHT_SHINY", "FULLBRIGHT_SHINY_RIGGED",
-    "SHINY", "SHINY_RIGGED", "BUMP", "BUMP_RIGGED", "POST_BUMP", "POST_BUMP_RIGGED", "MATERIAL", "MATERIAL_RIGGED", "MATERIAL_ALPHA", "MATERIAL_ALPHA_RIGGED", "MATERIAL_ALPHA_MASK",
-    "MATERIAL_ALPHA_MASK_RIGGED", "MATERIAL_ALPHA_EMISSIVE", "MATERIAL_ALPHA_EMISSIVE_RIGGED", "SPECMAP", "SPECMAP_RIGGED", "SPECMAP_BLEND", "SPECMAP_BLEND_RIGGED", "SPECMAP_MASK", "SPECMAP_MASK_RIGGED",
-    "SPECMAP_EMISSIVE", "SPECMAP_EMISSIVE_RIGGED", "NORMMAP", "NORMMAP_RIGGED", "NORMMAP_BLEND", "NORMMAP_BLEND_RIGGED", "NORMMAP_MASK", "NORMMAP_MASK_RIGGED", "NORMMAP_EMISSIVE", "NORMMAP_EMISSIVE_RIGGED",
-    "NORMSPEC", "NORMSPEC_RIGGED", "NORMSPEC_BLEND", "NORMSPEC_BLEND_RIGGED", "NORMSPEC_MASK", "NORMSPEC_MASK_RIGGED", "NORMSPEC_EMISSIVE", "NORMSPEC_EMISSIVE_RIGGED", "GLOW", "GLOW_RIGGED",
-    "GLTF_GLOW", "GLTF_GLOW_RIGGED", "ALPHA", "ALPHA_RIGGED", "ALPHA_MASK", "ALPHA_MASK_RIGGED", "FULLBRIGHT_ALPHA_MASK", "FULLBRIGHT_ALPHA_MASK_RIGGED", "ALPHA_INVISIBLE", "ALPHA_INVISIBLE_RIGGED",
-    "GLTF_PBR", "GLTF_PBR_RIGGED", "GLTF_PBR_ALPHA_MASK", "GLTF_PBR_ALPHA_MASK_RIGGED",
-};
-static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) == (size_t)((int)LLRenderPass::NUM_RENDER_TYPES - (int)LLDrawPool::NUM_POOL_TYPES), "pass names");
-static_assert(sizeof(kVisPassNames) / sizeof(kVisPassNames[0]) <= (size_t)LLVisCensus::PASSES, "pass names");
-
-// B0: the boxes of the table items of this frame's visible groups (the groups postSort keeps: not occluded, not auto-hidden), served items only (what the table draws). ALL of them go to the Hi-Z batch of
-// the frame (LLHiz::addItem), the frustum test is the worker's (bits 17 / 19 of its verdict); the CPU's own frustum verdict travels along for comparison. Tallied when the verdicts come back (LLHiz::apply).
-void LLVisCensus::report()
-{
-    using namespace LLVisCensus;
-    LARGE_INTEGER q;
-    QueryPerformanceCounter(&q);
-    LARGE_INTEGER qf;
-    QueryPerformanceFrequency(&qf);
-    const U64 tsc = now();
-    double ms_per_tick = 0.0, interval_ms = 0.0;
-    if (sQpc0)
-    {
-        interval_ms = (double)(q.QuadPart - sQpc0) * 1000.0 / (double)qf.QuadPart;
-        ms_per_tick = interval_ms / (double)(tsc - sTsc0);
-    }
-    const bool first_window = sQpc0 == 0;      // (the first window only sets the clock: what it counted is dropped with the reset below)
-    sQpc0 = q.QuadPart;
-    sTsc0 = tsc;
-    const double N = 600.0;
-    auto ms = [&](U64 ticks) { return (double)ticks * ms_per_tick / N; };
-    auto pf = [&](U64 count) { return (double)count / N; };
-    if (!first_window)
-    {
-        char buf[1536];
-        static const char* const part_names[] = { "HUD", "TERRAIN", "VOIDWATER", "WATER", "TREE", "PARTICLE", "GRASS", "VOLUME", "BRIDGE", "AVATAR", "CONTROL_AV", "HUD_PARTICLE", "VO_CACHE", "NONE", "14", "15" };
-        snprintf(buf, sizeof(buf), "frame interval %.2f ms (the main view's laps per frame, 600 post sorts) | updateCull %.3f ms (%.2f calls/frame)", interval_ms / N, ms(sCullTicks), pf(sCullFrames));
-        LL_INFOS("VisCensus") << buf << LL_ENDL;
-        snprintf(buf, sizeof(buf), "stateSort %.3f ms (%.2f calls/frame): checkOcclusion %.3f (%.0f calls) | markVisible loop %.3f (%.0f drawables) | changeLOD %.3f (%.0f calls, %.0f true) | drawable sort %.3f (%.0f calls; updateDistance %.3f for %.0f) | bridges %.3f (%.0f)"
-            " | groups: drawable %.0f, visible %.0f, occluded %.0f", ms(sSortTicks), pf(sSortCalls), ms(sSortTicksCheck), pf(sSortCheckCalls), ms(sSortTicksMarkVis), pf(sSortMarkVisN), ms(sSortTicksLod), pf(sSortLodCalls), pf(sSortLodTrue),
-            ms(sSortTicksDrawable), pf(sSortDrawableCalls), ms(sSortTicksDist), pf(sSortDistCalls), ms(sSortTicksBridge), pf(sSortBridgeCalls), pf(sSortDrawableGroups), pf(sSortVisibleGroups), pf(sSortOccluded));
-        LL_INFOS("VisCensus") << buf << LL_ENDL;
-        if (sChurnFrames)
-        {
-            const double F = (double)sChurnFrames;
-            snprintf(buf, sizeof(buf), "visible set per frame over %.0f frames: groups in the render map loop %.0f, also there the frame before %.0f (%.1f %%), left since the frame before %.1f, with a draw map changed since the frame before %.1f, with new draw infos %.1f"
-                " | drawables marked visible: active %.1f, avatars %.1f, bridges %.1f of %.0f | drawables sorted: avatars %.1f, other active %.1f, static %.1f",
-                F, (double)sChurnGroups / F, (double)sChurnKept / F, sChurnGroups ? 100.0 * (double)sChurnKept / (double)sChurnGroups : 0.0, (double)sChurnLeft / F, (double)sChurnSerial / F, (double)sChurnNewInfo / F,
-                pf(sMarkActive), pf(sMarkAvatar), pf(sMarkBridge), pf(sSortMarkVisN), pf(sDrawAvatar), pf(sDrawActive), pf(sDrawStatic));
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-        }
-        snprintf(buf, sizeof(buf), "postSort %.3f ms: rebuildGeom of drawable groups %.3f | build render map %.3f | delayed rebuildMesh %.3f | sort alpha groups %.3f | alpha groups %.0f (items %.0f, in the table %.0f), rigged alpha groups %.0f",
-            ms(sPostTicks), ms(sPostTicksRebuildGeom), ms(sPostTicksMap), ms(sPostTicksMesh), ms(sPostTicksAlpha), pf(sAlphaGroups), pf(sAlphaItemsTotal), pf(sAlphaServedItems), pf(sRiggedAlphaGroups));
-        LL_INFOS("VisCensus") << buf << LL_ENDL;
-        for (int i = 0; i < PARTS; ++i)
-        {
-            if (sPartGroups[i])
-            {
-                snprintf(buf, sizeof(buf), "partition %s: visible groups %.0f, elements %.0f, groups with a table fragment %.0f (all draws served %.0f), draw infos %.0f, tris %.0f", part_names[i], pf(sPartGroups[i]), pf(sPartElems[i]), pf(sPartWithTable[i]), pf(sPartAllServed[i]), pf(sPartInfos[i]), pf(sPartTris[i]));
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-            }
-        }
-        for (int i = 0; i < PASSES; ++i)
-        {
-            if (sPassServedInfos[i] || sPassListedInfos[i])
-            {
-                snprintf(buf, sizeof(buf), "pass %s: draw infos from the table %.1f (%.0f tris), left to the pool loops %.1f (%.0f tris)", kVisPassNames[i], pf(sPassServedInfos[i]), pf(sPassServedTris[i]), pf(sPassListedInfos[i]), pf(sPassListedTris[i]));
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-            }
-        }
-        if (sBFrames)
-        {
-            const double F = (double)sBFrames;
-            const double nb = (double)std::max<U64>(sBBatches, 1);
-            snprintf(buf, sizeof(buf), "B0 per frame over %.0f frames: groups partly in the frustum %.0f, fully in %.0f; avatars boxed (distinct) %.1f with %.0f rigged tris; batches read %.0f (previous pyramid valid %.0f); no room %.1f",
-                F, (double)sBGroupsPartial / F, (double)sBGroupsFull / F, (double)sBAvatars / F, (double)sBAvatarTris / F, (double)sBBatches, (double)sBBatchesValidB, (double)sBNoRoom / F);
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-            U64 tot_items = 0, tot_tris = 0, tot_out = 0, tot_out_tris = 0, tot_hb = 0, tot_hb_tris = 0, tot_drop = 0, tot_drop_tris = 0;
-            for (int t = 0; t < ITEM_TYPES; ++t)
-            {
-                if (!sBItems[t])
-                {
-                    continue;
-                }
-                std::string name;
-                if (t < (int)kGeoTypeCount * 2)
-                {
-                    name = std::string(kVisPassNames[kGeoTypes[t % kGeoTypeCount].mType - LLDrawPool::NUM_POOL_TYPES]) + (t >= (int)kGeoTypeCount ? " (rigged)" : "");
-                }
-                else
-                {
-                    name = t == (int)kGeoAlphaItemType ? "ALPHA runs" : "ALPHA rigged runs";
-                }
-                snprintf(buf, sizeof(buf), "B0 %s: items %.1f (%.0f tris), no box %.1f | tested %.1f: GPU outside %.1f (%.0f tris; CPU outside %.1f, of which GPU missed %.1f; GPU outside where CPU says in %.1f) | hidden, same-frame pyramid %.1f (%.0f tris) | hidden, previous frame's pyramid %.1f (%.0f tris, valid %.1f) | frustum or previous-frame hidden %.1f (%.0f tris)",
-                    name.c_str(), (double)sBItems[t] / F, (double)sBTris[t] / F, (double)sBUnbounded[t] / F, (double)sBTested[t] / nb, (double)sBGpuOut[t] / nb, (double)sBGpuOutTris[t] / nb, (double)sBCpuOut[t] / nb, (double)sBCpuOutNotGpu[t] / nb, (double)sBGpuOutNotCpu[t] / nb,
-                    (double)sBHidA[t] / nb, (double)sBHidATris[t] / nb, (double)sBHidB[t] / nb, (double)sBHidBTris[t] / nb, (double)sBValidB[t] / nb, (double)sBDropB[t] / nb, (double)sBDropBTris[t] / nb);
-                LL_INFOS("VisCensus") << buf << LL_ENDL;
-                tot_items += sBTested[t]; tot_tris += sBTestedTris[t]; tot_out += sBGpuOut[t]; tot_out_tris += sBGpuOutTris[t]; tot_hb += sBHidB[t]; tot_hb_tris += sBHidBTris[t]; tot_drop += sBDropB[t]; tot_drop_tris += sBDropBTris[t];
-            }
-            snprintf(buf, sizeof(buf), "B0 all table items (tested, per batch): %.0f items %.0f tris | GPU outside %.0f items %.0f tris | hidden by the previous frame's pyramid %.0f items %.0f tris | dropped by frustum + previous pyramid %.0f items (%.1f %%) %.0f tris (%.2f %%)",
-                (double)tot_items / nb, (double)tot_tris / nb, (double)tot_out / nb, (double)tot_out_tris / nb, (double)tot_hb / nb, (double)tot_hb_tris / nb, (double)tot_drop / nb, tot_items ? 100.0 * (double)tot_drop / (double)tot_items : 0.0, (double)tot_drop_tris / nb, tot_tris ? 100.0 * (double)tot_drop_tris / (double)tot_tris : 0.0);
-            LL_INFOS("VisCensus") << buf << LL_ENDL;
-        }
-    }
-    // the window is done
-    sChurnGroups = sChurnKept = sChurnSerial = sChurnNewInfo = sChurnLeft = sChurnFrames = 0;
-    sMarkActive = sMarkAvatar = sMarkBridge = sDrawActive = sDrawAvatar = sDrawStatic = 0;
-    sCullFrames = sCullTicks = 0;
-    sSortCalls = sSortTicks = sSortTicksCheck = sSortCheckCalls = sSortTicksMarkVis = sSortMarkVisN = sSortTicksLod = sSortLodCalls = sSortLodTrue = 0;
-    sSortTicksDrawable = sSortDrawableCalls = sSortTicksDist = sSortDistCalls = sSortTicksBridge = sSortBridgeCalls = 0;
-    sSortDrawableGroups = sSortVisibleGroups = sSortOccluded = 0;
-    sPostTicks = sPostTicksRebuildGeom = sPostTicksMap = sPostTicksMesh = sPostTicksAlpha = 0;
-    memset(sPartGroups, 0, sizeof(sPartGroups)); memset(sPartElems, 0, sizeof(sPartElems)); memset(sPartWithTable, 0, sizeof(sPartWithTable));
-    memset(sPartAllServed, 0, sizeof(sPartAllServed)); memset(sPartInfos, 0, sizeof(sPartInfos)); memset(sPartTris, 0, sizeof(sPartTris));
-    memset(sPassServedInfos, 0, sizeof(sPassServedInfos)); memset(sPassServedTris, 0, sizeof(sPassServedTris)); memset(sPassListedInfos, 0, sizeof(sPassListedInfos)); memset(sPassListedTris, 0, sizeof(sPassListedTris));
-    sAlphaGroups = sAlphaServedItems = sAlphaItemsTotal = sRiggedAlphaGroups = 0;
-    sBAvatars = sBAvatarTris = 0;
-    sBFrames = sBNoRoom = sBGroupsPartial = sBGroupsFull = sBBatches = sBBatchesValidB = 0;
-    memset(sBItems, 0, sizeof(sBItems)); memset(sBTris, 0, sizeof(sBTris)); memset(sBUnbounded, 0, sizeof(sBUnbounded));
-    memset(sBTested, 0, sizeof(sBTested)); memset(sBTestedTris, 0, sizeof(sBTestedTris)); memset(sBGpuOut, 0, sizeof(sBGpuOut)); memset(sBGpuOutTris, 0, sizeof(sBGpuOutTris));
-    memset(sBCpuOut, 0, sizeof(sBCpuOut)); memset(sBCpuOutNotGpu, 0, sizeof(sBCpuOutNotGpu)); memset(sBGpuOutNotCpu, 0, sizeof(sBGpuOutNotCpu));
-    memset(sBHidA, 0, sizeof(sBHidA)); memset(sBHidATris, 0, sizeof(sBHidATris)); memset(sBHidB, 0, sizeof(sBHidB)); memset(sBHidBTris, 0, sizeof(sBHidBTris)); memset(sBValidB, 0, sizeof(sBValidB));
-    memset(sBDropB, 0, sizeof(sBDropB)); memset(sBDropBTris, 0, sizeof(sBDropBTris));
 }
 
 // ---- <FS> S7 C1 / C1b (LL_VK_CULL_SHADOW=1, doc/vulkan/S7-design.md sections 14-16): the flat group table and the shadow-mode GPU frustum test. Measurement only. ----

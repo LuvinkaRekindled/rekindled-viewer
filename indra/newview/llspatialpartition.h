@@ -473,7 +473,6 @@ public:
     // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
     U32 mGeometrySerial = 1;
     S32 mReleaseDeadline = 0;                  // <FS> expiry (cold mode 3): the frame at which the group's geometry is looked at for release (0 = not queued: LLPipeline::scheduleRelease / releaseForget, pipeline.cpp)
-    U32 mChurnFrame = 0, mChurnSerial = 0;     // <FS> census only (LL_VK_VISCENSUS): the frame this group was last in the main view's render map loop and its mGeometrySerial then
     U32 mSceneSeenSerial = 0;
     U32 mSceneSeenFrame = 0;
     // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mGeometrySerial; freed with the group

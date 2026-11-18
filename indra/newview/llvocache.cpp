@@ -26,7 +26,6 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llvocache.h"
-#include "lloccensus.h"
 #include "llregionhandle.h"
 #include "llviewercontrol.h"
 #include "llviewerobjectlist.h"
@@ -1131,10 +1130,6 @@ void LLVOCachePartition::processOccluders(LLCamera* camera)
         return; //no need for those cameras.
     }
 
-    if (LLOccCensus::sOn)
-    {
-        ++LLOccCensus::sCachePasses;        // <FS> H0
-    }
     LLVector3 region_agent = mRegionp->getOriginAgent();
     LLVector4a shift(region_agent[0], region_agent[1], region_agent[2]);
     for(std::set<LLVOCacheGroup*>::iterator iter = mOccludedGroups.begin(); iter != mOccludedGroups.end(); ++iter)
