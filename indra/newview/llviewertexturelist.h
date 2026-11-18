@@ -92,14 +92,12 @@ class LLViewerTextureList
     friend class LLLocalBitmap;
 
 public:
-    static void updateCameraEpoch();    // <FS> native-vk (LL_VK_TEXSTAMP): once a frame
-    static U32 sCameraEpoch;    // <FS> native-vk (LL_VK_TEXSTAMP): goes up when the camera (position, direction, field of view, window) moves to another cell of a coarse grid
+    static void updateCameraEpoch();    // <FS> native-vk: once a frame
+    static U32 sCameraEpoch;    // <FS> native-vk: goes up when the camera (position, direction, field of view, window) moves to another cell of a coarse grid
     static bool sViewSteady;    // <FS> the view has not changed for a while (see updateImagesFetchTextures): slower texture refresh rates
 
     // <FS> H6 (doc/vulkan/PLAN-texture-handles.md): the textures on two lists, the active ones walked at the normal rate and the dormant ones (no face on screen, nothing asking for them) at a slow one, so the
-    // walk of updateImagesFetchTextures does not visit the whole table. LL_VK_TEXIDX: 0 the old walk over the whole map, 1 the lists, 2 (default) the lists are kept and everything is walked at the old rate while a
-    // dormant texture that is found to be wanted without anything having woken it is counted as a miss (VkTexIdx log line every 10 s).
-    static S32 sIdxMode;
+    // walk of updateImagesFetchTextures does not visit the whole table (VkTexIdx log line every 10 s).
     static bool sInListUpdate;                      // the list's own pass is running: its addTextureStats calls wake nothing
     void wakeTexture(LLViewerTexture* tex);         // a dormant texture goes back to the active list at the next pass
     void visitNext(LLViewerTexture* tex);           // a listed texture, active or dormant, is visited at the next pass (its fetch finished: collect the result now, not when the slice reaches it)
@@ -260,7 +258,6 @@ public:
 private:
     typedef std::map< LLTextureKey, LLPointer<LLViewerFetchedTexture> > uuid_map_t;
     uuid_map_t mUUIDMap;
-    LLTextureKey mLastUpdateKey;
 
     image_list_t mImageList;
 

@@ -281,7 +281,7 @@ private:
     bool mHasExplicitFormat; // If false (default), GL format is f(mComponents)
 
     bool mIsMask;
-    U32  mAnalyzedPixels = 0;   // <FS> native-vk (LL_VK_ALPHA_KEEP, default on): the pixel count of the best level the alpha classification (mIsMask) was made from; a smaller upload does not redo it
+    U32  mAnalyzedPixels = 0;   // <FS> native-vk: the pixel count of the best level the alpha classification (mIsMask) was made from; a smaller upload does not redo it
     U32  mAnalysisCount = 0;    // <FS> native-vk diagnostic: how many alpha analyses this texture has had (a change of mIsMask at the first one is the classification, not a flip)
     bool mNeedsAlphaAndPickMask;
     bool mAnalysisAdopted = false;      // <FS> this upload's analysis came with the raw image: analyzeAlpha and updatePickMask stand down
