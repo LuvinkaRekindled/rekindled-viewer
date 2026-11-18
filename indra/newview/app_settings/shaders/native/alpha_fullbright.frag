@@ -15,16 +15,8 @@ layout(location = 3) flat in uint vary_slot;
 
 layout(location = 0) out vec4 frag_color;
 
-#include "lib/texneed.glsl"
-#ifdef TEXNEED
-layout(early_fragment_tests) in;        // (no discard, no depth output in this shader: the stores below only happen for fragments that pass the depth test)
-#endif
-
 void main()
 {
-#ifdef TEXNEED
-    ll_texneed_store(vary_slot, vary_texcoord0);
-#endif
     mirror_clip(vary_position);
     water_clip(vary_position);
     frag_color = shade_fullbright(vary_position, texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slot))], vary_texcoord0), vertex_color);

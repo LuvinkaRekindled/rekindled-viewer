@@ -1067,7 +1067,7 @@ void LLViewerTextureList::idxLog()
 // <FS> Where the textures are: how many have data, how many wait for it (being fetched, waiting to be created as GL textures), how many the server refused, what the viewer thinks they cost
 // and the discard bias it works against. Next to the VkTex line of the Vulkan layer (the video memory the device really holds): a face that stays on the placeholder in a busy region shows up
 // here as a long queue or a count of refused textures.
-static std::string memory_by_consumer_text(U64 texture_bytes, U64 os_used);     // (below, with the eviction count)
+static std::string memory_by_consumer_text(U64 texture_bytes, U64 os_used);     // (below)
 
 void LLViewerTextureList::logSummary()
 {
@@ -1259,210 +1259,10 @@ static std::string memory_by_consumer_text(U64 texture_bytes, U64 os_used)
         mb(vb), (long long)(os_used >> 20) - (long long)(named >> 20));
 }
 
-// <FS> LL_VK_TEX_EXPIRY=1, stage 1 of the texture eviction in doc/vulkan/EXPIRY-design.md section 11: count only, nothing is released. Once a second, while the OS reports video memory above a soft watermark
-// (85% of the budget, left again below 80%), the textures in memory are sorted into the classes of section 12 and what releasing them in that order would free is logged:
-//   class 0: no face at all, or every face in a region beyond the draw distance (whatever the age);  class 1: faces only in groups no camera has accepted for 10 s;  class 2: in use (never touched).
-// Textures with a boost level or callbacks are excluded. The release would drop a texture to a very small level (about 99% of its memory).
-void LLViewerTextureList::expiryCount()
-{
-    static const int mode = getenv("LL_VK_TEX_EXPIRY") ? atoi(getenv("LL_VK_TEX_EXPIRY")) : 0;
-    if (mode <= 0)
-    {
-        return;
-    }
-    static LLTimer timer;
-    static U32 last_frame = 0;
-    if (timer.getElapsedTimeF32() < 1.f)
-    {
-        return;
-    }
-    const F32 seconds = timer.getElapsedTimeF32();
-    timer.reset();
-    const U32 frame_now = (U32)gFrameCount;
-    const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
-    last_frame = frame_now;
-    U64 used = 0, budget = 0;
-    if (!LLVkBridge::videoMemory(used, budget) || !budget)
-    {
-        return;
-    }
-    static bool was_over = false;
-    static U32 flagged_total = 0;       // textures released (mode 2) and not woken since
-    static U64 released_total_bytes = 0;
-    static U32 quick_wakes = 0, wakes = 0;
-    const double fraction = (double)used / (double)budget;
-    const bool over = fraction > (was_over ? 0.80 : 0.85);
-    if (over != was_over)
-    {
-        was_over = over;
-        LL_INFOS("TexExpiry") << (over ? "above" : "back below") << " the soft watermark: the OS sees " << (used >> 20) << " MB of a budget of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias "
-            << LLViewerTexture::sDesiredDiscardBias << LL_ENDL;
-    }
-    if (!over && !(mode >= 2 && flagged_total > 0))
-    {
-        return;
-    }
-    const bool only_released = !over;       // below the watermark only the released textures are looked at (do their faces need them again?)
-    const LLVector3 cam = LLViewerCamera::getInstance()->getOrigin();
-    const F32 far_limit = LLViewerCamera::getInstance()->getFar() + 64.f;
-    U32 count[3] = {}, excluded = 0;
-    U64 bytes[3] = {}, excluded_bytes = 0;
-    struct Candidate { LLViewerFetchedTexture* mTex; U64 mMem; int mClass; double mAge; };
-    std::vector<Candidate> candidates;
-    U32 woken_now = 0, quick_now = 0;
-    for (const LLPointer<LLViewerFetchedTexture>& image_ptr : mImageList)
-    {
-        LLViewerFetchedTexture* image = image_ptr.get();
-        if (only_released && !image->mExpired)
-        {
-            continue;
-        }
-        if (!image->hasImageTexture())
-        {
-            continue;
-        }
-        const U64 mem = (U64)image->getTextureMemory().value();
-        if (image->getBoostLevel() != LLViewerTexture::BOOST_NONE || image->hasCallbacks())
-        {
-            ++excluded;
-            excluded_bytes += mem;
-            if (image->mExpired)
-            {
-                image->mExpired = false;        // (it got a boost or a callback: whoever asked for it gets it back)
-                --flagged_total;
-            }
-            continue;
-        }
-        bool any_face = false, all_far = true, no_group = false;
-        S32 latest = 0;
-        for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
-        {
-            const LLViewerTexture::ll_face_list_t* faces = image->getFaceList(ch);
-            const S32 n_faces = image->getNumFaces(ch);
-            for (S32 i = 0; i < n_faces && i < (S32)faces->size(); ++i)
-            {
-                const LLFace* face = (*faces)[i];
-                any_face = true;
-                const LLDrawable* drawable = face ? face->getDrawable() : nullptr;
-                LLSpatialGroup* group = drawable ? drawable->getSpatialGroup() : nullptr;
-                if (!group)
-                {
-                    no_group = true;
-                    all_far = false;
-                    continue;
-                }
-                // (the region of the object, and only if the world still lists it: the pointer of a partition outlives its region, which the first version of this pass followed into a crash when the old region was removed)
-                const LLViewerRegion* region = drawable->getVObj() ? drawable->getRegion() : nullptr;
-                if (region && !LLWorld::getInstance()->isRegionListed(region))
-                {
-                    region = nullptr;
-                }
-                bool far_region = false;
-                if (region)
-                {
-                    const LLVector3 o = region->getOriginAgent();
-                    const F32 w = region->getWidth();
-                    const F32 dx = llmax(llmax(o.mV[VX] - cam.mV[VX], cam.mV[VX] - (o.mV[VX] + w)), 0.f);
-                    const F32 dy = llmax(llmax(o.mV[VY] - cam.mV[VY], cam.mV[VY] - (o.mV[VY] + w)), 0.f);
-                    far_region = sqrtf(dx * dx + dy * dy) > far_limit;
-                }
-                all_far = all_far && far_region;
-                for (S32 c = 0; c < LLViewerCamera::NUM_CAMERAS; ++c)
-                {
-                    latest = std::max(latest, group->getVisible((LLViewerCamera::eCameraID)c));
-                }
-            }
-        }
-        int cls = 2;
-        double age = 0.0;
-        if (!no_group)
-        {
-            if (!any_face || all_far)
-            {
-                cls = 0;
-                age = 1.0e9;
-            }
-            else
-            {
-                age = latest > 0 ? (double)(LLViewerOctreeEntryData::getCurrentFrame() - std::min(LLViewerOctreeEntryData::getCurrentFrame(), latest)) * spf : 1.0e9;
-                cls = age > 10.0 ? 1 : 2;
-            }
-        }
-        if (image->mExpired && cls == 2)
-        {
-            // something needs it again: the priority pass takes over (the wanted size comes back with the next visit)
-            image->mExpired = false;
-            --flagged_total;
-            ++woken_now;
-            quick_now += (frame_now - std::min(frame_now, image->mExpiredAtFrame)) * spf < 30.0;
-            continue;
-        }
-        if (only_released)
-        {
-            continue;
-        }
-        ++count[cls];
-        bytes[cls] += mem;
-        // (the first run of stage 2: stale textures released at 85 % while the camera turned were needed again within seconds, 6,600 of them in 30 s: the stale class is only released
-        // above 95 % of the budget and after 30 s; the first class, regions beyond the draw distance and textures with no face, is never needed back soon)
-        if (cls < 2 && !image->mExpired && (cls == 0 || (fraction > 0.95 && age > 30.0)))
-        {
-            candidates.push_back({ image, mem, cls, age });
-        }
-    }
-    wakes += woken_now;
-    quick_wakes += quick_now;
-    if (only_released)
-    {
-        if (woken_now)
-        {
-            LL_INFOS("TexExpiry") << "released textures woken (a camera accepted a group of their faces): " << woken_now << ", of them within 30 s of the release " << quick_now << "; still released " << flagged_total << LL_ENDL;
-        }
-        return;
-    }
-    // what an eviction takes: down to 80% of the budget, class by class, oldest first, 99% of a texture's memory each
-    const double need = std::max(0.0, (double)used - 0.80 * (double)budget);
-    double freed = 0.0;
-    U64 taken_bytes[2] = {};
-    U32 taken_count[2] = {};
-    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) { return a.mClass != b.mClass ? a.mClass < b.mClass : a.mAge > b.mAge; });
-    constexpr U32 kMaxPerCall = 2000;
-    U32 released_now = 0;
-    for (const Candidate& c : candidates)
-    {
-        if (freed >= need || released_now >= kMaxPerCall)
-        {
-            break;
-        }
-        freed += 0.99 * (double)c.mMem;
-        taken_bytes[c.mClass] += c.mMem;
-        ++taken_count[c.mClass];
-        ++released_now;
-        if (mode >= 2)
-        {
-            c.mTex->mExpired = true;
-            c.mTex->mExpiredAtFrame = frame_now;
-            c.mTex->mMaxVirtualSize = 0.f;
-            ++flagged_total;
-            released_total_bytes += c.mMem;
-            forceImmediateUpdate(c.mTex);      // (processTextureStats: it wants the smallest level now)
-            c.mTex->scaleDown();               // ... and the downscale is queued here: the branch of processTextureStats for a size of 0 sets the wanted level but never queues it (the run before this showed the released textures still holding 4 GB a minute later)
-        }
-    }
-    LL_INFOS("TexExpiry") << "over the watermark: the OS sees " << (used >> 20) << " of " << (budget >> 20) << " MB (" << (int)(fraction * 100.0) << " %), bias " << LLViewerTexture::sDesiredDiscardBias << "; needs " << (U64)(need / 1048576.0)
-        << " MB to get to 80 % | textures by class (per-texture sums): region beyond draw distance or no face " << count[0] << " / " << (bytes[0] >> 20) << " MB, stale for over 10 s " << count[1] << " / " << (bytes[1] >> 20)
-        << " MB, in use " << count[2] << " / " << (bytes[2] >> 20) << " MB, excluded (boost or callbacks) " << excluded << " / " << (excluded_bytes >> 20) << " MB | an eviction in that order takes about "
-        << taken_count[0] << " textures (" << (taken_bytes[0] >> 20) << " MB) of the first class and " << taken_count[1] << " (" << (taken_bytes[1] >> 20) << " MB) of the second, " << (U64)(freed / 1048576.0) << " MB of the "
-        << (U64)(need / 1048576.0) << " MB needed" << (mode >= 2 ? "; RELEASED " : "; (count only) ") << released_now << " this second, " << flagged_total << " released and not woken (" << (released_total_bytes >> 20) << " MB released in all), woken "
-        << wakes << " (within 30 s of the release " << quick_wakes << ")" << LL_ENDL;
-    LL_INFOS("TexExpiry") << memory_by_consumer_text(bytes[0] + bytes[1] + bytes[2] + excluded_bytes, used) << LL_ENDL;
-}
-
 void LLViewerTextureList::updateImages(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     LLTexRetire::pump();        // <FS> C2.2: destroy the textures parked long enough
-    expiryCount();
     {
         // <FS> diagnostic (2026-11-14, Adam: system memory bumps of several GB at a login and at a teleport while video memory had room; remove once the cause is known): where the image data sits. A line (tag
         // ImgMem) when the image data changed by 50 MB or more since the last line, else every 10 s: all image data held by LLImageBase (compressed and raw), the compressed part, the decode queue, the decoded
@@ -1598,31 +1398,6 @@ struct StampStats
     U64 mWhyGeomKind[5] = {};       // a face that moved without telling the texture, by kind of object: attachment, avatar, tree or grass, prim, other
 };
 StampStats sStamp;
-// <FS> H6 (doc/vulkan/PLAN-texture-handles.md): LL_VK_TEXFB (default 1: measure and report, change nothing) compares what the draws measured of each texture's need (LLVkBridge::textureNeed: the whole texture
-// would cover 1 / area pixels) with the result of the face loop, per texture the loop looked at.
-const S32 sFbMode = []{ const char* e = getenv("LL_VK_TEXFB"); return e ? atoi(e) : 0; }();
-// <FS> LL_VK_TEXFB=4 (2026-11-15): measure only. The attachment, the reduce pass, the alpha stores and the harvest all run, the compare with the face loop (which walks up to 16 faces of every unmeasured
-// on-screen texture: about 130,000 face looks a second in London) does not: the cost of the measurement itself, without the diagnostic. 1 compares, 3 sizes by the measurement (the old proof of concept).
-const bool sFbCompare = sFbMode != 0 && sFbMode != 4;
-struct FbStats
-{
-    U64 mLooked = 0;            // textures with faces the loop looked at
-    U64 mNoData = 0;            // ... with no measurement at all
-    U64 mCpuOnlyBig = 0;        // the loop says on screen with an area of 64 pixels or more; the draws did not sample the texture in the last second
-    U64 mGpuOnly = 0;           // the draws sampled it in the last second; the loop says it is not on screen
-    U64 mBoth = 0;              // both
-    U64 mDiff[9] = {};          // both: log4(loop area / measured area), rounded, -4 or less to 4 or more
-    U64 mNoName = 0;
-    U64 mCpuOnlyKind[5] = {};   // the on-screen ones without a measurement, by the kind of object of the texture's first face: attachment, avatar, tree or grass, prim, other
-    U64 mBothKind[5] = {};
-    U64 mCpuOnlyRigged = 0;     // ... of them with a rigged face
-    U64 mCpuOnlyBoost = 0;      // ... with a boost level above none
-    U64 mUsed = 0, mCapped = 0; // LL_VK_TEXFB=3: textures sized by the measurement / never measured and capped
-    U64 mUnOcc = 0;             // on screen by the loop, not sampled: every face looked at is in an occluded group
-    U64 mUnNoFace = 0;          // ... no face with a drawable
-    U64 mUnPool[32] = {};       // ... otherwise: the draw pool of the first face that is not occluded
-};
-FbStats sFb;
 F32 sStampEpochTime = 0.f;      // gFrameTimeSeconds when the camera epoch last changed: a result is only kept once the camera has stood still for a moment (the face areas it read were then made under that pose, not up to 0.1 s earlier)
 }
 
@@ -1963,113 +1738,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
 
-        if (sFbCompare && face_count > 0 && face_count <= max_faces_to_check)
-        {
-            ++sFb.mLooked;
-            S32 kind = 4;
-            bool rigged = false;
-            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && kind == 4 && !rigged; ++ch)
-            {
-                if (imagep->getNumFaces(ch) > 0)
-                {
-                    LLFace* f0 = (*(imagep->getFaceList(ch)))[0];
-                    LLViewerObject* o0 = f0 ? f0->getViewerObject() : nullptr;
-                    if (o0)
-                    {
-                        kind = o0->isAttachment() ? 0 : (o0->isAvatar() ? 1 : ((o0->getPCode() == LL_PCODE_LEGACY_TREE || o0->getPCode() == LL_PCODE_LEGACY_GRASS) ? 2 : (o0->getPCode() == LL_PCODE_VOLUME ? 3 : 4)));
-                        rigged = f0->isState(LLFace::RIGGED);
-                        break;
-                    }
-                }
-            }
-            // the on-screen textures nobody sampled: why? all the faces (up to 16 looked at) in occluded groups, or the pool of the first face that is not occluded
-            auto note_unmeasured = [&]()
-            {
-                ++sFb.mCpuOnlyBig; ++sFb.mCpuOnlyKind[kind]; sFb.mCpuOnlyRigged += rigged; sFb.mCpuOnlyBoost += imagep->getBoostLevel() > 0;
-                U32 looked = 0, occluded = 0, visible_pool = 0xFFFF;
-                for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && looked < 16; ++ch)
-                {
-                    for (S32 fi = 0; fi < imagep->getNumFaces(ch) && looked < 16; ++fi)
-                    {
-                        LLFace* f = (*(imagep->getFaceList(ch)))[fi];
-                        if (!f || !f->getViewerObject() || !f->getDrawable())
-                        {
-                            continue;
-                        }
-                        ++looked;
-                        LLSpatialGroup* g = f->getDrawable()->getSpatialGroup();
-                        if (g && g->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
-                        {
-                            ++occluded;
-                        }
-                        else if (visible_pool == 0xFFFF)
-                        {
-                            visible_pool = f->getPoolType();
-                        }
-                    }
-                }
-                if (!looked) ++sFb.mUnNoFace;
-                else if (occluded == looked) ++sFb.mUnOcc;
-                else ++sFb.mUnPool[std::min<U32>(visible_pool, 31)];
-            };
-            const LLImageTex* it = imagep->getImageTexture();
-            LLVkBridge::TextureNeed need;
-            if (!it || !it->getTexName())
-            {
-                ++sFb.mNoName;
-            }
-            else if (!LLVkBridge::textureNeed(it->getTexName(), need))
-            {
-                ++sFb.mNoData;
-                if (on_screen && max_vsize >= 64.f) note_unmeasured();
-            }
-            else if (need.mAge >= 1.f)
-            {
-                if (on_screen && max_vsize >= 64.f) note_unmeasured();
-            }
-            else if (!on_screen)
-            {
-                ++sFb.mGpuOnly;
-            }
-            else
-            {
-                ++sFb.mBoth;
-                ++sFb.mBothKind[kind];
-                const F32 gpu = llmin(1.f / llmax(need.mWindow, 1.0e-12f), LLViewerFetchedTexture::sMaxVirtualSize);
-                const F32 d = logf(llmax(max_vsize, 1.f) / llmax(gpu, 1.f)) / logf(4.f);
-                ++sFb.mDiff[llclamp((S32)floorf(d + 0.5f) + 4, 0, 8)];
-            }
-        }
-
-        if (sFbMode == 3 && face_count > 0 && face_count <= max_faces_to_check)
-        {
-            // <FS> H6 proof of concept (LL_VK_TEXFB=3): the size of a texture on the screen is what the draws measured (whole texture = 1 / area pixels), not what the faces would cover: a texture that was not
-            // drawn in the last second keeps what it was measured at, divided by the bias like an off-screen face; a texture never measured is capped at a modest size until a draw has sampled it
-            const LLImageTex* it3 = imagep->getImageTexture();
-            LLVkBridge::TextureNeed need3;
-            if (it3 && it3->getTexName())
-            {
-                if (LLVkBridge::textureNeed(it3->getTexName(), need3))
-                {
-                    const bool seen = need3.mAge < 1.f;
-                    const F32 area = seen ? need3.mWindow : need3.mKnown;
-                    F32 vs = llmin(1.f / llmax(area, 1.0e-12f), LLViewerFetchedTexture::sMaxVirtualSize);
-                    if (!seen || LLViewerTexture::sDesiredDiscardBias > 2.f)
-                    {
-                        vs /= bias;
-                    }
-                    max_vsize = vs;
-                    on_screen = seen;
-                    ++sFb.mUsed;
-                }
-                else
-                {
-                    max_vsize = llmin(max_vsize, 256.f * 256.f);
-                    ++sFb.mCapped;
-                }
-            }
-        }
-
         if (face_count > max_faces_to_check)
         { // this texture is used in so many places we should just boost it and not bother checking its vsize
             // this is especially important because the above is not time sliced and can hit multiple ms for a single texture
@@ -2091,11 +1759,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         if (on_screen)
         {
             imagep->mLastOnScreenFrame = gFrameCount;
-        }
-        if (imagep->mExpired)
-        {
-            max_vsize = 0.f;                      // (LL_VK_TEX_EXPIRY=2: released until a camera accepts a group of its faces again, see expiryCount)
-            imagep->mMaxVirtualSize = 0.f;
         }
         imagep->addTextureStats(max_vsize);
 
@@ -2448,40 +2111,6 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     updateCameraEpoch();
     LLTexRecs::frame();         // <FS> H6: the records that changed go to the worker, the results it has finished come back
-    if (sFbCompare)
-    {
-        static F32 last_fb_log = 0.f;
-        if (gFrameTimeSeconds - last_fb_log >= 10.f)
-        {
-            static FbStats prev;
-            if (last_fb_log > 0.f)
-            {
-                U64 textures = 0, readings = 0;
-                LLVkBridge::textureNeedStats(textures, readings);
-                static U64 prev_readings = 0;
-                LL_INFOS("VkTexFb") << "need measured by the draws (10 s): " << textures << " textures have a measurement, " << readings - prev_readings << " readings; the face loop looked at " << sFb.mLooked - prev.mLooked
-                                    << " textures: no measurement " << sFb.mNoData - prev.mNoData << " (name 0: " << sFb.mNoName - prev.mNoName << "), on screen by the loop with 64 pixels or more but not sampled in the last second "
-                                    << sFb.mCpuOnlyBig - prev.mCpuOnlyBig << ", sampled but not on screen by the loop " << sFb.mGpuOnly - prev.mGpuOnly << ", both " << sFb.mBoth - prev.mBoth
-                                    << "; log4(loop / measured) -4.." << 4 << ": " << sFb.mDiff[0] - prev.mDiff[0] << " " << sFb.mDiff[1] - prev.mDiff[1] << " " << sFb.mDiff[2] - prev.mDiff[2] << " " << sFb.mDiff[3] - prev.mDiff[3]
-                                    << " [" << sFb.mDiff[4] - prev.mDiff[4] << "] " << sFb.mDiff[5] - prev.mDiff[5] << " " << sFb.mDiff[6] - prev.mDiff[6] << " " << sFb.mDiff[7] - prev.mDiff[7] << " " << sFb.mDiff[8] - prev.mDiff[8]
-                                    << "; on screen by the loop, not sampled, by object (attachment, avatar, tree or grass, prim, other): " << sFb.mCpuOnlyKind[0] - prev.mCpuOnlyKind[0] << " " << sFb.mCpuOnlyKind[1] - prev.mCpuOnlyKind[1] << " "
-                                    << sFb.mCpuOnlyKind[2] - prev.mCpuOnlyKind[2] << " " << sFb.mCpuOnlyKind[3] - prev.mCpuOnlyKind[3] << " " << sFb.mCpuOnlyKind[4] - prev.mCpuOnlyKind[4] << ", rigged " << sFb.mCpuOnlyRigged - prev.mCpuOnlyRigged
-                                    << ", boosted " << sFb.mCpuOnlyBoost - prev.mCpuOnlyBoost << "; both, by object: " << sFb.mBothKind[0] - prev.mBothKind[0] << " " << sFb.mBothKind[1] - prev.mBothKind[1] << " " << sFb.mBothKind[2] - prev.mBothKind[2]
-                                    << " " << sFb.mBothKind[3] - prev.mBothKind[3] << " " << sFb.mBothKind[4] - prev.mBothKind[4] << "; sized by the measurement " << sFb.mUsed - prev.mUsed << ", never measured and capped " << sFb.mCapped - prev.mCapped << LL_ENDL;
-                std::ostringstream why;
-                why << "; not sampled, by cause: every face in an occluded group " << sFb.mUnOcc - prev.mUnOcc << ", no face with a drawable " << sFb.mUnNoFace - prev.mUnNoFace << ", otherwise by pool (type:count)";
-                for (U32 pt = 0; pt < 32; ++pt)
-                {
-                    if (sFb.mUnPool[pt] != prev.mUnPool[pt]) why << " " << pt << ":" << sFb.mUnPool[pt] - prev.mUnPool[pt];
-                }
-                LL_INFOS("VkTexFb") << why.str() << LL_ENDL;
-                prev_readings = readings;
-            }
-            prev = sFb;
-            last_fb_log = gFrameTimeSeconds;
-        }
-    }
-
     // update N textures at beginning of mImageList
     U32 update_count = 0;
     static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32

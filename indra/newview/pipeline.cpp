@@ -1037,18 +1037,6 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             return false;
         }
     }
-    // <FS> idea 3 (doc/vulkan/PLAN-velocity-fold-and-skin-once.md): the texture need, attachment 5 of the main view's world pass (RG16 unorm: handle and log2 of the texture coordinate area one pixel covers), read by a
-    // compute pass that fills the renderer's need buffer. Only with LL_VK_TEXFB set (the H6 measurement), next to the motion attachment.
-    static const bool texneed_on = getenv("LL_VK_TEXFB") && atoi(getenv("LL_VK_TEXFB")) != 0;
-    if (texneed_on && !gCubeSnapshot && mRT->deferredScreen.getNumTextures() == 5)
-    {
-        if (!mRT->deferredScreen.addColorAttachment(TexelFormat::RG16))
-        {
-            LL_WARNS("VkTexNeed") << "the texture need attachment of the world pass could not be added" << LL_ENDL;
-            return false;
-        }
-    }
-
     TexelFormat screenFormat = hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
 
     if (!mRT->screen.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
@@ -8699,182 +8687,6 @@ std::vector<const void*> sorted_pointers(It begin, It end)
 }
 
 // worker: cull the cascade, mark the visible groups and drawables
-// <FS> LL_VK_SHADOW_HULL (=1 apply, =2 only count what it would take out; LL_VK_SHADOW_HULL_VERIFY=1 checks every group it takes out with rays from inside the slice; LL_VK_SHADOW_HULL_MARGIN meters, default 6).
-// A cascade's map is only sampled for the camera's view slice [dist[j], dist[j+1]]. A static group can only put a shadow there if a ray from some point of the slice toward the sun meets it: the slice
-// pushed toward the sun is a convex solid (ShadowSliceHull), and a group outside it is left out of the cascade's visible groups (the light-space box the cull uses is loose: its corners, and the far
-// side of the slice, hold groups that never shadow the slice; after a turn there are about a thousand more of them). Rigged avatars and drawable groups are not touched.
-static int shadow_hull_mode()
-{
-    static const int mode = getenv("LL_VK_SHADOW_HULL") ? atoi(getenv("LL_VK_SHADOW_HULL")) : 0;
-    return mode;
-}
-static std::atomic<U64> sHullTested[4], sHullDropped[4], sHullVerifyHits[4], sHullVerified[4];
-
-static void shadow_hull_build(LLPipeline::ShadowSliceHull& hull, const LLCamera& cam, F32 z0, F32 z1, const LLVector3& to_sun, F32 widen)
-{
-    hull = LLPipeline::ShadowSliceHull();
-    LLVector3 d = to_sun;
-    if (d.magVecSquared() < 1e-8f)
-    {
-        return;
-    }
-    d.normVec();
-    const LLVector3 origin = cam.getOrigin(), at = cam.getAtAxis(), left = cam.getLeftAxis(), up = cam.getUpAxis();
-    const F32 tan_half = tanf(cam.getView() * 0.5f) * widen;
-    const F32 aspect = cam.getAspect();
-    LLVector3 centroid;
-    for (int k = 0; k < 2; ++k)
-    {
-        const F32 z = k ? z1 : z0;
-        const F32 hh = z * tan_half, hw = hh * aspect;
-        const LLVector3 c = origin + at * z;
-        hull.mCorners[k * 4 + 0] = c + left * hw + up * hh;
-        hull.mCorners[k * 4 + 1] = c - left * hw + up * hh;
-        hull.mCorners[k * 4 + 2] = c - left * hw - up * hh;
-        hull.mCorners[k * 4 + 3] = c + left * hw - up * hh;
-    }
-    for (int i = 0; i < 8; ++i)
-    {
-        centroid += hull.mCorners[i] * 0.125f;
-    }
-    static const int faces[6][4] = { { 0, 1, 2, 3 }, { 4, 5, 6, 7 }, { 0, 1, 5, 4 }, { 3, 2, 6, 7 }, { 0, 3, 7, 4 }, { 1, 2, 6, 5 } };
-    LLVector3 normal[6];
-    bool back[6];       // faces that look away from the sun (they stay on the boundary when the slice is pushed toward it)
-    for (int f = 0; f < 6; ++f)
-    {
-        const LLVector3& p0 = hull.mCorners[faces[f][0]];
-        LLVector3 n = (hull.mCorners[faces[f][1]] - p0) % (hull.mCorners[faces[f][3]] - p0);
-        if (n.magVecSquared() < 1e-12f)
-        {
-            return;
-        }
-        n.normVec();
-        LLVector3 face_center = (p0 + hull.mCorners[faces[f][1]] + hull.mCorners[faces[f][2]] + hull.mCorners[faces[f][3]]) * 0.25f;
-        if (n * (face_center - centroid) < 0.f)
-        {
-            n = -n;
-        }
-        normal[f] = n;
-        back[f] = (n * d) <= 1e-4f;
-        if (back[f])
-        {
-            hull.mPlane[hull.mCount][0] = n.mV[0];
-            hull.mPlane[hull.mCount][1] = n.mV[1];
-            hull.mPlane[hull.mCount][2] = n.mV[2];
-            hull.mPlane[hull.mCount][3] = n * p0;
-            ++hull.mCount;
-        }
-    }
-    for (int f = 0; f < 6; ++f)
-    {
-        for (int g = f + 1; g < 6; ++g)
-        {
-            if (back[f] == back[g])
-            {
-                continue;
-            }
-            int shared[4], count = 0;
-            for (int a = 0; a < 4; ++a)
-            {
-                for (int b = 0; b < 4; ++b)
-                {
-                    if (faces[f][a] == faces[g][b] && count < 4)
-                    {
-                        shared[count++] = faces[f][a];
-                    }
-                }
-            }
-            if (count != 2)
-            {
-                continue;
-            }
-            const LLVector3& u = hull.mCorners[shared[0]];
-            LLVector3 m = (hull.mCorners[shared[1]] - u) % d;
-            if (m.magVecSquared() < 1e-10f)
-            {
-                continue;
-            }
-            m.normVec();
-            if (m * (centroid - u) > 0.f)
-            {
-                m = -m;
-            }
-            if (hull.mCount < 24)
-            {
-                hull.mPlane[hull.mCount][0] = m.mV[0];
-                hull.mPlane[hull.mCount][1] = m.mV[1];
-                hull.mPlane[hull.mCount][2] = m.mV[2];
-                hull.mPlane[hull.mCount][3] = m * u;
-                ++hull.mCount;
-            }
-        }
-    }
-    hull.mToSun = d;
-    hull.mValid = hull.mCount >= 3;
-}
-
-// true when the box (centre, half size) is outside the solid by more than the margin
-static bool shadow_hull_outside(const LLPipeline::ShadowSliceHull& hull, const LLVector4a& center, const LLVector4a& half, F32 margin)
-{
-    const F32* c = center.getF32ptr();
-    const F32* h = half.getF32ptr();
-    for (S32 i = 0; i < hull.mCount; ++i)
-    {
-        const F32* p = hull.mPlane[i];
-        const F32 distance = p[0] * c[0] + p[1] * c[1] + p[2] * c[2] - p[3];
-        const F32 radius = fabsf(p[0]) * h[0] + fabsf(p[1]) * h[1] + fabsf(p[2]) * h[2];
-        if (distance > radius + margin)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-// verify: does a ray from a sampled point of the slice toward the sun meet the box? (an exact test, independent of the planes)
-static bool shadow_hull_ray_meets(const LLPipeline::ShadowSliceHull& hull, const LLVector4a& center, const LLVector4a& half)
-{
-    const F32* c = center.getF32ptr();
-    const F32* h = half.getF32ptr();
-    static const F32 us[3] = { 0.2f, 0.5f, 0.8f }, ws[3] = { 0.1f, 0.5f, 0.9f };
-    for (F32 u : us)
-    {
-        for (F32 v : us)
-        {
-            const LLVector3 near_p = hull.mCorners[0] + (hull.mCorners[1] - hull.mCorners[0]) * u + (hull.mCorners[3] - hull.mCorners[0]) * v;
-            const LLVector3 far_p = hull.mCorners[4] + (hull.mCorners[5] - hull.mCorners[4]) * u + (hull.mCorners[7] - hull.mCorners[4]) * v;
-            for (F32 w : ws)
-            {
-                const LLVector3 p = near_p + (far_p - near_p) * w;
-                F32 t0 = 0.f, t1 = 8192.f;
-                bool hit = true;
-                for (int a = 0; a < 3 && hit; ++a)
-                {
-                    const F32 lo = c[a] - h[a], hi = c[a] + h[a];
-                    const F32 dir = hull.mToSun.mV[a];
-                    if (fabsf(dir) < 1e-7f)
-                    {
-                        hit = p.mV[a] >= lo && p.mV[a] <= hi;
-                    }
-                    else
-                    {
-                        F32 ta = (lo - p.mV[a]) / dir, tb = (hi - p.mV[a]) / dir;
-                        if (ta > tb) { std::swap(ta, tb); }
-                        t0 = std::max(t0, ta);
-                        t1 = std::min(t1, tb);
-                        hit = t0 <= t1;
-                    }
-                }
-                if (hit)
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-
 void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -8904,50 +8716,7 @@ void LLPipeline::shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpa
         ++part_index;
     }
 
-    shadowPrepHull(prep);
-
     // (the marking of the groups the walks found is shadowPrepMark, in chunks)
-}
-
-void LLPipeline::shadowPrepHull(ShadowCascadePrep& prep)
-{
-    LLCullResult& result = *prep.mResult;
-    if (prep.mHull.mValid)
-    {
-        // <FS> LL_VK_SHADOW_HULL: the groups the slice cannot see a shadow from (see shadow_hull_build)
-        static const F32 margin = getenv("LL_VK_SHADOW_HULL_MARGIN") ? (F32)atof(getenv("LL_VK_SHADOW_HULL_MARGIN")) : 6.f;
-        static const bool verify = getenv("LL_VK_SHADOW_HULL_VERIFY") != nullptr;
-        const bool apply = shadow_hull_mode() == 1;
-        const U32 index = (U32)(prep.mIndex & 3);
-        const ShadowSliceHull& hull = prep.mHull;
-        U64 tested = 0, dropped = 0, verified = 0, hits = 0;
-        auto keep = [&](LLSpatialGroup* group)
-        {
-            ++tested;
-            const LLVector4a* bounds = group->getObjectBounds();
-            const F32* size = bounds[1].getF32ptr();
-            if (size[0] <= 0.f && size[1] <= 0.f && size[2] <= 0.f)
-            {
-                return true;        // no bounds worked out: keep it
-            }
-            if (!shadow_hull_outside(hull, bounds[0], bounds[1], margin))
-            {
-                return true;
-            }
-            ++dropped;
-            if (verify)
-            {
-                ++verified;
-                hits += shadow_hull_ray_meets(hull, bounds[0], bounds[1]);
-            }
-            return !apply;
-        };
-        result.filterVisibleGroups(keep);
-        sHullTested[index].fetch_add(tested, std::memory_order_relaxed);
-        sHullDropped[index].fetch_add(dropped, std::memory_order_relaxed);
-        sHullVerified[index].fetch_add(verified, std::memory_order_relaxed);
-        sHullVerifyHits[index].fetch_add(hits, std::memory_order_relaxed);
-    }
 }
 
 // <FS> LL_VK_SC_SPLIT (default 1, 0 = one pool job a cascade as before; check it with FSParallelShadowPrepCheck): the cull of every pending cascade as pool jobs by partition and by subtree. The units of a cascade are
@@ -9187,10 +8956,6 @@ void LLPipeline::shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, co
     }
     if (sScCostUs.size() > 8192) sScCostUs.clear();
     if (sScNodeUs.size() > 16384) sScNodeUs.clear();
-    for (ShadowCascadePrep& prep : pending)
-    {
-        shadowPrepHull(prep);
-    }
 }
 
 // worker: mark a range of the cascade's groups visible, and their drawables. Kind 0: the drawable groups (what stateSort does with them when there is no occlusion culling, less the mesh rebuild); kind 1: the visible groups
@@ -9253,24 +9018,13 @@ void LLPipeline::shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U3
     }
 
     // <FS> C4.4: kind 1 runs over the groups of the cascade's cull whose changeLOD() answered true (LLCullResult::mLodGroups, filled by markNotCulled while the walk stamped them), not over every visible group:
-    // the stamp and the question were this job's second visit to each of ~1800 group rows a frame. The shadow hull's verdict (it dropped some visible groups before the marking) is asked again here, of these few.
-    const bool hull_apply = prep.mHull.mValid && shadow_hull_mode() == 1;
-    static const F32 hull_margin = getenv("LL_VK_SHADOW_HULL_MARGIN") ? (F32)atof(getenv("LL_VK_SHADOW_HULL_MARGIN")) : 6.f;
+    // the stamp and the question were this job's second visit to each of ~1800 group rows a frame.
     for (U32 k = begin; k < end; ++k)
     {
         LLSpatialGroup* group = result.mLodGroups[k];
         if (group->isDead())
         {
             continue;
-        }
-        if (hull_apply)
-        {
-            const LLVector4a* bounds = group->getObjectBounds();
-            const F32* size = bounds[1].getF32ptr();
-            if (!(size[0] <= 0.f && size[1] <= 0.f && size[2] <= 0.f) && shadow_hull_outside(prep.mHull, bounds[0], bounds[1], hull_margin))
-            {
-                continue;
-            }
         }
         const bool group_new = census && (S32)group->getVisible(LLViewerCamera::CAMERA_WORLD) < frame;
         if (census)
@@ -9337,7 +9091,7 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
     {
         LLCullResult& result = *prep.mResult;
         LLViewerCamera::sCurCameraID = (LLViewerCamera::eCameraID)(LLViewerCamera::CAMERA_SUN_SHADOW0 + prep.mIndex);
-        const bool use_reg = reg_mode == 1 && !(prep.mHull.mValid && shadow_hull_mode() == 1);       // (the hull drops stamped groups from the lists: those cascades read the lists)
+        const bool use_reg = reg_mode == 1;
         const LLViewerCamera::eCameraID cascade_cam = LLViewerCamera::sCurCameraID;
 
         if (use_reg)
@@ -26656,18 +26410,6 @@ static void shadow_census_report(U32 frames)
             }
             LL_INFOS("SceneCensus") << "shadow cull found, per job:" << found << LL_ENDL;
         }
-        if (shadow_hull_mode())
-        {
-            std::string hull;
-            for (int i = 0; i < 4; ++i)
-            {
-                const U64 tested = sHullTested[i].exchange(0), dropped = sHullDropped[i].exchange(0), verified = sHullVerified[i].exchange(0), hits = sHullVerifyHits[i].exchange(0);
-                const double jobs = (double)std::max<U64>(1, c.mCascadeJobs[0][i]);
-                hull += llformat(" cascade %d: %.0f of %.0f visible groups a job %s (%.0f %%)%s;", i, dropped / jobs, tested / jobs, shadow_hull_mode() == 1 ? "taken out" : "would be taken out",
-                                 tested ? 100.0 * dropped / tested : 0.0, verified ? llformat(", verified %llu with rays, %llu WRONG", (unsigned long long)verified, (unsigned long long)hits).c_str() : "");
-            }
-            LL_INFOS("SceneCensus") << "shadow slice hull (LL_VK_SHADOW_HULL=" << shadow_hull_mode() << "):" << hull << LL_ENDL;
-        }
         sPrepJobCensus = PrepJobCensus();
         // the partitions: per cull job, the time of each, largest first
         std::vector<std::pair<double, std::string>> parts;
@@ -29963,11 +29705,6 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                     prep.mCullAt = camera.getAtAxis();
                     prep.mCullSliceStart = dist[j];
                     prep.mCullMargin = cascade_margin;
-                }
-                if (shadow_hull_mode() && defer_cascades && !gCubeSnapshot)
-                {
-                    // the slice a cascade is sampled for, a little wider than the split distances (the padding the cascade itself is built with, the blend into the next one, the sides of the screen)
-                    shadow_hull_build(prep.mHull, camera, j == 0 ? 0.01f : dist[j] * 0.7f, dist[j + 1] * 1.25f, caster_dir, 1.15f);
                 }
 
                 if (!defer_cascades)

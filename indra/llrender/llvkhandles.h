@@ -199,7 +199,6 @@ public:
     }
 
     uint32_t liveHandles(uint32_t table) const { return mLiveCount[table]; }
-    uint32_t handleLimit(uint32_t table) const { return mNextHandle[table]; }       // one more than the highest handle ever given in the table
     uint32_t descriptorsUsed(uint32_t table) const { return mNextDesc[table] - 1 - (uint32_t)mFreeDesc[table].size(); }
     uint64_t sets() const { return mSets; }
     uint64_t refusedHandles() const { return mRefusedHandles; }

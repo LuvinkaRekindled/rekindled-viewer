@@ -340,15 +340,6 @@ namespace LLVkBridge
     void hizDone(U32 serial);
     void hizSetResults(const U32* results, U32 capacity);       // (worker) the mapped ring
     void hizPublish(U32 slot, U32 serial);                      // (worker) the frame of this serial has finished
-    // H6 (doc/vulkan/PLAN-texture-handles.md): what the draws measured of the need of a texture. The table draws record, per texture, the smallest area of texture coordinates one pixel covered (so the
-    // size of the whole texture on the screen is 1 / area pixels); the worker reads that back when the GPU has finished the frame (3 or so frames later) and keeps it by texture id.
-    // mWindow: the smallest area over the last one to two windows (half a second each) in which the texture was drawn (INF: it has not been drawn in them, its windows are older than that); mKnown: the same, kept
-    // when the texture is not drawn any more (INF: never drawn); mAge: seconds since the texture was last drawn. Main thread; false when nothing was ever measured for the id.
-    struct TextureNeed { F32 mWindow = 0.f; F32 mKnown = 0.f; F32 mAge = 0.f; };
-    bool textureNeed(U32 name, TextureNeed& out);
-    void textureNeedStats(U64& textures, U64& readings);
-    void textureNeedReading(U32 name, F32 area);                 // (worker) a reading of one finished frame
-    void textureNeedForget(U32 name);                            // (worker) the texture is gone
     // kind 35, the flat group table: CullParams then count delta rows (see cullSend). The worker keeps the table; the derive (kept sets, late list, view requests) reads its copy.
     struct CullParams { F32 mPlanes[7][4]; F32 mOrigin[3]; F32 mCornerDist; F32 mMotion[4]; F32 mFactors[4]; U32 mPlaneCount; U32 mPad[7]; };     // 192 bytes; mMotion = translation bound, rotation bound
     struct CullRow { F32 mCenter[3]; U32 mParent; F32 mHalf[3]; U32 mFlags; F32 mExtMin[3]; F32 mPad0; F32 mExtMax[3]; F32 mPad1; };       // mFlags: 1 root, 2 skip frustum check, 4 occluded, 8 sphere test

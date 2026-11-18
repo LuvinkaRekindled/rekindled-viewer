@@ -41,10 +41,6 @@ S32 LLVkBridge::hizRead(U32, U32, U32*) { return -1; }
 void LLVkBridge::hizDone(U32) {}
 void LLVkBridge::hizSetResults(const U32*, U32) {}
 void LLVkBridge::hizPublish(U32, U32) {}
-bool LLVkBridge::textureNeed(U32, TextureNeed&) { return false; }
-void LLVkBridge::textureNeedStats(U64& t, U64& r) { t = r = 0; }
-void LLVkBridge::textureNeedReading(U32, F32) {}
-void LLVkBridge::textureNeedForget(U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
 void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
 U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
@@ -1686,77 +1682,6 @@ void LLVkBridge::hizSetResults(const U32* results, U32 capacity)
 void LLVkBridge::hizPublish(U32 slot, U32 serial)
 {
     gHizPublished[slot % 8].store(serial, std::memory_order_release);
-}
-
-// H6: the measured need of each texture, by id. The worker adds the readings of the frames the GPU has finished; the main thread reads when it looks at a texture (a few hundred a frame): a short lock.
-namespace
-{
-struct NeedState
-{
-    F32 mCur = 3.0e38f, mPrev = 3.0e38f;        // the smallest area of the current window and of the one before it
-    double mWindowStart = 0.0;
-    double mLastSeen = 0.0;
-};
-std::mutex gNeedMutex;
-std::unordered_map<U32, NeedState> gNeed;
-U64 gNeedReadings = 0;
-constexpr double kNeedWindow = 0.5;             // seconds
-double need_now()
-{
-    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
-}
-
-void LLVkBridge::textureNeedReading(U32 name, F32 area)
-{
-    const double now = need_now();
-    std::lock_guard<std::mutex> lock(gNeedMutex);
-    NeedState& s = gNeed[name];
-    if (s.mWindowStart == 0.0)
-    {
-        s.mWindowStart = now;
-    }
-    else if (now - s.mWindowStart >= kNeedWindow)
-    {
-        // a new window; the one that closed is kept as the previous (two windows old data is dropped: a texture that was drawn in the closed window only keeps that one)
-        s.mPrev = now - s.mWindowStart < 2.0 * kNeedWindow ? s.mCur : 3.0e38f;
-        s.mCur = 3.0e38f;
-        s.mWindowStart = now;
-    }
-    s.mCur = std::min(s.mCur, area);
-    s.mLastSeen = now;
-    ++gNeedReadings;
-}
-
-void LLVkBridge::textureNeedForget(U32 name)
-{
-    std::lock_guard<std::mutex> lock(gNeedMutex);
-    gNeed.erase(name);
-}
-
-bool LLVkBridge::textureNeed(U32 name, TextureNeed& out)
-{
-    const double now = need_now();
-    std::lock_guard<std::mutex> lock(gNeedMutex);
-    auto it = gNeed.find(name);
-    if (it == gNeed.end())
-    {
-        return false;
-    }
-    const NeedState& s = it->second;
-    const F32 known = std::min(s.mCur, s.mPrev);
-    out.mKnown = known;
-    out.mAge = (F32)(now - s.mLastSeen);
-    // the window values count only while they are recent: seen within the last two windows
-    out.mWindow = out.mAge < 2.0 * kNeedWindow ? known : 3.0e38f;
-    return true;
-}
-
-void LLVkBridge::textureNeedStats(U64& textures, U64& readings)
-{
-    std::lock_guard<std::mutex> lock(gNeedMutex);
-    textures = gNeed.size();
-    readings = gNeedReadings;
 }
 
 namespace

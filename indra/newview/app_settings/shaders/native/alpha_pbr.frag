@@ -32,16 +32,8 @@ layout(location = 11) flat in vec3 vary_emissive;
 
 layout(location = 0) out vec4 frag_color;
 
-#include "lib/texneed.glsl"
-#ifdef TEXNEED
-layout(early_fragment_tests) in;        // (no discard, no depth output in this shader: the stores below only happen for fragments that pass the depth test)
-#endif
-
 void main()
 {
-#ifdef TEXNEED
-    ll_texneed_store(vary_slots.x, vary_tc_base);
-#endif
     mirror_clip(vary_position);
     water_clip(vary_position);
 

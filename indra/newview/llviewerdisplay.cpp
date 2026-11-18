@@ -1419,14 +1419,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLRenderTarget &rt = (gPipeline.sRenderDeferred ? gPipeline.mRT->deferredScreen : gPipeline.mRT->screen);
         (void)rt;
         { LL_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
-        if (LLPipeline::sRenderDeferred && !gCubeSnapshot && gPipeline.mRT->deferredScreen.getNumTextures() == 6)
-        {
-            // <FS> idea 3: the world pass has its texture need attachment: the worker reduces it into the need buffer (kind 42, see on_texneed)
-            LLVkBridge::ShadowPacketsHeader need_header;
-            need_header.mKind = 42;
-            const U32 need_none = 0;
-            LLVkBridge::shadowPackets(need_header, &need_none, sizeof(need_none));
-        }
         gPipeline.rtSceneEarly(2);      // <FS> LL_VK_RT_EARLY=2: after the G-buffer (diagnostic)
 
         if (LLPipeline::sRenderDeferred)
