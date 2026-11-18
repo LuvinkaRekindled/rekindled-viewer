@@ -26,23 +26,17 @@ layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 0) out vec4 frag_color;
 
 #ifdef HAS_NOISE
-// noise borrowed from https://www.shadertoy.com/view/4dS3Wd by Morgan McGuire (@morgan3d, http://graphicscodex.com)
-float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
-
-float noise(vec2 x)
+// the dither: an integer hash of the pixel (PCG) for each channel, 0 to 1 and the same level as the value noise it replaces (which cost 24 sin() a pixel for a dither of 0.003: AUDIT-shaders-2026-11-18.md section 2 item 2)
+uint pcg_hash(uint v)
 {
-    const vec2 i = floor(x);
-    const vec2 f = fract(x);
+    const uint s = v * 747796405u + 2891336453u;
+    const uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
 
-    // the four corners of a tile
-    const float a = hash(i);
-    const float b = hash(i + vec2(1.0, 0.0));
-    const float c = hash(i + vec2(0.0, 1.0));
-    const float d = hash(i + vec2(1.0, 1.0));
-
-    // a 2D lerp with a smoothstep envelope
-    const vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+float dither_channel(uvec2 px, uint channel)
+{
+    return float(pcg_hash(px.x + pcg_hash(px.y + pcg_hash(channel)))) * (1.0 / 4294967295.0);
 }
 #endif
 
@@ -59,9 +53,8 @@ void main()
     vec4 diff = texture(ll_tbl2d[LL_HM(ll_ti_diffuseRect)], vary_fragcoord);
 
 #ifdef HAS_NOISE
-    const vec2 tc = vary_fragcoord * screen_res * 4.0;
-    const vec3 seed = (diff.rgb + vec3(1.0)) * vec3(tc.xy, tc.x + tc.y);
-    const vec3 nz = vec3(noise(seed.rg), noise(seed.gb), noise(seed.rb));
+    const uvec2 px = uvec2(vary_fragcoord * screen_res);
+    const vec3 nz = vec3(dither_channel(px, 0u), dither_channel(px, 1u), dither_channel(px, 2u));
     diff.rgb += nz * 0.003;
 #endif
     frag_color = vec4(clamp_hdr_range(diff.rgb), diff.a);
