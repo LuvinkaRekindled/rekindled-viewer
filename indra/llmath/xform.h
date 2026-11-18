@@ -161,8 +161,6 @@ public:
     const LLQuaternion& getWorldRotation() const    { return mViewWorldRot ? *mViewWorldRot : mWorldRotation; }
     const LLVector3&    getWorldPosition() const    { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
     // <FS> PLAN-avatars.md stage C: a joint's xform while the joint is a view of the avatar's flat world array: the world position and rotation are the array's slot (set by the avatar's pass, cleared by LLJoint::touch)
-    const LLVector3&    getWorldPositionField() const   { return mWorldPosition; }        // (the xform's own field: what the verify mode compares the array with)
-    const LLQuaternion& getWorldRotationField() const   { return mWorldRotation; }
     void                setLocals(LLXformLocals* slot) { mLocals = slot; }      // (the caller copies the values over first)
     LLXformLocals*      getLocals() const { return mLocals; }
     void                releaseLocals() { if (mLocals) { mPosition = mLocals->mPos; mRotation = mLocals->mRot; mScale = mLocals->mScale; mLocals = nullptr; } }      // (the fields get the last values back)
@@ -191,14 +189,6 @@ public:
     void updateMatrix(bool update_bounds = true);
     void updateMatrixFromParent(const LLVector3& parent_pos, const LLQuaternion& parent_rot, const LLVector3& parent_scale, bool parent_scale_child_offset, bool update_bounds = true);     // <FS> stage C: updateMatrix with the parent's world data given
     void finishMatrix(bool update_bounds);
-    // <FS> PLAN-avatars.md stage C: the world position and rotation worked out elsewhere (the avatar's flat world pass computes them from the locals in array order): the fields update() leaves, and the matrix
-    // updateMatrix(false) makes from them
-    void setWorldFromPass(const LLVector3& world_pos, const LLQuaternion& world_rot)
-    {
-        mWorldPosition = world_pos;
-        mWorldRotation = world_rot;
-        mWorldMatrix.initAll(lscale(), mWorldRotation, mWorldPosition);
-    }
     void getMinMax(LLVector3& min,LLVector3& max) const;
 
 protected:

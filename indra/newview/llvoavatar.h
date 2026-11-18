@@ -317,7 +317,7 @@ public:
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     std::shared_ptr<LLFlatSkeleton> mFlatSkel;          // <FS> stage B0
     bool            flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor);       // <FS> avatar relative skinning: the same palette from world matrices made relative to the anchor (false: not possible, the plain one stands)
-    void            flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin);       // the skin's palette (LL_VK_SKELFLAT: 0 the old per-joint build, 1 from the flat array, 2 both, compared)
+    void            flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin);       // the skin's palette from the flat array (the old per-joint build only where the array lacks a joint)
     mutable S32     mAvTableSlot = -1;                  // <FS> the avatar's row in LLAvatarTable's array this frame (valid when the row at the slot names this avatar)
     bool            computeTooSlowLive() const;         // isTooSlow() derived from the avatar's state (what the table caches at endFrame)
     bool            computeVisuallyMutedLive();         // isVisuallyMuted() derived likewise
@@ -355,7 +355,7 @@ public:
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
     void            buildPalettesInJob();
-    // <FS> PLAN-avatars.md stage C (LL_VK_FLATFILL: 1 default, 0 the palette job fills it as before, 2 compared): the flat world array (LLFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
+    // <FS> PLAN-avatars.md stage C: the flat world array (LLFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
     // walk's result; the attachment rows and the palette job read it, and the palette job fills it again only when a joint was touched after (skeletonDirty)
     void            ensureJointLocals();        // the joints' locals into the flat array
     void            releaseJointViews();        // the joints stop pointing into this avatar's arrays

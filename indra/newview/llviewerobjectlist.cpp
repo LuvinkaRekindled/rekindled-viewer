@@ -1218,7 +1218,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         }
         batch[index]->runDeferredMotionBlend();
     };
-    // <FS> stage C5d (LL_VK_ANIMROOT): an animated object worn by an avatar (LLControlAvatar::hostJobOwned) is placed from the host's FINAL pose, after the host's completion (hover, overrides and the rest that the
+    // <FS> stage C5d: an animated object worn by an avatar (LLControlAvatar::hostJobOwned) is placed from the host's FINAL pose, after the host's completion (hover, overrides and the rest that the
     // completion changes after the pose job): its placement, its pose job and its completion are the second phase, after the completions of the first.
     static std::vector<size_t> phase1, phase2;
     phase1.clear();

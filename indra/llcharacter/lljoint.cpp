@@ -37,10 +37,7 @@
 S32 LLJoint::sNumUpdates = 0;
 S32 LLJoint::sNumTouches = 0;
 U32 LLJoint::sTouchSerial = 0;
-int LLJoint::sViewMode = getenv("LL_VK_JOINTVIEW") ? atoi(getenv("LL_VK_JOINTVIEW")) : 3;     // <FS> stage C: 3 (default since 2026-11-07, laps jw2: 36.6 M answers 0 different, jw3: the user: looked good) the joints are views only, nothing written into the xform world fields; 2 adds the writeback and the compare; 1 the writeback; 0 off
 std::atomic<U32> LLJoint::sViewPasses{ 0 };
-std::atomic<U64> LLJoint::sViewChecked{ 0 }, LLJoint::sViewDifferent{ 0 };
-static std::atomic<U64> sViewWriteWhileValid{ 0 };
 
 template <class T>
 bool attachment_map_iter_compare_key(const T& a, const T& b)
@@ -753,14 +750,8 @@ void LLJoint::setDebugJointNames(const std::string& names_string)
 //--------------------------------------------------------------------
 LLVector3 LLJoint::getWorldPosition()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
-        if (sViewMode == 2)
-        {
-            ++sViewChecked;
-            const LLVector3& x = mXform.getWorldPositionField();
-            if (memcmp(&x, mViewPos, sizeof(LLVector3)) != 0) { if (++sViewDifferent <= 12) { LL_INFOS("JointView") << "position of " << mName << " (joint " << mJointNum << ", mUpdateXform " << mUpdateXform << ", dirty 0x" << std::hex << mDirtyFlags << std::dec << "): array " << *mViewPos << " xform " << x << " diff " << (x - *mViewPos) << " ; kind " << (int)mViewKind << " set " << (sViewPasses.load() - mViewPass) << " passes ago ; from the local and the parent's xform now: " << ([&]{ LLXformMatrix t = mXform; t.update(); return t.getWorldPosition() - x; })() << " away from the xform; parent " << (mParent ? mParent->mName : std::string("-")) << " dirty 0x" << std::hex << (mParent ? mParent->mDirtyFlags : 0) << std::dec << " valid " << (mParent ? mParent->mViewValid : false) << LL_ENDL; } }
-        }
         return *mViewPos;
     }
     updateWorldPRSParent();
@@ -772,7 +763,7 @@ LLVector3 LLJoint::getWorldPosition()
 //-----------------------------------------------------------------------------
 LLVector3 LLJoint::getLastWorldPosition()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
         return *mViewPos;
     }
@@ -839,14 +830,8 @@ void LLJoint::setRotation( const LLQuaternion& rot )
 //--------------------------------------------------------------------
 LLQuaternion LLJoint::getWorldRotation()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
-        if (sViewMode == 2)
-        {
-            ++sViewChecked;
-            const LLQuaternion& x = mXform.getWorldRotationField();
-            if (memcmp(&x, mViewRot, sizeof(LLQuaternion)) != 0) { if (++sViewDifferent <= 12) { LL_INFOS("JointView") << "rotation of " << mName << " (joint " << mJointNum << ", mUpdateXform " << mUpdateXform << ", dirty 0x" << std::hex << mDirtyFlags << std::dec << "): array " << *mViewRot << " xform " << x << LL_ENDL; } }
-        }
         return *mViewRot;
     }
     updateWorldPRSParent();
@@ -859,7 +844,7 @@ LLQuaternion LLJoint::getWorldRotation()
 //-----------------------------------------------------------------------------
 LLQuaternion LLJoint::getLastWorldRotation()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
         return *mViewRot;
     }
@@ -921,10 +906,9 @@ void LLJoint::setScale( const LLVector3& requested_scale, bool apply_attachment_
     {
         LL_DEBUGS("Avatar") << " joint " << getName() << " set scale " << scale << LL_ENDL;
     }
-    // <FS> PLAN-avatars.md stage B2c (LL_VK_SCALEGUARD: 1 default, 0 the old unconditional touch): a scale that does not change dirties nothing. The blend sets the scale of every joint it touches, every frame, and the touch
+    // <FS> PLAN-avatars.md stage B2c: a scale that does not change dirties nothing. The blend sets the scale of every joint it touches, every frame, and the touch
     // dirtied the joint and all its descendants each time (the same fix the position and rotation setters have), so every avatar's whole skeleton was walked every frame whether or not anything had moved.
-    static const bool guard = !getenv("LL_VK_SCALEGUARD") || atoi(getenv("LL_VK_SCALEGUARD")) != 0;
-    if (guard && mXform.getScale() == scale)
+    if (mXform.getScale() == scale)
     {
         return;
     }
@@ -940,9 +924,9 @@ void LLJoint::setScale( const LLVector3& requested_scale, bool apply_attachment_
 //--------------------------------------------------------------------
 const LLMatrix4 &LLJoint::getWorldMatrix()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
-        // the array's matrix as an LLMatrix4, made once a pass (the xform's own copy is not written by the pass in mode 3)
+        // the array's matrix as an LLMatrix4, made once a pass (the xform's own copy is not written by the pass)
         if (mViewMatPass != mViewPass)
         {
             LLMatrix4 m;
@@ -959,13 +943,8 @@ const LLMatrix4 &LLJoint::getWorldMatrix()
 
 const LLMatrix4a& LLJoint::getWorldMatrix4a()
 {
-    if (mViewValid && sViewMode && !mDirtyFlags)
+    if (mViewValid && !mDirtyFlags)
     {
-        if (sViewMode == 2)
-        {
-            ++sViewChecked;
-            if (memcmp(&mWorldMatrix, mViewMat, sizeof(LLMatrix4a)) != 0) { if (++sViewDifferent <= 12) { LL_INFOS("JointView") << "matrix of " << mName << " (joint " << mJointNum << ", mUpdateXform " << mUpdateXform << ", dirty 0x" << std::hex << mDirtyFlags << std::dec << "): the joint's own copy differs from the array's" << LL_ENDL; } }
-        }
         return *mViewMat;
     }
     updateWorldMatrixParent();
@@ -1021,7 +1000,6 @@ void LLJoint::updateWorldPRSParent()
             parent->updateWorldPRSParent();
         }
 
-        if (mViewValid && sViewMode == 2 && ++sViewWriteWhileValid <= 12) { LL_INFOS("JointView") << "PRS update of " << mName << " (joint " << mJointNum << ") with dirty 0x" << std::hex << mDirtyFlags << std::dec << " while its view was marked valid" << LL_ENDL; }
         mXform.update();
         mDirtyFlags &= ~(ROTATION_DIRTY | POSITION_DIRTY);
     }
@@ -1052,7 +1030,6 @@ void LLJoint::updateWorldMatrix()
     if (mDirtyFlags & MATRIX_DIRTY)
     {
         sNumUpdates++;
-        if (mViewValid && sViewMode == 2 && ++sViewWriteWhileValid <= 12) { LL_INFOS("JointView") << "matrix update of " << mName << " (joint " << mJointNum << ") with dirty 0x" << std::hex << mDirtyFlags << std::dec << " while its view was marked valid" << LL_ENDL; }
         mXform.updateMatrix(false);
         mWorldMatrix.loadu(mXform.getWorldMatrix());
         mDirtyFlags = 0x0;

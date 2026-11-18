@@ -55,7 +55,7 @@ protected:
     joint_map                   mJointMap;
     F32                         mWeight;
     joint_map_iterator          mListIter;
-    // <FS> PLAN-avatars.md stage B2b (LL_VK_POSEVEC: 1 default, 0 the map walk, 2 both, compared): the joint states in the map's order (by joint name) as a contiguous vector, rebuilt when a state is added or removed (a motion
+    // <FS> PLAN-avatars.md stage B2b: the joint states in the map's order (by joint name) as a contiguous vector, rebuilt when a state is added or removed (a motion
     // fills its pose once, when it loads), so addMotion and setWeight walk an array and not the tree nodes of a std::map<std::string, ...>. The order is the map's, so the blend sees the states in the same order.
     mutable std::vector<LLJointState*> mStateVec;
     mutable bool                mStateVecDirty = true;
@@ -120,7 +120,7 @@ protected:
 
     S32         mNextPoseSlot;
     LLPose      mBlendedPose;
-    // <FS> PLAN-avatars.md stage B1 (LL_VK_BLENDFLAT: 0 the pool above, 1 flat slots by joint number instead, 2 both, compared): the joint states of the frame in an array indexed by the joint's number, an active
+    // <FS> PLAN-avatars.md stage B1 (flat slots by joint number instead of the pool above, while mFlatOn): the joint states of the frame in an array indexed by the joint's number, an active
     // list of numbers with a count instead of a std::list searched linearly for every joint state, no map lookups. The blend math is the same. A joint without a valid number keeps using the pool above.
 public:
     struct FlatBlend;

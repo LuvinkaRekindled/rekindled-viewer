@@ -156,15 +156,9 @@ void LLControlAvatar::getNewConstraintFixups(LLVector3& new_pos_fixup, F32& new_
     }
 }
 
-int LLControlAvatar::animRootMode()
-{
-    static const int mode = getenv("LL_VK_ANIMROOT") ? atoi(getenv("LL_VK_ANIMROOT")) : 1;
-    return mode;
-}
-
 bool LLControlAvatar::hostJobOwned() const
 {
-    return animRootMode() != 0 && mRootVolp && mRootVolp->isAttachment() && mRootVolp->mDrawable.notNull() && getAttachedAvatar() != nullptr;
+    return mRootVolp && mRootVolp->isAttachment() && mRootVolp->mDrawable.notNull() && getAttachedAvatar() != nullptr;
 }
 
 void LLControlAvatar::placeFromHost()
@@ -207,7 +201,7 @@ void LLControlAvatar::matchVolumeTransform()
                 {
                     const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
                     static std::atomic<U64> from_array{ 0 }, from_joint{ 0 };
-                    if (animRootMode() != 0 && attached_av->poseJobDoneThisFrame() && attach && attached_av->flatJoint(attach->getJointNum(), ppos, prot, pscale, psco))
+                    if (attached_av->poseJobDoneThisFrame() && attach && attached_av->flatJoint(attach->getJointNum(), ppos, prot, pscale, psco))
                     {
                         joint_pos = *ppos;
                         joint_rot = *prot;
@@ -220,7 +214,7 @@ void LLControlAvatar::matchVolumeTransform()
                         joint_rot = attach->getWorldRotation();
                         ++from_joint;
                     }
-                    if (animRootMode() != 0 && ((from_array + from_joint) % 50000) == 0)
+                    if (((from_array + from_joint) % 50000) == 0)
                     {
                         LL_INFOS("AnimRoot") << "animated object root placements: the attachment point from the host's flat array " << from_array.load() << ", from the joint " << from_joint.load() << LL_ENDL;
                     }
@@ -249,12 +243,8 @@ void LLControlAvatar::matchVolumeTransform()
                 LLVector3 obj_pos = mRootVolp->mDrawable->getPosition();
                 LLQuaternion obj_rot = mRootVolp->mDrawable->getRotation();
                 obj_pos.rotVec(joint_rot);
-                mJobObjRot = obj_rot;
-                mJobJointRot = joint_rot;
-                mJobRootPos = obj_pos + joint_pos;
-                mJobRootRot = obj_rot * joint_rot;
-                mRoot->setWorldPosition(mJobRootPos);
-                mRoot->setWorldRotation(mJobRootRot);
+                mRoot->setWorldPosition(obj_pos + joint_pos);
+                mRoot->setWorldRotation(obj_rot * joint_rot);
                 setRotation(mRoot->getRotation());
 
                 setGlobalScale(mScaleConstraintFixup);
