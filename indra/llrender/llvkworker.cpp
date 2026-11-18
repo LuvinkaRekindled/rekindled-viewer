@@ -8062,7 +8062,8 @@ bool geo_timed()
 }
 bool geo_stale_check_on()
 {
-    static const bool on = !(getenv("LL_VK_SCENE_GEO_STALECHECK") && getenv("LL_VK_SCENE_GEO_STALECHECK")[0] == '0');
+    // a diagnostic (LL_VK_DIAG=1, or LL_VK_SCENE_GEO_STALECHECK=1): the events are the mechanism and the check found nothing in 40 laps (millions of fragments looked at); about 27 us of a prepare. =0 turns it off in a diagnostic run.
+    static const bool on = getenv("LL_VK_SCENE_GEO_STALECHECK") ? getenv("LL_VK_SCENE_GEO_STALECHECK")[0] != '0' : ll_diag_on();
     return on;
 }
 U64 geo_ns(const std::chrono::steady_clock::time_point& since)
@@ -12645,10 +12646,13 @@ void rtPinUpdate()
             }
         }
     }
-    // 3. the safety net: every pin is looked at again about every 32 frames
+    // 3. the safety net: every pin is looked at again about every 32 frames (a slice a FRAME: this runs once a prepare, 2 to 3 times a frame, and a slice a prepare made it every 12 frames at 45 us a prepare; the sweep found
+    // no change that an event had missed in 40 laps)
+    static U64 slice_frame = ~0ull;
     const size_t total = sPins.size();
-    if (total > 1)
+    if (total > 1 && slice_frame != frame)
     {
+        slice_frame = frame;
         const size_t n = total / 32 + 1;
         for (size_t k = 0; k < n; ++k)
         {
