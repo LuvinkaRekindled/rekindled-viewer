@@ -359,6 +359,9 @@ public:
 
     void setOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
     void clearOcclusionState(U32 state, S32 mode = STATE_MODE_SINGLE);
+    // <FS> the groups whose world occlusion state is OCCLUDED: a bit per group row, kept by the four places that write the state (this class's setters, the constructor). Stale bits (a dead group, a state cleared by another path) are dropped
+    // here. The main view's cull does not walk the covered partitions while the worker's kept set is the list (stage 8f), and a group held occluded is not in that set: this is how the pass finds them to ask for their next verdict.
+    static void worldOccluded(std::vector<LLOcclusionCullingGroup*>& out);
     void checkOcclusion(); // a group that asked to be discarded while its verdict was awaited is visible again; a group under an occluded parent is occluded with it
     // adds the group's box to the Hi-Z batch when it has none awaited (shift: the object cache's region origin, to agent space)
     void hizCollect(LLCamera* camera, const LLVector4a* shift = NULL);
