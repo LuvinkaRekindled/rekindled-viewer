@@ -15375,7 +15375,7 @@ static bool shadow_lod_one(const GeoRange& r, U32 lvl, F32 error, int& snapshots
 
 
 // the main view's rigged draws (item E): the simplified list of a draw for a geometric error in metres (below half a pixel at its distance), true with its index buffer and count when it is ready.
-// LL_VK_RIGGEDLOD (default off while measuring) or rt-debug.txt riggedlod=0/1 decide in the caller.
+// The caller decides.
 bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
 {
     const int level = (int)floorf(log2f(error_m * 1000.f));

@@ -5648,10 +5648,9 @@ void LLRiggedVolume::update(
     LLSkinningUtil::initSkinningMatrixPalette(mat, maxJoints, skin, avatar);
     const LLMatrix4a bind_shape_matrix = skin->mBindShapeMatrix;
 
-    // <FS> (LL_VK_RIGGED_SKIP=0: off) the caller asked to skip when nothing changed: the same joint matrices, skin, source volume, faces and octree request as the last such call give the same positions, extents
+    // <FS> the caller asked to skip when nothing changed: the same joint matrices, skin, source volume, faces and octree request as the last such call give the same positions, extents
     // and octrees, so the skinning of every vertex (and the octree rebuild) is not done again. Any other kind of update makes the key unknown. The selection outline of a worn mesh calls it every frame.
-    static const bool skip_on = !getenv("LL_VK_RIGGED_SKIP") || atoi(getenv("LL_VK_RIGGED_SKIP")) != 0;
-    if (skip_if_unchanged && skip_on)
+    if (skip_if_unchanged)
     {
         const size_t bytes = (size_t)maxJoints * sizeof(LLMatrix4a);
         if (!copy && mPaletteKeyValid && mPaletteSkin == skin && mPaletteSrc == volume && mPaletteFace == face_index && mPaletteOctrees == rebuild_face_octrees

@@ -2,7 +2,7 @@
  * @file llavatartable.h
  * @brief The avatar table (doc/vulkan/PLAN-avatars.md, stage A): one row per avatar, filled by ONE writer once a frame before the avatar update loop. The row holds what the five scattered
  *        "does this avatar need work this frame" gates of the update loop used to derive from the object graph, one after the other: the importance class, and the frame's mode.
- *        LL_VK_AVTABLE: 0 the old gates, 1 (default) the loop reads the row, 2 both: the loop uses the old answer and counts the disagreements with the row (log tag AvTable, every 600 frames).
+ *        The loop reads the row (an avatar without a row this frame keeps the old gates).
  */
 #ifndef LL_LLAVATARTABLE_H
 #define LL_LLAVATARTABLE_H
@@ -23,8 +23,7 @@ public:
         MODE_NONE,          // idleUpdate returns at once (a hidden avatar's reduced update: every 2nd or 4th frame)
         MODE_SKIP,          // updateCharacter's early out (an impostor's or a far avatar's period): motions in the hidden form, nothing else
         MODE_MATRICES,      // not visible: motions in the hidden form, the skeleton's matrices in the batch, the completion
-        MODE_POSE,          // the full update
-        MODE_COUNT
+        MODE_POSE           // the full update
     };
     // importance: 0 the viewer's own, 1 seen in the main view, 2 seen by nothing (3 reserved: seen only by a probe or snapshot)
     enum Class : U8 { CLASS_OWN = 0, CLASS_SEEN = 1, CLASS_UNSEEN = 2, CLASS_COUNT = 4 };
@@ -54,10 +53,8 @@ public:
         U32 mFrame = 0;
     };
 
-    static int switchMode();                                                         // LL_VK_AVTABLE
     static void beginFrame(const std::vector<LLViewerObject*>& list, size_t count);  // the only writer: LLViewerObjectList::update, before the avatars' idleUpdate
     static const Row* row(const LLVOAvatar* av);                                     // null when the avatar has no row this frame
-    static void noteActual(const LLVOAvatar* av, U8 actual);                         // mode 2: what the old gates did
     static void endFrame();                                                          // after the avatars' update (the motion batch and the completions): the facts the render side reads
     static const Row* finalRow(const LLVOAvatar* av);                                // the row once endFrame has made it final this frame, else null (the caller derives the answer as before)
     static void noteCheck(int which, bool same);                                     // LL_VK_AVTABLE_VERIFY=1: the cached answer (0 impostor, 1 too slow, 2 visually muted, 3 overall appearance) against the live one
@@ -65,7 +62,7 @@ public:
     static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
     static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)
     static bool voiceSpeaking(const LLVOAvatar* av);                                 // B3d: the speaking fact from the row
-    static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames; mode 1 only)
+    static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames)
 };
 
 #endif

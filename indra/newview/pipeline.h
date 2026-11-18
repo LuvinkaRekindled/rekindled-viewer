@@ -371,7 +371,7 @@ public:
     static thread_local std::vector<SortDelta>* sSortTee;       // set: recorded and made (the check's second run)
     // <FS> view rework A1 (doc/vulkan/PLAN-view-prep-rework.md section 8.3): the writes to shared state that the attachment loop of an avatar makes (the moved lists, the octree move of a drawable and of a bridge, the render
     // order written on a group) are recorded while sAvSink is set and replayed in the order they were made (applyAvOps) when the loop of the avatar is over. A drawable's own state bits (ON_MOVE_LIST, EARLY_MOVE, ACTIVE) are still set
-    // at once, so the next step of the loop sees them. LL_VK_AV_LEDGER=1 turns it on.
+    // at once, so the next step of the loop sees them.
     struct AvOp
     {
         enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, BRIDGE_MOVE, RENDER_ORDER, MAKE_ACTIVE_SHARED, UPDATE_TEXT, DIRTY_GROUP } mKind;

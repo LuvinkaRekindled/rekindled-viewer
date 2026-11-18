@@ -1237,10 +1237,9 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             pool->runLabeled("avatar motion batch", phase1.size(), blend1);
         }
 
-        // <FS> view rework A2 (LL_VK_AV_PARALLEL=1): the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
+        // <FS> view rework A2: the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
-        static const bool av_parallel = !getenv("LL_VK_AV_PARALLEL") || getenv("LL_VK_AV_PARALLEL")[0] != '0';       // (on unless LL_VK_AV_PARALLEL=0)
-        if (av_parallel && !gFSAvTimersOn && !LLAttCensus::sOn)
+        if (!gFSAvTimersOn && !LLAttCensus::sOn)
         {
             static std::vector<LLVOAvatar*> jobs;
             jobs.clear();
@@ -1500,7 +1499,7 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     std::vector<LLViewerObject*>::iterator idle_end = idle_list.begin()+idle_count;
 
-    LLAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place (LL_VK_AVTABLE)
+    LLAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place
 
     // <FS:Ansariel> Speed up debug settings
     //if (gSavedSettings.getBOOL("FreezeTime"))

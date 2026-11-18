@@ -701,46 +701,14 @@ static struct AlphaSceneStats
 
 // item E (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rigged alpha draws of the world's colour pass (and its depth passes) draw a simplified index list when the avatar is far enough that the error of the
 // simplification is under half a pixel at its distance (a hair card with 100,000 triangles for a few hundred pixels). The lists are made on a background thread (item A's cache: ll_rigged_lod_lookup in
-// pipeline.cpp); until one is ready the draw's own list is used. LL_VK_RIGGEDLOD=1 starts it on, rt-debug.txt riggedlod=0/1 switches it live (a same-lap A/B).
+// pipeline.cpp); until one is ready the draw's own list is used.
 extern bool ll_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count);
-static bool rigged_lod_wanted(bool opaque)
-{
-    // (the alpha draws and the scene table's opaque rigged draws have a key each: riggedlod= and riggedlodopq=, so a lap can switch one of them)
-    static const bool env[2] = { []() { const char* e = getenv("LL_VK_RIGGEDLOD"); return !e || atoi(e) != 0; }(),         // on unless LL_VK_RIGGEDLOD=0 (Adam judged the picture: fine, 2026-11-04)
-                                 []() { const char* e = getenv("LL_VK_RIGGEDLODOPQ"); return !e || atoi(e) != 0; }() };   // the opaque ones: on unless LL_VK_RIGGEDLODOPQ=0 (not judged yet)
-    static S32 live[2] = { -1, -1 };
-    static std::chrono::steady_clock::time_point last;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - last >= std::chrono::milliseconds(500))
-    {
-        last = now;
-        S32 v[2] = { -1, -1 };
-        std::ifstream in("<work>/rt-debug.txt");
-        std::string line;
-        while (std::getline(in, line))
-        {
-            if (line.compare(0, 10, "riggedlod=") == 0)
-            {
-                v[0] = atoi(line.c_str() + 10);
-            }
-            else if (line.compare(0, 13, "riggedlodopq=") == 0)
-            {
-                v[1] = atoi(line.c_str() + 13);
-            }
-        }
-        live[0] = v[0];
-        live[1] = v[1];
-    }
-    const int i = opaque ? 1 : 0;
-    return live[i] >= 0 ? live[i] != 0 : env[i];
-}
-
-static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count, bool opaque = false)
+static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
 {
     ib_name = 0;
     count = 0;
     extern bool gSnapshot;
-    if (!rigged_lod_wanted(opaque) || gSnapshot || LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
+    if (gSnapshot || LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
     {
         return false;
     }
@@ -766,7 +734,7 @@ static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_na
 // the scene table's opaque rigged items (pipeline.cpp, the frame record's palette bindings)
 bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_name, U32& count)
 {
-    return rigged_lod_for(range, avatar, ib_name, count, true);
+    return rigged_lod_for(range, avatar, ib_name, count);
 }
 
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
