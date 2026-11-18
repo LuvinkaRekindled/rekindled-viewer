@@ -11276,7 +11276,7 @@ std::vector<U32> sMapHandleFrame;                   // slot -> the frame its map
 std::vector<U32> sMapChangeFrame;                   // slot -> the frame its map row last changed in any field (the LOD candidates read it)
 // <FS> ONE list of "this group's row changed in the last frames" (2026-11-16: three lists said it with three lifetimes, sRecentSlots for the consumers' list, sAvRecentSlots for the avatar, bridge and animated object region
 // partitions and sCoveredRecentSlots for the cascades): every reader of a set made from rows 1 to 2 frames old asks it, by age and by what changed. mWhat: RECENT_BOX = the group is new or its box or kind of group (empty, dead,
-// a bridge's) changed (an occlusion flag the Hi-Z verdicts change every frame is not one: no set asks for occlusion); RECENT_MAP = its map row or handle changed. Pruned once, at 6 frames, in cull_process.
+// a bridge's) changed (an occlusion flag the Hi-Z verdicts change every frame is not one: no set asks for occlusion); RECENT_MAP = its map row's fragment handle changed. Pruned once, at 6 frames, in cull_process.
 struct RecentSlot { U32 mFrame; U32 mSlot; U8 mWhat; };
 enum : U8 { RECENT_BOX = 1, RECENT_MAP = 2 };
 std::deque<RecentSlot> sRecent;
@@ -11285,10 +11285,8 @@ static void recent_note(U32 slot, U8 what)
 {
     sRecent.push_back({ (U32)gFrameCount, slot, what });
 }
-std::vector<U32> sRowChangeFrame;                   // slot -> the frame its cull row last changed (the flat cull does not trust a verdict's bit for a row that changed after the verdict was made)
 std::vector<LLViewerOctreeGroup*> sSlotGroup;       // slot -> group (nullptr: free)
 std::vector<U8> sSlotPartType;                      // <FS> stage 10d: slot -> the group's partition type (255: free); the cascades' cull jobs filter by it without touching the group
-std::vector<U32> sSlotGen;                          // slot -> generation (+1 each time it is freed)
 // <FS> T3 of doc/vulkan/PLAN-visible-set-owner.md: the alpha set. The slots whose map row says the group has an alpha or a rigged alpha key (as stage 6's rule: a group the table serves whole has its alpha in the fragment's bits, any other
 // in the group's keys), kept by the same touch events that refresh the map rows (cull_process, forget): the main thread's own state, current to the last cull_process, the groups touched since are in sDirtySlots.
 std::vector<U32> sAlphaSlots;
@@ -11410,9 +11408,7 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
     }
     LLSpatialPartition* part = g->getSpatialPartition();
     row.mHandle = g->mGeoHandle;
-    row.mServedTris = g->mGeoServedTris;
-    row.mDrawTris = ll_group_draw_tris(g);
-    row.mFlags = (g->mGeoAllServed ? 1u : 0u) | (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u) | (g->hasState(LLSpatialGroup::FS_RELEASED) ? 32u : 0u) | (part && part->isOcclusionEnabled() ? 64u : 0u) | (part && (part->mDrawableType == LLPipeline::RENDER_TYPE_WATER || part->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER) ? 128u : 0u);       // 64: the partition is occlusion tested, 128: a water partition (the Hi-Z box is depth clamped); stage 8d       // 32: Released (stage 8c: kept by the events that release and rebuild a group, the worker names the released rows of its derived set)
+    row.mFlags = (ll_group_has_alpha_key(g) ? 2u : 0u) | (ll_group_has_rigged_alpha_key(g) ? 4u : 0u) | (part && part->mRenderByGroup ? 8u : 0u);
     row.mSurfaceArea = g->mSurfaceArea;
     row.mObjectBoxSize = g->row().objectBoxSize;
     // stage 3: the object bounds the walk tests for a node that has children (a bridge's group: the bridge's world box, as the cull row; such a group counts as a leaf)
@@ -11494,7 +11490,7 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
             if (said < 4)
             {
                 ++said;
-                LL_INFOS("VkCullDiag") << "marked this frame but not named: slot " << slot << " handle " << g->mGeoHandle << " far-skip? served tris " << g->mGeoServedTris << " draw tris " << ll_group_draw_tris(g) << " state " << std::hex << (U32)g->getState() << std::dec << LL_ENDL;
+                LL_INFOS("VkCullDiag") << "marked this frame but not named: slot " << slot << " handle " << g->mGeoHandle << " far-skip? served tris " << g->mGeoServedTris << " state " << std::hex << (U32)g->getState() << std::dec << LL_ENDL;
             }
             continue;
         }
@@ -11605,9 +11601,7 @@ void cull_process()
             sMapChangeFrame.push_back((U32)gFrameCount);
             sAlphaPos.push_back(~0u);
             sMainListed.push_back(0u);
-            sRowChangeFrame.push_back((U32)gFrameCount);
             sSlotGroup.push_back(nullptr);
-            sSlotGen.push_back(1u);
         }
         g->mCullId = slot + 1;
         g->mCullFirstSerial = sCullBuildSerial;
@@ -11642,7 +11636,6 @@ void cull_process()
             cull_fill_row((LLSpatialGroup*)g, sMirror[slot]);
             if (memcmp(&old_cull, &sMirror[slot], sizeof(old_cull)) != 0)
             {
-                sRowChangeFrame[slot] = (U32)gFrameCount;
                 // (only a row that is new, or whose box or kind of group changed: an occlusion flag the Hi-Z verdicts change every frame does not make a group missing from a set that asks for no occlusion)
                 // 2026-11-17: the main view's set DOES ask for occlusion (the record's mPad[0]): a group whose occluded flag CLEARS is not in the set for the 1 to 3 frames it is made from rows of, and the walk would have handled it the
                 // frame the state cleared: it is a recent group for those frames (the pass's loop tests its box against the frustum). A flag that is set needs nothing: the set drops the group, and so does the viewer's retest.
@@ -11669,9 +11662,9 @@ void cull_process()
             {
                 sMapHandleFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
             }
-            if (memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)
+            if (ll_diag_on() && memcmp(&old_row, &sMapMirror[slot], sizeof(CullMapRow)) != 0)       // (only LL_DIAG's LOD candidate check reads it)
             {
-                sMapChangeFrame[slot] = (U32)gFrameCount; recent_note(slot, RECENT_MAP);
+                sMapChangeFrame[slot] = (U32)gFrameCount;
             }
         }
         sSendSlots.push_back(slot);
@@ -11702,7 +11695,6 @@ void LLCullShadow::forget(LLViewerOctreeGroup* group)
         if (slot < sSlotGroup.size() && sSlotGroup[slot] == group)
         {
             sSlotGroup[slot] = nullptr;
-            ++sSlotGen[slot];
             sFreeSlots.push_back(slot);
             memset(&sMirror[slot], 0, sizeof(sMirror[slot]));
             sMirror[slot].mFlags = 33u;
@@ -11855,7 +11847,7 @@ void ll_lod_cand_refresh()
 {
     static std::vector<U32> bc((1u << 15) / 32 + 1);
     U32 frame = 0;
-    if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, nullptr, nullptr, bc.data(), 1u << 15))       // (the change bits only: the distances and the slop bits are the stage 7 compare's)
+    if (const U32 t = LLVkBridge::lodListRead(sCandFrame, frame, bc.data(), 1u << 15))
     {
         sCandBits.assign(bc.begin(), bc.begin() + (t + 31) / 32);
         sCandFrame = frame;

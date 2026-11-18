@@ -11508,12 +11508,9 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
     }
     if (job.mLodFlag & 1u)
     {
-        // stage 7 (a compare for now): the LOD numbers of every row. distance: LLSpatialPartition::calcDistance (the length from the camera to the object bounds centre, the squared ramp under 16 m); the bit: the slop test
+        // the LOD change bits of every row (the viewer reads them as the sort's candidates). The distance is LLSpatialPartition::calcDistance (the length from the camera to the object bounds centre, the squared ramp under 16 m) for the slop test
         // of LLSpatialGroup::changeLOD (the dirty bits and needsUpdate are the viewer's rows' flags, not looked at here). The rows of the groups of bridges hold the bridge's box, not the group's own bounds: no number for them.
-        static std::vector<F32> lod_dist;
-        static std::vector<U32> lod_bits, lod_change;
-        lod_dist.assign(table, 0.f);
-        lod_bits.assign((table + 31) / 32, 0);
+        static std::vector<U32> lod_change;
         lod_change.assign((table + 31) / 32, 0);
         const U32 lod_frame = job.mLodFlag >> 1;        // (the viewer's own frame counter, LLViewerOctreeEntryData::getCurrentFrame(): needsUpdate() reads it)
         for (U32 slot = 0; slot < table; ++slot)
@@ -11535,13 +11532,11 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 dist *= dist;
                 dist *= 16.f;
             }
-            lod_dist[slot] = dist;
             if (m.mSlop > 0.f)
             {
                 const F32 ratio = (dist - m.mLastUpdateDistance) / (fmaxf(m.mLastUpdateDistance, m.mRadius));
                 if (fabsf(ratio) >= m.mSlop)
                 {
-                    lod_bits[slot >> 5] |= 1u << (slot & 31u);
                     change = true;
                 }
             }
@@ -11550,7 +11545,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 lod_change[slot >> 5] |= 1u << (slot & 31u);
             }
         }
-        LLVkBridge::lodListPublish(job.mPass, table, lod_dist.data(), lod_bits.data(), lod_change.data());
+        LLVkBridge::lodListPublish(job.mPass, table, lod_change.data());
     }
 }
 

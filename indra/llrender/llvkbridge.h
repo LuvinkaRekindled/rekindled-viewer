@@ -347,8 +347,8 @@ namespace LLVkBridge
     // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: what the render map reads of a group besides its cull row, one per slot, in the same delta record (after the rows)
     struct CullMapRow
     {
-        U32 mHandle = 0, mServedTris = 0, mDrawTris = 0;     // the group's scene fragment handle (0 = none), the served and the drawn triangles
-        U8 mFlags = 0;          // 1 all served, 2 has an alpha key, 4 has a rigged alpha key, 8 render by group, 16 the node has children (the walk tests its object bounds too)
+        U32 mHandle = 0;        // the group's scene fragment handle (0 = none)
+        U8 mFlags = 0;          // 2 has an alpha key, 4 has a rigged alpha key, 8 render by group, 16 the node has children (the walk tests its object bounds too)
         U8 mPad1 = 0;
         U16 mPad = 0;
         F32 mSurfaceArea = 0.f, mObjectBoxSize = 0.f;     // the inputs of the auto-hide test
@@ -356,7 +356,7 @@ namespace LLVkBridge
         F32 mLastUpdateDistance = 0.f, mRadius = 0.f, mSlop = 0.f;       // stage 7 (the LOD of the groups): what changeLOD() reads besides the distance: the distance of the last LOD update, the radius, the partition's slop ratio
         U32 mLodFlags = 0;                                 // 1: a state that makes changeLOD() true by itself (ALPHA_DIRTY or OBJECT_DIRTY)
     };
-    static_assert(sizeof(CullMapRow) == 64, "cull map row layout");
+    static_assert(sizeof(CullMapRow) == 56, "cull map row layout");
     // C1c: the record carries delta rows: slots[n] (U32 each, padded to 16 bytes) then rows[n]; table_size = the rows of the whole table after the delta; reset = the worker's copy is replaced (first record, or after a record
     // was refused). The worker keeps the table and uploads all of it for the test. cullRead takes the table size of the record (the words of a variant are ceil(table_size / 32)).
     // (stage 3: the record carries, after the rows, one CullMapRow for each of them)
@@ -365,8 +365,8 @@ namespace LLVkBridge
     // published as a list for the viewer to read; the viewer compares them with its own groups' (a compare for now)
     // stage 8b: the exact derived set of the main view (the slots whose groups the worker's derive lists, occlusion included, the bridges' groups by the marked list) as a bit set by slot, with the frame of its record: the
     // visible stamps follow it (a compare first)
-    void lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
-    U32 lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
+    void lodListPublish(U32 frame, U32 table_size, const U32* change_bits);        // change_bits: the whole answer of changeLOD() (dirty, slop, or the round robin of needsUpdate)
+    U32 lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 capacity_rows);        // 0 = nothing newer, else the table size
     // stage 8 (the viewer's consumers, LL_VK_CONSUMERS): what the viewer's consumers of the main view serve, made by the worker from its rows and its late set and published ready, so the viewer does not walk the table: the fragment handles
     // of the late set's rows (one each, in slot order) with their slots. A handle here can be a frame or two behind its group: the viewer takes it only if it is still the group's current one.
     // The list is immutable once published: the reader holds the pointer, nothing is copied.

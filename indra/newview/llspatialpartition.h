@@ -495,7 +495,7 @@ public:
     F32 mSurfaceArea; //used by volumes to track estimated surface area of geometry in this node
     F32 mBuilt;
 
-    // <FS> C1b.2: distance, depth, lastUpdateDistance, lastUpdateTime, pixelArea, radius, objectBoxSize, viewAngle and lastUpdateViewAngle are in this group's row (row().distance ...)
+    // <FS> C1b.2: distance, depth, lastUpdateDistance, lastUpdateTime, radius, objectBoxSize, viewAngle and lastUpdateViewAngle are in this group's row (row().distance ...)
 
     //used by LLVOAVatar to set render order in alpha draw pool to preserve legacy render order behavior
     LLVOAvatar* mAvatarp = nullptr;
@@ -542,7 +542,6 @@ public:
     virtual void shift(const LLVector4a &offset);
 
     virtual F32 calcDistance(LLSpatialGroup* group, LLCamera& camera);
-    virtual F32 calcPixelArea(LLSpatialGroup* group, LLCamera& camera);
 
     virtual void rebuildGeom(LLSpatialGroup* group);
     virtual void rebuildMesh(LLSpatialGroup* group);
@@ -805,7 +804,6 @@ public:
     virtual void rebuildGeom(LLSpatialGroup* group);
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32 &vertex_count, U32& index_count);
-    virtual F32 calcPixelArea(LLSpatialGroup* group, LLCamera& camera);
 protected:
     bool rebuildRows(LLSpatialGroup* group);        // <FS> GPU particles stage 1: one row a particle for the pull shaders (false: the group needs the quads, nothing was changed)
     U32 mRenderPass;
@@ -961,7 +959,6 @@ class LLHUDBridge : public LLVolumeBridge
 public:
     LLHUDBridge(LLDrawable* drawablep, LLViewerRegion* regionp);
     virtual void shiftPos(const LLVector4a& vec);
-    virtual F32 calcPixelArea(LLSpatialGroup* group, LLCamera& camera);
 };
 
 //spatial partition that holds nothing but spatial bridges

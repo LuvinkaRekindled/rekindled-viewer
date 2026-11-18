@@ -51,14 +51,13 @@ public:
         S32 visible[kCameras];          // per camera: the frame the group was last visible
         U32 occlusion[kCameras];        // per camera: the occlusion state
         // the view caches of LLSpatialGroup (C1b.2). Written by LLSpatialGroup::updateDistance, which accepts the world camera only (the shadow and water views never write them): one writer, so they
-        // are not keyed by view. Read by the sort (distance, depth), the rebuild urgency, the alpha ordering (view angle) and the texture priority (pixel area).
+        // are not keyed by view. Read by the sort (distance, depth), the rebuild urgency and the alpha ordering (view angle).
         LLVector4a viewAngle;           // the view direction when the group was last re-sorted (alpha)
         LLVector4a lastUpdateViewAngle;
         F32 distance;
         F32 depth;
         F32 lastUpdateDistance;
         F32 lastUpdateTime;
-        F32 pixelArea;
         F32 radius;
         F32 objectBoxSize;              // cached objectBounds[1].getLength3()
     };

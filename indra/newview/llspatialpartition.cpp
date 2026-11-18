@@ -806,7 +806,6 @@ LLSpatialGroup::LLSpatialGroup(OctreeNode* node, LLSpatialPartition* part) : LLO
     mReflectionProbe = gPipeline.mReflectionMapManager.registerSpatialGroup(this);
 
     row().radius = 1;
-    row().pixelArea = 1024.f;
 }
 
 void LLSpatialGroup::updateDistance(LLCamera &camera)
@@ -834,7 +833,6 @@ void LLSpatialGroup::updateDistance(LLCamera &camera)
         row().radius = getSpatialPartition()->mRenderByGroup ? row().objectBounds[1].getLength3().getF32() :
                         (F32) mOctreeNode->getSize().getLength3().getF32();
         row().distance = getSpatialPartition()->calcDistance(this, camera);
-        row().pixelArea = getSpatialPartition()->calcPixelArea(this, camera);
     }
 }
 
@@ -917,10 +915,6 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
     return dist;
 }
 
-F32 LLSpatialPartition::calcPixelArea(LLSpatialGroup* group, LLCamera& camera)
-{
-    return LLPipeline::calcPixelArea(group->row().objectBounds[0], group->row().objectBounds[1], camera);
-}
 
 F32 LLSpatialGroup::getUpdateUrgency() const
 {

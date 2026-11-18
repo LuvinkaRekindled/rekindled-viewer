@@ -2199,10 +2199,6 @@ LLHUDBridge::LLHUDBridge(LLDrawable* drawablep, LLViewerRegion* regionp)
     mSlopRatio = 0.0f;
 }
 
-F32 LLHUDBridge::calcPixelArea(LLSpatialGroup* group, LLCamera& camera)
-{
-    return 1024.f;
-}
 
 
 void LLHUDBridge::shiftPos(const LLVector4a& vec)
