@@ -26,6 +26,10 @@ layout(location = 4) out vec2 frag_velocity;
 vec4 cloudNoise(vec2 uv)
 {
     vec4 a = texture(ll_tbl2d[LL_HM(ll_ti_cloud_noise_texture)], uv);
+    if (blend_factor <= 0.0)
+    {
+        return a;       // (mix(a, b, 0) is a: the driver sets the factor to 0 with one noise texture or no scroll; the second image is not read then)
+    }
     vec4 b = texture(ll_tbl2d[LL_HM(ll_ti_cloud_noise_texture_next)], uv);
     vec4 cloud_noise_sample = mix(a, b, blend_factor);
     return cloud_noise_sample;
@@ -48,8 +52,14 @@ void main()
         discard;
     }
 
-    vec2 disturbance  = vec2(cloudNoise(uv1 / 8.0f).x, cloudNoise((uv3 + uv1) / 16.0f).x) * cloud_variance * (1.0f - cloud_scale * 0.25f);
-    vec2 disturbance2 = vec2(cloudNoise((uv1 + uv3) / 4.0f).x, cloudNoise((uv4 + uv2) / 8.0f).x) * cloud_variance * (1.0f - cloud_scale * 0.25f);
+    // (both are the noise times cloud_variance: exactly 0 without a variance, and then the four lookups are not made)
+    vec2 disturbance = vec2(0.0);
+    vec2 disturbance2 = vec2(0.0);
+    if (cloud_variance != 0.0)
+    {
+        disturbance  = vec2(cloudNoise(uv1 / 8.0f).x, cloudNoise((uv3 + uv1) / 16.0f).x) * cloud_variance * (1.0f - cloud_scale * 0.25f);
+        disturbance2 = vec2(cloudNoise((uv1 + uv3) / 4.0f).x, cloudNoise((uv4 + uv2) / 8.0f).x) * cloud_variance * (1.0f - cloud_scale * 0.25f);
+    }
 
     // Offset texture coords
     uv1 += cloud_pos_density1.xy + (disturbance * 0.2);    //large texture, visible density

@@ -72,6 +72,13 @@ void main()
     // the octahedral encoding of the viewer (encodeNormal in globalF.glsl): xy of the normal over sqrt(8 z + 8), the environment intensity 0, the flag HAS_PBR
     frag_normal = vec4(norm.xy / sqrt(8.0 * norm.z + 8.0) + 0.5, 0.0, 0.67);
 #if defined(HAS_EMISSIVE)
-    frag_emissive = max(vec4(vary_emissive * srgb_to_linear(texture(ll_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive).rgb), 0.0), vec4(0.0));
+    // (no emissive colour, no emissive: the map is not read then; the lookup is in a branch, so it takes the derivatives from outside it)
+    vec3 emissive_out = vec3(0.0);
+    const vec2 emissive_dx = dFdx(vary_tc_emissive), emissive_dy = dFdy(vary_tc_emissive);
+    if (vary_emissive != vec3(0.0))
+    {
+        emissive_out = vary_emissive * srgb_to_linear(textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(vary_slots.w))], vary_tc_emissive, emissive_dx, emissive_dy).rgb);
+    }
+    frag_emissive = max(vec4(emissive_out, 0.0), vec4(0.0));
 #endif
 }
