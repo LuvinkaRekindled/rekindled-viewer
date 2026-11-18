@@ -1094,7 +1094,7 @@ void LLViewerTextureList::logSummary()
         // with the bytes the viewer counts for each age. The memory that a teleport leaves behind shows here; the bias logic does not look at it (it lowers everything's quality by the percentage over budget).
         static U32 last_frame = 0;
         static LLTimer last_time;
-        const U32 frame_now = (U32)gFrameCount  /* (the counter the texture passes stamp with) */;
+        const U32 frame_now = LLViewerOctreeEntryData::getCurrentFrame()  /* (the counter the groups' stamps use: the ages below are stamp deltas, so the seconds a frame are measured on it too) */;
         const F32 seconds = last_time.getElapsedTimeF32();
         const double spf = last_frame && frame_now > last_frame ? (double)seconds / (double)(frame_now - last_frame) : 0.0166;
         last_frame = frame_now;
@@ -1113,7 +1113,7 @@ void LLViewerTextureList::logSummary()
             // the freshest of the groups its faces sit in: the latest frame any camera (world, cascades, probes, mirrors) accepted one of them. A texture with a face in no group (UI, avatar parts) counts as in use.
             S32 latest = 0;
             bool no_group = false;
-            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && latest < (S32)gFrameCount; ++ch)
+            for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS && latest < (S32)frame_now; ++ch)
             {
                 const LLViewerTexture::ll_face_list_t* faces = image->getFaceList(ch);
                 const S32 n_faces = image->getNumFaces(ch);
