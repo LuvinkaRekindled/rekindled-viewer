@@ -3967,10 +3967,6 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
     }
 
     U32 image_count = caps.minImageCount + 1;
-    if (const char* n = getenv("LL_VK_SC_IMAGES"))
-    {
-        image_count = std::max<U32>(caps.minImageCount, (U32)atoi(n));      // experiment: swapchain image count
-    }
     if (caps.maxImageCount > 0 && image_count > caps.maxImageCount)
     {
         image_count = caps.maxImageCount;

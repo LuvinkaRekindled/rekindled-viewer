@@ -1298,13 +1298,7 @@ void LLView::draw()
 }
 
 // <FS> a child entirely outside the innermost clip rect (a row of a scrolled list that is not in the visible part, a tab that is scrolled away) is drawn and then discarded by the scissor: nothing
-// of it can be seen. LL_VK_UI_CULL=1 does not draw it (default 0 for now); with LL_VK_ITEMCENSUS the time of such draws is counted either way (UI census slot 10).
-static bool ui_cull_clipped()
-{
-    static const bool env_on = getenv("LL_VK_UI_CULL") && atoi(getenv("LL_VK_UI_CULL")) != 0;
-    return env_on;
-}
-
+// of it can be seen. With LL_VK_ITEMCENSUS the time of such draws is counted (UI census slot 10).
 // true when the view (its bounding rect when it has one: it may draw outside its rect) has no pixel inside the innermost clip rect
 static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 {
@@ -1846,11 +1840,7 @@ void LLView::drawChildren()
                 LLRect screen_rect = viewp->calcScreenRect();
                 if ( rootp->getLocalRect().overlaps(screen_rect)  && sDirtyRect.overlaps(screen_rect))
                 {
-                    const bool clipped_out = (LLRender::sUiHashing || ui_cull_clipped()) && ui_view_clipped_out(viewp, screen_rect);
-                    if (clipped_out && ui_cull_clipped())
-                    {
-                        continue;
-                    }
+                    const bool clipped_out = LLRender::sUiHashing && ui_view_clipped_out(viewp, screen_rect);
                     LLUI::pushMatrix();
                     {
                         LLUI::translate((F32)viewp->getRect().mLeft, (F32)viewp->getRect().mBottom);
@@ -2001,22 +1991,19 @@ void LLView::drawChild(LLView* childp, S32 x_offset, S32 y_offset, bool force_dr
         if ((childp->getVisible() && childp->getRect().isValid())
             || force_draw)
         {
-            const bool clipped_out = !force_draw && (LLRender::sUiHashing || ui_cull_clipped()) && ui_view_clipped_out(childp, childp->calcScreenRect());
-            if (!(clipped_out && ui_cull_clipped()))
+            const bool clipped_out = !force_draw && LLRender::sUiHashing && ui_view_clipped_out(childp, childp->calcScreenRect());
+            LLUI::pushMatrix();
             {
-                LLUI::pushMatrix();
+                LLUI::translate((F32)childp->getRect().mLeft + x_offset, (F32)childp->getRect().mBottom + y_offset);
+                if (sDrawHook && sDepth <= 20) sDrawHook(childp, true);
+                if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
                 {
-                    LLUI::translate((F32)childp->getRect().mLeft + x_offset, (F32)childp->getRect().mBottom + y_offset);
-                    if (sDrawHook && sDepth <= 20) sDrawHook(childp, true);
-                    if (LLRender::sUiHashing) { ++LLRender::sUiCensusCalls[8]; }
-                    {
-                        LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
-                        ui_draw_view(childp, childp->calcScreenRect());
-                    }
-                    if (sDrawHook && sDepth <= 20) sDrawHook(childp, false);
+                    LLRender::UiCensusScope clipped_scope(clipped_out ? 10 : -1);
+                    ui_draw_view(childp, childp->calcScreenRect());
                 }
-                LLUI::popMatrix();
+                if (sDrawHook && sDepth <= 20) sDrawHook(childp, false);
             }
+            LLUI::popMatrix();
         }
 
         --sDepth;

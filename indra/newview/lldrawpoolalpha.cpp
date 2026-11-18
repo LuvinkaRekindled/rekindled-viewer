@@ -103,11 +103,6 @@ S32 LLDrawPoolAlpha::getNumPostDeferredPasses()
 // set some common parameters on the given shader to prepare for alpha rendering
 extern S32 rrAlphaSunOld();    // pipeline.cpp: test switch, 1 = the old one hard sun ray
 
-// <FS> U1 (pipeline.cpp: LL_VK_PASSUNI, _VERIFY, _AB)
-extern bool ll_pass_uni_on();
-extern bool ll_pass_uni_verify();
-extern U64 gPassUniAlphaMade, gPassUniAlphaSkipped, gPassUniAlphaMismatch;
-static U32 sAlphaEpoch = 1;
 
 static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironment, F32 water_sign)
 {
@@ -777,8 +772,6 @@ bool ll_rigged_lod_opaque(const GeoRange& range, LLVOAvatar* avatar, U32& ib_nam
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    ++sAlphaEpoch;      // <FS> U1: what the loop below last wrote to a program is not known any more
-    const bool alpha_values_on = ll_pass_uni_on();
     // <FS> S5g (doc/vulkan/S5-design.md): the scene table is the ONLY alpha path. The main view's passes draw the groups' plans from the fragments (one record per run, in the loop's order), every other draw as a
     // transient entry; a draw that neither can draw is not drawn (counted, logged once by ll_alpha_transient)
     const bool post_water = getType() == LLDrawPool::POOL_ALPHA_POST_WATER;
@@ -1250,14 +1243,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             }
         }
         gRender.syncLightState();       // the old draws upload the lights (point lights, sun up factor, ambient) into the bound program in syncMatrices(); a table run has no such draw: without this the program's lights stay 0 and the lit shader divides by them (NaN: black)
-        const F32 vals[6] = { 1.f, 1.f, 1.f, 1.f, 0.f, 1.f };
-        if (pkey < 2 && !(alpha_values_on && current_shader->mAlphaEpoch == sAlphaEpoch && memcmp(current_shader->mAlphaVals, vals, sizeof(vals)) == 0))
+        if (pkey < 2)
         {
             current_shader->uniform4f(LLShaderMgr::SPECULAR_COLOR, 1.f, 1.f, 1.f, 1.f);
             current_shader->uniform1f(LLShaderMgr::ENVIRONMENT_INTENSITY, 0.f);
             current_shader->uniform1f(LLShaderMgr::EMISSIVE_BRIGHTNESS, 1.f);
-            memcpy(current_shader->mAlphaVals, vals, sizeof(vals));
-            current_shader->mAlphaEpoch = sAlphaEpoch;
         }
         pending_key = key;
         setup_key = key;
@@ -1575,7 +1565,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     {
                         lastShader->bind();
                     }
-                    ++sAlphaEpoch;      // <FS> U1: the glow passes wrote their own values
                 }
             }
         }

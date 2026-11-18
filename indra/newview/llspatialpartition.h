@@ -87,8 +87,7 @@ class LLSpatialGroup;
 void ll_scene_fragment_build(LLSpatialGroup* group);
 class LLCullResult;
 bool ll_scene_geo_on();                                         // pipeline.cpp (S3): LL_VK_SCENE_GEO=1 or 2
-bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this frame (LL_VK_SCENE_GEO_AB=<seconds> alternates it)
-bool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
+bool ll_scene_geo_serving();                                    // LL_VK_SCENE_GEO=2 and the table draws this framebool ll_scene_geo_skip();                                       // the deferred geometry builders leave out the draws the table serves (serving, and not verifying)
 bool ll_scene_geo_main_view();                                  // the camera / render flags of the main view (not a probe, an impostor, a shadow or a reflection render)
 bool ll_scene_geo_hud_view();                                   // J1 K6 S1: the HUD pass (its own cull result: the table is told about it before the HUD's post deferred passes)
 bool ll_scene_geo_hud_any();                                    // ... any of them
@@ -716,7 +715,7 @@ public:
     U32 getVisibleBridgeSize()      { return mVisibleBridgeSize; }
 
     // <FS> S2: the visible groups whose static shadow casters are not resident on the worker (no current resident fragment): the only ones the main thread still names per pass.
-    // Filled by the shadow render map job (shadowPrepRenderMap) when LL_VK_SCENE_RESIDENT=1.
+    // Filled by the shadow render map job (shadowPrepRenderMap).
     std::vector<LLSpatialGroup*> mSceneGroups;
     bool mAlphaResSkipped = false;      // <FS> J1 K3c: the render map job left out the alpha casters the worker holds as resident rows (the viewer's filter for them has nothing to drop)
     bool mRigAlphaOn = false;           // <FS> J1 K3d: the render map job named the rigged alpha masked casters of the groups' fragments in mRigSources too (their draw infos are not in the lists, mode 1)

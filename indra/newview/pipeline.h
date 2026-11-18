@@ -385,10 +385,7 @@ public:
     void applyAvOps(std::vector<AvOp>& ops);
     void applyAvOpsRange(const AvOp* begin, const AvOp* end);
     void applySortDeltasRange(const SortDelta* begin, const SortDelta* end);
-    // <FS> view rework O1 (LL_VK_MOVED_PARALLEL): the entries of the moved list that are plain volume prims, grouped by linkset, run their updateMove as pool jobs that record their writes to shared state; the
-    // writes are made, and the done handling of each entry, in list order afterwards. False when it did not run (too few entries, a census on, the setting off).
-    bool updateMovedListParallel(LLDrawable::drawable_vector_t& moved_list);
-    void updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list, size_t first);
+    void updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list);
     static bool sSortJournalOn;                                  // set: the fields the loops write are saved first (the check's first run)
     static void sortJournalVolume(LLVOVolume* volume);
     void applySortDeltas(std::vector<SortDelta>& deltas);
@@ -475,9 +472,7 @@ public:
     // if setup is true, wil lset texture compare mode function and filtering options
     void bindShadowMaps(LLShaderProgram& shader);
     void bindDeferredShaderFast(LLShaderProgram& shader);
-    void bindFastUnit(S32 k, S32 unit);                       // <FS> U1: one pass sampler of the Fast bind
-    void bindDeferredFill(LLShaderProgram& shader);         // <FS> U1: the Fast bind in full
-    void passFastState(void* out);                           // <FS> U1: the state the Fast bind depends on (PassFastState in pipeline.cpp)
+    void bindDeferredFill(LLShaderProgram& shader);         // the Fast bind in full
     void bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
     void setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep);
     void spotLightRow(LLDrawable* drawablep, struct LLVkBridge::SpotVolumeRow& row, LLViewerTexture*& image);        // <FS> S6 LV2: setupSpotLight's values as a row of the projector record (and its side effects)

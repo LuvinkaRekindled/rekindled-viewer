@@ -1531,30 +1531,6 @@ int LLShaderProgram::censusUniformClass(size_t index) const
     return (int)mVkProgram->getInfo().mUniforms[index].mClass;
 }
 
-bool LLShaderProgram::vkMainOnlyProducer()
-{
-    return LLVkAsync::mainOnlyProducer();
-}
-
-std::string LLShaderProgram::vkUniformAt(U32 cls, U32 offset) const
-{
-    S64 best = -1;
-    for (size_t i = 0; i < mVkUni.size(); ++i)
-    {
-        const VkUni& u = mVkUni[i];
-        if (u.mClass == cls && u.mOffset <= offset && (best < 0 || u.mOffset >= mVkUni[(size_t)best].mOffset))
-        {
-            best = (S64)i;
-        }
-    }
-    if (best < 0)
-    {
-        return "?";
-    }
-    const std::string* n = censusUniformName((size_t)best);
-    return n ? *n : std::string("?");
-}
-
 // <FS> shader cleanup (stage 4): what the viewer loaded and what it bound in this run (LL_VK_PROGRAM_CENSUS=1). Called before the programs are unloaded (a shader reload or the end of the run).
 // The program's own name, the files it lists (the stock GLSL paths below shaders/class<N>/, libraries included), the native files that stand in for it, its shader level and how often it was bound.
 void LLShaderProgram::dumpProgramCensus()

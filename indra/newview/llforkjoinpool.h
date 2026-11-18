@@ -61,19 +61,9 @@ public:
 
     explicit LLForkJoinPool(unsigned num_workers)
     {
-        // LL_VK_POOL_LEGACY=1: the pool as it was before launch and join (one run at a time, a run inside a run on the calling thread), for an A/B in the same build (2026-10-31). launch runs its jobs inside the call then.
-        const char* legacy = getenv("LL_VK_POOL_LEGACY");
-        mLegacy = legacy && atoi(legacy) != 0;
         for (unsigned i = 0; i < num_workers; ++i)
         {
-            if (mLegacy)
-            {
-                mThreads.emplace_back([this] { workerLoopLegacy(); });
-            }
-            else
-            {
-                mThreads.emplace_back([this] { workerLoop(); });
-            }
+            mThreads.emplace_back([this] { workerLoop(); });
         }
     }
 
@@ -97,7 +87,7 @@ public:
     static inline std::atomic<unsigned> sMismatchRuns{ 0 }, sRecoveredRuns{ 0 }, sUnderflows{ 0 };
 
     // <FS> LL_VK_POOL_LABELS=1 (C4 measurement, doc/vulkan/PLAN-clean-core.md): the time the jobs of each named family take on ALL threads of a batch (the workers and the launching thread), per frame, logged
-    // every 600 frames (reportLabels, called from the main loop). A launch names its family with runLabeled / launchLabeled (or a Label in scope); a batch launched without one is counted as "other".
+    // every 600 frames (reportLabels, called from the main loop). A launch names its family with runLabeled (or a Label in scope); a batch launched without one is counted as "other".
     // Wall time of each job (two clock reads a job: only while the switch is set). For a 4-core machine the total of the families is the number, not the main thread's wait zone.
     struct Label
     {
@@ -108,7 +98,6 @@ public:
     static inline thread_local const char* sCurrentLabel = nullptr;
     static bool labelsOn() { static const bool on = getenv("LL_VK_POOL_LABELS") != nullptr; return on; }
     void runLabeled(const char* label, size_t count, const std::function<void(size_t)>& fn) { Label l(label); run(count, fn); }
-    Handle launchLabeled(const char* label, size_t count, const std::function<void(size_t)>& fn) { Label l(label); return launch(count, fn); }
     // main thread, every frame: logs and resets the per-label accounting every 600 frames (a few lines: family, ms a frame on all threads, of it on the main thread, jobs and batches a frame)
     static void reportLabels(unsigned frame_count);
 
@@ -116,11 +105,6 @@ public:
     {
         if (count == 0)
         {
-            return Handle();
-        }
-        if (mLegacy)
-        {
-            runLegacy(count, fn);
             return Handle();
         }
         int slot = -1;
@@ -264,11 +248,6 @@ public:
 
     void run(size_t count, const std::function<void(size_t)>& fn)
     {
-        if (mLegacy)
-        {
-            runLegacy(count, fn);
-            return;
-        }
         join(launch(count, fn));
     }
 
@@ -510,129 +489,6 @@ private:
             }
         }
     }
-
-    // ---- the pool as it was before launch and join (LL_VK_POOL_LEGACY=1), kept for the A/B and deleted after the soak
-    void runLegacy(size_t count, const std::function<void(size_t)>& fn)
-    {
-        if (mBusyL.exchange(true, std::memory_order_acq_rel))
-        {
-            ++sNestedRuns;
-            for (size_t i = 0; i < count; ++i)
-            {
-                fn(i);
-            }
-            return;
-        }
-        struct BusyScope { std::atomic<bool>& b; ~BusyScope() { b.store(false, std::memory_order_release); } } busy_scope { mBusyL };
-        if (count >= kMaxJobs)
-        {
-            for (size_t i = 0; i < count; ++i)
-            {
-                fn(i);
-            }
-            return;
-        }
-        unsigned long long generation;
-        {
-            std::lock_guard<std::mutex> lock(mMutex);
-            mFnL = &fn;
-            mRemainingL.store(count, std::memory_order_relaxed);
-            mExecutedL.store(0, std::memory_order_relaxed);
-            generation = mGenerationL.load(std::memory_order_relaxed) + 1;
-            mClaimL.store(((generation & kTagMask) << kTagShift) | ((unsigned long long)count << kCountShift), std::memory_order_release);
-            mGenerationL.store(generation, std::memory_order_release);
-        }
-        mWake.notify_all();
-        drainLegacy(generation);
-        if (!spinUntil([this] { return mRemainingL.load(std::memory_order_acquire) == 0; }, 100))
-        {
-            std::unique_lock<std::mutex> lock(mMutex);
-            for (int waits = 1; !mDone.wait_for(lock, std::chrono::milliseconds(200), [this] { return mRemainingL.load() == 0; }); ++waits)
-            {
-                const unsigned long long claim = mClaimL.load();
-                const size_t claimed = (size_t)(claim & kIndexMask);
-                if (waits >= 5 && claimed >= count && mInFlightL.load() == 0)
-                {
-                    ++sRecoveredRuns;
-                    mRemainingL.store(0);
-                    break;
-                }
-            }
-        }
-        if (mExecutedL.load(std::memory_order_acquire) != count)
-        {
-            ++sMismatchRuns;
-        }
-        mFnL = nullptr;
-    }
-
-    void drainLegacy(unsigned long long generation)
-    {
-        const unsigned long long tag = generation & kTagMask;
-        for (;;)
-        {
-            unsigned long long claim = mClaimL.load(std::memory_order_acquire);
-            if (((claim >> kTagShift) & kTagMask) != tag)
-            {
-                return;
-            }
-            const size_t index = (size_t)(claim & kIndexMask);
-            if (index >= (size_t)((claim >> kCountShift) & kIndexMask))
-            {
-                return;
-            }
-            if (!mClaimL.compare_exchange_weak(claim, claim + 1, std::memory_order_acq_rel))
-            {
-                continue;
-            }
-            mInFlightL.fetch_add(1, std::memory_order_relaxed);
-            (*mFnL)(index);
-            mExecutedL.fetch_add(1, std::memory_order_relaxed);
-            mInFlightL.fetch_sub(1, std::memory_order_relaxed);
-            size_t remaining = mRemainingL.load();
-            do
-            {
-                if (remaining == 0)
-                {
-                    ++sUnderflows;
-                    break;
-                }
-            } while (!mRemainingL.compare_exchange_weak(remaining, remaining - 1));
-            if (remaining == 1)
-            {
-                std::lock_guard<std::mutex> lock(mMutex);
-                mDone.notify_all();
-            }
-        }
-    }
-
-    void workerLoopLegacy()
-    {
-        unsigned long long seen_generation = 0;
-        for (;;)
-        {
-            if (!spinUntil([&] { return mStop.load(std::memory_order_relaxed) || mGenerationL.load(std::memory_order_acquire) != seen_generation; }, 150))
-            {
-                std::unique_lock<std::mutex> lock(mMutex);
-                mWake.wait(lock, [&] { return mStop.load() || mGenerationL.load(std::memory_order_acquire) != seen_generation; });
-            }
-            if (mStop.load())
-            {
-                return;
-            }
-            seen_generation = mGenerationL.load(std::memory_order_acquire);
-            drainLegacy(seen_generation);
-        }
-    }
-
-    bool mLegacy = false;
-    const std::function<void(size_t)>* mFnL = nullptr;
-    std::atomic<unsigned long long> mClaimL{ 0 };
-    std::atomic<size_t> mRemainingL{ 0 };
-    std::atomic<size_t> mExecutedL{ 0 };
-    std::atomic<unsigned> mInFlightL{ 0 };
-    std::atomic<unsigned long long> mGenerationL{ 0 };
-    std::atomic<bool> mBusyL{ false };
 
     std::vector<std::thread> mThreads;
     std::mutex mMutex;

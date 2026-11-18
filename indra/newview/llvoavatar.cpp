@@ -3258,11 +3258,6 @@ static bool animesh_rowable(const LLViewerObject* o)
     const LLControlAvatar* cav = mode ? o->getControlAvatar() : nullptr;
     return cav && cav->hostJobOwned();
 }
-static bool flexi_allowed()
-{
-    static const int flexi = getenv("LL_VK_ATTFLEXI") ? atoi(getenv("LL_VK_ATTFLEXI")) : 0;     // (0 default until a lap with a flexible root shows the fast move compare clean)
-    return flexi != 0;
-}
 // <FS> stage C5a (LL_VK_ATTLIGHT: 1 default, 0 = a light, a sound or a particle emitter keeps the walk): an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
 // (a light: calc_light_dist; a sound: the audio source's object position; a particle emitter: the source's getRenderPosition) from the drawable the row keeps up to date, none of them through the moved list. Not rowable:
 // selected, flexible, animated (animesh) and HUD attachments, and linksets with one of those.
@@ -3273,15 +3268,13 @@ inline bool att_rowable(const LLViewerObject* root)
     {
         return att_plain(root);
     }
-    // (C5b, LL_VK_ATTFLEXI: 0 default = a flexible attachment keeps the walk (unverified), 1 = rows: the flexible object's simulation and rebuild belong to the object and run from its own idle update, whether or not it moved; the
-    // avatar's part is the root's world matrix)
     // (C5e, LL_VK_ATTANIM: 1 default, 0 = animesh keep the walk: an animated object whose control avatar is placed by the avatar it is worn by (C5d: LLControlAvatar::hostJobOwned) is a row with the fast move: the
     // drawable's update no longer places the skeleton's root, so nothing is left in the full move that the fast one does not do)
     // (C5b, lap cf2: a linkset with FLEXIBLE CHILDREN is moved by the rows: 18,802 root matrices by the fast move checked against the full move, 0 different; the children draw through the root's matrix and run their own
-    // physics from their own idle update. A flexible ROOT stays off until one is seen: LL_VK_ATTFLEXI)
+    // physics from their own idle update. A flexible ROOT keeps the walk)
     auto ok = [](const LLViewerObject* o, bool root_object)
     {
-        return !(o->isSelected() || (root_object && !flexi_allowed() && o->isFlexible()) || (o->isAnimatedObject() && !animesh_rowable(o)));
+        return !(o->isSelected() || (root_object && o->isFlexible()) || (o->isAnimatedObject() && !animesh_rowable(o)));
     };
     if (root->isHUDAttachment() || !ok(root, true))
     {
@@ -4936,7 +4929,7 @@ void LLVOAvatar::runAttachmentJob()
     LLPipeline::sAvSink = &led.mOps;
     LLPipeline::sSortSink = &led.mSort;
     // <FS> stage C: the drawable moves of the loop stamp the textures of every face they move (stampTextures marks the face's texture record dirty and bumps the textures' face stamps: shared state of the
-    // main thread); on this pool thread they are listed and stamped by the replay, as the moved list jobs of the pipeline do
+    // main thread); on this pool thread they are listed and stamped by the replay
     LLFace::sStampSink = &led.mStamps;
     idleUpdateAttachments(isVisible() || mNeedsAnimUpdate);
     LLFace::sStampSink = saved_stamps;

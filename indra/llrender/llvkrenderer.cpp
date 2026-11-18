@@ -96,8 +96,6 @@ bool vk_ok(VkResult r, const char* what)
 
 const U32 RING_BYTES = 128u * 1024 * 1024;     // per frame in flight (a crowd of rigged avatars uploads tens of MB of skinning matrices per frame)
 const U32 DUMMY_UBO_BYTES = 64 * 1024;
-// LL_VK_RING_STALE=1 brings back the old behaviour (a program's uniform ring offset is trusted for the whole frame number, also across a mid-frame flush, and the vertex scratch ring restarts there too): A/B for the login device lost
-static const bool sRingEpochOff = getenv("LL_VK_RING_STALE") != nullptr;
 
 const U32 VERTEX_RING_BYTES = 8u * 1024 * 1024;
 const U32 PALETTE_RING_BYTES = 8u * 1024 * 1024;        // <FS> a slot of the palette ring (a frame's rigged palettes: a few MB in a crowd)
@@ -2248,7 +2246,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mRingPeak = std::max(mRingPeak, mRingUsed);
     mRingUsed = 0;
     ++mRingEpoch;       // every program's cached ring offset is void: the ring starts again from 0 (a mid-frame flush keeps the frame number, so the frame number cannot tell)
-    if (!mRestarting || sRingEpochOff)
+    if (!mRestarting)
     {
         mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
         mPaletteSlot = (U32)(Context::instance().getFrameNumber() % (U64)(Context::frameCount() + 2));      // <FS> the palette ring: one slot per frame, round frameCount() + 2 of them
@@ -2886,7 +2884,6 @@ void Renderer::beginRenderingIfNeeded()
         ++mPassBeginsDepthRO;
     }
     mDrawStamps = false;
-    mSerialPass = true;
     mDrawStampCount = 0;
     if (LLVkBridge::gPhaseTiming)
     {
@@ -2899,20 +2896,6 @@ void Renderer::beginRenderingIfNeeded()
             // (the reflection probe faces are 343x343 with the same attachments: told apart by that size. An impostor target can be any size from a few texels to 512x512, square or not: hangs and
             // faults have been in 128x256, 64x64 and 512x512)
             mDrawStamps = draw_stamp_mode >= 2 || (mColorCount == 4 && mDepthTarget && w <= 1024 && h <= 1024 && !(w == 343 && h == 343));
-            // LL_VK_DRAW_SERIAL_ONLY=<width> serializes only the passes of that target width, LL_VK_DRAW_SERIAL_SKIP=<width> all but those (bisecting which pass needs it)
-            static const int only = getenv("LL_VK_DRAW_SERIAL_ONLY") ? atoi(getenv("LL_VK_DRAW_SERIAL_ONLY")) : 0;
-            static const int skip = getenv("LL_VK_DRAW_SERIAL_SKIP") ? atoi(getenv("LL_VK_DRAW_SERIAL_SKIP")) : 0;
-            mSerialPass = (!only || (int)w == only) && (!skip || (int)w != skip);
-            static const bool serial_log = getenv("LL_VK_DRAW_SERIAL_LOG") != nullptr;
-            if (mSerialPass && serial_log)
-            {
-                static std::set<std::string> seen;
-                const std::string d = describeTarget();
-                if (seen.insert(d).second)
-                {
-                    LL_INFOS("Vulkan") << "serial draw pass target: " << d << " (" << w << "x" << h << ")" << LL_ENDL;
-                }
-            }
         }
         mPassTag = Context::stampTag(describeTarget());
         mBeginTag = mZoneStack.empty() ? mPassTag : mZoneStack.back();
@@ -4034,7 +4017,7 @@ void Renderer::applyState()
     LLVkBridge::phaseLap(LLVkBridge::PH_A_SAMP, lap_t);
     // 6. loose uniforms, class by class: copy a class's shadow into the ring when it changed (or on its first use this frame)
     const U64 frame_number = Context::instance().getFrameNumber();
-    const U64 ring_key = sRingEpochOff ? frame_number : mRingEpoch;
+    const U64 ring_key = mRingEpoch;
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
         std::vector<U8>& shadow = mProgram->mShadow[k];
@@ -4418,24 +4401,6 @@ std::string Renderer::describeDraw(U64 serial) const
     return out;
 }
 
-// LL_VK_DRAW_SERIAL=1 (with LL_VK_DRAW_STAMPS=2): every stamped draw finishes before the next one starts, so the draw of the last reached checkpoint is the one that faulted
-// (without it a lost device only says which draws were in flight together)
-static void serialize_draw(VkCommandBuffer cmd, bool pass_ok)
-{
-    static const bool on = getenv("LL_VK_DRAW_SERIAL") != nullptr;
-    if (!on || !pass_ok)
-    {
-        return;
-    }
-    VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-    mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    VkDependencyInfo dep = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-    dep.memoryBarrierCount = 1;
-    dep.pMemoryBarriers = &mb;
-    vkCmdPipelineBarrier2(cmd, &dep);
-}
-
 bool Renderer::draw(U32 vertex_count, U32 first_vertex)
 {
     if (!mProgram || !mProgram->isValid() || (!mColorCount && !mDepthTarget))
@@ -4458,10 +4423,6 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
     }
     vkCmdDraw(mCmd, vertex_count, 1, first_vertex, 0);
-    if (stamp_tag)
-    {
-        serialize_draw(mCmd, mSerialPass);
-    }
     if (stamp_tag)
     {
         Context::instance().gpuStamp(stamp_tag);
@@ -4520,7 +4481,6 @@ bool Renderer::drawPackets(const U32* vertex_counts, U32 draws, VkBuffer indirec
     if (mDrawStamps)
     {
         Context::instance().gpuStamp(drawTag("packet draws", draws, 0, 0));
-        serialize_draw(mCmd, mSerialPass);
     }
     ++mModCount;
     return true;
@@ -4572,7 +4532,6 @@ bool Renderer::drawPacketsIndexed(const VkDrawIndexedIndirectCommand* commands, 
     if (mDrawStamps)
     {
         Context::instance().gpuStamp(drawTag("packet draws", draws, 0, 0));
-        serialize_draw(mCmd, mSerialPass);
     }
     ++mModCount;
     return true;
@@ -4623,10 +4582,6 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         Context::instance().drawCheckpoint(stamp_tag);       // (before the draw: a lost device names the draw the GPU had started)
     }
     vkCmdDrawIndexed(mCmd, index_count, 1, first_index, vertex_offset, 0);
-    if (stamp_tag)
-    {
-        serialize_draw(mCmd, mSerialPass);
-    }
     if (stamp_tag)
     {
         Context::instance().gpuStamp(stamp_tag);

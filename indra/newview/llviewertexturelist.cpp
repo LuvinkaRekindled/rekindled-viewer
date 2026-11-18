@@ -1756,10 +1756,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
 
-        if (on_screen)
-        {
-            imagep->mLastOnScreenFrame = gFrameCount;
-        }
         imagep->addTextureStats(max_vsize);
 
         // <FS> H6: a texture nobody is looking at and nothing is asking for goes on the dormant list: no face on screen (none at all, or every face in an occluded group), no boost, no callback, not being

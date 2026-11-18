@@ -592,16 +592,9 @@ bool LLRenderPass::deferredPacketsEnabled()
 }
 
 // <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
-// LL_VK_RIGGED_VERIFY=1 checks that every draw info of a rigged pass is an entry, a fallback draw or a counted skip.
 bool ll_rigged_packets_enabled()
 {
     return LLRenderPass::deferredPacketsEnabled();
-}
-
-static bool rigged_verify()
-{
-    static const bool on = getenv("LL_VK_RIGGED_VERIFY") != nullptr;
-    return on;
 }
 
 // S4 A2: the frame's shared palette list (see lldrawpool.h)

@@ -345,7 +345,7 @@ public:
     bool hizIsStale() const { return mHizStale; }
     // <FS> an object (its extents) is now in this group: a held occluded verdict of the group or of a group above it was tested without the object, so where the object is outside the box it covered, the
     // verdict says nothing about it. The occluded state is dropped there (this group and the ones above, one node each: the siblings keep theirs) and the next two agreeing verdicts decide again. Without this
-    // an object that moved into a group with a held occluded verdict was missing for the 1 to 4 frames the verdict of its new box took. LL_VK_HIZ_ENTRY_OFF=1 = the old behaviour.
+    // an object that moved into a group with a held occluded verdict was missing for the 1 to 4 frames the verdict of its new box took.
     void hizEntryMoved(const LLVector4a* entry_extents);    bool hizNeedsMainThread() const { return mHizStale && isHizAwaiting(); }   // <FS> checkOcclusion would clear the occlusion state of the subtree (the parallel stateSort leaves such a sort to the main thread)
     virtual void hizResult(bool occluded);
     bool isOcclusionState(U32 state) const { return row().occlusion[LLViewerCamera::sCurCameraID] & state; }
