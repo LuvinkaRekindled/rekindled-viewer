@@ -4206,6 +4206,7 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
 }
 
 bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
+static void ll_walk_fallback_note(bool derived_use);       // step 0 of removing the main view's walk (diagnostics, LL_DIAG): why the walk ran, how old the set was, what the walk kept that the last set and the recent groups lack
 static void ll_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
@@ -4276,10 +4277,6 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         LLHiz::apply();        // <FS> S7 H3: the verdicts of the boxes sent a few frames ago
     }
 
-    if (view.isMainWorldSort() && !gCubeSnapshot)
-    {
-        dropOcclusionMarks(*sCull);     // (2026-11-17: the last sort's occlusion list is about to be cleared; a group of it that the occlusion pass did not take (no pass ran) keeps its flag, and markOccluder skips a flagged group for good)
-    }
     sCull->clear();
     sCull->mMainView = view.isMainWorldSort() && !gCubeSnapshot;        // (T3: the main view's result stamps the groups it lists, see LLCullResult::pushVisibleGroup)
     struct MarkAtCullScope
@@ -4358,6 +4355,11 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         {
             cull_split_report();
         }
+    }
+
+    if (view.isMainWorld() && !gCubeSnapshot)
+    {
+        ll_walk_fallback_note(derived_use);
     }
 
     if (derived_use)
@@ -12575,6 +12577,93 @@ static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
 // group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
 // stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
 // groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
+// STEP 0 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, LL_DIAG VkWalkFallback, nothing changes in the frame): the frames the main view WALKS (a shift frame, no set, an empty
+// set, a set over 3 frames old) by reason, the age of the set on every frame, and on the frames that walk: the covered groups the walk listed (the visible and the drawable groups) against the groups of the last set and the
+// recent groups (RECENT_BOX of the last 3 frames): the walk's only (what a pass over the last set would not list) and the set's only. A line for each of the first 60 walking frames, the totals every 600 frames.
+static void ll_walk_fallback_note(bool derived_use)
+{
+    if (!ll_diag_on())
+    {
+        return;
+    }
+    static U64 frames = 0, walked = 0, why[4] = {}, age_hist[7] = {}, sum_walk_only = 0, sum_set_only = 0, compared = 0;
+    static U32 lines = 0;
+    ++frames;
+    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
+    const U32 age = wl ? (U32)gFrameCount - wl->mFrame : ~0u;
+    if (wl)
+    {
+        ++age_hist[age == 0 ? 0 : age == 1 ? 1 : age == 2 ? 2 : age == 3 ? 3 : age <= 6 ? 4 : age <= 20 ? 5 : 6];
+    }
+    if (!derived_use)
+    {
+        ++walked;
+        const int w = gShiftFrame ? 0 : !wl ? 1 : wl->mKept.empty() ? 2 : 3;
+        ++why[w];
+        if (wl && !wl->mKept.empty())
+        {
+            std::lock_guard<std::mutex> lock(sCullMutex);
+            const U32 n = (U32)sSlotGroup.size();
+            const auto covered = [&](U32 slot)
+            {
+                LLViewerOctreeGroup* g = slot < n ? sSlotGroup[slot] : nullptr;
+                LLSpatialGroup* sg = (LLSpatialGroup*)g;
+                return sg && !sg->isDead() && sg->getSpatialPartition() && ll_cull_derived_covers(sg->getSpatialPartition());
+            };
+            static std::unordered_set<U32> in_set, in_walk;
+            in_set.clear();
+            in_walk.clear();
+            for (U32 wd = 0; wd < (U32)wl->mKept.size(); ++wd)
+            {
+                U32 bits = wl->mKept[wd];
+                for (U32 b = 0; bits && b < 32; ++b)
+                {
+                    if ((bits >> b) & 1u)
+                    {
+                        const U32 slot = (wd << 5) + b;
+                        if (covered(slot)) { in_set.insert(slot); }
+                    }
+                }
+            }
+            const U32 now = (U32)gFrameCount;
+            for (const auto& e : sRecent)
+            {
+                if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && covered(e.mSlot)) { in_set.insert(e.mSlot); }
+            }
+            const auto note_walk = [&](LLSpatialGroup* g)
+            {
+                if (g->mCullId && covered(g->mCullId - 1)) { in_walk.insert(g->mCullId - 1); }
+            };
+            for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) { note_walk(*i); }
+            for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) { note_walk(*i); }
+            U32 walk_only = 0, set_only = 0;
+            for (U32 s : in_walk) { walk_only += in_set.count(s) == 0; }
+            for (U32 s : in_set) { set_only += in_walk.count(s) == 0; }
+            sum_walk_only += walk_only;
+            sum_set_only += set_only;
+            ++compared;
+            if (lines < 60)
+            {
+                ++lines;
+                static const char* const names[] = { "shift frame", "no set", "empty set", "set over 3 frames old" };
+                LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << " walked: " << names[w] << ", age of the set " << (S32)age << ", the walk listed " << in_walk.size() << " covered groups, the last set and the recent groups " << in_set.size()
+                                          << ": the walk's only " << walk_only << ", the set's only " << set_only << LL_ENDL;
+            }
+        }
+        else if (lines < 60)
+        {
+            ++lines;
+            LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << " walked: " << (gShiftFrame ? "shift frame" : !wl ? "no set" : "empty set") << ", age of the set " << (S32)age << LL_ENDL;
+        }
+    }
+    if (frames % 600 == 0)
+    {
+        LL_DIAG("VkWalkFallback") << "main view frames " << frames << ": walked " << walked << " (shift " << why[0] << ", no set " << why[1] << ", empty set " << why[2] << ", set over 3 frames old " << why[3] << "); age of the set when there is one: 0 "
+                                  << age_hist[0] << ", 1 " << age_hist[1] << ", 2 " << age_hist[2] << ", 3 " << age_hist[3] << ", 4 to 6 " << age_hist[4] << ", 7 to 20 " << age_hist[5] << ", over 20 " << age_hist[6] << "; compared " << compared
+                                  << " walking frames: the walk's only " << sum_walk_only << ", the set's only " << sum_set_only << LL_ENDL;
+    }
+}
+
 static void ll_occluded_retest(LLCamera& camera)
 {
     static std::vector<LLOcclusionCullingGroup*> occluded;

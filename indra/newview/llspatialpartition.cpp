@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llcullshadow.h"
+#include "lldiag.h"
 #include "llgpuzonetimer.h"
 #include "llasyncpool.h"
 
@@ -656,6 +657,7 @@ void LLSpatialGroup::shift(const LLVector4a &offset)
     row().objectExtents[0].add(offset);
     row().objectExtents[1].add(offset);
     bumpPartitionEpoch();               // <FS> C4.3
+    LLCullShadow::touch(this);          // 2026-11-18: the group table (the viewer's mirror and the worker's copy) shows these bounds: a row is made again only when something touches it, and after a region shift every row stayed where the world was (the worker listed and tested groups by the old positions: things not loaded, groups coming and going until another event happened to touch them)
 
     if (!getSpatialPartition()->mRenderByGroup &&
         getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_TREE &&
@@ -1261,11 +1263,13 @@ class LLSpatialShift : public OctreeTraveler
 {
 public:
     const LLVector4a& mOffset;
+    U32 mCount = 0;
 
     LLSpatialShift(const LLVector4a& offset) : mOffset(offset) { }
     virtual void visit(const OctreeNode* branch)
     {
         ((LLSpatialGroup*) branch->getListener(0))->shift(mOffset);
+        ++mCount;
     }
 };
 
@@ -1273,6 +1277,10 @@ void LLSpatialPartition::shift(const LLVector4a &offset)
 { //shift octree node bounding boxes by offset
     LLSpatialShift shifter(offset);
     shifter.traverse(mOctree);
+    if (ll_diag_on() && shifter.mCount)
+    {
+        LL_DIAG("VkShift") << "region shift: partition " << (S32)mPartitionType << " " << shifter.mCount << " groups shifted and touched (their table rows are made again: the worker's copy follows)" << LL_ENDL;
+    }
 }
 
 class LLOctreeCull : public LLViewerOctreeCull
