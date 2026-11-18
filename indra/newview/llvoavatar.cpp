@@ -3221,10 +3221,6 @@ struct AttStats
     U32 firstFrame = 0;
 };
 AttStats gAttStats;
-namespace
-{
-std::atomic<U64> sAttConsFrozen{ 0 }, sAttConsTaken{ 0 }, sAttConsRefused{ 0 }, sAttConsChecked{ 0 }, sAttConsOutside{ 0 }, sAttConsVisits{ 0 }, sAttConsLeft{ 0 }, sAttXfFast{ 0 }, sAttXfChecked{ 0 }, sAttXfDifferent{ 0 }, sAttArrChecked{ 0 }, sAttArrDifferent{ 0 };       // LL_VK_ATTCONS counters (the loop runs on pool threads)
-}
 // an attachment that only follows its joint: nothing selected, flexible, animated, lighted, sounding or emitting particles in it or its children, not a HUD
 inline bool att_plain(const LLViewerObject* root)
 {
@@ -3254,21 +3250,15 @@ inline bool att_plain(const LLViewerObject* root)
 }
 static bool animesh_rowable(const LLViewerObject* o)
 {
-    static const int mode = getenv("LL_VK_ATTANIM") ? atoi(getenv("LL_VK_ATTANIM")) : 1;
-    const LLControlAvatar* cav = mode ? o->getControlAvatar() : nullptr;
+    const LLControlAvatar* cav = o->getControlAvatar();
     return cav && cav->hostJobOwned();
 }
-// <FS> stage C5a (LL_VK_ATTLIGHT: 1 default, 0 = a light, a sound or a particle emitter keeps the walk): an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
+// <FS> stage C5a: an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
 // (a light: calc_light_dist; a sound: the audio source's object position; a particle emitter: the source's getRenderPosition) from the drawable the row keeps up to date, none of them through the moved list. Not rowable:
 // selected, flexible, animated (animesh) and HUD attachments, and linksets with one of those.
 inline bool att_rowable(const LLViewerObject* root)
 {
-    static const int mode = getenv("LL_VK_ATTLIGHT") ? atoi(getenv("LL_VK_ATTLIGHT")) : 1;
-    if (!mode)
-    {
-        return att_plain(root);
-    }
-    // (C5e, LL_VK_ATTANIM: 1 default, 0 = animesh keep the walk: an animated object whose control avatar is placed by the avatar it is worn by (C5d: LLControlAvatar::hostJobOwned) is a row with the fast move: the
+    // (C5e: an animated object whose control avatar is placed by the avatar it is worn by (C5d: LLControlAvatar::hostJobOwned) is a row with the fast move: the
     // drawable's update no longer places the skeleton's root, so nothing is left in the full move that the fast one does not do)
     // (C5b, lap cf2: a linkset with FLEXIBLE CHILDREN is moved by the rows: 18,802 root matrices by the fast move checked against the full move, 0 different; the children draw through the root's matrix and run their own
     // physics from their own idle update. A flexible ROOT keeps the walk)
@@ -3294,7 +3284,7 @@ inline bool att_rowable(const LLViewerObject* root)
 }
 // <FS> stage C5 census (LL_VK_ROWOPS=1): why an attachment is not plain: 0 animesh, 1 flexible, 2 light, 3 audio source, 4 particle source, 5 selected, 6 HUD, 7 none of those (plain, but the rows do not hold it)
 static std::atomic<U64> sWalkClassN[8][2], sWalkClassOps[8][2];
-static std::atomic<U64> sRowFlexiRoot{ 0 }, sRowFlexiChild{ 0 }, sRowFlexiFast{ 0 }, sRowFlexiFastDiff{ 0 }, sRowFlexiFull{ 0 };   // flexible attachments in the rows: a flexible root, a linkset with flexible children; fast moves, their differences from the full move, full moves
+static std::atomic<U64> sRowFlexiRoot{ 0 }, sRowFlexiChild{ 0 }, sRowFlexiFull{ 0 };   // flexible attachments in the rows: a flexible root, a linkset with flexible children; full moves
 static int fs_att_class(const LLViewerObject* root)
 {
     auto reason = [](const LLViewerObject* o) -> int
@@ -3462,7 +3452,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     }
 
     // record time and refresh "tooSlow" status (<FS> stage A mode 1: the table's pre-pass has done it)
-    const LLAvatarTable::Row* table_row = LLAvatarTable::switchMode() == 1 ? LLAvatarTable::row(this) : nullptr;
+    const LLAvatarTable::Row* table_row = LLAvatarTable::row(this);
     if (!table_row)
     {
         updateTooSlow();
@@ -3484,7 +3474,6 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
     if (table_row ? table_row->mMode == LLAvatarTable::MODE_NONE : reducedHiddenSkip())
     {
-        LLAvatarTable::noteActual(this, LLAvatarTable::MODE_NONE);
         return;
     }
 
@@ -3898,7 +3887,7 @@ bool LLVOAvatar::isLiveInstance(const LLVOAvatar* avatar)
     return avatar && live.count(avatar) != 0;
 }
 
-// <FS> view rework A1: the writes of an avatar's attachment loop to shared state are recorded and replayed in order when the loop is over (LL_VK_AV_LEDGER=1; the viewer's own avatar keeps the direct path)
+// <FS> view rework A1: the writes of an avatar's attachment loop to shared state are recorded and replayed in order when the loop is over (the viewer's own avatar keeps the direct path)
 namespace
 {
 struct AvLedgerScope
@@ -3953,7 +3942,7 @@ struct AvJobLedger
 };
 }
 
-// <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS): the rows of an avatar's plain rigid attachments (a root attachment with a bridge that is not rigged and is plain: not flexible, animated, lit, sounding or emitting
+// <FS> PLAN-avatars.md stage C: the rows of an avatar's plain rigid attachments (a root attachment with a bridge that is not rigged and is plain: not flexible, animated, lit, sounding or emitting
 // particles in it or its children, not a HUD, not selected), built from the attachment points when the attachment set changes and swept every 32 frames (staggered by avatar) for the flags that change without it
 void LLVOAvatar::rebuildAttRows()
 {
@@ -3975,7 +3964,6 @@ void LLVOAvatar::rebuildAttRows()
             LLDrawable* drawable = attached_object->mDrawable;
             LLSpatialBridge* bridge = drawable->getSpatialBridge();
             const bool rigged = drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD);
-            static const int rig_rows = getenv("LL_VK_RIGROWS") ? atoi(getenv("LL_VK_RIGROWS")) : 1;
             if (bridge && rigged)
             {
                 // <FS> stage C4: every rigged attachment of the avatar, in the order the attachment loop visits them, gets its place in the draw order of the avatar's rigged groups here, once for this attachment set
@@ -3983,7 +3971,7 @@ void LLVOAvatar::rebuildAttRows()
                 drawable->mAttOrder = rigged_order++;
                 drawable->mAttOrderRev = LLViewerJointAttachment::sRevision;
             }
-            if (!bridge || (rigged && !rig_rows) || !att_rowable(attached_object.get()))
+            if (!bridge || !att_rowable(attached_object.get()))
             {
                 continue;
             }
@@ -4019,15 +4007,11 @@ static void fs_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSp
 void LLVOAvatar::idleUpdateAttachments(bool visible)
 {
         LL_CPU_ZONE("att: attachment loop (per avatar)");
-        static const bool av_ledger = !getenv("LL_VK_AV_LEDGER") || getenv("LL_VK_AV_LEDGER")[0] != '0';       // (on unless LL_VK_AV_LEDGER=0)
-        AvLedgerScope ledger_scope(av_ledger && !isSelf() && !LLPipeline::sAvSink);
+        AvLedgerScope ledger_scope(!isSelf() && !LLPipeline::sAvSink);
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
         LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
         U32 draw_order = 0;
-        static const int cons_mode = getenv("LL_VK_ATTCONS") ? atoi(getenv("LL_VK_ATTCONS")) : 1;
-        static const int xf_mode = getenv("LL_VK_ATTXF") ? atoi(getenv("LL_VK_ATTXF")) : 1;
-        static const int att_arr_mode = getenv("LL_VK_ATTARR") ? atoi(getenv("LL_VK_ATTARR")) : 1;
         S32 selection_on = sAttachmentSelectedForJobs;
         LLVOAvatar* selection_avatar = sAttachmentSelectedAvatar;
         if (selection_on < 0)
@@ -4104,15 +4088,13 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         gAttStats.nsPre += att_ns(att_loop_t0);
         gAttStats.skipFrames += skip_rigged_this_frame;
 
-        // <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS: 1 default, 0 off, 2 compare): the plain rigid attachments from the avatar's rows, each moved as the walk below would move it (the same gate, the same skip of a
-        // static joint, the avatar's box for its bridge, the fast move, the bridge move when the box changed, the text); the walk below skips what the rows moved this frame. Mode 2 moves nothing here: it counts the rows
-        // that pass the gate and the plain rigid attachments the walk below finds, per visit, and says where they differ.
-        static const int rows_mode = getenv("LL_VK_ATTROWS") ? atoi(getenv("LL_VK_ATTROWS")) : 1;
+        // <FS> PLAN-avatars.md stage C: the plain rigid attachments from the avatar's rows, each moved as the walk below would move it (the same gate, the same skip of a
+        // static joint, the avatar's box for its bridge, the fast move, the bridge move when the box changed, the text); the walk below skips what the rows moved this frame.
         static const bool rowops_on = getenv("LL_VK_ROWOPS") && atoi(getenv("LL_VK_ROWOPS")) != 0;      // census: the ops the rows write into the ledger and the ops the walk writes, by kind (stage C step C3)
         const size_t rowops0 = (rowops_on && LLPipeline::sAvSink) ? LLPipeline::sAvSink->size() : 0;
         U32 rows_passed = 0;
         // (every avatar, the viewer's own included, with a selection anywhere or a diagnostic on: what is not plain is not in the rows - a selected attachment, a light, flexi, particles... - and the walk below moves it)
-        const bool rows_run = rows_mode && cons_mode && mDrawable.notNull();
+        const bool rows_run = mDrawable.notNull();
         const auto rows_t0 = att_now();
         const bool rows_cons = getOverallAppearance() == AOA_NORMAL;        // (a jellydolled or otherwise reduced avatar keeps the exact boxes of its attachments' bridges)
         if (rows_run)
@@ -4168,47 +4150,27 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 drawable->mAttRowFrame = rigid_frame;
                 if (row.mRigged)
                 {
-                    // <FS> stage C4 (LL_VK_RIGROWS): a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
+                    // <FS> stage C4: a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
                     // not changed: skip_rigged_this_frame), its drawable move, its bridge move, then the stamp of its group with its place in the draw order (written only when the group does not hold it), the text
                     // (not an animated object: its control avatar takes the attachment's place every frame, a skipped move leaves it behind the animation of its host: the user, 2026-11-11, another avatar's hair layer
                     // that did not follow the animation until FSSkipStaticRiggedAttachmentUpdates was switched off)
                     const bool skip_update = skip_rigged_this_frame && !obj->isAnimatedObject();
-                    // <FS> stage C4b (LL_VK_RIGBOX: 1 default, 0 = the box of the avatar taken into the attachment's space and set every update, as before, 2 = held boxes and the old ones checked): the attachment holds two boxes that
+                    // <FS> stage C4b: the attachment holds two boxes that
                     // contain what the old calculation gave, and they are fitted again only when that stops being true. The BRIDGE holds the avatar's world box with a margin (its octree entry in the region's avatar partition);
                     // the attachment's own octree entry holds a cube around its origin that reaches every point of the avatar from there (the distance does not depend on the rotation).
-                    static const int rigbox_mode = getenv("LL_VK_RIGBOX") ? atoi(getenv("LL_VK_RIGBOX")) : 1;
                     bool bridge_refit = false;
                     if (!skip_update)
                     {
-                        // <FS> stage C4c (LL_VK_RIGMOVE: 1 default, 0 = the full damped move as before, 2 = the fast move and then the full one, the matrices compared bit for bit): the drawable of a rigged attachment follows its joint
+                        // <FS> stage C4c: the drawable of a rigged attachment follows its joint
                         // like a rigid one: when the object's own transform is unchanged the fast move writes the matrix from the avatar's flat array and the faces' centres, with no moved list entry; with the bridge held at the
                         // avatar's box (C4b) the drawable's update has no bridge to queue either (mBridgeFrozen). The full move is made when anything differs, or for an avatar with a selected attachment.
-                        static const int rigmove_mode = getenv("LL_VK_RIGMOVE") ? atoi(getenv("LL_VK_RIGMOVE")) : 1;
-                        drawable->mBridgeFrozen = rigbox_mode != 0 && rigmove_mode != 0;
+                        drawable->mBridgeFrozen = true;
                         bool fast = false;
-                        if (rigmove_mode && !attachment_selected && xf_mode)
+                        if (!attachment_selected)
                         {
                             const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
-                            const bool from_array = att_arr_mode && flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
+                            const bool from_array = flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
                             fast = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
-                            if (fast && rigmove_mode == 2)
-                            {
-                                static std::atomic<U64> mv_checked{ 0 }, mv_diff{ 0 }, mv_anim{ 0 }, mv_anim_diff{ 0 };
-                                LLMatrix4 before = drawable->getXform()->getWorldMatrix();
-                                gPipeline.updateMoveDampedAsync(drawable);
-                                ++mv_checked;
-                                const bool differs = memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0;
-                                mv_diff += differs;
-                                if (obj->isAnimatedObject())
-                                {
-                                    ++mv_anim;
-                                    mv_anim_diff += differs;
-                                }
-                                if ((mv_checked % 100000) == 0 || (mv_anim % 5000) == 1)
-                                {
-                                    LL_INFOS("RigMove") << "rigged attachment matrix by the fast move checked against the full move " << mv_checked.load() << ", different " << mv_diff.load() << " (animated objects: " << mv_anim.load() << ", different " << mv_anim_diff.load() << ")" << LL_ENDL;
-                                }
-                            }
                         }
                         if (!fast)
                         {
@@ -4221,82 +4183,48 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                 gPipeline.updateMoveDampedAsync(drawable);
                             }
                         }
-                        if (rigbox_mode == 0)
+                        const LLVector4a* abox = mDrawable->getSpatialExtents();
+                        const F32* amin = abox[0].getF32ptr();
+                        const F32* amax = abox[1].getF32ptr();
+                        // the bridge's world box
+                        bool inside = bridge->mConservative;
+                        for (S32 k = 0; k < 3 && inside; ++k)
                         {
-                            LLVector4a extents[2];
-                            bridge->transformExtents(mDrawable->getSpatialExtents(), extents);
-                            override_bbox(drawable, extents);
+                            inside = amin[k] >= bridge->mConsMin[k] && amax[k] <= bridge->mConsMax[k]
+                                && (bridge->mConsMax[k] - bridge->mConsMin[k]) <= (amax[k] - amin[k]) * 2.f + 2.f;        // (and not much larger than the avatar: the margin is given again once it is)
+                        }
+                        if (!inside)
+                        {
+                            for (S32 k = 0; k < 3; ++k)
+                            {
+                                const F32 pad = llmax(0.5f, 0.25f * (amax[k] - amin[k]));
+                                bridge->mConsMin[k] = amin[k] - pad;
+                                bridge->mConsMax[k] = amax[k] + pad;
+                            }
+                            bridge->mConservative = true;
                             bridge_refit = true;
                         }
-                        else
+                        // the attachment's own octree entry: a cube around its origin
+                        const LLVector3 origin = drawable->getXform()->getWorldPosition();
+                        const F32 dx = llmax(fabsf(amin[0] - origin.mV[0]), fabsf(amax[0] - origin.mV[0]));
+                        const F32 dy = llmax(fabsf(amin[1] - origin.mV[1]), fabsf(amax[1] - origin.mV[1]));
+                        const F32 dz = llmax(fabsf(amin[2] - origin.mV[2]), fabsf(amax[2] - origin.mV[2]));
+                        const F32 reach = sqrtf(dx * dx + dy * dy + dz * dz);
+                        const F32 held = drawable->mRigR;
+                        const F32* cur_lo = drawable->getSpatialExtents()[0].getF32ptr();
+                        const F32* cur_hi = drawable->getSpatialExtents()[1].getF32ptr();
+                        bool cube_held = held > 0.f && drawable->getSpatialGroup();
+                        for (S32 k = 0; k < 3 && cube_held; ++k)
                         {
-                            const LLVector4a* abox = mDrawable->getSpatialExtents();
-                            const F32* amin = abox[0].getF32ptr();
-                            const F32* amax = abox[1].getF32ptr();
-                            // the bridge's world box
-                            bool inside = bridge->mConservative;
-                            for (S32 k = 0; k < 3 && inside; ++k)
-                            {
-                                inside = amin[k] >= bridge->mConsMin[k] && amax[k] <= bridge->mConsMax[k]
-                                    && (bridge->mConsMax[k] - bridge->mConsMin[k]) <= (amax[k] - amin[k]) * 2.f + 2.f;        // (and not much larger than the avatar: the margin is given again once it is)
-                            }
-                            if (!inside)
-                            {
-                                for (S32 k = 0; k < 3; ++k)
-                                {
-                                    const F32 pad = llmax(0.5f, 0.25f * (amax[k] - amin[k]));
-                                    bridge->mConsMin[k] = amin[k] - pad;
-                                    bridge->mConsMax[k] = amax[k] + pad;
-                                }
-                                bridge->mConservative = true;
-                                bridge_refit = true;
-                            }
-                            // the attachment's own octree entry: a cube around its origin
-                            const LLVector3 origin = drawable->getXform()->getWorldPosition();
-                            const F32 dx = llmax(fabsf(amin[0] - origin.mV[0]), fabsf(amax[0] - origin.mV[0]));
-                            const F32 dy = llmax(fabsf(amin[1] - origin.mV[1]), fabsf(amax[1] - origin.mV[1]));
-                            const F32 dz = llmax(fabsf(amin[2] - origin.mV[2]), fabsf(amax[2] - origin.mV[2]));
-                            const F32 reach = sqrtf(dx * dx + dy * dy + dz * dz);
-                            const F32 held = drawable->mRigR;
-                            const F32* cur_lo = drawable->getSpatialExtents()[0].getF32ptr();
-                            const F32* cur_hi = drawable->getSpatialExtents()[1].getF32ptr();
-                            bool cube_held = held > 0.f && drawable->getSpatialGroup();
-                            for (S32 k = 0; k < 3 && cube_held; ++k)
-                            {
-                                cube_held = fabsf(cur_lo[k] + held) < 1e-3f && fabsf(cur_hi[k] - held) < 1e-3f;        // (a rebuild of the geometry gives the drawable its own box again: then it is fitted again)
-                            }
-                            if (!cube_held || reach > held || held > 1.6f * reach)
-                            {
-                                drawable->mRigR = reach * 1.25f + 0.05f;
-                                const F32 r = drawable->mRigR;
-                                drawable->setSpatialExtents(LLVector4a(-r, -r, -r), LLVector4a(r, r, r));
-                                drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
-                                drawable->movePartition();
-                            }
-                            if (rigbox_mode == 2)
-                            {
-                                // compare: what the old calculation gave (the avatar's box in the attachment's space; the avatar's box in the world) lies inside the held boxes
-                                static std::atomic<U64> checked{ 0 }, bad_inner{ 0 }, bad_bridge{ 0 }, refits{ 0 }, cube_refits{ 0 };
-                                LLVector4a old_ext[2];
-                                bridge->transformExtents(mDrawable->getSpatialExtents(), old_ext);
-                                const F32* lo = old_ext[0].getF32ptr();
-                                const F32* hi = old_ext[1].getF32ptr();
-                                const F32 r = drawable->mRigR;
-                                bool inner_ok = true, bridge_ok = true;
-                                for (S32 k = 0; k < 3; ++k)
-                                {
-                                    inner_ok = inner_ok && lo[k] >= -r && hi[k] <= r;
-                                    bridge_ok = bridge_ok && amin[k] >= bridge->mConsMin[k] && amax[k] <= bridge->mConsMax[k];
-                                }
-                                ++checked;
-                                bad_inner += !inner_ok;
-                                bad_bridge += !bridge_ok;
-                                refits += bridge_refit;
-                                if ((checked % 100000) == 0)
-                                {
-                                    LL_INFOS("RigBox") << "rigged attachment boxes held: updates checked " << checked.load() << ", old attachment-space box outside the held cube " << bad_inner.load() << ", avatar box outside the held bridge box " << bad_bridge.load() << ", bridge refits " << refits.load() << LL_ENDL;
-                                }
-                            }
+                            cube_held = fabsf(cur_lo[k] + held) < 1e-3f && fabsf(cur_hi[k] - held) < 1e-3f;        // (a rebuild of the geometry gives the drawable its own box again: then it is fitted again)
+                        }
+                        if (!cube_held || reach > held || held > 1.6f * reach)
+                        {
+                            drawable->mRigR = reach * 1.25f + 0.05f;
+                            const F32 r = drawable->mRigR;
+                            drawable->setSpatialExtents(LLVector4a(-r, -r, -r), LLVector4a(r, r, r));
+                            drawable->setPositionGroup(LLVector4a(0.f, 0.f, 0.f));
+                            drawable->movePartition();
                         }
                     }
                     bridge = drawable->getSpatialBridge();
@@ -4391,41 +4319,12 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 drawable->mBridgeFrozen = cons_frozen;
                 if (!skip_rigid)
                     {
-                    // <FS> stage C (LL_VK_ATTARR: 1 default, 0 off, 2 verified): the attachment's world matrix from the avatar's flat world array (the attachment point's world position, rotation, scale and scale-child-offset
-                    // as the pass made them), not from the attachment point's xform: the arithmetic of LLXformMatrix::update with the same operations; mode 2 then makes the old update from the joint's xform and compares
+                    // <FS> stage C: the attachment's world matrix from the avatar's flat world array (the attachment point's world position, rotation, scale and scale-child-offset
+                    // as the pass made them), not from the attachment point's xform: the arithmetic of LLXformMatrix::update with the same operations
                     const LLVector3* ppos = nullptr; const LLQuaternion* prot = nullptr; const LLVector3* pscale = nullptr; bool psco = false;
-                    const bool from_array = att_arr_mode && flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
-                    bool fast_done = false;
-                    if (xf_mode)
-                    {
-                        fast_done = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
-                        if (fast_done && from_array && att_arr_mode == 2)
-                        {
-                            LLMatrix4 before = drawable->getXform()->getWorldMatrix();
-                            drawable->getXform()->updateMatrix();
-                            ++sAttArrChecked;
-                            if (memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
-                            {
-                                if (++sAttArrDifferent <= 8)
-                                {
-                                    F32 worst = 0.f;
-                                    const F32* a = &before.mMatrix[0][0];
-                                    const F32* b = &drawable->getXform()->getWorldMatrix().mMatrix[0][0];
-                                    for (int k = 0; k < 16; ++k) { worst = std::max(worst, fabsf(a[k] - b[k])); }
-                                    LLXformMatrix* pxf = row.mPoint->getXform();
-                                    const LLVector3 dpos = *ppos - row.mPoint->getWorldPosition();
-                                    LL_INFOS("AttArr") << "attachment " << row.mPoint->getName() << " (joint " << row.mPoint->getJointNum() << ") of " << getFullname() << ": matrix differs by " << worst << "; the array's point position minus the xform's "
-                                        << dpos << ", rotation dot " << dot(*prot, row.mPoint->getWorldRotation()) << ", point dirty 0x" << std::hex << row.mPoint->mDirtyFlags << std::dec << ", mUpdateXform " << row.mPoint->mUpdateXform
-                                        << ", the drawable xform's parent is the point's xform " << (drawable->getXform()->getParent() == pxf) << LL_ENDL;
-                                }
-                            }
-                            if ((sAttArrChecked % 100000) == 0)
-                            {
-                                LL_INFOS("AttArr") << "attachment matrices from the flat array: checked against the xform chain " << sAttArrChecked.load() << ", different " << sAttArrDifferent.load() << LL_ENDL;
-                            }
-                        }
-                    }
-                    if (!fast_done && obj->isFlexible() && xf_mode)
+                    const bool from_array = flatJoint(row.mPoint->getJointNum(), ppos, prot, pscale, psco);
+                    const bool fast_done = from_array ? drawable->updateMoveFast(ppos, prot, pscale, psco) : drawable->updateMoveFast();
+                    if (!fast_done && obj->isFlexible())
                     {
                         // <FS> stage C5b diagnostic: why the fast move refused a flexible attachment (the full move was made)
                         static std::atomic<U64> fx_n{ 0 }, fx_moved{ 0 }, fx_pos{ 0 }, fx_rot{ 0 }, fx_scale{ 0 }, fx_state{ 0 }, fx_inactive{ 0 };
@@ -4443,39 +4342,6 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         {
                             LL_INFOS("FlexiMove") << "flexible attachment refused by the fast move " << fx_n.load() << " times: object changed MOVED " << fx_moved.load() << ", position differs " << fx_pos.load() << ", rotation differs " << fx_rot.load()
                                 << ", scale differs " << fx_scale.load() << ", drawable invisible or animated child " << fx_state.load() << ", not active " << fx_inactive.load() << LL_ENDL;
-                        }
-                    }
-                    if (fast_done && xf_mode == 2)
-                    {
-                        // <FS> stage C5 (LL_VK_ATTXF=2 in the rows): the full move after the fast one, the matrices compared bit for bit
-                        static std::atomic<U64> rx_checked{ 0 }, rx_diff{ 0 }, rx_flexi{ 0 }, rx_flexi_diff{ 0 };
-                        LLMatrix4 before = drawable->getXform()->getWorldMatrix();
-                        gPipeline.updateMoveDampedAsync(drawable);
-                        const bool differs = memcmp(before.mMatrix, drawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0;
-                        ++rx_checked;
-                        rx_diff += differs;
-                        bool flexi_class = obj->isFlexible();
-                        if (!flexi_class)
-                        {
-                            for (const LLPointer<LLViewerObject>& child : obj->getChildren())
-                            {
-                                if (child.notNull() && child->isFlexible())
-                                {
-                                    flexi_class = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (flexi_class)
-                        {
-                            ++rx_flexi;
-                            rx_flexi_diff += differs;
-                            ++sRowFlexiFast;
-                            sRowFlexiFastDiff += differs;
-                        }
-                        if ((rx_checked % 100000) == 0)
-                        {
-                            LL_INFOS("RowXf") << "row attachment matrix by the fast move checked against the full move " << rx_checked.load() << ", different " << rx_diff.load() << " (flexible ones: " << rx_flexi.load() << ", different " << rx_flexi_diff.load() << ")" << LL_ENDL;
                         }
                     }
                     if (!fast_done)
@@ -4623,11 +4489,11 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         gAttStats.rigidSkipped += skip_rigid;
                     }
 
-                    // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS: 1 default, 0 off, 2 on and verified): a plain rigid attachment's bridge sits at the AVATAR's box (as a rigged attachment's drawable does), so the
+                    // <FS> PLAN-avatars.md stage C: a plain rigid attachment's bridge sits at the AVATAR's box (as a rigged attachment's drawable does), so the
                     // attachment following its joint does not move the bridge in the octree: the matrix and face centers are still updated every visit, the bridge is moved when the avatar's box changes. The exact box of the
-                    // bridge's contents has to lie inside the avatar's box when the bridge takes it, else this bridge stays exact. Mode 2 also checks it on every visit that left the bridge alone.
+                    // bridge's contents has to lie inside the avatar's box when the bridge takes it, else this bridge stays exact.
                     bool cons_frozen = false;
-                    const bool cons_eligible = cons_mode && !rigged && bridge && !attachment_selected && !isSelf() && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL && att_plain(attached_object.get());
+                    const bool cons_eligible = !rigged && bridge && !attachment_selected && !isSelf() && mDrawable.notNull() && getOverallAppearance() == AOA_NORMAL && att_plain(attached_object.get());
                     if (bridge && bridge->mConservative && !cons_eligible)
                     {
                         bridge->mConservative = false;      // (selected, not plain, jellydolled: the exact box again, at this visit's move)
@@ -4659,22 +4525,10 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             // the held box no longer holds the attachment's bounding sphere (it moved toward the edge): back to the exact box at this visit's move
                             bridge->mConservative = false;
                             same = false;
-                            ++sAttConsLeft;
                         }
                         if (same)
                         {
                             cons_frozen = true;
-                            ++sAttConsFrozen;
-                            if (cons_mode == 2)
-                            {
-                                LLVector4a lo, hi;
-                                bridge->exactWorldBox(lo, hi);
-                                ++sAttConsChecked;
-                                if (!inside(lo, hi))
-                                {
-                                    ++sAttConsOutside;      // (the sphere test says inside, so this must stay 0)
-                                }
-                            }
                         }
                         else
                         {
@@ -4688,18 +4542,11 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                     bridge->mConsMin[k] = amin[k];
                                     bridge->mConsMax[k] = amax[k];
                                 }
-                                ++sAttConsTaken;
                             }
                             else
                             {
                                 bridge->mConservative = false;      // (this attachment reaches beyond the avatar's box: it keeps its exact box)
-                                ++sAttConsRefused;
                             }
-                        }
-                        if (cons_mode == 2 && (++sAttConsVisits % 100000) == 0)
-                        {
-                            LL_INFOS("AttCons") << "plain rigid attachments: bridge left alone " << sAttConsFrozen.load() << ", box taken (the bridge was moved) " << sAttConsTaken.load() << ", refused (reaches beyond the avatar's box) " << sAttConsRefused.load()
-                                << "; held box given up (the bounding sphere reached its edge) " << sAttConsLeft.load() << "; checked on the left alone visits " << sAttConsChecked.load() << ", exact box outside the avatar's box " << sAttConsOutside.load() << LL_ENDL;
                         }
                     }
                     attached_object->mDrawable->mBridgeFrozen = cons_frozen;
@@ -4709,28 +4556,12 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     {
                         LL_CPU_ZONE("att: drawable move");
                         const auto t = att_now();
-                        // <FS> PLAN-avatars.md stage C (LL_VK_ATTXF: 1 default, 0 off, 2 on and verified): a plain rigid attachment whose own transform is unchanged needs only its matrix and its faces' centres written (the
+                        // <FS> PLAN-avatars.md stage C: a plain rigid attachment whose own transform is unchanged needs only its matrix and its faces' centres written (the
                         // joint moved, nothing else), not the whole damped move with its moved list entry, state bits and text; the full move when anything differs
                         bool moved_fast = false;
-                        if (xf_mode && cons_eligible && attached_object->mDrawable->updateMoveFast())
+                        if (cons_eligible && attached_object->mDrawable->updateMoveFast())
                         {
                             moved_fast = true;
-                            ++sAttXfFast;
-                            if (xf_mode == 2)
-                            {
-                                // verify: the full move after the fast one must leave the matrix as it is
-                                LLMatrix4 before = attached_object->mDrawable->getXform()->getWorldMatrix();
-                                gPipeline.updateMoveDampedAsync(attached_object->mDrawable);
-                                ++sAttXfChecked;
-                                if (memcmp(before.mMatrix, attached_object->mDrawable->getXform()->getWorldMatrix().mMatrix, sizeof(before.mMatrix)) != 0)
-                                {
-                                    ++sAttXfDifferent;
-                                }
-                                if ((sAttXfChecked % 100000) == 0)
-                                {
-                                    LL_INFOS("AttXf") << "attachment matrix by the fast move " << sAttXfFast.load() << ", checked against the full move " << sAttXfChecked.load() << ", different " << sAttXfDifferent.load() << LL_ENDL;
-                                }
-                            }
                         }
                         if (!moved_fast)
                         {
@@ -4780,10 +4611,8 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
                             if (group)
                             { //set draw order of group
-                                // <FS> PLAN-avatars.md stage C4 (LL_VK_RIGORDER: 1 default, 0 off, 2 counts only): the stamp (the avatar and the order of the group among this avatar's rigged attachments) is the same every frame
+                                // <FS> PLAN-avatars.md stage C4: the stamp (the avatar and the order of the group among this avatar's rigged attachments) is the same every frame
                                 // while the attachment list and the groups stay: it is written only when the group does not hold it already. The group's two fields are only written for this avatar's own groups.
-                                static const int order_mode = getenv("LL_VK_RIGORDER") ? atoi(getenv("LL_VK_RIGORDER")) : 1;
-                                static std::atomic<U64> order_same{ 0 }, order_changed{ 0 };
                                 // (with the rows running, the place in the draw order is the one the rows were numbered with, so that the rows' stamps and this walk's agree; not numbered yet: no stamp this frame, the rows are made again)
                                 const bool numbered = attached_object->mDrawable->mAttOrderRev == LLViewerJointAttachment::sRevision;
                                 if (rows_run && !numbered)
@@ -4792,12 +4621,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                 }
                                 const U32 this_order = rows_run ? (numbered ? attached_object->mDrawable->mAttOrder : ~0u) : draw_order++;
                                 const bool holds = group->mAvatarp == this && group->mRenderOrder == this_order;
-                                (holds ? order_same : order_changed)++;
-                                if (order_mode == 2 && (((order_same + order_changed) % 200000) == 0))
-                                {
-                                    LL_INFOS("RigOrder") << "rigged draw order stamps: already held by the group " << order_same.load() << ", written " << order_changed.load() << LL_ENDL;
-                                }
-                                if (!(order_mode == 1 && holds) && this_order != ~0u)
+                                if (!holds && this_order != ~0u)
                                 {
                                     if (LLPipeline::sAvSink)
                                     {
@@ -4860,7 +4684,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 }
                 LL_INFOS("WalkKinds") << "what the attachment walk handles, per avatar loop over " << loops.load() << " loops (attachments, ledger ops):" << text << LL_ENDL;
                 LL_INFOS("FlexiRows") << "flexible attachments held by the rows, visits in " << loops.load() << " loops: a flexible root " << sRowFlexiRoot.load() << ", a linkset with flexible children " << sRowFlexiChild.load()
-                    << "; matrices by the fast move (ATTXF=2: checked against the full move) " << sRowFlexiFast.load() << ", different " << sRowFlexiFastDiff.load() << "; flexible roots the fast move refused " << sRowFlexiFull.load() << LL_ENDL;
+                    << "; flexible roots the fast move refused " << sRowFlexiFull.load() << LL_ENDL;
             }
             if (loops % 20000 == 0)
             {
@@ -7507,10 +7331,7 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
     {
         return LLAvatarTable::MODE_OTHER;
     }
-    if (LLAvatarTable::switchMode() == 1)
-    {
-        updateTooSlow();        // (mode 1: idleUpdate does not; mode 2 leaves it to idleUpdate and the answers differ where the state it makes matters)
-    }
+    updateTooSlow();        // (idleUpdate does not)
     static LLCachedControl<bool> disable_all_render_types(gSavedSettings, "DisableAllRenderTypes");
     if (!(gPipeline.hasRenderType(mIsControlAvatar ? LLPipeline::RENDER_TYPE_CONTROL_AV : LLPipeline::RENDER_TYPE_AVATAR)) && !disable_all_render_types && !isSelf())
     {
@@ -7540,14 +7361,6 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
 namespace
 {
 std::vector<std::pair<const LLVOAvatar*, LLAvatarTable::Row>> sAvatarRows;      // the rows of the frame; an avatar's index is in LLVOAvatar::mAvTableSlot
-U64 sAvTableAgree = 0, sAvTableMatrix[LLAvatarTable::MODE_COUNT][LLAvatarTable::MODE_COUNT] = {}, sAvTableNoRow = 0;
-U32 sAvTableLast = 0;
-}
-
-int LLAvatarTable::switchMode()
-{
-    static const int mode = getenv("LL_VK_AVTABLE") ? atoi(getenv("LL_VK_AVTABLE")) : 1;       // 1 (default since 2026-11-07: the user looked at the avt2 lap, nothing differed) the loop reads the row, 0 the old gates, 2 both and count
-    return mode;
 }
 
 const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
@@ -7558,10 +7371,6 @@ const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
 
 const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
 {
-    if (switchMode() != 1)
-    {
-        return nullptr;
-    }
     const S32 slot = av->mAvTableSlot;
     if (slot < 0 || (size_t)slot >= sAvatarRows.size() || sAvatarRows[slot].first != av || !sAvatarRows[slot].second.mFinal)
     {
@@ -7572,10 +7381,6 @@ const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
 
 void LLAvatarTable::endFrame()
 {
-    if (switchMode() != 1)
-    {
-        return;
-    }
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     for (auto& entry : sAvatarRows)
     {
@@ -7620,13 +7425,13 @@ bool sVoiceProximal = false;
 
 bool LLAvatarTable::voiceProximal()
 {
-    return switchMode() == 1 ? sVoiceProximal : LLVoiceClient::getInstance()->inProximalChannel();
+    return sVoiceProximal;
 }
 
 bool LLAvatarTable::voiceEnabled(const LLVOAvatar* av)
 {
     static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
-    const Row* r = switchMode() == 1 ? row(av) : nullptr;
+    const Row* r = row(av);
     if (!r)
     {
         return LLVoiceClient::getInstance()->getVoiceEnabled(av->getID());
@@ -7641,7 +7446,7 @@ bool LLAvatarTable::voiceEnabled(const LLVOAvatar* av)
 bool LLAvatarTable::voiceSpeaking(const LLVOAvatar* av)
 {
     static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
-    const Row* r = switchMode() == 1 ? row(av) : nullptr;
+    const Row* r = row(av);
     if (!r)
     {
         return LLVoiceClient::getInstance()->getIsSpeaking(av->getID());
@@ -7655,10 +7460,6 @@ bool LLAvatarTable::voiceSpeaking(const LLVOAvatar* av)
 
 void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
 {
-    if (!switchMode())
-    {
-        return;
-    }
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     sAvatarRows.clear();
     const U32 frame = LLFrameTimer::getFrameCount();
@@ -7714,10 +7515,6 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
 
 bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
 {
-    if (switchMode() != 1)
-    {
-        return from_update;
-    }
     const Row* r = row(av);
     if (!r)
     {
@@ -7740,10 +7537,6 @@ bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
 
 bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
 {
-    if (switchMode() != 1)
-    {
-        return true;
-    }
     static U64 ran = 0, skipped = 0;
     static U32 last = 0;
     const Row* r = row(av);
@@ -7757,46 +7550,6 @@ bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
         ran = skipped = 0;
     }
     return open;
-}
-
-void LLAvatarTable::noteActual(const LLVOAvatar* av, U8 actual)
-{
-    if (switchMode() != 2)
-    {
-        return;
-    }
-    const Row* found = row(av);
-    if (!found)
-    {
-        ++sAvTableNoRow;
-    }
-    else
-    {
-        ++sAvTableMatrix[found->mMode][actual];
-        sAvTableAgree += found->mMode == actual ? 1 : 0;
-    }
-    if (LLFrameTimer::getFrameCount() >= sAvTableLast + 600)
-    {
-        const double frames = (double)std::max<U32>(1, LLFrameTimer::getFrameCount() - sAvTableLast);
-        sAvTableLast = LLFrameTimer::getFrameCount();
-        static const char* const names[MODE_COUNT] = { "other", "none", "skip", "matrices", "pose" };
-        std::string text;
-        U64 total = 0;
-        for (int p = 0; p < MODE_COUNT; ++p)
-        {
-            for (int a = 0; a < MODE_COUNT; ++a)
-            {
-                if (sAvTableMatrix[p][a])
-                {
-                    total += sAvTableMatrix[p][a];
-                    text += llformat(" | row %s, old gates %s: %.2f%s", names[p], names[a], sAvTableMatrix[p][a] / frames, p == a ? "" : "  <- DISAGREE");
-                }
-            }
-        }
-        LL_DIAG("AvTable") << "avatar table check, per frame over " << (U32)frames << " frames: " << total / frames << " avatars compared, agree " << sAvTableAgree / frames << ", no row " << sAvTableNoRow / frames << text << LL_ENDL;
-        sAvTableAgree = sAvTableNoRow = 0;
-        memset(sAvTableMatrix, 0, sizeof(sAvTableMatrix));
-    }
 }
 
 // <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
@@ -7912,7 +7665,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     }
     ensureJointLocals();        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
 
-    const LLAvatarTable::Row* table_row = LLAvatarTable::switchMode() == 1 ? LLAvatarTable::row(this) : nullptr;       // <FS> stage A mode 1
+    const LLAvatarTable::Row* table_row = LLAvatarTable::row(this);       // <FS> stage A
     bool visible = table_row ? table_row->mVisible : isVisible();
 
     // For fading out the names above heads, only let the timer
@@ -7938,14 +7691,12 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (!needs_update && !isSelf())
     {
-        LLAvatarTable::noteActual(this, LLAvatarTable::MODE_SKIP);
         fs_av_importance_ran(0);
         AvScope early_scope(AV_CHAR_EARLY);
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
     fs_av_importance_ran((!visible && !isSelf()) ? 1 : 2);
-    LLAvatarTable::noteActual(this, (!visible && !isSelf()) ? LLAvatarTable::MODE_MATRICES : LLAvatarTable::MODE_POSE);
 
     //--------------------------------------------------------------------
     // Handle transitions between regular rendering, jellydoll, or invisible.
@@ -8102,9 +7853,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
 //-----------------------------------------------------------------------------
 bool LLVOAvatar::canDeferMotionUpdate() const
 {
-    static const bool self_deferred = !getenv("LL_VK_AV_SELF") || getenv("LL_VK_AV_SELF")[0] != '0';        // <FS> stage d: the own avatar in the batch (LL_VK_AV_SELF=0: inline, as before)
+    // <FS> stage d: the own avatar is in the batch too (its motion stop requests go to the network: kept while the blend runs as a job, made afterwards: flushDeferredStopRequests)
     if (!sMotionUpdateBatch
-        || (isSelf() && !self_deferred)     // own avatar: motion stop requests go to the network (kept while the blend runs as a job, made afterwards: flushDeferredStopRequests)
         || isUIAvatar()
         || mSpecialRenderMode != 0
         || !canDeferNormalMotionUpdate())

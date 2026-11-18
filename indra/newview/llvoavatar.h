@@ -349,7 +349,7 @@ public:
 
     void            idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &position);
     void            idleUpdateMisc(bool detailed_update);
-    // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job, LL_VK_AV_PARALLEL=1) and
+    // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job) and
     // idleUpdateMisc replays them in its turn (replayAttachmentJob) instead of running the loop
     void            idleUpdateAttachments(bool visible);
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
@@ -364,7 +364,7 @@ public:
     bool            skeletonDirty() const;
     bool            flatJoint(S32 joint_num, const LLVector3*& pos, const LLQuaternion*& rot, const LLVector3*& scale, bool& scale_child_offset) const;      // the joint's world position, rotation, own scale and scale-child-offset flag from the array the pass made this frame
     const F32*      flatWorld(S32 joint_num) const;     // the joint's world matrix (16 floats) from the array when it was filled this frame, else null
-    // <FS> PLAN-avatars.md stage C (LL_VK_ATTROWS: 1 default, 0 the loop finds them each frame, 2 rows built and compared with the loop's own set): the plain rigid attachments of the avatar as a list of rows, built when the
+    // <FS> PLAN-avatars.md stage C: the plain rigid attachments of the avatar as a list of rows, built when the
     // attachment set changes (LLViewerJointAttachment::sRevision) and swept every 32 frames, not found by walking the attachment points and testing each object every frame
     struct AttRow
     {

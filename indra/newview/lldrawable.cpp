@@ -987,14 +987,13 @@ bool LLDrawable::updateMove()
     return isState(MOVE_UNDAMPED) ? updateMoveUndamped() : updateMoveDamped();
 }
 
-// <FS> PLAN-avatars.md stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform has not changed, which is all that follows its joint needs: updateXform of such a drawable finds the object's local
+// <FS> PLAN-avatars.md stage C: the move of an attached drawable whose own transform has not changed, which is all that follows its joint needs: updateXform of such a drawable finds the object's local
 // position, rotation and scale equal to what the xform holds (nothing to damp, no rebuild), sets the same values again and recomputes the world matrix from the parent's (the attachment point's); with the bridge
 // held at the avatar's box nothing is queued either. So this is that matrix and the faces' centres, for the loop of the avatar. False when anything differs: the full move is made.
-// (C5e, LL_VK_ATTANIM: 1 default) an animated object whose control avatar is placed by the avatar it is worn by: the drawable's update does not place the skeleton's root, so the fast move is the full move
+// (C5e) an animated object whose control avatar is placed by the avatar it is worn by: the drawable's update does not place the skeleton's root, so the fast move is the full move
 static bool animesh_fast(LLViewerObject* o)
 {
-    static const int mode = getenv("LL_VK_ATTANIM") ? atoi(getenv("LL_VK_ATTANIM")) : 1;
-    LLControlAvatar* cav = mode ? o->getControlAvatar() : nullptr;
+    LLControlAvatar* cav = o->getControlAvatar();
     return cav && cav->hostJobOwned();
 }
 
@@ -1581,7 +1580,7 @@ void LLSpatialBridge::updateSpatialExtents()
     LLVector4a newMax;
     if (mConservative)
     {
-        // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): a plain rigid attachment's bridge holds the avatar's box (world space) while the avatar's loop keeps it there: moves of the attachment do not move it in the octree
+        // <FS> PLAN-avatars.md stage C: a plain rigid attachment's bridge holds the avatar's box (world space) while the avatar's loop keeps it there: moves of the attachment do not move it in the octree
         newMin.load3(mConsMin);
         newMax.load3(mConsMax);
     }

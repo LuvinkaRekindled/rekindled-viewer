@@ -173,7 +173,7 @@ struct LLRigAnchor
     F32 mA[3] = { 0.f, 0.f, 0.f };
     bool mActive = false;
 };
-LLRigAnchor ll_rig_anchor(U32 frame);      // LL_VK_RIGREBASE: 0 off, 1 (default) when the camera is high, 2 always (to test at low altitude)
+LLRigAnchor ll_rig_anchor(U32 frame);      // when the camera is high
 
 class LLRenderPass : public LLDrawPool
 {

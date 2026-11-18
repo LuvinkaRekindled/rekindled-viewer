@@ -219,12 +219,12 @@ protected:
     bool updateMoveUndamped();
 
 public:
-    bool mBridgeFrozen = false;     // <FS> PLAN-avatars.md stage C (LL_VK_ATTCONS): this attachment's bridge sits at the avatar's box and is not queued to move with every update of the attachment
-    F32 mRigR = 0.f;                // <FS> stage C4b (LL_VK_RIGBOX): the half size of the cube around this rigged attachment's origin that its octree entry holds (the avatar is within it from the origin, in any rotation); 0: not held
+    bool mBridgeFrozen = false;     // <FS> PLAN-avatars.md stage C: this attachment's bridge sits at the avatar's box and is not queued to move with every update of the attachment
+    F32 mRigR = 0.f;                // <FS> stage C4b: the half size of the cube around this rigged attachment's origin that its octree entry holds (the avatar is within it from the origin, in any rotation); 0: not held
     U32 mAttOrder = 0;              // <FS> stage C4: this rigged attachment's place among its avatar's rigged attachments (the alpha sort order of their groups), numbered when the avatar's attachment rows are made
     U32 mAttOrderRev = ~0u;         // ... for this attachment set (LLViewerJointAttachment::sRevision); ~0: not numbered
-    U32 mAttRowFrame = 0;           // <FS> stage C (LL_VK_ATTROWS): the frame the avatar's attachment rows moved this drawable (the loop that finds attachments by walking skips it)
-    bool updateMoveFast(const LLVector3* parent_pos = nullptr, const LLQuaternion* parent_rot = nullptr, const LLVector3* parent_scale = nullptr, bool parent_sco = false);       // (the parent data from the avatar's flat world array: the attachment point's world position, rotation, scale and scale-child-offset; else the parent xform is read)          // <FS> stage C (LL_VK_ATTXF): the move of an attached drawable whose own transform is unchanged: its matrix and its faces' centres; false: make the full move
+    U32 mAttRowFrame = 0;           // <FS> stage C: the frame the avatar's attachment rows moved this drawable (the loop that finds attachments by walking skips it)
+    bool updateMoveFast(const LLVector3* parent_pos = nullptr, const LLQuaternion* parent_rot = nullptr, const LLVector3* parent_scale = nullptr, bool parent_sco = false);       // (the parent data from the avatar's flat world array: the attachment point's world position, rotation, scale and scale-child-offset; else the parent xform is read)          // <FS> stage C: the move of an attached drawable whose own transform is unchanged: its matrix and its faces' centres; false: make the full move
     friend class LLPipeline;
     friend class LLDrawPool;
     friend class LLSpatialBridge;

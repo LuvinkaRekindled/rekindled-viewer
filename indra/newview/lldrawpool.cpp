@@ -644,11 +644,6 @@ LLRigAnchor sRigAnchorCurrent;
 
 LLRigAnchor ll_rig_anchor(U32 frame)
 {
-    static const int mode = getenv("LL_VK_RIGREBASE") ? atoi(getenv("LL_VK_RIGREBASE")) : 1;
-    if (mode == 0)
-    {
-        return LLRigAnchor();
-    }
     std::lock_guard<std::mutex> lock(sRigAnchorMutex);
     RigAnchorSlot& slot = sRigAnchorRing[frame & 7u];
     if (slot.mFrame == frame)
@@ -660,7 +655,7 @@ LLRigAnchor ll_rig_anchor(U32 frame)
     const F32 reach = std::max(fabsf(c.mV[0]), std::max(fabsf(c.mV[1]), fabsf(c.mV[2])));
     LLRigAnchor next;
     const bool was = sRigAnchorCurrent.mActive;
-    if (mode == 2 || reach > (was ? 500.f : 700.f))
+    if (reach > (was ? 500.f : 700.f))
     {
         next.mActive = true;
         F32 away = 1.0e9f;
