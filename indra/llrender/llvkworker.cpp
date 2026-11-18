@@ -7939,8 +7939,9 @@ struct GeoFrag
     std::vector<U32> mRLodIb, mRLodCount;                   // item E for the opaque rigged items: per command of mRCmds, the simplified list the viewer chose for this frame (GL name of its index buffer, its count); 0 = the item's own
     std::vector<U32> mARLodIb, mARLodCount;                 // item E: per command, a simplified index list (the GL name of its index buffer, its count) the viewer chose for this frame; 0 = the item's own list
     std::vector<VkDrawIndirectCommand> mACmds;  // S5a: the draws of its alpha items (type 26), in item order, one per item (count 0 when its buffers are not usable): a run names a range of them
-    U32 mTypeFirst[kGeoTypes + 1] = {};
-    U32 mTypeDs[kGeoTypes] = {};                // P3: where the double sided commands of type t start inside its range of mCmds (= mTypeFirst[t + 1] when it has none)
+    // the non empty runs of mCmds, by type and side (P3: the double sided commands of a type follow its single sided ones): a fragment has about two commands, so a frame visits its runs, not 13 types x 2 sides
+    struct SRun { U32 mType, mFirst, mCount; bool mDs; };
+    std::vector<SRun> mSRuns;
     // S4 B: the rigged items (types 13-25, drawn indexed: the hardware reads the indices): commands sorted by rigged type and buffer pair, runs of one pair, the item -> command map
     struct RRun { U32 mPair, mFirst, mCount; bool mDs; };       // (P3: mDs = the run's items are double sided: drawn by the kind 22 that has culling off)
     std::vector<VkDrawIndexedIndirectCommand> mRCmds;
@@ -7971,6 +7972,7 @@ struct GeoStats
     U64 mCommands[kGeoTypes] = {}, mCommandsMax[kGeoTypes] = {}, mDrawNs[kGeoTypes] = {}, mDrawCalls[kGeoTypes] = {};
     U64 mMaxFragsFrame = 0, mMaxItemsFrame = 0;
     U64 mNsPrepare = 0, mNsEvents = 0, mNsPins = 0, mNsRebuild = 0, mNsList = 0, mNsCopy = 0, mNsCheck = 0, mNsRetain = 0, mNsRelease = 0, mNsTexUpdate = 0, mNsMatrices = 0;
+    U64 mNsDerive = 0, mNsRigged = 0, mNsStatic = 0;       // the parts of a prepare that had no timer: reclaim + the derived list, the rigged bindings and palettes, the static commands inside 'command copy'
     U64 mNsDraw = 0, mNsDrawMatrices = 0, mNsDrawState = 0, mNsDrawCall = 0;
     U64 mMatricesSent = 0;
     U64 mLastLog = 0;
@@ -8576,15 +8578,12 @@ static bool geo_item_ok(const GeoFrag& f, size_t i)
 void geo_build_commands(GeoFrag& f)
 {
     f.mCmds.clear();
+    f.mSRuns.clear();
     for (U32 t = 0; t < kGeoTypes; ++t)
     {
-        f.mTypeFirst[t] = (U32)f.mCmds.size();
         for (U32 ds = 0; ds < 2; ++ds)
         {
-            if (ds)
-            {
-                f.mTypeDs[t] = (U32)f.mCmds.size();
-            }
+            const U32 first = (U32)f.mCmds.size();
             for (size_t i = 0; i < f.mItems.size(); ++i)
             {
                 if (f.mItems[i].mType == t && ((f.mItems[i].mE.mFlags & LLVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
@@ -8592,9 +8591,12 @@ void geo_build_commands(GeoFrag& f)
                     f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
                 }
             }
+            if (f.mCmds.size() > first)
+            {
+                f.mSRuns.push_back({ t, first, (U32)f.mCmds.size() - first, ds != 0 });
+            }
         }
     }
-    f.mTypeFirst[kGeoTypes] = (U32)f.mCmds.size();
     // S4 B: the rigged items, by rigged type and buffer pair
     f.mRCmds.clear();
     f.mRCount0.clear();
@@ -8934,6 +8936,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     GeoStats& s = sGeo.mS;
     Renderer& r = Renderer::instance();
     const U64 frame_now = Context::instance().getFrameNumber();
+    const auto t_derive = std::chrono::steady_clock::now();
     geo_reclaim(frame_now);
     const U32* handles = (const U32*)blob;
     const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
@@ -8951,6 +8954,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             entries = (U32)own_handles.size();
         }
     }
+    if (timed) s.mNsDerive += geo_ns(t_derive);
     auto t0 = std::chrono::steady_clock::now();
     // pins: textures the viewer named since last frame are resolved (their slots are permanent from here on); a slot that changed makes the fragments look at their slots again
     rtPinUpdate();
@@ -8984,8 +8988,9 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     if (timed) s.mNsEvents += geo_ns(t0);
     // the listed fragments: rebuilt when something named them, their commands counted by type
-    static thread_local std::vector<GeoFrag*> listed;
+    static thread_local std::vector<GeoFrag*> listed, rigged_listed;
     listed.clear();
+    rigged_listed.clear();       // (the listed fragments with opaque rigged items: the few the rigged loops below visit)
     // a fragment is built (its commands, its slots) when it is listed, and also when a binding names it: the viewer sends a persistent binding once and counts it bound, so a binding for a fragment that is not built yet (a new one, named
     // by the rows' derive a frame after its binding, stage 5) must not be dropped here
     auto ensure_built = [&](GeoFrag* f)
@@ -9023,18 +9028,23 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             c.indexCount = 0;           // S5d: a rigged alpha item draws only when the viewer bound a palette for it in THIS frame (kind 31)
         }
         listed.push_back(f);
+        if (!f->mRCmds.empty() || !f->mRItems.empty())
+        {
+            rigged_listed.push_back(f);
+        }
         items_frame += f->mItems.size();
         s.mItemsSkippedPair += f->mItems.size() - f->mCmds.size() - f->mRCmds.size() - f->mACmds.size() - f->mARCmds.size();
-        for (U32 t = 0; t < kGeoTypes; ++t)
+        for (const GeoFrag::SRun& run : f->mSRuns)
         {
-            counts[t] += f->mTypeFirst[t + 1] - f->mTypeFirst[t];
-            counts_ds[t] += f->mTypeFirst[t + 1] - f->mTypeDs[t];
+            counts[run.mType] += run.mCount;
+            counts_ds[run.mType] += run.mDs ? run.mCount : 0u;
         }
     }
     if (timed) s.mNsList += geo_ns(t0);
     // S4 B + <FS> P2: the rigged items' palettes. The binding of an item (palette id, joints, simplified list) is persistent: with h.mFragment == 1 the record carries the ones that changed (ids, resolved below in
     // the frame's table: h.mPass is the viewer frame whose pairs it must be); else it carries all of them as offsets and the items without one are unbound first. Then every rigged item of a listed fragment gets
     // the row's palette address and joints and the command's count (an item without a palette in this frame's table draws nothing)
+    t0 = std::chrono::steady_clock::now();
     const bool persist = h.mFragment == 1;
     sGeo.mPersist = persist;
     sGeo.mViewerFrame = h.mPass;
@@ -9066,7 +9076,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         f->mRItemLodCount[b.mItem] = b.mLodCount;
     }
     const bool table_is_this_frame = !persist || (gFrameState.mPalFrame == h.mPass && gFrameState.mPalIdFrame == h.mPass);
-    for (GeoFrag* f : listed)
+    for (GeoFrag* f : rigged_listed)
     {
         if (f->mRItems.empty())
         {
@@ -9100,6 +9110,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             }
         }
     }
+    if (timed) s.mNsRigged += geo_ns(t0);
     s.mItemsListed += items_frame;
     s.mMaxFragsFrame = std::max<U64>(s.mMaxFragsFrame, entries);
     s.mMaxItemsFrame = std::max<U64>(s.mMaxItemsFrame, items_frame);
@@ -9144,24 +9155,18 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 at[t] = sGeo.mFirst[t];
                 at_ds[t] = sGeo.mDsFirst[t];
             }
-            auto copy_commands = [&](const GeoFrag* f, U32 first, U32 n, U32& dest)
-            {
-                if (n)
-                {
-                    memcpy(out + dest, f->mCmds.data() + first, sizeof(VkDrawIndirectCommand) * (size_t)n);
-                    dest += n;
-                }
-            };
             for (const GeoFrag* f : listed)
             {
-                for (U32 t = 0; t < kGeoTypes; ++t)
+                for (const GeoFrag::SRun& run : f->mSRuns)
                 {
-                    copy_commands(f, f->mTypeFirst[t], f->mTypeDs[t] - f->mTypeFirst[t], at[t]);
-                    copy_commands(f, f->mTypeDs[t], f->mTypeFirst[t + 1] - f->mTypeDs[t], at_ds[t]);
+                    U32& dest = run.mDs ? at_ds[run.mType] : at[run.mType];
+                    memcpy(out + dest, f->mCmds.data() + run.mFirst, sizeof(VkDrawIndirectCommand) * (size_t)run.mCount);
+                    dest += run.mCount;
                 }
             }
         }
     }
+    if (timed) s.mNsStatic += geo_ns(t0);
     // S4 B: the rigged commands of the frame, by rigged type: runs of one buffer pair
     for (U32 rt = 0; rt < kGeoTypes; ++rt)
     {
@@ -9171,7 +9176,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     sGeo.mRTable = Renderer::ScratchAlloc();
     sGeo.mRLodNames.clear();
     size_t rtotal = 0;
-    for (const GeoFrag* f : listed)
+    for (const GeoFrag* f : rigged_listed)
     {
         rtotal += f->mRCmds.size();
     }
@@ -9186,15 +9191,24 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         else
         {
             VkDrawIndexedIndirectCommand* rout = (VkDrawIndexedIndirectCommand*)sGeo.mRCommands.mPtr;
+            // The table is one buffer the GPU reads while the next frames are being prepared: a palette written into a row now would be read by the draws of the frames still in flight
+            // (rigged items out of step with each other and with the camera). The rigged items draw from rows of their own, copied for this frame: the command's first instance is the copy.
+            // The scratch is write combined memory: it is only written here (a read of it costs about a microsecond, 180 commands a frame were 160 us): each command is made in a local and stored once.
+            sGeo.mRTable = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rtotal);
+            GeoGpuG* rows = (sGeo.mRTable.mPtr && sGeo.mRTable.mAddress) ? (GeoGpuG*)sGeo.mRTable.mPtr : nullptr;
+            if (!rows)
+            {
+                sGeo.mRTable = Renderer::ScratchAlloc();
+                ++s.mScratchFail;
+            }
             U32 cursor = 0;
-            for (const GeoFrag* f : listed)
+            for (const GeoFrag* f : rigged_listed)
             {
                 for (U32 rt = 0; rt < kGeoTypes; ++rt)
                 {
                     for (U32 k = f->mRTypeFirst[rt]; k < f->mRTypeFirst[rt + 1]; ++k)
                     {
                         const GeoFrag::RRun& run = f->mRRuns[k];
-                        memcpy(rout + cursor, f->mRCmds.data() + run.mFirst, run.mCount * sizeof(VkDrawIndexedIndirectCommand));
                         // item E: a command whose item has a simplified list (its buffer on the GPU) draws that list: its own range of the command, split into draws by index buffer
                         U32 seg = 0, seg_lod = 0;
                         const bool lods = f->mRLodIb.size() == f->mRCmds.size();
@@ -9202,20 +9216,27 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         {
                             U32 lod = 0;
                             const U32 ci = run.mFirst + c;
+                            VkDrawIndexedIndirectCommand cmd = f->mRCmds[ci];
                             if (lods && f->mRLodIb[ci] && f->mRCmds[ci].indexCount)
                             {
                                 Buf* lb = packet_buffer(f->mRLodIb[ci]);
                                 if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
                                 {
                                     lod = f->mRLodIb[ci];
-                                    rout[cursor + c].indexCount = f->mRLodCount[ci];
-                                    rout[cursor + c].firstIndex = 0;
+                                    cmd.indexCount = f->mRLodCount[ci];
+                                    cmd.firstIndex = 0;
                                     sGeo.mRLodNames.push_back(lod);
                                     ++sGeo.mRLodCmds;
                                     sGeo.mRLodTrisFull += f->mRCount0[ci] / 3;
                                     sGeo.mRLodTris += f->mRLodCount[ci] / 3;
                                 }
                             }
+                            if (rows)
+                            {
+                                rows[cursor + c] = sGeo.mTCpu[cmd.firstInstance];
+                            }
+                            cmd.firstInstance = cursor + c;
+                            rout[cursor + c] = cmd;
                             if (c > 0 && lod != seg_lod)
                             {
                                 sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg, run.mDs });
@@ -9227,23 +9248,6 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         cursor += run.mCount;
                     }
                 }
-            }
-            // The table is one buffer the GPU reads while the next frames are being prepared: a palette written into a row now would be read by the draws of the frames still in flight
-            // (rigged items out of step with each other and with the camera). The rigged items draw from rows of their own, copied for this frame: the command's first instance is the copy.
-            sGeo.mRTable = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rtotal);
-            if (sGeo.mRTable.mPtr && sGeo.mRTable.mAddress)
-            {
-                GeoGpuG* rows = (GeoGpuG*)sGeo.mRTable.mPtr;
-                for (size_t i = 0; i < rtotal; ++i)
-                {
-                    rows[i] = sGeo.mTCpu[rout[i].firstInstance];
-                    rout[i].firstInstance = (U32)i;
-                }
-            }
-            else
-            {
-                sGeo.mRTable = Renderer::ScratchAlloc();
-                ++s.mScratchFail;
             }
         }
     }
@@ -9287,7 +9291,8 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             LL_DIAG("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
                 << (double)s.mNsMatrices / 1000.0 / n << " + buffer events " << (double)s.mNsEvents / 1000.0 / n << " + listing " << (double)s.mNsList / 1000.0 / n << " (of it rebuilds "
-                << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
+                << (double)s.mNsRebuild / 1000.0 / n << ") + stale check " << (double)s.mNsCheck / 1000.0 / n << " + command copy " << (double)s.mNsCopy / 1000.0 / n << " (static commands " << (double)s.mNsStatic / 1000.0 / n << "), reclaim and derived list " << (double)s.mNsDerive / 1000.0 / n << ", rigged bindings and palettes "
+                << (double)s.mNsRigged / 1000.0 / n << "; retain " << (double)s.mNsRetain / 1000.0 / n
                 << ", release " << (double)s.mNsRelease / 1000.0 / n << ", texture updates " << (double)s.mNsTexUpdate / 1000.0 / n << "; draw records " << (double)s.mNsDraw / 1000.0 / n << " (matrices "
                 << (double)s.mNsDrawMatrices / 1000.0 / n << ", state " << (double)s.mNsDrawState / 1000.0 / n << ", draw call " << (double)s.mNsDrawCall / 1000.0 / n << ")" << LL_ENDL;
         }
@@ -9924,51 +9929,52 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
         lod_use.assign(total, 0);
         lod_names.clear();
-        size_t at_cmd = 0;
-        for (const auto& t : todo)
-        {
-            const VkDrawIndexedIndirectCommand* src = t.first->mARCmds.data() + t.second.mFirst;
-            memcpy(out, src, t.second.mCount * sizeof(VkDrawIndexedIndirectCommand));
-            const GeoFrag* lf = t.first;
-            for (U32 k = 0; k < t.second.mCount; ++k)
-            {
-                a.mZeroRigged += src[k].indexCount == 0 ? 1 : 0;       // (an item that draws nothing: no palette this frame, or its buffers are not usable; counted from the source: the scratch is write combined memory, a read of it costs about a microsecond)
-                const U32 c = t.second.mFirst + k;
-                if (src[k].indexCount && c < lf->mARLodIb.size() && lf->mARLodIb[c])
-                {
-                    Buf* lb = packet_buffer(lf->mARLodIb[c]);
-                    if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
-                    {
-                        out[k].indexCount = lf->mARLodCount[c];
-                        out[k].firstIndex = 0;
-                        lod_use[at_cmd + k] = lf->mARLodIb[c];
-                        lod_names.push_back(lf->mARLodIb[c]);
-                    }
-                }
-            }
-            out += t.second.mCount;
-            at_cmd += t.second.mCount;
-        }
-        if (!lod_names.empty())
-        {
-            ensure_buffers_current(lod_names, 0);          // (the lists' data written by the main thread is recorded before the draws read it)
-        }
-        // as the rigged G-buffer items: the rows the draw reads are copies made for this draw (the table is read by frames in flight)
+        // as the rigged G-buffer items: the rows the draw reads are copies made for this draw (the table is read by frames in flight). The scratch is write combined memory: it is only written (each command is
+        // made in a local and stored once with its row's number; a read of it costs about a microsecond)
         U32 row_base = 0;
+        GeoGpuG* rows = nullptr;
         if (alpha_rows_reserve(r, (U32)total, row_base, alpha_rows))
         {
-            VkDrawIndexedIndirectCommand* rc = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
-            GeoGpuG* rows = (GeoGpuG*)alpha_rows.mPtr + row_base;
-            for (size_t i = 0; i < total; ++i)
-            {
-                rows[i] = sGeo.mTCpu[rc[i].firstInstance];
-                rc[i].firstInstance = (U32)(row_base + i);
-            }
+            rows = (GeoGpuG*)alpha_rows.mPtr + row_base;
         }
         else
         {
             alpha_rows = Renderer::ScratchAlloc();
             ++a.mScratchFail;
+        }
+        size_t at_cmd = 0;
+        for (const auto& t : todo)
+        {
+            const VkDrawIndexedIndirectCommand* src = t.first->mARCmds.data() + t.second.mFirst;
+            const GeoFrag* lf = t.first;
+            for (U32 k = 0; k < t.second.mCount; ++k)
+            {
+                VkDrawIndexedIndirectCommand cmd = src[k];
+                a.mZeroRigged += cmd.indexCount == 0 ? 1 : 0;       // (an item that draws nothing: no palette this frame, or its buffers are not usable)
+                const U32 c = t.second.mFirst + k;
+                if (cmd.indexCount && c < lf->mARLodIb.size() && lf->mARLodIb[c])
+                {
+                    Buf* lb = packet_buffer(lf->mARLodIb[c]);
+                    if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
+                    {
+                        cmd.indexCount = lf->mARLodCount[c];
+                        cmd.firstIndex = 0;
+                        lod_use[at_cmd + k] = lf->mARLodIb[c];
+                        lod_names.push_back(lf->mARLodIb[c]);
+                    }
+                }
+                if (rows)
+                {
+                    rows[at_cmd + k] = sGeo.mTCpu[cmd.firstInstance];
+                }
+                cmd.firstInstance = (U32)(row_base + at_cmd + k);
+                out[at_cmd + k] = cmd;
+            }
+            at_cmd += t.second.mCount;
+        }
+        if (!lod_names.empty())
+        {
+            ensure_buffers_current(lod_names, 0);          // (the lists' data written by the main thread is recorded before the draws read it)
         }
     }
     else
