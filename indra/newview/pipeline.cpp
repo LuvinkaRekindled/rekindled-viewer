@@ -24478,6 +24478,8 @@ void LLPipeline::renderDeferredLighting()
     gRender.setColorMask(true, true);
 }
 
+bool ll_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
+
 void LLPipeline::doAtmospherics()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
@@ -24489,32 +24491,8 @@ void LLPipeline::doAtmospherics()
 
     if (RenderDeferredAtmospheric)
     {
-        {
-            // copy depth buffer for use in haze shader (use water displacement map as temp storage)
-            LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
-
-            LLRenderTarget& src = gPipeline.mRT->screen;
-            LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
-            LLRenderTarget& dst = gPipeline.mWaterDis;
-
-            RenderPassSuspend suspend(mRT->screen);      // the caller's pass on the screen target is interrupted for the depth copy
-            RenderPassScope pass_13415(dst);
-            gCopyDepthProgram.bind();
-
-            S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
-            S32 depth_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
-
-            gRender.getTexUnit(diff_map)->bind(&src);
-            gRender.getTexUnit(depth_map)->bind(&depth_src, true);
-
-            gRender.setColorMask(false, false);
-            gPipeline.mScreenTriangleVB->setBuffer();
-            gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-
-            pass_13415.end();
-            suspend.resume();
-        }
-
+        // <FS> the haze samples the scene depth itself: no copy of the depth (and the colour) into mWaterDis and no suspend and resume of the screen pass around it (AUDIT-shaders-2026-11-18.md section 2 item 1).
+        // The draw writes no depth and samples the depth attachment, so the renderer takes the read-only depth layout for it (F3.5c); the copy was a GL era way around sampling a bound depth buffer.
         LLRenderState::BlendScope blend(true);
         gRender.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA, LLRender::BF_ZERO, LLRender::BF_SOURCE_ALPHA);
         gRender.setColorMask(true, true);
@@ -24523,7 +24501,8 @@ void LLPipeline::doAtmospherics()
         LLShaderProgram& haze_shader = gHazeProgram;
 
         LL_PROFILE_GPU_ZONE("haze");
-        bindDeferredShader(haze_shader, nullptr, &mWaterDis);
+        LLRenderState::DepthReadOnlyScope haze_depth_read_only(true);      // F3.5c: the stage samples the depth and writes none
+        bindDeferredShader(haze_shader);
 
         LLEnvironment& environment = LLEnvironment::instance();
         haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
@@ -24550,35 +24529,14 @@ void LLPipeline::doWaterHaze()
     { // do not attempt water haze on impostors
         return;
     }
+    if (!ll_water_plane_in_view())
+    { // <FS> no water can be seen in this view: the haze of the water patches (or of the water seen from below) has nothing to draw
+        return;
+    }
 
     if (RenderDeferredAtmospheric)
     {
-        // copy depth buffer for use in haze shader (use water displacement map as temp storage)
-        {
-            LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
-
-            LLRenderTarget& src = gPipeline.mRT->screen;
-            LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
-            LLRenderTarget& dst = gPipeline.mWaterDis;
-
-            RenderPassSuspend suspend(mRT->screen);      // the caller's pass on the screen target is interrupted for the depth copy
-            RenderPassScope pass_13480(dst);
-            gCopyDepthProgram.bind();
-
-            S32 diff_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DIFFUSE_MAP);
-            S32 depth_map = gCopyDepthProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH);
-
-            gRender.getTexUnit(diff_map)->bind(&src);
-            gRender.getTexUnit(depth_map)->bind(&depth_src, true);
-
-            gRender.setColorMask(false, false);
-            gPipeline.mScreenTriangleVB->setBuffer();
-            gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-
-            pass_13480.end();
-            suspend.resume();
-        }
-
+        // <FS> as doAtmospherics: the haze samples the scene depth itself, no copy into mWaterDis and no suspend of the screen pass
         LLRenderState::BlendScope blend(true);
         gRender.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA, LLRender::BF_ZERO, LLRender::BF_SOURCE_ALPHA);
 
@@ -24588,7 +24546,8 @@ void LLPipeline::doWaterHaze()
         LLShaderProgram& haze_shader = gWaterHazePullProgram;       // (the water patches above the water are one record; the full screen triangle under it is an entry of one: LLVertexBuffer::pullDraw)
 
         LL_PROFILE_GPU_ZONE("haze");
-        bindDeferredShader(haze_shader, nullptr, &mWaterDis);
+        LLRenderState::DepthReadOnlyScope haze_depth_read_only(true);      // F3.5c: the stage samples the depth and writes none
+        bindDeferredShader(haze_shader);
 
         haze_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
 
@@ -24628,8 +24587,14 @@ void LLPipeline::doWaterHaze()
     }
 }
 
+bool ll_water_plane_in_view();      // lldrawpoolwater.cpp: some part of this view's frustum reaches the water
+
 void LLPipeline::doWaterExclusionMask()
 {
+    if (!ll_water_plane_in_view())
+    {
+        return;         // <FS> no water can be seen in this view: nothing reads the mask (the water pool and the water haze are skipped the same way)
+    }
     RenderPassScope pass_13548(mWaterExclusionMask);
     gRender.setClearColor(1, 1, 1, 1);
     mWaterExclusionMask.clear();
