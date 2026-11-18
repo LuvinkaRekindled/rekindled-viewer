@@ -162,3 +162,42 @@ Order by value at 100 avatars: 1, 2, 3 are the CPU cap (the turn and the recover
 - The cost of the table's begin and end and of `ownersFinish` (no zones of their own).
 - Ray tracing: the avatar structures (refit on a period by distance, a compute skin of their own) are not changed by this plan; D4's shared buffers are their natural source later.
 - The zone laps carry timer cost (scale by about 0.7); the per-avatar figures are from laps of 31 to 39 active avatars scaled linearly, not from a lap with 100.
+
+## 8. D2 measured, and a reduced D2 (2026-11-18, same day, after reading the code and one zones lap)
+
+Adam: "start D2". Before changing code, one zones lap `d2z-def1` (the clean exe 17:45:29, mode def, RT off, `-Zones`, short; 72 to 84 avatars, 20.0k to 27.7k objects; main loop interval 7.83 ms; zones carry timer cost) and a read of `run_avatar_motion_batch` (`newview/llviewerobjectlist.cpp:1186`), `completeDeferredMotionUpdate` (`llvoavatar.cpp:7970`), `runAttachmentJob` (`:4743`) and the pool (`rkforkjoinpool.h`).
+
+### What the main thread spends on avatars (V, one lap, 84 avatars)
+
+| Zone | ms a frame | Note |
+|---|---|---|
+| `objectlist: avatar motion batch` | 0.70 | everything below up to `animated objects` |
+| of it `completions (main thread)` | 0.29 | of it `idleUpdateMisc (attachment replay, matrices)` 0.16 (56.8 calls); post motion 0.02; name tag position, voice, appearance, lip sync, name tag each 0.03 or less |
+| of it `blend (launch to join)` | 0.26 | the main thread works as a pool member here: not pure waiting |
+| of it `palette jobs (launch to join)` | 0.10 | |
+| of it `attachment jobs (launch to join)` | 0.03 | |
+| of it `blend of animated objects worn` | 0.04 | |
+| `objectlist: idleUpdate (avatars)` | 0.24 | 84 calls, the serial part |
+| owner collect, pixel area sort, far tier | 0.05, 0.05, 0.03 | |
+| `ui: LLHUDObject::renderAll (name tags)` | 0.10 | draw, not update |
+
+All of it is about 1.2 ms of a 7.83 ms loop (display 5.06, idle 2.25). That is 15 percent. At 100 avatars, linear, about 1.5 ms.
+
+### What is already done (the plan text of section 2 predates part of it)
+
+- The ledger carries 0.81 writes per avatar loop now (150,000 loops in the lap): moved list 0.35, bridge moves 0.36, partition moves 0.005, moved bridge 0.002, render orders 0.002. Of the eight kinds only two are left in numbers. Bridges and avatars left the octrees (the visible set owner plan, 3.3 and the avatars step), which took the partition moves away.
+- `LLPose` already walks a vector (B2b); the flat world pass and the joint views exist (stages B and C of `PLAN-avatars.md`).
+- `RKForkJoinPool` has `launch` and `join` already (`rkforkjoinpool.h`: "Several batches can be in flight at once"). The overlap of D2 needs no new pool code. The batch uses only `runLabeled` (launch and join in one call) today.
+
+### What D2 can win on this machine
+
+The whole batch 0.70 plus the serial update 0.24, minus what stays (the table, the event drain, the join's tail, about 0.3 to 0.4 in the plan's own target): **0.5 to 0.8 ms of 7.8 ms, 6 to 10 percent of the main loop**, about 1 ms at 100 avatars. The pool is not the limit (nine workers at 17 to 19 percent each in `rkturn-def1`). It is a real but modest win; the case for the rest of D2 is structure (one source of truth for the pose and the attachments, the six one-frame-late bugs), not frames.
+
+### The reduced D2, in order, each with a compare and a gate
+
+- **D2a: ledger ops out.** MOVED_LIST and BRIDGE_MOVE are 0.71 of the 0.81 writes a loop. First read what their replay still does now that bridges are not in octrees (`lldrawable.cpp:2043`, `pipeline.cpp:2321`): if a replay is bookkeeping nobody reads, delete it; if a reader needs it, give the reader the record. Compare: the lists the replay builds equal what the new path gives, over a crowd lap, 0 differences. Gate: the `idleUpdateMisc (attachment replay)` zone down from 0.16, picture the same, Adam's eye on attachments.
+- **D2b: the blend overlapped.** `pool->launch` of the phase 1 blend and attachment jobs before the main thread's other work of `LLViewerObjectList::update` (flexible objects, animated textures, the fetches, the stats) and `join` where the first reader needs the skeleton. Must be read first: every reader between launch and join (flexible prims worn read the attachment's matrix, `updateApparentAngles` reads drawable positions the attachment job writes). The plan's rule: after launch nothing writes that avatar's pose until the join. Gate: `blend (launch to join)` plus the join zones from 0.39 to under 0.1 where the work is independent; no avatar one frame off (hover offset, ground sit, worn animated objects).
+- **D2c: late writes become inputs of the next frame.** The hover offset and the ground sit changes of `updateCharacterPostMotion` (written after the pass today, the cause of past bugs) move into the job's inputs. One frame of lag on a ground sitting avatar's hover; Adam's eye. Only then can the palette join (0.10) fold into the avatar's single job.
+- **D2d: readers of the record.** Name tag position, voice visualizer, footsteps, lip sync read the avatar's record instead of the joints (each 0.03 ms or less: small, structure only; last).
+
+Not decided: whether D2a to D2d are worth their risk against 0.5 to 0.8 ms. The lap shows the main thread's remaining time is mostly outside the avatars (`generateSunShadow` 1.19, `stateSort (early)` 1.01, `gObjectList.update` 1.17 (the batch 0.70 is most of it), `renderDeferredLighting` 0.79, `render_ui` 0.59). That is Adam's call.
