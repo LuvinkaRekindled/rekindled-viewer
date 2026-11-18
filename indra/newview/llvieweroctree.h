@@ -173,7 +173,7 @@ protected:
     LLVector4a& getGroupPosition()  {return mEntry->mPositionGroup;}
     void        initVisible(U32 visible) {mEntry->mVisible = visible;}
 
-    static void incrementVisible() {sCurVisible++;}
+    static void incrementVisible();        // (llvieweroctree.cpp: the stamp counter follows the display frame counter, see there)
 protected:
     LLPointer<LLViewerOctreeEntry>        mEntry;
     LLViewerOctreeEntry::eEntryDataType_t mDataType;

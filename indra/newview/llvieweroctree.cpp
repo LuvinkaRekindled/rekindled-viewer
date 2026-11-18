@@ -46,6 +46,16 @@
 //static variables definitions
 //-----------------------------------------------------------------------------------
 U32 LLViewerOctreeEntryData::sCurVisible = 10; //reserve the low numbers for special use.
+
+// 2026-11-18 (inventory item 4 of doc/vulkan/PLAN-visible-set-owner.md): the stamp counter used to be a counter of its own, ticked once a display after the geometry update, that happened to keep in step with gFrameCount (the
+// display's own counter) at an offset of 10 (the reserved low numbers); a reader that compared a stamp with gFrameCount, or measured seconds a frame on one and applied it to the other, was right only while the two stayed
+// in step. It follows gFrameCount now: the same tick site, and the value is gFrameCount + 10 (never less than the old value + 1: it only goes up), so the offset is a constant by construction. The counters of the idle
+// loop (LLFrameTimer, which runs ahead while the login screen draws) and of the image deletion (LLImageTex) stay what they are: timers, not stamps.
+void LLViewerOctreeEntryData::incrementVisible()
+{
+    sCurVisible = std::max(sCurVisible + 1, (U32)gFrameCount + 10u);
+}
+
 bool LLViewerOctreeDebug::sInDebug = false;
 
 static LLTrace::CountStatHandle<S32> sOcclusionQueries("occlusion_queries", "Number of occlusion queries executed"),
