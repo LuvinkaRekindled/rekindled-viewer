@@ -3687,13 +3687,12 @@ static void vk_avatar_log()
     }
 }
 
-// <FS> ---- the main view's cull on the pool (doc/vulkan/PLAN-statesort-offmain.md, stage 3a) ----
-// Every partition has an octree of its own and the walk of one writes only what belongs to its groups (visibility stamps, distances, occlusion state, the group's alpha-dirty bit), to the lists of the
-// cull result, and, through markNotCulled, to the rebuild queue (calcDistance) and the wake queue. The partitions are cut into runs of the list they come in (a run is a job); each job culls into a result
-// of its own and records the queue writes in a ledger (sSortSink); the results are appended and the ledgers applied in list order, which is the order the serial loop made them in.
+// <FS> ---- the kept pass of the main view: jobs on the pool (doc/vulkan/PLAN-statesort-offmain.md, stage 3a; the partition walk it was made for is gone, doc/vulkan/PLAN-visible-set-owner.md) ----
+// markNotCulled of a group writes only what belongs to the group (visibility stamps, distances, occlusion state, the group's alpha-dirty bit), to the lists of the cull result, and to the rebuild queue (calcDistance)
+// and the wake queue. The groups of the kept set are cut into runs (a run is a job); each job marks into a result of its own and records the queue writes in a ledger (sSortSink); the results are appended and the
+// ledgers applied in the order of the runs.
 namespace
 {
-// what a job does: the walk of a whole partition, or of one subtree of a partition that was split (mSplit)
 // stage 9: the main view's cull marks the drawables of a static drawable group (terrain, trees, water: render by drawable, in the region partitions) where it lists the group; the shadow, probe, impostor and HUD views do not
 static bool sMarkAtCull = false;
 static bool ll_static_drawable_group(LLSpatialGroup* g)
@@ -3707,22 +3706,12 @@ static bool ll_static_drawable_group(LLSpatialGroup* g)
     return type == LLViewerRegion::PARTITION_TERRAIN || type == LLViewerRegion::PARTITION_TREE || type == LLViewerRegion::PARTITION_WATER || type == LLViewerRegion::PARTITION_VOIDWATER;
 }
 
-struct CullItem
-{
-    LLSpatialPartition* mPart = nullptr;
-    bool mTask = false;
-    LLViewerOctreeCull::SplitTask mSplit = { nullptr, 0 };
-    float mUs = 0.f;
-};
-
-// a unit of the result, in the order of the serial loop: a segment (what the top levels of a split partition did, on the calling thread, before the jobs) or a run of items (a job)
+// a unit of the result of the kept pass: a run of groups (a job), its result and the ledger of what the calls defer
 struct CullChunk
 {
     size_t mBegin = 0, mEnd = 0;
-    bool mSegment = false;
     std::vector<LLPipeline::SortDelta> mLedger;
     LLCullResult* mLocal = nullptr;
-    double mUs = 0.0;
 };
 
 // <FS> view rework W3: the jobs of a stage work for a view. The scope installs it for the thread (the flags and the render type mask the job reads come from it, see LLPipeline::sJobView) and its camera id, and puts both back
@@ -3767,57 +3756,7 @@ struct CullTaskScope
 };
 
 std::vector<std::unique_ptr<LLCullResult>> sCullLocals;
-std::unordered_map<LLSpatialPartition*, float> sCullCostUs;     // the last measured cost of a partition's walk (smoothed), the weight when the runs are cut
-std::unordered_map<const void*, float> sCullNodeUs;       // the same for the subtrees that were jobs (smoothed): a node that cost more than the limit is walked on the calling thread, its children are the jobs
-
-struct CullSplitStats
-{
-    U32 mCalls[2] = {};             // 0: the serial loop, 1: the pool path
-    double mMs[2] = {};
-    double mApplyMs = 0.0, mLongestUs = 0.0, mSumUs = 0.0, mTopUs = 0.0;
-    U64 mChunks = 0, mInline = 0, mSegments = 0;
-    U32 mReport = 0;
-};
-CullSplitStats sCullSplitStats;
-std::vector<LLSpatialPartition*> sCullParts;
-
-void cull_split_report()
-{
-    CullSplitStats& s = sCullSplitStats;
-    const double pool_n = std::max<U32>(s.mCalls[1], 1), ser_n = std::max<U32>(s.mCalls[0], 1);
-    std::string list;
-    {
-        std::vector<std::pair<float, LLSpatialPartition*>> v;
-        double total = 0.0;
-        for (LLSpatialPartition* p : sCullParts)
-        {
-            auto it = sCullCostUs.find(p);
-            if (it != sCullCostUs.end())
-            {
-                v.push_back({ it->second, p });
-                total += it->second;
-            }
-        }
-        std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-        char b[96];
-        snprintf(b, sizeof(b), "%zu partitions, the sum of their costs %.0f us; the largest: ", v.size(), total);
-        list = b;
-        for (size_t k = 0; k < v.size() && k < 8; ++k)
-        {
-            snprintf(b, sizeof(b), "[type %u %.0f us] ", v[k].second->mPartitionType, v[k].first);
-            list += b;
-        }
-    }
-    LL_DIAG("CullSplit") << "main cull, partition stage (ms per frame): serial loop " << s.mMs[0] / ser_n << " over " << s.mCalls[0] << " frames | pool " << s.mMs[1] / pool_n << " over " << s.mCalls[1]
-        << " frames (of it the apply pass " << s.mApplyMs / pool_n << "; " << (double)s.mChunks / pool_n << " jobs a frame, sum of the jobs " << s.mSumUs / pool_n << " us, the longest " << s.mLongestUs / pool_n << " us, the top levels of the split partitions " << s.mTopUs / pool_n << " us in " << (double)s.mSegments / pool_n << " segments"
-        << " us; " << s.mInline << " frames run inline) | " << list << LL_ENDL;
-    LL_DIAG("CullSplit") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
-        << LLForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << LLForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << LLForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
-    LLPhaseCheck::logSummary();
-    s = CullSplitStats();
-}
-
-// the walks of the partitions of every region, as jobs: the result is the real one (sCull) and the object cache is culled too; 1 is returned (0: no pool). The partitions the stage 9 emptied are not walked (ll_partition_emptied).
+// the partitions the stage 9 emptied (bridges, avatars, animated objects) are not walked by the main view (ll_partition_emptied)
 static U64 sPartSkipped = 0, sPartSkippedNonEmpty = 0;       // step 2: the walks of the emptied bridge, avatar and animated object partitions that the main view skipped, and the ones that held something (must stay 0)
 static bool ll_partition_emptied(LLSpatialPartition* part)
 {
@@ -3830,263 +3769,6 @@ static bool ll_partition_emptied(LLSpatialPartition* part)
     ++sPartSkipped;
     sPartSkippedNonEmpty += part->mOctree && (part->mOctree->getElementCount() || part->mOctree->getChildCount());
     return true;
-}
-int cull_partitions_parallel(const LLPipeline::View& view)
-{
-    LLCamera& camera = *view.mCamera;
-    LLForkJoinPool* pool = LLForkJoinPool::shared();
-    if (!pool)
-    {
-        return 0;
-    }
-    std::vector<LLSpatialPartition*>& parts = sCullParts;
-    parts.clear();
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-    {
-        for (U32 i = 0; i < LLViewerRegion::NUM_PARTITIONS; i++)
-        {
-            LLSpatialPartition* part = (*iter)->getSpatialPartition(i);
-            if (part && gPipeline.hasRenderType(part->mDrawableType) && !ll_partition_emptied(part))
-            {
-                parts.push_back(part);
-            }
-        }
-    }
-    if (parts.empty())
-    {
-        return 0;
-    }
-
-    const auto t_start = std::chrono::steady_clock::now();
-    const size_t workers = pool->workerCount();
-
-    // the runs: contiguous stretches of the list of about the same cost (the cost of a partition is what its walk took the last time)
-    std::vector<float> cost(parts.size(), 0.f);
-    double known_sum = 0.0;
-    size_t known = 0;
-    for (size_t k = 0; k < parts.size(); ++k)
-    {
-        auto it = sCullCostUs.find(parts[k]);
-        if (it != sCullCostUs.end())
-        {
-            cost[k] = it->second;
-            known_sum += it->second;
-            ++known;
-        }
-        else
-        {
-            cost[k] = -1.f;
-        }
-    }
-    const float unknown_cost = known ? (float)(known_sum / known) : 6.f;
-    double total = 0.0;
-    for (float& c : cost)
-    {
-        if (c < 0.f)
-        {
-            c = unknown_cost;
-        }
-        total += c;
-    }
-    const double target = std::max(total / (double)((workers + 1) * 2), 12.0);
-
-    // the units, in the order of the serial loop. A partition that cost more than split_cost the last time is walked in pieces: its top levels here (a segment of the result), the subtrees below them as
-    // jobs of their own (each between two segments); the other partitions go into runs of about the same cost, one job a run.
-    static const double split_cost = getenv("LL_VK_CULL_SPLIT_US") ? atof(getenv("LL_VK_CULL_SPLIT_US")) : 80.0;
-    std::deque<CullChunk> chunks;
-    std::vector<CullItem> items;
-    items.reserve(parts.size() + 64);
-    auto new_chunk = [&](bool segment) -> CullChunk&
-    {
-        chunks.emplace_back();
-        CullChunk& c = chunks.back();
-        const size_t idx = chunks.size() - 1;
-        if (sCullLocals.size() <= idx)
-        {
-            sCullLocals.push_back(std::make_unique<LLCullResult>());
-        }
-        sCullLocals[idx]->clear();
-        c.mLocal = sCullLocals[idx].get();
-        c.mSegment = segment;
-        c.mBegin = c.mEnd = items.size();
-        return c;
-    };
-    std::unordered_map<LLSpatialPartition*, float> part_us;     // what each partition cost this time (its top levels and every job together)
-    double top_us = 0.0;
-    size_t segments = 0;
-    {
-        CullChunk* run = nullptr;
-        double run_cost = 0.0;
-        for (size_t k = 0; k < parts.size(); ++k)
-        {
-            LLSpatialPartition* part = parts[k];
-            if (cost[k] > split_cost)
-            {
-                run = nullptr;
-                static const double node_split = getenv("LL_VK_CULL_NODE_US") ? atof(getenv("LL_VK_CULL_NODE_US")) : 100.0;
-                const auto w0 = std::chrono::steady_clock::now();
-                CullChunk& first_segment = new_chunk(true);
-                ++segments;
-                CullTaskScope scope(first_segment, view);
-                const OctreeNode* root = part->mOctree;
-                part->cullSplit(camera, 8, [&](const OctreeNode* n)
-                {
-                    if (n == root)
-                    {
-                        return true;
-                    }
-                    auto it = sCullNodeUs.find(n);
-                    return it != sCullNodeUs.end() && it->second > node_split;
-                }, [&](const LLViewerOctreeCull::SplitTask& task)
-                {
-                    CullChunk& w = new_chunk(false);
-                    items.push_back({ part, true, task, 0.f });
-                    w.mEnd = items.size();
-                    CullChunk& next_segment = new_chunk(true);
-                    ++segments;
-                    sCull = next_segment.mLocal;                    // (the scope puts the thread's own back at the end)
-                    LLPipeline::sSortSink = &next_segment.mLedger;
-                });
-                const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - w0).count();
-                top_us += us;
-                part_us[part] += (float)us;
-            }
-            else
-            {
-                if (!run)
-                {
-                    run = &new_chunk(false);
-                    run_cost = 0.0;
-                }
-                items.push_back({ part, false, { nullptr, 0 }, 0.f });
-                run->mEnd = items.size();
-                run_cost += cost[k];
-                if (run_cost >= target)
-                {
-                    run = nullptr;
-                }
-            }
-        }
-    }
-    std::vector<size_t> work;
-    for (size_t c = 0; c < chunks.size(); ++c)
-    {
-        if (!chunks[c].mSegment)
-        {
-            work.push_back(c);
-        }
-    }
-
-    const std::function<void(size_t)> job = [&](size_t w)
-    {
-        CullChunk& chunk = chunks[work[w]];
-        CullTaskScope scope(chunk, view);
-        const auto t0 = std::chrono::steady_clock::now();
-        for (size_t k = chunk.mBegin; k < chunk.mEnd; ++k)
-        {
-            CullItem& item = items[k];
-            const auto p0 = std::chrono::steady_clock::now();
-            {
-                LL_CPU_ZONE("updateCull: partition cull");
-                if (item.mTask)
-                {
-                    item.mPart->cullTask(camera, item.mSplit);
-                }
-                else
-                {
-                    item.mPart->cull(camera);
-                }
-            }
-            item.mUs = (float)std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - p0).count();
-        }
-        chunk.mUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
-    };
-    // (a frame whose walks cost less than a wake-up is run here, in the same units: the costs go on being measured)
-    const bool inline_run = total < 100.0;
-    if (inline_run)
-    {
-        for (size_t w = 0; w < work.size(); ++w)
-        {
-            job(w);
-        }
-    }
-    else
-    {
-        LL_CPU_ZONE("updateCull: partition cull jobs (wait for the pool)");
-        pool->runLabeled("updateCull: partition cull", work.size(), job);
-    }
-
-    // the results in the order of the units, the ledgers applied in the same order
-    LLCullResult& target_result = *sCull;
-    const auto t_apply = std::chrono::steady_clock::now();
-    std::vector<LLPipeline::SortDelta> ledger;
-    size_t pushed = 0;
-    double longest = 0.0, sum = 0.0;
-    for (CullChunk& chunk : chunks)
-    {
-        LLCullResult& l = *chunk.mLocal;
-        for (LLCullResult::drawable_iterator d = l.beginVisibleList(); d != l.endVisibleList(); ++d) target_result.pushDrawable(*d);
-        for (LLCullResult::bridge_iterator b = l.beginVisibleBridge(); b != l.endVisibleBridge(); ++b) target_result.pushBridge(*b);
-        for (LLCullResult::sg_iterator g = l.beginDrawableGroups(); g != l.endDrawableGroups(); ++g) { target_result.pushDrawableGroup(*g); ++pushed; }
-        for (LLCullResult::sg_iterator g = l.beginVisibleGroups(); g != l.endVisibleGroups(); ++g) { target_result.pushVisibleGroup(*g); ++pushed; }
-        for (LLCullResult::sg_iterator g = l.beginOcclusionGroups(); g != l.endOcclusionGroups(); ++g) target_result.pushOcclusionGroup(*g);
-        ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
-        if (!chunk.mSegment)
-        {
-            longest = std::max(longest, chunk.mUs);
-            sum += chunk.mUs;
-        }
-    }
-    gPipeline.applySortDeltas(ledger);
-    for (const CullItem& item : items)
-    {
-        part_us[item.mPart] += item.mUs;
-        if (item.mTask)
-        {
-            float& c = sCullNodeUs[item.mSplit.mNode];
-            c = c > 0.f ? c * 0.7f + item.mUs * 0.3f : item.mUs;
-        }
-    }
-    if (sCullNodeUs.size() > 8192)
-    {
-        sCullNodeUs.clear();
-    }
-    for (size_t k = 0; k < parts.size(); ++k)
-    {
-        LLSpatialPartition* part = parts[k];
-        float& c = sCullCostUs[part];
-        const float now_us = part_us[part];
-        c = c > 0.f ? c * 0.8f + now_us * 0.2f : now_us;
-    }
-    if (sCullCostUs.size() > 4096)
-    {
-        sCullCostUs.clear();        // (partitions of regions that are gone: the weights come back within a frame)
-    }
-
-    gPipeline.mNumVisibleNodes += (S32)pushed;
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
-    {
-        LLVOCachePartition* vo_part = (*iter)->getVOCachePartition();
-        if (vo_part)
-        {
-            LL_CPU_ZONE("updateCull: VO cache cull");
-            vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive());
-        }
-    }
-
-    CullSplitStats& s = sCullSplitStats;
-    {
-        ++s.mCalls[1];
-        s.mMs[1] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_start).count();
-        s.mApplyMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_apply).count();
-        s.mChunks += work.size();
-        s.mSegments += segments;
-        s.mTopUs += top_us;
-        s.mSumUs += sum;
-        s.mLongestUs += longest;
-        s.mInline += inline_run;
-    }
-    return 1;
 }
 }
 
@@ -4108,8 +3790,7 @@ LLPipeline::View LLPipeline::currentView(LLCamera& camera, bool hud)
     return view;
 }
 
-bool ll_cull_derived_on();                    // stage 8f (defined with the kept compare, below): LL_VK_KEPT=2 and the worker's kept set is fresh
-static void ll_walk_fallback_note(bool derived_use);       // step 0 of removing the main view's walk (diagnostics, LL_DIAG): why the walk ran, how old the set was, what the walk kept that the last set and the recent groups lack
+static void ll_main_set_note();       // diagnostics (LL_DIAG): the age of the set on every main view frame, the frames with no set, the skipped walks of the emptied partitions; the pool counters
 static void ll_occluded_retest(LLCamera& camera);       // the groups held occluded are asked for their next verdict (the walk's earlyFail did it, and does not run while the kept set is the list)
 bool ll_cull_derived_skip(LLSpatialPartition* part);    // the covered partition is not walked (its root is rebounded, as the walk does first)
 void ll_cull_stamps_release();                // stage 8b (LL_VK_KSTAMP): the world stamps of the last kept set written back, the view dropped
@@ -4162,12 +3843,9 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
 
     { LL_CPU_ZONE("grabReferences"); grabReferences(result); }
 
-    // stage 8f (LL_VK_KEPT=2): the covered partitions are not walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, each group goes through markNotCulled as the walk's own does
-    const bool derived_use = view.isMainWorld() && !gCubeSnapshot && ll_cull_derived_on();
-    if (!derived_use && view.isMainWorld() && !gCubeSnapshot)
-    {
-        ll_cull_stamps_release();       // stage 8b: a frame the walk runs (or nothing is derived): the stamps of the last set are the groups' own again (nothing to do when none was applied)
-    }
+    // stage 8f, finished: in the main world view the covered partitions are never walked: the worker's set of the groups the walk keeps (ConsumerList::mKept) is the list, whatever its age and whatever gShiftFrame says, each
+    // group goes through markNotCulled as the walk's own did (ll_cull_derived_pass: it does nothing but release the stamps when there is no set yet). The other views (cascades, probes, HUD, impostors, snapshots) cull as before.
+    const bool main_kept = view.isMainWorld() && !gCubeSnapshot;
     struct CullShadowEnd
     {
         bool mOn; LLCamera* mCamera;
@@ -4188,19 +3866,8 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         ~MarkAtCullScope() { sMarkAtCull = false; }
     } mark_at_cull_scope(view.isMainWorldSort() && !gCubeSnapshot);
 
-    // <FS> stage 3a: the main view's partition walks on the pool (see cull_partitions_parallel)
-    // (the table keeps the walk serial only while something of it needs that: its comparison with the walk's lists, the flat cull, the LOD compare's notes: with the table's compare off the pool walk runs, the row events go through a mutex)
-    const bool main_cull = view.isMainWorld()
-        && !derived_use && !LLGpuZoneTimer::isActive();     // (the pose log only reads the camera after the cull: it does not need the serial path)
-    int cull_done = 0;
-    if (main_cull)
-    {
-        cull_done = cull_partitions_parallel(view);
-    }
-    const auto serial_t0 = main_cull && cull_done != 1 ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-
-    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin();
-            cull_done != 1 && iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
+    // (the partitions the kept set covers are not walked in the main view; the others, the HUD's, the bridges', the avatars', the animated objects', the HUD particles' and the object cache, and every partition of the other views are)
+    for (LLWorld::region_list_t::const_iterator iter = LLWorld::getInstance()->getRegionList().begin(); iter != LLWorld::getInstance()->getRegionList().end(); ++iter)
     {
         LLViewerRegion* region = *iter;
 
@@ -4215,7 +3882,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
                     static const char* const part_zones[] = { "updateCull: cull HUD", "updateCull: cull TERRAIN", "updateCull: cull VOIDWATER", "updateCull: cull WATER", "updateCull: cull TREE", "updateCull: cull PARTICLE",
                         "updateCull: cull GRASS", "updateCull: cull VOLUME", "updateCull: cull BRIDGE", "updateCull: cull AVATAR", "updateCull: cull CONTROL_AV", "updateCull: cull HUD_PARTICLE", "updateCull: cull (other)" };
                     LL_CPU_ZONE(part_zones[i < 12 ? i : 12]);
-                    if (derived_use && ll_cull_derived_skip(part))
+                    if (main_kept && ll_cull_derived_skip(part))
                     {
                         continue;       // (stage 8f: the worker's kept set stands in for this partition's walk, below)
                     }
@@ -4233,30 +3900,12 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
             { LL_CPU_ZONE("updateCull: VO cache cull"); vo_part->cull(camera, LLPipeline::useOcclusion() > 0 && !gAgent.getFSAreaSearchActive()); }
         }
     }
-    if (main_cull)
+    if (main_kept)
     {
-        CullSplitStats& s = sCullSplitStats;
-        if (cull_done != 1)
-        {
-            ++s.mCalls[0];
-            s.mMs[0] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - serial_t0).count();
-        }
-        if (++s.mReport >= 600)
-        {
-            cull_split_report();
-        }
-    }
-
-    if (view.isMainWorld() && !gCubeSnapshot)
-    {
-        ll_walk_fallback_note(derived_use);
-    }
-
-    if (derived_use)
-    {
+        ll_main_set_note();
         LL_CPU_ZONE("updateCull: kept groups");
-        ll_cull_derived_pass(camera, view, view.isMainWorld() && !LLGpuZoneTimer::isActive());
-        ll_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not run: this does
+        ll_cull_derived_pass(camera, view, !LLGpuZoneTimer::isActive());
+        ll_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
     }
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -12353,19 +12002,9 @@ void ll_lod_cand_report()
                           << "; candidates the live changeLOD() drops " << sCandExtra[0] / n << " | " << sCandExtra[1] / n << "; the set is " << (double)sCandAge.load() / std::max<double>(1.0, (double)(sCandLooked[0] + sCandLooked[1])) << " frames old" << LL_ENDL;
 }
 
-// stage 8f (LL_VK_KEPT=2): the walk of the covered partitions is replaced by the worker's set of the groups the walk keeps. Only while the worker draws the main view from its own derive (LL_VK_CULL_OWN: the render map's lists are
-// consumers' then, a frame late is what they accept) and the set is at most 3 frames old; otherwise the walk runs as before. The covered partitions are the ones C2's flat cull covered (not the HUD's, the bridges', the avatars',
-// the animated objects', the HUD particles', the object cache's).
-bool ll_cull_derived_on()
-{
-    if (gShiftFrame)
-    {
-        return false;
-    }
-    const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
-    return wl && !wl->mKept.empty() && (U32)gFrameCount - wl->mFrame <= 3;
-}
-
+// stage 8f, finished (removing the main view's walk): the walk of the covered partitions is replaced by the worker's set of the groups the walk keeps, on every frame of the main world view, whatever the age of the
+// set and whatever gShiftFrame says (no set: nothing is listed). The covered partitions are the ones C2's flat cull covered (not the HUD's, the bridges', the avatars', the animated objects', the HUD particles', the
+// object cache's).
 static bool ll_cull_derived_covers(LLSpatialPartition* part)
 {
     if (!part->mOctree || !gPipeline.hasRenderType(part->mDrawableType))
@@ -12463,97 +12102,54 @@ static void ll_kept_mark(LLSpatialGroup* g, LLCamera& camera)
     gPipeline.markNotCulled(g, camera);
 }
 
-// 2026-11-17: the walk of the covered partitions is not made while the worker's kept set is the list (stage 8f), and a group the CPU holds occluded is not in that set. The walk's earlyFail was what asked for such a
-// group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
-// stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
-// groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
-// STEP 0 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, LL_DIAG VkWalkFallback, nothing changes in the frame): the frames the main view WALKS (a shift frame, no set, an empty
-// set, a set over 3 frames old) by reason, the age of the set on every frame, and on the frames that walk: the covered groups the walk listed (the visible and the drawable groups) against the groups of the last set and the
-// recent groups (RECENT_BOX of the last 3 frames): the walk's only (what a pass over the last set would not list) and the set's only. A line for each of the first 60 walking frames, the totals every 600 frames.
-static void ll_walk_fallback_note(bool derived_use)
+// STEP 3 of removing the main view's walk (doc/vulkan/PLAN-visible-set-owner.md; diagnostics only, LL_DIAG VkWalkFallback, nothing changes in the frame): the main view never walks the covered partitions now, the kept
+// pass runs on every frame through whatever set exists. What is counted: the age of the set on every frame (0, 1, 2, 3, 4 to 6, 7 to 20, over 20), the frames with no set (login: nothing is listed for the covered
+// partitions) and the frames with an empty set, the shift frames, and the walks of the emptied partitions that were skipped. The same 600 frame hook reports the fork-join pool's counters and the thread phase check totals.
+static void ll_main_set_note()
 {
+    static U64 pool_frames = 0;
+    if (++pool_frames % 600 == 0)
+    {
+        LL_DIAG("VkWalkFallback") << "fork-join pool: " << LLForkJoinPool::sNestedRuns.load() << " runs found the pool busy and ran inline (a run inside a run; 0 is the expectation); runs whose executed jobs were not the count "
+            << LLForkJoinPool::sMismatchRuns.load() << ", given up on after a wait " << LLForkJoinPool::sRecoveredRuns.load() << ", decrements refused at zero " << LLForkJoinPool::sUnderflows.load() << " (all 0 is the expectation)" << LL_ENDL;
+        LLPhaseCheck::logSummary();
+    }
     if (!ll_diag_on())
     {
         return;
     }
-    static U64 frames = 0, walked = 0, why[4] = {}, age_hist[7] = {}, sum_walk_only = 0, sum_set_only = 0, compared = 0;
+    static U64 frames = 0, no_set = 0, empty_set = 0, shift = 0, age_hist[7] = {};
     static U32 lines = 0;
     ++frames;
     const std::shared_ptr<const LLVkBridge::ConsumerList> wl = LLVkBridge::consumerListRead();
     const U32 age = wl ? (U32)gFrameCount - wl->mFrame : ~0u;
+    shift += gShiftFrame ? 1 : 0;
     if (wl)
     {
         ++age_hist[age == 0 ? 0 : age == 1 ? 1 : age == 2 ? 2 : age == 3 ? 3 : age <= 6 ? 4 : age <= 20 ? 5 : 6];
+        empty_set += wl->mKept.empty() ? 1 : 0;
     }
-    if (!derived_use)
+    else
     {
-        ++walked;
-        const int w = gShiftFrame ? 0 : !wl ? 1 : wl->mKept.empty() ? 2 : 3;
-        ++why[w];
-        if (wl && !wl->mKept.empty())
-        {
-            std::lock_guard<std::mutex> lock(sCullMutex);
-            const U32 n = (U32)sSlotGroup.size();
-            const auto covered = [&](U32 slot)
-            {
-                LLViewerOctreeGroup* g = slot < n ? sSlotGroup[slot] : nullptr;
-                LLSpatialGroup* sg = (LLSpatialGroup*)g;
-                return sg && !sg->isDead() && sg->getSpatialPartition() && ll_cull_derived_covers(sg->getSpatialPartition());
-            };
-            static std::unordered_set<U32> in_set, in_walk;
-            in_set.clear();
-            in_walk.clear();
-            for (U32 wd = 0; wd < (U32)wl->mKept.size(); ++wd)
-            {
-                U32 bits = wl->mKept[wd];
-                for (U32 b = 0; bits && b < 32; ++b)
-                {
-                    if ((bits >> b) & 1u)
-                    {
-                        const U32 slot = (wd << 5) + b;
-                        if (covered(slot)) { in_set.insert(slot); }
-                    }
-                }
-            }
-            const U32 now = (U32)gFrameCount;
-            for (const auto& e : sRecent)
-            {
-                if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && covered(e.mSlot)) { in_set.insert(e.mSlot); }
-            }
-            const auto note_walk = [&](LLSpatialGroup* g)
-            {
-                if (g->mCullId && covered(g->mCullId - 1)) { in_walk.insert(g->mCullId - 1); }
-            };
-            for (LLCullResult::sg_iterator i = sCull->beginVisibleGroups(); i != sCull->endVisibleGroups(); ++i) { note_walk(*i); }
-            for (LLCullResult::sg_iterator i = sCull->beginDrawableGroups(); i != sCull->endDrawableGroups(); ++i) { note_walk(*i); }
-            U32 walk_only = 0, set_only = 0;
-            for (U32 s : in_walk) { walk_only += in_set.count(s) == 0; }
-            for (U32 s : in_set) { set_only += in_walk.count(s) == 0; }
-            sum_walk_only += walk_only;
-            sum_set_only += set_only;
-            ++compared;
-            if (lines < 60)
-            {
-                ++lines;
-                static const char* const names[] = { "shift frame", "no set", "empty set", "set over 3 frames old" };
-                LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << " walked: " << names[w] << ", age of the set " << (S32)age << ", the walk listed " << in_walk.size() << " covered groups, the last set and the recent groups " << in_set.size()
-                                          << ": the walk's only " << walk_only << ", the set's only " << set_only << LL_ENDL;
-            }
-        }
-        else if (lines < 60)
-        {
-            ++lines;
-            LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << " walked: " << (gShiftFrame ? "shift frame" : !wl ? "no set" : "empty set") << ", age of the set " << (S32)age << LL_ENDL;
-        }
+        ++no_set;
+    }
+    if ((!wl || wl->mKept.empty()) && lines < 60)
+    {
+        ++lines;
+        LL_DIAG("VkWalkFallback") << "frame " << gFrameCount << ": " << (!wl ? "no set" : "empty set") << ", the covered partitions list nothing" << (gShiftFrame ? " (shift frame)" : "") << LL_ENDL;
     }
     if (frames % 600 == 0)
     {
-        LL_DIAG("VkWalkFallback") << "main view frames " << frames << ": walked " << walked << " (shift " << why[0] << ", no set " << why[1] << ", empty set " << why[2] << ", set over 3 frames old " << why[3] << "); age of the set when there is one: 0 "
-                                  << age_hist[0] << ", 1 " << age_hist[1] << ", 2 " << age_hist[2] << ", 3 " << age_hist[3] << ", 4 to 6 " << age_hist[4] << ", 7 to 20 " << age_hist[5] << ", over 20 " << age_hist[6] << "; compared " << compared
-                                  << " walking frames: the walk's only " << sum_walk_only << ", the set's only " << sum_set_only << "; walks of the emptied partitions skipped " << sPartSkipped << ", of them non empty " << sPartSkippedNonEmpty << LL_ENDL;
+        LL_DIAG("VkWalkFallback") << "main view frames " << frames << ": no set " << no_set << ", empty set " << empty_set << ", shift frames " << shift << "; age of the set when there is one: 0 "
+                                  << age_hist[0] << ", 1 " << age_hist[1] << ", 2 " << age_hist[2] << ", 3 " << age_hist[3] << ", 4 to 6 " << age_hist[4] << ", 7 to 20 " << age_hist[5] << ", over 20 " << age_hist[6]
+                                  << "; walks of the emptied partitions skipped " << sPartSkipped << ", of them non empty " << sPartSkippedNonEmpty << LL_ENDL;
     }
 }
 
+// 2026-11-17: the walk of the covered partitions is not made while the worker's kept set is the list (stage 8f), and a group the CPU holds occluded is not in that set. The walk's earlyFail was what asked for such a
+// group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
+// stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
+// groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
 static void ll_occluded_retest(LLCamera& camera)
 {
     static std::vector<LLOcclusionCullingGroup*> occluded;
@@ -12703,7 +12299,7 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             }
         }
     }
-    // the groups through markNotCulled, as the pool walk does it: chunks of about the same size, a result and a ledger (what the call defers: the wake) for each, the results merged in the order of the chunks and the ledgers
+    // the groups through markNotCulled, as the walk did it: chunks of about the same size, a result and a ledger (what the call defers: the wake) for each, the results merged in the order of the chunks and the ledgers
     // applied in that order. A few groups are done here.
     const auto keep = [](LLSpatialGroup* g)
     {

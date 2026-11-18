@@ -549,10 +549,7 @@ public:
 
     /*virtual*/ S32 cull(LLCamera &camera, bool do_occlusion=false); // Cull on arbitrary frustum
     S32 cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select); // Cull on arbitrary frustum
-    // <FS> stage 3a: cull(camera) in pieces (see LLViewerOctreeCull::traverseTop); the main view only (no shadow culler)
-    void cullSplit(LLCamera& camera, S32 levels, const std::function<bool(const OctreeNode*)>& descend_more, const std::function<void(const LLViewerOctreeCull::SplitTask&)>& on_task);
-    void cullTask(LLCamera& camera, const LLViewerOctreeCull::SplitTask& task);
-    // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullSplit and cullTask cut the main cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
+    // <FS> the cascades' point cloud (LL_VK_PC_SPLIT): getVisibleExtents in pieces, the way cullShadowSplit and cullShadowTask cut the cascades' cull. min and max are the caller's accumulators (the roots are rebounded by the caller,
     // on its own thread, before any of these run: rebound() writes); empty is cleared when the walk found a visible group.
     // <FS> the cascades' cull (LL_VK_SC_SPLIT): LLOctreeCullShadow over a whole partition, and in pieces (the roots are rebounded by the caller before any of these run)
     void cullShadowWhole(LLCamera& camera);
