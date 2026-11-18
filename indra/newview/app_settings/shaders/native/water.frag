@@ -149,11 +149,7 @@ void main()
         sunlit = srgb_to_linear(sunlit);
     }
     sunlit *= sky_sunlight_scale;
-#if defined(LL_RT_QUERY) && defined(SUN_SHADOW)
-    const float shadow = rt_sun_shadow(pos, norm, distort);       // (a session with ray queries: the sun shadow of the stock water is a ray, sampleDirectionalShadow of shadowUtil.glsl)
-#else
-    const float shadow = sun_shadow(pos, norm, distort.y);
-#endif
+    // (the sun's shadow is looked up below, only where the glint is above the last level of the picture: its one use is the glint)
 
 #ifdef TRANSPARENT_WATER
     // the picture below: where the water is cut out (exclusion mask) the ripples do not push it; where the surface under the water is nearer than the water, they do not either
@@ -209,7 +205,22 @@ void main()
     const PbrSurface s = pbr_surface(normalize(norm + up * max(dist, 32.0) / 32.0 * (1.0 - vdu)), v, vec3(0.0), specular_linear, perceptualRoughness);
     float nl;
     const vec3 lobe = pbr_punctual(s, normalize(light_dir), nl);
-    const vec3 punctual = clamp(nl * lobe, vec3(0.0), vec3(10.0)) * sunlit * shadow * atten;
+    // the glint is the lobe in the sun's colour times the shadow (at most 1): where it is already under 1/1024 (a quarter of the last level of an 8 bit picture) the shadow cannot show, so the cascade taps (or the sun ray of a
+    // ray traced session) are not made there: they were about half of the water's texture reads (AUDIT-shaders-2026-11-18.md section 4 item 1)
+    vec3 punctual = clamp(nl * lobe, vec3(0.0), vec3(10.0)) * sunlit * atten;
+    if (max(punctual.r, max(punctual.g, punctual.b)) > (1.0 / 1024.0))
+    {
+#if defined(LL_RT_QUERY) && defined(SUN_SHADOW)
+        const float shadow = rt_sun_shadow(pos, norm, distort);       // (a session with ray queries: the sun shadow of the stock water is a ray, sampleDirectionalShadow of shadowUtil.glsl)
+#else
+        const float shadow = sun_shadow(pos, norm, distort.y);
+#endif
+        punctual *= shadow;
+    }
+    else
+    {
+        punctual = vec3(0.0);
+    }
 
     radiance *= df2.y;
     vec3 color = mix(fb.rgb, radiance, min(1.0, df2.x)) + punctual;

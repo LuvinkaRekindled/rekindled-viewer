@@ -162,7 +162,12 @@ PBRMix sample_pbr(int m, vec2 uv, vec2 duvdx, vec2 duvdy)
     mix.vNt = textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_normal(m)))], uv, duvdx, duvdy).xyz * 2.0 - 1.0;
 #endif
 #if (TERRAIN_PBR_DETAIL >= TERRAIN_PBR_DETAIL_EMISSIVE)
-    mix.emissive = srgb_to_linear(textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
+    // (the caller multiplies it by the material's emissive colour, which is black for almost every terrain material: the map is not read then; explicit derivatives, so a branch is fine)
+    mix.emissive = vec3(0.0);
+    if (emissiveColors[m] != vec3(0.0))
+    {
+        mix.emissive = srgb_to_linear(textureGrad(ll_tbl2d[nonuniformEXT(LL_HM(slot_emissive(m)))], uv, duvdx, duvdy).xyz);
+    }
 #endif
     return mix;
 }
