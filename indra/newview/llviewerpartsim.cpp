@@ -342,7 +342,7 @@ static void fs_bounce_z(F32 z0, F32 v0, F32 a, F32 age, F32& z_out, F32& v_out)
     v_out = 0.f;
 }
 
-void LLViewerPartRecord::evaluate(F64 now, LLVector3& pos, LLVector3& vel) const
+void RKViewerPartRecord::evaluate(F64 now, LLVector3& pos, LLVector3& vel) const
 {
     const F32 age = (F32)(now - mT0);
     const F32 half_age2 = 0.5f * age * age;
@@ -404,20 +404,20 @@ static int fs_record_mode(const LLViewerPart& part)
     const bool bounce = (fl & LLPartData::LL_PART_BOUNCE_MASK) != 0;
     if (fl & LLPartData::LL_PART_TARGET_LINEAR_MASK)
     {
-        return (bounce || part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::TARGET_LINEAR;
+        return (bounce || part.mPartSourcep.isNull()) ? -1 : RKViewerPartRecord::TARGET_LINEAR;
     }
     if (fl & LLPartData::LL_PART_TARGET_POS_MASK)
     {
-        return (bounce || part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::TARGET_POS;
+        return (bounce || part.mPartSourcep.isNull()) ? -1 : RKViewerPartRecord::TARGET_POS;
     }
     if (fl & LLPartData::LL_PART_FOLLOW_SRC_MASK)
     {
-        return part.mPartSourcep.isNull() ? -1 : LLViewerPartRecord::FOLLOW;
+        return part.mPartSourcep.isNull() ? -1 : RKViewerPartRecord::FOLLOW;
     }
-    return (bounce && part.mPartSourcep.isNull()) ? -1 : LLViewerPartRecord::FREE;
+    return (bounce && part.mPartSourcep.isNull()) ? -1 : RKViewerPartRecord::FREE;
 }
 
-static void fs_fill_record(const LLViewerPart& part, int mode, LLViewerPartRecord& rec)
+static void fs_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec)
 {
     rec.mPos0 = part.mSpawnKnown ? part.mSpawnPos : part.mPosAgent;
     rec.mVel0 = part.mSpawnKnown ? part.mSpawnVel : part.mVelocity;
@@ -460,7 +460,7 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
 
     gPipeline.markRebuild(mVOPartGroupp->mDrawable, LLDrawable::REBUILD_ALL);
 
-    LLViewerPartRecord rec;
+    RKViewerPartRecord rec;
     fs_fill_record(part, mode, rec);
     rec.mT0 = LLViewerPartSim::sSimTime - (F64)LLViewerPartSim::sSimDt;     // (the stepping gives a particle its first full step in the frame it was made in)
     {
@@ -530,7 +530,7 @@ bool LLViewerPartGroup::addRecord(const LLViewerPart& part, F32 desired_size, in
 // the record of a slot as the shader reads it (alphaPullV.glsl / emissivePullV.glsl, ll_record_eval): positions = (pos0, t0 high), normals = (vel0, t0 low), tangents = (accel, max age),
 // weight4 = (target at spawn, floor height), texcoord0 / 1 = start / end scale, texcoord2 = two words (start glow | end glow << 8 | mode << 16 | bounce << 18 | interp colour << 19 | interp scale << 20 |
 // follow velocity << 21 | source number << 24, end colour), colour = start colour
-static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const LLViewerPartRecord* recs)
+static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const RKViewerPartRecord* recs)
 {
     LLStrider<LLVector4a> pos, nrm, tan, wt;
     LLStrider<LLVector2> tc0, tc1, tc2;
@@ -545,7 +545,7 @@ static void fs_store_write(LLVertexBuffer* store, U32 slot, U32 count, const LLV
     store->getColorStrider(col, slot, count);
     for (U32 i = 0; i < count; ++i)
     {
-        const LLViewerPartRecord& r = recs[i];
+        const RKViewerPartRecord& r = recs[i];
         const F32 t0_hi = (F32)r.mT0;
         const F32 t0_lo = (F32)(r.mT0 - (F64)t0_hi);
         LLVector4a v;
@@ -615,7 +615,7 @@ bool LLViewerPartGroup::syncStore()
     return true;
 }
 
-void LLViewerPartGroup::noteRecordReach(const LLViewerPartRecord& r)
+void LLViewerPartGroup::noteRecordReach(const RKViewerPartRecord& r)
 {
     if (mSrcAgg.size() < mSources.size())
     {
@@ -628,19 +628,19 @@ void LLViewerPartGroup::noteRecordReach(const LLViewerPartRecord& r)
     F32 ball = reach;
     switch (r.mMode)
     {
-    case LLViewerPartRecord::FOLLOW:
+    case RKViewerPartRecord::FOLLOW:
         if (r.mSrcLocal < mSrcAgg.size())
         {
             mSrcAgg[r.mSrcLocal].mFollowReach = llmax(mSrcAgg[r.mSrcLocal].mFollowReach, reach);
         }
         return;
-    case LLViewerPartRecord::TARGET_LINEAR:
+    case RKViewerPartRecord::TARGET_LINEAR:
         if (r.mSrcLocal < mSrcAgg.size())
         {
             mSrcAgg[r.mSrcLocal].mTl = true;
         }
         return;
-    case LLViewerPartRecord::TARGET_POS:
+    case RKViewerPartRecord::TARGET_POS:
         ball = (r.mTarget0 - r.mPos0).length() + v * T + a * T * T;
         if (r.mSrcLocal < mSrcAgg.size())
         {
@@ -672,7 +672,7 @@ void LLViewerPartGroup::rebuildAggregates()
     mBoxValid = false;
     mMaxScale = 0.f;
     mSrcAgg.assign(mSources.size(), SrcAgg());
-    for (const LLViewerPartRecord& r : mRecords)
+    for (const RKViewerPartRecord& r : mRecords)
     {
         noteRecordReach(r);
     }
@@ -785,7 +785,7 @@ static bool fs_partsim_compare_on()
 // the closed form of every law against the stepped state (a particle just stepped to its age): the free flight and the colour / scale / glow are expected to agree, the follow source and target linear laws too;
 // the bounce and the pull towards a target are different laws (continuous, not the stepping's), the log says how far apart they are
 static int fs_record_mode(const LLViewerPart& part);
-static void fs_fill_record(const LLViewerPart& part, int mode, LLViewerPartRecord& rec);
+static void fs_fill_record(const LLViewerPart& part, int mode, RKViewerPartRecord& rec);
 static void fs_partsim_compare(const LLViewerPart* part)
 {
     const int mode = fs_record_mode(*part);
@@ -793,7 +793,7 @@ static void fs_partsim_compare(const LLViewerPart* part)
     {
         return;
     }
-    LLViewerPartRecord rec;
+    RKViewerPartRecord rec;
     fs_fill_record(*part, mode, rec);
     const F32 age = part->mLastUpdateTime;
     rec.mT0 = 0.0;
@@ -1081,7 +1081,7 @@ void LLViewerPartGroup::shift(const LLVector3 &offset)
         mParticles[i]->mPosAgent += offset;
         mParticles[i]->mSpawnPos += offset;
     }
-    for (LLViewerPartRecord& rec : mRecords)
+    for (RKViewerPartRecord& rec : mRecords)
     {
         rec.mPos0 += offset;
     }
@@ -1317,7 +1317,7 @@ void LLViewerPartSim::sortStores()
         LL_DIAG("Q1Census") << "particle sort jobs sent: " << sent << " frames, " << calls << " calls from the alpha pass; groups seen " << groups_seen << ", sent " << groups_sent << ", without a store " << no_store << ", not all records " << not_pure << LL_ENDL;
     }
     LLViewerCamera* camera = LLViewerCamera::getInstance();
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 36;
     header.mEntries = count;
     header.mParticleFloats = (U32)sources.size();
@@ -1331,7 +1331,7 @@ void LLViewerPartSim::sortStores()
     blob.resize(jobs.size() * 4 + sources.size() * 4);
     memcpy(blob.data(), jobs.data(), jobs.size() * 4);
     memcpy(blob.data() + jobs.size() * 4, sources.data(), sources.size() * 4);
-    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+    RKVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 void LLViewerPartSim::addPart(LLViewerPart* part)
@@ -1560,7 +1560,7 @@ void LLViewerPartSim::updateSimulation()
         if (census)
         {
             sSimCensus.mRecs += mViewerPartGroups[i]->mRecords.size();
-            for (const LLViewerPartRecord& rec : mViewerPartGroups[i]->mRecords)
+            for (const RKViewerPartRecord& rec : mViewerPartGroups[i]->mRecords)
             {
                 ++sSimCensus.mModeRecs[rec.mBounce ? 4 : rec.mMode];
             }

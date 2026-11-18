@@ -2,7 +2,7 @@
  * @file rkrowtable.h
  * @brief A table of rows: one row per owner object, handed out and given back, rows never move.
  *
- * doc/vulkan/PLAN-clean-core.md step C3. The generic form of the instance table (rkinstancetable.h) and the group table (rkgrouptable.h): LLRowTable<Row, Capacity, ChunkShift>. An owner (a face) gets a
+ * doc/vulkan/PLAN-clean-core.md step C3. The generic form of the instance table (rkinstancetable.h) and the group table (rkgrouptable.h): RKRowTable<Row, Capacity, ChunkShift>. An owner (a face) gets a
  * row id, owns no copy of what the row holds, and its accessors read the row; the row is addressable by id from a job or, later, a GPU upload. Rows are contiguous in chunks that are allocated when the
  * first row of the chunk is handed out (cost = what is used), a row never moves (no lock for readers), acquire() / release() take a mutex.
  *
@@ -27,7 +27,7 @@
 #include <vector>
 
 template <class Row, U32 CAPACITY, U32 CHUNK_SHIFT>
-class LLRowTable
+class RKRowTable
 {
 public:
     static constexpr U32 kCapacity = CAPACITY;

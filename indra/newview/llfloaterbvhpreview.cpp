@@ -1540,24 +1540,24 @@ bool    LLPreviewAnimation::render()
     mNeedsUpdate = false;
     LLVOAvatar* avatarp = mDummyAvatar;
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
     gUIProgram.bind();
 
-    LLRenderPresetUIDefault def;
+    RKRenderPresetUIDefault def;
     gRender.getTexUnit(0)->bindWhite();
     gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gRender.flush();
 
@@ -1585,7 +1585,7 @@ bool    LLPreviewAnimation::render()
         avatarp->updateLOD();
 
         LLVertexBuffer::unbind();
-        LLRenderState::DepthScope gls_depth(true);
+        RKRenderState::DepthScope gls_depth(true);
 
         LLFace* face = avatarp->mDrawable->getFace(0);
         if (face)

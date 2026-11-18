@@ -18,7 +18,7 @@
 #include <string>
 #include <thread>
 
-class LLWinMediaPlayout
+class RKWinMediaPlayout
 {
 public:
     static const int kRate        = 48000;
@@ -28,8 +28,8 @@ public:
     // Fills |frames| frames of 16 bit interleaved stereo at 48 kHz.
     using PullFn = std::function<void(void* buffer, size_t frames)>;
 
-    LLWinMediaPlayout();
-    ~LLWinMediaPlayout();
+    RKWinMediaPlayout();
+    ~RKWinMediaPlayout();
 
     // |endpoint_id| is a Windows endpoint id in UTF-8; empty (or one that no longer exists) = the
     // default playback device for the console role. Returns when the stream runs or has failed.

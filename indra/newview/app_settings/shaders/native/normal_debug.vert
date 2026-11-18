@@ -2,13 +2,13 @@
 // HAS_ATTRIBUTE_TANGENT, of its tangent) for the geometry stage to draw as lines. A translation of "Normal Debug Shader" (interface/normaldebugV.glsl, the static form: the skinned form was never bound);
 // pairs with normal_debug.geom and normal_debug.frag. The tips are remapped to Vulkan's clip space here as the vertex position is (the old program's translator remapped the position only).
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 projection_matrix;
     float debug_normal_draw_length;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
 };

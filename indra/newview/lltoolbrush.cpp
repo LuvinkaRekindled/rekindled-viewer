@@ -525,10 +525,10 @@ void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region
                                     const LLVector3& pos_world)
 {
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope mDepthTest(true);
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderState::DepthScope mDepthTest(true);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     gRender.color4fv(OVERLAY_COLOR.mV);
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.0f, 0.0f, 1.0f);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, 0.0f, 0.0f, 1.0f);
 
     S32 i = (S32) pos_region.mV[VX];
     S32 j = (S32) pos_region.mV[VY];
@@ -582,7 +582,7 @@ void LLToolBrushLand::renderOverlay(LLSurface& land, const LLVector3& pos_region
     }
     gRender.end();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void LLToolBrushLand::determineAffectedRegions(region_list_t& regions,

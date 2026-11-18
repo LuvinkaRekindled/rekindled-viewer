@@ -97,10 +97,10 @@ U32 LLViewerJoint::render( F32 pixelArea, bool first_pass, bool is_dummy )
             if ((pixelArea > MIN_PIXEL_AREA_3PASS_HAIR))
             {
                 // render all three passes
-                LLRenderState::CullScope cull(false);
+                RKRenderState::CullScope cull(false);
                 // first pass renders without writing to the z buffer
                 {
-                    LLRenderState::DepthScope gls_depth(true, false);
+                    RKRenderState::DepthScope gls_depth(true, false);
                     triangle_count += drawShape( pixelArea, first_pass, is_dummy );
                 }
                 // second pass writes to z buffer only
@@ -111,20 +111,20 @@ U32 LLViewerJoint::render( F32 pixelArea, bool first_pass, bool is_dummy )
                 // third past respects z buffer and writes color
                 gRender.setColorMask(true, false);
                 {
-                    LLRenderState::DepthScope gls_depth(true, false);
+                    RKRenderState::DepthScope gls_depth(true, false);
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
                 }
             }
             else
             {
                 // Render Inside (no Z buffer write)
-                gRender.setCullFace(LLRenderState::CullFace::Front);
+                gRender.setCullFace(RKRenderState::CullFace::Front);
                 {
-                    LLRenderState::DepthScope gls_depth(true, false);
+                    RKRenderState::DepthScope gls_depth(true, false);
                     triangle_count += drawShape( pixelArea, first_pass, is_dummy  );
                 }
                 // Render Outside (write to the Z buffer)
-                gRender.setCullFace(LLRenderState::CullFace::Back);
+                gRender.setCullFace(RKRenderState::CullFace::Back);
                 {
                     triangle_count += drawShape( pixelArea, false, is_dummy  );
                 }

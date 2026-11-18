@@ -1037,7 +1037,7 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
 }
 
 // <FS> Stage 0 of doc/vulkan/ATTACHMENTS-design.md (LL_VK_ATTCENSUS=1): how much of the move chain belongs to attachments
-LLAttCensus::Kind LLAttCensus::kindOf(const LLDrawable* drawable)
+RKAttCensus::Kind RKAttCensus::kindOf(const LLDrawable* drawable)
 {
     const LLViewerObject* object = drawable ? drawable->getVObj() : nullptr;
     if (!object)
@@ -1052,7 +1052,7 @@ LLAttCensus::Kind LLAttCensus::kindOf(const LLDrawable* drawable)
     return drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) ? RIGGED : RIGID;
 }
 
-void LLAttCensus::classify(const LLViewerObject* object, const LLDrawable* drawable)
+void RKAttCensus::classify(const LLViewerObject* object, const LLDrawable* drawable)
 {
     ++sReason[R_SEEN];
     bool not_plain = false;
@@ -1092,7 +1092,7 @@ void LLAttCensus::classify(const LLViewerObject* object, const LLDrawable* drawa
     (void)drawable;
 }
 
-void LLAttCensus::frame()
+void RKAttCensus::frame()
 {
     if (!sOn)
     {
@@ -1204,7 +1204,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         }
     }
 
-    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    RKForkJoinPool* pool = RKForkJoinPool::shared();
 
     constexpr size_t MIN_PARALLEL_BATCH = 4;
     const std::function<void(size_t)> blend = [&batch](size_t index)
@@ -1239,7 +1239,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 
         // <FS> view rework A2: the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
         // them in avatar order where the loop would have run. Not while a census or the avatar timers are on (their counters are shared).
-        if (!gFSAvTimersOn && !LLAttCensus::sOn)
+        if (!gFSAvTimersOn && !RKAttCensus::sOn)
         {
             static std::vector<LLVOAvatar*> jobs;
             jobs.clear();
@@ -1450,7 +1450,7 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     //clear avatar LOD change counter
     LLVOAvatar::sNumLODChangesThisFrame = 0;
-    LLAttCensus::frame();
+    RKAttCensus::frame();
     gPipeline.sceneStateCensus();
     ItemCensus::frame();
     HitchWatch::frame();
@@ -1499,7 +1499,7 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     std::vector<LLViewerObject*>::iterator idle_end = idle_list.begin()+idle_count;
 
-    LLAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place
+    RKAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place
 
     // <FS:Ansariel> Speed up debug settings
     //if (gSavedSettings.getBOOL("FreezeTime"))
@@ -1565,7 +1565,7 @@ void LLViewerObjectList::update(LLAgent &agent)
             { LL_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }
             motion_batch.clear();
         }
-        LLAvatarTable::endFrame();      // <FS> PLAN-avatars.md stage A step 4: the facts of the avatars' update are final: the render side reads them from the rows
+        RKAvatarTable::endFrame();      // <FS> PLAN-avatars.md stage A step 4: the facts of the avatars' update are final: the render side reads them from the rows
         // </FS>
 
         // <FS> the avatar update timers

@@ -92,7 +92,7 @@ public:
 // <FS> GPU particles stage 2 (doc/vulkan/PLAN-gpu-particles.md): a particle with no per-frame input (no wind, target, bounce, follow source, ribbon, callback) is not stepped: its position,
 // velocity, colour, scale and glow are functions of its age (the closed form step 1 compared against the stepping: colour, scale and glow equal, position within the stepping's float rounding).
 // The group keeps it as a record; LLVOPartGroup::updateRows evaluates it.
-struct LLViewerPartRecord
+struct RKViewerPartRecord
 {
     LLVector3 mPos0, mVel0, mAccel;
     F64 mT0 = 0.0;                          // the simulation clock (LLViewerPartSim::getSimTime) when the first step began
@@ -164,7 +164,7 @@ public:
     part_list_t mParticles;
 
     // <FS> GPU particles stage 2: the particles that are functions of their age (mDeadAt: the clock after which each is gone, -1 = removed by its source's id)
-    std::vector<LLViewerPartRecord> mRecords;
+    std::vector<RKViewerPartRecord> mRecords;
     std::vector<F64> mDeadAt;
     bool addRecord(const LLViewerPart& part, const F32 desired_size, int mode);
     bool expireRecords();                   // true: some went
@@ -186,7 +186,7 @@ public:
     bool mBoxValid = false;
     F32 mMaxScale = 0.f;                    // the largest scale of any record
     U32 mAggAge = 0;
-    void noteRecordReach(const LLViewerPartRecord& rec);
+    void noteRecordReach(const RKViewerPartRecord& rec);
     void rebuildAggregates();
     bool pathBox(LLVector3& lo, LLVector3& hi) const;   // the box of the group's particles now (false: no records)
     LLPointer<LLVertexBuffer> mStore;

@@ -5,9 +5,9 @@
  * A native program is plain Vulkan GLSL 460 with explicit layouts. The loader prepends one prelude (native/ll_native.glsl: the bindless texture tables and the handle map), resolves
  * `#include "lib/x.glsl"` from the native directory, compiles with glslang and builds the same ProgramInfo the renderer already draws with. The contract:
  *
- *   set 0, binding 0   `layout(std140, set = 0, binding = 0) uniform LLLooseUniforms { ... };`   per pass values (the renderer's uniform class UC_PASS)
- *   set 0, binding 5   `layout(std140, set = 0, binding = 5) uniform LLLooseDraw { ... };`       per draw values (UC_DRAW); a member `uint ll_ti_<name>` is the texture slot of a sampler `<name>`
- *                                                                                                 (`ll_ti_cube_<name>`: a cube map). Bindings 6-8: LLLooseMaterial / LLLooseLight / LLLooseSkin.
+ *   set 0, binding 0   `layout(std140, set = 0, binding = 0) uniform RKLooseUniforms { ... };`   per pass values (the renderer's uniform class UC_PASS)
+ *   set 0, binding 5   `layout(std140, set = 0, binding = 5) uniform RKLooseDraw { ... };`       per draw values (UC_DRAW); a member `uint ll_ti_<name>` is the texture slot of a sampler `<name>`
+ *                                                                                                 (`ll_ti_cube_<name>`: a cube map). Bindings 6-8: RKLooseMaterial / RKLooseLight / RKLooseSkin.
  *   set 2              the bindless tables (ll_tbl2d, ll_tblcube, ll_tblcubearray, ll_tbl2dshadow) and the handle map: `texture(ll_tbl2d[LL_HM(ll_ti_name)], uv)`
  *   vertex inputs      explicit `layout(location = n)`, n = index in the viewer's reserved attribute list (position 0)
  *   outputs            explicit locations
@@ -25,7 +25,7 @@
 
 #include "rkvkshader.h"
 
-namespace LLVk
+namespace RKVk
 {
 class Program;
 
@@ -56,7 +56,7 @@ std::vector<std::pair<std::string, std::string>> nativeGlobalDefinesCopy();
 // shadows on, the stock program with its ray query code stays and the line is swapped in at the draw. Set with the global defines each time the viewer's shaders are set up (main thread).
 void nativeSetRtSession(bool on);
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN
 

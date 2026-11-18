@@ -1,7 +1,7 @@
 // copydepth.frag: the colour of one texture and the depth of another, unchanged (the depth copies of the post chain). A line for line translation of "Copy Depth Shader" (interface/copyF.glsl with
 // COPY_DEPTH); pairs with copy.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_depthMap;
     uint ll_ti_diffuseMap;

@@ -13,7 +13,7 @@
 class LLVOAvatar;
 class LLViewerObject;
 
-class LLAvatarTable
+class RKAvatarTable
 {
 public:
     // what the avatar update does with the avatar this frame

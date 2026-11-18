@@ -300,7 +300,7 @@ void LLVOWLSky::drawFsSky(void)
         updateGeometry(mDrawable);
     }
 
-    LLRenderState::BlendScope disable_blend(false);
+    RKRenderState::BlendScope disable_blend(false);
 
     mFsSkyVerts->setBuffer();
     mFsSkyVerts->drawRange(LLRender::TRIANGLES, 0, mFsSkyVerts->getNumVerts() - 1, mFsSkyVerts->getNumIndices(), 0);
@@ -315,7 +315,7 @@ void LLVOWLSky::drawDome(void)
         updateGeometry(mDrawable);
     }
 
-    LLRenderState::DepthScope gls_depth(true, false);
+    RKRenderState::DepthScope gls_depth(true, false);
 
     std::vector< LLPointer<LLVertexBuffer> >::const_iterator strips_vbo_iter, end_strips;
     end_strips = mStripsVerts.end();

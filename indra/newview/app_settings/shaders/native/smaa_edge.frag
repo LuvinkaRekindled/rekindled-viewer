@@ -1,12 +1,12 @@
 // smaa_edge.frag: SMAA's edge detection: the colour edges of the picture. A line for line translation of "SMAA Edge Detection" (deferred/SMAAEdgeDetectF.glsl); pairs with smaa_edge.vert.
 // (the predication texture is only there with SMAA_PREDICATION, which the manifest lines set to 0)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 #if SMAA_PREDICATION

@@ -3,7 +3,7 @@
  * @brief The AMD FidelityFX Denoiser 1.3 (MIT, SDK v1.1.4) for the traced reflections and the traced sun shadow of the Vulkan mirror (doc/vulkan/PLAN-amd-denoiser.md)
  *
  * The denoiser component and its Vulkan backend are linked from static libraries built from the SDK's source (see llrender/CMakeLists.txt); without them every call here says no.
- * The caller (the worker thread: LLVkWorker::on_denoise_reflections / on_denoise_shadows) hands it images and the camera; it keeps the denoiser's own helper images (for the reflections the second
+ * The caller (the worker thread: RKVkWorker::on_denoise_reflections / on_denoise_shadows) hands it images and the camera; it keeps the denoiser's own helper images (for the reflections the second
  * radiance and the two variance images of the ping-pong, the tile list of the dispatch and its indirect arguments; for the shadows the hit mask) and the denoiser context, and makes them again when
  * the render size changes. Each kind has a context of its own, so turning one kind on or off never rebuilds the other's.
  *
@@ -17,19 +17,19 @@
 
 #include <vector>
 
-namespace LLVkDenoise
+namespace RKVkDenoise
 {
     enum Kind : U32 { KIND_REFLECTIONS = 1, KIND_SHADOWS = 2 };
 
     struct ReflectionParams
     {
         // images, all of the render size; every one is in VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL when the call is made and is left in it
-        LLVk::Image* mRadiance = nullptr;       // RGBA16F, STORAGE usage: the traced reflection (rgb) and the length of the reflected ray (a, metres)
-        LLVk::Image* mOutput = nullptr;         // RGBA16F, STORAGE usage: the denoised reflection (rgb)
-        LLVk::Image* mDepth = nullptr;          // R32F: the raw depth buffer value
-        LLVk::Image* mNormals = nullptr;        // RGBA16F: the world normal (xyz, -1 .. 1)
-        LLVk::Image* mRoughness = nullptr;      // R16F or R8: the perceptual roughness (r)
-        LLVk::Image* mMotion = nullptr;         // RG16F: the motion of the surface in pixels (previous minus current)
+        RKVk::Image* mRadiance = nullptr;       // RGBA16F, STORAGE usage: the traced reflection (rgb) and the length of the reflected ray (a, metres)
+        RKVk::Image* mOutput = nullptr;         // RGBA16F, STORAGE usage: the denoised reflection (rgb)
+        RKVk::Image* mDepth = nullptr;          // R32F: the raw depth buffer value
+        RKVk::Image* mNormals = nullptr;        // RGBA16F: the world normal (xyz, -1 .. 1)
+        RKVk::Image* mRoughness = nullptr;      // R16F or R8: the perceptual roughness (r)
+        RKVk::Image* mMotion = nullptr;         // RG16F: the motion of the surface in pixels (previous minus current)
         U32 mWidth = 0, mHeight = 0;
         float mInvProjection[16] = {};          // column major; inverse of the projection that made the depth buffer (OpenGL clip space)
         float mInvView[16] = {};                // column major; eye space -> world
@@ -42,11 +42,11 @@ namespace LLVkDenoise
 
     struct ShadowParams
     {
-        LLVk::Image* mHitSource = nullptr;      // RGBA8, ceil(width / 8) x ceil(height / 4): the hit mask as four bytes a tile (dnsr_sunpack.frag); copied into the denoiser's R32_UINT image
-        LLVk::Image* mOutput = nullptr;         // RGBA8 render size, STORAGE usage: the filtered visibility in r (1 lit)
-        LLVk::Image* mDepth = nullptr;          // R32F: the raw depth buffer value
-        LLVk::Image* mNormals = nullptr;        // RGBA16F: the world normal (xyz, -1 .. 1)
-        LLVk::Image* mMotion = nullptr;         // RG16F: the motion of the surface in pixels (previous minus current)
+        RKVk::Image* mHitSource = nullptr;      // RGBA8, ceil(width / 8) x ceil(height / 4): the hit mask as four bytes a tile (dnsr_sunpack.frag); copied into the denoiser's R32_UINT image
+        RKVk::Image* mOutput = nullptr;         // RGBA8 render size, STORAGE usage: the filtered visibility in r (1 lit)
+        RKVk::Image* mDepth = nullptr;          // R32F: the raw depth buffer value
+        RKVk::Image* mNormals = nullptr;        // RGBA16F: the world normal (xyz, -1 .. 1)
+        RKVk::Image* mMotion = nullptr;         // RG16F: the motion of the surface in pixels (previous minus current)
         U32 mWidth = 0, mHeight = 0;
         float mInvProjection[16] = {};          // column major; inverse of the projection that made the depth buffer (OpenGL clip space)
         float mReprojection[16] = {};           // column major; previous view projection * inverse(current view projection), both OpenGL
@@ -64,7 +64,7 @@ namespace LLVkDenoise
     void shutdown();
 
     // makes the helper images and buffers for this size and these kinds (and the denoiser context); the images the dispatch needs in SHADER_READ_ONLY_OPTIMAL are added to `own`
-    bool prepare(U32 width, U32 height, U32 kinds, std::vector<LLVk::Image*>& own);
+    bool prepare(U32 width, U32 height, U32 kinds, std::vector<RKVk::Image*>& own);
     // records the denoiser into `cmd` (the caller is inside Renderer::recordExternal with every image in its layout)
     bool reflections(VkCommandBuffer cmd, const ReflectionParams& params);
     bool shadows(VkCommandBuffer cmd, const ShadowParams& params);

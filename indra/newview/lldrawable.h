@@ -97,8 +97,8 @@ public:
     const LLVector3&      getPosition() const           { return xform().getPosition(); }
     const LLVector3&      getWorldPosition() const      { return xform().getPositionW(); }
     const LLVector3       getPositionAgent() const;
-    const LLVector3&      getScale() const              { return LLInstances::row(mInstance).scale; }
-    void                  setScale(const LLVector3& scale) { LLInstances::row(mInstance).scale = scale; }
+    const LLVector3&      getScale() const              { return RKInstances::row(mInstance).scale; }
+    void                  setScale(const LLVector3& scale) { RKInstances::row(mInstance).scale = scale; }
     const LLQuaternion&   getWorldRotation() const      { return xform().getWorldRotation(); }
     const LLQuaternion&   getRotation() const           { return xform().getRotation(); }
     F32                   getIntensity() const          { return llmin(xform().getScale().mV[0], 4.f); }
@@ -106,17 +106,17 @@ public:
 
     void  getMinMax(LLVector3& min,LLVector3& max) const { xform().getMinMax(min,max); }
     // <FS> C1a.2: the transform is the second part of the drawable's row in the instance table
-    LLXformMatrix&      xform()       { return LLInstances::xform(mInstance); }
-    const LLXformMatrix& xform() const { return LLInstances::xform(mInstance); }
-    LLXformMatrix*      getXform() { return &LLInstances::xform(mInstance); }
+    LLXformMatrix&      xform()       { return RKInstances::xform(mInstance); }
+    const LLXformMatrix& xform() const { return RKInstances::xform(mInstance); }
+    LLXformMatrix*      getXform() { return &RKInstances::xform(mInstance); }
 
     // <FS> C1a: the state word is a column of the instance table (row mInstance)
-    U32                 getState()           const { return LLInstances::row(mInstance).flags; }
-    bool                isState   (U32 bits) const { return ((LLInstances::row(mInstance).flags & bits) != 0); }
-    void                setState  (U32 bits)       { LLInstances::row(mInstance).flags |= bits; }
-    void                clearState(U32 bits)       { LLInstances::row(mInstance).flags &= ~bits; }
+    U32                 getState()           const { return RKInstances::row(mInstance).flags; }
+    bool                isState   (U32 bits) const { return ((RKInstances::row(mInstance).flags & bits) != 0); }
+    void                setState  (U32 bits)       { RKInstances::row(mInstance).flags |= bits; }
+    void                clearState(U32 bits)       { RKInstances::row(mInstance).flags &= ~bits; }
     U32                 getInstance()        const { return mInstance; }
-    bool                ownsInstanceRow()    const { return LLInstances::ownedBy(mInstance, this); }   // false for a pointer to a destroyed drawable
+    bool                ownsInstanceRow()    const { return RKInstances::ownedBy(mInstance, this); }   // false for a pointer to a destroyed drawable
 
     bool                isAvatar()  const           { return mVObjp.notNull() && mVObjp->isAvatar(); }
     bool                isRoot() const              { return !mParent || mParent->isAvatar(); }
@@ -184,7 +184,7 @@ public:
 
     void setGroup(LLViewerOctreeGroup* group);
     void setRadius(const F32 radius);
-    F32 getRadius() const                       { return LLInstances::row(mInstance).radius; }
+    F32 getRadius() const                       { return RKInstances::row(mInstance).radius; }
     F32 getVisibilityRadius() const;
 
     void updateUVMinMax();  // Updates the cache of sun space bounding box.
@@ -193,9 +193,9 @@ public:
     virtual void updateSpatialExtents();
     virtual void updateBinRadius();
 
-    void setRenderType(S32 type)                { LLInstances::row(mInstance).renderType = type; }
-    bool isRenderType(S32 type)                 { return LLInstances::row(mInstance).renderType == type; }
-    S32  getRenderType()                        { return LLInstances::row(mInstance).renderType; }
+    void setRenderType(S32 type)                { RKInstances::row(mInstance).renderType = type; }
+    bool isRenderType(S32 type)                 { return RKInstances::row(mInstance).renderType == type; }
+    S32  getRenderType()                        { return RKInstances::row(mInstance).renderType; }
 
     // Debugging methods
     S32 findReferences(LLDrawable *drawablep); // Not const because of @#$! iterators...
@@ -212,7 +212,7 @@ public:
     static void cleanupDeadDrawables();
 
 protected:
-    ~LLDrawable() { destroy(); LLInstances::release(mInstance, DEAD); }   // <FS> C1a: the row goes back after destroy() (which still reads the state)
+    ~LLDrawable() { destroy(); RKInstances::release(mInstance, DEAD); }   // <FS> C1a: the row goes back after destroy() (which still reads the state)
     void moveUpdatePipeline(bool moved);
     void updatePartition();
     bool updateMoveDamped();

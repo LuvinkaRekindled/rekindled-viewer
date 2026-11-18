@@ -30,7 +30,7 @@
 #include "llface.h"
 #include "rkmatrixtable.h"
 
-static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "LLFaceRow::recIdx (rkfacetable.h) has one slot per texture channel");   // <FS> C3.3
+static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "RKFaceRow::recIdx (rkfacetable.h) has one slot per texture channel");   // <FS> C3.3
 #include "llviewertextureanim.h"
 
 #include "llviewercontrol.h"
@@ -225,7 +225,7 @@ void LLFace::destroy()
 
     if (mTextureMatrix)
     {
-        LLMatrixTable::free(mTextureMatrix);       // <FS> C3.4: a matrix of the matrix table (rkmatrixtable.h): its row is quarantined, a stale pointer still reads it
+        RKMatrixTable::free(mTextureMatrix);       // <FS> C3.4: a matrix of the matrix table (rkmatrixtable.h): its row is quarantined, a stale pointer still reads it
         mTextureMatrix = NULL;
 
         if (mDrawablep)
@@ -330,7 +330,7 @@ void LLFace::setTexture(U32 ch, LLViewerTexture* tex)
         const U64 n = ++sChecks;
         if (n == 1 || n % 50000 == 0)
         {
-            const LLTexHandles::Stats s = LLTexHandles::stats();
+            const RKTexHandles::Stats s = RKTexHandles::stats();
             LL_INFOS("TexHandle") << "texture handles: " << n << " face uses checked, " << sBad.load() << " did not resolve to their texture; live " << s.mLive << ", peak " << s.mPeak
                                   << ", slots used " << s.mNext << ", handed out " << s.mAcquired << ", table full " << s.mFull << LL_ENDL;
         }
@@ -419,7 +419,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
 void LLFace::stampTextures()
 {
     row().lastPixelAreaUpdate = 0.f;     // the size read by the texture priority is refreshed at most every 0.1 s (calcPixelArea): after a change the next evaluation must not read the old one
-    LLTexRecs::faceChanged(this);   // <FS> H6: its record is filled again
+    RKTexRecs::faceChanged(this);   // <FS> H6: its record is filled again
     for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
     {
         if (mTexture[ch].notNull())
@@ -595,14 +595,14 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
     {
         gRender.getTexUnit(0)->bind(imagep);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         if (mDrawablep->isActive())
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRenderMatrix().mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRenderMatrix().mMatrix);
         }
         else
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)mDrawablep->getRegion()->mRenderMatrix.mMatrix);
         }
 
         gRender.diffuseColor4fv(color.mV);
@@ -617,9 +617,9 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
                 if (rigged)
                 {
                     // called when selecting a face during edit of a mesh object
-                    LLRenderState::PolygonOffsetScope offset(true);
+                    RKRenderState::PolygonOffsetScope offset(true);
                     gRender.setPolygonOffset(-1.f, -1.f);
-                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
+                    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
                     const LLVolumeFace& vol_face = rigged->getVolumeFace(getTEOffset());
                     // <FS:Ansariel> Use a vbo for the static LLVertexBuffer::drawArray/Element functions; by Drake Arconis/Shyotl Kuhr
                     //LLVertexBuffer::unbind();
@@ -660,7 +660,7 @@ void LLFace::renderSelected(LLViewerTexture *imagep, const LLColor4& color)
             }
         }
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -776,7 +776,7 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
     if (bRenderHiddenSelections)
     {
         gRender.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
-        LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
+        RKRenderState::DepthScope gls_depth(true, false, RKRenderState::CompareOp::GreaterEqual);
         if (shader)
         {
             gRender.diffuseColor4f(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.4f);
@@ -798,12 +798,12 @@ void LLFace::renderOneWireframe(const LLColor4 &color, F32 fogCfx, bool wirefram
     gRender.diffuseColor4f(color.mV[VRED] * 2, color.mV[VGREEN] * 2, color.mV[VBLUE] * 2, color.mV[VALPHA]);
 
     {
-        LLRenderState::BlendScope depth(false, !wireframe_selection);
+        RKRenderState::BlendScope depth(false, !wireframe_selection);
 
         // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
         gRender.setPolygonOffset(3.f, 3.f);
         gRender.setLineWidth(5.f); // <FS> Line width OGL core profile fix by Rye Mutt
-        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+        gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
         renderFace(mDrawablep, this);
     }
 }
@@ -886,11 +886,11 @@ void LLFace::printDebugInfo() const
 // coordinates (small faces, a rebuild before the face is in the animated state) is the matrix the parameters give at this moment
 static const LLMatrix4& bake_tex_matrix(const LLMatrix4* m, LLMatrix4& scratch)
 {
-    if (!LLVkTexAnim::isParams((const F32*)m->mMatrix))
+    if (!RKVkTexAnim::isParams((const F32*)m->mMatrix))
     {
         return *m;
     }
-    LLVkTexAnim::evaluateNow((const F32*)m->mMatrix, (F32*)scratch.mMatrix);
+    RKVkTexAnim::evaluateNow((const F32*)m->mMatrix, (F32*)scratch.mMatrix);
     return scratch;
 }
 
@@ -2398,7 +2398,7 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
             S32* vp = (S32*) &val;
             *vp = index;
 
-            llassert(index < LLShaderProgram::sIndexedTextureChannels);
+            llassert(index < RKShaderProgram::sIndexedTextureChannels);
 
             LLVector4Logical mask;
             mask.clear();

@@ -1,12 +1,12 @@
 // smaa_blend.frag: SMAA's neighbourhood blending: the picture blended along the edges by the weights. A line for line translation of "SMAA Neighborhood Blending"
 // (deferred/SMAANeighborhoodBlendF.glsl); pairs with smaa_blend.vert. (the velocity texture is only there with SMAA_REPROJECTION, which the manifest lines set to 0)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_blendTex;

@@ -35,10 +35,10 @@
 // <FS> A cache of decoded images the decode pool asks before decoding (rkdecodedtexturecache.h implements it; the texture plan section 2).
 // read: the image of 'id' at exactly 'discard', or null. write: the decode just produced this image at this discard level (the cache copies what it keeps). Both run on the decode
 // pool's threads and must not block for long.
-class LLDecodedImageCache
+class RKDecodedImageCache
 {
 public:
-    virtual ~LLDecodedImageCache() {}
+    virtual ~RKDecodedImageCache() {}
     // allow_compressed: a compressed (BC7 chain) image may be returned; false: only texels (the texture needs raw pixels).
     // checked_raw (out, may be null): the stored texels were already judged by the BC7 check and kept raw, so the check need not run again on this hit
     virtual LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw) = 0;
@@ -70,8 +70,8 @@ public:
                          const LLUUID& cache_id = LLUUID::null,
                          bool allow_compressed = false);     // <FS> BC7 at decode may replace the texels (RenderCompressTextures, rkimagebc7.h) and the cache may answer with a chain
     // <FS> the decoded cache the pool asks (null: none); set before any decode runs and cleared after the pool has shut down
-    static void setDecodedCache(LLDecodedImageCache* cache);
-    static LLDecodedImageCache* getDecodedCache();
+    static void setDecodedCache(RKDecodedImageCache* cache);
+    static RKDecodedImageCache* getDecodedCache();
     size_t getPending();
     size_t update(F32 max_time_ms);
     S32 getTotalDecodeCount() { return mDecodeCount; }

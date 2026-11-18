@@ -21,10 +21,10 @@
 #include <cstdlib>
 #include <cstring>
 
-namespace LLVkDenoise
+namespace RKVkDenoise
 {
 
-using namespace LLVk;       // the loaded Vulkan entry points live there
+using namespace RKVk;       // the loaded Vulkan entry points live there
 
 #if defined(LL_FFX_DENOISER)
 

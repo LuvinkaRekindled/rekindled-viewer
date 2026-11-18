@@ -71,7 +71,7 @@ const U32 VERTEX_MASK_BUMP = LLVertexBuffer::MAP_VERTEX |LLVertexBuffer::MAP_TEX
 U32 LLDrawPoolBump::sVertexMask = VERTEX_MASK_SHINY;
 
 
-static LLShaderProgram* shader = NULL;
+static RKShaderProgram* shader = NULL;
 static S32 cube_channel = -1;
 static S32 diffuse_channel = -1;
 static S32 bump_channel = -1;
@@ -160,7 +160,7 @@ void LLStandardBumpmap::addstandard()
         gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mLabel = label;
         gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mImage =
             LLViewerTextureManager::getFetchedTexture(LLUUID(bump_image_id));
-        gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mImage->setBoostLevel(LLBaseTexture::LOCAL) ;
+        gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mImage->setBoostLevel(RKBaseTexture::LOCAL) ;
         gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mImage->setLoadedCallback(LLBumpImageList::onSourceStandardLoaded, 0, true, false, NULL, NULL );
         gStandardBumpmapList[LLStandardBumpmap::sStandardBumpmapCount].mImage->forceToSaveRawImage(0, 30.f) ;
         LLStandardBumpmap::sStandardBumpmapCount++;
@@ -211,7 +211,7 @@ S32 LLDrawPoolBump::numBumpPasses()
 
 
 //static
-void LLDrawPoolBump::bindCubeMap(LLShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel)
+void LLDrawPoolBump::bindCubeMap(RKShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel)
 {
     LLCubeMap* cube_map = gSky.mVOSkyp ? gSky.mVOSkyp->getCubeMap() : NULL;
     if( cube_map && !LLPipeline::sReflectionProbesEnabled )
@@ -257,7 +257,7 @@ void LLDrawPoolBump::bindCubeMap(LLShaderProgram* shader, S32 shader_level, S32&
 }
 
 //static
-void LLDrawPoolBump::unbindCubeMap(LLShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel)
+void LLDrawPoolBump::unbindCubeMap(RKShaderProgram* shader, S32 shader_level, S32& diffuse_channel, S32& cube_channel)
 {
     LLCubeMap* cube_map = gSky.mVOSkyp ? gSky.mVOSkyp->getCubeMap() : NULL;
     if( cube_map && !LLPipeline::sReflectionProbesEnabled)
@@ -358,7 +358,7 @@ void LLDrawPoolBump::renderFullbrightShiny()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SHINY);
 
     // J1 K6 A3: the scene table's draw record (the shiny pull program is bound), nothing else draws this pass
-    LLRenderState::BlendScope blend_enable(true);
+    RKRenderState::BlendScope blend_enable(true);
     pushGeometryPackets(mRigged ? LLRenderPass::PASS_FULLBRIGHT_SHINY_RIGGED : LLRenderPass::PASS_FULLBRIGHT_SHINY, mRigged);
 }
 
@@ -483,11 +483,11 @@ static bool emboss_table(bool rigged)
 void LLDrawPoolBump::renderBump()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_BUMP);
-    LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::LessEqual);
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::DepthScope gls_depth(true, false, RKRenderState::CompareOp::LessEqual);
+    RKRenderState::BlendScope blend(true);
     gRender.diffuseColor4f(1,1,1,1);
     /// Get rid of z-fighting with non-bump pass.
-    LLRenderState::PolygonOffsetScope polyOffset(true);
+    RKRenderState::PolygonOffsetScope polyOffset(true);
     gRender.setPolygonOffset(-1.0f, -1.0f);
     // J1 K6 A3: the scene table's draw record (the emboss pull program is bound)
     pushGeometryPackets(mRigged ? LLRenderPass::PASS_POST_BUMP_RIGGED : LLRenderPass::PASS_POST_BUMP, mRigged);
@@ -496,7 +496,7 @@ void LLDrawPoolBump::renderBump()
 //static
 void LLDrawPoolBump::endBump(U32 pass)
 {
-    LLShaderProgram::unbind();
+    RKShaderProgram::unbind();
 
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
 }
@@ -528,7 +528,7 @@ void LLDrawPoolBump::renderDeferred(S32 pass)
         }
         (rigged ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram)->bind();
         pushGeometryPackets(rigged ? LLRenderPass::PASS_BUMP_RIGGED : LLRenderPass::PASS_BUMP, rigged);
-        LLShaderProgram::sCurBoundShaderPtr->unbind();
+        RKShaderProgram::sCurBoundShaderPtr->unbind();
     }
 }
 
@@ -855,8 +855,8 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         bump->setExplicitFormat(TexelFormat::RGBA8, PixelFormat::RGBA);
 
-        LLImageTex* src_img = src->getImageTexture();
-        LLImageTex* dst_img = bump->getImageTexture();
+        RKImageTex* src_img = src->getImageTexture();
+        RKImageTex* dst_img = bump->getImageTexture();
         if (!dst_img->setSize(src->getWidth(), src->getHeight(), 4, 0))
         {
             LL_WARNS() << "Failed to setSize for image " << bump->getID() << LL_ENDL;
@@ -867,7 +867,7 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
 
         gRender.getTexUnit(0)->bind(bump);
 
-        LLImageTex::setManualImage(dst_img->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
+        RKImageTex::setManualImage(dst_img->getTexName(), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, dst_img->getWidth(), dst_img->getHeight(), PixelFormat::RGBA, ComponentType::U8, nullptr, false);
 
         U32 tex_name = dst_img->getTexName();
         // point render target at empty buffer
@@ -877,12 +877,12 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
         {
             RenderPassScope pass_920(sRenderTarget);
 
-            LLRenderState::DepthScope depth(false);
-            LLRenderState::CullScope cull(false);
-            LLRenderState::BlendScope blend(false);
+            RKRenderState::DepthScope depth(false);
+            RKRenderState::CullScope cull(false);
+            RKRenderState::BlendScope blend(false);
             gRender.setColorMask(true, true);
 
-            LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+            RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
             gNormalMapGenProgram.bind();
 
             static LLStaticHashedString sNormScale("norm_scale");

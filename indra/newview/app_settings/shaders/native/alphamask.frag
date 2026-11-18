@@ -1,14 +1,14 @@
 // alphamask.frag: the vertex colour times the texture, thrown away under minimum_alpha (the avatar's baked texture layers). A line for line translation of "Alpha Mask Shader" (interface/alphamaskF.glsl);
 // pairs with alphamask.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;
     uint ll_ti_diffuseMap;
 };
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     float minimum_alpha;
 };

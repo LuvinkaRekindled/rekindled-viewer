@@ -1,7 +1,7 @@
 // cof.frag: the depth of field's circle of confusion: the picture with the blur radius of each pixel (from its depth and the focus) in the alpha channel. A line for line translation of "Deferred CoF Shader"
 // (deferred/cofF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float focal_distance;
     float blur_constant;
@@ -11,7 +11,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     mat4 inv_proj;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_depthMap;

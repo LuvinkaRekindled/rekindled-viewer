@@ -17,13 +17,13 @@
 #include <memory>
 #include <vector>
 
-struct LLReadbackTicket
+struct RKReadbackTicket
 {
     std::atomic<int> mDone{ 0 };        // 1 when mData holds the pixels (a failed read leaves zeros)
     std::vector<U8> mData;              // rows packed with the 4 byte alignment of a GL read, as many bytes as the caller asked for
 };
 
 // reads a rectangle of the colour attachment of the render target that is current now; `bytes` is the size of the ticket's data (rows * stride)
-std::shared_ptr<LLReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes);
+std::shared_ptr<RKReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes);
 
 #endif // LL_LLREADBACK_H

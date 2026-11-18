@@ -47,7 +47,7 @@
 // attaching a texture to a target: a slot (colour attachment index, or the depth slot) of the target names the texture
 static void ll_fboAttach(U32 fbo, U32 slot, U32 texture)
 {
-    LLVkTarget::attach(fbo, slot, texture);
+    RKVkTarget::attach(fbo, slot, texture);
 }
 
 LLRenderTarget* LLRenderTarget::sBoundTarget = NULL;
@@ -56,7 +56,7 @@ static std::vector<LLRenderTarget*> sTargetStack;
 
 void LLRenderTarget::setCurrentDrawBufferCount(S32 count)
 {
-    LLVkAsync::targetDrawBuffers(sCurFBO, count);
+    RKVkAsync::targetDrawBuffers(sCurFBO, count);
 }
 
 U32 LLRenderTarget::sBytesAllocated = 0;
@@ -98,7 +98,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     for (U32 i = 0; i < mTex.size(); ++i)
     { //resize color attachments
         gRender.getTexUnit(0)->bindManual(mUsage, mTex[i]);
-        LLImageTex::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
+        RKImageTex::setManualImage(mTex[i], LLTexUnit::getInternalType(mUsage), 0, mInternalFormat[i], mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
         sBytesAllocated += pix_diff*4;
     }
 
@@ -106,7 +106,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     {
         gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
         TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-        LLImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+        RKImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
 
         sBytesAllocated += pix_diff*4;
     }
@@ -150,28 +150,28 @@ bool LLRenderTarget::allocate(U32 resx, U32 resy, TexelFormat color_fmt, bool de
         }
     }
 
-    LLVkTarget::create((U32*)&mFBO);
+    RKVkTarget::create((U32*)&mFBO);
 
     if (mDepth)
     {
-        ll_fboAttach(mFBO, LLVkTarget::DEPTH_SLOT, mDepth);
+        ll_fboAttach(mFBO, RKVkTarget::DEPTH_SLOT, mDepth);
     }
 
     return addColorAttachment(color_fmt, file, line);
 }
 
-void LLRenderTarget::setColorAttachment(LLImageTex* img, U32 use_name)
+void LLRenderTarget::setColorAttachment(RKImageTex* img, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     llassert(img != nullptr); // img must not be null
     llassert(sUseFBO); // FBO support must be enabled
     llassert(mDepth == 0); // depth buffers not supported with this mode
-    llassert(mTex.empty()); // mTex must be empty with this mode (binding target should be done via LLImageTex)
+    llassert(mTex.empty()); // mTex must be empty with this mode (binding target should be done via RKImageTex)
     llassert(!isBoundInStack());
 
     if (mFBO == 0)
     {
-        LLVkTarget::create((U32*)&mFBO);
+        RKVkTarget::create((U32*)&mFBO);
     }
 
     mResX = img->getWidth();
@@ -205,7 +205,7 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     llassert(!isBoundInStack());
-    LLVkFormat::noteFormat("RT.color", file, line, (U8)color_fmt, 0, 0);
+    RKVkFormat::noteFormat("RT.color", file, line, (U8)color_fmt, 0, 0);
 
     if (color_fmt == TexelFormat::None)
     {
@@ -214,7 +214,7 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 
     U32 offset = static_cast<U32>(mTex.size());
 
-    // <FS> 8, not 4: the Vulkan backend has eight colour slots (LLVkTarget::DEPTH_SLOT is 8). The fifth is the world pass's motion target (PLAN-velocity-fold-and-skin-once.md); the limit of 4 was the GL era's
+    // <FS> 8, not 4: the Vulkan backend has eight colour slots (RKVkTarget::DEPTH_SLOT is 8). The fifth is the world pass's motion target (PLAN-velocity-fold-and-skin-once.md); the limit of 4 was the GL era's
     if( offset >= 8 )
     {
         LL_WARNS() << "Too many color attachments" << LL_ENDL;
@@ -228,13 +228,13 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
     }
 
     U32 tex;
-    LLImageTex::generateTextures(1, &tex);
+    RKImageTex::generateTextures(1, &tex);
     gRender.getTexUnit(0)->bindManual(mUsage, tex);
 
 
 
     {
-        LLImageTex::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
+        RKImageTex::setManualImage(tex, LLTexUnit::getInternalType(mUsage), 0, color_fmt, mResX, mResY, PixelFormat::RGBA, ComponentType::U8, NULL, false);
     }
 
     sBytesAllocated += mResX*mResY*4;
@@ -282,11 +282,11 @@ bool LLRenderTarget::addColorAttachment(TexelFormat color_fmt, const char* file,
 bool LLRenderTarget::allocateDepth()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
-    LLImageTex::generateTextures(1, &mDepth);
+    RKImageTex::generateTextures(1, &mDepth);
     gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-    LLImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+    RKImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
     gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
 
     sBytesAllocated += mResX*mResY*4;
@@ -316,7 +316,7 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
 
     if (mDepth)
     {
-        ll_fboAttach(target.mFBO, LLVkTarget::DEPTH_SLOT, mDepth);
+        ll_fboAttach(target.mFBO, RKVkTarget::DEPTH_SLOT, mDepth);
 
 
         target.mUseDepth = true;
@@ -331,7 +331,7 @@ void LLRenderTarget::release()
 
     if (mDepth)
     {
-        LLImageTex::deleteTextures(1, &mDepth);
+        RKImageTex::deleteTextures(1, &mDepth);
 
         mDepth = 0;
 
@@ -342,7 +342,7 @@ void LLRenderTarget::release()
     {
         if (mUseDepth)
         { //detach shared depth buffer
-            ll_fboAttach(mFBO, LLVkTarget::DEPTH_SLOT, 0);
+            ll_fboAttach(mFBO, RKVkTarget::DEPTH_SLOT, 0);
             mUseDepth = false;
         }
     }
@@ -356,7 +356,7 @@ void LLRenderTarget::release()
         {
             sBytesAllocated -= mResX*mResY*4;
             ll_fboAttach(mFBO, static_cast<U32>(z), 0);
-            LLImageTex::deleteTextures(1, &mTex[z]);
+            RKImageTex::deleteTextures(1, &mTex[z]);
         }
     }
 
@@ -365,17 +365,17 @@ void LLRenderTarget::release()
         if (mFBO == sCurFBO)
         {
             sCurFBO = 0;
-            LLVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, LLVkAsync::PASS_SCREEN, __FILE__, __LINE__);
+            RKVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, RKVkAsync::PASS_SCREEN, __FILE__, __LINE__);
         }
 
-        LLVkTarget::destroy(mFBO);
+        RKVkTarget::destroy(mFBO);
         mFBO = 0;
     }
 
     if (mTex.size() > 0)
     {
         sBytesAllocated -= mResX*mResY*4;
-        LLImageTex::deleteTextures(1, &mTex[0]);
+        RKImageTex::deleteTextures(1, &mTex[0]);
     }
 
     mTex.clear();
@@ -398,7 +398,7 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, ClearBit
         noteBind(file, line);
         mBindFile = file;
         mBindLine = line;
-        mBindDraw = LLVkAsync::drawSeq();
+        mBindDraw = RKVkAsync::drawSeq();
     }
     llassert(mFBO);
     llassert(!isBoundInStack());
@@ -412,9 +412,9 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, ClearBit
         sBoundTarget = this;
         noteClear(file, line);
     }
-    LLVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color,
-                         restore ? LLVkAsync::PASS_RESUME : LLVkAsync::PASS_NEW, file, line);
-    LLShaderProgram::announceBound();
+    RKVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color,
+                         restore ? RKVkAsync::PASS_RESUME : RKVkAsync::PASS_NEW, file, line);
+    RKShaderProgram::announceBound();
     sCurResX = mResX;
     sCurResY = mResY;
 
@@ -441,8 +441,8 @@ void LLRenderTarget::clear(ClearBits mask_in, const char* file, int line)
     }
     else
     {
-        LLRenderState::ScissorScope scissor(true);
-        LLVkState::setScissor(0, 0, mResX, mResY);
+        RKRenderState::ScissorScope scissor(true);
+        RKVkState::setScissor(0, 0, mResX, mResY);
         gRender.clearBuffers(mask & mask_in);
     }
 }
@@ -502,10 +502,10 @@ void LLRenderTarget::flush(const char* file, int line)
     {
         LL_PROFILE_GPU_ZONE("rt generate mipmaps");
         bindTexture(0, 0, LLTexUnit::TFO_TRILINEAR);
-        LLVkTex::generateMipmap(mTex[0]);
+        RKVkTex::generateMipmap(mTex[0]);
     }
 
-    LLVkAsync::passEnd();
+    RKVkAsync::passEnd();
     sTargetStack.erase(std::remove(sTargetStack.begin(), sTargetStack.end(), this), sTargetStack.end());
     if (!sTargetStack.empty())
     {
@@ -518,8 +518,8 @@ void LLRenderTarget::flush(const char* file, int line)
     else
     {
         sBoundTarget = nullptr;
-        LLVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, LLVkAsync::PASS_SCREEN, file, line);
-        LLShaderProgram::announceBound();
+        RKVkAsync::passBegin(0, -1, gRenderViewport[0], gRenderViewport[1], gRenderViewport[2], gRenderViewport[3], false, false, nullptr, RKVkAsync::PASS_SCREEN, file, line);
+        RKShaderProgram::announceBound();
         sCurFBO = 0;
         sCurResX = gRenderViewport[2];
         sCurResY = gRenderViewport[3];
@@ -675,9 +675,9 @@ bool LLRenderTarget::boundInStackBounded() const
 
 void LLRenderTarget::noteBind(const char* file, int line)
 {
-    const bool stats = LLVkAsync::gFrontStats;
+    const bool stats = RKVkAsync::gFrontStats;
     const bool check = pass_check();
-    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    if ((!stats && !check) || !RKVkAsync::mainOnlyProducer())
     {
         return;
     }
@@ -719,9 +719,9 @@ void LLRenderTarget::noteBind(const char* file, int line)
 
 void LLRenderTarget::noteFlush(const char* file, int line)
 {
-    const bool stats = LLVkAsync::gFrontStats;
+    const bool stats = RKVkAsync::gFrontStats;
     const bool check = pass_check();
-    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    if ((!stats && !check) || !RKVkAsync::mainOnlyProducer())
     {
         return;
     }
@@ -757,9 +757,9 @@ void LLRenderTarget::noteFlush(const char* file, int line)
 
 void LLRenderTarget::noteClear(const char* file, int line)
 {
-    const bool stats = LLVkAsync::gFrontStats;
+    const bool stats = RKVkAsync::gFrontStats;
     const bool check = pass_check();
-    if ((!stats && !check) || !LLVkAsync::mainOnlyProducer())
+    if ((!stats && !check) || !RKVkAsync::mainOnlyProducer())
     {
         return;
     }
@@ -767,7 +767,7 @@ void LLRenderTarget::noteClear(const char* file, int line)
     {
         ++gPassClears;
         // directly after its bind: no draw was made between (the shape that becomes the load op of the pass)
-        const bool after_bind = sBoundTarget == this && mBindFile && LLVkAsync::drawSeq() == mBindDraw;
+        const bool after_bind = sBoundTarget == this && mBindFile && RKVkAsync::drawSeq() == mBindDraw;
         if (after_bind)
         {
             ++gPassClearsAfterBind;
@@ -797,7 +797,7 @@ void LLRenderTarget::noteClear(const char* file, int line)
 
 void LLRenderTarget::noteRelease()
 {
-    if (pass_check() && mFBO && LLVkAsync::mainOnlyProducer() && boundInStackBounded())
+    if (pass_check() && mFBO && RKVkAsync::mainOnlyProducer() && boundInStackBounded())
     {
         pass_warn("a target is released while it is bound", mBindFile, mBindLine, " (the call site is where it was bound)");
     }
@@ -805,7 +805,7 @@ void LLRenderTarget::noteRelease()
 
 void LLRenderTarget::checkFrameEnd()
 {
-    if (!pass_check() || !LLVkAsync::mainOnlyProducer())
+    if (!pass_check() || !RKVkAsync::mainOnlyProducer())
     {
         return;
     }
@@ -857,7 +857,7 @@ void frameEnd()
 
 std::string report(size_t frames)
 {
-    if (!LLVkAsync::gFrontStats)
+    if (!RKVkAsync::gFrontStats)
     {
         return std::string();
     }

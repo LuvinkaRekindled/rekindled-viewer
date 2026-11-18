@@ -469,7 +469,7 @@ void LLStatBar::draw()
     if (mDisplayBar && mStat.valid)
     {
         // Draw the tick marks.
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetUIDefault gls_ui;
         gRender.getTexUnit(0)->bindWhite();
 
         F32 value_scale;

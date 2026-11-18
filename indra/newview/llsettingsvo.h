@@ -39,7 +39,7 @@
 #include <boost/signals2.hpp>
 
 class LLInventoryItem;
-class LLShaderProgram;
+class RKShaderProgram;
 
 //=========================================================================
 class LLSettingsVOBase : public LLSettingsBase

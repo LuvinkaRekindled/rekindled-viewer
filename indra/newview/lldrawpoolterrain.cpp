@@ -61,7 +61,7 @@ int DebugDetailMap = 0;
 S32 LLDrawPoolTerrain::sPBRDetailMode = 0;
 F32 LLDrawPoolTerrain::sDetailScale = DETAIL_SCALE;
 F32 LLDrawPoolTerrain::sPBRDetailScale = DETAIL_SCALE;
-static LLShaderProgram* sShader = NULL;
+static RKShaderProgram* sShader = NULL;
 static LLTrace::BlockTimerStatHandle FTM_SHADOW_TERRAIN("Terrain Shadow");
 
 
@@ -93,7 +93,7 @@ LLDrawPoolTerrain::LLDrawPoolTerrain(LLViewerTexture *texturep) :
     //gRender.getTexUnit(0)->bind(m2DAlphaRampImagep.get());
     m2DAlphaRampImagep->setAddressMode(LLTexUnit::TAM_CLAMP);
 
-    mTexturep->setBoostLevel(LLBaseTexture::BOOST_TERRAIN);
+    mTexturep->setBoostLevel(RKBaseTexture::BOOST_TERRAIN);
 
     //gRender.getTexUnit(0)->bindWhite();
 }
@@ -109,7 +109,7 @@ U32 LLDrawPoolTerrain::getVertexDataMask()
     {
         return LLVertexBuffer::MAP_VERTEX;
     }
-    else if (LLShaderProgram::sCurBoundShaderPtr)
+    else if (RKShaderProgram::sCurBoundShaderPtr)
     {
         return VERTEX_DATA_MASK & ~(LLVertexBuffer::MAP_TEXCOORD2 | LLVertexBuffer::MAP_TEXCOORD3);
     }
@@ -204,7 +204,7 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
 void LLDrawPoolTerrain::drawShadowPull()
 {
     gRender.flush();
-    static thread_local std::vector<LLVkBridge::ShadowPacketEntry> entries;
+    static thread_local std::vector<RKVkBridge::ShadowPacketEntry> entries;
     static thread_local std::vector<F32> matrices;
     static thread_local std::vector<const LLMatrix4*> keys;
     static thread_local std::vector<U8> blob;
@@ -245,14 +245,14 @@ void LLDrawPoolTerrain::drawShadowPull()
             matrices.insert(matrices.end(), (const F32*)model->mMatrix, (const F32*)model->mMatrix + 16);
             matrix = (U32)keys.size();
         }
-        LLVkBridge::ShadowPacketEntry e = { vb->getVertexBufferId(), vb->getIndexBufferId(), (U32)facep->getIndicesStart(), facep->getIndicesCount(), matrix, 0 };
+        RKVkBridge::ShadowPacketEntry e = { vb->getVertexBufferId(), vb->getIndexBufferId(), (U32)facep->getIndicesStart(), facep->getIndicesCount(), matrix, 0 };
         entries.push_back(e);
     }
     if (entries.empty())
     {
         return;
     }
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 0;
     header.mEntries = (U32)entries.size();
     header.mMatrices = (U32)(matrices.size() / 16);
@@ -264,7 +264,7 @@ void LLDrawPoolTerrain::drawShadowPull()
     blob.resize(entries_bytes + matrix_bytes);
     memcpy(blob.data(), entries.data(), entries_bytes);
     memcpy(blob.data() + entries_bytes, matrices.data(), matrix_bytes);
-    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+    RKVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 // S6.6a: the faces of the pool as one record of geometry entries (kind 32): the patch's vertex buffer is read by address, the region's render matrix is the entry's model matrix
@@ -332,7 +332,7 @@ void LLDrawPoolTerrain::renderFullShaderTextures()
     gRender.getTexUnit(detail0)->bind(detail_texture0p);
     gRender.getTexUnit(detail0)->setTextureAddressMode(LLTexUnit::TAM_WRAP);
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader);
 
     shader->uniform4fv(LLShaderMgr::OBJECT_PLANE_S, 1, tp0.mV);
@@ -499,7 +499,7 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
         }
     }
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader);
 
     // Like for PBR materials, PBR terrain texture transforms are defined by
@@ -680,12 +680,12 @@ void LLDrawPoolTerrain::renderFullShaderPBR(bool use_local_materials)
 void LLDrawPoolTerrain::hilightParcelOwners()
 {
     { //use fullbright shader for highlighting
-        LLShaderProgram* old_shader = sShader;
+        RKShaderProgram* old_shader = sShader;
         sShader->unbind();
         sShader = &gDeferredHighlightProgram;
         sShader->bind();
         gRender.diffuseColor4f(1, 1, 1, 1);
-        LLRenderState::PolygonOffsetScope polyOffset(true);
+        RKRenderState::PolygonOffsetScope polyOffset(true);
         gRender.setPolygonOffset(-1.0f, -1.0f);
         renderOwnership();
         sShader = old_shader;
@@ -696,7 +696,7 @@ void LLDrawPoolTerrain::hilightParcelOwners()
 
 void LLDrawPoolTerrain::renderOwnership()
 {
-    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
+    RKRenderPresetPipelineAlpha gls_pipeline_alpha;
 
     llassert(!mDrawFace.empty());
 
@@ -719,10 +719,10 @@ void LLDrawPoolTerrain::renderOwnership()
     // texture coordinates for pixel 256x256 is not 1,1. This makes the
     // ownership map not line up with the selection. We address this with
     // a texture matrix multiply.
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Texture0);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Texture0);
 
     const F32 TEXTURE_FUDGE = 257.f / 256.f;
-    LLRenderMatrix::scale(LLRenderMatrix::Kind::Texture0, TEXTURE_FUDGE, TEXTURE_FUDGE, 1.f);
+    RKRenderMatrix::scale(RKRenderMatrix::Kind::Texture0, TEXTURE_FUDGE, TEXTURE_FUDGE, 1.f);
     for (std::vector<LLFace*>::iterator iter = mDrawFace.begin();
          iter != mDrawFace.end(); iter++)
     {
@@ -730,7 +730,7 @@ void LLDrawPoolTerrain::renderOwnership()
         facep->renderIndexed();
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Texture0);
 }
 
 

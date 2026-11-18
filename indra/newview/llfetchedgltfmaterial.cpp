@@ -47,7 +47,7 @@ LLFetchedGLTFMaterial::LLFetchedGLTFMaterial()
 
 LLFetchedGLTFMaterial::~LLFetchedGLTFMaterial()
 {
-    LLGLTFMatHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4
+    RKGLTFMatHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4
 }
 
 // <FS> C2.4
@@ -58,7 +58,7 @@ U32 LLFetchedGLTFMaterial::getRenderHandle()
     {
         return handle;
     }
-    const U32 fresh = LLGLTFMatHandles::acquire(this);
+    const U32 fresh = RKGLTFMatHandles::acquire(this);
     if (!fresh)
     {
         return 0;
@@ -66,7 +66,7 @@ U32 LLFetchedGLTFMaterial::getRenderHandle()
     U32 expected = 0;
     if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
     {
-        LLGLTFMatHandles::release(fresh);       // another thread asked first
+        RKGLTFMatHandles::release(fresh);       // another thread asked first
         return expected;
     }
     return fresh;
@@ -74,13 +74,13 @@ U32 LLFetchedGLTFMaterial::getRenderHandle()
 
 bool LLFetchedGLTFMaterial::retireOnLastRef() const
 {
-    return LLRetireList::park(const_cast<LLFetchedGLTFMaterial*>(this));
+    return RKRetireList::park(const_cast<LLFetchedGLTFMaterial*>(this));
 }
 
-std::atomic<U64> LLGLTFMatRef::sDeadResolved{0};
+std::atomic<U64> RKGLTFMatRef::sDeadResolved{0};
 
 // static
-LLFetchedGLTFMaterial* LLGLTFMatRef::deadMaterial()
+LLFetchedGLTFMaterial* RKGLTFMatRef::deadMaterial()
 {
     ++sDeadResolved;
     return &LLFetchedGLTFMaterial::sDefault;
@@ -104,7 +104,7 @@ void LLFetchedGLTFMaterial::bind(LLViewerTexture* media_tex)
     // mAlphaCutoff is only valid for LLGLTFMaterial::ALPHA_MODE_MASK
     F32 min_alpha = -1.0;
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
     // override emissive and base color textures with media tex if present
     LLViewerTexture* baseColorTex = media_tex ? media_tex : mBaseColorTexture;
@@ -186,7 +186,7 @@ LLViewerFetchedTexture* fetch_texture(const LLUUID& id)
     LLViewerFetchedTexture* img = nullptr;
     if (id.notNull())
     {
-        img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
         img->addTextureStats(64.f * 64.f, true);
     }
     return img;

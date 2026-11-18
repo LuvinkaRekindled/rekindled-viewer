@@ -33,7 +33,7 @@
 #include "llpointer.h"
 #include "llrefcount.h"
 
-class LLMaterial : public LLAssetRefCount
+class LLMaterial : public RKAssetRefCount
 {
 public:
 

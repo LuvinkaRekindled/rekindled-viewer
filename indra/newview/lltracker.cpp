@@ -531,17 +531,17 @@ void LLTracker::drawBeacon(LLVector3 pos_agent, std::string direction, LLColor4 
 
     LLColor4 c_col, col_next, col_edge, col_edge_next;
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
     if ("DOWN" == direction)
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
         draw_shockwave(1024.f, gRenderStartTime.getElapsedTimeF32(), 32, fogged_color);
         height = MAX_HEIGHT - pos_agent.mV[2];
     }
     else
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], 0);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], 0);
         height = pos_agent.mV[2];
     }
 
@@ -638,7 +638,7 @@ void LLTracker::drawBeacon(LLVector3 pos_agent, std::string direction, LLColor4 
     }
 
     gRender.end();
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 // static
@@ -679,10 +679,10 @@ void LLTracker::renderBeacon(LLVector3d pos_global,
     LLVector3 pos_agent = gAgent.getPosAgentFromGlobal(pos_global);
     LLVector3d pos_agent_3d = gAgent.getPositionGlobal();   // <FS:CR> FIRE-8234
 
-    LLRenderPresetTracker gls_tracker;
+    RKRenderPresetTracker gls_tracker;
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::CullScope cull_face(false);
-    LLRenderState::DepthScope gls_depth(true, false);
+    RKRenderState::CullScope cull_face(false);
+    RKRenderState::DepthScope gls_depth(true, false);
 
     LLTracker::drawBeacon(pos_agent, "DOWN", fogged_color, dist);
     LLTracker::drawBeacon(pos_agent, "UP", fogged_color_under, dist);

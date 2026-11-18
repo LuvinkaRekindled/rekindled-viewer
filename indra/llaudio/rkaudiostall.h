@@ -14,11 +14,11 @@
 #include "lluuid.h"
 #include <chrono>
 
-class LLAudioStallTimer
+class RKAudioStallTimer
 {
 public:
-    LLAudioStallTimer(const char* what, U32 limit_ms = 20) : mWhat(what), mLimitMs(limit_ms), mStart(std::chrono::steady_clock::now()), mDone(false) {}
-    ~LLAudioStallTimer() { stop(); }
+    RKAudioStallTimer(const char* what, U32 limit_ms = 20) : mWhat(what), mLimitMs(limit_ms), mStart(std::chrono::steady_clock::now()), mDone(false) {}
+    ~RKAudioStallTimer() { stop(); }
 
     void setId(const LLUUID& id) { mId = id; }
     void setDetail(const std::string& detail) { mDetail = detail; }

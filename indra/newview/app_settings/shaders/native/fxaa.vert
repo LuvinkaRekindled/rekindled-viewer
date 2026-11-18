@@ -2,7 +2,7 @@
 // fills). A line for line translation of the viewer's post vertex shader (deferred/postDeferredV.glsl; its screen_res uniform was never read); pairs with fxaa.frag. (the pass block is declared the same in
 // both stages)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 tc_scale;
     vec2 rcp_screen_res;

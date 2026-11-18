@@ -621,7 +621,7 @@ void LLJoystickCameraRotate::setToggleState( bool left, bool top, bool right, bo
 
 void LLJoystickCameraRotate::draw()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
   getImageUnselected()->draw( getLocalRect() );
     LLPointer<LLUIImage> image = getImageSelected();
@@ -895,7 +895,7 @@ void LLJoystickQuaternion::onHeldDown()
 
 void LLJoystickQuaternion::draw()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     getImageUnselected()->draw(0, 0);
     LLPointer<LLUIImage> image = getImageSelected();

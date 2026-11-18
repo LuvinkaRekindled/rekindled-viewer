@@ -16,7 +16,7 @@
 
 #include "rkvkbridge.h"
 #include "llimage.h"            // <FS> fs_sparse_hash (describe_textures)
-#include "rkimagebc7.h"         // <FS> LLImageBC7::lookupLevel (the mip levels of a bake slot that are not what was uploaded)
+#include "rkimagebc7.h"         // <FS> RKImageBC7::lookupLevel (the mip levels of a bake slot that are not what was uploaded)
 #include "rkvknative.h"
 #include "rkvktexanim.h"
 #include "rkshaderprogram.h"
@@ -64,11 +64,11 @@
 std::atomic<int> gFsWorkerCpu{ -1 };
 std::atomic<unsigned> gFsWorkerTid{ 0 };
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
 
 bool gActive = false;
-LLVkBridge::Mutex gMutex;
+RKVkBridge::Mutex gMutex;
 
 // CPU time spent inside the translator's draw/clear hooks (the cost of recording the work into Vulkan), in ticks of the performance counter
 static long long gHookTicks = 0;
@@ -79,7 +79,7 @@ namespace
 struct HookTimer
 {
     LARGE_INTEGER mStart;
-    const bool mOn = LLVkBridge::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
+    const bool mOn = RKVkBridge::gPhaseTiming;      // the total only goes into the LL_VK_PHASES report: no clock reads (two per draw) otherwise
     HookTimer() { if (mOn) QueryPerformanceCounter(&mStart); }
     ~HookTimer()
     {
@@ -92,7 +92,7 @@ struct HookTimer
     }
 };
 
-using namespace LLVk;
+using namespace RKVk;
 
 //-----------------------------------------------------------------------------------------------------
 // logging helpers
@@ -126,9 +126,9 @@ const VkComponentMapping SWZ_ALPHA = { VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_S
 const VkComponentMapping SWZ_LUM = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
 const VkComponentMapping SWZ_LUM_ALPHA = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G };
 
-bool store_info(LLVkFormat::Store st, FormatMap& m)
+bool store_info(RKVkFormat::Store st, FormatMap& m)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     m = FormatMap();
     switch (st)
     {
@@ -198,9 +198,9 @@ U16 float_to_half(F32 v)
 }
 
 // 8-bit RGB / RGBA client rows into an RGBA8 or RGBA8 sRGB texture: nothing to decide per texel
-bool is_rgba8_fast(const FormatMap& fm, LLVkFormat::Transfer tr)
+bool is_rgba8_fast(const FormatMap& fm, RKVkFormat::Transfer tr)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     const U32 comps = compCount(tr.mComps);
     return !fm.mDepth && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R8G8B8A8_SRGB) && tr.mType == T_U8
         && ((comps == 4 && tr.mComps != C_BGRA) || (comps == 3 && tr.mComps != C_BGR));
@@ -235,10 +235,10 @@ void convert_rgba8_rows(const U8* fbase, U32 width, U32 height, U32 depth, U32 c
 
 // Converts GL client pixel data into the tightly packed texels of the Vulkan format. Returns false if the
 // combination is not handled.
-bool convert_pixels(const FormatMap& fm, LLVkFormat::Transfer tr, const void* src, U32 width, U32 height, U32 depth,
+bool convert_pixels(const FormatMap& fm, RKVkFormat::Transfer tr, const void* src, U32 width, U32 height, U32 depth,
                     U32 alignment, U32 row_length, std::vector<U8>& out)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     const U32 comps = compCount(tr.mComps);
     const U32 tb = typeBytes(tr.mType);
     if (!comps || !tb)
@@ -348,14 +348,14 @@ bool convert_pixels(const FormatMap& fm, LLVkFormat::Transfer tr, const void* sr
 
 struct SamplerParams
 {
-    LLVkFormat::Filter mMin = LLVkFormat::F_NEAREST_MIP_LINEAR;
-    LLVkFormat::Filter mMag = LLVkFormat::F_LINEAR;
-    LLVkFormat::Wrap mWrapS = LLVkFormat::W_REPEAT;
-    LLVkFormat::Wrap mWrapT = LLVkFormat::W_REPEAT;
-    LLVkFormat::Wrap mWrapR = LLVkFormat::W_REPEAT;
+    RKVkFormat::Filter mMin = RKVkFormat::F_NEAREST_MIP_LINEAR;
+    RKVkFormat::Filter mMag = RKVkFormat::F_LINEAR;
+    RKVkFormat::Wrap mWrapS = RKVkFormat::W_REPEAT;
+    RKVkFormat::Wrap mWrapT = RKVkFormat::W_REPEAT;
+    RKVkFormat::Wrap mWrapR = RKVkFormat::W_REPEAT;
     F32 mAnisotropy = 1.f;
     bool mCompare = false;
-    LLVkFormat::Compare mCompareFunc = LLVkFormat::CMP_LEQUAL;
+    RKVkFormat::Compare mCompareFunc = RKVkFormat::CMP_LEQUAL;
     S32 mBaseLevel = 0;
     S32 mMaxLevel = 1000;
 };
@@ -363,14 +363,14 @@ struct SamplerParams
 struct Tex
 {
     Image mImage;
-    U8 mDim = LLVkFormat::DIM_OTHER;    // LLVkFormat::Dim
+    U8 mDim = RKVkFormat::DIM_OTHER;    // RKVkFormat::Dim
     U32 mWidth = 0, mHeight = 0, mDepth = 0;
     U32 mLevels = 0;
-    U8 mStore = LLVkFormat::S_NONE;     // LLVkFormat::Store
+    U8 mStore = RKVkFormat::S_NONE;     // RKVkFormat::Store
     FormatMap mFormat;
     SamplerParams mSampler;
     U32 mValidLevels = 0;               // contiguous mip levels from 0 that hold data (the rest would sample as black)
-    LLVkFormat::Swizzle mSwizzle[4] = { LLVkFormat::SW_R, LLVkFormat::SW_G, LLVkFormat::SW_B, LLVkFormat::SW_A };
+    RKVkFormat::Swizzle mSwizzle[4] = { RKVkFormat::SW_R, RKVkFormat::SW_G, RKVkFormat::SW_B, RKVkFormat::SW_A };
     bool mSwizzleSet = false;
     // <FS> the last 32 things that happened to this texture's image (2026-11-14, the bake slots whose mip levels are not what was uploaded): 1 the image kept for the same specification, 2 a new image (size), 3 the mip chain
     // grown into a new image, 4 a compressed level uploaded (level, width), 5 a level uploaded (level, width), 6 another image committed into this texture, 7 levels dropped, 8 mipmaps generated, 9 the image destroyed
@@ -401,15 +401,15 @@ void Tex::note(U8 kind, S32 a, S32 b)
     ++mEventCount;
 }
 
-VkComponentSwizzle swizzle_component(LLVkFormat::Swizzle s)
+VkComponentSwizzle swizzle_component(RKVkFormat::Swizzle s)
 {
     switch (s)
     {
-    case LLVkFormat::SW_R: return VK_COMPONENT_SWIZZLE_R;
-    case LLVkFormat::SW_G: return VK_COMPONENT_SWIZZLE_G;
-    case LLVkFormat::SW_B: return VK_COMPONENT_SWIZZLE_B;
-    case LLVkFormat::SW_A: return VK_COMPONENT_SWIZZLE_A;
-    case LLVkFormat::SW_ZERO: return VK_COMPONENT_SWIZZLE_ZERO;
+    case RKVkFormat::SW_R: return VK_COMPONENT_SWIZZLE_R;
+    case RKVkFormat::SW_G: return VK_COMPONENT_SWIZZLE_G;
+    case RKVkFormat::SW_B: return VK_COMPONENT_SWIZZLE_B;
+    case RKVkFormat::SW_A: return VK_COMPONENT_SWIZZLE_A;
+    case RKVkFormat::SW_ZERO: return VK_COMPONENT_SWIZZLE_ZERO;
     default: return VK_COMPONENT_SWIZZLE_ONE;
     }
 }
@@ -485,7 +485,7 @@ struct BoundAttrib
     bool mEnabled = false;
     U32 mBuffer = 0;
     S32 mSize = 4;
-    U8 mType = LLVkFormat::T_F32;       // LLVkFormat::PType
+    U8 mType = RKVkFormat::T_F32;       // RKVkFormat::PType
     bool mNormalized = false;
     bool mInteger = false;
     S32 mStride = 0;
@@ -500,7 +500,7 @@ struct BoundVertices
 };
 // ---- S6.4: the worker's state, by owner (doc/vulkan/S6-design.md section 7) ----
 // PassState: what the records of a pass read and write that the pass before left behind. Passes are closed (every pass announces again what it reads: LL_VK_PASSCLOSE), poison mode forgets all of it at
-// every pass (LLVkWorker::pass_poison). One instance: the stream is played by one thread; passes decoded on several threads would each have their own.
+// every pass (RKVkWorker::pass_poison). One instance: the stream is played by one thread; passes decoded on several threads would each have their own.
 struct PassState
 {
     U32 mUnitTex[32] = {};              // F2.6: the texture each unit holds, by id only; a sampler of dimension 'cls' samples it when the texture has that dimension
@@ -565,7 +565,7 @@ struct GLState
     std::unordered_map<U32, Buf> mBuffers;
     F32 mConstAttrib[16][4];
 
-    // draw state: the render state lives in LLVkState (F1.1); only the clear colour is still kept here
+    // draw state: the render state lives in RKVkState (F1.1); only the clear colour is still kept here
 
     GLState()
     {
@@ -574,7 +574,7 @@ struct GLState
 };
 
 // never destroyed: the viewer's own statics (gPipeline's render targets, the textures of the image lists) release their GL objects when the process exits, after this file's statics would
-// be gone, and every one of those calls lands here (the shutdown of the mirror itself is LLVkBridge::shutdown). A destroyed map under that call was the crash at exit.
+// be gone, and every one of those calls lands here (the shutdown of the mirror itself is RKVkBridge::shutdown). A destroyed map under that call was the crash at exit.
 GLState& sGL = *new GLState;
 
 // <FS> flat lookup of the entries of sGL.mTextures / mBuffers by GL name (the names are small integers from the viewer's name pools). A hash lookup for every sampler of
@@ -660,10 +660,10 @@ int sDbgMode = 0;                       // debug shader mode from D:\claude\vk-d
 std::string sDbgFilter;                 // programs whose name contains this get the mode
 std::string sDbgSampler;                // sampler shown by mode 2
 
-// <FS> F1.2: a texture edit names its texture (LLVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
+// <FS> F1.2: a texture edit names its texture (RKVkTex): while a scope is open the edit functions below act on that texture and read the unpack state
 // from the record, not from the GL bound-texture / pixel-store emulation. thread_local: the worker replays one record at a time, inline mode runs on the caller.
 thread_local U32 tlsEditTex = 0;
-thread_local const LLVkTex::PixelStore* tlsEditPS = nullptr;
+thread_local const RKVkTex::PixelStore* tlsEditPS = nullptr;
 
 Tex* edit_texture()
 {
@@ -672,7 +672,7 @@ Tex* edit_texture()
         auto it = sGL.mTextures.find(tlsEditTex);
         return it == sGL.mTextures.end() ? nullptr : &it->second;
     }
-    return nullptr;         // every texture edit names its texture (LLVkTex)
+    return nullptr;         // every texture edit names its texture (RKVkTex)
 }
 
 inline S32 edit_unpack_alignment() { return tlsEditPS ? tlsEditPS->mAlignment : 1; }
@@ -722,9 +722,9 @@ static U32 tex_gl_name(Tex& t)
     return 0;
 }
 
-bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U32 h, U32 depth)
+bool ensure_image(Tex& t, RKVkFormat::Target tg, RKVkFormat::Store st, U32 w, U32 h, U32 depth)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     FormatMap fm;
     if (!store_info(st, fm))
     {
@@ -820,7 +820,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
     else if (!fm.mCompressed)
     {
         td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (LLVkUpscale::ready() && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        if (RKVkUpscale::ready() && (fm.mVk == VK_FORMAT_R8G8B8A8_UNORM || fm.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;        // DLSS writes its output into an image like this
         }
@@ -851,7 +851,7 @@ bool ensure_image(Tex& t, LLVkFormat::Target tg, LLVkFormat::Store st, U32 w, U3
 // uploads or renders into a level above 0, or generates the chain. Arrays, cubes and 3D textures own their chain from the start.
 bool grow_levels(Tex& t)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     if (!t.mImage.valid() || t.mDim != DIM_2D)
     {
         return t.mImage.valid();
@@ -877,7 +877,7 @@ bool grow_levels(Tex& t)
     else if (!t.mFormat.mCompressed)
     {
         td.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        if (LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+        if (RKVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
         }
@@ -901,13 +901,13 @@ bool grow_levels(Tex& t)
 }
 
 // <FS> native-vk: a plain 2D texture that holds its whole mip chain gives up its top k levels: a new image with the levels below them (a copy, the old image released). The viewer shrinks a texture this way
-// (LLImageTex::scaleDown) instead of drawing it small into a target and copying that. False (nothing changed) when the texture does not hold all of its levels.
+// (RKImageTex::scaleDown) instead of drawing it small into a target and copying that. False (nothing changed) when the texture does not hold all of its levels.
 // <FS> why drop_levels said no, counted (the "texture will be downscaled immediately after loading" warning fires about 5000 times a lap and 4800 of the drops were refused, 2026-11-03): 1 no levels
 // asked or no image, 2 not a plain 2D texture, 3 depth format, 4 compressed format, 5 the mip chain is not complete or not all levels hold data, 6 fewer levels than the drop, 7 no new image, 8 the copy failed
 static U64 sDropWhy[8] = {};
 bool drop_levels(Tex& t, U32 k)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     if (!k || !t.mImage.valid())
     {
         ++sDropWhy[1];
@@ -947,7 +947,7 @@ bool drop_levels(Tex& t, U32 k)
     td.mFormat = t.mFormat.mVk;
     td.mSwizzle = t.mSwizzleSet ? swizzle_mapping(t) : t.mFormat.mSwizzle;
     td.mUsage = t.mFormat.mCompressed ? 0 : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;       // (a compressed format cannot be a colour attachment)
-    if (!t.mFormat.mCompressed && LLVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
+    if (!t.mFormat.mCompressed && RKVkUpscale::ready() && (t.mFormat.mVk == VK_FORMAT_R8G8B8A8_UNORM || t.mFormat.mVk == VK_FORMAT_R16G16B16A16_SFLOAT))
     {
         td.mUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
     }
@@ -978,11 +978,11 @@ bool drop_levels(Tex& t, U32 k)
     return true;
 }
 
-void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
+void upload_converted(Tex& t, RKVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels);
 
-void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, LLVkFormat::Transfer tr, const void* pixels)
+void upload_level(Tex& t, RKVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, RKVkFormat::Transfer tr, const void* pixels)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     if (t.mImage.valid() && level > 0 && (U32)level >= t.mLevels)
     {
         grow_levels(t);
@@ -1002,7 +1002,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
     {
         return;     // nothing to upload (allocation only)
     }
-    if (LLVkAsync::gEnabled && d == 1 && t.mDim != DIM_2D_ARRAY && t.mDim != DIM_CUBE_ARRAY && t.mDim != DIM_3D
+    if (RKVkAsync::gEnabled && d == 1 && t.mDim != DIM_2D_ARRAY && t.mDim != DIM_CUBE_ARRAY && t.mDim != DIM_3D
         && is_rgba8_fast(t.mFormat, tr) && w && h)
     {
         // C4: the common upload (8-bit RGB or RGBA into an RGBA8 texture) is read from where the viewer left it and written straight into the staging buffer: one copy
@@ -1026,18 +1026,18 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
         const U32 alignment = (U32)edit_unpack_alignment(), row_length = (U32)edit_unpack_row_length();
         const VkImage handle = t.mImage.mImage;
         const U32 name = tlsEditTex;
-        const bool unlocked = (U64)w * h * d >= 16384 && !LLVkAsync::gEnabled;      // (the worker does not take the lock)
+        const bool unlocked = (U64)w * h * d >= 16384 && !RKVkAsync::gEnabled;      // (the worker does not take the lock)
         unsigned depth_held = 0;
         if (unlocked)
         {
-            depth_held = LLVkWorker::gMutex.releaseAll();
+            depth_held = RKVkWorker::gMutex.releaseAll();
         }
         const auto t_conv = std::chrono::steady_clock::now();
         const bool converted = convert_pixels(fm, tr, src, w, h, d, alignment, row_length, texels);
-        LLVkAsync::noteTexWorker((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_conv).count(), 0, 0, 0);
+        RKVkAsync::noteTexWorker((U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_conv).count(), 0, 0, 0);
         if (unlocked)
         {
-            LLVkWorker::gMutex.reacquire(depth_held);
+            RKVkWorker::gMutex.reacquire(depth_held);
             // the texture may have been deleted or replaced while the lock was free
             auto it = sGL.mTextures.find(name);
             if (it == sGL.mTextures.end() || it->second.mImage.mImage != handle)
@@ -1054,9 +1054,9 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
     upload_converted(t, tg, level, x, y, z, w, h, d, true, texels);
 }
 
-void upload_converted(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
+void upload_converted(Tex& t, RKVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z, U32 w, U32 h, U32 d, bool converted, std::vector<U8>& texels)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     if (!converted || !t.mImage.valid())
     {
         return;
@@ -1143,7 +1143,7 @@ Image* read_image(U32 fbo)
 {
     if (fbo == 0)
     {
-        return LLVkBridge::backbufferColor();
+        return RKVkBridge::backbufferColor();
     }
     auto it = sGL.mFbos.find(fbo);
     if (it == sGL.mFbos.end())
@@ -1170,7 +1170,7 @@ static inline void note_frame_target(U32 texture)
     }
 }
 
-const LLVkState::Block* state_block();
+const RKVkState::Block* state_block();
 
 bool sync_target()
 {
@@ -1182,8 +1182,8 @@ bool sync_target()
     }
     if (gPassState.mDrawFbo == 0)
     {
-        Image* color = LLVkBridge::backbufferColor();
-        Image* depth = LLVkBridge::backbufferDepth();
+        Image* color = RKVkBridge::backbufferColor();
+        Image* depth = RKVkBridge::backbufferDepth();
         if (!color)
         {
             return false;
@@ -1195,7 +1195,7 @@ bool sync_target()
             if (size_log)
             {
                 // the scissor changes constantly (every UI element); only the viewport and the target size are worth a line
-                const LLVkState::Block* vb = state_block();
+                const RKVkState::Block* vb = state_block();
                 const S32 now[9] = { vb ? vb->mViewport[0] : 0, vb ? vb->mViewport[1] : 0, vb ? vb->mViewport[2] : 0, vb ? vb->mViewport[3] : 0, 0, 0, 0, 0, (S32)color->mExtent.width };
                 if (memcmp(now, last, sizeof(now)) != 0)
                 {
@@ -1290,27 +1290,27 @@ bool sync_target()
 // state translation
 //-----------------------------------------------------------------------------------------------------
 
-VkPrimitiveTopology topology(LLVkFormat::Topology t)
+VkPrimitiveTopology topology(RKVkFormat::Topology t)
 {
     switch (t)
     {
-    case LLVkFormat::TOP_POINTS: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-    case LLVkFormat::TOP_LINES: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    case LLVkFormat::TOP_LINE_STRIP: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
-    case LLVkFormat::TOP_TRIANGLES: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    case LLVkFormat::TOP_TRIANGLE_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
-    case LLVkFormat::TOP_TRIANGLE_FAN: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+    case RKVkFormat::TOP_POINTS: return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    case RKVkFormat::TOP_LINES: return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case RKVkFormat::TOP_LINE_STRIP: return VK_PRIMITIVE_TOPOLOGY_LINE_STRIP;
+    case RKVkFormat::TOP_TRIANGLES: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case RKVkFormat::TOP_TRIANGLE_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case RKVkFormat::TOP_TRIANGLE_FAN: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
     default: warn_once("primitive mode", t); return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     }
 }
 
-VkSamplerAddressMode wrap_mode(LLVkFormat::Wrap w)
+VkSamplerAddressMode wrap_mode(RKVkFormat::Wrap w)
 {
     switch (w)
     {
-    case LLVkFormat::W_CLAMP_EDGE: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    case LLVkFormat::W_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-    case LLVkFormat::W_CLAMP_BORDER: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    case RKVkFormat::W_CLAMP_EDGE: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case RKVkFormat::W_MIRRORED_REPEAT: return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case RKVkFormat::W_CLAMP_BORDER: return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
     default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
     }
 }
@@ -1319,15 +1319,15 @@ SamplerDesc sampler_for(const Tex& t)
 {
     const SamplerParams& sp = t.mSampler;
     SamplerDesc d;
-    d.mMag = sp.mMag == LLVkFormat::F_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+    d.mMag = sp.mMag == RKVkFormat::F_NEAREST ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
     bool mipmapped = true;
     switch (sp.mMin)
     {
-    case LLVkFormat::F_NEAREST: d.mMin = VK_FILTER_NEAREST; mipmapped = false; break;
-    case LLVkFormat::F_LINEAR: d.mMin = VK_FILTER_LINEAR; mipmapped = false; break;
-    case LLVkFormat::F_NEAREST_MIP_NEAREST: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
-    case LLVkFormat::F_LINEAR_MIP_NEAREST: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
-    case LLVkFormat::F_NEAREST_MIP_LINEAR: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
+    case RKVkFormat::F_NEAREST: d.mMin = VK_FILTER_NEAREST; mipmapped = false; break;
+    case RKVkFormat::F_LINEAR: d.mMin = VK_FILTER_LINEAR; mipmapped = false; break;
+    case RKVkFormat::F_NEAREST_MIP_NEAREST: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case RKVkFormat::F_LINEAR_MIP_NEAREST: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_NEAREST; break;
+    case RKVkFormat::F_NEAREST_MIP_LINEAR: d.mMin = VK_FILTER_NEAREST; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
     default: d.mMin = VK_FILTER_LINEAR; d.mMip = VK_SAMPLER_MIPMAP_MODE_LINEAR; break;
     }
     d.mAddressU = wrap_mode(sp.mWrapS);
@@ -1335,7 +1335,7 @@ SamplerDesc sampler_for(const Tex& t)
     d.mAddressW = wrap_mode(sp.mWrapR);
     d.mAnisotropy = sp.mAnisotropy;
     d.mCompare = sp.mCompare;
-    d.mCompareOp = (VkCompareOp)sp.mCompareFunc;        // LLVkFormat::Compare has the order of VkCompareOp
+    d.mCompareOp = (VkCompareOp)sp.mCompareFunc;        // RKVkFormat::Compare has the order of VkCompareOp
     const F32 last = (F32)std::max<S32>(0, (S32)std::min(t.mLevels, std::max<U32>(1, t.mValidLevels)) - 1);
     d.mMinLod = (F32)std::max(0, sp.mBaseLevel);
     d.mMaxLod = mipmapped ? std::min(last, (F32)sp.mMaxLevel) : d.mMinLod + 0.25f;
@@ -1360,7 +1360,7 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     memcpy(&aniso_bits, &sp.mAnisotropy, 4);
     mix(aniso_bits); mix(t.mLevels); mix(t.mValidLevels);
     {
-        const float bias = LLVkUpscale::lodBias();      // a new DLSS mode changes it: the sampler is made again
+        const float bias = RKVkUpscale::lodBias();      // a new DLSS mode changes it: the sampler is made again
         U32 bias_bits;
         memcpy(&bias_bits, &bias, 4);
         mix(bias_bits);
@@ -1373,32 +1373,32 @@ VkSampler texture_sampler(Renderer& r, Tex& t)
     return t.mVkSampler;
 }
 
-// <FS> F1.1: the render state comes from the typed block the producer wrote (LLVkState), not from a replayed GL state machine
-const LLVkState::Block* state_block()
+// <FS> F1.1: the render state comes from the typed block the producer wrote (RKVkState), not from a replayed GL state machine
+const RKVkState::Block* state_block()
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         // inline mode (before the queue starts): the producer and this code are one thread; the GL hooks wrote the context directly
-        LLVkState::Block b;
-        if (LLVkState::takeChanged(b))
+        RKVkState::Block b;
+        if (RKVkState::takeChanged(b))
         {
-            LLVkState::receive(b);
+            RKVkState::receive(b);
         }
     }
-    return LLVkState::received();
+    return RKVkState::received();
 }
 
 // translates the state block into renderer state for the next draw
 void sync_draw_state(Renderer& r, bool has_depth)
 {
-    const LLVkState::Block* blk = state_block();
+    const RKVkState::Block* blk = state_block();
     if (!blk)
     {
         return;
     }
-    if (LLVkPassCensus::sOn) LLVkPassCensus::stateRead();
+    if (RKVkPassCensus::sOn) RKVkPassCensus::stateRead();
     // the translation is a function of the block, has_depth and the renderer's own state generation: when none changed it is skipped
-    static LLVkState::Block last;
+    static RKVkState::Block last;
     static U32 last_gen = 0;
     static bool last_has_depth = false;
     static bool last_valid = false;
@@ -1409,7 +1409,7 @@ void sync_draw_state(Renderer& r, bool has_depth)
     RasterState rs;
     DepthStencilState ds;
     BlendState bs;
-    LLVkState::toRenderer(*blk, has_depth, rs, ds, bs);
+    RKVkState::toRenderer(*blk, has_depth, rs, ds, bs);
     if (sDbgMatch)
     {
         if (sDbgNoCull) rs.mCull = VK_CULL_MODE_NONE;
@@ -1462,7 +1462,7 @@ void sync_textures(Renderer& r, Program& program)
             continue;
         }
         const U32 cls = program.getSamplerClass(k);
-        if (LLVkPassCensus::sOn) LLVkPassCensus::unitRead(unit);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::unitRead(unit);
         const U32 slot_name = unit_texture(unit, cls);
         Tex* tex = tex_ptr(slot_name);
         if (sStatsEnabled)
@@ -1530,56 +1530,56 @@ VkFormat vertex_format(S32 size, U8 type, bool normalized, bool integer, char nu
         const VkFormat b32u[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
         switch (type)
         {
-        case LLVkFormat::T_S8: case LLVkFormat::T_U8: return sign ? b8s[n - 1] : b8u[n - 1];
-        case LLVkFormat::T_S16: case LLVkFormat::T_U16: return sign ? b16s[n - 1] : b16u[n - 1];
+        case RKVkFormat::T_S8: case RKVkFormat::T_U8: return sign ? b8s[n - 1] : b8u[n - 1];
+        case RKVkFormat::T_S16: case RKVkFormat::T_U16: return sign ? b16s[n - 1] : b16u[n - 1];
         default: return sign ? b32s[n - 1] : b32u[n - 1];
         }
     }
     switch (type)
     {
-    case LLVkFormat::T_F32:
+    case RKVkFormat::T_F32:
     {
         const VkFormat f[4] = { VK_FORMAT_R32_SFLOAT, VK_FORMAT_R32G32_SFLOAT, VK_FORMAT_R32G32B32_SFLOAT, VK_FORMAT_R32G32B32A32_SFLOAT };
         return f[n - 1];
     }
-    case LLVkFormat::T_F16:
+    case RKVkFormat::T_F16:
     {
         const VkFormat f[4] = { VK_FORMAT_R16_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT };
         return f[n - 1];
     }
-    case LLVkFormat::T_U8:
+    case RKVkFormat::T_U8:
     {
         const VkFormat un[4] = { VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
         const VkFormat ui[4] = { VK_FORMAT_R8_UINT, VK_FORMAT_R8G8_UINT, VK_FORMAT_R8G8B8_UINT, VK_FORMAT_R8G8B8A8_UINT };
         const VkFormat us[4] = { VK_FORMAT_R8_USCALED, VK_FORMAT_R8G8_USCALED, VK_FORMAT_R8G8B8_USCALED, VK_FORMAT_R8G8B8A8_USCALED };
         return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
     }
-    case LLVkFormat::T_S8:
+    case RKVkFormat::T_S8:
     {
         const VkFormat sn[4] = { VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8_SNORM, VK_FORMAT_R8G8B8A8_SNORM };
         const VkFormat si[4] = { VK_FORMAT_R8_SINT, VK_FORMAT_R8G8_SINT, VK_FORMAT_R8G8B8_SINT, VK_FORMAT_R8G8B8A8_SINT };
         return integer ? si[n - 1] : sn[n - 1];
     }
-    case LLVkFormat::T_U16:
+    case RKVkFormat::T_U16:
     {
         const VkFormat un[4] = { VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16_UNORM, VK_FORMAT_R16G16B16A16_UNORM };
         const VkFormat ui[4] = { VK_FORMAT_R16_UINT, VK_FORMAT_R16G16_UINT, VK_FORMAT_R16G16B16_UINT, VK_FORMAT_R16G16B16A16_UINT };
         const VkFormat us[4] = { VK_FORMAT_R16_USCALED, VK_FORMAT_R16G16_USCALED, VK_FORMAT_R16G16B16_USCALED, VK_FORMAT_R16G16B16A16_USCALED };
         return integer ? ui[n - 1] : (normalized ? un[n - 1] : us[n - 1]);
     }
-    case LLVkFormat::T_S16:
+    case RKVkFormat::T_S16:
     {
         const VkFormat sn[4] = { VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16_SNORM, VK_FORMAT_R16G16B16A16_SNORM };
         const VkFormat si[4] = { VK_FORMAT_R16_SINT, VK_FORMAT_R16G16_SINT, VK_FORMAT_R16G16B16_SINT, VK_FORMAT_R16G16B16A16_SINT };
         const VkFormat ss[4] = { VK_FORMAT_R16_SSCALED, VK_FORMAT_R16G16_SSCALED, VK_FORMAT_R16G16B16_SSCALED, VK_FORMAT_R16G16B16A16_SSCALED };
         return integer ? si[n - 1] : (normalized ? sn[n - 1] : ss[n - 1]);
     }
-    case LLVkFormat::T_U32:
+    case RKVkFormat::T_U32:
     {
         const VkFormat ui[4] = { VK_FORMAT_R32_UINT, VK_FORMAT_R32G32_UINT, VK_FORMAT_R32G32B32_UINT, VK_FORMAT_R32G32B32A32_UINT };
         return ui[n - 1];
     }
-    case LLVkFormat::T_S32:
+    case RKVkFormat::T_S32:
     {
         const VkFormat si[4] = { VK_FORMAT_R32_SINT, VK_FORMAT_R32G32_SINT, VK_FORMAT_R32G32B32_SINT, VK_FORMAT_R32G32B32A32_SINT };
         return si[n - 1];
@@ -1594,8 +1594,8 @@ U32 attrib_type_bytes(U8 type)
 {
     switch (type)
     {
-    case LLVkFormat::T_S8: case LLVkFormat::T_U8: return 1;
-    case LLVkFormat::T_S16: case LLVkFormat::T_U16: case LLVkFormat::T_F16: return 2;
+    case RKVkFormat::T_S8: case RKVkFormat::T_U8: return 1;
+    case RKVkFormat::T_S16: case RKVkFormat::T_U16: case RKVkFormat::T_F16: return 2;
     default: return 4;
     }
 }
@@ -1604,7 +1604,7 @@ U32 attrib_type_bytes(U8 type)
 struct ScratchVerts
 {
     S32 mCount = 0;
-    U32 mMask = 0;                  // LLVkAsync::ScratchAttr bits (bit = attribute location)
+    U32 mMask = 0;                  // RKVkAsync::ScratchAttr bits (bit = attribute location)
     const U8* mBytes = nullptr;     // positions (16 bytes each), texcoords (8), colours (4), one run after the other
 };
 thread_local const ScratchVerts* sScratchVerts = nullptr;
@@ -1615,7 +1615,7 @@ bool build_scratch_input(Renderer& r, Program& program, VertexInput& vi)
     const ScratchVerts& sv = *sScratchVerts;
     const ProgramInfo& info = program.getInfo();
     const size_t n = (size_t)sv.mCount;
-    const size_t pos_bytes = n * 16, uv_bytes = (sv.mMask & LLVkAsync::SCRATCH_TEXCOORD0) ? n * 8 : 0, col_bytes = (sv.mMask & LLVkAsync::SCRATCH_COLOR) ? n * 4 : 0;
+    const size_t pos_bytes = n * 16, uv_bytes = (sv.mMask & RKVkAsync::SCRATCH_TEXCOORD0) ? n * 8 : 0, col_bytes = (sv.mMask & RKVkAsync::SCRATCH_COLOR) ? n * 4 : 0;
     Renderer::ScratchAlloc sa = r.allocVertexScratch(pos_bytes + uv_bytes + col_bytes);
     if (!sa.mPtr)
     {
@@ -1625,9 +1625,9 @@ bool build_scratch_input(Renderer& r, Program& program, VertexInput& vi)
     // the attribute locations are the vertex buffer's attribute types (position 0, texcoord0 2, colour 6); one binding each, stride = element size
     struct Src { U32 mLocation; U32 mBit; VkDeviceSize mOffset; U32 mStride; S32 mSize; U8 mType; bool mNormalized; };
     const Src srcs[3] = {
-        { 0, LLVkAsync::SCRATCH_POSITION, 0, 16, 3, LLVkFormat::T_F32, false },
-        { 2, LLVkAsync::SCRATCH_TEXCOORD0, pos_bytes, 8, 2, LLVkFormat::T_F32, false },
-        { 6, LLVkAsync::SCRATCH_COLOR, pos_bytes + uv_bytes, 4, 4, LLVkFormat::T_U8, true },
+        { 0, RKVkAsync::SCRATCH_POSITION, 0, 16, 3, RKVkFormat::T_F32, false },
+        { 2, RKVkAsync::SCRATCH_TEXCOORD0, pos_bytes, 8, 2, RKVkFormat::T_F32, false },
+        { 6, RKVkAsync::SCRATCH_COLOR, pos_bytes + uv_bytes, 4, 4, RKVkFormat::T_U8, true },
     };
     for (size_t a = 0; a < info.mAttributes.size(); ++a)
     {
@@ -1794,7 +1794,7 @@ void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 {
     for (U32 i = 0; i < 4; ++i)
     {
-        if (LLVkPassCensus::sOn && gPassState.mUboBinding[i]) LLVkPassCensus::uboRead(i);
+        if (RKVkPassCensus::sOn && gPassState.mUboBinding[i]) RKVkPassCensus::uboRead(i);
         auto it = gPassState.mUboBinding[i] ? sGL.mBuffers.find(gPassState.mUboBinding[i]) : sGL.mBuffers.end();
         if (it != sGL.mBuffers.end() && it->second.mVk.valid())
         {
@@ -1812,8 +1812,8 @@ void sync_uniform_blocks(Renderer& r, std::vector<U32>& used_buffers)
 // common work before a draw; returns false if the draw cannot be mirrored
 bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
 {
-    LLVkBridge::gLastLap = 200;
-    if (!LLVkBridge::inFrame())
+    RKVkBridge::gLastLap = 200;
+    if (!RKVkBridge::inFrame())
     {
         ++sStats.mNotInFrame;
         return false;
@@ -1827,9 +1827,9 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         return false;
     }
     sDbgMatch = !sDbgFilter.empty() && program->getName().find(sDbgFilter) != std::string::npos;
-    LLVkBridge::gLastLap = 201;
+    RKVkBridge::gLastLap = 201;
     {
-        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_TARGET);
+        RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_TARGET);
         if (!sync_target())
         {
             ++sDrawsSkipped;
@@ -1838,20 +1838,20 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
             return false;
         }
     }
-    LLVkBridge::gLastLap = 202;
+    RKVkBridge::gLastLap = 202;
     {
-        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATE);
+        RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_STATE);
         sync_draw_state(r, gPassState.mHasDepth);
     }
-    LLVkBridge::gLastLap = 203;
+    RKVkBridge::gLastLap = 203;
     {
-        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_TEX);
+        RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_TEX);
         sync_textures(r, *program);
     }
-    LLVkBridge::gLastLap = 204;
+    RKVkBridge::gLastLap = 204;
     if (sStatsEnabled)
     {
-        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_STATS);
+        RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_STATS);
         std::string key = program->getName() + " -> ";
         if (gPassState.mDrawFbo == 0) key += "SCREEN";
         for (U32 tname : gPassState.mCurTargets) key += std::to_string(tname) + " ";
@@ -1904,11 +1904,11 @@ bool prepare_draw(VertexInput& vi, std::vector<U32>& used_buffers)
         sStats.mBackbufferEvents.push_back(e);
     }
     {
-        LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_UBO);
+        RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_UBO);
         sync_uniform_blocks(r, used_buffers);
     }
-    LLVkBridge::gLastLap = 205;
-    LLVkBridge::PhaseTimer phase(LLVkBridge::PH_D_VERTEX);
+    RKVkBridge::gLastLap = 205;
+    RKVkBridge::PhaseTimer phase(RKVkBridge::PH_D_VERTEX);
     if (!build_vertex_input(r, *program, vi, used_buffers))
     {
         ++sDrawsSkipped;
@@ -2355,7 +2355,7 @@ void slot_set(unsigned unit, unsigned name)
 {
     if (unit < 32)
     {
-        if (LLVkPassCensus::sOn) LLVkPassCensus::unitSet(unit);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::unitSet(unit);
         gPassState.mUnitTex[unit] = name;
         if (name)
         {
@@ -2364,14 +2364,14 @@ void slot_set(unsigned unit, unsigned name)
     }
 }
 
-void edit_image2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
+void edit_image2D(RKVkFormat::Target tg, S32 level, RKVkFormat::Store st, S32 width, S32 height, RKVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == LLVkFormat::DIM_CUBE ? 6 : 1))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == RKVkFormat::DIM_CUBE ? 6 : 1))
     {
         return;
     }
@@ -2382,7 +2382,7 @@ void edit_image2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 wi
     upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, 1, tr, pixels);
 }
 
-void edit_image3D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
+void edit_image3D(RKVkFormat::Target tg, S32 level, RKVkFormat::Store st, S32 width, S32 height, S32 depth, RKVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0 || depth <= 0)
@@ -2400,7 +2400,7 @@ void edit_image3D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 wi
     upload_level(*t, tg, level, 0, 0, 0, (U32)width, (U32)height, (U32)depth, tr, pixels);
 }
 
-void edit_subimage2D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
+void edit_subimage2D(RKVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 width, S32 height, RKVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (t)
@@ -2409,7 +2409,7 @@ void edit_subimage2D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset,
     }
 }
 
-void edit_subimage3D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
+void edit_subimage3D(RKVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 width, S32 height, S32 depth, RKVkFormat::Transfer tr, const void* pixels)
 {
     Tex* t = edit_texture();
     if (t)
@@ -2418,14 +2418,14 @@ void edit_subimage3D(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset,
     }
 }
 
-void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 imageSize, const void* data)
+void edit_compressed2D(RKVkFormat::Target tg, S32 level, RKVkFormat::Store st, S32 width, S32 height, S32 imageSize, const void* data)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
     {
         return;
     }
-    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == LLVkFormat::DIM_CUBE ? 6 : 1))
+    if (level == 0 && !ensure_image(*t, tg, st, (U32)width, (U32)height, tg.mDim == RKVkFormat::DIM_CUBE ? 6 : 1))
     {
         return;
     }
@@ -2454,9 +2454,9 @@ void edit_compressed2D(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S
 }
 
 // one sampler / level / swizzle setting of the texture being edited
-void edit_setting(const LLVkFormat::Setting& st)
+void edit_setting(const RKVkFormat::Setting& st)
 {
-    using namespace LLVkFormat;
+    using namespace RKVkFormat;
     Tex* t = edit_texture();
     if (!t)
     {
@@ -2497,11 +2497,11 @@ void edit_mipmap()
     }
 }
 
-static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+static void copy_to_texture(RKVkFormat::Target tg, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
     Tex* t = edit_texture();
     Image* src = read_image(source_fbo);
-    if (!t || !t->mImage.valid() || !src || !LLVkBridge::inFrame())
+    if (!t || !t->mImage.valid() || !src || !RKVkBridge::inFrame())
     {
         ++((!t || !t->mImage.valid()) ? sCopyDropTex : !src ? sCopyDropSrc : sCopyDropFrame);
         return;
@@ -2512,7 +2512,7 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
     }
     U32 layer = 0;
     if (tg.mFace >= 0) layer = (U32)tg.mFace;
-    else if (t->mDim == LLVkFormat::DIM_2D_ARRAY || t->mDim == LLVkFormat::DIM_CUBE_ARRAY) layer = (U32)zoffset;
+    else if (t->mDim == RKVkFormat::DIM_2D_ARRAY || t->mDim == RKVkFormat::DIM_CUBE_ARRAY) layer = (U32)zoffset;
     Renderer::instance().copyRegion(*src, x, y, t->mImage, (U32)level, layer, xoffset, yoffset, width, height);
     pin_touch(*t);
     ++sCopies;
@@ -2520,7 +2520,7 @@ static void copy_to_texture(LLVkFormat::Target tg, S32 level, S32 xoffset, S32 y
 
 
 
-void copy_image_2d(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
+void copy_image_2d(RKVkFormat::Target tg, S32 level, RKVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source_fbo)
 {
     Tex* t = edit_texture();
     if (!t || width <= 0 || height <= 0)
@@ -2535,7 +2535,7 @@ void copy_image_2d(LLVkFormat::Target tg, S32 level, LLVkFormat::Store st, S32 x
 }
 
 //-----------------------------------------------------------------------------------------------------
-// F1.2: texture edits that name their texture (LLVkTex). The scope replaces "the texture bound on the active unit".
+// F1.2: texture edits that name their texture (RKVkTex). The scope replaces "the texture bound on the active unit".
 //-----------------------------------------------------------------------------------------------------
 
 namespace
@@ -2543,8 +2543,8 @@ namespace
 struct EditScope
 {
     U32 mPrev;
-    const LLVkTex::PixelStore* mPrevPS;
-    EditScope(U32 id, const LLVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
+    const RKVkTex::PixelStore* mPrevPS;
+    EditScope(U32 id, const RKVkTex::PixelStore* ps = nullptr) : mPrev(tlsEditTex), mPrevPS(tlsEditPS)
     {
         if (id)
         {
@@ -2557,37 +2557,37 @@ struct EditScope
 };
 }
 
-void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, LLVkFormat::Transfer tr, const void* pixels)
+void tex_image2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, RKVkFormat::Transfer tr, const void* pixels)
 {
     EditScope s(id, &ps);
     edit_image2D(tg, level, st, width, height, tr, pixels);
 }
 
-void tex_image3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels)
+void tex_image3D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, int depth, RKVkFormat::Transfer tr, const void* pixels)
 {
     EditScope s(id, &ps);
     edit_image3D(tg, level, st, width, height, depth, tr, pixels);
 }
 
-void tex_subimage2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, LLVkFormat::Transfer tr, const void* pixels)
+void tex_subimage2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, RKVkFormat::Transfer tr, const void* pixels)
 {
     EditScope s(id, &ps);
     edit_subimage2D(tg, level, xoffset, yoffset, width, height, tr, pixels);
 }
 
-void tex_subimage3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels)
+void tex_subimage3D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, RKVkFormat::Transfer tr, const void* pixels)
 {
     EditScope s(id, &ps);
     edit_subimage3D(tg, level, xoffset, yoffset, zoffset, width, height, depth, tr, pixels);
 }
 
-void tex_compressed2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int imageSize, const void* data)
+void tex_compressed2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, int imageSize, const void* data)
 {
     EditScope s(id, &ps);
     edit_compressed2D(tg, level, st, width, height, imageSize, data);
 }
 
-void tex_params(unsigned id, const LLVkFormat::Setting* settings, unsigned count)
+void tex_params(unsigned id, const RKVkFormat::Setting* settings, unsigned count)
 {
     EditScope s(id);
     for (unsigned i = 0; i < count; ++i)
@@ -2596,7 +2596,7 @@ void tex_params(unsigned id, const LLVkFormat::Setting* settings, unsigned count
     }
 }
 
-void tex_swizzle(unsigned id, const LLVkFormat::Swizzle* rgba)
+void tex_swizzle(unsigned id, const RKVkFormat::Swizzle* rgba)
 {
     EditScope s(id);
     Tex* t = edit_texture();
@@ -2677,13 +2677,13 @@ void tex_drop_levels(unsigned id, int levels)
     ++sLevelDrops;
 }
 
-void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source)
+void tex_copy_sub(unsigned id, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source)
 {
     EditScope s(id);
     copy_to_texture(tg, level, xoffset, yoffset, zoffset, x, y, width, height, source);
 }
 
-void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int x, int y, int width, int height, unsigned source)
+void tex_copy_image(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int x, int y, int width, int height, unsigned source)
 {
     EditScope s(id);
     copy_image_2d(tg, level, st, x, y, width, height, source);
@@ -2727,7 +2727,7 @@ void target_attach(unsigned fbo_name, unsigned slot, unsigned texture)
     {
         fbo.mColor[slot] = a;
     }
-    else if (slot == LLVkTarget::DEPTH_SLOT)
+    else if (slot == RKVkTarget::DEPTH_SLOT)
     {
         fbo.mDepth = a;
     }
@@ -2799,7 +2799,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
     Buf& b = it->second;
     Context& ctx = Context::instance();
     // large vertex / index buffers take the device path (GPU copies, no CPU access, no shadow copy)
-    const bool want_device = (kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX) && (U64)size >= device_buffer_min_bytes();
+    const bool want_device = (kind == RKVkFormat::BK_VERTEX || kind == RKVkFormat::BK_INDEX) && (U64)size >= device_buffer_min_bytes();
     if (want_device && b.mDevicePath && b.mVk.valid() && b.mVk.mSize == (VkDeviceSize)size)
     {
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
@@ -2842,7 +2842,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
         }
         return;
     }
-    const bool geometry = kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX;
+    const bool geometry = kind == RKVkFormat::BK_VERTEX || kind == RKVkFormat::BK_INDEX;
     const bool stored = size != 0 && (geometry && arena_host_enabled() ? acquire_arena_storage(b, (U64)size, ArenaKind::Host)
         : ctx.createBuffer((VkDeviceSize)size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                            Context::Memory::UploadDevice, b.mVk));
@@ -2974,15 +2974,15 @@ void refusals(unsigned long long out[6])
 
 void pass_poison()
 {
-    const int mask = LLVkPassCensus::sPoisonMask;
+    const int mask = RKVkPassCensus::sPoisonMask;
     if (mask & 1) Program::poisonAll();
     if (mask & 2) for (U32 u = 0; u < 32; ++u) gPassState.mUnitTex[u] = 0;
     if (mask & 4) for (U32 i = 0; i < 4; ++i) gPassState.mUboBinding[i] = 0;
     if (mask & 8) for (auto& a : sGL.mConstAttrib) { a[0] = a[1] = a[2] = 0.f; a[3] = 1.f; }
     if (mask & 16) gPassState.mBound = BoundVertices();
-    if (const LLVkState::Block* cur = (mask & 32) ? LLVkState::received() : nullptr)
+    if (const RKVkState::Block* cur = (mask & 32) ? RKVkState::received() : nullptr)
     {
-        LLVkState::Block b = *cur;
+        RKVkState::Block b = *cur;
         b.mRaster.mCull = VK_CULL_MODE_FRONT_BIT;
         b.mDepth.mDepthTest = false;
         b.mDepth.mDepthWrite = false;
@@ -2991,18 +2991,18 @@ void pass_poison()
         b.mScissorOn = true;
         b.mScissor[0] = b.mScissor[1] = 0;
         b.mScissor[2] = b.mScissor[3] = 1;
-        LLVkState::receive(b);
+        RKVkState::receive(b);
     }
-    if ((mask & 64) && LLVkBridge::isReady())
+    if ((mask & 64) && RKVkBridge::isReady())
     {
         Renderer::instance().setProgram(nullptr);
     }
 }
 
 // CMD_DRAW2: the draw names its program and carries its vertex binding when it changed; the binding is written into the vertex input state the draw functions read
-void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
+void draw_context_apply(void* program, const RKVkAsync::DrawBinding* binding)
 {
-    if (LLVkBridge::isReady())
+    if (RKVkBridge::isReady())
     {
         Renderer& r = Renderer::instance();
         Program* use = (Program*)program;
@@ -3033,7 +3033,7 @@ void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding)
             a.mEnabled = false;
             continue;
         }
-        const LLVkAsync::BindAttr& e = binding->mAttr[i];
+        const RKVkAsync::BindAttr& e = binding->mAttr[i];
         a.mEnabled = true;
         a.mBuffer = binding->mArray;
         a.mSize = e.mSize;
@@ -3066,7 +3066,7 @@ void probe_note(U32 vb_name, U32 ib_name, const Buf& vb, const Buf& ib, U32 firs
 void draw_arrays(unsigned topo, int first, int count)
 {
     HookTimer hook_timer;
-    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
+    RKVkBridge::PhaseTimer draw_phase(RKVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -3080,14 +3080,14 @@ void draw_arrays(unsigned topo, int first, int count)
     }
     Renderer& r = Renderer::instance();
     ensure_buffers_current(used, 0);
-    LLVkBridge::gLastLap = 210;
-    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
+    RKVkBridge::gLastLap = 210;
+    RKVkBridge::PhaseTimer apply_phase(RKVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
-    r.setTopology(topology((LLVkFormat::Topology)topo));
-    LLVkBridge::gLastLap = 211;
+    r.setTopology(topology((RKVkFormat::Topology)topo));
+    RKVkBridge::gLastLap = 211;
     if (r.draw((U32)count, (U32)first))
     {
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -3153,12 +3153,12 @@ void uidiff_note(int count, unsigned topo, unsigned mask, const void* bytes, con
     const size_t n = (size_t)count;
     r.mPos = ui_fnv(b, n * 16);
     size_t off = n * 16;
-    if (mask & LLVkAsync::SCRATCH_TEXCOORD0)
+    if (mask & RKVkAsync::SCRATCH_TEXCOORD0)
     {
         r.mUv = ui_fnv(b + off, n * 8);
         off += n * 8;
     }
-    if (mask & LLVkAsync::SCRATCH_COLOR)
+    if (mask & RKVkAsync::SCRATCH_COLOR)
     {
         r.mCol = ui_fnv(b + off, n * 4);
         if (n)
@@ -3275,7 +3275,7 @@ void uidiff_frame_end()
 void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
 {
     HookTimer hook_timer;
-    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
+    RKVkBridge::PhaseTimer draw_phase(RKVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -3295,9 +3295,9 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
         return;
     }
     Renderer& r = Renderer::instance();
-    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
+    RKVkBridge::PhaseTimer apply_phase(RKVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
-    r.setTopology(topology((LLVkFormat::Topology)topo));
+    r.setTopology(topology((RKVkFormat::Topology)topo));
     const bool drawn = r.draw((U32)count, 0);
     if (sUiDiff)
     {
@@ -3305,7 +3305,7 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
     }
     if (drawn)
     {
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -3328,7 +3328,7 @@ void draw_scratch(unsigned topo, int count, unsigned mask, const void* bytes)
 void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsigned type, const void* indices)
 {
     HookTimer hook_timer;
-    LLVkBridge::PhaseTimer draw_phase(LLVkBridge::PH_DRAW);
+    RKVkBridge::PhaseTimer draw_phase(RKVkBridge::PH_DRAW);
     static thread_local VertexInput vi_cache;
     static thread_local std::vector<U32> used_cache;
     VertexInput& vi = vi_cache;
@@ -3349,15 +3349,15 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
         ++sStats.mSkippedPerProgram[Renderer::instance().getProgram()->getName() + " (no index buffer)"];
         return;
     }
-    const VkIndexType itype = type == LLVkFormat::T_U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    const U32 index_bytes = type == LLVkFormat::T_U32 ? 4 : 2;
+    const VkIndexType itype = type == RKVkFormat::T_U32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    const U32 index_bytes = type == RKVkFormat::T_U32 ? 4 : 2;
     Renderer& r = Renderer::instance();
-    if (probe_on() && type == LLVkFormat::T_U16)
+    if (probe_on() && type == RKVkFormat::T_U16)
     {
         // BLAS probe: positions are attribute 0 (vec4 array at the start of the vertex buffer); rigged draws (weights, joints enabled) and the UI are left out
         const BoundAttrib& pos = vao.mAttrib[0];
         auto vit = sGL.mBuffers.find(pos.mBuffer);
-        if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == LLVkFormat::T_F32 && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
+        if (pos.mEnabled && pos.mBuffer && vit != sGL.mBuffers.end() && pos.mType == RKVkFormat::T_F32 && pos.mSize >= 3 && pos.mOffset == 0 && (pos.mStride == 16 || (pos.mStride == 0 && pos.mSize == 4))
             && !vao.mAttrib[10].mEnabled && !vao.mAttrib[12].mEnabled)
         {
             const std::string& program_name = r.getProgram()->getName();
@@ -3391,7 +3391,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
                 {
                     continue;                   // (prepare_draw decides what a missing buffer means)
                 }
-                const U64 element = (U64)std::max<S32>(at.mSize, 1) * LLVkFormat::typeBytes(at.mType);
+                const U64 element = (U64)std::max<S32>(at.mSize, 1) * RKVkFormat::typeBytes(at.mType);
                 const U64 stride = at.mStride ? (U64)at.mStride : element;
                 if (at.mOffset + (U64)end * stride + element > vit->second.mSize)
                 {
@@ -3416,7 +3416,7 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
                     {
                         continue;
                     }
-                    const U64 element = (U64)std::max<S32>(at.mSize, 1) * LLVkFormat::typeBytes(at.mType);
+                    const U64 element = (U64)std::max<S32>(at.mSize, 1) * RKVkFormat::typeBytes(at.mType);
                     const U64 stride = at.mStride ? (U64)at.mStride : element;
                     const U64 capacity = vit->second.mSize > at.mOffset + element ? (vit->second.mSize - at.mOffset - element) / stride + 1 : 0;
                     if ((U64)largest >= capacity)
@@ -3446,13 +3446,13 @@ void draw_elements(unsigned topo, unsigned start, unsigned end, int count, unsig
         }
     }
     ensure_buffers_current(used, vao.mElementBuffer);
-    LLVkBridge::PhaseTimer apply_phase(LLVkBridge::PH_D_APPLY);
+    RKVkBridge::PhaseTimer apply_phase(RKVkBridge::PH_D_APPLY);
     r.setVertexInput(vi);
-    r.setTopology(topology((LLVkFormat::Topology)topo));
+    r.setTopology(topology((RKVkFormat::Topology)topo));
     r.setIndexBuffer(eit->second.mVk.mBuffer, eit->second.mArena.mOffset, itype);
     if (r.drawIndexed((U32)count, (U32)((U64)indices / index_bytes), 0))
     {
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             ++sPhaseProgramDraws[r.getProgram()->getName()];
             ++sPhaseTargetDraws[r.describeTarget()];
@@ -3956,7 +3956,7 @@ std::string bindless_probe(Tex& t, bool& wrong)
     {
         return " | probe unavailable";
     }
-    if (LLVkBridge::inFrame() && !r.flushAndRestart(5))
+    if (RKVkBridge::inFrame() && !r.flushAndRestart(5))
     {
         return " | probe skipped (could not leave the frame)";
     }
@@ -4061,7 +4061,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                 Renderer& r = Renderer::instance();
                 std::vector<U8> blocks;
                 bool ok = true;
-                if (LLVkBridge::inFrame() && !r.flushAndRestart(4))
+                if (RKVkBridge::inFrame() && !r.flushAndRestart(4))
                 {
                     ok = false;
                 }
@@ -4102,7 +4102,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
             {
                 Renderer& r = Renderer::instance();
                 bool ok = true;
-                if (LLVkBridge::inFrame() && !r.flushAndRestart(6))
+                if (RKVkBridge::inFrame() && !r.flushAndRestart(6))
                 {
                     ok = false;
                 }
@@ -4135,7 +4135,7 @@ void describe_textures(const std::vector<U32>& names, const std::vector<std::str
                                 break;
                             }
                         }
-                        const std::string known = LLImageBC7::lookupLevel(gpu_hash);
+                        const std::string known = RKImageBC7::lookupLevel(gpu_hash);
                         lv += zeros ? " (ALL ZERO)" : (known.empty() ? " (matches no known upload)" : " (holds " + known + ")");
                     }
                     wrong = wrong || !same;
@@ -4603,8 +4603,8 @@ static void buffer_info_of(const Buf& b, BufferInfo& out)
     }
 }
 
-static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, LLVk::Rt::CasterRef* ref);
-static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr, LLVk::Rt::CasterRef* ref = nullptr)
+static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, RKVk::Rt::CasterRef* ref);
+static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, const Rt::AlphaInfo* alpha = nullptr, RKVk::Rt::CasterRef* ref = nullptr)
 {
     Rt::Caster c;
     c.mVb = vb;
@@ -4632,7 +4632,7 @@ static void note_rt_caster(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf&
     Rt::noteCaster(c, ref);
 }
 
-static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, LLVk::Rt::CasterRef* ref)
+static void note_rt_caster_ref(U32 pass, U32 vb, U32 ib, const Buf& vbuf, const Buf& ibuf, U32 first, U32 count, U32 matrix_id, U32 kind, const F32* model, RKVk::Rt::CasterRef* ref)
 {
     note_rt_caster(pass, vb, ib, vbuf, ibuf, first, count, matrix_id, kind, model, nullptr, ref);
 }
@@ -4677,7 +4677,7 @@ static const F32* palette_cpu_of(U64 address, U32 bytes)
 }
 
 // a rigged caster draw for the ray scene: skinned on the GPU into a copy of its vertices (Rt::noteSkinned)
-static void note_rt_skinned(U32 pass, const LLVkBridge::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+static void note_rt_skinned(U32 pass, const RKVkBridge::ShadowSkinEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
     Rt::SkinCaster c;
     c.mAvatarId = e.mAvatarId;
@@ -4713,15 +4713,15 @@ static void note_rt_skinned(U32 pass, const LLVkBridge::ShadowSkinEntry& e, cons
 }
 
 // the same for a rigged alpha masked draw: the structure of its avatar gets a geometry with the alpha test
-static void note_rt_skinned_alpha(U32 pass, const LLVkBridge::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
+static void note_rt_skinned_alpha(U32 pass, const RKVkBridge::ShadowAlphaEntry& e, const Buf& vbuf, const Buf& ibuf, U64 palette_address, const F32* model)
 {
     Rt::AlphaInfo alpha;
-    alpha.mFlags = e.mFlags & (31u | LLVkBridge::ALPHA_HARD);
+    alpha.mFlags = e.mFlags & (31u | RKVkBridge::ALPHA_HARD);
     alpha.mTexcoordOffset = e.mTexcoordOffset;
     alpha.mColorOffset = e.mColorOffset;
     memcpy(alpha.mTextures, e.mTextures, sizeof(alpha.mTextures));
     alpha.mCutoff = e.mCutoff;
-    if (e.mFlags & (LLVkBridge::ALPHA_HARD | LLVkBridge::ALPHA_UV))
+    if (e.mFlags & (RKVkBridge::ALPHA_HARD | RKVkBridge::ALPHA_UV))
     {
         memcpy(alpha.mUv, e.mUv, sizeof(alpha.mUv));         // the glTF texture transform, or the texture animation of a rigged masked draw
     }
@@ -4755,17 +4755,17 @@ static void note_rt_skinned_alpha(U32 pass, const LLVkBridge::ShadowAlphaEntry& 
 }
 
 // the worker side of a record of casters the old path draws (kind 5): nothing is drawn, the ray scene gets them (opaque, or with the alpha test and the texture transform)
-static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_rt_only_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || h.mEntries == 0)
     {
         return;
     }
-    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowAlphaEntry) * h.mEntries);
+    const RKVkBridge::ShadowAlphaEntry* entries = (const RKVkBridge::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(RKVkBridge::ShadowAlphaEntry) * h.mEntries);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::ShadowAlphaEntry& e = entries[i];
+        const RKVkBridge::ShadowAlphaEntry& e = entries[i];
         Buf* vb = packet_buffer(e.mVertexBuffer);
         Buf* ib = packet_buffer(e.mIndexBuffer);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -4773,7 +4773,7 @@ static void on_rt_only_packets(const LLVkBridge::ShadowPacketsHeader& h, const U
             continue;
         }
         const F32* model = e.mMatrix ? matrices + 16 * (size_t)e.mMatrix : nullptr;
-        if (e.mFlags & LLVkBridge::ALPHA_RAY_ONLY)
+        if (e.mFlags & RKVkBridge::ALPHA_RAY_ONLY)
         {
             Rt::AlphaInfo info;
             if (Rt::materialsOn())
@@ -4877,7 +4877,7 @@ static U64 palette_id_address_prev(U32 id, U32 viewer_frame)
 }
 
 // <FS> P1 step 3: kind 40: the palettes the viewer stamped into the frame's list, as (id, float offset) pairs (mEntries of them in the blob); each offset is resolved to an address now, the records that follow name the palette by its id
-static void on_palette_ids(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_palette_ids(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (h.mPass != gFrameState.mPalFrame)
     {
@@ -4901,26 +4901,26 @@ static void on_palette_ids(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
 
 // <FS> PLAN-avatars.md rigged draws as rows, P1: kind 39: part of the frame's palette list that the viewer wrote straight into a palette arena (mEntries = the arena, mFragment = the first float, mPaletteFloats = how many):
 // a segment of the frame's list at the arena's own address, no copy; the arena is held until frameCount() + 3 renderer frames after this record
-static void on_palette_arena(const LLVkBridge::ShadowPacketsHeader& h)
+static void on_palette_arena(const RKVkBridge::ShadowPacketsHeader& h)
 {
     if (h.mPass != gFrameState.mPalFrame)
     {
         gFrameState.mPalFrame = h.mPass;
         gFrameState.mPalSegs.clear();
     }
-    LLVkBridge::PaletteArena arena;
-    if (h.mPaletteFloats == 0 || !LLVkBridge::paletteArenaInfo(h.mEntries, arena) || (U64)h.mFragment + h.mPaletteFloats > arena.mFloats)
+    RKVkBridge::PaletteArena arena;
+    if (h.mPaletteFloats == 0 || !RKVkBridge::paletteArenaInfo(h.mEntries, arena) || (U64)h.mFragment + h.mPaletteFloats > arena.mFloats)
     {
         return;
     }
     const U64 address = arena.mAddress + 4ull * h.mFragment;
     gFrameState.mPalSegs.push_back({ h.mFragment, h.mPaletteFloats, address });
     palette_cpu_register(address, 4u * h.mPaletteFloats, arena.mPtr + h.mFragment);        // (the skin catcher's snapshot)
-    LLVkBridge::paletteArenaSent(h.mEntries, Context::instance().getFrameNumber() + Context::frameCount() + 3);
+    RKVkBridge::paletteArenaSent(h.mEntries, Context::instance().getFrameNumber() + Context::frameCount() + 3);
     Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)address, (unsigned long long)h.mPass);
 }
 
-static void on_palette_segment(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_palette_segment(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (h.mPass != gFrameState.mPalFrame)
     {
@@ -4955,7 +4955,7 @@ static Buf* packet_buffer_used(U32 name, U64 frame)
 }
 
 // the worker side of kinds 6 and 7: rigged draws of the main view, only named to the ray scene (palettes are copied into the frame's scratch memory the scene call reads)
-static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_rigged_note_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     Context::instance().flight(Context::FL_RT_NOTE, (unsigned long long)h.mKind, (unsigned long long)h.mEntries, (unsigned long long)h.mPaletteFloats, (unsigned long long)h.mPass);
     if (!Rt::active() || h.mEntries == 0)
@@ -4963,13 +4963,13 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
         return;
     }
     const bool alpha_entries = h.mKind == 7;
-    const size_t entry_bytes = alpha_entries ? sizeof(LLVkBridge::ShadowAlphaEntry) : sizeof(LLVkBridge::ShadowSkinEntry);
+    const size_t entry_bytes = alpha_entries ? sizeof(RKVkBridge::ShadowAlphaEntry) : sizeof(RKVkBridge::ShadowSkinEntry);
     const F32* matrices = (const F32*)(blob + entry_bytes * h.mEntries);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         if (alpha_entries)
         {
-            const LLVkBridge::ShadowAlphaEntry& e = ((const LLVkBridge::ShadowAlphaEntry*)blob)[i];
+            const RKVkBridge::ShadowAlphaEntry& e = ((const RKVkBridge::ShadowAlphaEntry*)blob)[i];
             Buf* vb = packet_buffer(e.mVertexBuffer);
             Buf* ib = packet_buffer(e.mIndexBuffer);
             // debug: why a rigged alpha entry of the main view is turned away here (counted, logged about once in 600 packets)
@@ -5000,7 +5000,7 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
             {
                 ++why[5];
             }
-            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & LLVkBridge::ALPHA_RIGGED))
+            if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress || !(e.mFlags & RKVkBridge::ALPHA_RIGGED))
             {
                 continue;
             }
@@ -5013,7 +5013,7 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
         }
         else
         {
-            const LLVkBridge::ShadowSkinEntry& e = ((const LLVkBridge::ShadowSkinEntry*)blob)[i];
+            const RKVkBridge::ShadowSkinEntry& e = ((const RKVkBridge::ShadowSkinEntry*)blob)[i];
             Buf* vb = packet_buffer(e.mVertexBuffer);
             Buf* ib = packet_buffer(e.mIndexBuffer);
             if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -5031,14 +5031,14 @@ static void on_rigged_note_packets(const LLVkBridge::ShadowPacketsHeader& h, con
 }
 
 // the worker side of a record of the body meshes of avatars (kind 4): nothing is drawn, the ray scene skins them on the GPU
-static void on_body_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_body_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || h.mEntries == 0)
     {
         return;
     }
-    const LLVkBridge::ShadowBodyEntry* entries = (const LLVkBridge::ShadowBodyEntry*)blob;
-    const F32* palette_source = (const F32*)(blob + sizeof(LLVkBridge::ShadowBodyEntry) * h.mEntries);
+    const RKVkBridge::ShadowBodyEntry* entries = (const RKVkBridge::ShadowBodyEntry*)blob;
+    const F32* palette_source = (const F32*)(blob + sizeof(RKVkBridge::ShadowBodyEntry) * h.mEntries);
     Renderer& r = Renderer::instance();
     Renderer::ScratchAlloc palettes;
     if (h.mPaletteFloats)
@@ -5053,7 +5053,7 @@ static void on_body_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     }
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::ShadowBodyEntry& e = entries[i];
+        const RKVkBridge::ShadowBodyEntry& e = entries[i];
         Buf* vb = packet_buffer(e.mVertexBuffer);
         Buf* ib = packet_buffer(e.mIndexBuffer);
         if (!vb || !ib || !vb->mVk.valid() || !ib->mVk.valid() || !vb->mVk.mAddress || !ib->mVk.mAddress)
@@ -5212,7 +5212,7 @@ static void alpha_split_note(int part, std::chrono::steady_clock::time_point sin
     }
 }
 
-static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_shadow_alpha_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     const auto split_t0 = std::chrono::steady_clock::now();
     struct AlphaGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mTexcoords[2]; U32 mColors[2]; U32 mFirst, mCount, mModel, mFlags; U32 mSlots[2]; F32 mCutoff; U32 mPad; U32 mWeights[2]; U32 mPalette[2]; };
@@ -5234,8 +5234,8 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowAlphaEntry) * h.mEntries);
+    const RKVkBridge::ShadowAlphaEntry* entries = (const RKVkBridge::ShadowAlphaEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(RKVkBridge::ShadowAlphaEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(AlphaGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -5252,7 +5252,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
             F32* tm = (F32*)texmats.mPtr;
             memset(tm, 0, 64);
             tm[0] = tm[5] = tm[10] = tm[15] = 1.f;
-            LLVkTexAnim::writeSlot0(tm);
+            RKVkTexAnim::writeSlot0(tm);
             memcpy(tm + 16, matrices + 16 * (size_t)h.mMatrices, 64 * (size_t)h.mTexmats);
         }
         else
@@ -5266,7 +5266,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     AlphaGpu* out = (AlphaGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::ShadowAlphaEntry& e = entries[i];
+        const RKVkBridge::ShadowAlphaEntry& e = entries[i];
         AlphaGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
@@ -5275,7 +5275,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         {
             continue;       // not created (yet): the draw is skipped, as a draw from an empty buffer is
         }
-        if (Rt::active() && !(e.mFlags & LLVkBridge::ALPHA_RIGGED) && !h.mDrawOnly)       // (mDrawOnly: step 3d, the viewer names these casters to the ray scene itself, with their materials)
+        if (Rt::active() && !(e.mFlags & RKVkBridge::ALPHA_RIGGED) && !h.mDrawOnly)       // (mDrawOnly: step 3d, the viewer names these casters to the ray scene itself, with their materials)
         {
             Rt::AlphaInfo alpha;
             alpha.mFlags = e.mFlags & 31u;      // fullbright, tree, one texture, texcoords, colours: the bits mean the same in the ray query shader
@@ -5293,13 +5293,13 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
         g.mIndices[0] = (U32)ia;
         g.mIndices[1] = (U32)(ia >> 32);
         U32 flags = e.mFlags;
-        if (flags & LLVkBridge::ALPHA_HAS_TEXCOORD)
+        if (flags & RKVkBridge::ALPHA_HAS_TEXCOORD)
         {
             const U64 a = pa + e.mTexcoordOffset;
             g.mTexcoords[0] = (U32)a;
             g.mTexcoords[1] = (U32)(a >> 32);
         }
-        if (flags & LLVkBridge::ALPHA_HAS_COLOR)
+        if (flags & RKVkBridge::ALPHA_HAS_COLOR)
         {
             const U64 a = pa + e.mColorOffset;
             g.mColors[0] = (U32)a;
@@ -5315,7 +5315,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
             const U32 tm_b = (texmats.mAddress && e.mTexMatrix2 <= h.mTexmats) ? e.mTexMatrix2 : 0u;
             g.mPad = tm_a | (tm_b << 16);
         }
-        if (flags & LLVkBridge::ALPHA_RIGGED)
+        if (flags & RKVkBridge::ALPHA_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset, pal = palette_address(e.mPaletteOffset);        // (the rigged entries name their palettes by id: the frame's shared list)
             if (!pal)
@@ -5392,7 +5392,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     alpha_split_note(1, split_t1, 0);
     const auto split_t2 = std::chrono::steady_clock::now();
@@ -5453,7 +5453,7 @@ static void on_shadow_alpha_packets(const LLVkBridge::ShadowPacketsHeader& h, co
 }
 
 // the worker side of a record of deferred geometry draws (diffusePullV.glsl): the draw's matrices are in the record, its textures get slots in the bindless table
-static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged)       // (kind 32 only: the transient alpha draws; a rigged record is drawn indexed)
+static void on_geometry_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob, bool rigged)       // (kind 32 only: the transient alpha draws; a rigged record is drawn indexed)
 {
     const bool indexed = rigged;
     struct GeoGpu
@@ -5512,8 +5512,8 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
         }
         return;
     }
-    const LLVkBridge::GeoEntry* entries = (const LLVkBridge::GeoEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::GeoEntry) * h.mEntries);
+    const RKVkBridge::GeoEntry* entries = (const RKVkBridge::GeoEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(RKVkBridge::GeoEntry) * h.mEntries);
     // S4 A1: a rigged entry is the 128 bytes of GeoGpu and 32 more (weights, palette id, joints), the palettes are in the frame's shared list
     const size_t stride = 160;       // (S4 B: every record entry has the rigged tail, the pull shaders read one layout)
     Renderer::ScratchAlloc table = r.allocVertexScratch(stride * (size_t)h.mEntries);
@@ -5528,11 +5528,11 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     index_buffers.assign(h.mEntries, nullptr);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::GeoEntry& e = entries[i];
+        const RKVkBridge::GeoEntry& e = entries[i];
         U8* raw = (U8*)table.mPtr + stride * i;
         memset(raw, 0, stride);
         GeoGpu& g = *(GeoGpu*)raw;
-        const bool no_index = (e.mFlags & LLVkBridge::GEO_NO_INDEX) != 0;       // S6.6: a drawArrays: no index buffer
+        const bool no_index = (e.mFlags & RKVkBridge::GEO_NO_INDEX) != 0;       // S6.6: a drawArrays: no index buffer
         Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
         Buf* ib = no_index ? nullptr : packet_buffer_used(e.mIndexBuffer, frame_now);
         if (!vb || !vb->mVk.valid() || !vb->mVk.mAddress || (!no_index && (!ib || !ib->mVk.valid() || !ib->mVk.mAddress)))
@@ -5660,7 +5660,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
             return;
         }
         F32* tm = (F32*)texmats.mPtr;
-        LLVkTexAnim::writeSlot0(tm);
+        RKVkTexAnim::writeSlot0(tm);
         memcpy(tm + 16, texmat_src, 64 * (size_t)texmat_count);
         memset(pbr_rows.mPtr, 0, 160 * (size_t)std::max<U32>(pbr_count, 1));
         memcpy(pbr_rows.mPtr, pbr_src, 160 * (size_t)pbr_count);
@@ -5689,7 +5689,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(h.mEntries && (entries[0].mFlags & LLVkBridge::GEO_STRIP) ? LLVkFormat::TOP_TRIANGLE_STRIP : LLVkFormat::TOP_TRIANGLES));      // (S6.6: a strip is a record of one entry)
+    r.setTopology(topology(h.mEntries && (entries[0].mFlags & RKVkBridge::GEO_STRIP) ? RKVkFormat::TOP_TRIANGLE_STRIP : RKVkFormat::TOP_TRIANGLES));      // (S6.6: a strip is a record of one entry)
     r.bindlessFlush();
 
     if (indexed)
@@ -5778,7 +5778,7 @@ static void on_geometry_packets(const LLVkBridge::ShadowPacketsHeader& h, const 
 }
 
 // the worker side of a record of rigged untextured casters (shadowSkinPullV.glsl)
-static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void on_shadow_skin_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     struct SkinGpu { U32 mPositions[2]; U32 mIndices[2]; U32 mWeights[2]; U32 mPalette[2]; U32 mFirst, mJoints, mModel, mPad; };
     static_assert(sizeof(SkinGpu) == 48, "skin packet entry");
@@ -5799,17 +5799,17 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkBridge::ShadowSkinEntry* entries = (const LLVkBridge::ShadowSkinEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinEntry) * h.mEntries);
-    static thread_local std::vector<LLVkBridge::ShadowSkinEntry> expanded;
-    if (h.mEntryBytes == sizeof(LLVkBridge::ShadowSkinSlim))
+    const RKVkBridge::ShadowSkinEntry* entries = (const RKVkBridge::ShadowSkinEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(RKVkBridge::ShadowSkinEntry) * h.mEntries);
+    static thread_local std::vector<RKVkBridge::ShadowSkinEntry> expanded;
+    if (h.mEntryBytes == sizeof(RKVkBridge::ShadowSkinSlim))
     {
         // J1 K3b: the slim entries of a record no ray scene reads: expanded here, the rest of the handler is as it was
-        const LLVkBridge::ShadowSkinSlim* slim = (const LLVkBridge::ShadowSkinSlim*)blob;
-        expanded.assign(h.mEntries, LLVkBridge::ShadowSkinEntry{});
+        const RKVkBridge::ShadowSkinSlim* slim = (const RKVkBridge::ShadowSkinSlim*)blob;
+        expanded.assign(h.mEntries, RKVkBridge::ShadowSkinEntry{});
         for (U32 k = 0; k < h.mEntries; ++k)
         {
-            LLVkBridge::ShadowSkinEntry& x = expanded[k];
+            RKVkBridge::ShadowSkinEntry& x = expanded[k];
             x.mVertexBuffer = slim[k].mVertexBuffer;
             x.mIndexBuffer = slim[k].mIndexBuffer;
             x.mFirstIndex = slim[k].mFirstIndex;
@@ -5820,7 +5820,7 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
             x.mJoints = slim[k].mJoints;
         }
         entries = expanded.data();
-        matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowSkinSlim) * h.mEntries);
+        matrices = (const F32*)(blob + sizeof(RKVkBridge::ShadowSkinSlim) * h.mEntries);
     }
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(SkinGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
@@ -5834,7 +5834,7 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     SkinGpu* out = (SkinGpu*)table.mPtr;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::ShadowSkinEntry& e = entries[i];
+        const RKVkBridge::ShadowSkinEntry& e = entries[i];
         SkinGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
@@ -5904,7 +5904,7 @@ static void on_shadow_skin_packets(const LLVkBridge::ShadowPacketsHeader& h, con
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
 
     Renderer::ScratchAlloc commands;
     const auto& caps = Context::instance().getCaps();
@@ -5974,16 +5974,16 @@ struct ResPair
 struct ResFrag
 {
     std::vector<U32> mSlots;                                    // the table slot of each entry
-    std::vector<LLVkBridge::ShadowPacketEntry> mEntries;
+    std::vector<RKVkBridge::ShadowPacketEntry> mEntries;
     std::vector<U32> mPairOf;                                   // per entry: index into mPairs
     std::vector<ResPair> mPairs;
     F32 mBounds[4] = {};                                        // the sphere (the table copy is write-combined memory: never read back by the CPU)
-    std::vector<LLVk::Rt::CasterRef> mRefs;                     // ray scene: the group each entry was filed under
+    std::vector<RKVk::Rt::CasterRef> mRefs;                     // ray scene: the group each entry was filed under
     size_t mCullIndex = 0;                                      // its row in sRes.mCull
     bool mInCull = false;
     // ray scene alpha casters (kind 18): mMatrix = region slot, mTextures = GL names as last told (kind 19 changes them), ALPHA_NOT_READY keeps an entry out of the scene
-    std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
-    std::vector<LLVk::Rt::CasterRef> mAlphaRefs;
+    std::vector<RKVkBridge::ShadowAlphaEntry> mAlpha;
+    std::vector<RKVk::Rt::CasterRef> mAlphaRefs;
     std::vector<U32> mAlphaPairOf;
     std::vector<U8> mAlphaHeld;
     // resident alpha masked casters the worker draws itself (LL_VK_ALPHARES, kinds 38 and 37): a row of the alpha table and a range of the index pool for each alpha entry
@@ -6153,7 +6153,7 @@ static void res_write_entries(ResFrag& f, size_t pair_index)
         {
             continue;
         }
-        const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+        const RKVkBridge::ShadowPacketEntry& e = f.mEntries[i];
         ResGpu32& g = sRes.mT[f.mSlots[i]];
         if (!p.mOk)
         {
@@ -6297,7 +6297,7 @@ static bool res_pair_ready(ResPair& p)
 static void res_full_note(ResFrag& f, size_t i)
 {
     ResPair& pair = f.mPairs[f.mPairOf[i]];
-    const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+    const RKVkBridge::ShadowPacketEntry& e = f.mEntries[i];
     void* before = f.mRefs[i].mGroup;
     note_rt_caster_ref(0, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
     ++(!before ? sRes.mHandleFirst[0] : (before != f.mRefs[i].mGroup ? sRes.mHandleReplaced[0] : sRes.mHandleSame[0]));
@@ -6308,7 +6308,7 @@ static void res_full_note(ResFrag& f, size_t i)
 static void res_full_note_alpha(ResFrag& f, size_t i)
 {
     ResPair& pair = f.mPairs[f.mAlphaPairOf[i]];
-    const LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
+    const RKVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
     Rt::AlphaInfo a;
     a.mFlags = e.mFlags & (31u | 64u);
     a.mTexcoordOffset = e.mTexcoordOffset;
@@ -6325,10 +6325,10 @@ static void res_full_note_alpha(ResFrag& f, size_t i)
 
 static void res_alpha_hold(ResFrag& f, size_t i)
 {
-    if (!f.mAlphaHeld[i] && !(f.mAlpha[i].mFlags & LLVkBridge::ALPHA_NOT_READY))
+    if (!f.mAlphaHeld[i] && !(f.mAlpha[i].mFlags & RKVkBridge::ALPHA_NOT_READY))
     {
         res_full_note_alpha(f, i);
-        LLVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, 1);
+        RKVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, 1);
         f.mAlphaHeld[i] = 1;
     }
 }
@@ -6337,7 +6337,7 @@ static void res_alpha_unhold(ResFrag& f, size_t i)
 {
     if (f.mAlphaHeld[i])
     {
-        LLVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, -1);
+        RKVk::Rt::holdRange(f.mAlphaRefs[i], f.mAlpha[i].mFirstIndex, f.mAlpha[i].mIndexCount, -1);
         f.mAlphaHeld[i] = 0;
     }
 }
@@ -6354,7 +6354,7 @@ static bool res_enter(ResFrag& f)
     for (size_t i = 0; i < f.mEntries.size(); ++i)
     {
         res_full_note(f, i);
-        LLVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, 1);
+        RKVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, 1);
     }
     for (size_t i = 0; i < f.mAlpha.size(); ++i)
     {
@@ -6367,7 +6367,7 @@ static void res_leave(ResFrag& f)
 {
     for (size_t i = 0; i < f.mEntries.size(); ++i)
     {
-        LLVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, -1);
+        RKVk::Rt::holdRange(f.mRefs[i], f.mEntries[i].mFirstIndex, f.mEntries[i].mIndexCount, -1);
     }
     for (size_t i = 0; i < f.mAlpha.size(); ++i)
     {
@@ -6406,7 +6406,7 @@ static void res_release(U32 id)
     sRes.mFrags.erase(it);
 }
 
-static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_retain(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!res_init())
     {
@@ -6415,11 +6415,11 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     res_release(h.mFragment);
     res_reclaim(Context::instance().getFrameNumber());
     ++sRes.mVersion;
-    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
+    const RKVkBridge::ShadowPacketEntry* entries = (const RKVkBridge::ShadowPacketEntry*)blob;
     ResFrag f;
     memcpy(f.mBounds, h.mViewProj, sizeof(f.mBounds));
     f.mEntries.assign(entries, entries + h.mEntries);
-    f.mRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
+    f.mRefs.assign(h.mEntries, RKVk::Rt::CasterRef());
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -6442,7 +6442,7 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             return;
         }
         f.mSlots.push_back(slot);
-        const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+        const RKVkBridge::ShadowPacketEntry& e = f.mEntries[i];
         size_t k = 0;
         while (k < f.mPairs.size() && !(f.mPairs[k].mVb == e.mVertexBuffer && f.mPairs[k].mIb == e.mIndexBuffer))
         {
@@ -6599,13 +6599,13 @@ static void res_refresh(U64 frame)
 }
 
 // kind 18: the alpha masked static casters of a fragment (merges with its kind 14 record, which comes first)
-static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_retain_alpha(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!res_init() || h.mEntries == 0)
     {
         return;
     }
-    const LLVkBridge::ShadowAlphaEntry* entries = (const LLVkBridge::ShadowAlphaEntry*)blob;
+    const RKVkBridge::ShadowAlphaEntry* entries = (const RKVkBridge::ShadowAlphaEntry*)blob;
     auto found = sRes.mFrags.find(h.mFragment);
     ResFrag* f;
     if (found == sRes.mFrags.end())
@@ -6620,10 +6620,10 @@ static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8*
     alpha_res_release_frag(*f);
     res_unregister_pairs(*f);
     f->mAlpha.assign(entries, entries + h.mEntries);
-    f->mAlphaRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
+    f->mAlphaRefs.assign(h.mEntries, RKVk::Rt::CasterRef());
     f->mAlphaHeld.assign(h.mEntries, 0);
     f->mAlphaPairOf.clear();
-    for (const LLVkBridge::ShadowAlphaEntry& e : f->mAlpha)
+    for (const RKVkBridge::ShadowAlphaEntry& e : f->mAlpha)
     {
         size_t k = 0;
         while (k < f->mPairs.size() && !(f->mPairs[k].mVb == e.mVertexBuffer && f->mPairs[k].mIb == e.mIndexBuffer))
@@ -6658,7 +6658,7 @@ static void res_retain_alpha(const LLVkBridge::ShadowPacketsHeader& h, const U8*
 }
 
 // kind 19: entries whose textures changed name or readiness: { entry index, 4 names, ready }
-static void res_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_tex_update(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     auto it = sRes.mFrags.find(h.mFragment);
     if (it == sRes.mFrags.end())
@@ -6675,22 +6675,22 @@ static void res_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
         {
             continue;
         }
-        LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[index];
+        RKVkBridge::ShadowAlphaEntry& e = f.mAlpha[index];
         memcpy(e.mTextures, u + 6 * j + 1, sizeof(e.mTextures));
         if (u[6 * j + 5])
         {
-            e.mFlags &= ~(U32)LLVkBridge::ALPHA_NOT_READY;
+            e.mFlags &= ~(U32)RKVkBridge::ALPHA_NOT_READY;
         }
         else
         {
-            e.mFlags |= LLVkBridge::ALPHA_NOT_READY;
+            e.mFlags |= RKVkBridge::ALPHA_NOT_READY;
         }
         alpha_res_entry_changed(f, index);
         if (!held)
         {
             continue;
         }
-        if (e.mFlags & LLVkBridge::ALPHA_NOT_READY)
+        if (e.mFlags & RKVkBridge::ALPHA_NOT_READY)
         {
             res_alpha_unhold(f, index);
         }
@@ -6708,7 +6708,7 @@ static void res_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
     }
 }
 
-static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_matrices(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!res_init())
     {
@@ -6943,12 +6943,12 @@ void alpha_res_write_row(ResFrag& f, size_t i)
     {
         return;
     }
-    const LLVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
+    const RKVkBridge::ShadowAlphaEntry& e = f.mAlpha[i];
     AlphaRow& g = sAR.mRows[f.mAlphaSlot[i]];
     ++sAR.mVersion;
     ++sAR.mRowWrites;
     ResPair& p = f.mPairs[f.mAlphaPairOf[i]];
-    if (!p.mOk || !p.mPvb || !p.mPvb->mVk.valid() || !p.mPvb->mVk.mAddress || (e.mFlags & LLVkBridge::ALPHA_RIGGED) || f.mAlphaPoolCount[i] == 0)
+    if (!p.mOk || !p.mPvb || !p.mPvb->mVk.valid() || !p.mPvb->mVk.mAddress || (e.mFlags & RKVkBridge::ALPHA_RIGGED) || f.mAlphaPoolCount[i] == 0)
     {
         g.mCount = 0;
         return;
@@ -6957,13 +6957,13 @@ void alpha_res_write_row(ResFrag& f, size_t i)
     const U64 pa = (U64)p.mPvb->mVk.mAddress;
     g.mPositions[0] = (U32)pa;
     g.mPositions[1] = (U32)(pa >> 32);
-    if (e.mFlags & LLVkBridge::ALPHA_HAS_TEXCOORD)
+    if (e.mFlags & RKVkBridge::ALPHA_HAS_TEXCOORD)
     {
         const U64 a = pa + e.mTexcoordOffset;
         g.mTexcoords[0] = (U32)a;
         g.mTexcoords[1] = (U32)(a >> 32);
     }
-    if (e.mFlags & LLVkBridge::ALPHA_HAS_COLOR)
+    if (e.mFlags & RKVkBridge::ALPHA_HAS_COLOR)
     {
         const U64 a = pa + e.mColorOffset;
         g.mColors[0] = (U32)a;
@@ -7067,7 +7067,7 @@ static void alpha_res_release_frag(ResFrag& f)
 
 // kind 38: the indices of a fragment's alpha entries (sent with kind 18, same order): per entry a count, then that many 16 bit indices (padded to a whole word). They are copied into the pool, the entries
 // get their rows.
-static void res_alpha_indices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_alpha_indices(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     auto found = sRes.mFrags.find(h.mFragment);
     if (found == sRes.mFrags.end() || !alpha_res_init())
@@ -7267,9 +7267,9 @@ bool alpha_cull_pipeline()
 }
 } // namespace
 
-void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob);
 // kind 37: cull the resident alpha rows against the pass's planes on the GPU, then draw the survivors with one indirect indexed draw from the index pool (the packet program of kind 1 is bound by the viewer)
-static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void alpha_res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!sAR.mReady || sAR.mHigh == 0 || !alpha_cull_pipeline())
     {
@@ -7373,7 +7373,7 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
         return;
     }
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     r.setIndexBuffer(sAR.mPool.mBuffer, 0, VK_INDEX_TYPE_UINT16);
     if (r.drawPacketsIndexed(nullptr, n, commands.mBuffer, commands.mOffset + 16, compact ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
@@ -7519,7 +7519,7 @@ static bool res_cull_pipeline()
 }
 
 // kind 17 (ray shadows): the casters of a cascade pass for the ray scene, from the resident fragments: the same frustum test as the GPU cull, on the CPU, per fragment (its entries share its bounds)
-static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_note(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!Rt::active() || !sRes.mReady || sRes.mFrags.empty())
     {
@@ -7566,7 +7566,7 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             {
                 continue;
             }
-            const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
+            const RKVkBridge::ShadowPacketEntry& e = f.mEntries[i];
             note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, nullptr);
             ++noted;
         }
@@ -7764,9 +7764,9 @@ static void res_ray_membership(U64 frame)
     }
 }
 
-void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob);
 // kind 16: cull the resident entries against the pass's planes on the GPU, then draw the commands it wrote with the packet program (already bound by the viewer: the same one as kind 0)
-static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+static void res_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!res_init() || !res_cull_pipeline())
     {
@@ -7860,7 +7860,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     if (r.drawPackets(nullptr, n, commands.mBuffer, commands.mOffset + 16, compact ? commands.mBuffer : VK_NULL_HANDLE, commands.mOffset))
     {
         sDraws += n;
@@ -7878,7 +7878,7 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the compare of the derived listed set with a kind 21 record's handles. Defined with the group table's worker code (kind 35) below, in this named namespace;
 // declared here, outside the anonymous namespace that holds geo_prepare, which calls it (a declaration inside that anonymous namespace would name another function).
-bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own);
+bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own);
 
 // <FS> S3 G2 / G3 (doc/vulkan/S3-design.md): the deferred geometry entries of the scene fragments, kept in a persistent GPU table (the 128 byte entry diffusePullV.glsl / materialPullV.glsl read), drawn
 // from the list of fragments the viewer names once a frame (kind 21) and the pass it draws (kind 22). Nothing is looked at per entry per frame: a fragment is checked only when an EVENT says
@@ -7890,7 +7890,7 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
 namespace
 {
 const U32 kGeoCapacity = 131072;
-const U32 kGeoTypes = LLVkBridge::kGeoPassTypes;
+const U32 kGeoTypes = RKVkBridge::kGeoPassTypes;
 const U32 kGeoAlphaType = 2 * kGeoTypes;       // S5a: the item type of the alpha items
 const U32 kGeoAlphaRiggedType = 2 * kGeoTypes + 1;       // S5d: ... of the rigged alpha items (weights and palette, indexed draws)
 const U32 kPbrCapacity = 16384;                // S5c: rows of PBR values (160 bytes each) for the alpha items with a glTF material
@@ -7910,7 +7910,7 @@ static_assert(sizeof(GeoGpuG) == 160, "geometry table entry");
 struct GeoFrag
 {
     // the fields every frame reads of every listed fragment (the listing, the counts, the copy, the alpha safety check, the pin epoch test), together: a fragment is about 1 KB and these were spread over it, a cache line each
-    std::vector<LLVkBridge::GeoWire> mItems;
+    std::vector<RKVkBridge::GeoWire> mItems;
     std::vector<ResPair> mPairs;        // the distinct (vertex, index) buffers of its items
     std::vector<U64> mAddr;             // per pair: vertex and index buffer address as last written into the entries (the stale check reads these, never the write-combined table)
     std::vector<VkDrawIndirectCommand> mCmds;   // the draws of its usable items, sorted by pass type
@@ -8209,7 +8209,7 @@ void geo_release(U32 handle)
 }
 
 // kind 20: mFragment = the viewer's handle, mEntries x GeoWire, then mPaletteFloats GL names (the fragment's textures in list order)
-void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_retain(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!geo_init())
     {
@@ -8218,7 +8218,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const auto t0 = std::chrono::steady_clock::now();
     geo_release(h.mFragment);
     geo_reclaim(Context::instance().getFrameNumber());
-    const LLVkBridge::GeoWire* items = (const LLVkBridge::GeoWire*)blob;
+    const RKVkBridge::GeoWire* items = (const RKVkBridge::GeoWire*)blob;
     const U32* names = (const U32*)(items + h.mEntries);
     GeoFrag* f = new GeoFrag();
     f->mHandle = h.mFragment;
@@ -8261,7 +8261,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             return;
         }
         f->mSlots.push_back(slot);
-        const LLVkBridge::GeoEntry& e = f->mItems[i].mE;
+        const RKVkBridge::GeoEntry& e = f->mItems[i].mE;
         size_t k = 0;
         while (k < f->mPairs.size() && !(f->mPairs[k].mVb == e.mVertexBuffer && f->mPairs[k].mIb == e.mIndexBuffer))
         {
@@ -8330,7 +8330,7 @@ void geo_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // kind 24: mFragment = handle, mEntries x { local texture number (0 based), GL name }
-void geo_tex_update(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_tex_update(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     const auto t0 = std::chrono::steady_clock::now();
     GeoFrag* f = geo_find(h.mFragment);
@@ -8466,7 +8466,7 @@ void geo_write_items(GeoFrag& f)
 {
     for (size_t i = 0; i < f.mItems.size(); ++i)
     {
-        const LLVkBridge::GeoEntry& e = f.mItems[i].mE;
+        const RKVkBridge::GeoEntry& e = f.mItems[i].mE;
         const ResPair& p = f.mPairs[f.mPairOf[i]];
         if (!p.mOk)
         {
@@ -8500,9 +8500,9 @@ void geo_write_items(GeoFrag& f)
             // buffer, so the nearest array start after it ends it: the smallest nonzero offset of the others gives the number of vertices it holds (the arrays are padded at most, never overlapped, so the
             // limit is never below the real count). Particle rows count particles, not vertices, and a draw with no other array has no limit (0): the pull shaders (rows.glsl row_clamp_index) leave those alone.
             U32 first_array = 0;
-            if (!(e.mFlags & LLVkBridge::GEO_PARTICLE_ROWS))
+            if (!(e.mFlags & RKVkBridge::GEO_PARTICLE_ROWS))
             {
-                const U32 offsets[8] = { e.mNormalOffset, e.mTexcoordOffset, e.mColorOffset, e.mTangentOffset, e.mTexcoord1Offset, e.mTexcoord2Offset, (e.mFlags & LLVkBridge::GEO_RIGGED) ? e.mWeightOffset : 0u, e.mEmissiveOffset };
+                const U32 offsets[8] = { e.mNormalOffset, e.mTexcoordOffset, e.mColorOffset, e.mTangentOffset, e.mTexcoord1Offset, e.mTexcoord2Offset, (e.mFlags & RKVkBridge::GEO_RIGGED) ? e.mWeightOffset : 0u, e.mEmissiveOffset };
                 for (U32 off : offsets)
                 {
                     if (off >= 16u && (first_array == 0 || off < first_array))
@@ -8514,7 +8514,7 @@ void geo_write_items(GeoFrag& f)
             static const bool clamp_on = getenv("LL_VK_VERTEX_CLAMP") == nullptr || atoi(getenv("LL_VK_VERTEX_CLAMP")) != 0;       // 0: no limit (the clamp of the pull shaders does nothing): an A/B for a rigged draw that goes missing
             g.mSkinPad[1] = clamp_on ? first_array / 16u : 0u;
         }
-        if (e.mFlags & LLVkBridge::GEO_RIGGED)
+        if (e.mFlags & RKVkBridge::GEO_RIGGED)
         {
             const U64 wa = pa + e.mWeightOffset;
             g.mWeights[0] = (U32)wa;
@@ -8548,7 +8548,7 @@ static bool geo_item_ok(const GeoFrag& f, size_t i)
     {
         return false;
     }
-    const LLVkBridge::GeoEntry& e = f.mItems[i].mE;
+    const RKVkBridge::GeoEntry& e = f.mItems[i].mE;
     const U64 end = ((U64)e.mFirstIndex + (U64)e.mIndexCount) * 2ull;
     if (p.mPib && end > (U64)p.mPib->mVk.mSize)
     {
@@ -8574,7 +8574,7 @@ void geo_build_commands(GeoFrag& f)
             const U32 first = (U32)f.mCmds.size();
             for (size_t i = 0; i < f.mItems.size(); ++i)
             {
-                if (f.mItems[i].mType == t && ((f.mItems[i].mE.mFlags & LLVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
+                if (f.mItems[i].mType == t && ((f.mItems[i].mE.mFlags & RKVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
                 {
                     f.mCmds.push_back({ f.mItems[i].mE.mIndexCount, 1u, 0u, f.mSlots[i] });
                 }
@@ -8601,7 +8601,7 @@ void geo_build_commands(GeoFrag& f)
                 const U32 first = (U32)f.mRCmds.size();
                 for (size_t i = 0; i < f.mItems.size(); ++i)
                 {
-                    if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && ((f.mItems[i].mE.mFlags & LLVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
+                    if (f.mItems[i].mType == kGeoTypes + rt && f.mPairOf[i] == k && ((f.mItems[i].mE.mFlags & RKVkBridge::GEO_DOUBLE_SIDED) != 0) == (ds != 0) && geo_item_ok(f, i))
                     {
                         f.mRItemCmd[i] = (U32)f.mRCmds.size();
                         f.mRItems.push_back((U32)i);
@@ -8906,17 +8906,17 @@ void geo_stale_check(const std::vector<GeoFrag*>& listed)
 }
 
 // kind 21: once a frame, before the passes. Blob: mEntries handles (U32), then mMatrices x GeoSlotMatrix
-void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!geo_init())
     {
-        ++LLVkBridge::sGeoPrepareDropped;
+        ++RKVkBridge::sGeoPrepareDropped;
         return;
     }
-    if (!LLVkBridge::inFrame())
+    if (!RKVkBridge::inFrame())
     {
         ++sGeo.mS.mNotInFrame;
-        ++LLVkBridge::sGeoPrepareDropped;       // P2: the viewer sends the persistent bindings again
+        ++RKVkBridge::sGeoPrepareDropped;       // P2: the viewer sends the persistent bindings again
         return;
     }
     const bool timed = geo_timed();
@@ -8927,7 +8927,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const auto t_derive = std::chrono::steady_clock::now();
     geo_reclaim(frame_now);
     const U32* handles = (const U32*)blob;
-    const LLVkBridge::GeoSlotMatrix* matrices = (const LLVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
+    const RKVkBridge::GeoSlotMatrix* matrices = (const RKVkBridge::GeoSlotMatrix*)(handles + h.mEntries);
     struct Binding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };
     const Binding* bindings = (const Binding*)(matrices + h.mMatrices);       // S4 B: mPaletteFloats = how many
     U32 entries = h.mEntries;
@@ -9259,7 +9259,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             per_type += std::string(t ? "/" : "") + std::to_string((long long)((double)s.mCommands[t] / n + 0.5)) + "(max " + std::to_string(s.mCommandsMax[t]) + ")";
         }
         U64 pins = 0, resolves = 0, events = 0;
-        LLVkWorker::rtPinCounts(pins, resolves, events);
+        RKVkWorker::rtPinCounts(pins, resolves, events);
         LL_DIAG("VkScene") << "scene geometry table, per frame over " << s.mPrepares << " prepares: " << (double)s.mFragsListed / n << " fragments listed (" << s.mFragsUnknown << " unknown handles in total, max "
             << s.mMaxFragsFrame << "), " << (double)s.mItemsListed / n << " entries (max " << s.mMaxItemsFrame << "), " << (double)s.mCommandsTotal / n << " commands (" << (double)s.mItemsSkippedPair / n
             << " entries without usable buffers), rebuilds " << (double)s.mRebuilds / n << " (first " << (double)s.mRebuildFirst / n << ", buffers changed " << (double)s.mRebuildPairs / n << ", texture slots changed "
@@ -9288,7 +9288,7 @@ void geo_prepare(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // kind 22: one pass type, with the program the viewer bound
-void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
     const U32 type = h.mPass;
@@ -9458,7 +9458,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         t[0] = t[5] = t[10] = t[15] = 1.f;
                     }
                 }
-                LLVkTexAnim::writeSlot0(tex);
+                RKVkTexAnim::writeSlot0(tex);
                 sharedTex.mFrame = frame_now;
                 sharedTex.mPrepares = s.mPrepares;
                 sharedTex.mSlots = slots;
@@ -9521,7 +9521,7 @@ void geo_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     geo_flush_if_needed();
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     if (timed) s.mNsDrawState += geo_ns(t0);
     t0 = std::chrono::steady_clock::now();
@@ -9751,7 +9751,7 @@ static void geo_alpha_resolve(GeoFrag& f, U32 first, U32 count)
     }
 }
 
-void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
     AlphaStats& a = sAlphaS;
@@ -9803,7 +9803,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 t[0] = t[5] = t[10] = t[15] = 1.f;
             }
         }
-        LLVkTexAnim::writeSlot0(tex);       // (slot 0 is never a matrix: the clock of the texture animations whose slots hold parameters)
+        RKVkTexAnim::writeSlot0(tex);       // (slot 0 is never a matrix: the clock of the texture animations whose slots hold parameters)
         pass.mFrame = frame_now;
         pass.mPrepares = s.mPrepares;
         memcpy(pass.mVP, view, sizeof(pass.mVP));
@@ -10030,7 +10030,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     geo_flush_if_needed();
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     if (timed) { a.mNsPrepare += geo_ns(t0); t0 = std::chrono::steady_clock::now(); }
     r.bindlessFlush();
     if (timed) { a.mNsBindless += geo_ns(t0); }
@@ -10121,7 +10121,7 @@ void geo_alpha_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // kind 33 (S6 LV1): the light volumes of a deferred lighting pass. The program is the pull light program the viewer bound; each light is an 8 vertex triangle fan drawn as one indirect command whose instance is the
 // light's row.
-void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_light_volumes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     Renderer& r = Renderer::instance();
     Program* program = r.getProgram();
@@ -10135,7 +10135,7 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     const bool spot = h.mPass == 1;
-    const size_t row_bytes = spot ? sizeof(LLVkBridge::SpotVolumeRow) : sizeof(LLVkBridge::LightVolumeRow);
+    const size_t row_bytes = spot ? sizeof(RKVkBridge::SpotVolumeRow) : sizeof(RKVkBridge::LightVolumeRow);
     Renderer::ScratchAlloc rows = r.allocVertexScratch(row_bytes * h.mEntries);
     Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * h.mEntries);
     if (!rows.mPtr || !rows.mAddress || !cmds.mPtr)
@@ -10145,8 +10145,8 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     memcpy(rows.mPtr, blob, row_bytes * h.mEntries);
     if (spot)
     {   // the projected image: the GL name in the row becomes this frame's bindless slot
-        LLVkBridge::SpotVolumeRow* sr = (LLVkBridge::SpotVolumeRow*)rows.mPtr;
-        const LLVkBridge::SpotVolumeRow* src = (const LLVkBridge::SpotVolumeRow*)blob;
+        RKVkBridge::SpotVolumeRow* sr = (RKVkBridge::SpotVolumeRow*)rows.mPtr;
+        const RKVkBridge::SpotVolumeRow* src = (const RKVkBridge::SpotVolumeRow*)blob;
         for (U32 i = 0; i < h.mEntries; ++i)
         {
             sr[i].mTexture = packet_texture_slot(r, src[i].mTexture);
@@ -10170,7 +10170,7 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLE_FAN));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLE_FAN));
     if (spot)
     {
         r.bindlessFlush();
@@ -10193,7 +10193,7 @@ void on_light_volumes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 // kind 41: the avatar impostors of a deferred pass. Blob: mEntries x ImpostorQuadRow (the GL names of the three images become this frame's bindless slots). The program is the viewer's "Deferred Impostor
 // Shader", which has no table of its own: only its native stand-in (impostor.vert / impostor.frag, which declares ll_impostor_table) draws; with the family off or the stand-in not built nothing is drawn and the
 // first such record is logged. One draw of 6 vertices a row, the row chosen by the instance.
-void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_impostor_quads(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     Renderer& r = Renderer::instance();
     Program* old_program = r.getProgram();
@@ -10214,15 +10214,15 @@ void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         ++sStats.mNoProgram;
         return;
     }
-    Renderer::ScratchAlloc rows = r.allocVertexScratch(sizeof(LLVkBridge::ImpostorQuadRow) * h.mEntries);
+    Renderer::ScratchAlloc rows = r.allocVertexScratch(sizeof(RKVkBridge::ImpostorQuadRow) * h.mEntries);
     Renderer::ScratchAlloc cmds = r.allocVertexScratch(sizeof(VkDrawIndirectCommand) * h.mEntries);
     if (!rows.mPtr || !rows.mAddress || !cmds.mPtr)
     {
         return;
     }
-    memcpy(rows.mPtr, blob, sizeof(LLVkBridge::ImpostorQuadRow) * h.mEntries);
-    LLVkBridge::ImpostorQuadRow* rr = (LLVkBridge::ImpostorQuadRow*)rows.mPtr;
-    const LLVkBridge::ImpostorQuadRow* src = (const LLVkBridge::ImpostorQuadRow*)blob;
+    memcpy(rows.mPtr, blob, sizeof(RKVkBridge::ImpostorQuadRow) * h.mEntries);
+    RKVkBridge::ImpostorQuadRow* rr = (RKVkBridge::ImpostorQuadRow*)rows.mPtr;
+    const RKVkBridge::ImpostorQuadRow* src = (const RKVkBridge::ImpostorQuadRow*)blob;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         rr[i].mDiffuse = packet_texture_slot(r, src[i].mDiffuse);
@@ -10247,7 +10247,7 @@ void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         return;
     }
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
     r.bindlessFlush();
     if (r.drawPackets(nullptr, h.mEntries, cmds.mBuffer, cmds.mOffset))
     {
@@ -10266,13 +10266,13 @@ void on_impostor_quads(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 // kind 31 (S5d): the palettes of this frame for the rigged alpha items. Blob: mEntries x { fragment handle, item (its number in the fragment's wire list), the palette's offset in the frame's shared list
 // (~0u: none), joints }. The row of the item gets the palette address and joint count, its command the index count: an item without a binding this frame draws nothing (as the rigged G-buffer items).
-void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_alpha_palettes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (!sGeo.mReady || sGeo.mPreparedFrame != Context::instance().getFrameNumber())
     {
         if (sGeo.mPersist)
         {
-            ++LLVkBridge::sGeoPrepareDropped;       // P2: the changes in this record are lost: the viewer sends every binding again
+            ++RKVkBridge::sGeoPrepareDropped;       // P2: the changes in this record are lost: the viewer sends every binding again
         }
         return;
     }
@@ -10328,7 +10328,7 @@ void geo_alpha_palettes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob
     }
 }
 
-void geo_dispatch(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void geo_dispatch(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if (h.mKind == 31)
     {
@@ -10618,7 +10618,7 @@ bool hiz_init()
         return false;
     }
     memset(s.mResults.mMapped, 0, (size_t)kHizSlots * kHizCapacity * 12);
-    LLVkBridge::hizSetResults((const U32*)s.mResults.mMapped, kHizCapacity);
+    RKVkBridge::hizSetResults((const U32*)s.mResults.mMapped, kHizCapacity);
     s.mReady = true;
     LL_INFOS("VkHiz") << "Hi-Z occlusion ready: " << kHizSlots << " result slots of " << kHizCapacity << " boxes" << LL_ENDL;
     return true;
@@ -10637,7 +10637,7 @@ void hiz_poll()
         const HizState::Pending p = s.mPending.front();
         s.mPending.pop_front();
         vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kHizCapacity * 12, (VkDeviceSize)p.mCount * 12);
-        LLVkBridge::hizPublish(p.mSlot, p.mSerial);
+        RKVkBridge::hizPublish(p.mSlot, p.mSerial);
         ++s.mPublished;
     }
 }
@@ -10695,7 +10695,7 @@ bool hiz_pyramid(U32 w, U32 h)
 }
 
 // kind 34
-void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_hiz_boxes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     HizState& s = sHiz;
     ++s.mRecords;
@@ -10757,7 +10757,7 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const VkPipelineLayout down_layout = s.mDownLayout, test_layout = s.mTestLayout;
     U64 dispatches = 0;
     const bool recorded = r.recordExternal({ { root, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL } }, [&](VkCommandBuffer cmd) {
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             ctx.gpuStamp(Context::stampTag("hiz pyramid + box test"));
         }
@@ -10842,8 +10842,8 @@ void on_hiz_boxes(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 // ---- <FS> S7 C1 (doc/vulkan/S7-design.md section 14), kind 35: the flat group table against the camera frustum, shadow mode: nothing reads the bits but the viewer's comparison log ----
 struct CullShadowState
 {
-    std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
-    std::vector<LLVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
+    std::vector<RKVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
+    std::vector<RKVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
     std::vector<U64> mHandleStamp;                  // the record that last changed the slot's fragment handle (stage 5: a handle that just changed is the viewer's to name, the row's may be a frame behind the group's fragments)
     U64 mRecords = 0;
 };
@@ -10860,7 +10860,7 @@ struct CullDeriveStats
 CullDeriveStats sCullDerive;
 
 // LLCamera::AABBInFrustumNoFarClip: 0 outside, 1 partly in, 2 fully in (the planes of the view, the far plane (5) left to the sphere test)
-int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F32 m = 0.f)
+int cull_box_res(const RKVkBridge::CullParams& P, const F32* c, const F32* h, F32 m = 0.f)
 {
     const U32 planes = P.mPlaneCount < 7u ? P.mPlaneCount : 7u;
     bool partly = false;
@@ -10883,7 +10883,7 @@ int cull_box_res(const LLVkBridge::CullParams& P, const F32* c, const F32* h, F3
 }
 
 // AABBSphereIntersect of the box min..max with the sphere of the far limit: 2 when both corners are inside (the stock quirk: a box with its two corners inside counts as wholly in), 0 outside, 1 else
-int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* mx, F32 m = 0.f)
+int cull_sphere_res(const RKVkBridge::CullParams& P, const F32* mn, const F32* mx, F32 m = 0.f)
 {
     if (P.mCornerDist <= 0.f)
     {
@@ -10910,7 +10910,7 @@ int cull_sphere_res(const LLVkBridge::CullParams& P, const F32* mn, const F32* m
 }
 
 // the margin of the late list (the GPU test's: the translation bound plus the distance times the rotation bound, times the variant's factor); 0 for the exact test
-F32 cull_margin(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, F32 factor)
+F32 cull_margin(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, F32 factor)
 {
     if (factor <= 0.f)
     {
@@ -10921,7 +10921,7 @@ F32 cull_margin(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, F
 }
 
 // the culler's frustumCheck of the group's bounds (and, for the far limit, its extents) and its frustumCheckObjects of the object bounds
-int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, F32 factor = 0.f)
+int cull_group_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, F32 factor = 0.f)
 {
     const F32 m = cull_margin(P, r, factor);
     int res = cull_box_res(P, r.mCenter, r.mHalf, m);
@@ -10939,7 +10939,7 @@ int cull_group_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r
     return res;
 }
 
-int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow& r, const LLVkBridge::CullMapRow& m, F32 factor = 0.f)
+int cull_objects_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, const RKVkBridge::CullMapRow& m, F32 factor = 0.f)
 {
     int res = cull_box_res(P, m.mObjCenter, m.mObjHalf, cull_margin(P, r, factor));      // (stage 10d: the margin of a view request that asks for it; 0 for the exact test)
     if (res && (r.mFlags & 8u))
@@ -10960,13 +10960,13 @@ int cull_objects_res(const LLVkBridge::CullParams& P, const LLVkBridge::CullRow&
 // an ancestor fails (the subtree is never visited), ST_PART / ST_FULL the node is visited with mRes 1 / 2 (a node under a wholly-in ancestor, or a skip-frustum-check node under a partly-in one, takes its parent's mRes with no test)
 enum { ST_UNKNOWN = 0, ST_OCC, ST_OUT, ST_PART, ST_FULL };
 
-U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, U32 slot, std::vector<U8>& memo, int depth, F32 factor = 0.f)
+U8 cull_chain_state(const CullShadowState& s, const RKVkBridge::CullParams& P, bool occlusion, U32 slot, std::vector<U8>& memo, int depth, F32 factor = 0.f)
 {
     if (memo[slot])
     {
         return memo[slot];
     }
-    const LLVkBridge::CullRow& row = s.mTable[slot];
+    const RKVkBridge::CullRow& row = s.mTable[slot];
     const U32 flags = row.mFlags;
     U8 st;
     if (flags & 32u)
@@ -11022,10 +11022,10 @@ U8 cull_chain_state(const CullShadowState& s, const LLVkBridge::CullParams& P, b
 
 enum { CV_PASS = 0, CV_DEAD, CV_NOHANDLE, CV_TYPE, CV_OCC, CV_HIDE, CV_FRUSTUM, CV_OBJECTS, CV_GATE };
 
-int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, bool need_handle = true)
+int cull_row_verdict(const CullShadowState& s, const RKVkBridge::CullParams& P, U32 slot, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, bool need_handle = true)
 {
-    const LLVkBridge::CullRow& row = s.mTable[slot];
-    const LLVkBridge::CullMapRow& map = s.mMap[slot];
+    const RKVkBridge::CullRow& row = s.mTable[slot];
+    const RKVkBridge::CullMapRow& map = s.mMap[slot];
     const U32 flags = row.mFlags;
     if (flags & 32u)
     {
@@ -11097,10 +11097,10 @@ int cull_row_verdict(const CullShadowState& s, const LLVkBridge::CullParams& P, 
 // stage 4: the late set, a bit set by slot (the consumers' handle list is made from it), of the groups whose fragments the CPU consumers of the visible set (matrices of moving fragments, bindings and palettes of rigged ones, textures) have to serve. It is the exact list's
 // filters of the render map without the occlusion cut (a group the Hi-Z hides can be uncovered by the time the list is read), with the planes grown by the motion margin and the chain rule of the walk (so the far limit quirk
 // is in it); the groups of the bridges the walk marked are exact (the viewer says which)
-bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U32 slot, F32 factor, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
+bool cull_late_pass(const CullShadowState& s, const RKVkBridge::CullParams& P, U32 slot, F32 factor, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked)
 {
-    const LLVkBridge::CullRow& row = s.mTable[slot];
-    const LLVkBridge::CullMapRow& map = s.mMap[slot];
+    const RKVkBridge::CullRow& row = s.mTable[slot];
+    const RKVkBridge::CullMapRow& map = s.mMap[slot];
     const U32 flags = row.mFlags;
     if ((flags & (32u | 16u)) || !map.mHandle)       // (no fragment: no handle to name; the viewer makes the alpha lists itself)
     {
@@ -11134,13 +11134,13 @@ bool cull_late_pass(const CullShadowState& s, const LLVkBridge::CullParams& P, U
 // (memo: the chain states of this view, zeroed by the caller for a view of its own; stage 10a uses it for the views that ask by id)
 // (type_mask: the main view's render type filter, as cull_late_pass applies it: a group of a type the view does not render is not kept (2026-11-17: the walk never visited it, and the stamps of the kept set are written for
 // every bit of it). Null for the views that ask by their own parameters.)
-void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out, F32 factor = 0.f, const U32* type_mask = nullptr)
+void cull_kept_bits(const CullShadowState& s, const RKVkBridge::CullParams& P, bool occlusion, std::vector<U8>& memo, std::vector<U32>& out, F32 factor = 0.f, const U32* type_mask = nullptr)
 {
     const U32 table = (U32)s.mTable.size();
     out.assign((table + 31) / 32, 0u);
     for (U32 slot = 0; slot < table; ++slot)
     {
-        const LLVkBridge::CullRow& row = s.mTable[slot];
+        const RKVkBridge::CullRow& row = s.mTable[slot];
         const U32 flags = row.mFlags;
         if ((flags & (32u | 64u | 16u)) || (!(flags & 1u) && row.mParent >= table))
         {
@@ -11160,7 +11160,7 @@ void cull_kept_bits(const CullShadowState& s, const LLVkBridge::CullParams& P, b
         {
             continue;
         }
-        const LLVkBridge::CullMapRow& m = s.mMap[slot];
+        const RKVkBridge::CullMapRow& m = s.mMap[slot];
         if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m, factor) == 0)
         {
             continue;
@@ -11176,14 +11176,14 @@ struct DerivePub
     U32 mPass = 0, mLodFlag = 0;
     bool mOcclusion = false;
     F32 mHideLimit = 0.f;
-    LLVkBridge::CullParams mParams;
+    RKVkBridge::CullParams mParams;
     std::vector<U32> mVis;          // the exact derived set by slot (the verdict pass)
     std::vector<U32> mMarked;       // the root slots of the bridges the walk marked
 };
 
 void derive_publish(const CullShadowState& s, const DerivePub& job)
 {
-    const LLVkBridge::CullParams& P = job.mParams;
+    const RKVkBridge::CullParams& P = job.mParams;
     const bool occlusion = job.mOcclusion;
     const F32 hide_limit = job.mHideLimit;
     const U32* type_mask = &P.mPad[2];
@@ -11222,7 +11222,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
         {
             // the viewer's consumers' list (the viewer used to walk the whole table for it each frame, with a seen array and a sort): the late set's rows with a fragment handle, one each.
             // (a handle here may be a frame or two behind the group's fragments: the viewer checks each against the group's current handle)
-            auto list = std::make_shared<LLVkBridge::ConsumerList>();
+            auto list = std::make_shared<RKVkBridge::ConsumerList>();
             list->mFrame = job.mPass;
             list->mTable = table;
             static std::vector<U32> seen_stamp;
@@ -11238,7 +11238,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                     {
                         continue;
                     }
-                    const LLVkBridge::CullMapRow& m = s.mMap[slot];
+                    const RKVkBridge::CullMapRow& m = s.mMap[slot];
                     const F32 ex = m.mObjCenter[0] - P.mOrigin[0], ey = m.mObjCenter[1] - P.mOrigin[1], ez = m.mObjCenter[2] - P.mOrigin[2];
                     const F32 len = sqrtf(ex * ex + ey * ey + ez * ez);
                     if (len < 1.0e-6f)
@@ -11261,7 +11261,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 {
                     continue;
                 }
-                const LLVkBridge::CullMapRow& m = s.mMap[slot];
+                const RKVkBridge::CullMapRow& m = s.mMap[slot];
                 if (!m.mHandle)
                 {
                     continue;       // (no fragment: no handle to name)
@@ -11284,7 +11284,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
                 cull_kept_bits(s, P, occlusion, memo, list->mKept, 0.f, type_mask);
             }
-            LLVkBridge::consumerListPublish(std::move(list));
+            RKVkBridge::consumerListPublish(std::move(list));
         }
     }
     if (job.mLodFlag & 1u)
@@ -11300,7 +11300,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             {
                 continue;
             }
-            const LLVkBridge::CullMapRow& m = s.mMap[slot];
+            const RKVkBridge::CullMapRow& m = s.mMap[slot];
             const U32 period = (m.mLodFlags >> 8) & 255u, hash = (m.mLodFlags >> 16) & 255u;
             // the whole of changeLOD(): the dirty bits, the round robin of needsUpdate() (every period frames, staggered by the group's hash), the slop test below
             // (the viewer reads this set one to three frames after the record's own: the turns of the three frames after it are in the set, its own live changeLOD() drops the ones that are not due yet; stage 8's LOD switch, LL_VK_LOD_CAND)
@@ -11326,7 +11326,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                 lod_change[slot >> 5] |= 1u << (slot & 31u);
             }
         }
-        LLVkBridge::lodListPublish(job.mPass, table, lod_change.data());
+        RKVkBridge::lodListPublish(job.mPass, table, lod_change.data());
     }
 }
 
@@ -11336,7 +11336,7 @@ void derive_publish_dispatch(DerivePub&& job);
 // The test is the number of groups the derive lists against the view before: a sweep to a sparse direction moves it a few percent a view, a flash by a fifth or more (LL_VK_FLASH_TEST=1: 3 percent, to make events to read). A change
 // starts an event: one line with the groups that left the set or joined it and why (the derive's own verdict of each row now: occluded, outside the frustum, its objects outside, no fragment, auto-hidden, dead, a bridge not marked), the
 // camera's move and turn since the view before; and one line at its end: the count back within 10 percent of the one before inside 6 views is a flash, else a step. A status line every 600 views says it ran.
-void flash_watch(const CullShadowState& s, const LLVkBridge::CullParams& P, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, const std::vector<U32>& vis_words, U64 count)
+void flash_watch(const CullShadowState& s, const RKVkBridge::CullParams& P, bool occlusion, F32 hide_limit, const U32* type_mask, std::vector<U8>& memo, const std::vector<U8>& bridge_marked, const std::vector<U32>& vis_words, U64 count)
 {
     static const bool test = getenv("LL_VK_FLASH_TEST") != nullptr;
     const double jump = test ? 0.03 : 0.20;
@@ -11411,14 +11411,14 @@ void flash_watch(const CullShadowState& s, const LLVkBridge::CullParams& P, bool
     }
 }
 
-bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own)
+bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* view_blob, std::vector<U32>* own)
 {
     // The main view's derive (T4b-2 of doc/vulkan/PLAN-visible-set-owner.md): the listed set from the worker's own rows and this record's planes, which the worker draws from. The record names no handles for the main view: the viewer sends the
     // groups it can say better than a row a frame old (the marked bridges' groups, the handles changed in the last 3 frames) and nothing else. What the consumers read is made by the derive thread (derive_publish).
     CullShadowState& s = sCullShadow;
     U32 own_flag, lod_flag;
-    memcpy(&own_flag, view_blob + sizeof(LLVkBridge::CullParams) + 8, 4);
-    memcpy(&lod_flag, view_blob + sizeof(LLVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
+    memcpy(&own_flag, view_blob + sizeof(RKVkBridge::CullParams) + 8, 4);
+    memcpy(&lod_flag, view_blob + sizeof(RKVkBridge::CullParams), 4);       // (view extras [0]: bit 0 = the viewer asks for the LOD numbers, the other bits the viewer's frame counter)
     CullDeriveStats& d = sCullDerive;
     const auto t0 = std::chrono::steady_clock::now();
     if (s.mTable.empty() || s.mMap.size() != s.mTable.size())
@@ -11426,7 +11426,7 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
         ++d.mNoTable;
         return false;
     }
-    LLVkBridge::CullParams P;
+    RKVkBridge::CullParams P;
     memcpy(&P, view_blob, sizeof(P));
     std::vector<U32>* own_out = own_flag == 1 && own ? own : nullptr;       // the list the worker draws from (the derived set, by slot)
     if (own_out)
@@ -11438,10 +11438,10 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
     memcpy(&hide_limit, &P.mPad[1], 4);
     const U32* type_mask = &P.mPad[2];
     U32 marked_count;
-    memcpy(&marked_count, view_blob + sizeof(LLVkBridge::CullParams) + 4, 4);
-    const U8* marked_slots = view_blob + sizeof(LLVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
+    memcpy(&marked_count, view_blob + sizeof(RKVkBridge::CullParams) + 4, 4);
+    const U8* marked_slots = view_blob + sizeof(RKVkBridge::CullParams) + 16;      // (after the 16 bytes of view extras: the root slots of the bridges the walk marked)
     U32 bridge_handle_count;
-    memcpy(&bridge_handle_count, view_blob + sizeof(LLVkBridge::CullParams) + 12, 4);
+    memcpy(&bridge_handle_count, view_blob + sizeof(RKVkBridge::CullParams) + 12, 4);
     const U8* bridge_handles = marked_slots + (size_t)marked_count * 4;           // (then the handles the viewer names: the marked bridges' groups and the handles changed in the last 3 frames, exact)
     ++d.mViews;
     const U32 table = (U32)s.mTable.size();
@@ -11522,7 +11522,7 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
 
 // kind 43 (stage 10a): a view asks for its kept set by id (blob: a CullParams; mFragment = the id, mPass = the viewer's frame). The kept set of the planes, no occlusion, answered under the id for the owner view to read.
 // the answer to one request (stage 10a): the kept set of the view, by slot, from the table copy given (the render thread's own in the inline mode, the derive thread's in the thread mode); never both at once
-void view_request_run(const CullShadowState& s, U32 id, U32 frame, const LLVkBridge::CullParams& params)
+void view_request_run(const CullShadowState& s, U32 id, U32 frame, const RKVkBridge::CullParams& params)
 {
     static U64 asked = 0, answered = 0;
     ++asked;
@@ -11530,7 +11530,7 @@ void view_request_run(const CullShadowState& s, U32 id, U32 frame, const LLVkBri
     {
         return;
     }
-    auto set = std::make_shared<LLVkBridge::ViewSet>();
+    auto set = std::make_shared<RKVkBridge::ViewSet>();
     set->mId = id;
     set->mFrame = frame;
     set->mTable = (U32)s.mTable.size();
@@ -11540,7 +11540,7 @@ void view_request_run(const CullShadowState& s, U32 id, U32 frame, const LLVkBri
     // (stage 10d: bit 9 of mPad[0] = the request asks for the late list's margin: the motion bounds of the request, times the factor in mFactors[1])
     const F32 factor = (set->mParams.mPad[0] & 0x200u) ? set->mParams.mFactors[1] : 0.f;
     cull_kept_bits(s, set->mParams, false, memo, set->mKept, factor);
-    LLVkBridge::viewSetPublish(std::move(set));
+    RKVkBridge::viewSetPublish(std::move(set));
     if (++answered % 600 == 1)
     {
         LL_INFOS("VkCullDerive") << "view requests (stage 10a): " << asked << " asked, " << answered << " answered" << LL_ENDL;
@@ -11558,10 +11558,10 @@ struct DeriveThread
         bool mRequest = false, mReset = false, mPublish = false;
         DerivePub mPub;             // mPublish: what the main view's derive publishes for the consumers (derive_publish)
         U32 mTable = 0, mId = 0, mFrame = 0;
-        LLVkBridge::CullParams mParams;
+        RKVkBridge::CullParams mParams;
         std::vector<U32> mSlots;
-        std::vector<LLVkBridge::CullRow> mRows;
-        std::vector<LLVkBridge::CullMapRow> mMap;
+        std::vector<RKVkBridge::CullRow> mRows;
+        std::vector<RKVkBridge::CullMapRow> mMap;
     };
     std::mutex mMutex;
     std::condition_variable mCv;
@@ -11593,19 +11593,19 @@ struct DeriveThread
     {
         if (j.mReset)
         {
-            LLVkBridge::CullRow dead;
+            RKVkBridge::CullRow dead;
             memset(&dead, 0, sizeof(dead));
             dead.mFlags = 33u;
             mS.mTable.assign(j.mTable, dead);
-            mS.mMap.assign(j.mTable, LLVkBridge::CullMapRow());
+            mS.mMap.assign(j.mTable, RKVkBridge::CullMapRow());
         }
         else
         {
-            LLVkBridge::CullRow dead;
+            RKVkBridge::CullRow dead;
             memset(&dead, 0, sizeof(dead));
             dead.mFlags = 33u;
             mS.mTable.resize(j.mTable, dead);
-            mS.mMap.resize(j.mTable, LLVkBridge::CullMapRow());
+            mS.mMap.resize(j.mTable, RKVkBridge::CullMapRow());
         }
         for (size_t i = 0; i < j.mSlots.size(); ++i)
         {
@@ -11663,9 +11663,9 @@ void derive_publish_dispatch(DerivePub&& job)
     derive_thread().push(std::move(j));
 }
 
-void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_view_request(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    LLVkBridge::CullParams params;
+    RKVkBridge::CullParams params;
     memcpy(&params, blob, sizeof(params));
     DeriveThread::Job job;
     job.mRequest = true;
@@ -11676,7 +11676,7 @@ void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
-void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_cull_rows(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     CullShadowState& s = sCullShadow;
     ++s.mRecords;
@@ -11687,10 +11687,10 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     // the delta goes into the copy first, whatever happens to this record's test: the next record builds on it
     {
-        LLVkBridge::CullRow dead;
+        RKVkBridge::CullRow dead;
         memset(&dead, 0, sizeof(dead));
         dead.mFlags = 33u;
-        const LLVkBridge::CullMapRow no_map;
+        const RKVkBridge::CullMapRow no_map;
         if (h.mPaletteFloats == 1)
         {
             s.mTable.assign(table, dead);
@@ -11703,11 +11703,11 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             s.mMap.resize(table, no_map);
             s.mHandleStamp.resize(table, 0);
         }
-        const U8* p = blob + sizeof(LLVkBridge::CullParams);
+        const U8* p = blob + sizeof(RKVkBridge::CullParams);
         const U32* slots = (const U32*)p;
         const size_t slot_bytes = ((size_t)h.mEntries * 4 + 15) & ~(size_t)15;
         const U8* rows = p + slot_bytes;
-        const U8* map_rows = rows + (size_t)h.mEntries * sizeof(LLVkBridge::CullRow);        // stage 3: one map row after the rows for each of them
+        const U8* map_rows = rows + (size_t)h.mEntries * sizeof(RKVkBridge::CullRow);        // stage 3: one map row after the rows for each of them
         for (U32 i = 0; i < h.mEntries; ++i)
         {
             U32 slot;
@@ -11716,10 +11716,10 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             {
                 continue;
             }
-            memcpy(&s.mTable[slot], rows + (size_t)i * sizeof(LLVkBridge::CullRow), sizeof(LLVkBridge::CullRow));
+            memcpy(&s.mTable[slot], rows + (size_t)i * sizeof(RKVkBridge::CullRow), sizeof(RKVkBridge::CullRow));
             {
-                LLVkBridge::CullMapRow incoming;
-                memcpy(&incoming, map_rows + (size_t)i * sizeof(LLVkBridge::CullMapRow), sizeof(LLVkBridge::CullMapRow));
+                RKVkBridge::CullMapRow incoming;
+                memcpy(&incoming, map_rows + (size_t)i * sizeof(RKVkBridge::CullMapRow), sizeof(RKVkBridge::CullMapRow));
                 const U32 old_handle = s.mMap[slot].mHandle;
                 if (incoming.mHandle != old_handle)
                 {
@@ -11739,8 +11739,8 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             if (h.mEntries)
             {
                 memcpy(job.mSlots.data(), slots, (size_t)h.mEntries * 4);
-                memcpy(job.mRows.data(), rows, (size_t)h.mEntries * sizeof(LLVkBridge::CullRow));
-                memcpy(job.mMap.data(), map_rows, (size_t)h.mEntries * sizeof(LLVkBridge::CullMapRow));
+                memcpy(job.mRows.data(), rows, (size_t)h.mEntries * sizeof(RKVkBridge::CullRow));
+                memcpy(job.mMap.data(), map_rows, (size_t)h.mEntries * sizeof(RKVkBridge::CullMapRow));
             }
             derive_thread().push(std::move(job));
         }
@@ -11749,7 +11749,7 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 
 
 // <FS> GPU particles G1 (doc/vulkan/PLAN-gpu-particles-gpu-sort.md): the sort of the particle record stores. One workgroup a store (at most 1024 records): the position of each record at the frame's clock
-// (the laws of LLViewerPartRecord::evaluate, the bounce as a floor only: it is an order, not a picture), its key (class, then distance along the camera's at axis, back to front), a bitonic sort in shared
+// (the laws of RKViewerPartRecord::evaluate, the bounce as a floor only: it is an order, not a picture), its key (class, then distance along the camera's at axis, back to front), a bitonic sort in shared
 // memory, and the order of the slots written 16 bits each to the store's index buffer. The draws read it (alphaPullV.glsl, ll_particle_corner, flags & 32).
 static const char* kParticleSortShader = R"GLSL(
 #version 450
@@ -11782,7 +11782,7 @@ uvec2 addr(uvec2 base, uint off)
     return uvec2(lo, base.y + carry);
 }
 
-// the vertical motion above a floor at height 0 with the bounce of LLViewerPartRecord::evaluate (fs_bounce_z in llviewerpartsim.cpp): the flights between the bounces
+// the vertical motion above a floor at height 0 with the bounce of RKViewerPartRecord::evaluate (fs_bounce_z in llviewerpartsim.cpp): the flights between the bounces
 void bounce_z(float z0, float v0, float a, float age, out float z_out, out float v_out)
 {
     float z = z0, v = v0, left = age;
@@ -11839,7 +11839,7 @@ void bounce_z(float z0, float v0, float a, float age, out float z_out, out float
 
 struct Part { vec3 pos; vec3 vel; vec2 half_size; vec4 color; float glow; uint cls; };
 
-// a record at the frame's clock: LLViewerPartRecord::evaluate, and the colour, scale and glow of its age (the same arithmetic as the CPU's, in the same order)
+// a record at the frame's clock: RKViewerPartRecord::evaluate, and the colour, scale and glow of its age (the same arithmetic as the CPU's, in the same order)
 Part eval_record(uint slot)
 {
     vec4 a = V4(gStore).v[slot];                        // pos0, t0 high
@@ -11879,7 +11879,7 @@ Part eval_record(uint slot)
     }
     else if (mode == 3u)
     {
-        // the pull towards the target solved (LLViewerPartRecord::evaluate)
+        // the pull towards the target solved (RKViewerPartRecord::evaluate)
         float r0 = max_age, r = max(max_age - age, 0.0);
         float rho = r / r0, rho4 = rho * rho * rho * rho;
         vec3 u0 = (d.xyz - pos0) / r0;
@@ -12043,7 +12043,7 @@ bool part_sort_init()
 
 // kind 36: the jobs (16 words each: store vertex buffer, row buffer, the store's offsets (normal, tangent, weight4, texcoord0, texcoord1, texcoord2, colour), the rows' (normal, texcoord0, colour, emissive), record count, first source), then the source table
 // (mParticleFloats floats: a (now) row and 8 floats a source); mViewProj[0..2] = the camera's at axis, [4..6] its position
-void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_particle_sort(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     ParticleSortState& s = sPartSort;
     ++s.mRecords;
@@ -12114,7 +12114,7 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const VkPipeline pipe = s.mPipe;
     const VkPipelineLayout layout = s.mLayout;
     r.recordExternal({}, [&](VkCommandBuffer cmd) {
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             ctx.gpuStamp(Context::stampTag("particle sort"));
         }
@@ -12140,14 +12140,14 @@ void on_particle_sort(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
 }
 
-// <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of LLVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
-static std::unordered_map<U32, std::vector<LLVkBridge::ShadowPacketEntry>> sShadowFragments;
+// <FS> S1 retained fragments: the table id -> entries (kinds 11-13 of RKVkBridge::shadowPackets). Ordered with the draws by the queue, so a release never overtakes a pass that uses it.
+static std::unordered_map<U32, std::vector<RKVkBridge::ShadowPacketEntry>> sShadowFragments;
 static U64 sFragmentMissing = 0;
 
-void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
-static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob);
+static void on_shadow_fragments(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
-    typedef LLVkBridge::ShadowPacketEntry Entry;
+    typedef RKVkBridge::ShadowPacketEntry Entry;
     if (h.mKind == 18) { res_retain_alpha(h, blob); return; }
     if (h.mKind == 19) { res_tex_update(h, blob); return; }
     if (h.mKind >= 14 && h.mKind <= 17)
@@ -12224,18 +12224,18 @@ static void on_shadow_fragments(const LLVkBridge::ShadowPacketsHeader& h, const 
         return;
     }
     memcpy(expanded.data() + n * sizeof(Entry), matrices, 64 * (size_t)h.mMatrices);
-    LLVkBridge::ShadowPacketsHeader plain = h;
+    RKVkBridge::ShadowPacketsHeader plain = h;
     plain.mKind = 0;
     plain.mEntries = (U32)n;
     plain.mPaletteFloats = 0;
     on_shadow_packets(plain, expanded.data());
 }
 
-// <FS> Render packets: the worker side of LLVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
+// <FS> Render packets: the worker side of RKVkBridge::shadowPackets. The program bound is the one of shadowPullV.glsl: it has no vertex input and finds the position of
 // every vertex itself, from the buffer addresses in the table written here (one 32 byte entry per draw; the entry number is the draw's instance index).
-void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob);
+void on_shadow_packets_impl(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob);
 // S6 census (LL_VK_OPSTATS): what the worker spends in each packet kind (calls and time per command buffer submit, which is 2 a presented frame; logged every 600 submits)
-void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     static const bool census = getenv("LL_VK_OPSTATS") != nullptr;
     if (!census || h.mKind >= 40)
@@ -12309,7 +12309,7 @@ static bool rigged_shadow_skipped()
     return skip;
 }
 
-void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
+void on_shadow_packets_impl(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     if ((h.mKind == 2 || h.mKind == 4) && h.mPass <= 3 && rigged_shadow_skipped())
     {
@@ -12347,7 +12347,7 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     }
     if (h.mKind == 10)
     {
-        Rt::updateMaterials((const LLVkBridge::RtMaterialDef*)blob, h.mEntries);
+        Rt::updateMaterials((const RKVkBridge::RtMaterialDef*)blob, h.mEntries);
         return;
     }
     if (h.mKind == 27)
@@ -12433,8 +12433,8 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
         ++sStats.mNoProgram;
         return;
     }
-    const LLVkBridge::ShadowPacketEntry* entries = (const LLVkBridge::ShadowPacketEntry*)blob;
-    const F32* matrices = (const F32*)(blob + sizeof(LLVkBridge::ShadowPacketEntry) * h.mEntries);
+    const RKVkBridge::ShadowPacketEntry* entries = (const RKVkBridge::ShadowPacketEntry*)blob;
+    const F32* matrices = (const F32*)(blob + sizeof(RKVkBridge::ShadowPacketEntry) * h.mEntries);
     Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(PacketGpu) * (size_t)h.mEntries);
     Renderer::ScratchAlloc models = r.allocVertexScratch(64 * (size_t)std::max<U32>(h.mMatrices, 1));
     if (!table.mPtr || !models.mPtr || !table.mAddress || !models.mAddress)
@@ -12447,7 +12447,7 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     U32 last_vb = 0, last_ib = 0;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
-        const LLVkBridge::ShadowPacketEntry& e = entries[i];
+        const RKVkBridge::ShadowPacketEntry& e = entries[i];
         PacketGpu& g = out[i];
         memset(&g, 0, sizeof(g));
         Buf* vb = packet_buffer_used(e.mVertexBuffer, frame_now);
@@ -12510,7 +12510,7 @@ void on_shadow_packets_impl(const LLVkBridge::ShadowPacketsHeader& h, const U8* 
     }
     ensure_buffers_current(packet_used, 0);
     r.setVertexInput(vi);
-    r.setTopology(topology(LLVkFormat::TOP_TRIANGLES));
+    r.setTopology(topology(RKVkFormat::TOP_TRIANGLES));
 
     // one indirect command for the record when the device allows the first instance in indirect draws (the draw number is the first instance)
     Renderer::ScratchAlloc commands;
@@ -12710,8 +12710,8 @@ static void packet_texture_prefetch(U32 name, U32 stage)
     }
 }
 
-// <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (LLVkBridge::rtScene)
-void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
+// <FS> Ray query shadows: the viewer asks for the frame's scene before the lighting that samples the sun shadow (RKVkBridge::rtScene)
+void on_rt_scene(const RKVkBridge::RtSceneArgs& args)
 {
     if (!Rt::active())
     {
@@ -12769,12 +12769,12 @@ void on_rt_scene(const LLVkBridge::RtSceneArgs& args)
 void clear_target(bool color, bool depth, const float* rgba)
 {
     HookTimer hook_timer;
-    if (!LLVkBridge::inFrame() || !sync_target())
+    if (!RKVkBridge::inFrame() || !sync_target())
     {
         return;
     }
     U32 bits = 0;
-    const LLVkState::Block* blk = state_block();
+    const RKVkState::Block* blk = state_block();
     const bool color_mask = !blk || blk->mBlend.mWriteMask != 0;
     const bool depth_mask = !blk || blk->mDepthMask;
     if (color && color_mask) bits |= CLEAR_COLOR;
@@ -12797,7 +12797,7 @@ namespace
 // what the translator currently holds in Vulkan, for the benchmark log
 std::string resource_summary()
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(gMutex);
     U64 tex_bytes = 0, rt_bytes = 0, buf_bytes = 0, unused_mip_bytes = 0, bc_bytes = 0;
     U32 tex_count = 0, rt_count = 0, views = 0, buf_count = 0, bc_count = 0;      // <FS> bc_*: the block-compressed textures (BC7 at decode) within the mirrored ones
     for (auto& kv : sGL.mTextures)
@@ -12847,7 +12847,7 @@ namespace { void drain_query_results(); }
 // which a later frame reuses)
 void before_end_frame()
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(gMutex);
     flush_buffer_updates(true);
     probe_run();
 }
@@ -12871,13 +12871,13 @@ void after_frame()
     }
     gFsWorkerCpu.store((int)GetCurrentProcessorNumber(), std::memory_order_relaxed);        // <FS> LL_VK_CPUPROBE core census (pipeline.cpp)
     gFsWorkerTid.store((unsigned)GetCurrentThreadId(), std::memory_order_relaxed);
-    LLVk::Context::instance().arenaPrepareTick();        // <FS> LL_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
-    std::lock_guard<LLVkBridge::Mutex> lock(gMutex);
+    RKVk::Context::instance().arenaPrepareTick();        // <FS> LL_VK_HOST_BLOCK_GATE: finished fills make their blocks ready, a spare host block is made ahead of need
+    std::lock_guard<RKVkBridge::Mutex> lock(gMutex);
     if (sUiDiff)
     {
         uidiff_frame_end();
     }
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
         drain_query_results();
     }
@@ -12932,9 +12932,9 @@ void after_frame()
             static U32 frames = 0;
             static U64 draws_at_start = 0;
             static LARGE_INTEGER t_start = {};
-            if (!LLVkBridge::gPhaseTiming)
+            if (!RKVkBridge::gPhaseTiming)
             {
-                LLVkBridge::gPhaseTiming = true;
+                RKVkBridge::gPhaseTiming = true;
                 QueryPerformanceCounter(&t_start);
             }
             if (++frames >= 600)
@@ -12944,12 +12944,12 @@ void after_frame()
                 QueryPerformanceCounter(&now);
                 const double wall_ms = (double)(now.QuadPart - t_start.QuadPart) * 1000.0 / (double)freq.QuadPart;
                 std::string text;
-                for (int p = 0; p < LLVkBridge::PH_COUNT; ++p)
+                for (int p = 0; p < RKVkBridge::PH_COUNT; ++p)
                 {
                     char buf[64];
-                    snprintf(buf, sizeof(buf), "%s %.2f | ", LLVkBridge::phaseName(p), (double)LLVkBridge::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / frames);
+                    snprintf(buf, sizeof(buf), "%s %.2f | ", RKVkBridge::phaseName(p), (double)RKVkBridge::gPhaseTicks[p] * 1000.0 / (double)freq.QuadPart / frames);
                     text += buf;
-                    LLVkBridge::gPhaseTicks[p] = 0;
+                    RKVkBridge::gPhaseTicks[p] = 0;
                 }
                 LL_INFOS("VkPhases") << frames << " frames, " << wall_ms / frames << " ms/frame wall, " << (sDrawsTotal - draws_at_start) / frames
                                      << " draws/frame; CPU ms/frame by phase: " << text << LL_ENDL;
@@ -13017,7 +13017,7 @@ void after_frame()
                     }
                     {
                         unsigned long long v[2];
-                        LLVkAsync::queryResultStats(v);
+                        RKVkAsync::queryResultStats(v);
                         LL_INFOS("VkPhases") << "occlusion results handed to the viewer per frame: occluded (0) " << (double)v[0] / frames << ", visible " << (double)v[1] / frames << LL_ENDL;
                     }
                     {
@@ -13122,21 +13122,21 @@ void after_frame()
                         }
                         sBufTraffic = BufTraffic();
                     }
-                    if (LLVkAsync::gEnabled)
+                    if (RKVkAsync::gEnabled)
                     {
-                        LL_INFOS("VkPhases") << "frame pacing: " << LLVkAsync::pacingReport() << LL_ENDL;
-                        LL_INFOS("VkPhases") << "worker operations: " << LLVkAsync::opStatsReport((size_t)frames) << LL_ENDL;
+                        LL_INFOS("VkPhases") << "frame pacing: " << RKVkAsync::pacingReport() << LL_ENDL;
+                        LL_INFOS("VkPhases") << "worker operations: " << RKVkAsync::opStatsReport((size_t)frames) << LL_ENDL;
                     }
-                    if (LLVkAsync::gEnabled)
+                    if (RKVkAsync::gEnabled)
                     {
                         unsigned long long q[7];
-                        LLVkAsync::queryStats(q);
+                        RKVkAsync::queryStats(q);
                         LL_INFOS("VkPhases") << "occlusion queries per frame: marked pending " << (double)q[0] / frames << ", published " << (double)q[1] / frames << ", set idle " << (double)q[2] / frames
                                              << "; polls answered ready " << (double)q[3] / frames << ", pending " << (double)q[4] / frames << ", idle " << (double)q[5] / frames
                                              << ", result reads sent to the worker " << (double)q[6] / frames << LL_ENDL;
                     }
                     const Renderer::UploadStats up = Renderer::instance().takeUploadStats();
-                    LL_INFOS("VkPhases") << "texture upload costs per frame: " << LLVkAsync::texUploadReport((size_t)frames) << LL_ENDL;
+                    LL_INFOS("VkPhases") << "texture upload costs per frame: " << RKVkAsync::texUploadReport((size_t)frames) << LL_ENDL;
                     LL_INFOS("VkPhases") << "texture uploads per frame: " << (double)up.mCount / frames << " uploads, " << (double)up.mBytes / frames / 1024.0 << " KB, "
                                          << (double)up.mPassSplits / frames << " ended a render pass in progress" << LL_ENDL;
                     {
@@ -13270,7 +13270,7 @@ struct QueryRec
 {
     U32 mName = 0;                   // the GL name the query was begun under
     U64 mGen = 0;                       // the async generation of that begin (0 in inline mode)
-    U32 mKind = 0;                      // LLVkQuery::Kind
+    U32 mKind = 0;                      // RKVkQuery::Kind
     bool mOcc = false, mTime = false;
     bool mVkHave = false, mHaveStart = false, mHaveEnd = false;
     U64 mVkValue = 0, mTsStart = 0, mTsEnd = 0;
@@ -13308,12 +13308,12 @@ void drain_query_results()
             rec.mVkValue = (U64)(((rec.mTsEnd - rec.mTsStart) & mask) * (double)caps.mTimestampPeriodNs);
             rec.mVkHave = true;
         }
-        if (rec.mVkHave && LLVkAsync::gEnabled && rec.mGen)
+        if (rec.mVkHave && RKVkAsync::gEnabled && rec.mGen)
         {
             // hand the result to the main thread, which polls without waiting for this thread
             U64 v = rec.mVkValue;
-            if (rec.mOcc && rec.mKind != LLVkQuery::SAMPLES_PASSED) v = v ? 1 : 0;
-            LLVkAsync::queryPublish(rec.mName, rec.mGen, v);
+            if (rec.mOcc && rec.mKind != RKVkQuery::SAMPLES_PASSED) v = v ? 1 : 0;
+            RKVkAsync::queryPublish(rec.mName, rec.mGen, v);
         }
     }
     while (sQueries.size() > 40000)         // results that never found their partner
@@ -13344,24 +13344,24 @@ void destroy_queries(S32 n, const U32* ids)
 
 void query_begin(unsigned kind, unsigned id)
 {
-    if (!LLVkBridge::inFrame() || !Renderer::instance().isReady())
+    if (!RKVkBridge::inFrame() || !Renderer::instance().isReady())
     {
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
+        if (RKVkAsync::gEnabled) RKVkAsync::queryIdle(id, RKVkAsync::workerQueryGen(id));
         return;
     }
     Renderer& r = Renderer::instance();
     QueryRec rec;
     rec.mName = id;
-    rec.mGen = LLVkAsync::gEnabled ? LLVkAsync::workerQueryGen(id) : 0;
+    rec.mGen = RKVkAsync::gEnabled ? RKVkAsync::workerQueryGen(id) : 0;
     rec.mKind = kind;
     const U64 serial = ++sQuerySerial;
     bool ok = false;
-    if (kind == LLVkQuery::ANY_SAMPLES || kind == LLVkQuery::SAMPLES_PASSED)
+    if (kind == RKVkQuery::ANY_SAMPLES || kind == RKVkQuery::SAMPLES_PASSED)
     {
         rec.mOcc = true;
         ok = r.queryBegin(serial);
     }
-    else if (kind == LLVkQuery::TIME_ELAPSED)
+    else if (kind == RKVkQuery::TIME_ELAPSED)
     {
         rec.mTime = true;
         ok = r.queryTimestamp(serial, false);
@@ -13369,7 +13369,7 @@ void query_begin(unsigned kind, unsigned id)
     if (!ok)
     {
         sQueryActive.erase(kind);
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
+        if (RKVkAsync::gEnabled) RKVkAsync::queryIdle(id, RKVkAsync::workerQueryGen(id));
         return;
     }
     sQueries[serial] = rec;
@@ -13385,7 +13385,7 @@ void query_end(unsigned kind)
         return;
     }
     auto it = sQueries.find(act->second);
-    if (it != sQueries.end() && LLVkBridge::inFrame())
+    if (it != sQueries.end() && RKVkBridge::inFrame())
     {
         if (it->second.mOcc) Renderer::instance().queryEnd();
         else if (it->second.mTime) Renderer::instance().queryTimestamp(act->second, true);
@@ -13450,12 +13450,12 @@ bool gl_channels(U8 comps, std::vector<int>& ch)
 {
     switch (comps)
     {
-    case LLVkFormat::C_RGBA: ch = { 0, 1, 2, 3 }; return true;
-    case LLVkFormat::C_BGRA: ch = { 2, 1, 0, 3 }; return true;
-    case LLVkFormat::C_RGB: ch = { 0, 1, 2 }; return true;
-    case LLVkFormat::C_BGR: ch = { 2, 1, 0 }; return true;
-    case LLVkFormat::C_RG: ch = { 0, 1 }; return true;
-    case LLVkFormat::C_R: case LLVkFormat::C_DEPTH: ch = { 0 }; return true;
+    case RKVkFormat::C_RGBA: ch = { 0, 1, 2, 3 }; return true;
+    case RKVkFormat::C_BGRA: ch = { 2, 1, 0, 3 }; return true;
+    case RKVkFormat::C_RGB: ch = { 0, 1, 2 }; return true;
+    case RKVkFormat::C_BGR: ch = { 2, 1, 0 }; return true;
+    case RKVkFormat::C_RG: ch = { 0, 1 }; return true;
+    case RKVkFormat::C_R: case RKVkFormat::C_DEPTH: ch = { 0 }; return true;
     default: return false;
     }
 }
@@ -13465,9 +13465,9 @@ U32 gl_type_bytes(U8 type)
 {
     switch (type)
     {
-    case LLVkFormat::T_U8: return 1;
-    case LLVkFormat::T_F16: return 2;
-    case LLVkFormat::T_F32: return 4;
+    case RKVkFormat::T_U8: return 1;
+    case RKVkFormat::T_F16: return 2;
+    case RKVkFormat::T_F32: return 4;
     default: return 0;
     }
 }
@@ -13501,10 +13501,10 @@ void resource_create(unsigned kind, int n, const unsigned* ids)
     U32* names = const_cast<U32*>(ids);
     switch (kind)
     {
-    case LLVkAsync::RES_TEXTURE: create_textures(n, names); break;
-    case LLVkAsync::RES_TARGET: create_targets(n, names); break;
-    case LLVkAsync::RES_BUFFER: create_buffers(n, names); break;
-    case LLVkAsync::RES_QUERY: create_queries(n, names); break;
+    case RKVkAsync::RES_TEXTURE: create_textures(n, names); break;
+    case RKVkAsync::RES_TARGET: create_targets(n, names); break;
+    case RKVkAsync::RES_BUFFER: create_buffers(n, names); break;
+    case RKVkAsync::RES_QUERY: create_queries(n, names); break;
     default: break;
     }
 }
@@ -13513,10 +13513,10 @@ void resource_destroy(unsigned kind, int n, const unsigned* ids)
 {
     switch (kind)
     {
-    case LLVkAsync::RES_TEXTURE: destroy_textures(n, ids); break;
-    case LLVkAsync::RES_TARGET: destroy_targets(n, ids); break;
-    case LLVkAsync::RES_BUFFER: destroy_buffers(n, ids); break;
-    case LLVkAsync::RES_QUERY: destroy_queries(n, ids); break;
+    case RKVkAsync::RES_TEXTURE: destroy_textures(n, ids); break;
+    case RKVkAsync::RES_TARGET: destroy_targets(n, ids); break;
+    case RKVkAsync::RES_BUFFER: destroy_buffers(n, ids); break;
+    case RKVkAsync::RES_QUERY: destroy_queries(n, ids); break;
     default: break;
     }
 }
@@ -13555,7 +13555,7 @@ U16 float_to_half_bits(float f)
 }
 
 // writes decoded RGBA floats (w x h, row 0 first) into GL's pixel layout
-bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, LLVkFormat::Transfer tr, U8* dst, S32 row_length = 0)
+bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, RKVkFormat::Transfer tr, U8* dst, S32 row_length = 0)
 {
     std::vector<int> ch;
     const U32 tb = gl_type_bytes(tr.mType);
@@ -13576,11 +13576,11 @@ bool encode_to_gl(const std::vector<float>& rgba, S32 w, S32 h, LLVkFormat::Tran
             {
                 const float v = rgba[((size_t)y * w + x) * 4 + ch[c]];
                 U8* p = row + (size_t)x * pixel_bytes + c * tb;
-                if (tr.mType == LLVkFormat::T_U8)
+                if (tr.mType == RKVkFormat::T_U8)
                 {
                     *p = (U8)std::lround(std::min(1.f, std::max(0.f, v)) * 255.f);
                 }
-                else if (tr.mType == LLVkFormat::T_F16)
+                else if (tr.mType == RKVkFormat::T_F16)
                 {
                     const U16 hb = float_to_half_bits(v);
                     memcpy(p, &hb, 2);
@@ -13619,7 +13619,7 @@ bool fetch_rect_cached(Image& view, S32 x, S32 y, S32 w, S32 h, std::vector<U8>&
     }
     if (sReadCache.mImage != &view || sReadCache.mMip != mip || sReadCache.mLayer != layer || sReadCache.mEpoch != r.modificationCount())
     {
-        if (LLVkBridge::inFrame() && !r.flushAndRestart(1))
+        if (RKVkBridge::inFrame() && !r.flushAndRestart(1))
         {
             return false;
         }
@@ -13676,11 +13676,11 @@ bool own_query_value(U32 id, bool want_result, U64& value)
     if (it != sQueries.end() && it->second.mVkHave)
     {
         value = it->second.mVkValue;
-        if (it->second.mOcc && it->second.mKind != LLVkQuery::SAMPLES_PASSED) value = value ? 1 : 0;      // ANY_SAMPLES is a boolean
-        LLVkAsync::queryResultTally(value != 0);
+        if (it->second.mOcc && it->second.mKind != RKVkQuery::SAMPLES_PASSED) value = value ? 1 : 0;      // ANY_SAMPLES is a boolean
+        RKVkAsync::queryResultTally(value != 0);
         sQueries.erase(it);
         sQueryLatest.erase(lat);
-        if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
+        if (RKVkAsync::gEnabled) RKVkAsync::queryIdle(id, RKVkAsync::workerQueryGen(id));
         return true;
     }
     value = it != sQueries.end() && it->second.mOcc ? 1 : 0;
@@ -13689,20 +13689,20 @@ bool own_query_value(U32 id, bool want_result, U64& value)
 
 } // anonymous namespace
 
-int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q)
+int tex_level_parameter(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Level q)
 {
     EditScope s(id);
     Tex* t = edit_texture();
     int v = 0;
-    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mDim == LLVkFormat::DIM_2D ? mipLevelCount(t->mWidth, t->mHeight) : t->mLevels))
+    if (t && t->mImage.valid() && level >= 0 && (U32)level < std::max<U32>(1, t->mDim == RKVkFormat::DIM_2D ? mipLevelCount(t->mWidth, t->mHeight) : t->mLevels))
     {
         switch (q)
         {
-        case LLVkFormat::LQ_WIDTH: v = (int)std::max<U32>(1, t->mWidth >> level); break;
-        case LLVkFormat::LQ_HEIGHT: v = (int)std::max<U32>(1, t->mHeight >> level); break;
-        case LLVkFormat::LQ_DEPTH: v = (int)(t->mDim == LLVkFormat::DIM_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
-        case LLVkFormat::LQ_COMPRESSED: v = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
-        case LLVkFormat::LQ_COMPRESSED_SIZE: v = (int)Renderer::compressedMipBytes(t->mImage, (U32)level); break;
+        case RKVkFormat::LQ_WIDTH: v = (int)std::max<U32>(1, t->mWidth >> level); break;
+        case RKVkFormat::LQ_HEIGHT: v = (int)std::max<U32>(1, t->mHeight >> level); break;
+        case RKVkFormat::LQ_DEPTH: v = (int)(t->mDim == RKVkFormat::DIM_3D ? std::max<U32>(1, t->mDepth >> level) : std::max<U32>(1, t->mDepth)); break;
+        case RKVkFormat::LQ_COMPRESSED: v = formatInfo(t->mImage.mFormat).mCompressed ? 1 : 0; break;
+        case RKVkFormat::LQ_COMPRESSED_SIZE: v = (int)Renderer::compressedMipBytes(t->mImage, (U32)level); break;
         default: break;
         }
     }
@@ -13714,7 +13714,7 @@ bool query_value(unsigned id, bool want_result, unsigned long long& value)
     return own_query_value(id, want_result, value);
 }
 
-void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::Transfer tr, void* pixels)
+void read_pixels(unsigned fbo, int x, int y, int width, int height, RKVkFormat::Transfer tr, void* pixels)
 {
     U8* dst = (U8*)pixels;
     Image* img = read_image(fbo);
@@ -13748,7 +13748,7 @@ void read_pixels(unsigned fbo, int x, int y, int width, int height, LLVkFormat::
     return;
 }
 
-void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* pixels)
+void tex_get_image(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Transfer tr, void* pixels)
 {
     EditScope s(id);
     U8* dst = (U8*)pixels;
@@ -13758,7 +13758,7 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
         return;
     }
     Renderer& r = Renderer::instance();
-    if (LLVkBridge::inFrame() && !r.flushAndRestart(2))
+    if (RKVkBridge::inFrame() && !r.flushAndRestart(2))
     {
         return;
     }
@@ -13772,8 +13772,8 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
     // 2D: one image; cube map face: that face; arrays and cube maps: every layer one after the other
     U32 first_layer = 0, layers = 1;
     if (tg.mFace >= 0) first_layer = (U32)tg.mFace;
-    else if (tg.mDim == LLVkFormat::DIM_CUBE_ARRAY || tg.mDim == LLVkFormat::DIM_2D_ARRAY) layers = t->mImage.mLayers;
-    else if (tg.mDim == LLVkFormat::DIM_CUBE) layers = 6;
+    else if (tg.mDim == RKVkFormat::DIM_CUBE_ARRAY || tg.mDim == RKVkFormat::DIM_2D_ARRAY) layers = t->mImage.mLayers;
+    else if (tg.mDim == RKVkFormat::DIM_CUBE) layers = 6;
     for (U32 l = 0; l < layers; ++l)
     {
         std::vector<U8> texels;
@@ -13786,7 +13786,7 @@ void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Tr
     }
 }
 
-void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* img)
+void tex_get_compressed_image(unsigned id, RKVkFormat::Target tg, int level, void* img)
 {
     EditScope s(id);
     U8* dst = (U8*)img;
@@ -13808,7 +13808,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
         }
         return;
     }
-    if (LLVkBridge::inFrame() && !r.flushAndRestart(3))
+    if (RKVkBridge::inFrame() && !r.flushAndRestart(3))
     {
         return;
     }
@@ -13820,7 +13820,7 @@ void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, voi
 }
 
 // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the finished window-size colour through the neural renderer; depth and motion at the render size
-void on_neural_render(const LLVkBridge::UpscaleArgs& a)
+void on_neural_render(const RKVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
     if (!gActive)
@@ -13829,10 +13829,10 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     }
     if (a.mNeuralRender == 2)
     {
-        LLVkDlssNr::release();
+        RKVkDlssNr::release();
         return;
     }
-    if (!LLVkDlssNr::ready())
+    if (!RKVkDlssNr::ready())
     {
         return;
     }
@@ -13853,7 +13853,7 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
         }
         return;
     }
-    LLVkDlssNr::Params p;
+    RKVkDlssNr::Params p;
     p.mColor = &color->mImage;
     p.mDepth = &depth->mImage;
     p.mMotion = &motion->mImage;
@@ -13876,13 +13876,13 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
     p.mLocalStructure = a.mNrLocalStructure;
     p.mSkinStructure = a.mNrSkinStructure;
     std::vector<std::pair<Image*, VkImageLayout>> needs = {
-        { p.mColor, LLVkNgx::inputLayout(*p.mColor) },
-        { p.mDepth, LLVkNgx::inputLayout(*p.mDepth) },
-        { p.mMotion, LLVkNgx::inputLayout(*p.mMotion) },
-        { p.mOutput, LLVkNgx::outputLayout() },
+        { p.mColor, RKVkNgx::inputLayout(*p.mColor) },
+        { p.mDepth, RKVkNgx::inputLayout(*p.mDepth) },
+        { p.mMotion, RKVkNgx::inputLayout(*p.mMotion) },
+        { p.mOutput, RKVkNgx::outputLayout() },
     };
     bool done = false;
-    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDlssNr::evaluate(cmd, p); });
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = RKVkDlssNr::evaluate(cmd, p); });
     if (done)
     {
         output->mValidLevels = 1;
@@ -13894,7 +13894,7 @@ void on_neural_render(const LLVkBridge::UpscaleArgs& a)
 }
 
 // the sun shadow denoiser (the same command, mKind 2): the packed hit mask, the filtered visibility out
-static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
+static void on_denoise_shadows(const RKVkBridge::DenoiseArgs& a)
 {
     static U32 failures = 0;
     auto find = [](U32 name) -> Tex* {
@@ -13916,7 +13916,7 @@ static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
         return;
     }
     std::vector<Image*> own;
-    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | LLVkDenoise::KIND_SHADOWS, own))
+    if (!RKVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | RKVkDenoise::KIND_SHADOWS, own))
     {
         if (failures++ < 5)
         {
@@ -13924,7 +13924,7 @@ static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
         }
         return;
     }
-    LLVkDenoise::ShadowParams p;
+    RKVkDenoise::ShadowParams p;
     p.mHitSource = &hit->mImage;
     p.mOutput = &output->mImage;
     p.mDepth = &depth->mImage;
@@ -13950,7 +13950,7 @@ static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
         needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
     }
     bool done = false;
-    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDenoise::shadows(cmd, p); });
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = RKVkDenoise::shadows(cmd, p); });
     if (done)
     {
         output->mValidLevels = 1;
@@ -13961,14 +13961,14 @@ static void on_denoise_shadows(const LLVkBridge::DenoiseArgs& a)
     }
 }
 
-void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
+void on_denoise_reflections(const RKVkBridge::DenoiseArgs& a)
 {
     static U32 failures = 0;
-    if (!gActive || !LLVkDenoise::ready())
+    if (!gActive || !RKVkDenoise::ready())
     {
         return;
     }
-    if (a.mKind == LLVkDenoise::KIND_SHADOWS)
+    if (a.mKind == RKVkDenoise::KIND_SHADOWS)
     {
         on_denoise_shadows(a);
         return;
@@ -13993,7 +13993,7 @@ void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
         return;
     }
     std::vector<Image*> own;
-    if (!LLVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | LLVkDenoise::KIND_REFLECTIONS, own))
+    if (!RKVkDenoise::prepare(a.mWidth, a.mHeight, a.mKinds | RKVkDenoise::KIND_REFLECTIONS, own))
     {
         if (failures++ < 5)
         {
@@ -14001,7 +14001,7 @@ void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
         }
         return;
     }
-    LLVkDenoise::ReflectionParams p;
+    RKVkDenoise::ReflectionParams p;
     p.mRadiance = &radiance->mImage;
     p.mOutput = &output->mImage;
     p.mDepth = &depth->mImage;
@@ -14028,7 +14028,7 @@ void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
         needs.push_back({ image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
     }
     bool done = false;
-    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkDenoise::reflections(cmd, p); });
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = RKVkDenoise::reflections(cmd, p); });
     if (done)
     {
         output->mValidLevels = 1;       // what was written counts as the texture's content
@@ -14039,7 +14039,7 @@ void on_denoise_reflections(const LLVkBridge::DenoiseArgs& a)
     }
 }
 
-void on_upscale(const LLVkBridge::UpscaleArgs& a)
+void on_upscale(const RKVkBridge::UpscaleArgs& a)
 {
     static U32 failures = 0;
     if (a.mNeuralRender)
@@ -14047,7 +14047,7 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
         on_neural_render(a);
         return;
     }
-    if (!gActive || !LLVkUpscale::ready())
+    if (!gActive || !RKVkUpscale::ready())
     {
         return;
     }
@@ -14068,7 +14068,7 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
         }
         return;
     }
-    LLVkUpscale::Params p;
+    RKVkUpscale::Params p;
     p.mColor = &color->mImage;
     p.mDepth = &depth->mImage;
     p.mMotion = &motion->mImage;
@@ -14088,13 +14088,13 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
     p.mCameraFovY = a.mCameraFovY;
     p.mFrameTimeMs = a.mFrameTimeMs;
     std::vector<std::pair<Image*, VkImageLayout>> needs = {
-        { p.mColor, LLVkUpscale::inputLayout(*p.mColor) },
-        { p.mDepth, LLVkUpscale::inputLayout(*p.mDepth) },
-        { p.mMotion, LLVkUpscale::inputLayout(*p.mMotion) },
-        { p.mOutput, LLVkUpscale::outputLayout() },
+        { p.mColor, RKVkUpscale::inputLayout(*p.mColor) },
+        { p.mDepth, RKVkUpscale::inputLayout(*p.mDepth) },
+        { p.mMotion, RKVkUpscale::inputLayout(*p.mMotion) },
+        { p.mOutput, RKVkUpscale::outputLayout() },
     };
     bool done = false;
-    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = LLVkUpscale::evaluate(cmd, p); });
+    Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = RKVkUpscale::evaluate(cmd, p); });
     if (done)
     {
         output->mValidLevels = 1;       // what was written counts as the texture's content
@@ -14106,7 +14106,7 @@ void on_upscale(const LLVkBridge::UpscaleArgs& a)
 }
 
 
-} // namespace LLVkWorker
+} // namespace RKVkWorker
 
 #endif // LL_VULKAN
 

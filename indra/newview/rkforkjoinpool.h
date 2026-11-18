@@ -48,7 +48,7 @@
 // Several batches can be in flight at once (up to kSlots; a batch launched while all slots are taken runs on the launching thread, inside launch). A job may launch and join a batch of its own. A join never
 // deadlocks: the joining thread can run every job of its batch itself. fn must stay alive, and what the jobs write must stay alive, until the join has returned. Jobs run on the workers and on the joining
 // thread: thread-local state a job changes has to be put back (ViewScope and the other task scopes do this).
-class LLForkJoinPool
+class RKForkJoinPool
 {
 public:
     // what launch returns: join takes it. A default one (invalid) joins to nothing: the batch had no jobs, or ran inside launch.
@@ -59,7 +59,7 @@ public:
         bool valid() const { return mSlot >= 0; }
     };
 
-    explicit LLForkJoinPool(unsigned num_workers)
+    explicit RKForkJoinPool(unsigned num_workers)
     {
         for (unsigned i = 0; i < num_workers; ++i)
         {
@@ -67,7 +67,7 @@ public:
         }
     }
 
-    ~LLForkJoinPool()
+    ~RKForkJoinPool()
     {
         {
             std::lock_guard<std::mutex> lock(mMutex);
@@ -116,7 +116,7 @@ public:
                 if (mBatches[i].mActive.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
                 {
                     slot = i;
-                    LLPhaseCheck::sPhaseDepth.fetch_add(1, std::memory_order_relaxed);      // (GPU-LIFETIMES.md step 4: a parallel phase is running until the join ends)
+                    RKPhaseCheck::sPhaseDepth.fetch_add(1, std::memory_order_relaxed);      // (GPU-LIFETIMES.md step 4: a parallel phase is running until the join ends)
                     break;
                 }
             }
@@ -242,7 +242,7 @@ public:
             }
         }
         b.mFn = nullptr;
-        LLPhaseCheck::sPhaseDepth.fetch_sub(1, std::memory_order_relaxed);
+        RKPhaseCheck::sPhaseDepth.fetch_sub(1, std::memory_order_relaxed);
         b.mActive.store(false, std::memory_order_release);      // (the slot can be launched again; its claim word already has the index at the count)
     }
 
@@ -256,7 +256,7 @@ public:
     // run() returns. Healthy = "0 wrong, 0 still running". Then the phase check is tried: a call on the main thread outside a batch must stay silent, calls from jobs must each log a PhaseCheck line.
     static void selfTest(unsigned seconds)
     {
-        LLForkJoinPool* pool = shared();
+        RKForkJoinPool* pool = shared();
         if (!pool)
         {
             LL_INFOS("ForkJoin") << "self test: no shared pool on this machine (fewer than 8 hardware threads)" << LL_ENDL;
@@ -298,14 +298,14 @@ public:
             }
         });
         LL_INFOS("ForkJoin") << "self test: phase check tried (4 reports expected, none for the main thread outside a batch):" << LL_ENDL;
-        LLPhaseCheck::logSummary();
+        RKPhaseCheck::logSummary();
     }
 
     // The pool the viewer shares between its parallel phases: null when the machine has too few
     // threads for it to be worth it. The calling thread works too, so one worker fewer than the budget.
-    static LLForkJoinPool* shared()
+    static RKForkJoinPool* shared()
     {
-        static std::unique_ptr<LLForkJoinPool> pool;
+        static std::unique_ptr<RKForkJoinPool> pool;
         static bool checked = false;
         if (!checked)
         {
@@ -321,7 +321,7 @@ public:
             }
             if (workers > 0)
             {
-                pool = std::make_unique<LLForkJoinPool>(workers);
+                pool = std::make_unique<RKForkJoinPool>(workers);
             }
         }
         return pool.get();
@@ -502,7 +502,7 @@ private:
 };
 
 
-inline void LLForkJoinPool::reportLabels(unsigned frame_count)
+inline void RKForkJoinPool::reportLabels(unsigned frame_count)
 {
     if (!labelsOn())
     {

@@ -83,7 +83,7 @@ protected:
     friend class LLTexUnit;
     ~LLCubeMap();
     TextureTarget mTargets[6];
-    LLPointer<LLImageTex> mImages[6];
+    LLPointer<RKImageTex> mImages[6];
     LLPointer<LLImageRaw> mRawImages[6];
     S32 mTextureStage;
     S32 mMatrixStage;

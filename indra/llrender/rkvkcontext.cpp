@@ -28,7 +28,7 @@
 #include <SDL2/SDL_vulkan.h>
 #endif
 
-namespace LLVk
+namespace RKVk
 {
 
 #define LL_VK_GLOBAL_FN(name) PFN_##name name = nullptr;
@@ -624,9 +624,9 @@ bool Context::createInstance()
         }
     }
 #endif
-    if (LLVkUpscale::requested())
+    if (RKVkUpscale::requested())
     {
-        LLVkUpscale::addInstanceExtensions(wanted);
+        RKVkUpscale::addInstanceExtensions(wanted);
     }
     for (const char* name : wanted)
     {
@@ -1116,9 +1116,9 @@ bool Context::createDevice()
             LL_INFOS("Vulkan") << "device diagnostics (VK_NV_device_diagnostics_config): resource tracking and shader debug info are on (LL_VK_DIAG=0 turns them off)" << LL_ENDL;
         }
     }
-    if (LLVkUpscale::requested())
+    if (RKVkUpscale::requested())
     {
-        LLVkUpscale::addDeviceExtensions(mInstance, mPhysical, device_extensions);
+        RKVkUpscale::addDeviceExtensions(mInstance, mPhysical, device_extensions);
     }
     dci.enabledExtensionCount = (U32)device_extensions.size();
     dci.ppEnabledExtensionNames = device_extensions.data();
@@ -1171,10 +1171,10 @@ bool Context::createDevice()
     {
         return false;
     }
-    if (LLVkUpscale::requested())
+    if (RKVkUpscale::requested())
     {
-        LLVkUpscale::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
-        LLVkDenoise::init(mInstance, mPhysical, mDevice);      // not fatal either (the AMD reflection denoiser: PLAN-amd-denoiser.md)
+        RKVkUpscale::init(mInstance, mPhysical, mDevice);      // not fatal: without it the viewer just does not upscale
+        RKVkDenoise::init(mInstance, mPhysical, mDevice);      // not fatal either (the AMD reflection denoiser: PLAN-amd-denoiser.md)
     }
     return true;
 }
@@ -1327,8 +1327,8 @@ void Context::shutdown()
     if (mDevice != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(mDevice);
-        LLVkDenoise::shutdown();
-        LLVkUpscale::shutdown();
+        RKVkDenoise::shutdown();
+        RKVkUpscale::shutdown();
         {
             std::vector<std::function<void()>> leftovers;
             {
@@ -4156,6 +4156,6 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN

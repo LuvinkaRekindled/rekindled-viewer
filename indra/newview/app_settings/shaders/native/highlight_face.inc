@@ -4,13 +4,13 @@
 
 #ifdef HAS_SKIN
 // the skinned form ("Skinned Highlight Shader": the old rigged draws of the alpha pool's debug view): the mesh's skin transform, then the modelview and the projection, as the old shader with HAS_SKIN
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 projection_matrix;
 };
 #endif
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #ifdef HAS_SKIN
     mat4 modelview_matrix;
@@ -21,7 +21,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_diffuseMap;
 };
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     vec4 color;
 };

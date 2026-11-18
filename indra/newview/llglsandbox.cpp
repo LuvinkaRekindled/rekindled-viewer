@@ -146,7 +146,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
     S32 center_y = (top + bottom) / 2;
 
     // save drawing mode
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
 
     // <FS:Ansariel> Use faster LLCachedControls
     //bool limit_select_distance = gSavedSettings.getBOOL("LimitSelectDistance");
@@ -298,7 +298,7 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
     }
 
     // restore drawing mode
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
     // restore camera
     camera.setFar(old_far_plane);
@@ -320,18 +320,18 @@ void LLWind::renderVectors()
 // </FS:CR> Aurora Sim
 
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     LLVector3 origin_agent;
     origin_agent = gAgent.getPosAgentFromGlobal(mOriginGlobal);
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, origin_agent.mV[VX], origin_agent.mV[VY], gAgent.getPositionAgent().mV[VZ] + WIND_RELATIVE_ALTITUDE);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, origin_agent.mV[VX], origin_agent.mV[VY], gAgent.getPositionAgent().mV[VZ] + WIND_RELATIVE_ALTITUDE);
     for (j = 0; j < mSize; j++)
     {
         for (i = 0; i < mSize; i++)
         {
             x = mVelX[i + j*mSize] * WIND_SCALE_HACK;
             y = mVelY[i + j*mSize] * WIND_SCALE_HACK;
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)i * region_width_meters/mSize, (F32)j * region_width_meters/mSize, 0.f);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)i * region_width_meters/mSize, (F32)j * region_width_meters/mSize, 0.f);
             gRender.color3f(0.f, 1.f, 0.f);
             gRender.begin(LLRender::POINTS);
                 gRender.vertex3f(0.f, 0.f, 0.f);
@@ -341,10 +341,10 @@ void LLWind::renderVectors()
                 gRender.vertex3f(x * 0.1f, y * 0.1f, 0.f);
                 gRender.vertex3f(x, y, 0.f);
             gRender.end();
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 
@@ -354,9 +354,9 @@ void LLWind::renderVectors()
 void LLViewerParcelMgr::renderRect(const LLVector3d &west_south_bottom_global,
                                    const LLVector3d &east_north_top_global)
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope gls_depth(true);
+    RKRenderState::DepthScope gls_depth(true);
 
     LLVector3 west_south_bottom_agent = gAgent.getPosAgentFromGlobal(west_south_bottom_global);
     F32 west    = west_south_bottom_agent.mV[VX];
@@ -544,12 +544,12 @@ void LLViewerParcelMgr::renderHighlightSegments(const U8* segments, LLViewerRegi
     F32 x2, y2; // end point
     bool has_segments = false;
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     // <FS:Ansariel> FIRE-10546: Show parcel boundary up to max. build level
     //LLGLDepthTest gls_depth(true);
-    LLRenderState::DepthScope gls_depth(true, false);
-    LLRenderState::CullScope cull(false);
+    RKRenderState::DepthScope gls_depth(true, false);
+    RKRenderState::CullScope cull(false);
 
     static LLCachedControl<bool> fsRenderParcelSelectionToMaxBuildHeight(gSavedSettings, "FSRenderParcelSelectionToMaxBuildHeight");
     F32 height = fsRenderParcelSelectionToMaxBuildHeight ? LLWorld::instance().getMaxPrimZPos() + PARCEL_POST_HEIGHT : PARCEL_POST_HEIGHT;
@@ -633,9 +633,9 @@ void LLViewerParcelMgr::renderCollisionSegments(U8* segments, bool use_pass, LLV
     F32 pos_x = pos.mV[VX];
     F32 pos_y = pos.mV[VY];
 
-    LLRenderPresetUIDefault gls_ui;
-    LLRenderState::DepthScope gls_depth(true, false);
-    LLRenderState::CullScope cull(false);
+    RKRenderPresetUIDefault gls_ui;
+    RKRenderState::DepthScope gls_depth(true, false);
+    RKRenderState::CullScope cull(false);
 
     if (mCollisionBanned == BA_BANNED ||
         regionp->getRegionFlag(REGION_FLAGS_BLOCK_FLYOVER))
@@ -805,7 +805,7 @@ void LLViewerObjectList::renderObjectBeacons()
         return;
     }
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     gUIProgram.bind();
 
@@ -843,7 +843,7 @@ void LLViewerObjectList::renderObjectBeacons()
 
     {
         gRender.getTexUnit(0)->bindWhite();
-        LLRenderState::DepthScope gls_depth(true);
+        RKRenderState::DepthScope gls_depth(true);
 
         S32 last_line_width = -1;
         // gRender.begin(LLRender::LINES); // Always happens in (line_width != last_line_width)
@@ -900,7 +900,7 @@ void LLViewerObjectList::renderObjectBeacons()
 
 void LLSky::renderSunMoonBeacons(const LLVector3& pos_agent, const LLVector3& direction, LLColor4 color)
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gUIProgram.bind();
     gRender.getTexUnit(0)->bindWhite();
 
@@ -935,11 +935,11 @@ struct ShaderProfileHelper
 {
     ShaderProfileHelper()
     {
-        LLShaderProgram::initProfile();
+        RKShaderProgram::initProfile();
     }
     ~ShaderProfileHelper()
     {
-        LLShaderProgram::finishProfile();
+        RKShaderProgram::finishProfile();
     }
 };
 
@@ -955,7 +955,7 @@ public:
     {
         // takes (count, pointer)
         // &vector[0] gets pointer to contiguous array
-        LLImageTex::generateTextures(static_cast<S32>(source.size()), &source[0]);
+        RKImageTex::generateTextures(static_cast<S32>(source.size()), &source[0]);
     }
 
     ~TextureHolder()
@@ -966,7 +966,7 @@ public:
                 texUnit->bindWhite();
         }
         // ensure that we delete these textures regardless of how we exit
-        LLImageTex::deleteTextures(static_cast<S32>(source.size()), &source[0]);
+        RKImageTex::deleteTextures(static_cast<S32>(source.size()), &source[0]);
     }
 
     U32 name(U32 index) const { return source[index]; }
@@ -991,7 +991,7 @@ private:
 class ShaderBinder
 {
 public:
-    ShaderBinder(LLShaderProgram& shader) :
+    ShaderBinder(RKShaderProgram& shader) :
         mShader(shader)
     {
         mShader.bind();
@@ -1002,7 +1002,7 @@ public:
     }
 
 private:
-    LLShaderProgram& mShader;
+    RKShaderProgram& mShader;
 };
 
 
@@ -1062,7 +1062,7 @@ F32 gpu_benchmark()
         }
     }
 
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::BlendScope blend(false);
 
     //measure memory bandwidth by:
     // - allocating a batch of textures and render targets
@@ -1092,7 +1092,7 @@ F32 gpu_benchmark()
     }
 
     gRender.setColorMask(true, true);
-    LLRenderState::DepthScope depth(false);
+    RKRenderState::DepthScope depth(false);
 
     LLTimer alloc_timer;
     alloc_timer.start();
@@ -1117,7 +1117,7 @@ F32 gpu_benchmark()
             delete[] pixels;
             return -1.f;
         }
-        LLImageTex::setManualImage(texHolder.name(i), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, res,res,PixelFormat::RGBA, ComponentType::U8, pixels);
+        RKImageTex::setManualImage(texHolder.name(i), TextureTarget::Tex2D, 0, TexelFormat::RGBA8, res,res,PixelFormat::RGBA, ComponentType::U8, pixels);
         // disable mipmaps and use point filtering to cause cache misses
         gRender.getTexUnit(0)->setHasMipMaps(false);
         gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
@@ -1162,7 +1162,7 @@ F32 gpu_benchmark()
 
     buff->unmapBuffer();
 
-    LLShaderProgram::unbind();
+    RKShaderProgram::unbind();
 
     // run GPU timer benchmark twice
     F32 seconds = 0;

@@ -66,7 +66,7 @@ const F32 CONVERSION_SCRATCH_BUFFER_GL_VERSION = 3.29f;
 U32 wpo2(U32 i);
 
 
-U32 LLImageTex::sFrameCount = 0;
+U32 RKImageTex::sFrameCount = 0;
 
 
 // texture memory accounting (for macOS)
@@ -76,10 +76,10 @@ static U64 sTextureBytes = 0;
 
 // track a texture alloc on the currently bound texture.
 // asserts that no currently tracked alloc exists
-void LLImageTexMemory::alloc_tex_image(U32 width, U32 height, TexelFormat intformat, U32 count)
+void RKImageTexMemory::alloc_tex_image(U32 width, U32 height, TexelFormat intformat, U32 count)
 {
     U32 texName = gRender.getTexUnit(0)->getCurrTexture();      // allocations are always done on tex unit 0
-    U64 size = LLImageTex::dataFormatBytes(intformat, width, height);
+    U64 size = RKImageTex::dataFormatBytes(intformat, width, height);
     size *= count;
 
     llassert(size >= 0);
@@ -96,7 +96,7 @@ void LLImageTexMemory::alloc_tex_image(U32 width, U32 height, TexelFormat intfor
 }
 
 // track texture free on given texName
-void LLImageTexMemory::free_tex_image(U32 texName)
+void RKImageTexMemory::free_tex_image(U32 texName)
 {
     sTexMemMutex.lock();
     auto iter = sTextureAllocs.find(texName);
@@ -113,7 +113,7 @@ void LLImageTexMemory::free_tex_image(U32 texName)
 }
 
 // track texture free on given texNames
-void LLImageTexMemory::free_tex_images(U32 count, const U32* texNames)
+void RKImageTexMemory::free_tex_images(U32 count, const U32* texNames)
 {
     for (U32 i = 0; i < count; ++i)
     {
@@ -122,48 +122,48 @@ void LLImageTexMemory::free_tex_images(U32 count, const U32* texNames)
 }
 
 // track texture free on currently bound texture
-void LLImageTexMemory::free_cur_tex_image()
+void RKImageTexMemory::free_cur_tex_image()
 {
     U32 texName = gRender.getTexUnit(0)->getCurrTexture();      // frees are always done on tex unit 0
     free_tex_image(texName);
 }
 
-using namespace LLImageTexMemory;
+using namespace RKImageTexMemory;
 
 // static
-U64 LLImageTex::getTextureBytesAllocated()
+U64 RKImageTex::getTextureBytesAllocated()
 {
     return sTextureBytes;
 }
 
 //statics
 
-U32 LLImageTex::sUniqueCount             = 0;
-U32 LLImageTex::sBindCount               = 0;
-S32 LLImageTex::sCount                   = 0;
+U32 RKImageTex::sUniqueCount             = 0;
+U32 RKImageTex::sBindCount               = 0;
+S32 RKImageTex::sCount                   = 0;
 
-bool LLImageTex::sGlobalUseAnisotropic   = false;
-F32 LLImageTex::sLastFrameTime           = 0.f;
-LLImageTex* LLImageTex::sDefaultImageTexture = NULL ;
-bool LLImageTex::sCompressTextures = false;
-std::unordered_set<LLImageTex*> LLImageTex::sImageList;
+bool RKImageTex::sGlobalUseAnisotropic   = false;
+F32 RKImageTex::sLastFrameTime           = 0.f;
+RKImageTex* RKImageTex::sDefaultImageTexture = NULL ;
+bool RKImageTex::sCompressTextures = false;
+std::unordered_set<RKImageTex*> RKImageTex::sImageList;
 
 
-bool LLImageTexThread::sEnabledTextures = false;
-bool LLImageTexThread::sEnabledMedia = false;
+bool RKImageTexThread::sEnabledTextures = false;
+bool RKImageTexThread::sEnabledMedia = false;
 
 //****************************************************************************************************
 //The below for texture auditing use only
 //****************************************************************************************************
 //-----------------------
 //debug use
-S32 LLImageTex::sCurTexSizeBar = -1 ;
-S32 LLImageTex::sCurTexPickSize = -1 ;
-S32 LLImageTex::sMaxCategories = 1 ;
+S32 RKImageTex::sCurTexSizeBar = -1 ;
+S32 RKImageTex::sCurTexPickSize = -1 ;
+S32 RKImageTex::sMaxCategories = 1 ;
 
 //optimization for when we don't need to calculate mIsMask
-bool LLImageTex::sSkipAnalyzeAlpha;
-U32* LLImageTex::sManualScratch = nullptr;
+bool RKImageTex::sSkipAnalyzeAlpha;
+U32* RKImageTex::sManualScratch = nullptr;
 
 
 //------------------------
@@ -175,7 +175,7 @@ U32* LLImageTex::sManualScratch = nullptr;
 //below are functions for debug use
 //do not delete them even though they are not currently being used.
 
-void LLImageTex::checkTexSize(bool forced) const
+void RKImageTex::checkTexSize(bool forced) const
 {
     if ((forced || gDebugRender) && mTarget == TextureTarget::Tex2D)
     {
@@ -184,7 +184,7 @@ void LLImageTex::checkTexSize(bool forced) const
         bool error = false;
         if (texname != mTexName)
         {
-            LL_INFOS() << "Bound: " << texname << " Should bind: " << mTexName << " Default: " << LLImageTex::sDefaultImageTexture->getTexName() << LL_ENDL;
+            LL_INFOS() << "Bound: " << texname << " Should bind: " << mTexName << " Default: " << RKImageTex::sDefaultImageTexture->getTexName() << LL_ENDL;
 
             error = true;
             if (gDebugSession)
@@ -197,8 +197,8 @@ void LLImageTex::checkTexSize(bool forced) const
             }
         }
         S32 x = 0, y = 0 ;
-        x = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Width);
-        y = LLVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Height);
+        x = RKVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Width);
+        y = RKVkTex::levelParameter(mTexName, mTarget, 0, LevelQuery::Height);
         llcallstacks << "w: " << x << " h: " << y << llcallstacksendl ;
 
         if(!x || !y)
@@ -222,7 +222,7 @@ void LLImageTex::checkTexSize(bool forced) const
 
         if (error)
         {
-            ll_fail("LLImageTex::checkTexSize failed.");
+            ll_fail("RKImageTex::checkTexSize failed.");
         }
     }
 }
@@ -239,20 +239,20 @@ bool is_little_endian()
 }
 
 //static
-void LLImageTex::initClass(LLWindow* window, S32 num_catagories, bool skip_analyze_alpha /* = false */, bool thread_texture_loads /* = false */, bool thread_media_updates /* = false */)
+void RKImageTex::initClass(LLWindow* window, S32 num_catagories, bool skip_analyze_alpha /* = false */, bool thread_texture_loads /* = false */, bool thread_media_updates /* = false */)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     sSkipAnalyzeAlpha = skip_analyze_alpha;
 
     if (thread_texture_loads || thread_media_updates)
     {
-        LLImageTexThread::createInstance(window);
-        LLImageTexThread::sEnabledTextures = gDeviceCaps.mApiVersionNumber > 3.95f ? thread_texture_loads : false;
-        LLImageTexThread::sEnabledMedia = gDeviceCaps.mApiVersionNumber > 3.95f ? thread_media_updates : false;
+        RKImageTexThread::createInstance(window);
+        RKImageTexThread::sEnabledTextures = gDeviceCaps.mApiVersionNumber > 3.95f ? thread_texture_loads : false;
+        RKImageTexThread::sEnabledMedia = gDeviceCaps.mApiVersionNumber > 3.95f ? thread_media_updates : false;
     }
 }
 
-void LLImageTex::allocateConversionBuffer()
+void RKImageTex::allocateConversionBuffer()
 {
     if (gDeviceCaps.mApiVersionNumber < CONVERSION_SCRATCH_BUFFER_GL_VERSION)
     {
@@ -269,17 +269,17 @@ void LLImageTex::allocateConversionBuffer()
 }
 
 //static
-void LLImageTex::cleanupClass()
+void RKImageTex::cleanupClass()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    LLImageTexThread::deleteSingleton();
+    RKImageTexThread::deleteSingleton();
 
     delete[] sManualScratch;
 }
 
 
 //static
-S32 LLImageTex::dataFormatBits(TexelFormat f)
+S32 RKImageTex::dataFormatBits(TexelFormat f)
 {
     switch (f)
     {
@@ -313,13 +313,13 @@ S32 LLImageTex::dataFormatBits(TexelFormat f)
     case TexelFormat::RG32F:                        return 64;
     case TexelFormat::RGBA32F:                      return 128;
     default:
-        LL_ERRS() << "LLImageTex::Unknown format: " << (S32)f << LL_ENDL;
+        LL_ERRS() << "RKImageTex::Unknown format: " << (S32)f << LL_ENDL;
         return 0;
     }
 }
 
 //static
-S32 LLImageTex::dataFormatBits(PixelFormat f)
+S32 RKImageTex::dataFormatBits(PixelFormat f)
 {
     switch (f)
     {
@@ -334,7 +334,7 @@ S32 LLImageTex::dataFormatBits(PixelFormat f)
     case PixelFormat::RGBA:
     case PixelFormat::BGRA:                         return 32;      // BGRA: used for media textures
     default:
-        LL_ERRS() << "LLImageTex::Unknown format: " << (S32)f << LL_ENDL;
+        LL_ERRS() << "RKImageTex::Unknown format: " << (S32)f << LL_ENDL;
         return 0;
     }
 }
@@ -357,19 +357,19 @@ static bool is_s3tc(TexelFormat f)
 }
 
 //static
-S64 LLImageTex::dataFormatBytes(TexelFormat dataformat, S32 width, S32 height)
+S64 RKImageTex::dataFormatBytes(TexelFormat dataformat, S32 width, S32 height)
 {
     return level_bytes(dataFormatBits(dataformat), width, height, is_s3tc(dataformat));
 }
 
 //static
-S64 LLImageTex::dataFormatBytes(PixelFormat dataformat, S32 width, S32 height)
+S64 RKImageTex::dataFormatBytes(PixelFormat dataformat, S32 width, S32 height)
 {
     return level_bytes(dataFormatBits(dataformat), width, height, false);
 }
 
 //static
-S32 LLImageTex::dataFormatComponents(PixelFormat dataformat)
+S32 RKImageTex::dataFormatComponents(PixelFormat dataformat)
 {
     switch (dataformat)
     {
@@ -383,7 +383,7 @@ S32 LLImageTex::dataFormatComponents(PixelFormat dataformat)
       case PixelFormat::RGBA:
       case PixelFormat::BGRA:                   return 4;       // BGRA: used for media textures
       default:
-        LL_ERRS() << "LLImageTex::Unknown format: " << (S32)dataformat << LL_ENDL;
+        LL_ERRS() << "RKImageTex::Unknown format: " << (S32)dataformat << LL_ENDL;
         return 0;
     }
 }
@@ -391,7 +391,7 @@ S32 LLImageTex::dataFormatComponents(PixelFormat dataformat)
 //----------------------------------------------------------------------------
 
 // static
-void LLImageTex::updateStats(F32 current_time)
+void RKImageTex::updateStats(F32 current_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     sLastFrameTime = current_time;
@@ -400,7 +400,7 @@ void LLImageTex::updateStats(F32 current_time)
 //----------------------------------------------------------------------------
 
 //static
-void LLImageTex::destroyResources()
+void RKImageTex::destroyResources()
 {
     for (S32 stage = 0; stage < gDeviceCaps.mNumTextureImageUnits; stage++)
     {
@@ -408,10 +408,10 @@ void LLImageTex::destroyResources()
     }
 }
 
-std::vector<LLImageTex*> LLImageTex::sDirtyOptionImages;
-std::mutex LLImageTex::sDirtyOptionMutex;
+std::vector<RKImageTex*> RKImageTex::sDirtyOptionImages;
+std::mutex RKImageTex::sDirtyOptionMutex;
 
-void LLImageTex::markTexOptionsDirty()
+void RKImageTex::markTexOptionsDirty()
 {
     mTexOptionsDirty = true;
     std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
@@ -423,14 +423,14 @@ void LLImageTex::markTexOptionsDirty()
 }
 
 //static
-void LLImageTex::flushDirtyTexOptions()
+void RKImageTex::flushDirtyTexOptions()
 {
     static U64 sCalls = 0, sImages = 0, sApplied = 0, sMaxApplied = 0, sNs = 0;
     const auto start = std::chrono::steady_clock::now();
     U64 applied = 0;
     std::lock_guard<std::mutex> lock(sDirtyOptionMutex);
     sImages += sDirtyOptionImages.size();
-    for (LLImageTex* image : sDirtyOptionImages)
+    for (RKImageTex* image : sDirtyOptionImages)
     {
         image->mTexOptionsQueued = false;
         if (image->mTexOptionsDirty && image->mTexName)
@@ -452,7 +452,7 @@ void LLImageTex::flushDirtyTexOptions()
 }
 
 //static
-void LLImageTex::dirtyTexOptions()
+void RKImageTex::dirtyTexOptions()
 {
     for (auto& glimage : sImageList)
     {
@@ -464,29 +464,29 @@ void LLImageTex::dirtyTexOptions()
 
 //for server side use only.
 //static
-bool LLImageTex::create(LLPointer<LLImageTex>& dest, bool usemipmaps)
+bool RKImageTex::create(LLPointer<RKImageTex>& dest, bool usemipmaps)
 {
-    dest = new LLImageTex(usemipmaps);
+    dest = new RKImageTex(usemipmaps);
     return true;
 }
 
 //for server side use only.
-bool LLImageTex::create(LLPointer<LLImageTex>& dest, U32 width, U32 height, U8 components, bool usemipmaps)
+bool RKImageTex::create(LLPointer<RKImageTex>& dest, U32 width, U32 height, U8 components, bool usemipmaps)
 {
-    dest = new LLImageTex(width, height, components, usemipmaps);
+    dest = new RKImageTex(width, height, components, usemipmaps);
     return true;
 }
 
 //for server side use only.
-bool LLImageTex::create(LLPointer<LLImageTex>& dest, const LLImageRaw* imageraw, bool usemipmaps)
+bool RKImageTex::create(LLPointer<RKImageTex>& dest, const LLImageRaw* imageraw, bool usemipmaps)
 {
-    dest = new LLImageTex(imageraw, usemipmaps);
+    dest = new RKImageTex(imageraw, usemipmaps);
     return true;
 }
 
 //----------------------------------------------------------------------------
 
-LLImageTex::LLImageTex(bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
+RKImageTex::RKImageTex(bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
 :   mSaveData(0), mExternalTexture(false)
 {
     init(usemipmaps, allow_compression);
@@ -495,7 +495,7 @@ LLImageTex::LLImageTex(bool usemipmaps/* = true*/, bool allow_compression/* = tr
     sCount++;
 }
 
-LLImageTex::LLImageTex(U32 width, U32 height, U8 components, bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
+RKImageTex::RKImageTex(U32 width, U32 height, U8 components, bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
 :   mSaveData(0), mExternalTexture(false)
 {
     llassert( components <= 4 );
@@ -505,7 +505,7 @@ LLImageTex::LLImageTex(U32 width, U32 height, U8 components, bool usemipmaps/* =
     sCount++;
 }
 
-LLImageTex::LLImageTex(const LLImageRaw* imageraw, bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
+RKImageTex::RKImageTex(const LLImageRaw* imageraw, bool usemipmaps/* = true*/, bool allow_compression/* = true*/)
 :   mSaveData(0), mExternalTexture(false)
 {
     init(usemipmaps, allow_compression);
@@ -516,7 +516,7 @@ LLImageTex::LLImageTex(const LLImageRaw* imageraw, bool usemipmaps/* = true*/, b
     createImageTexture(0, imageraw);
 }
 
-LLImageTex::LLImageTex(
+RKImageTex::RKImageTex(
     U32 texName,
     U32 components,
     TextureTarget target,
@@ -526,7 +526,7 @@ LLImageTex::LLImageTex(
     LLTexUnit::eTextureAddressMode addressMode,
     const char* file, int line)
 {
-    LLVkFormat::noteFormat("LLImageTex", file, line, (U8)formatInternal, (U8)formatPrimary, (U8)formatType);
+    RKVkFormat::noteFormat("RKImageTex", file, line, (U8)formatInternal, (U8)formatPrimary, (U8)formatType);
     init(false, true);
     mTexName = texName;
     noteNameChange();
@@ -545,12 +545,12 @@ static std::vector<U32> sNameEventIds;
 static std::atomic<U32> sNextTexId{1};
 static std::atomic<bool> sNameEventsWanted{false};
 
-void LLImageTex::wantNameEvents()
+void RKImageTex::wantNameEvents()
 {
     sNameEventsWanted = true;
 }
 
-void LLImageTex::noteNameChange()
+void RKImageTex::noteNameChange()
 {
     if (mTexId == 0)
     {
@@ -564,14 +564,14 @@ void LLImageTex::noteNameChange()
     sNameEventIds.push_back(mTexId);
 }
 
-void LLImageTex::takeNameEvents(std::vector<U32>& ids)
+void RKImageTex::takeNameEvents(std::vector<U32>& ids)
 {
     ids.clear();
     std::lock_guard<std::mutex> lock(sNameEventMutex);
     ids.swap(sNameEventIds);
 }
 
-LLImageTex::~LLImageTex()
+RKImageTex::~RKImageTex()
 {
     if (mTexOptionsQueued)
     {
@@ -580,14 +580,14 @@ LLImageTex::~LLImageTex()
     }
     if (!mExternalTexture && gDeviceCaps.mInited)
     {
-        LLImageTex::cleanup();
+        RKImageTex::cleanup();
         sImageList.erase(this);
         freePickMask();
         sCount--;
     }
 }
 
-void LLImageTex::init(bool usemipmaps, bool allow_compression)
+void RKImageTex::init(bool usemipmaps, bool allow_compression)
 {
 #if LL_IMAGEGL_THREAD_CHECK
     mActiveThread = LLThread::currentID();
@@ -648,7 +648,7 @@ void LLImageTex::init(bool usemipmaps, bool allow_compression)
     mMainQueue = LL::WorkQueue::getInstance("mainloop");
 }
 
-void LLImageTex::cleanup()
+void RKImageTex::cleanup()
 {
     if (!gDeviceCaps.mIsDisabled)
     {
@@ -677,12 +677,12 @@ static bool check_power_of_two(S32 dim)
 }
 
 //static
-bool LLImageTex::checkSize(S32 width, S32 height)
+bool RKImageTex::checkSize(S32 width, S32 height)
 {
     return check_power_of_two(width) && check_power_of_two(height);
 }
 
-bool LLImageTex::setSize(S32 width, S32 height, S32 ncomponents, S32 discard_level)
+bool RKImageTex::setSize(S32 width, S32 height, S32 ncomponents, S32 discard_level)
 {
     if (width != mWidth || height != mHeight || ncomponents != mComponents)
     {
@@ -728,7 +728,7 @@ bool LLImageTex::setSize(S32 width, S32 height, S32 ncomponents, S32 discard_lev
 //----------------------------------------------------------------------------
 
 // virtual
-void LLImageTex::dump()
+void RKImageTex::dump()
 {
     LL_INFOS() << "mMaxDiscardLevel " << S32(mMaxDiscardLevel)
             << " mLastBindTime " << mLastBindTime
@@ -753,12 +753,12 @@ void LLImageTex::dump()
 }
 
 //----------------------------------------------------------------------------
-void LLImageTex::forceUpdateBindStats(void) const
+void RKImageTex::forceUpdateBindStats(void) const
 {
     mLastBindTime = sLastFrameTime;
 }
 
-bool LLImageTex::updateBindStats() const
+bool RKImageTex::updateBindStats() const
 {
     if (mTexName != 0)
     {
@@ -778,14 +778,14 @@ bool LLImageTex::updateBindStats() const
     return false ;
 }
 
-F32 LLImageTex::getTimePassedSinceLastBound()
+F32 RKImageTex::getTimePassedSinceLastBound()
 {
     return sLastFrameTime - mLastBindTime ;
 }
 
-void LLImageTex::setExplicitFormat( TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line )
+void RKImageTex::setExplicitFormat( TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line )
 {
-    LLVkFormat::noteFormat("setExplicitFormat", file, line, (U8)internal_format, (U8)primary_format, (U8)(type_format == ComponentType::None ? ComponentType::U8 : type_format));
+    RKVkFormat::noteFormat("setExplicitFormat", file, line, (U8)internal_format, (U8)primary_format, (U8)(type_format == ComponentType::None ? ComponentType::U8 : type_format));
     // Note: must be called before createTexture()
     // Note: it's up to the caller to ensure that the format matches the number of components.
     mHasExplicitFormat = true;
@@ -802,7 +802,7 @@ void LLImageTex::setExplicitFormat( TexelFormat internal_format, PixelFormat pri
 //----------------------------------------------------------------------------
 
 // <FS> native-vk (C4): see the declaration in rkimagetex.h
-LLImageTex::PixelHandover::PixelHandover(const LLImageRaw* raw)
+RKImageTex::PixelHandover::PixelHandover(const LLImageRaw* raw)
 :   mActive(false)
 {
     if (!raw || raw->isBufferInvalid() || !raw->getData() || raw->getDataSize() <= 0)
@@ -810,26 +810,26 @@ LLImageTex::PixelHandover::PixelHandover(const LLImageRaw* raw)
         return;
     }
     static const bool hook_set = []() {
-        LLImageBase::setPixelHoldWait([](const LLImageBase*) { LLVkAsync::waitForPixelHolds(); });
+        LLImageBase::setPixelHoldWait([](const LLImageBase*) { RKVkAsync::waitForPixelHolds(); });
         return true;
     }();
     (void)hook_set;
-    LLVkAsync::PixelHold hold = { raw->getData(), (size_t)raw->getDataSize(), raw,
+    RKVkAsync::PixelHold hold = { raw->getData(), (size_t)raw->getDataSize(), raw,
                                   [](const void* o) { LLImageRaw* i = const_cast<LLImageRaw*>((const LLImageRaw*)o); i->ref(); i->addPixelHold(); },
                                   [](const void* o) { LLImageRaw* i = const_cast<LLImageRaw*>((const LLImageRaw*)o); i->releasePixelHold(); i->unref(); } };
-    LLVkAsync::setPixelHold(&hold);
+    RKVkAsync::setPixelHold(&hold);
     mActive = true;
 }
 
-LLImageTex::PixelHandover::~PixelHandover()
+RKImageTex::PixelHandover::~PixelHandover()
 {
     if (mActive)
     {
-        LLVkAsync::setPixelHold(nullptr);
+        RKVkAsync::setPixelHold(nullptr);
     }
 }
 
-void LLImageTex::setImage(const LLImageRaw* imageraw)
+void RKImageTex::setImage(const LLImageRaw* imageraw)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert((imageraw->getWidth() == getWidth(mCurrentDiscardLevel)) &&
@@ -839,7 +839,7 @@ void LLImageTex::setImage(const LLImageRaw* imageraw)
     setImage(rawdata, false);
 }
 
-bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S32 usename /* = 0 */)
+bool RKImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S32 usename /* = 0 */)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -866,7 +866,7 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
     {
         S32 w = getWidth();
         S32 h = getHeight();
-        LLImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
+        RKImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
             mFormatPrimary, mFormatType, (void*)data_in, mAllowCompression);
     }
     else if (mUseMipMaps)
@@ -891,12 +891,12 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
                 if (is_compressed)
                 {
                     S32 tex_size = (S32)formatBytes(w, h);
-                    LLVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatInternal, w, h, tex_size, (void *)data_in);
+                    RKVkTex::compressedImage2D(edit_name, mTarget, gl_level, mFormatInternal, w, h, tex_size, (void *)data_in);
                 }
                 else
                 {
 
-                    LLImageTex::setManualImage(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, ComponentType::U8, (void*)data_in, mAllowCompression);
+                    RKImageTex::setManualImage(edit_name, mTarget, gl_level, mFormatInternal, w, h, mFormatPrimary, ComponentType::U8, (void*)data_in, mAllowCompression);
                     if (gl_level == 0)
                     {
                         analyzeAlpha(data_in, w, h);
@@ -915,12 +915,12 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
             S32 w = getWidth(mCurrentDiscardLevel);
             S32 h = getHeight(mCurrentDiscardLevel);
             mMipLevels = wpo2(llmax(w, h));
-            LLImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h, mFormatPrimary, mFormatType, data_in, mAllowCompression);
+            RKImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h, mFormatPrimary, mFormatType, data_in, mAllowCompression);
             analyzeAlpha(data_in, w, h);
             updatePickMask(w, h, data_in);
             {
                 LL_PROFILE_GPU_ZONE("generate mip map");
-                LLVkTex::generateMipmap(edit_name);
+                RKVkTex::generateMipmap(edit_name);
             }
         }
         else
@@ -936,12 +936,12 @@ bool LLImageTex::setImage(const U8* data_in, bool data_hasmips /* = false */, S3
         if (is_compressed)
         {
             S32 tex_size = (S32)formatBytes(w, h);
-            LLVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatInternal, w, h, tex_size, (void *)data_in);
+            RKVkTex::compressedImage2D(edit_name, mTarget, 0, mFormatInternal, w, h, tex_size, (void *)data_in);
         }
         else
         {
 
-            LLImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
+            RKImageTex::setManualImage(edit_name, mTarget, 0, mFormatInternal, w, h,
                          mFormatPrimary, mFormatType, (void *)data_in, mAllowCompression);
             analyzeAlpha(data_in, w, h);
 
@@ -1000,7 +1000,7 @@ void sub_image_lines(U32 texname, TextureTarget target, S32 miplevel, S32 x_offs
     LL_PROFILE_ZONE_NUM(width);
     LL_PROFILE_ZONE_NUM(height);
 
-    U32 components = LLImageTex::dataFormatComponents(pixformat);
+    U32 components = RKImageTex::dataFormatComponents(pixformat);
     U32 type_width = type_width_from_pixtype(pixtype);
 
     const U32 line_width = data_width * components * type_width;
@@ -1028,7 +1028,7 @@ void sub_image_lines(U32 texname, TextureTarget target, S32 miplevel, S32 x_offs
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            LLVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
+            RKVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, batch_size, pixformat, pixtype, src);
             src += line_width * batch_size;
         }
     }
@@ -1039,13 +1039,13 @@ void sub_image_lines(U32 texname, TextureTarget target, S32 miplevel, S32 x_offs
         {
             // If this keeps crashing, pass down data_size, looks like it is using
             // imageraw->getData(); for data, but goes way over allocated size limit
-            LLVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
+            RKVkTex::subImage2D(texname, target, miplevel, x_offset, y_pos, width, 1, pixformat, pixtype, src);
             src += line_width;
         }
     }
 }
 
-bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
+bool RKImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     if (!width || !height)
@@ -1115,7 +1115,7 @@ bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S
         const U8* sub_datap = datap + (y_pos * data_width + x_pos) * getComponents();
         // Update the GL texture
         bool res = gRender.getTexUnit(0)->bindManual(mBindTarget, tex_name);
-        if (!res) LL_ERRS() << "LLImageTex::setSubImage(): bindTexture failed" << LL_ENDL;
+        if (!res) LL_ERRS() << "RKImageTex::setSubImage(): bindTexture failed" << LL_ENDL;
 
         const bool use_sub_image = should_stagger_image_set(isCompressed());
         if (!use_sub_image)
@@ -1124,7 +1124,7 @@ bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S
             // setManualImage? Maybe because it only gets called with the
             // dimensions of the full image?  Or because the image is never
             // compressed?
-            LLVkTex::subImage2D(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
+            RKVkTex::subImage2D(tex_name, mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap, data_width);
         }
         else
         {
@@ -1138,18 +1138,18 @@ bool LLImageTex::setSubImage(const U8* datap, S32 data_width, S32 data_height, S
     return true;
 }
 
-bool LLImageTex::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
+bool RKImageTex::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update /* = false */, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     return setSubImage(imageraw->getData(), imageraw->getWidth(), imageraw->getHeight(), x_pos, y_pos, width, height, force_fast_update, use_name);
 }
 
 // Copy sub image from frame buffer
-bool LLImageTex::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_pos, S32 width, S32 height)
+bool RKImageTex::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_pos, S32 width, S32 height)
 {
     if (gRender.getTexUnit(0)->bind(this, false, true))
     {
-        LLVkTex::copySubImage(mTexName, TextureTarget::Tex2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::currentId());
+        RKVkTex::copySubImage(mTexName, TextureTarget::Tex2D, 0, fb_x, fb_y, 0, x_pos, y_pos, width, height, LLRenderTarget::currentId());
         mImageTextureCreated = true;
         return true;
     }
@@ -1160,7 +1160,7 @@ bool LLImageTex::setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y
 }
 
 // static
-void LLImageTex::generateTextures(S32 numTextures, U32 *textures)
+void RKImageTex::generateTextures(S32 numTextures, U32 *textures)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     static constexpr U32 pool_size = 1024;
@@ -1171,7 +1171,7 @@ void LLImageTex::generateTextures(S32 numTextures, U32 *textures)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - reup pool");
         // pool is emtpy, refill it
-        LLVkTex::create(pool_size, name_pool);
+        RKVkTex::create(pool_size, name_pool);
         name_count = pool_size;
     }
 
@@ -1184,7 +1184,7 @@ void LLImageTex::generateTextures(S32 numTextures, U32 *textures)
     else
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("iglgt - pool miss");
-        LLVkTex::create(numTextures, textures);
+        RKVkTex::create(numTextures, textures);
     }
 }
 
@@ -1194,7 +1194,7 @@ static const int DELETE_DELAY = []{ const char* e = getenv("LL_VK_TEX_DELETE_DEL
 static std::vector<U32> sFreeList[31+1];
 
 // static
-void LLImageTex::updateClass()
+void RKImageTex::updateClass()
 {
     sFrameCount++;
 
@@ -1206,13 +1206,13 @@ void LLImageTex::updateClass()
     if (!sFreeList[idx].empty())
     {
         free_tex_images((S32) sFreeList[idx].size(), sFreeList[idx].data());
-        LLVkTex::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
+        RKVkTex::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
         sFreeList[idx].resize(0);
     }
 }
 
 // static
-void LLImageTex::deleteTextures(S32 numTextures, const U32 *textures)
+void RKImageTex::deleteTextures(S32 numTextures, const U32 *textures)
 {
     if (gDeviceCaps.mInited)
     {
@@ -1221,17 +1221,17 @@ void LLImageTex::deleteTextures(S32 numTextures, const U32 *textures)
         for (S32 i = 0; i < numTextures; ++i)
         {
             sFreeList[idx].push_back(textures[i]);
-            LLVkAsync::uiCacheTextureFreed(textures[i]);        // <FS> UI record cache: a cached segment that draws with it is stale
+            RKVkAsync::uiCacheTextureFreed(textures[i]);        // <FS> UI record cache: a cached segment that draws with it is stale
         }
     }
 }
 
 // static
 // static
-void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void* pixels, bool allow_compression, const char* file, int line)
+void RKImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel, TexelFormat intformat, S32 width, S32 height, PixelFormat pixformat, ComponentType pixtype, const void* pixels, bool allow_compression, const char* file, int line)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    LLVkFormat::noteFormat("setManualImage", file, line, (U8)intformat, (U8)pixformat, (U8)pixtype);
+    RKVkFormat::noteFormat("setManualImage", file, line, (U8)intformat, (U8)pixformat, (U8)pixtype);
     if (LLRender::sGLCoreProfile)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1240,7 +1240,7 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
             if (pixformat == PixelFormat::Alpha)
             { //alpha only formats are deprecated, convert to R8 with a swizzle
                 const TextureSwizzle mask[] = { TextureSwizzle::Zero, TextureSwizzle::Zero, TextureSwizzle::Zero, TextureSwizzle::R };
-                LLVkTex::swizzle(texname, mask);
+                RKVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::R;
                 intformat = TexelFormat::R8;
             }
@@ -1248,7 +1248,7 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
             if (pixformat == PixelFormat::Lum)
             { //luminance is deprecated, convert to R8 with a swizzle
                 const TextureSwizzle mask[] = { TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::One };
-                LLVkTex::swizzle(texname, mask);
+                RKVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::R;
                 intformat = TexelFormat::R8;
             }
@@ -1256,7 +1256,7 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
             if (pixformat == PixelFormat::LumAlpha)
             { //luminance alpha is deprecated, convert to RG8 with a swizzle
                 const TextureSwizzle mask[] = { TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::R, TextureSwizzle::G };
-                LLVkTex::swizzle(texname, mask);
+                RKVkTex::swizzle(texname, mask);
                 pixformat = PixelFormat::RG;
                 intformat = TexelFormat::RG8;
             }
@@ -1343,14 +1343,14 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
         if (!use_sub_image)
         {
             LL_PROFILE_ZONE_NAMED("glTexImage2D alloc + copy");
-            LLVkTex::image2D(texname, target, miplevel, intformat, width, height, pixformat, pixtype, pixels);
+            RKVkTex::image2D(texname, target, miplevel, intformat, width, height, pixformat, pixtype, pixels);
         }
         else
         {
             // break up calls to a manageable size for the GL command buffer
             {
                 LL_PROFILE_ZONE_NAMED("glTexImage2D alloc");
-                LLVkTex::image2D(texname, target, miplevel, intformat, width, height, pixformat, pixtype, nullptr);
+                RKVkTex::image2D(texname, target, miplevel, intformat, width, height, pixformat, pixtype, nullptr);
             }
 
             U8* src = (U8*)(pixels);
@@ -1365,8 +1365,8 @@ void LLImageTex::setManualImage(U32 texname, TextureTarget target, S32 miplevel,
 }
 
 //create an empty GL texture: just create a texture name
-//the texture is assiciate with some image by calling glTexImage outside LLImageTex
-bool LLImageTex::createImageTexture()
+//the texture is assiciate with some image by calling glTexImage outside RKImageTex
+bool RKImageTex::createImageTexture()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     checkActiveThread();
@@ -1383,24 +1383,24 @@ bool LLImageTex::createImageTexture()
 
     if(mTexName)
     {
-        LLImageTex::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
+        RKImageTex::deleteTextures(1, (reinterpret_cast<U32*>(&mTexName))) ;
         mTexName = 0;
         noteNameChange();
     }
 
 
-    LLImageTex::generateTextures(1, &mTexName);
+    RKImageTex::generateTextures(1, &mTexName);
     noteNameChange();
     if (!mTexName)
     {
-        LL_WARNS() << "LLImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
+        LL_WARNS() << "RKImageTex::createImageTexture failed to make an empty texture" << LL_ENDL;
         return false;
     }
 
     return true ;
 }
 
-bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename/*=0*/, bool to_create, S32 category, bool defer_copy, U32* tex_name)
+bool RKImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename/*=0*/, bool to_create, S32 category, bool defer_copy, U32* tex_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     checkActiveThread();
@@ -1442,7 +1442,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
         return false;
     }
     // <FS> the decode pool's analysis of these texels, if it came with them: the passes at upload stand down until this create is done
-    struct AdoptScope { LLImageTex* t; ~AdoptScope() { t->mAnalysisAdopted = false; } } adopt_scope { this };
+    struct AdoptScope { RKImageTex* t; ~AdoptScope() { t->mAnalysisAdopted = false; } } adopt_scope { this };
     if (!imageraw->isCompressed()) adoptUploadAnalysis(imageraw, (U32)raw_w, (U32)raw_h);
 
     if (mHasExplicitFormat &&
@@ -1502,7 +1502,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const LLImageRaw* imagera
     return createImageTexture(discard_level, rawdata, imageraw->isCompressed(), usename, defer_copy, tex_name);
 }
 
-bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, U32* tex_name)
+bool RKImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, U32* tex_name)
 // Call with void data, vmem is allocated but unitialized
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1550,11 +1550,11 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
     }
     else
     {
-        LLImageTex::generateTextures(1, &new_texname);
+        RKImageTex::generateTextures(1, &new_texname);
         {
             gRender.getTexUnit(0)->bind(this, false, false, new_texname);
-            const LLVkFormat::Setting levels[2] = { LLVkFormat::setBaseLevel(0), LLVkFormat::setMaxLevel(mMaxDiscardLevel - discard_level) };
-            LLVkTex::params(new_texname, levels, 2);
+            const RKVkFormat::Setting levels[2] = { RKVkFormat::setBaseLevel(0), RKVkFormat::setMaxLevel(mMaxDiscardLevel - discard_level) };
+            RKVkTex::params(new_texname, levels, 2);
         }
     }
 
@@ -1606,7 +1606,7 @@ bool LLImageTex::createImageTexture(S32 discard_level, const U8* data_in, bool d
     return true;
 }
 
-void LLImageTex::syncToMainThread(U32 new_tex_name)
+void RKImageTex::syncToMainThread(U32 new_tex_name)
 {
     LL_PROFILE_ZONE_SCOPED;
     llassert(!on_main_thread());
@@ -1628,15 +1628,15 @@ void LLImageTex::syncToMainThread(U32 new_tex_name)
 
 
 // <FS> native-vk (texture handles H2): the texture's name is its id for as long as it has a GL texture, so a new resolution does not make a new name any more. The loader thread prepared the image under
-// a name of its own (`texname`); here, on the main thread, it takes the place of the image of mTexName (LLVkTex::commitImage; `texname` goes with it). A texture without a name yet simply takes
+// a name of its own (`texname`); here, on the main thread, it takes the place of the image of mTexName (RKVkTex::commitImage; `texname` goes with it). A texture without a name yet simply takes
 // `texname` as its name (the first image).
-void LLImageTex::syncTexName(U32 texname)
+void RKImageTex::syncTexName(U32 texname)
 {
     if (texname != 0)
     {
         if (mTexName != 0 && mTexName != texname)
         {
-            LLVkTex::commitImage(mTexName, texname);
+            RKVkTex::commitImage(mTexName, texname);
         }
         else
         {
@@ -1647,7 +1647,7 @@ void LLImageTex::syncTexName(U32 texname)
     }
 }
 
-bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compressed_ok) const
+bool RKImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compressed_ok) const
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -1671,7 +1671,7 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
     //checkTexSize() ;
 
     S32 glwidth = 0;
-    glwidth = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Width);
+    glwidth = RKVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Width);
     if (glwidth == 0)
     {
         // No mip data smaller than current discard level
@@ -1695,13 +1695,13 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
 
     if (width <= 0 || width > 2048 || height <= 0 || height > 2048 || ncomponents < 1 || ncomponents > 4)
     {
-        LL_ERRS() << llformat("LLImageTex::readBackRaw: bogus params: %d x %d x %d",width,height,ncomponents) << LL_ENDL;
+        LL_ERRS() << llformat("RKImageTex::readBackRaw: bogus params: %d x %d x %d",width,height,ncomponents) << LL_ENDL;
     }
 
     S32 is_compressed = 0;
     if (compressed_ok)
     {
-        is_compressed = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Compressed);
+        is_compressed = RKVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::Compressed);
     }
 
     LLImageDataLock lock(imageraw);
@@ -1709,7 +1709,7 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
     if (is_compressed)
     {
         S32 glbytes;
-        glbytes = LLVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::CompressedSize);
+        glbytes = RKVkTex::levelParameter(mTexName, mTarget, gl_discard, LevelQuery::CompressedSize);
         if(!imageraw->allocateDataSize(width, height, ncomponents, glbytes))
         {
             constexpr S64 MAX_GL_BYTES = 2048 * 2048;
@@ -1726,7 +1726,7 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
             return false ;
         }
 
-        LLVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (void*)(imageraw->getData()));
+        RKVkTex::getCompressedImage(mTexName, mTarget, gl_discard, (void*)(imageraw->getData()));
     }
     else
     {
@@ -1747,13 +1747,13 @@ bool LLImageTex::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compr
             return false ;
         }
 
-        LLVkTex::getImage(mTexName, TextureTarget::Tex2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
+        RKVkTex::getImage(mTexName, TextureTarget::Tex2D, gl_discard, mFormatPrimary, mFormatType, (void*)(imageraw->getData()));
     }
 
     return true ;
 }
 
-void LLImageTex::destroyImageTexture()
+void RKImageTex::destroyImageTexture()
 {
     checkActiveThread();
 
@@ -1764,7 +1764,7 @@ void LLImageTex::destroyImageTexture()
             mTextureMemory = (S64Bytes)0;
         }
 
-        LLImageTex::deleteTextures(1, &mTexName);
+        RKImageTex::deleteTextures(1, &mTexName);
         mCurrentDiscardLevel = -1 ; //invalidate mCurrentDiscardLevel.
         mTexName = 0;
         noteNameChange();
@@ -1773,7 +1773,7 @@ void LLImageTex::destroyImageTexture()
 }
 
 //force to invalidate the gl texture, most likely a sculpty texture
-void LLImageTex::forceToInvalidateGLTexture()
+void RKImageTex::forceToInvalidateGLTexture()
 {
     checkActiveThread();
     mAnalyzedPixels = 0;        // (new content: the classification starts over)
@@ -1789,7 +1789,7 @@ void LLImageTex::forceToInvalidateGLTexture()
 
 //----------------------------------------------------------------------------
 
-void LLImageTex::setAddressMode(LLTexUnit::eTextureAddressMode mode)
+void RKImageTex::setAddressMode(LLTexUnit::eTextureAddressMode mode)
 {
     if (mAddressMode != mode)
     {
@@ -1806,7 +1806,7 @@ void LLImageTex::setAddressMode(LLTexUnit::eTextureAddressMode mode)
     }
 }
 
-void LLImageTex::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
+void RKImageTex::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
     if (mFilterOption != option)
     {
@@ -1822,7 +1822,7 @@ void LLImageTex::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
     }
 }
 
-bool LLImageTex::getIsResident(bool test_now)
+bool RKImageTex::getIsResident(bool test_now)
 {
     if (test_now)
     {
@@ -1839,7 +1839,7 @@ bool LLImageTex::getIsResident(bool test_now)
     return mIsResident;
 }
 
-S32 LLImageTex::getHeight(S32 discard_level) const
+S32 RKImageTex::getHeight(S32 discard_level) const
 {
     if (discard_level < 0)
     {
@@ -1850,7 +1850,7 @@ S32 LLImageTex::getHeight(S32 discard_level) const
     return height;
 }
 
-S32 LLImageTex::getWidth(S32 discard_level) const
+S32 RKImageTex::getWidth(S32 discard_level) const
 {
     if (discard_level < 0)
     {
@@ -1861,7 +1861,7 @@ S32 LLImageTex::getWidth(S32 discard_level) const
     return width;
 }
 
-S64 LLImageTex::getBytes(S32 discard_level) const
+S64 RKImageTex::getBytes(S32 discard_level) const
 {
     if (discard_level < 0)
     {
@@ -1874,7 +1874,7 @@ S64 LLImageTex::getBytes(S32 discard_level) const
     return formatBytes(w, h);
 }
 
-S64 LLImageTex::getMipBytes(S32 discard_level) const
+S64 RKImageTex::getMipBytes(S32 discard_level) const
 {
     if (discard_level < 0)
     {
@@ -1895,23 +1895,23 @@ S64 LLImageTex::getMipBytes(S32 discard_level) const
     return res;
 }
 
-bool LLImageTex::isJustBound() const
+bool RKImageTex::isJustBound() const
 {
     return sLastFrameTime - mLastBindTime < 0.5f;
 }
 
-bool LLImageTex::getBoundRecently() const
+bool RKImageTex::getBoundRecently() const
 {
     return (bool)(sLastFrameTime - mLastBindTime < MIN_TEXTURE_LIFETIME);
 }
 
-bool LLImageTex::getIsAlphaMask() const
+bool RKImageTex::getIsAlphaMask() const
 {
     llassert_always(!sSkipAnalyzeAlpha);
     return mIsMask;
 }
 
-void LLImageTex::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
+void RKImageTex::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
 {
     mTarget = target;
     mBindTarget = bind_target;
@@ -1919,7 +1919,7 @@ void LLImageTex::setTarget(const TextureTarget target, const LLTexUnit::eTexture
 
 const S8 INVALID_OFFSET = -99 ;
 // <FS> BC7 at decode: the classification analyzeAlpha would have made, computed from the texels before the encoding (the blocks cannot be read here); no later analysis overrides it
-void LLImageTex::setIsMask(bool is_mask)
+void RKImageTex::setIsMask(bool is_mask)
 {
     mIsMask = is_mask;
     mAnalyzedPixels = ~0u;
@@ -1928,7 +1928,7 @@ void LLImageTex::setIsMask(bool is_mask)
 
 // <FS> the texture plan section 6.2: the decode pool computed what analyzeAlpha and updatePickMask would (LLImageRaw::analyzeForUpload); the texture takes it, with the same
 // rule as analyzeAlpha for which level's decision stands (a smaller level never overrides a bigger one's), and the passes over the texels stand down for this upload.
-void LLImageTex::adoptUploadAnalysis(const LLImageRaw* raw, U32 w, U32 h)
+void RKImageTex::adoptUploadAnalysis(const LLImageRaw* raw, U32 w, U32 h)
 {
     if (!raw || !raw->hasUploadAnalysis() || !mNeedsAlphaAndPickMask || sSkipAnalyzeAlpha)
     {
@@ -1955,18 +1955,18 @@ void LLImageTex::adoptUploadAnalysis(const LLImageRaw* raw, U32 w, U32 h)
     mAnalysisAdopted = true;
 }
 
-bool LLImageTex::isCompressedFormat() const
+bool RKImageTex::isCompressedFormat() const
 {
     return is_s3tc(mFormatInternal);
 }
 
-void LLImageTex::clearExplicitFormat()
+void RKImageTex::clearExplicitFormat()
 {
     mHasExplicitFormat = false;
     mAnalyzedPixels = 0;        // the next upload of texels classifies the alpha again
 }
 
-void LLImageTex::setNeedsAlphaAndPickMask(bool need_mask)
+void RKImageTex::setNeedsAlphaAndPickMask(bool need_mask)
 {
     if(mNeedsAlphaAndPickMask != need_mask)
     {
@@ -1985,7 +1985,7 @@ void LLImageTex::setNeedsAlphaAndPickMask(bool need_mask)
     }
 }
 
-void LLImageTex::calcAlphaChannelOffsetAndStride()
+void RKImageTex::calcAlphaChannelOffsetAndStride()
 {
     if(mAlphaOffset == INVALID_OFFSET)//do not need alpha mask
     {
@@ -2033,7 +2033,7 @@ void LLImageTex::calcAlphaChannelOffsetAndStride()
     }
 }
 
-void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
+void RKImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
 {
     if(!data_in || sSkipAnalyzeAlpha || !mNeedsAlphaAndPickMask || mAnalysisAdopted)
     {
@@ -2180,7 +2180,7 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
 }
 
 //----------------------------------------------------------------------------
-U32 LLImageTex::createPickMask(S32 pWidth, S32 pHeight)
+U32 RKImageTex::createPickMask(S32 pWidth, S32 pHeight)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     freePickMask();
@@ -2199,7 +2199,7 @@ U32 LLImageTex::createPickMask(S32 pWidth, S32 pHeight)
 }
 
 //----------------------------------------------------------------------------
-void LLImageTex::freePickMask()
+void RKImageTex::freePickMask()
 {
     if (mPickMask != NULL)
     {
@@ -2209,20 +2209,20 @@ void LLImageTex::freePickMask()
     mPickMaskWidth = mPickMaskHeight = 0;
 }
 
-bool LLImageTex::isCompressed()
+bool RKImageTex::isCompressed()
 {
     // *NOTE: Not all compressed formats are included here (the S3TC family). The GL code asked the PRIMARY format for this (the caller passed the compressed token as both formats);
     // nothing in the viewer does that, the typed way asks the storage format.
     return is_s3tc(mFormatInternal);
 }
 
-S64 LLImageTex::formatBytes(S32 w, S32 h) const
+S64 RKImageTex::formatBytes(S32 w, S32 h) const
 {
     return is_s3tc(mFormatInternal) ? dataFormatBytes(mFormatInternal, w, h) : dataFormatBytes(mFormatPrimary, w, h);
 }
 
 //----------------------------------------------------------------------------
-void LLImageTex::updatePickMask(S32 width, S32 height, const U8* data_in)
+void RKImageTex::updatePickMask(S32 width, S32 height, const U8* data_in)
 {
     if(!mNeedsAlphaAndPickMask || mAnalysisAdopted)
     {
@@ -2266,9 +2266,9 @@ void LLImageTex::updatePickMask(S32 width, S32 height, const U8* data_in)
     }
 }
 
-//bool LLImageTex::getMask(const LLVector2 &tc)
+//bool RKImageTex::getMask(const LLVector2 &tc)
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
-bool LLImageTex::getMask(const LLVector2 &tc) const
+bool RKImageTex::getMask(const LLVector2 &tc) const
 // [/RLVa:KB]
 {
     bool res = true;
@@ -2321,7 +2321,7 @@ bool LLImageTex::getMask(const LLVector2 &tc) const
     return res;
 }
 
-void LLImageTex::setCurTexSizebar(S32 index, bool set_pick_size)
+void RKImageTex::setCurTexSizebar(S32 index, bool set_pick_size)
 {
     sCurTexSizeBar = index ;
 
@@ -2334,13 +2334,13 @@ void LLImageTex::setCurTexSizebar(S32 index, bool set_pick_size)
         sCurTexPickSize = -1 ;
     }
 }
-void LLImageTex::resetCurTexSizebar()
+void RKImageTex::resetCurTexSizebar()
 {
     sCurTexSizeBar = -1 ;
     sCurTexPickSize = -1 ;
 }
 
-bool LLImageTex::scaleDown(S32 desired_discard)
+bool RKImageTex::scaleDown(S32 desired_discard)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -2368,7 +2368,7 @@ bool LLImageTex::scaleDown(S32 desired_discard)
     if (mHasMipMaps && mip > 0)
     {
         free_tex_image(mTexName);
-        LLVkTex::dropLevels(mTexName, mip);
+        RKVkTex::dropLevels(mTexName, mip);
         alloc_tex_image(desired_width, desired_height, mFormatInternal, 1);
         markTexOptionsDirty();
         mCurrentDiscardLevel = desired_discard;
@@ -2380,7 +2380,7 @@ bool LLImageTex::scaleDown(S32 desired_discard)
 
 //----------------------------------------------------------------------------
 #if LL_IMAGEGL_THREAD_CHECK
-void LLImageTex::checkActiveThread()
+void RKImageTex::checkActiveThread()
 {
     llassert(mActiveThread == LLThread::currentID());
 }
@@ -2419,7 +2419,7 @@ void LLImageTex::checkActiveThread()
             llassert(w > 0 && h > 0 && cur_mip_data);
             U8 test = cur_mip_data[w*h*mComponents-1];
             {
-                LLImageTex::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
+                RKImageTex::setManualImage(edit_name, mTarget, m, mFormatInternal, w, h, mFormatPrimary, mFormatType, cur_mip_data);
             }
             if (prev_mip_data && prev_mip_data != rawdata)
             {
@@ -2437,9 +2437,9 @@ void LLImageTex::checkActiveThread()
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  nummips);
 */
 
-LLImageTexThread::LLImageTexThread(LLWindow* window)
+RKImageTexThread::RKImageTexThread(LLWindow* window)
     // We want exactly one thread.
-    : LL::ThreadPool("LLImageTex", 1)
+    : LL::ThreadPool("RKImageTex", 1)
     , mWindow(window)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -2459,7 +2459,7 @@ LLImageTexThread::LLImageTexThread(LLWindow* window)
     LL::ThreadPool::start();
 }
 
-void LLImageTexThread::run()
+void RKImageTexThread::run()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     // We must perform setup on this thread before actually servicing our

@@ -19,10 +19,10 @@
 #include <string>
 #include <vector>
 
-namespace LLVkDlssNr
+namespace RKVkDlssNr
 {
 
-using namespace LLVk;
+using namespace RKVk;
 
 int requested()
 {
@@ -153,7 +153,7 @@ void* log_pointer(NVSDK_NGX_Parameter* p, const char* name)
     return NVSDK_NGX_SUCCEED(r) ? v : nullptr;
 }
 
-NVSDK_NGX_Resource_VK resource_of(const LLVk::Image& image, bool write, VkImageAspectFlags aspect)
+NVSDK_NGX_Resource_VK resource_of(const RKVk::Image& image, bool write, VkImageAspectFlags aspect)
 {
     const VkImageSubresourceRange range = { aspect, 0, 1, 0, 1 };
     return NVSDK_NGX_Create_ImageView_Resource_VK(image.mView, image.mImage, range, image.mFormat, image.mExtent.width, image.mExtent.height, write);

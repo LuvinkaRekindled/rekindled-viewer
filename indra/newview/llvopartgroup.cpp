@@ -193,7 +193,7 @@ LLDrawable* LLVOPartGroup::createDrawable(LLPipeline *pipeline)
      }
      else if (idx - (S32) mViewerPartGroupp->mParticles.size() < (S32) mViewerPartGroupp->mRecords.size())
      {
-         const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
+         const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
          if (rec.mSourcep.notNull())
          {
              ret = rec.mSourcep->getOwnerUUID();
@@ -219,7 +219,7 @@ LLDrawable* LLVOPartGroup::createDrawable(LLPipeline *pipeline)
      }
      else if (idx - (S32) mViewerPartGroupp->mParticles.size() < (S32) mViewerPartGroupp->mRecords.size())
      {
-         const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
+         const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[idx - mViewerPartGroupp->mParticles.size()];
          if (rec.mSourcep.notNull() && rec.mSourcep->mSourceObjectp.notNull())
          {
              ret = rec.mSourcep->mSourceObjectp->getID();
@@ -236,7 +236,7 @@ F32 LLVOPartGroup::getPartSize(S32 idx)
     {
         return mViewerPartGroupp->mParticles[idx]->mScale.mV[0];
     }
-    for (const LLPartEval& r : mEval)
+    for (const RKPartEval& r : mEval)
     {
         if (r.mIndex == idx)
         {
@@ -247,7 +247,7 @@ F32 LLVOPartGroup::getPartSize(S32 idx)
         const S32 ri = idx - (S32)mViewerPartGroupp->mParticles.size();
         if (ri >= 0 && ri < (S32)mViewerPartGroupp->mRecords.size())
         {
-            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
             const F32 frac = (F32)(LLViewerPartSim::getSimTime() - rec.mT0) / rec.mMaxAge;
             return ((rec.mFlags & LLPartData::LL_PART_INTERP_SCALE_MASK) ? fs_part_scale_at(rec.mStartScale, rec.mEndScale, frac) : rec.mStartScale).mV[0];
         }
@@ -359,7 +359,7 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
     return updateFacesLegacy(drawable, num_parts);
 }
 
-// <FS> GPU particles stage 1b / 2: the cuts of updateGeometry without a face a particle, and the particles of the group (the stepped ones and the records at this frame's clock) as LLPartEval rows.
+// <FS> GPU particles stage 1b / 2: the cuts of updateGeometry without a face a particle, and the particles of the group (the stepped ones and the records at this frame's clock) as RKPartEval rows.
 // False: a stepped particle of the group shows the parcel media (its face takes the media texture): the quads path (not while the group has records, which the quads path cannot draw).
 bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
 {
@@ -536,7 +536,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         }
         add_texture(texture);
 
-        LLPartEval row;
+        RKPartEval row;
         row.mPos = part->mPosAgent;
         row.mColor = part->mColor;
         row.mGlow = part->mGlow;
@@ -593,7 +593,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
         const S32 record_count = (S32)mViewerPartGroupp->mRecords.size();
         for (S32 ri = 0; ri < record_count; ri++)
         {
-            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
             const F32 age = (F32)(now - rec.mT0);
             if (age > rec.mMaxAge)
             {
@@ -619,7 +619,7 @@ bool LLVOPartGroup::updateRows(LLDrawable* drawable, S32 num_parts)
             LLViewerTexture* texture = rec.mImagep.get();
             add_texture(texture);
 
-            LLPartEval row;
+            RKPartEval row;
             row.mPos = pos;
             row.mColor = (rec.mFlags & LLPartData::LL_PART_INTERP_COLOR_MASK) ? fs_part_color_at(rec.mStartColor, rec.mEndColor, frac) : rec.mStartColor;
             row.mGlow = LLColor4U(0, 0, 0, (U8)ll_round(lerp(rec.mStartGlow, rec.mEndGlow, frac) * 255.f));
@@ -859,12 +859,12 @@ bool LLVOPartGroup::lineSegmentIntersect(const LLVector4a& start, const LLVector
 
     if (mEval.empty() && mPure && mViewerPartGroupp)
     {
-        // G1 step 2: nothing was evaluated for the frame: the records of the group are evaluated for the ray (the same law as the shader's, LLViewerPartRecord::evaluate)
+        // G1 step 2: nothing was evaluated for the frame: the records of the group are evaluated for the ray (the same law as the shader's, RKViewerPartRecord::evaluate)
         const F64 now = LLViewerPartSim::getSimTime();
         const S32 base = (S32)mViewerPartGroupp->mParticles.size();
         for (S32 ri = 0; ri < (S32)mViewerPartGroupp->mRecords.size(); ++ri)
         {
-            const LLViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
+            const RKViewerPartRecord& rec = mViewerPartGroupp->mRecords[ri];
             const F32 age = (F32)(now - rec.mT0);
             if (age > rec.mMaxAge)
             {
@@ -901,7 +901,7 @@ bool LLVOPartGroup::lineSegmentIntersect(const LLVector4a& start, const LLVector
             }
         }
     }
-    for (const LLPartEval& r : mEval)
+    for (const RKPartEval& r : mEval)
     {
         const S32 idx = r.mIndex;
         LLVector4a v[4];
@@ -1297,7 +1297,7 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
             continue;
         }
         const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
-        LLParticleRun run;
+        RKParticleRun run;
         run.mTexture = key.mTex.get();
         run.mFirst = first;
         run.mRows = cnt;
@@ -1315,7 +1315,7 @@ static void fs_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
 // path did. A group with a ribbon particle keeps the quads path (false: nothing changed).
 bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
 {
-    struct Entry { F32 mDist; const LLPartEval* mRow; };
+    struct Entry { F32 mDist; const RKPartEval* mRow; };
     static std::vector<Entry> entries;
     entries.clear();
     U32 ribbons = 0;
@@ -1348,7 +1348,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         only_obj = obj;
         obj->mDepth = 0.f;
         U32 count = 0;
-        for (const LLPartEval& r : obj->mEval)
+        for (const RKPartEval& r : obj->mEval)
         {
             if (r.mRibbon)
             {
@@ -1442,13 +1442,13 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
     };
 
     group->mPendingDraws[mRenderPass];       // (C5 J2: kept, empty: the alpha group lists find the group by it)
-    std::vector<LLParticleRun>& runs = group->mParticleRuns;
+    std::vector<RKParticleRun>& runs = group->mParticleRuns;
     runs.clear();
-    LLParticleRun* info = nullptr;
+    RKParticleRun* info = nullptr;
     U32 row = 0;
     for (U32 k = 0; k < n; ++k)
     {
-        const LLPartEval& r = *entries[k].mRow;
+        const RKPartEval& r = *entries[k].mRow;
 
         U32 added = 1;
         if (r.mRibbon)
@@ -1495,7 +1495,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         const LLViewerTexture* tex_keys[16] = {};
         for (U32 k = 0; k < n; ++k)
         {
-            const LLPartEval& r = *entries[k].mRow;
+            const RKPartEval& r = *entries[k].mRow;
             const U32 key = ((U32)r.mBlendSrc << 8) | ((U32)r.mBlendDst << 1) | (r.mFullbright ? 1u : 0u);
             bool known = false;
             for (U32 c = 0; c < classes && c < 8; ++c) { if (class_keys[c] == key) { known = true; break; } }
@@ -1514,7 +1514,7 @@ bool LLParticlePartition::rebuildRows(LLSpatialGroup* group)
         U32 state_runs = 0, last_key = ~0u;
         for (U32 k = 0; k < n; ++k)
         {
-            const LLPartEval& r = *entries[k].mRow;
+            const RKPartEval& r = *entries[k].mRow;
             const U32 key = ((U32)r.mBlendSrc << 8) | ((U32)r.mBlendDst << 1) | (r.mFullbright ? 1u : 0u);
             if (key != last_key) { ++state_runs; last_key = key; }
         }
@@ -1650,7 +1650,7 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
 
         if (idx >= 0)
         {
-            LLDrawBatch* info = draw_vec[idx];
+            RKDrawBatch* info = draw_vec[idx];
 
             if (info->mTexture == facep->getTexture() &&
                 info->mHasGlow == has_glow &&
@@ -1680,7 +1680,7 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
             U32 end = start + facep->getGeomCount()-1;
             U32 offset = facep->getIndicesStart();
             U32 count = facep->getIndicesCount();
-            LLDrawBatch* info = new LLDrawBatch(start,end,count,offset,facep->getTexture(),
+            RKDrawBatch* info = new RKDrawBatch(start,end,count,offset,facep->getTexture(),
                 buffer, fullbright);
 
             info->mBlendFuncDst = bf_dst;

@@ -2,14 +2,14 @@
 // by the dynamic exposure settings, and (USE_LAST_EXPOSURE) moved from the previous value towards it at the adaptation speed. A line for line translation of "Exposure" (with USE_LAST_EXPOSURE) and
 // "Exposure (no fade)" (deferred/exposureF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float dt;
     vec4 dynamic_exposure_params;
     vec4 dynamic_exposure_params2;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_emissiveRect;
 #ifdef USE_LAST_EXPOSURE

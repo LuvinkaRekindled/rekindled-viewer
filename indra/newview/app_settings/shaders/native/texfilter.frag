@@ -1,12 +1,12 @@
 // texfilter.frag: the picture, thrown away where it is darker than the tolerance, the rest at alpha 0.95 (the scene monitor's difference picture). A line for line translation of "One Texture Filter Shader"
 // (interface/onetexturefilterF.glsl); pairs with texfilter.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float tolerance;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_tex0;

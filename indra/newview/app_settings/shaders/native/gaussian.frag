@@ -1,13 +1,13 @@
 // gaussian.frag: one direction of a nine tap gaussian blur (the probe blur). A line for line translation of the program the viewer also names "Reflection Mip Shader" (interface/gaussianF.glsl, with
 // splattexturerectV); pairs with reflectionmip.vert. The manifest picks it by the uniform resScale, which only this program has.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float resScale;
     vec2 direction;         // texture direction, <1, 0> or <0, 1>
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_diffuseRect;

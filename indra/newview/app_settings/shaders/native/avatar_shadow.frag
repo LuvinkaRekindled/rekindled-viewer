@@ -6,7 +6,7 @@
 #include "avatar_shadow.inc"
 
 #ifdef SHADOW_ALPHA
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;
 };

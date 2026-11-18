@@ -238,7 +238,7 @@ void LLAvatarJointMesh::setColor( const LLColor4& color )
 //--------------------------------------------------------------------
 // LLAvatarJointMesh::setTexture()
 //--------------------------------------------------------------------
-void LLAvatarJointMesh::setTexture( LLBaseTexture *texture )
+void LLAvatarJointMesh::setTexture( RKBaseTexture *texture )
 {
     mTexture = texture;
 

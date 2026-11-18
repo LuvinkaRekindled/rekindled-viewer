@@ -81,77 +81,77 @@ static void renderPulsingSphere(const LLVector3& joint_world_position, const LLC
     // Calculate the current sphere radius.
     float currentRadius = MAX_SPHERE_RADIUS - PULSE_AMPLITUDE * pulseFactor;
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::BlendScope gl_blend(true);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::BlendScope gl_blend(true);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
 
         // Translate to the joint's position
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
             gDebugProgram.bind();
 
-            LLRenderState::CullScope cull_face(true);
-            LLRenderState::DepthScope gls_depth(false);
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderState::CullScope cull_face(true);
+            RKRenderState::DepthScope gls_depth(false);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
                 gRender.color4fv(color.mV);
                 gRender.diffuseColor4fv(color.mV);
 
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, currentRadius, currentRadius, currentRadius);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, currentRadius, currentRadius, currentRadius);
 
                 gSphere.render();
                 gRender.flush();
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
 }
 
 static void renderStaticSphere(const LLVector3& joint_world_position, const LLColor4& color = LLColor4(1.f, 1.f, 0.f, .6f), float radius=0.01f)
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::BlendScope gl_blend(true);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::BlendScope gl_blend(true);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
 
         // Translate to the joint's position
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
             gDebugProgram.bind();
 
-            LLRenderState::CullScope cull_face(true);
-            LLRenderState::DepthScope gls_depth(false);
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderState::CullScope cull_face(true);
+            RKRenderState::DepthScope gls_depth(false);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
                 gRender.color4fv(color.mV);
                 gRender.diffuseColor4fv(color.mV);
 
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, radius, radius, radius);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, radius, radius, radius);
 
                 gSphere.render();
                 gRender.flush();
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
 }
 
@@ -484,12 +484,12 @@ void FSManipRotateJoint::updateManipulatorScale(EManipPart part, LLVector4& scal
 // Render a single ring using the given parameters and pass index (for multi-pass rendering).
 void FSManipRotateJoint::renderRingPass(const RingRenderParams& params, float radius, float width, int pass)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
         // If an extra rotation is specified, apply it.
         if (params.extraRotateAngle != 0.f)
         {
-            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, params.extraRotateAngle, params.extraRotateAxis.mV[VX], params.extraRotateAxis.mV[VY], params.extraRotateAxis.mV[VZ]);
+            RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, params.extraRotateAngle, params.extraRotateAxis.mV[VX], params.extraRotateAxis.mV[VY], params.extraRotateAxis.mV[VZ]);
         }
         // Get the appropriate scale value from mManipulatorScales.
         float scaleVal = 1.f;
@@ -510,10 +510,10 @@ void FSManipRotateJoint::renderRingPass(const RingRenderParams& params, float ra
             default:
                 break;
         }
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scaleVal, scaleVal, scaleVal);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, scaleVal, scaleVal, scaleVal);
         gl_ring(radius, width, getUserEditColor(params.scaleIndex), getUserEditColor(params.scaleIndex, 0.3f), CIRCLE_STEPS, pass);
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 /**
@@ -534,15 +534,15 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
     // Translate to the joint's position
     const auto joint_world_position = mJoint->getWorldPosition();
     gDebugProgram.bind();
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderState::CullScope cull_face(true);
-        LLRenderState::DepthScope gls_depth(false);        
+        RKRenderState::CullScope cull_face(true);
+        RKRenderState::DepthScope gls_depth(false);        
         // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, joint_world_position.mV[VX], joint_world_position.mV[VY], joint_world_position.mV[VZ]);
 
         LLMatrix4 rot_mat(rotation);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
 
         for (int pass = 0; pass < 2; ++pass)
         {
@@ -564,15 +564,15 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
                 {
                     static const auto roll_color = LLColor4(1.f, 0.65f, 0.0f, 0.4f);
                     updateManipulatorScale(mManipPart, mManipulatorScales);
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                     {
                         // Cancel the rotation applied earlier:
                         LLMatrix4 inv_rot_mat(rotation);
                         inv_rot_mat.invert();
-                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)inv_rot_mat.mMatrix);
+                        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)inv_rot_mat.mMatrix);
                         renderCenterCircle( mRadiusMeters*1.2f, roll_color, roll_color );
                     }
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
             }
             else
@@ -586,16 +586,16 @@ void FSManipRotateJoint::renderManipulatorRings(const LLVector3& agent_space_cen
             }
         }
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     gUIProgram.bind();
 }
 
 void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& normal_color, const LLColor4& highlight_color)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderState::CullScope cull_face(true);
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::CullScope cull_face(true);
+        RKRenderState::DepthScope gls_depth(false);
 
         constexpr int segments = 64;
         gRender.setLineWidth(6.0f); // Set the desired line thickness
@@ -605,7 +605,7 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
         scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] +
                   mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
         gRender.diffuseColor4fv(normal_color.mV);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, scale, scale, scale);
 
         // Rotate the unit circle so its normal (0,0,1) aligns with mCenterToCamNorm.
         LLVector3 defaultNormal(0.f, 0.f, 1.f);
@@ -618,7 +618,7 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
 
         if (rotationAxis.magVec() > 0.001f)
         {
-            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle, rotationAxis.mV[VX], rotationAxis.mV[VY], rotationAxis.mV[VZ]);
+            RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle, rotationAxis.mV[VX], rotationAxis.mV[VY], rotationAxis.mV[VZ]);
         }
 
         // Draw a unit circle in the XY plane (which is now rotated correctly).
@@ -634,15 +634,15 @@ void FSManipRotateJoint::renderCenterCircle(const F32 radius, const LLColor4& no
 
         gRender.setLineWidth(1.0f); // Reset the line width.
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& normal_color, const LLColor4& highlight_color)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderState::CullScope cull_face(true);
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::CullScope cull_face(true);
+        RKRenderState::DepthScope gls_depth(false);
         
         float scale = radius * 0.8f;
         
@@ -660,12 +660,12 @@ void FSManipRotateJoint::renderCenterSphere(const F32 radius, const LLColor4& no
             scale *= (mManipulatorScales.mV[VX] + mManipulatorScales.mV[VY] + mManipulatorScales.mV[VZ] + mManipulatorScales.mV[VW]) / 4.0f;
         }
 
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, scale, scale, scale);
         gSphere.render();
 
         gRender.flush();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 /**
@@ -698,10 +698,10 @@ void FSManipRotateJoint::render()
     bool activeJointVisible = updateVisiblity();
 
     // Setup GL state.
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::BlendScope gl_blend(true);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::BlendScope gl_blend(true);
 
     // Iterate through the avatar's joint map.
     // If a joint other than the currently selected is highlighted, render a pulsing sphere.
@@ -760,15 +760,15 @@ void FSManipRotateJoint::render()
 
 void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 size, const LLQuaternion& rotation)
 {
-    LLRenderState::CullScope cull_face(true);
+    RKRenderState::CullScope cull_face(true);
     // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
-    LLRenderState::DepthScope gls_depth(false);
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, agent_space_center.mV[VX], agent_space_center.mV[VY], agent_space_center.mV[VZ]);
+    RKRenderState::DepthScope gls_depth(false);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, agent_space_center.mV[VX], agent_space_center.mV[VY], agent_space_center.mV[VZ]);
 
     LLMatrix4 rot_mat(rotation);
 
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
+    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)rot_mat.mMatrix);
 
     gRender.begin(LLRender::LINES);
 
@@ -792,7 +792,7 @@ void FSManipRotateJoint::renderAxes(const LLVector3& agent_space_center, F32 siz
 
     gRender.end();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 //static
@@ -876,7 +876,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
         mLastEuler[i] += rawDelta;
     }
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
         LLUIImagePtr imagep = LLUI::getUIImage("Rounded_Square");
         gViewerWindow->setup2DRender();
@@ -895,7 +895,7 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
 
         LLFontGL* font = LLFontGL::getFontSansSerif();
         LLLocale locale(LLLocale::USER_LOCALE);
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
 
         F32 base_y = (F32)(window_center_y + vertical_offset);
 
@@ -959,20 +959,20 @@ void FSManipRotateJoint::renderNameXYZ(const LLQuaternion& rot)
         renderTextWithShadow(current_joint_str, window_center_x - 130.f, base_y, LLColor4(1.f, 0.1f, 1.f, 1.f));
         renderTextWithShadow(current_part_str, window_center_x + 30.f, base_y, LLColor4(1.f, 1.f, .1f, 1.f));
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gViewerWindow->setup3DRender();
 }
 
 void FSManipRotateJoint::renderActiveRing( F32 radius, F32 width, const LLColor4& front_color, const LLColor4& back_color)
 {
-    LLRenderState::CullScope cull_face(true);
+    RKRenderState::CullScope cull_face(true);
     {
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, true);
     }
     {
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, true);
     }

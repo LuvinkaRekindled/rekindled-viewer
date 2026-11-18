@@ -85,8 +85,8 @@ public:
     static ERlvCmdRet onValueMinChanged(const LLUUID& idRlvObj, const boost::optional<RlvBehaviourModifierValue> newValue);
     static ERlvCmdRet onValueMaxChanged(const LLUUID& idRlvObj, const boost::optional<RlvBehaviourModifierValue> newValue);
 protected:
-    void renderPass(LLShaderProgram* pShader, const LLShaderEffectParams* pParams) const;
-    void setShaderUniforms(LLShaderProgram* pShader);
+    void renderPass(RKShaderProgram* pShader, const LLShaderEffectParams* pParams) const;
+    void setShaderUniforms(RKShaderProgram* pShader);
 
     /*
      * Member variables

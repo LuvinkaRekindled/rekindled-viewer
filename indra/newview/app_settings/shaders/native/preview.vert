@@ -5,7 +5,7 @@
 #include "lib/objectskin.glsl"
 #endif
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat3 normal_matrix;
     mat4 texture_matrix0;

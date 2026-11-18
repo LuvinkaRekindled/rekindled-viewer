@@ -63,7 +63,7 @@
 
 static U32 sShaderLevel = 0;
 
-LLShaderProgram* LLDrawPoolAvatar::sVertexProgram = NULL;
+RKShaderProgram* LLDrawPoolAvatar::sVertexProgram = NULL;
 bool    LLDrawPoolAvatar::sSkipOpaque = false;
 bool    LLDrawPoolAvatar::sSkipTransparent = false;
 S32     LLDrawPoolAvatar::sShadowPass = -1;
@@ -270,8 +270,8 @@ void LLDrawPoolAvatar::renderPostDeferred(S32 pass)
     // <FS> it did write some: nothing turned the depth mask off, so the draws kept the mask the lighting stage left (the original viewer's behaviour) and the declaration was ignored (DepthRO warning, 2026-11-01).
     // Now the pass writes none, as declared: the soft edges of classic hair and eyelashes no longer cut a halo into what is drawn later and into the depth of field and AO; overlapping strands blend in draw order.
     const bool alpha_read_only = !LLPipeline::sImpostorRender;
-    LLRenderState::DepthReadOnlyScope depth_read_only(true, alpha_read_only);
-    LLRenderState::DepthScope alpha_depth(true, false, LLRenderState::CompareOp::LessEqual, alpha_read_only);
+    RKRenderState::DepthReadOnlyScope depth_read_only(true, alpha_read_only);
+    RKRenderState::DepthScope alpha_depth(true, false, RKRenderState::CompareOp::LessEqual, alpha_read_only);
     if (LLPipeline::sImpostorRender)
     { //HACK for impostors so actual pass ends up being proper pass
         render(0);
@@ -554,8 +554,8 @@ void LLDrawPoolAvatar::endRigid()
     }
 }
 
-// <FS> 2026-11-10: the avatar impostors of a pass are the rows of one record (LLVkBridge kind 41, sent by endDeferredImpostor), not an immediate mode quad with three texture binds each
-static std::vector<LLVkBridge::ImpostorQuadRow> sImpostorRows;
+// <FS> 2026-11-10: the avatar impostors of a pass are the rows of one record (RKVkBridge kind 41, sent by endDeferredImpostor), not an immediate mode quad with three texture binds each
+static std::vector<RKVkBridge::ImpostorQuadRow> sImpostorRows;
 
 void LLDrawPoolAvatar::beginDeferredImpostor()
 {
@@ -582,10 +582,10 @@ void LLDrawPoolAvatar::endDeferredImpostor()
     {
         // the impostors of the pass in one record: the program is the one bound at the start of the pass, the matrices those of the pass (the quads are in agent space: no model matrix)
         gRender.syncMatrices();
-        LLVkBridge::ShadowPacketsHeader header;
+        RKVkBridge::ShadowPacketsHeader header;
         header.mKind = 41;
         header.mEntries = (U32)sImpostorRows.size();
-        LLVkBridge::shadowPackets(header, sImpostorRows.data(), sImpostorRows.size() * sizeof(sImpostorRows[0]));
+        RKVkBridge::shadowPackets(header, sImpostorRows.data(), sImpostorRows.size() * sizeof(sImpostorRows[0]));
         sImpostorRows.clear();
     }
     sVertexProgram->disableTexture(LLViewerShaderMgr::DIFFUSE_MAP);
@@ -624,7 +624,7 @@ void LLDrawPoolAvatar::beginSkinned()
     {
         llassert(false); // Avatar shader shouldn't have failed if deferred shader loaded
         sVertexProgram = nullptr;
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
         return;
     }
 
@@ -735,11 +735,11 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("render_hitbox");
 
         // load the debug output shader
-        LLShaderProgram* current_shader_program = LLShaderProgram::sCurBoundShaderPtr;
+        RKShaderProgram* current_shader_program = RKShaderProgram::sCurBoundShaderPtr;
         gDebugProgram.bind();
 
         // set up drawing mode and remove any textures used
-        LLRenderState::BlendScope blend(true);
+        RKRenderState::BlendScope blend(true);
         gRender.getTexUnit(0)->bindWhite();
 
         LLColor4 avatar_color = LLNetMap::getAvatarColor(avatarp->getID());
@@ -820,15 +820,15 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
             LLVector3 pos = avatarp->getPositionAgent();
             gRender.color4f(1.0f, 1.0f, 1.0f, 0.7f);
 
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)(pos.mV[VX]),
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)(pos.mV[VX]),
                            (F32)(pos.mV[VY]),
                             (F32)(pos.mV[VZ]));
-             LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.15f, 0.15f, 0.3f);
+             RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, 0.15f, 0.15f, 0.3f);
 
              gSphere.renderGGL();
 
-             LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+             RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
              gRender.setColorMask(true, false);
         }
         // don't render please
@@ -886,7 +886,7 @@ void LLDrawPoolAvatar::renderAvatars(LLVOAvatar* single_avatar, S32 pass)
         if (impostor || (LLVOAvatar::AOA_NORMAL != avatarp->getOverallAppearance() && !avatarp->needsImpostorUpdate()))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("render impostor"); // <FS:Beq/> Tracy markup
-            LLVkBridge::ImpostorQuadRow row;
+            RKVkBridge::ImpostorQuadRow row;
             if (avatarp->fillImpostorQuad(row))
             {
                 sImpostorRows.push_back(row);

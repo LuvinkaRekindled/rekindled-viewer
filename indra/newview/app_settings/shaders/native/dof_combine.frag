@@ -1,7 +1,7 @@
 // dof_combine.frag: the depth of field's last step: the blurred picture (diffuseRect, at res_scale of the size) mixed into the sharp one (lightMap) by each pixel's circle of confusion. A line for line translation of
 // "Deferred DoFCombine Shader" (deferred/dofCombineF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 screen_res;
     float max_cof;
@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float dof_height;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_lightMap;

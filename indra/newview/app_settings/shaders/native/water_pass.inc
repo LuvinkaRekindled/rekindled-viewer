@@ -3,7 +3,7 @@
 // Defines: UNDERWATER (the program for a camera under the water: no lighting, the fog only), and the viewer's own TRANSPARENT_WATER (the setting RenderTransparentWater, pushed with the global defines),
 // SUN_SHADOW, SSR, REFMAP_LEVEL, HERO_PROBES. The water surface has no draw record: it is drawn by attributes (position), so the matrices are loose draw values.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
 #ifdef WATER_PULL
     // the table form of the water planes (the manifest lines "Water Pull Shader", "Underwater Pull Shader": WATER_PULL): the vertex buffers of the planes are read by address, three buffer addresses written by the
@@ -108,7 +108,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #include "lib/probe_block.glsl"
 #endif
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
     mat3 normal_matrix;

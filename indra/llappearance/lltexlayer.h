@@ -265,7 +265,7 @@ protected:
 //
 // The composite image that a LLTexLayerSet writes to.  Each LLTexLayerSet has one.
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-class LLTexLayerSetBuffer : public virtual LLAssetRefCount
+class LLTexLayerSetBuffer : public virtual RKAssetRefCount
 {
     LOG_CLASS(LLTexLayerSetBuffer);
 
@@ -300,7 +300,7 @@ class LLTexLayerStaticImageList : public LLSingleton<LLTexLayerStaticImageList>
     LLSINGLETON(LLTexLayerStaticImageList);
     ~LLTexLayerStaticImageList();
 public:
-    LLBaseTexture*        getTexture(const std::string& file_name, bool is_mask);
+    RKBaseTexture*        getTexture(const std::string& file_name, bool is_mask);
     LLImageTGA*         getImageTGA(const std::string& file_name);
     void                deleteCachedImages();
     void                dumpByteCount() const;
@@ -308,7 +308,7 @@ protected:
     bool                loadImageRaw(const std::string& file_name, LLImageRaw* image_raw);
 private:
     LLStringTable       mImageNames;
-    typedef std::map<const char*, LLPointer<LLBaseTexture> > texture_map_t;
+    typedef std::map<const char*, LLPointer<RKBaseTexture> > texture_map_t;
     texture_map_t       mStaticImageList;
     typedef std::map<const char*, LLPointer<LLImageTGA> > image_tga_map_t;
     image_tga_map_t     mStaticImageListTGA;

@@ -56,14 +56,14 @@ std::wstring widen(const std::string& s)
 }
 } // namespace
 
-LLWinMediaPlayout::LLWinMediaPlayout() {}
+RKWinMediaPlayout::RKWinMediaPlayout() {}
 
-LLWinMediaPlayout::~LLWinMediaPlayout()
+RKWinMediaPlayout::~RKWinMediaPlayout()
 {
     stop();
 }
 
-bool LLWinMediaPlayout::start(const std::string& endpoint_id, PullFn pull)
+bool RKWinMediaPlayout::start(const std::string& endpoint_id, PullFn pull)
 {
     stop();
     mStop.store(false);
@@ -81,7 +81,7 @@ bool LLWinMediaPlayout::start(const std::string& endpoint_id, PullFn pull)
     return true;
 }
 
-void LLWinMediaPlayout::stop()
+void RKWinMediaPlayout::stop()
 {
     if (mThread.joinable())
     {
@@ -91,7 +91,7 @@ void LLWinMediaPlayout::stop()
     mRunning.store(false, std::memory_order_release);
 }
 
-void LLWinMediaPlayout::run(std::string endpoint_id, PullFn pull, std::atomic<int>* started)
+void RKWinMediaPlayout::run(std::string endpoint_id, PullFn pull, std::atomic<int>* started)
 {
     const bool com_ok = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
     HANDLE     event  = CreateEventW(nullptr, FALSE, FALSE, nullptr);

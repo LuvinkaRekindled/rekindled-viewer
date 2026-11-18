@@ -342,7 +342,7 @@ bool LLReflectionMap::isRelevant() const
 void LLReflectionMap::hizCollect(const LLVector4a& eye)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-    if (LLShaderProgram::sProfileEnabled)
+    if (RKShaderProgram::sProfileEnabled)
     {
         return;
     }
@@ -366,7 +366,7 @@ void LLReflectionMap::hizCollect(const LLVector4a& eye)
     { // the verdict of the last box is not back yet: the probe keeps what it had
         return;
     }
-    LLHiz::add(this, mOrigin, mRadius, mRadius, mRadius, false);
+    RKHiz::add(this, mOrigin, mRadius, mRadius, mRadius, false);
 }
 
 //virtual

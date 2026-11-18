@@ -6070,7 +6070,7 @@ void LLAgent::renderAutoPilotTarget()
         F32 height_meters;
         LLVector3d target_global;
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
         // not textured
         gRender.getTexUnit(0)->bindWhite();
@@ -6080,15 +6080,15 @@ void LLAgent::renderAutoPilotTarget()
 
         target_global = mAutoPilotTargetGlobal;
 
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)(target_global.mdV[VX]), (F32)(target_global.mdV[VY]), (F32)(target_global.mdV[VZ]));
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)(target_global.mdV[VX]), (F32)(target_global.mdV[VY]), (F32)(target_global.mdV[VZ]));
 
         height_meters = 1.f;
 
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, height_meters, height_meters, height_meters);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, height_meters, height_meters, height_meters);
 
         gSphere.render();
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 

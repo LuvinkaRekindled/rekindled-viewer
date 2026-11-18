@@ -53,7 +53,7 @@
 
 class LLVertexBuffer;
 class LLCubeMap;
-class LLImageTex;
+class RKImageTex;
 class LLRenderTarget;
 class LLTexture;
 class LLVertexBufferData;
@@ -165,9 +165,9 @@ public:
     // The unit holds nothing: white when it held a 2D texture, no texture (slot 0) for the other types (what disable() was)
     void clear();
 
-    // Binds the LLImageTex to this texture unit
-    // (automatically enables the unit for the LLImageTex's texture type)
-    bool bind(LLImageTex* texture, bool for_rendering = false, bool forceBind = false, S32 usename = 0);
+    // Binds the RKImageTex to this texture unit
+    // (automatically enables the unit for the RKImageTex's texture type)
+    bool bind(RKImageTex* texture, bool for_rendering = false, bool forceBind = false, S32 usename = 0);
     bool bind(LLTexture* texture, bool for_rendering = false, bool forceBind = false);
 
     // bind implementation for inner loops
@@ -183,7 +183,7 @@ public:
     // <FS> render packets: the effects of bindFast() on the texture (marks it in use, regenerates a deleted one, applies changed options) without binding it; returns its GL name
     U32 prepareFast(LLTexture* texture);
     // <FS> binds the image on this unit and sends its address mode and filtering options (what bindFast does when they are dirty)
-    void applyTexOptions(LLImageTex* gl_tex);
+    void applyTexOptions(RKImageTex* gl_tex);
 
     // Binds a cubemap to this texture unit
     // (automatically enables the texture unit for cubemaps)
@@ -477,16 +477,16 @@ public:
     void setClearColor(F32 r, F32 g, F32 b, F32 a);
     const F32* getClearColor() const { return mClearColor; }       // F3.5d: the pass scope clears to this unless it is given a colour
     void setViewport(S32 x, S32 y, S32 width, S32 height);
-    void setCullFace(LLRenderState::CullFace face);       // F3.2: typed (rkrenderstate.h)
+    void setCullFace(RKRenderState::CullFace face);       // F3.2: typed (rkrenderstate.h)
     void setPolygonOffset(F32 factor, F32 units);
-    void setPolygonMode(LLRenderState::PolygonMode mode);
+    void setPolygonMode(RKRenderState::PolygonMode mode);
     void setPointSize(F32 size);
-    void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
-    void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
+    void setStencilFunc(RKRenderState::CompareOp op, S32 ref, U32 mask);
+    void setStencilOp(RKRenderState::StencilOp sfail, RKRenderState::StencilOp dpfail, RKRenderState::StencilOp dppass);
     void setStencilMask(U32 mask);
     // reads the colour attachment of the target of the innermost open pass (the back buffer when none is bound)
     void readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
-    // queries (rkvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones LLVkQuery::Kind names
+    // queries (rkvkquery.h): occlusion counts and GPU timers around draws; the kinds are the ones RKVkQuery::Kind names
     enum QueryKind { QUERY_ANY_SAMPLES = 0, QUERY_SAMPLES_PASSED = 1, QUERY_TIME_ELAPSED = 2, QUERY_PRIMITIVES_GENERATED = 3 };
     void genQueries(S32 count, U32* ids);
     void deleteQueries(S32 count, const U32* ids);
@@ -504,7 +504,7 @@ public:
     // F3.6f: sampler settings of one texture, by name (a setting acts on the texture whatever its dimension): typed, no GL parameter numbers
     void setTexFilter(U32 texture, bool mag, TextureFilter filter);
     void setTexWrap(U32 texture, TextureWrap s, TextureWrap t);
-    void setTexCompare(U32 texture, bool on, LLRenderState::CompareOp func = LLRenderState::CompareOp::LessEqual);        // on: compare the reference to the texture with func (depth textures); off: plain sampling
+    void setTexCompare(U32 texture, bool on, RKRenderState::CompareOp func = RKRenderState::CompareOp::LessEqual);        // on: compare the reference to the texture with func (depth textures); off: plain sampling
     void texImage2D(U32 texture, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void bindTextureSlot(S32 unit, U32 id);     // raw slot write, bypasses the LLTexUnit cache (as the old direct call did)
     void deleteTextures(S32 count, const U32* ids);
@@ -551,7 +551,7 @@ public:
     // census only (newview/rkitemcensus.h): a running hash of everything the UI emits (immediate batches and cached text buffers), to find the views whose output
     // is the same as in the previous frame
     static bool sUiHashing;
-    // <FS> UI record cache: the beliefs of the CPU side that a recorded or replayed stretch of records makes wrong. Calls LLVkAsync::segmentBoundary(), forgets which texture each unit holds and which
+    // <FS> UI record cache: the beliefs of the CPU side that a recorded or replayed stretch of records makes wrong. Calls RKVkAsync::segmentBoundary(), forgets which texture each unit holds and which
     // matrices each shader was given, and (on the main producer) announces the bound program's uniform blocks. Before and after a segment is recorded or replayed.
     static void segmentBoundary();
     static U32 sSegmentEpoch;

@@ -187,7 +187,7 @@ public:     // PoundLife - Improved Object Inspect
     LLViewerFetchedTexture * getImage(const LLUUID &image_id,
                                      FTType f_type = FTT_DEFAULT,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -198,7 +198,7 @@ private:    // PoundLife - Improved Object Inspect
     LLViewerFetchedTexture * getImageFromFile(const std::string& filename,
                                      FTType f_type = FTT_LOCAL_FILE,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -208,7 +208,7 @@ private:    // PoundLife - Improved Object Inspect
     LLViewerFetchedTexture* getImageFromUrl(const std::string& url,
                                      FTType f_type,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                       PixelFormat primary_format = PixelFormat::None,
@@ -221,7 +221,7 @@ private:    // PoundLife - Improved Object Inspect
     LLViewerFetchedTexture* createImage(const LLUUID &image_id,
                                      FTType f_type,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -231,7 +231,7 @@ private:    // PoundLife - Improved Object Inspect
     // Request image from a specific host, used for baked avatar textures.
     // Implemented in header in case someone changes default params above. JC
     LLViewerFetchedTexture* getImageFromHost(const LLUUID& image_id, FTType f_type, LLHost host)
-    { return getImage(image_id, f_type, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host); }
+    { return getImage(image_id, f_type, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host); }
 
 public:
     typedef std::unordered_set<LLPointer<LLViewerFetchedTexture> > image_list_t;
@@ -291,12 +291,12 @@ private:
     LLPointer<LLUIImage> loadUIImageByName(const std::string& name, const std::string& filename,
                                    bool use_mips = false, const LLRect& scale_rect = LLRect::null,
                                    const LLRect& clip_rect = LLRect::null,
-                                   LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_UI,
+                                   LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_UI,
                                    LLUIImage::EScaleStyle = LLUIImage::SCALE_INNER);
     LLPointer<LLUIImage> loadUIImageByID(const LLUUID& id,
                                  bool use_mips = false, const LLRect& scale_rect = LLRect::null,
                                  const LLRect& clip_rect = LLRect::null,
-                                 LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_UI,
+                                 LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_UI,
                                  LLUIImage::EScaleStyle = LLUIImage::SCALE_INNER);
 
     LLPointer<LLUIImage> loadUIImage(LLViewerFetchedTexture* imagep, const std::string& name, bool use_mips = false, const LLRect& scale_rect = LLRect::null, const LLRect& clip_rect = LLRect::null, LLUIImage::EScaleStyle = LLUIImage::SCALE_INNER);

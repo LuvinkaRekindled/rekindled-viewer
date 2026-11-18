@@ -1,7 +1,7 @@
 // reflectionmip.vert: a rectangle splatted by a matrix, the texture coordinate following the position (the mip steps of the reflection probe blur). A line for line translation of "Reflection Mip Shader"
 // (interface/splattexturerectV.glsl); pairs with reflectionmip.frag and gaussian.frag. (the draw block is declared the same in all three)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_diffuseRect;

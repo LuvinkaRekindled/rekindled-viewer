@@ -145,11 +145,11 @@ public:
 
 // While one of these lives, the main scene projection in the GL matrix stack is the one without the DLSS jitter (if it carries one). For things that are
 // placed in screen space and must not wobble against it: HUD text backgrounds.
-class LLUnjitteredScope
+class RKUnjitteredScope
 {
 public:
-    LLUnjitteredScope();
-    ~LLUnjitteredScope();
+    RKUnjitteredScope();
+    ~RKUnjitteredScope();
 private:
     bool mActive = false;
     glm::mat4 mSaved = glm::mat4(1.f);

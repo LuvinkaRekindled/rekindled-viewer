@@ -3,12 +3,12 @@
 // four channels, byte k = row k of the tile, the lowest bit of a byte the leftmost pixel (the wrapper copies the target into an R32_UINT image: the two formats are copy compatible, the bytes stay as
 // they are). Pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 tile_count;            // the size of this target: the lightmap's width / 8 and height / 4, rounded up
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;      // the sun lightmap (r: the sun shadow, 1 lit .. 0 shadowed)
 };

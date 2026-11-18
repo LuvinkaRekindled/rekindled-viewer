@@ -125,7 +125,7 @@ S32 LLSphereAABB(const LLVector3& center, const LLVector3& size, const LLVector3
     return ret;
 }
 
-namespace LLDirtyGroups
+namespace RKDirtyGroups
 {
 static std::mutex sMutex;
 static std::vector<LLSpatialGroup*> sList;
@@ -182,11 +182,11 @@ void prune()
         ++k;
     }
 }
-}   // namespace LLDirtyGroups
+}   // namespace RKDirtyGroups
 
 LLSpatialGroup::~LLSpatialGroup()
 {
-    LLDirtyGroups::forget(this);
+    RKDirtyGroups::forget(this);
     /*if (sNoDelete)
     {
         LL_ERRS() << "Illegal deletion of LLSpatialGroup!" << LL_ENDL;
@@ -233,7 +233,7 @@ void LLSpatialGroup::clearDrawMap()
         {
             ++sDrawMapsCleared;
         }
-        LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
+        RKBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
     }
     mPendingDraws.clear();
     mParticleRuns.clear();
@@ -242,7 +242,7 @@ void LLSpatialGroup::clearDrawMap()
     mGeoServedTris = 0;
     mGeoAllServed = false;
     ll_scene_fragment_free(mSceneFragment);     // <FS> S2: the retained entries of the draw infos go with them (the worker's table follows)
-    LLCullShadow::touch(this);          // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map row shows the fragment, the handle and the surface area
+    RKCullShadow::touch(this);          // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the map row shows the fragment, the handle and the surface area
 }
 
 bool LLSpatialGroup::isHUDGroup() const
@@ -496,7 +496,7 @@ void LLSpatialGroup::rebuildGeom()
     clearState(FS_RELEASED);
     if (!isDead())
     {
-        LLRebuildBatch* batch = LLRebuildBatch::current();
+        RKRebuildBatch* batch = RKRebuildBatch::current();
         if (batch)
         {
             batch->mJustDeferred = nullptr;
@@ -517,7 +517,7 @@ void LLSpatialGroup::rebuildGeom()
         {
             gPipeline.markMeshDirty(this);
         }
-        LLCullShadow::touch(this);      // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the rebuild changed the surface area, the fragment, the handle
+        RKCullShadow::touch(this);      // <FS> stage 1 of doc/vulkan/PLAN-visible-set-owner.md: the rebuild changed the surface area, the fragment, the handle
     }
 }
 
@@ -528,7 +528,7 @@ void LLSpatialGroup::rebuildMesh()
         if (hasState(MESH_DIRTY))
         {
             // <FS> the vertex buffers of the group are repacked (their GL buffers may change)
-            LLBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
+            RKBuilderGuard::beforeMutation(getVisible(LLViewerCamera::CAMERA_WORLD) >= LLViewerOctreeEntryData::getCurrentFrame());
         }
         getSpatialPartition()->rebuildMesh(this);
     }
@@ -655,7 +655,7 @@ void LLSpatialGroup::shift(const LLVector4a &offset)
     row().objectExtents[0].add(offset);
     row().objectExtents[1].add(offset);
     bumpPartitionEpoch();               // <FS> C4.3
-    LLCullShadow::touch(this);          // 2026-11-18: the group table (the viewer's mirror and the worker's copy) shows these bounds: a row is made again only when something touches it, and after a region shift every row stayed where the world was (the worker listed and tested groups by the old positions: things not loaded, groups coming and going until another event happened to touch them)
+    RKCullShadow::touch(this);          // 2026-11-18: the group table (the viewer's mirror and the worker's copy) shows these bounds: a row is made again only when something touches it, and after a region shift every row stayed where the world was (the worker listed and tested groups by the old positions: things not loaded, groups coming and going until another event happened to touch them)
 
     if (!getSpatialPartition()->mRenderByGroup &&
         getSpatialPartition()->mPartitionType != LLViewerRegion::PARTITION_TREE &&
@@ -717,7 +717,7 @@ void LLSpatialGroup::setState(U32 state, S32 mode)
         row().state |= state;
         if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO))
         {
-            LLDirtyGroups::add(this);
+            RKDirtyGroups::add(this);
         }
     }
 }
@@ -786,7 +786,7 @@ LLSpatialGroup::LLSpatialGroup(OctreeNode* node, LLSpatialPartition* part) : LLO
     sNodeCount++;
 
     {   // <FS> C1b.2: the view caches are in the row (a new row is zeroed)
-        LLGroupRows::Row& r = row();
+        RKGroupRows::Row& r = row();
         r.objectBoxSize = 1.f;
         r.distance = 0.f;
         r.depth = 0.f;
@@ -1202,7 +1202,7 @@ void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool 
 {
     LL_CPU_ZONE("octree: partition move");
     LL_PROFILE_ZONE_SCOPED;
-    LLAttCensus::Scope att_census(LLAttCensus::sPartitionMove, drawablep);
+    RKAttCensus::Scope att_census(RKAttCensus::sPartitionMove, drawablep);
     // sanity check submitted by open source user bushing Spatula
     // who was seeing crashing here. (See VWR-424 reported by Bunny Mayne)
     if (!drawablep)
@@ -1235,9 +1235,9 @@ void LLSpatialPartition::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool 
         return;
     }
 
-    if (LLAttCensus::sOn)
+    if (RKAttCensus::sOn)
     {
-        ++LLAttCensus::sPartitionLeftGroup[LLAttCensus::kindOf(drawablep)];
+        ++RKAttCensus::sPartitionLeftGroup[RKAttCensus::kindOf(drawablep)];
     }
     //keep drawable from being garbage collected
     LLPointer<LLDrawable> ptr = drawablep;
@@ -1841,8 +1841,8 @@ void renderOctree(LLSpatialGroup* group)
         col.setVec(0.1f,0.1f,1,0.1f);
 
         {
-            LLRenderState::DepthScope gl_depth(false, false);
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+            RKRenderState::DepthScope gl_depth(false, false);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
 
             gRender.diffuseColor4f(1,0,0,group->mBuilt);
             gRender.flush();
@@ -1870,9 +1870,9 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                     LLVector3 trans = drawable->getRegion()->getOriginAgent();
-                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
+                    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
                 }
 
                 LLFace* face = drawable->getFace(0);
@@ -1883,8 +1883,8 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (rigged)
                 {
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
                     if (!LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
                     {
                         continue;
@@ -1931,15 +1931,15 @@ void renderOctree(LLSpatialGroup* group)
 
                 if (rigged)
                 {
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
 
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
             }
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
             gDebugProgram.bind(); // make sure non-rigged variant is bound
             gRender.diffuseColor4f(1,1,1,1);
         }
@@ -2022,7 +2022,7 @@ void renderUpdateType(LLDrawable* drawablep)
     {
         return;
     }
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::BlendScope blend(true);
     LLVector4 color(0, 0, 0, 0.5f);       // (the colour of the update type; the default case keeps the colour the caller set)
     bool colored = true;
     switch (vobj->getLastUpdateType())
@@ -2068,7 +2068,7 @@ void renderUpdateType(LLDrawable* drawablep)
         {
             if (skinned)
             {
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 gDebugProgram.bind();       // (the caller draws with the static form)
                 if (colored)
                 {
@@ -2090,8 +2090,8 @@ void renderUpdateType(LLDrawable* drawablep)
                     {
                         gRender.diffuseColor4fv(color.mV);
                     }
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
                     skinned = true;
                 }
                 if (LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
@@ -2247,8 +2247,8 @@ void renderNormals(LLDrawable *drawablep)
         }
         // </FS:Beq>
 
-        LLRenderState::BlendScope blend(true);
-        LLRenderState::DepthScope gl_depth(true, false);
+        RKRenderState::BlendScope blend(true);
+        RKRenderState::DepthScope gl_depth(true, false);
 
         // Drawable's normals & tangents are stored in model space, i.e. before any scaling is applied.
         //
@@ -2278,10 +2278,10 @@ void renderNormals(LLDrawable *drawablep)
             scale_len = 1.0;
         }
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         if (vol)
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32 *) vol->getRelativeXform().mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32 *) vol->getRelativeXform().mMatrix);
         }
 
         gRender.getTexUnit(0)->bindWhite();
@@ -2351,8 +2351,8 @@ void renderNormals(LLDrawable *drawablep)
         else if (drawable_faces)
         {
             // *HACK: Prepare to restore previous shader as other debug code depends on a simpler shader being present
-            llassert(LLShaderProgram::sCurBoundShaderPtr == &gDebugProgram);
-            LLShaderProgram* prev_shader = LLShaderProgram::sCurBoundShaderPtr;
+            llassert(RKShaderProgram::sCurBoundShaderPtr == &gDebugProgram);
+            RKShaderProgram* prev_shader = RKShaderProgram::sCurBoundShaderPtr;
             for (auto it = drawable_faces->begin(); it != drawable_faces->end(); ++it)
             {
                 LLFace* facep = *it;
@@ -2362,7 +2362,7 @@ void renderNormals(LLDrawable *drawablep)
                 U32 mask_vn = LLVertexBuffer::TYPE_VERTEX | LLVertexBuffer::TYPE_NORMAL;
                 if ((buf->getTypeMask() & mask_vn) != mask_vn) { continue; }
 
-                LLShaderProgram* shader;
+                RKShaderProgram* shader;
                 if ((buf->getTypeMask() & LLVertexBuffer::TYPE_TANGENT) != LLVertexBuffer::TYPE_TANGENT)
                 {
                     shader = &gNormalDebugProgram[NORMAL_DEBUG_SHADER_DEFAULT];
@@ -2388,7 +2388,7 @@ void renderNormals(LLDrawable *drawablep)
             }
         }
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -2429,10 +2429,10 @@ void renderMeshBaseHullWithOutline(LLVOVolume* volume, U32 data_mask, LLColor4& 
             gRender.diffuseColor4fv(color.mV);
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mBaseHullMesh.mPositions);
 
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
             gRender.diffuseColor4fv(line_color.mV);
             LLVertexBuffer::drawArrays(LLRender::TRIANGLES, decomp->mBaseHullMesh.mPositions);
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
         }
         else
         {
@@ -2485,12 +2485,12 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
 {
     gRender.diffuseColor4fv(color.mV);
     LLVertexBuffer::drawArrays(LLRender::TRIANGLES, mesh.mPositions);
-    gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+    gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
     gRender.setLineWidth(3.f); // <FS> Line width OGL core profile fix by Rye Mutt
     gRender.diffuseColor4fv(line_color.mV);
     LLVertexBuffer::drawArrays(LLRender::TRIANGLES, mesh.mPositions);
     gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+    gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
 }
 // </FS:Beq>
 
@@ -2565,8 +2565,8 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
     LLVector3 center(0,0,0);
     LLVector3 size(0.25f,0.25f,0.25f);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) volume->getRelativeXform().mMatrix);
 
     if (type == LLPhysicsShapeBuilderUtil::PhysicsShapeSpecification::USER_MESH)
     {
@@ -2804,7 +2804,7 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
         if (phys_volume->mHullPoints && phys_volume->mHullIndices)
         {
 
-            llassert(LLShaderProgram::sCurBoundShader != 0);
+            llassert(RKShaderProgram::sCurBoundShader != 0);
             LLVertexBuffer::unbind();
 
             gRender.diffuseColor4fv(color.mV);
@@ -2833,7 +2833,7 @@ void renderPhysicsShape(LLDrawable* drawable, LLVOVolume* volume, bool wireframe
         LL_ERRS() << "Unhandled type" << LL_ENDL;
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
@@ -2852,10 +2852,10 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
 
             if (bridge)
             {
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
                 bridge->renderPhysicsShapes(wireframe);
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
         else
@@ -2865,11 +2865,11 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
             {
                 if (!group->getSpatialPartition()->isBridge())
                 {
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                     LLVector3 trans = drawable->getRegion()->getOriginAgent();
-                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
+                    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
                     renderPhysicsShape(drawable, volume, wireframe);
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
                 else
                 {
@@ -2882,8 +2882,8 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                 LLViewerObject* object = drawable->getVObj();
                 if (object && object->getPCode() == LLViewerObject::LL_VO_SURFACE_PATCH)
                 {
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) object->getRegion()->mRenderMatrix.mMatrix);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) object->getRegion()->mRenderMatrix.mMatrix);
                     //push face vertices for terrain
                     for (S32 i = 0; i < drawable->getNumFaces(); ++i)
                     {
@@ -2893,19 +2893,19 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                             LLVertexBuffer* buff = face->getVertexBuffer();
                             if (buff)
                             {
-                                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
 
                                 buff->setBuffer();
                                 gRender.diffuseColor4f(0.2f, 0.5f, 0.3f, 0.5f);
                                 buff->draw(LLRender::TRIANGLES, buff->getNumIndices(), 0);
 
                                 gRender.diffuseColor4f(0.2f, 1.f, 0.3f, 0.75f);
-                                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                                 buff->draw(LLRender::TRIANGLES, buff->getNumIndices(), 0);
                             }
                         }
                     }
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
 #endif
             }
@@ -2925,7 +2925,7 @@ void renderTexturePriority(LLDrawable* drawable)
         LLVector4 boost_cold(0,0,0,0);
         LLVector4 boost_hot(0,1,0,1);
 
-        LLRenderState::BlendScope blend(false);
+        RKRenderState::BlendScope blend(false);
 
         if (facep)
         {
@@ -2959,7 +2959,7 @@ void renderTexturePriority(LLDrawable* drawable)
 
 void renderPoints(LLDrawable* drawablep)
 {
-    LLRenderState::DepthScope depth(false, false);
+    RKRenderState::DepthScope depth(false, false);
     if (drawablep->getNumFaces())
     {
         gRender.begin(LLRender::POINTS);
@@ -2984,7 +2984,7 @@ void renderTexelDensity(LLDrawable* drawable)
         return;
     }
 
-    LLRenderState::BlendScope _(true);
+    RKRenderState::BlendScope _(true);
 
     LLMatrix4 checkerboard_matrix;
     S32 discard_level = -1;
@@ -3017,7 +3017,7 @@ void renderTexelDensity(LLDrawable* drawable)
         checkerboard_matrix.initScale(LLVector3((F32)texturep->getWidth(discard_level) / 8.f, (F32)texturep->getHeight(discard_level) / 8.f, 1.f));
 
         gRender.getTexUnit(0)->bind(LLViewerTexture::sCheckerBoardImagep, true);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, (F32*)&checkerboard_matrix.mMatrix);
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Texture0, (F32*)&checkerboard_matrix.mMatrix);
 
         if (buffer && (facep->getGeomCount() >= 3))
         {
@@ -3029,7 +3029,7 @@ void renderTexelDensity(LLDrawable* drawable)
             buffer->drawRange(LLRender::TRIANGLES, start, end, count, offset);
         }
 
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Texture0);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Texture0);
     }
 
     //S32 num_textures = llmax(1, (S32)params->mTextureList.size());
@@ -3087,7 +3087,7 @@ void renderLights(LLDrawable* drawablep)
 
     if (drawablep->getNumFaces())
     {
-        LLRenderState::BlendScope blend(true);
+        RKRenderState::BlendScope blend(true);
         gRender.diffuseColor4f(0,1,1,0.5f);
 
         for (S32 i = 0; i < drawablep->getNumFaces(); i++)
@@ -3109,7 +3109,7 @@ void renderLights(LLDrawable* drawablep)
         size.mul(0.5f);
 
         {
-            LLRenderState::DepthScope depth(false, true);
+            RKRenderState::DepthScope depth(false, true);
             gRender.diffuseColor4f(1,1,1,1);
             drawBoxOutline(pos, size);
         }
@@ -3152,7 +3152,7 @@ public:
 
         for (U32 i = 0; i < 2; i++)
         {
-            LLRenderState::DepthScope depth(true, false, i == 1 ? LLRenderState::CompareOp::LessEqual : LLRenderState::CompareOp::Greater);
+            RKRenderState::DepthScope depth(true, false, i == 1 ? RKRenderState::CompareOp::LessEqual : RKRenderState::CompareOp::Greater);
 
             if (i == 1)
             {
@@ -3203,7 +3203,7 @@ void renderRaycast(LLDrawable* drawablep)
 {
     if (drawablep->getNumFaces())
     {
-        LLRenderState::BlendScope blend(true);
+        RKRenderState::BlendScope blend(true);
         gRender.diffuseColor4f(0,1,1,0.5f);
 
         LLVOVolume* vobj = drawablep->getVOVolume();
@@ -3230,9 +3230,9 @@ void renderRaycast(LLDrawable* drawablep)
                 {
                     const LLVolumeFace& face = volume->getVolumeFace(i);
 
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
-                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) vobj->getRelativeXform().mMatrix);
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
+                    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) vobj->getRelativeXform().mMatrix);
 
                     LLVector4a start, end;
                     if (transform)
@@ -3256,7 +3256,7 @@ void renderRaycast(LLDrawable* drawablep)
                     dir.setSub(end, start);
 
                     gRender.flush();
-                    gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                    gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
 
                     {
                         //render face positions
@@ -3274,8 +3274,8 @@ void renderRaycast(LLDrawable* drawablep)
                         renderOctreeRaycast(start, end, face.getOctree());
                     }
 
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-                    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
+                    gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                 }
             }
         }
@@ -3283,7 +3283,7 @@ void renderRaycast(LLDrawable* drawablep)
         {
             if (drawablep->getVObj() == gDebugRaycastObject)
             {
-                LLRenderState::DepthScope depth(false);
+                RKRenderState::DepthScope depth(false);
                 LLVOAvatar* av = (LLVOAvatar*) drawablep->getVObj().get();
                 av->renderCollisionVolumes();
             }
@@ -3292,10 +3292,10 @@ void renderRaycast(LLDrawable* drawablep)
         if (drawablep->getVObj() == gDebugRaycastObject)
         {
             // draw intersection point
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
             LLVector3 translate(gDebugRaycastIntersection.getF32ptr());
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, translate.mV[0], translate.mV[1], translate.mV[2]);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, translate.mV[0], translate.mV[1], translate.mV[2]);
             LLCoordFrame orient;
             LLVector4a debug_binormal;
 
@@ -3308,7 +3308,7 @@ void renderRaycast(LLDrawable* drawablep)
             orient.lookDir(normal, binormal);
             LLMatrix4 rotation;
             orient.getRotMatrixToParent(rotation);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (float*)rotation.mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (float*)rotation.mMatrix);
 
             gRender.diffuseColor4f(1,0,0,0.5f);
             drawBox(LLVector3(0, 0, 0), LLVector3(0.1f, 0.022f, 0.022f));
@@ -3316,7 +3316,7 @@ void renderRaycast(LLDrawable* drawablep)
             drawBox(LLVector3(0, 0, 0), LLVector3(0.021f, 0.1f, 0.021f));
             gRender.diffuseColor4f(0,0,1,0.5f);
             drawBox(LLVector3(0, 0, 0), LLVector3(0.02f, 0.02f, 0.1f));
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
             // draw bounding box of prim
             const LLVector4a* ext = drawablep->getSpatialExtents();
@@ -3328,7 +3328,7 @@ void renderRaycast(LLDrawable* drawablep)
             size.setSub(ext[1], ext[0]);
             size.mul(0.5f);
 
-            LLRenderState::DepthScope depth(false, true);
+            RKRenderState::DepthScope depth(false, true);
             gRender.diffuseColor4f(0,0.5f,0.5f,1);
             drawBoxOutline(pos, size);
         }
@@ -3568,12 +3568,12 @@ public:
                 group->rebuildMesh();
 
                 gRender.flush();
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                 gRenderLastMatrix = NULL;
-                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+                RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
                 renderXRay(group, mCamera);
                 gRenderLastMatrix = NULL;
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
     }
@@ -3811,8 +3811,8 @@ void LLSpatialPartition::renderDebug()
         sCurMaxTexPriority = 0.f;
     }
 
-    LLRenderState::CullScope cullface(false);
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::CullScope cullface(false);
+    RKRenderState::BlendScope blend(true);
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
     gRender.getTexUnit(0)->bindWhite();
     gPipeline.disableLights();
@@ -3853,11 +3853,11 @@ void LLSpatialPartition::renderDebug()
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_OCCLUSION))
     {
         {
-            LLRenderState::CullScope cull(true);
+            RKRenderState::CullScope cull(true);
 
-            LLRenderState::BlendScope blend(true);
-            LLRenderState::DepthScope depth_under(true, false, LLRenderState::CompareOp::Greater);
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+            RKRenderState::BlendScope blend(true);
+            RKRenderState::DepthScope depth_under(true, false, RKRenderState::CompareOp::Greater);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
             gRender.diffuseColor4f(0.5f, 0.0f, 0, 0.25f);
 
             // F3.2: LLGLEnable offset(GL_POLYGON_OFFSET_LINE) had no effect on the render state block (never mapped); dropped
@@ -3866,7 +3866,7 @@ void LLSpatialPartition::renderDebug()
             LLOctreeRenderXRay xray(camera);
             xray.traverse(mOctree);
 
-            gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+            gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
         }
     }
     gDebugProgram.unbind();
@@ -4329,7 +4329,7 @@ LLDrawable* LLSpatialGroup::lineSegmentIntersect(const LLVector4a& start, const 
     return drawable;
 }
 
-LLDrawBatch::LLDrawBatch(U16 start, U16 end, U32 count, U32 offset,
+RKDrawBatch::RKDrawBatch(U16 start, U16 end, U32 count, U32 offset,
                        LLViewerTexture* texture, LLVertexBuffer* buffer,
                        bool fullbright, U8 bump)
 :   mVertexBuffer(buffer),
@@ -4349,16 +4349,16 @@ LLDrawBatch::LLDrawBatch(U16 start, U16 end, U32 count, U32 offset,
     mVertexBuffer->validateRange(mStart, mEnd, mCount, mOffset);
 }
 
-LLDrawBatch::~LLDrawBatch()
+RKDrawBatch::~RKDrawBatch()
 {
 }
 
-LLColor4U LLDrawBatch::getDebugColor() const
+LLColor4U RKDrawBatch::getDebugColor() const
 {
     LLColor4U color;
 
     LLCRC hash;
-    hash.update((U8*)this + sizeof(S32), sizeof(LLDrawBatch) - sizeof(S32));
+    hash.update((U8*)this + sizeof(S32), sizeof(RKDrawBatch) - sizeof(S32));
 
     *((U32*) color.mV) = hash.getCRC();
 
@@ -4367,7 +4367,7 @@ LLColor4U LLDrawBatch::getDebugColor() const
     return color;
 }
 
-U64 LLDrawBatch::getSkinHash()
+U64 RKDrawBatch::getSkinHash()
 {
     return mSkinInfo ? mSkinInfo->mHash : 0;
 }

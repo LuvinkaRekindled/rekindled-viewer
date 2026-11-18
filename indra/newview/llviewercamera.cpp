@@ -66,23 +66,23 @@ glm::mat4 LLViewerCamera::sJitteredProjection(1.f);
 glm::mat4 LLViewerCamera::sJitterModelview(1.f);
 bool LLViewerCamera::sJitterInEffect = false;
 
-LLUnjitteredScope::LLUnjitteredScope()
+RKUnjitteredScope::RKUnjitteredScope()
 {
     mActive = LLViewerCamera::sJitterInEffect && get_current_projection() == LLViewerCamera::sJitteredProjection;
     if (mActive)
     {
         mSaved = get_current_projection();
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(LLViewerCamera::sUnjitteredProjection));
         set_current_projection(LLViewerCamera::sUnjitteredProjection);
     }
 }
 
-LLUnjitteredScope::~LLUnjitteredScope()
+RKUnjitteredScope::~RKUnjitteredScope()
 {
     if (mActive)
     {
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
         set_current_projection(mSaved);
     }
 }
@@ -348,7 +348,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
     aspect = getAspect();
 
     // Load camera view matrix
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
 
     glm::mat4 proj_mat = glm::identity<glm::mat4>();
 
@@ -429,7 +429,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
         sJitterInEffect = true;
     }
 
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj_mat));
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(proj_mat));
 
     set_current_projection(proj_mat);
 
@@ -442,7 +442,7 @@ void LLViewerCamera::setPerspective(bool for_selection,
 
     modelview *= glm::make_mat4(ogl_matrix);
 
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
 
     if (sJitterActive && !for_selection && mZoomFactor == 1.f)
     {

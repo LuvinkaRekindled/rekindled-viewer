@@ -5,7 +5,7 @@
 #define LEGACY_SKY 1
 #define LEGACY_DEPTH 1
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     vec3 sun_dir;
@@ -32,7 +32,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int classic_mode;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_depthMap;
     uint ll_ti_normalMap;

@@ -345,7 +345,7 @@ namespace LL
             // list of render batches
             // indexed by [material index + 1](0 is reserved for default material)
             // there should be exactly one render batch per material per variant
-            std::vector<RenderBatch> mBatches[LLShaderProgram::NUM_GLTF_VARIANTS];
+            std::vector<RenderBatch> mBatches[RKShaderProgram::NUM_GLTF_VARIANTS];
         };
 
 

@@ -198,9 +198,9 @@ inline void intrusive_ptr_release(LLRefCount* p)
 #define LL_FS_ATOMIC_ASSET_REFS 1
 #endif
 #if LL_FS_ATOMIC_ASSET_REFS
-typedef LLThreadSafeRefCount LLAssetRefCount;
+typedef LLThreadSafeRefCount RKAssetRefCount;
 #else
-typedef LLRefCount LLAssetRefCount;
+typedef LLRefCount RKAssetRefCount;
 #endif
 
 #endif

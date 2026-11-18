@@ -8,13 +8,13 @@
 
 #define LEGACY_DEPTH 1
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     int rt_debug_mode;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_emissiveRect;
@@ -52,7 +52,7 @@ vec4 getNorm(vec2 screenpos)
 
 void dbgSceneFrame(out mat3 to_scene, out vec3 camera)
 {
-    LLRtGeom h = ll_rt_geoms.g[0];
+    RKRtGeom h = ll_rt_geoms.g[0];
     to_scene = mat3(uintBitsToFloat(uvec3(h.positions.x, h.positions.y, h.indices.x)), uintBitsToFloat(uvec3(h.indices.y, h.texcoords.x, h.texcoords.y)),
                     uintBitsToFloat(uvec3(h.colors.x, h.colors.y, h.slots.x)));
     camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
@@ -79,13 +79,13 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     {
         return false;
     }
-    LLRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u || (g.indices.x == 0u && g.indices.y == 0u) || (g.positions.x == 0u && g.positions.y == 0u))
     {
         return false;
     }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    LLRtIndices ib = LLRtIndices(g.indices);
+    RKRtIndices ib = RKRtIndices(g.indices);
     uint ix[3];
     for (uint k = 0u; k < 3u; ++k)
     {
@@ -93,7 +93,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         uint word = ib.w[i >> 1];
         ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
-    LLRtPositions pb = LLRtPositions(g.positions);
+    RKRtPositions pb = RKRtPositions(g.positions);
     vec3 p0 = pb.v[ix[0]].xyz, p1 = pb.v[ix[1]].xyz, p2 = pb.v[ix[2]].xyz;
     flat_normal = normalize(cross(p1 - p0, p2 - p0));
     mat_id = g.material;
@@ -103,13 +103,13 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         albedo = vec4(0.5, 0.5, 0.5, 1.0);
         return true;
     }
-    LLRtMaterial m = LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
+    RKRtMaterial m = RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
     status = 0u;
     uint mflags = floatBitsToUint(m.params.z);
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
     {
-        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        RKRtTexcoords tc = RKRtTexcoords(g.texcoords);
         uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
         uv = m.uv0 * uv.x + m.uv1 * uv.y + m.uv2;
     }
@@ -124,7 +124,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
-        LLRtColors col = LLRtColors(g.colors);
+        RKRtColors col = RKRtColors(g.colors);
         vcol = (unpackUnorm4x8(col.c[ix[0]]) * w.x + unpackUnorm4x8(col.c[ix[1]]) * w.y + unpackUnorm4x8(col.c[ix[2]]) * w.z);
     }
     if ((mflags & 64u) != 0u)
@@ -135,7 +135,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
     vec3 n_geo = flat_normal;
     if ((g.flags & 1024u) != 0u)
     {
-        LLRtNormals nb = LLRtNormals(g.normals);
+        RKRtNormals nb = RKRtNormals(g.normals);
         vec3 ns = nb.n[ix[0]].xyz * w.x + nb.n[ix[1]].xyz * w.y + nb.n[ix[2]].xyz * w.z;
         n_geo = dot(ns, ns) > 1e-8 ? normalize(ns) : flat_normal;
     }
@@ -147,7 +147,7 @@ bool dbgSurface(uint record, uint prim, vec2 bary, float lod, out vec4 albedo, o
         uint normal_slot = ll_rt_slot(normal_pin);
         if (normal_slot != 0u)
         {
-            LLRtTexcoords tcn = LLRtTexcoords(g.texcoords);
+            RKRtTexcoords tcn = RKRtTexcoords(g.texcoords);
             vec2 a0 = tcn.t[ix[0]], a1 = tcn.t[ix[1]], a2 = tcn.t[ix[2]];
             a0 = m.uv0 * a0.x + m.uv1 * a0.y + m.uv2;
             a1 = m.uv0 * a1.x + m.uv1 * a1.y + m.uv2;

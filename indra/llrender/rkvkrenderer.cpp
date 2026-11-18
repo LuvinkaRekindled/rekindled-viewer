@@ -36,7 +36,7 @@
 #include "llfile.h"
 #include "rkdiag.h"        // <FS> LL_DIAG: the statistics lines are off unless LL_VK_DIAG is set
 
-namespace LLVk
+namespace RKVk
 {
 
 namespace
@@ -738,7 +738,7 @@ void Program::setFloatsAt(size_t uniform_index, const F32* data, U32 components,
     {
         mDirty[u.mClass] = true;      // the viewer re-sends the same values before most draws: only real changes cost an upload
     }
-    if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
+    if (RKVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * (u.mArraySize > 0 ? 16 : 4 * components));
 }
 
 void Program::writeRange(U32 cls, U32 offset, U32 size, const U8* data)
@@ -795,7 +795,7 @@ void Program::setMatricesAt(size_t uniform_index, const F32* data, U32 columns, 
     {
         mDirty[u.mClass] = true;
     }
-    if (LLVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
+    if (RKVkBridge::gPhaseTiming) note_uniform_write(mName, u, changed, count * columns * 16);
 }
 
 S32 Program::findSampler(const std::string& name) const
@@ -1228,7 +1228,7 @@ bool Renderer::createLayouts()
             b2[t].binding = t;      // 0: 2D (render packets and bindless programs), 1: cube, 2: cube array, 3: 2D shadow
             b2[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             b2[t].descriptorCount = cap[t];
-            b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;       // (compute: the bindless probe, LLVkWorker::describe_textures)
+            b2[t].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;       // (compute: the bindless probe, RKVkWorker::describe_textures)
             binding_flags[t] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
             // Entries are written in the middle of recording a frame, while work recorded earlier may still be pending: without this bit that is undefined for EVERY entry of the set
             binding_flags[t] |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
@@ -1396,7 +1396,7 @@ bool Renderer::init()
         {
             break;
         }
-        LLVkBridge::paletteArenaRegister(i, (F32*)mPaletteArena[i].mMapped, (U64)mPaletteArena[i].mAddress, (U32)(PALETTE_ARENA_BYTES / 4));
+        RKVkBridge::paletteArenaRegister(i, (F32*)mPaletteArena[i].mMapped, (U64)mPaletteArena[i].mAddress, (U32)(PALETTE_ARENA_BYTES / 4));
     }
     ctx.addAddressDescriber([this](unsigned long long at) -> std::string
     {
@@ -1631,7 +1631,7 @@ bool Renderer::init()
 
 void Renderer::gpuZone(const char* name, bool begin)
 {
-    if (!LLVkBridge::gPhaseTiming)
+    if (!RKVkBridge::gPhaseTiming)
     {
         return;
     }
@@ -2039,7 +2039,7 @@ void Renderer::shutdown()
             if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
             b = Buffer();
         }
-        LLVkBridge::paletteArenaClear();        // (the viewer must not write into them any more)
+        RKVkBridge::paletteArenaClear();        // (the viewer must not write into them any more)
         for (Buffer& b : mPaletteArena)
         {
             if (b.valid()) vmaDestroyBuffer(Context::instance().getAllocator(), b.mBuffer, b.mAllocation);
@@ -2145,7 +2145,7 @@ void Renderer::savePipelineCache()
 VkSampler Renderer::getSampler(const SamplerDesc& wanted)
 {
     SamplerDesc desc = wanted;
-    desc.mLodBias = (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR) ? LLVkUpscale::lodBias() : 0.f;      // DLSS: sample textures sharper to make up for the smaller render size
+    desc.mLodBias = (!desc.mCompare && desc.mMip == VK_SAMPLER_MIPMAP_MODE_LINEAR) ? RKVkUpscale::lodBias() : 0.f;      // DLSS: sample textures sharper to make up for the smaller render size
     auto it = mSamplers.find(desc);
     if (it != mSamplers.end())
     {
@@ -2221,7 +2221,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
         mVertexRingUsed = 0;        // (a mid-frame flush keeps it going: the ray scene reads palettes and tables written earlier in the frame by address, and the new start would overwrite them)
         mPaletteSlot = (U32)(Context::instance().getFrameNumber() % (U64)(Context::frameCount() + 2));      // <FS> the palette ring: one slot per frame, round frameCount() + 2 of them
         mPaletteRingUsed = 0;
-        LLVkBridge::paletteArenaFree(Context::instance().getFrameNumber());      // <FS> the palette arenas whose last reader frame is over
+        RKVkBridge::paletteArenaFree(Context::instance().getFrameNumber());      // <FS> the palette arenas whose last reader frame is over
         if (mOverflowChunk || mOverflowUsed)
         {
             mOverflowIdle = 0;
@@ -2832,10 +2832,10 @@ void Renderer::beginRenderingIfNeeded()
         return;
     }
     mInBegin = true;
-    if (LLVkPassCensus::sOn && LLVkPassCensus::sMode == 2)
+    if (RKVkPassCensus::sOn && RKVkPassCensus::sMode == 2)
     {
         const std::string target = describeTarget();
-        LLVkPassCensus::renderPassBegin((std::string(mDepthRO ? "ro-depth " : "") + target + " | " + (mProgram ? mProgram->getName() : std::string("no program"))).c_str());
+        RKVkPassCensus::renderPassBegin((std::string(mDepthRO ? "ro-depth " : "") + target + " | " + (mProgram ? mProgram->getName() : std::string("no program"))).c_str());
     }
     ++mPassBegins;
     ++mPassBeginsTotal;
@@ -2855,7 +2855,7 @@ void Renderer::beginRenderingIfNeeded()
     }
     mDrawStamps = false;
     mDrawStampCount = 0;
-    if (LLVkBridge::gPhaseTiming)
+    if (RKVkBridge::gPhaseTiming)
     {
         // LL_VK_DRAW_STAMPS: 0 none, 1 (default) the passes of avatar impostors (four colour attachments and depth, up to 1024 per side, not the 343x343 probe faces), 2 every pass
         static const U64 draw_stamp_mode = []() { const char* e = getenv("LL_VK_DRAW_STAMPS"); return e && e[0] ? (U64)atoi(e) : 1ull; }();
@@ -2921,7 +2921,7 @@ void Renderer::beginRenderingIfNeeded()
     if (mStatPool[mSlot] && mStatTag[mSlot].size() < MAX_STAT_QUERIES)
     {
         mStatOpen = (S32)mStatTag[mSlot].size();
-        mStatTag[mSlot].push_back(LLVkBridge::gPhaseTiming ? mBeginTag : mPassTag);       // (the tag the GPU time table charges the pass's first draws to)
+        mStatTag[mSlot].push_back(RKVkBridge::gPhaseTiming ? mBeginTag : mPassTag);       // (the tag the GPU time table charges the pass's first draws to)
         mStatPixels[mSlot].push_back((U64)extent.width * extent.height);
         vkCmdBeginQuery(mCmd, mStatPool[mSlot], (U32)mStatOpen, 0);
     }
@@ -3585,8 +3585,8 @@ Image* Renderer::resolveTexture(size_t k, bool depth_ro, Image* depth_root)
 
 void Renderer::applyState()
 {
-    LLVkBridge::noteRendererThread();
-    long long lap_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
+    RKVkBridge::noteRendererThread();
+    long long lap_t = RKVkBridge::gPhaseTiming ? RKVkBridge::phaseNow() : 0;
     mDiagChanged = false;
     // 1. A texture that is also the depth attachment is a feedback loop. Reading it while depth writes are off is
     //    legal with a read-only depth layout (the viewer's lighting passes do this); with writes on it cannot work.
@@ -3718,10 +3718,10 @@ void Renderer::applyState()
         }
     }
 
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_TEX, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_TEX, lap_t);
     // 3. pass
     beginRenderingIfNeeded();
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_PASS, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_PASS, lap_t);
 
     // 3. pipeline
     PipelineKey key;
@@ -3744,7 +3744,7 @@ void Renderer::applyState()
         mBoundPipeline = pipeline;
         mDiagChanged = true;
     }
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_PIPE, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_PIPE, lap_t);
 
     // 4. dynamic state (only what changed since it was last recorded)
     const Image* ref = mColorCount ? mColorTargets[0] : mDepthTarget;
@@ -3829,7 +3829,7 @@ void Renderer::applyState()
         mAppliedColorCount = mColorCount;
     }
     mStateApplied = true;
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_DYN, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_DYN, lap_t);
 
     // 5. vertex input
     if (mUseVertexInput)
@@ -3925,12 +3925,12 @@ void Renderer::applyState()
         }
     }
 
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_VI, lap_t);
-    LLVkBridge::gLastLap = 301;
-    LLVkBridge::gDbg[0] = (unsigned long long)mProgram;
-    LLVkBridge::gDbg[1] = mSlot;
-    LLVkBridge::gDbg[2] = (unsigned long long)mCmd;
-    LLVkBridge::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_VI, lap_t);
+    RKVkBridge::gLastLap = 301;
+    RKVkBridge::gDbg[0] = (unsigned long long)mProgram;
+    RKVkBridge::gDbg[1] = mSlot;
+    RKVkBridge::gDbg[2] = (unsigned long long)mCmd;
+    RKVkBridge::gDbg[3] = (unsigned long long)mRing[mSlot].mMapped;
     // 5b. <FS> the handle of each sampler's texture is written into the loose uniform block (copied to the ring below); nothing is pushed
     if (mProgram->mBindless)
     {
@@ -3984,21 +3984,21 @@ void Renderer::applyState()
             mRtBoundOffset = rt_offset;
         }
     }
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_SAMP, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_SAMP, lap_t);
     // 6. loose uniforms, class by class: copy a class's shadow into the ring when it changed (or on its first use this frame)
     const U64 frame_number = Context::instance().getFrameNumber();
     const U64 ring_key = mRingEpoch;
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
         std::vector<U8>& shadow = mProgram->mShadow[k];
-        if (LLVkPassCensus::sOn && !shadow.empty()) LLVkPassCensus::classRead(mProgram->mCensus, k, (U32)shadow.size(), mProgram->mName.c_str());
+        if (RKVkPassCensus::sOn && !shadow.empty()) RKVkPassCensus::classRead(mProgram->mCensus, k, (U32)shadow.size(), mProgram->mName.c_str());
         if (shadow.empty() || (!mProgram->mDirty[k] && mProgram->mRingFrame[k] == ring_key))
         {
             continue;
         }
-        LLVkBridge::gLastLap = 302;
+        RKVkBridge::gLastLap = 302;
         const U32 ring_offset = allocUniform((U32)shadow.size());
-        LLVkBridge::gLastLap = 303;
+        RKVkBridge::gLastLap = 303;
         if (ring_offset == 0xFFFFFFFFu)
         {
             mDrawBlocked = true;
@@ -4006,7 +4006,7 @@ void Renderer::applyState()
         }
         mProgram->mRingOffset[k] = ring_offset;
         mDiagChanged = true;
-        if (LLVkBridge::gPhaseTiming)
+        if (RKVkBridge::gPhaseTiming)
         {
             UniformCopyStat& us = mUniformCopies[mProgram];
             if (us.mName.empty())
@@ -4037,13 +4037,13 @@ void Renderer::applyState()
         mProgram->mRingFrame[k] = ring_key;
         mProgram->mDirty[k] = false;
     }
-    LLVkBridge::gLastLap = 304;
+    RKVkBridge::gLastLap = 304;
     VkDescriptorSet set0 = mSet0[mSlot];
     if (mUbo[0] || mUbo[1] || mUbo[2] || mUbo[3])
     {
         set0 = uboSet();
     }
-    LLVkBridge::gLastLap = 305;
+    RKVkBridge::gLastLap = 305;
     bool offsets_changed = !mSet0Bound || mAppliedSet0 != set0;
     for (U32 k = 0; k < UC_COUNT; ++k)
     {
@@ -4061,8 +4061,8 @@ void Renderer::applyState()
         mSet0Bound = true;
     }
 
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_UNI, lap_t);
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_PUSH, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_UNI, lap_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_PUSH, lap_t);
 }
 
 void Renderer::setUniformBuffer(U32 index, VkBuffer buffer, VkDeviceSize range)
@@ -4177,7 +4177,7 @@ std::string Renderer::describeSlot(U32 id) const
             maps += " slot" + std::to_string(k) + "=" + std::to_string(value) + (value == mHandles.descriptorOf(table, handle) ? "" : " DIFFERS");
         }
     }
-    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mImage) + ": " + Context::instance().describeBinding(s.mImage) + " | " + LLVkWorker::describe_texture_of_view(s.mViewId) + maps;
+    return std::string(buf) + ", image handle " + std::to_string((unsigned long long)s.mImage) + ": " + Context::instance().describeBinding(s.mImage) + " | " + RKVkWorker::describe_texture_of_view(s.mViewId) + maps;
 }
 
 std::string Renderer::auditBindless() const
@@ -4384,7 +4384,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
         mDrawBlocked = false;
         return false;
     }
-    long long cmd_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
+    long long cmd_t = RKVkBridge::gPhaseTiming ? RKVkBridge::phaseNow() : 0;
     startPendingQuery();
     noteDraw(1, vertex_count, first_vertex, 0);
     const U32 stamp_tag = mDrawStamps ? drawTag("vertices", vertex_count, first_vertex, 0) : 0u;
@@ -4397,7 +4397,7 @@ bool Renderer::draw(U32 vertex_count, U32 first_vertex)
     {
         Context::instance().gpuStamp(stamp_tag);
     }
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_CMD, cmd_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;
@@ -4520,8 +4520,8 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
         mDrawBlocked = false;
         return false;
     }
-    long long cmd_t = LLVkBridge::gPhaseTiming ? LLVkBridge::phaseNow() : 0;
-    if (LLVkBridge::gPhaseTiming && LLVkBridge::onMainThread())
+    long long cmd_t = RKVkBridge::gPhaseTiming ? RKVkBridge::phaseNow() : 0;
+    if (RKVkBridge::gPhaseTiming && RKVkBridge::onMainThread())
     {
         ++mDrawDiag.mDraws;
         if (!mDiagChanged)
@@ -4556,7 +4556,7 @@ bool Renderer::drawIndexed(U32 index_count, U32 first_index, S32 vertex_offset)
     {
         Context::instance().gpuStamp(stamp_tag);
     }
-    LLVkBridge::phaseLap(LLVkBridge::PH_A_CMD, cmd_t);
+    RKVkBridge::phaseLap(RKVkBridge::PH_A_CMD, cmd_t);
     ++mDrawCount;
     ++mModCount;
     return true;
@@ -4616,7 +4616,7 @@ bool Renderer::recordExternal(const std::vector<std::pair<Image*, VkImageLayout>
     {
         return false;
     }
-    if (LLVkBridge::gPhaseTiming)
+    if (RKVkBridge::gPhaseTiming)
     {
         Context::instance().gpuStamp(Context::stampTag("external (DLSS)"));
     }
@@ -4859,7 +4859,7 @@ static void note_upload_log(VkDeviceSize bytes, U64 fill_us, U64 total_us, U32 s
 bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 y, U32 width, U32 height, U32 depth, VkDeviceSize bytes, void (*fill)(void* ctx, U8* dst, VkDeviceSize bytes), void* fill_ctx)
 {
     const auto t_start = std::chrono::steady_clock::now();
-    LLVkBridge::noteRendererThread();
+    RKVkBridge::noteRendererThread();
     ++mModCount;
     Context& ctx = Context::instance();
     const FormatInfo fi = formatInfo(image.mFormat);
@@ -4927,7 +4927,7 @@ bool Renderer::uploadTextureDirect(Image& image, U32 mip, U32 layer, U32 x, U32 
         ++mUploadStats.mCount;
         mUploadStats.mBytes += expected;
         const U64 total_d = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count();
-        LLVkAsync::noteTexWorker(0, fill_us_d, total_d, 1);
+        RKVkAsync::noteTexWorker(0, fill_us_d, total_d, 1);
         note_upload_log(expected, fill_us_d, total_d, 0, 0, 1);
         if (mDeferredBytes > 256ull * 1024 * 1024)
         {
@@ -5005,7 +5005,7 @@ old_path:
         }
     }
     const U64 total_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_start).count();
-    LLVkAsync::noteTexWorker(0, fill_us, total_us, 1);
+    RKVkAsync::noteTexWorker(0, fill_us, total_us, 1);
     note_upload_log(expected, fill_us, total_us, (mCmd != VK_NULL_HANDLE && mRendering) ? 1 : 0, used_own_buffer ? 1 : 0, 0);
     return true;
 }
@@ -5841,6 +5841,6 @@ bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U
     return true;
 }
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN

@@ -336,16 +336,16 @@ void LLFacePool::addFaceReference(LLFace *facep)
 // S6.6: entries made from faces or draw infos for the pull programs (the generic LL_VERTEX_PULL rewrite): the arrays the buffer has are named, the model matrices are numbered in a table (0: the view alone)
 namespace
 {
-struct LLPullBatch
+struct RKPullBatch
 {
-    std::vector<LLVkBridge::GeoEntry> mEntries;
+    std::vector<RKVkBridge::GeoEntry> mEntries;
     std::vector<F32> mMatrices;
     std::vector<const LLMatrix4*> mKeys;
     std::vector<U8> mBlob;
     glm::mat4 mView, mProj;
     U32 mRefused = 0;
 
-    LLPullBatch()
+    RKPullBatch()
     {
         mView = gRender.getModelviewMatrix();
         mProj = gRender.getProjectionMatrix();
@@ -394,7 +394,7 @@ struct LLPullBatch
             ++mRefused;
             return false;
         }
-        LLVkBridge::GeoEntry e = {};
+        RKVkBridge::GeoEntry e = {};
         e.mVertexBuffer = vb->getVertexBufferId();
         e.mIndexBuffer = vb->getIndexBufferId();
         e.mFirstIndex = first_index;
@@ -428,15 +428,15 @@ struct LLPullBatch
         {
             return;
         }
-        const size_t entries_bytes = mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = mMatrices.size() * sizeof(F32);
+        const size_t entries_bytes = mEntries.size() * sizeof(RKVkBridge::GeoEntry), matrix_bytes = mMatrices.size() * sizeof(F32);
         mBlob.resize(entries_bytes + matrix_bytes);
         memcpy(mBlob.data(), mEntries.data(), entries_bytes);
         memcpy(mBlob.data() + entries_bytes, mMatrices.data(), matrix_bytes);
-        LLVkBridge::ShadowPacketsHeader header;
+        RKVkBridge::ShadowPacketsHeader header;
         header.mKind = 32;
         header.mEntries = (U32)mEntries.size();
         header.mMatrices = (U32)(mMatrices.size() / 44);
-        LLVkBridge::shadowPackets(header, mBlob.data(), mBlob.size());
+        RKVkBridge::shadowPackets(header, mBlob.data(), mBlob.size());
     }
 };
 }
@@ -444,7 +444,7 @@ struct LLPullBatch
 void LLFacePool::pushFacesPull(bool region_matrix)
 {
     gRender.flush();
-    LLPullBatch batch;
+    RKPullBatch batch;
     for (LLFace* const& face : mDrawFace)
     {
         batch.add(face->getVertexBuffer(), (U32)face->getIndicesStart(), face->getIndicesCount(),
@@ -457,7 +457,7 @@ void LLFacePool::pushFacesPull(bool region_matrix)
 void LLFacePool::pushWholeBufferFacesPull()
 {
     gRender.flush();
-    LLPullBatch batch;
+    RKPullBatch batch;
     for (LLFace* const& face : mDrawFace)
     {
         const LLVertexBuffer* vb = face->getVertexBuffer();
@@ -479,7 +479,7 @@ void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_cou
     const_cast<LLVertexBuffer*>(vb)->setBuffer();
     gRender.syncMatrices();         // (the program's matrix uniforms that are not in the record, projection_matrix of the avatar shaders, are written as a draw writes them)
     gRender.flush();
-    LLPullBatch batch;
+    RKPullBatch batch;
     batch.add(vb, first_index, index_count, nullptr);
     batch.send();
 }
@@ -561,7 +561,7 @@ LLRenderPass::~LLRenderPass()
 
 }
 
-void LLRenderPass::applyModelMatrix(const LLDrawBatch& params)
+void LLRenderPass::applyModelMatrix(const RKDrawBatch& params)
 {
     applyModelMatrix(params.mModelMatrix);
 }
@@ -571,24 +571,24 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
     if (model_matrix != gRenderLastMatrix)
     {
         gRenderLastMatrix = model_matrix;
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
         if (model_matrix)
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) model_matrix->mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) model_matrix->mMatrix);
         }
         gPipeline.mMatrixOpCount++;
     }
 }
 
-LLShadowDrawStats gShadowDrawStats;
-LLGeometryPacketStats gGeometryPacketStats;
+RKShadowDrawStats gShadowDrawStats;
+RKGeometryPacketStats gGeometryPacketStats;
 
 // <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch FS_DEFERRED_PACKETS_AB
 // (twin era tools that turned the records off) are gone, and so are the checks that the pull programs exist (they are required: a program that cannot be made ends the shader load); what is left is the worker's packet path.
 // static
 bool LLRenderPass::deferredPacketsEnabled()
 {
-    return LLVkBridge::shadowAlphaPacketsAvailable();
+    return RKVkBridge::shadowAlphaPacketsAvailable();
 }
 
 // <FS> S4 A1: the rigged draws of the deferred diffuse / materials passes as records (the switches LL_VK_RIGGED_PACKETS and LL_VK_RIGGED_PACKETS_AB are gone with the other A/B tools: PLAN-twin-removal.md, section 8).
@@ -610,7 +610,7 @@ static struct FramePalettes
     U64 mRequests = 0, mAdded = 0;
     // <FS> PLAN-avatars.md rigged draws as rows, P1 (LL_VK_PALARENA: 1 default, 0 = the copies as before, 2 = also compares what the arena holds): the part of the list that fits is written straight into a palette
     // arena of the renderer (offsets 0 .. its capacity), named to the worker by a kind 39 record, no copy; what does not fit (or a frame with no arena free) goes into mData as before, at offsets after the capacity
-    LLVkBridge::PaletteArena mArena;
+    RKVkBridge::PaletteArena mArena;
     bool mArenaOn = false;
     std::atomic<U32> mArenaCursor{ 0 };                 // floats written (the palette jobs allocate with a compare and swap, the requests under the mutex)
     U32 mArenaSent = 0;                                 // floats named to the worker
@@ -637,12 +637,12 @@ static int palette_arena_mode()
 namespace
 {
 std::mutex sRigAnchorMutex;
-struct RigAnchorSlot { U32 mFrame = ~0u; LLRigAnchor mValue; };
+struct RigAnchorSlot { U32 mFrame = ~0u; RKRigAnchor mValue; };
 RigAnchorSlot sRigAnchorRing[8];
-LLRigAnchor sRigAnchorCurrent;
+RKRigAnchor sRigAnchorCurrent;
 }
 
-LLRigAnchor ll_rig_anchor(U32 frame)
+RKRigAnchor ll_rig_anchor(U32 frame)
 {
     std::lock_guard<std::mutex> lock(sRigAnchorMutex);
     RigAnchorSlot& slot = sRigAnchorRing[frame & 7u];
@@ -653,7 +653,7 @@ LLRigAnchor ll_rig_anchor(U32 frame)
     // (the camera is read from a pool thread too: the origin is a few floats and any value of a nearby frame does: the anchor only has to be near the avatars, and every palette says which one it used)
     const LLVector3 c = LLViewerCamera::getInstance()->getOrigin();
     const F32 reach = std::max(fabsf(c.mV[0]), std::max(fabsf(c.mV[1]), fabsf(c.mV[2])));
-    LLRigAnchor next;
+    RKRigAnchor next;
     const bool was = sRigAnchorCurrent.mActive;
     if (reach > (was ? 500.f : 700.f))
     {
@@ -883,7 +883,7 @@ static void palette_frame_begin_locked(U64 frame)
     sFramePal.mArenaSent = 0;
     sFramePal.mPairCursor.store(0, std::memory_order_relaxed);
     sFramePal.mPairSent = 0;
-    sFramePal.mArenaOn = palette_arena_mode() != 0 && LLVkBridge::paletteArenaAcquire((U32)frame, sFramePal.mArena);
+    sFramePal.mArenaOn = palette_arena_mode() != 0 && RKVkBridge::paletteArenaAcquire((U32)frame, sFramePal.mArena);
     sFramePal.mDataBase = sFramePal.mArenaOn ? sFramePal.mArena.mFloats : 0;
     ++(sFramePal.mArenaOn ? sFramePal.mArenaFrames : sFramePal.mArenaFallbackFrames);
     if (palette_arena_mode() != 0 && ((sFramePal.mArenaFrames + sFramePal.mArenaFallbackFrames) % 1200) == 0)
@@ -1147,24 +1147,24 @@ void ll_frame_palette_flush()
         {
             return;
         }
-        LLVkBridge::ShadowPacketsHeader pair_header;
+        RKVkBridge::ShadowPacketsHeader pair_header;
         pair_header.mKind = 40;
         pair_header.mPass = (U32)gFrameCount;
         pair_header.mEntries = total - sFramePal.mPairSent;
-        LLVkBridge::shadowPackets(pair_header, sFramePal.mPairs + 2 * sFramePal.mPairSent, (size_t)pair_header.mEntries * 2 * sizeof(U32));
+        RKVkBridge::shadowPackets(pair_header, sFramePal.mPairs + 2 * sFramePal.mPairSent, (size_t)pair_header.mEntries * 2 * sizeof(U32));
         sFramePal.mPairSent = total;
     };
     if (sFramePal.mArenaOn && arena_used > sFramePal.mArenaSent)
     {
         // <FS> P1: the part of the list that was written into the arena is named, not sent (kind 39)
-        LLVkBridge::ShadowPacketsHeader arena_header;
+        RKVkBridge::ShadowPacketsHeader arena_header;
         arena_header.mKind = 39;
         arena_header.mPass = (U32)gFrameCount;
         arena_header.mEntries = sFramePal.mArena.mIndex;
         arena_header.mFragment = sFramePal.mArenaSent;
         arena_header.mPaletteFloats = arena_used - sFramePal.mArenaSent;
         static const U32 no_blob = 0;
-        LLVkBridge::shadowPackets(arena_header, &no_blob, sizeof(no_blob));
+        RKVkBridge::shadowPackets(arena_header, &no_blob, sizeof(no_blob));
         sFramePal.mFlushedFloats += arena_header.mPaletteFloats;
         sFramePal.mArenaSent = arena_used;
     }
@@ -1173,12 +1173,12 @@ void ll_frame_palette_flush()
         send_pairs();
         return;
     }
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 27;
     header.mPass = (U32)gFrameCount;
     header.mFragment = sFramePal.mDataBase + (U32)sFramePal.mSent;
     header.mPaletteFloats = (U32)(sFramePal.mData.size() - sFramePal.mSent);
-    LLVkBridge::shadowPackets(header, sFramePal.mData.data() + sFramePal.mSent, (size_t)header.mPaletteFloats * sizeof(F32));
+    RKVkBridge::shadowPackets(header, sFramePal.mData.data() + sFramePal.mSent, (size_t)header.mPaletteFloats * sizeof(F32));
     sFramePal.mFlushedFloats += header.mPaletteFloats;
     sFramePal.mSent = sFramePal.mData.size();
     send_pairs();
@@ -1220,7 +1220,7 @@ U32 ll_pass_arrays(U32 type)
     }
 }
 
-static bool geometry_packet_ok(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
+static bool geometry_packet_ok(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount || (p.mAvatar != nullptr) != rigged || p.mGLTFMaterial || !vb || !vb->getVertexBufferId() || !vb->getIndexBufferId() || vb->getIndicesType() != ComponentType::U16
@@ -1267,7 +1267,7 @@ static bool geometry_packet_ok(const LLDrawBatch& p, bool batch_textures, const 
 }
 
 // S6 census: why geometry_packet_ok refuses a draw (0 = it does not)
-int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
+int ll_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays)
 {
     const LLVertexBuffer* vb = p.mVertexBuffer.get();
     if (!p.mCount) return 1;
@@ -1290,7 +1290,7 @@ int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const L
 }
 
 // static. S5c: a draw with a glTF blend material as an entry of the alpha items: the pull shader reads 16 bit indices, position first, and the normal, texcoord 0, colour and tangent arrays
-bool LLRenderPass::pbrAlphaEntry(const LLDrawBatch& params, LLVkBridge::GeoEntry& e, bool rigged)
+bool LLRenderPass::pbrAlphaEntry(const RKDrawBatch& params, RKVkBridge::GeoEntry& e, bool rigged)
 {
     e = {};
     const LLVertexBuffer* vb = params.mVertexBuffer.get();
@@ -1311,14 +1311,14 @@ bool LLRenderPass::pbrAlphaEntry(const LLDrawBatch& params, LLVkBridge::GeoEntry
     e.mEmissiveOffset = vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE) ? vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE) : 0;       // S5e: the glow draw
     if (rigged)
     {
-        e.mFlags |= LLVkBridge::GEO_RIGGED;
+        e.mFlags |= RKVkBridge::GEO_RIGGED;
         e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
     }
     return true;
 }
 
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
-bool LLRenderPass::geometryEntry(const LLDrawBatch& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
+bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPassInfo* materials, RKVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
 {
     e = {};
     for (int t = 0; t < 6; ++t)
@@ -1347,7 +1347,7 @@ bool LLRenderPass::geometryEntry(const LLDrawBatch& params, const LLGeometryPass
     }
     if (rigged)
     {
-        e.mFlags |= LLVkBridge::GEO_RIGGED;
+        e.mFlags |= RKVkBridge::GEO_RIGGED;
         e.mWeightOffset = vb->getOffset(LLVertexBuffer::TYPE_WEIGHT4);
     }
     if (materials)
@@ -1375,7 +1375,7 @@ bool LLRenderPass::geometryEntry(const LLDrawBatch& params, const LLGeometryPass
     }
     else
     {
-        e.mFlags |= LLVkBridge::GEO_ONE_TEXTURE;
+        e.mFlags |= RKVkBridge::GEO_ONE_TEXTURE;
         if (params.mTexture.notNull())
         {
             textures[0] = params.mTexture.get();
@@ -1443,28 +1443,28 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
     LL_CPU_ZONE("packets: scene table draw record");
     {
         // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
-        extern bool ll_motion_fold_uniforms(LLShaderProgram* program);
-        ll_motion_fold_uniforms(LLShaderProgram::sCurBoundShaderPtr);
+        extern bool ll_motion_fold_uniforms(RKShaderProgram* program);
+        ll_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr);
     }
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 22;
     header.mPass = (U32)tn;
     F32 matrices[32];
     memcpy(matrices, gRenderModelView, 16 * sizeof(F32));
     memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
-    LLVkBridge::shadowPackets(header, matrices, sizeof(matrices));
+    RKVkBridge::shadowPackets(header, matrices, sizeof(matrices));
     ll_scene_geo_count(1, 1);
     extern bool ll_scene_geo_type_has_double_sided(int tn);
     if (ll_scene_geo_type_has_double_sided(tn))
     {
         // P3: the type's double sided rows (glTF materials): their own draw, culling off (the worker draws nothing when the frame has none)
-        LLRenderState::CullScope cull_face(false, true);
+        RKRenderState::CullScope cull_face(false, true);
         header.mFragment = 1;
-        LLVkBridge::shadowPackets(header, matrices, sizeof(matrices));
+        RKVkBridge::shadowPackets(header, matrices, sizeof(matrices));
     }
 }
 
-void LLShadowDrawStats::endStaticPass()
+void RKShadowDrawStats::endStaticPass()
 {
     mStaticDistinctVB += mPassVBs.size();
 
@@ -1527,7 +1527,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
         return false;
     }
 
-    LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+    RKShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
         count,
         false,
         (F32*)mpc.absPalette().data());
@@ -1542,7 +1542,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     llassert(skinInfo);
-    llassert(LLShaderProgram::sCurBoundShaderPtr);
+    llassert(RKShaderProgram::sCurBoundShaderPtr);
 
     if (!avatar || !skinInfo)       // <FS> C2.4c/d: a gone avatar or skin info (handles) reads as null: the draw is skipped
     {
@@ -1563,7 +1563,7 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
 
     if (!skipLastSkin)
     {
-        LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+        RKShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
             (F32*)mpc.absPalette().data());
@@ -1574,19 +1574,19 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
 
 // Returns true if rendering should proceed
 //static
-bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const LLShaderProgram*& lastAvatarShader, bool& skipLastSkin)// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
+bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const RKShaderProgram*& lastAvatarShader, bool& skipLastSkin)// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
     llassert(skinInfo);
-    llassert(LLShaderProgram::sCurBoundShaderPtr);
+    llassert(RKShaderProgram::sCurBoundShaderPtr);
 
     if (!avatar || !skinInfo)       // <FS> C2.4c/d: a gone avatar or skin info (handles) reads as null: the draw is skipped
     {
         return false;
     }
 
-    if (avatar == lastAvatar && skinInfo->mHash == lastMeshId && lastAvatarShader == LLShaderProgram::sCurBoundShaderPtr)
+    if (avatar == lastAvatar && skinInfo->mHash == lastMeshId && lastAvatarShader == RKShaderProgram::sCurBoundShaderPtr)
     {
         return !skipLastSkin;
     }
@@ -1597,11 +1597,11 @@ bool LLRenderPass::uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo*
     skipLastSkin = !bool(count);
     lastAvatar = avatar;
     lastMeshId = skinInfo->mHash;
-    lastAvatarShader = LLShaderProgram::sCurBoundShaderPtr;
+    lastAvatarShader = RKShaderProgram::sCurBoundShaderPtr;
 
     if (!skipLastSkin)
     {
-        LLShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
+        RKShaderProgram::sCurBoundShaderPtr->uniformMatrix3x4fv(LLViewerShaderMgr::AVATAR_MATRIX,
             count,
             false,
             (F32*)mpc.absPalette().data());

@@ -133,7 +133,7 @@ bool stop_gloderror()
 
 LLViewerFetchedTexture* bindMaterialDiffuseTexture(const LLImportMaterial& material)
 {
-    LLViewerFetchedTexture *texture = LLViewerTextureManager::getFetchedTexture(material.getDiffuseMap(), FTT_DEFAULT, true, LLBaseTexture::BOOST_PREVIEW);
+    LLViewerFetchedTexture *texture = LLViewerTextureManager::getFetchedTexture(material.getDiffuseMap(), FTT_DEFAULT, true, RKBaseTexture::BOOST_PREVIEW);
 
     if (texture)
     {
@@ -251,7 +251,7 @@ LLModelPreview::LLModelPreview(S32 width, S32 height, LLFloater* fmp)
     mBuildBorderMode = GLOD_BORDER_UNLOCK;
     mBuildOperator = GLOD_OPERATOR_EDGE_COLLAPSE;
     // </FS:Beq>
-    mUVGuideTexture = LLViewerTextureManager::getFetchedTextureFromFile(gSavedSettings.getString("FSMeshPreviewUVGuideFile"), FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_PREVIEW); // <FS:Beq> - Add UV guide overlay to pmesh preview
+    mUVGuideTexture = LLViewerTextureManager::getFetchedTextureFromFile(gSavedSettings.getString("FSMeshPreviewUVGuideFile"), FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_PREVIEW); // <FS:Beq> - Add UV guide overlay to pmesh preview
 
     for (U32 i = 0; i < LLModel::NUM_LODS; ++i)
     {
@@ -1723,7 +1723,7 @@ void LLModelPreview::genGlodLODs(S32 which_lod, U32 decimation, bool enforce_tri
 
     LLVertexBuffer::unbind();
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
     if (shader)
     {
@@ -4247,7 +4247,7 @@ U32 LLModelPreview::loadTextures(LLImportMaterial& material, LLHandle<LLModelPre
         material.mOpaqueData = new LLPointer< LLViewerFetchedTexture >;
         LLPointer< LLViewerFetchedTexture >& tex = (*reinterpret_cast< LLPointer< LLViewerFetchedTexture > * >(material.mOpaqueData));
 
-        tex = LLViewerTextureManager::getFetchedTextureFromUrl("file://" + LLURI::unescape(material.mDiffuseMapFilename), FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_PREVIEW);
+        tex = LLViewerTextureManager::getFetchedTextureFromUrl("file://" + LLURI::unescape(material.mDiffuseMapFilename), FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_PREVIEW);
         if (tex->getDiscardLevel() < tex->getMaxDiscardLevel())
         {
             // file was loaded previosly, reload image to get potential changes
@@ -4343,28 +4343,28 @@ bool LLModelPreview::render()
     S32 width = getWidth();
     S32 height = getHeight();
 
-    LLRenderPresetUIDefault def;
-    LLRenderState::BlendScope no_blend(false);
-    LLRenderState::CullScope cull(true);
-    LLRenderState::DepthScope depth(false); // SL-12781 disable z-buffer to render background color
+    RKRenderPresetUIDefault def;
+    RKRenderState::BlendScope no_blend(false);
+    RKRenderState::CullScope cull(true);
+    RKRenderState::DepthScope depth(false); // SL-12781 disable z-buffer to render background color
 
     {
         gUIProgram.bind();
 
         //clear background to grey
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)width, 0.0f, (F32)height, -1.0f, 1.0f);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, 0.0f, (F32)width, 0.0f, (F32)height, -1.0f, 1.0f);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
         gRender.color4fv(canvas_col().mV); // <FS:Beq/> restore changes removed by the lab
         gl_rect_2d_simple(width, height);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
     }
 
@@ -4519,7 +4519,7 @@ bool LLModelPreview::render()
 
     F32 physics_explode = (F32)mFMP->childGetValue("physics_explode").asReal();
 
-    LLRenderState::DepthScope gls_depth(true); // SL-12781 re-enable z-buffer for 3D model preview
+    RKRenderState::DepthScope gls_depth(true); // SL-12781 re-enable z-buffer for 3D model preview
 
     LLRect preview_rect;
 
@@ -4549,7 +4549,7 @@ bool LLModelPreview::render()
 
     gObjectPreviewProgram.bind(show_skin_weight);
 
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
     gPipeline.enableLightsPreview();
     gObjectPreviewProgram.uniform4fv(LLShaderMgr::AMBIENT, 1, LLPipeline::PreviewAmbientColor.mV); // <FS:Beq> pass ambient setting to shader
 
@@ -4569,7 +4569,7 @@ bool LLModelPreview::render()
     LLViewerCamera::getInstance()->setPerspective(false, mOrigin.mX, mOrigin.mY, width, height, false, z_near, z_far);
 
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     gRender.color4fv(edge_col().mV); // <FS:Beq/> restore changes removed by the lab
 
     if (!mBaseModel.empty() && mVertexBuffer[LLModel::NUM_LODS].empty())
@@ -4621,11 +4621,11 @@ bool LLModelPreview::render()
                     continue;
                 }
 
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
                 LLMatrix4 mat = instance.mTransform;
 
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
                 auto num_models = mVertexBuffer[mPreviewLOD][model].size();
                 for (size_t i = 0; i < num_models; ++i)
@@ -4680,14 +4680,14 @@ bool LLModelPreview::render()
                     if (show_edges)
                     {
                         gRender.setLineWidth(edge_width()); // <FS:Beq/> restore changes removed by the lab
-                        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                        gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
                         buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
-                        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                        gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                         gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                     }
                     buffer->unmapBuffer();
                 }
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
 
             if (show_physics)
@@ -4706,7 +4706,7 @@ bool LLModelPreview::render()
                     }
 
                     //enable alpha blending on second pass but not first pass
-                    LLRenderState::BlendScope blend(pass);
+                    RKRenderState::BlendScope blend(pass);
 
                     gRender.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
@@ -4721,10 +4721,10 @@ bool LLModelPreview::render()
                             continue;
                         }
 
-                        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                         LLMatrix4 mat = instance.mTransform;
 
-                        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
+                        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
 
                         bool render_mesh = true;
@@ -4758,12 +4758,12 @@ bool LLModelPreview::render()
                                     {
                                         if (physics_explode > 0.f)
                                         {
-                                            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                                            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
                                             LLVector3 offset = model->mHullCenter[i] - model->mCenterOfHullCenters;
                                             offset *= physics_explode;
 
-                                            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, offset.mV[0], offset.mV[1], offset.mV[2]);
+                                            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, offset.mV[0], offset.mV[1], offset.mV[2]);
                                         }
 
                                         static std::vector<LLColor4U> hull_colors;
@@ -4778,7 +4778,7 @@ bool LLModelPreview::render()
 
                                         if (physics_explode > 0.f)
                                         {
-                                            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                                            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                                         }
                                     }
 
@@ -4810,17 +4810,17 @@ bool LLModelPreview::render()
                                     gRender.diffuseColor4fv(phys_edge_col().mV);
                                     gRender.setLineWidth(phys_edge_width());
                                     // </FS:Beq>
-                                    gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                    gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
                                     buffer->drawRange(LLRender::TRIANGLES, 0, buffer->getNumVerts() - 1, buffer->getNumIndices(), 0);
 
-                                    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                    gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                                     gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
 
                                     buffer->unmapBuffer();
                                 }
                             }
                         }
-                        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                     }
 
                     // only do this if mDegenerate was set in the preceding mesh checks [Check this if the ordering ever breaks]
@@ -4835,8 +4835,8 @@ bool LLModelPreview::render()
                         // gPipeline.enableLightsFullbright(); // This may need to be restored when I fined the cause of the black rendering
                         // </FS:Beq>
                         //show degenerate triangles
-                        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
-                        LLRenderState::CullScope cull(false);
+                        RKRenderState::DepthScope depth(true, true, RKRenderState::CompareOp::Always);
+                        RKRenderState::CullScope cull(false);
 
                         // gRender.diffuseColor4f(1.f, 0.f, 0.f, 1.f); // <FS:Beq/> restore proper functionality
                         const LLVector4a scale(0.5f);
@@ -4852,10 +4852,10 @@ bool LLModelPreview::render()
                                 continue;
                             }
 
-                            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                             LLMatrix4 mat = instance.mTransform;
 
-                            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
+                            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)mat.mMatrix);
 
 
                             LLPhysicsDecomp* decomp = gMeshRepo.mDecompThread;
@@ -4891,10 +4891,10 @@ bool LLModelPreview::render()
                                             if (ll_is_degenerate(v1, v2, v3))
                                             {
                                                 // <FS:Beq> restore (configurable) coloured overlay
-                                                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                                gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                                                 gRender.diffuseColor4fv(deg_fill_col().mV);
                                                 buffer->draw(LLRender::TRIANGLES, 3, i);
-                                                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                                gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
                                                 gRender.diffuseColor3fv(deg_edge_col().mV);
                                                 gRender.color3fv(deg_edge_col().mV);
                                                 // </FS:Beq>
@@ -4908,7 +4908,7 @@ bool LLModelPreview::render()
                                 }
                             }
 
-                            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                         }
                         gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                         gRender.setPointSize(1.f);
@@ -5039,9 +5039,9 @@ bool LLModelPreview::render()
                                 gRender.diffuseColor4fv(edge_col().mV);
                                 gRender.setLineWidth(edge_width());
                                 // </FS:Beq>
-                                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                                gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
                                 buffer->draw(LLRender::TRIANGLES, buffer->getNumIndices(), 0);
-                                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                                gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
                                 gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
                             }
                         }
@@ -5051,7 +5051,7 @@ bool LLModelPreview::render()
 
             if (show_joint_positions)
             {
-                LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+                RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
                 if (shader)
                 {
                     gDebugProgram.bind();
@@ -5082,7 +5082,7 @@ bool LLModelPreview::render()
 
     gObjectPreviewProgram.unbind();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     return true;
 }

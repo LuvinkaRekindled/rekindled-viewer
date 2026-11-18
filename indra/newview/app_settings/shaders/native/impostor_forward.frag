@@ -1,12 +1,12 @@
 // impostor_forward.frag: the texture, thrown away under a minimum alpha. A line for line translation of "Impostor Shader" (objects/impostorF.glsl); pairs with impostor_forward.vert.
 // (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float minimum_alpha;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;

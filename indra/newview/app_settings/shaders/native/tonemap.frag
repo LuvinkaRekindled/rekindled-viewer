@@ -2,7 +2,7 @@
 // tonemap_mix), then optionally the sRGB encoding and the legacy gamma. A line for line translation of the six "... Tonemap ... Post Process" programs (deferred/postDeferredTonemap.glsl and
 // tonemapUtilF.glsl); pairs with fullscreen.vert. Defines: NO_POST (no tone curve, clamp only), GAMMA_CORRECT, LEGACY_GAMMA.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float gamma;
     float exposure;
@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int tonemap_type;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_exposureMap;

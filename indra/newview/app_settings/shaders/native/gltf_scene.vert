@@ -9,7 +9,7 @@
 #endif
 
 #define transparent_surface (transparent_surface_ll_b != 0u)
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 projection_matrix;
     int gltf_material_id;
@@ -82,7 +82,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float waterFogDensity;
     float waterFogKS;
 };
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
     uint ll_ti_diffuseMap;
@@ -107,11 +107,11 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_heroProbes;
     uint ll_ti_mirrorView;
 };
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     vec3 color;
 };
-layout(std140, set = 0, binding = 7) uniform LLLooseLight
+layout(std140, set = 0, binding = 7) uniform RKLooseLight
 {
     vec3 lightnorm;
     mat4 proj_mat;

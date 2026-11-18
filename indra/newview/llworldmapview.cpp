@@ -721,7 +721,7 @@ void LLWorldMapView::draw()
 
 
     // turn off the scissor
-    LLRenderState::ScissorScope no_scissor(false);
+    RKRenderState::ScissorScope no_scissor(false);
 
     updateDirections();
 
@@ -841,7 +841,7 @@ bool LLWorldMapView::drawMipmapLevel(S32 width, S32 height, S32 level, bool load
                     F32 top    = pos_screen[VY];
 
                     // Draw the tile
-                    LLRenderPresetUIDefault gls_ui;
+                    RKRenderPresetUIDefault gls_ui;
                     gRender.getTexUnit(0)->bind(simimage.get());
                     simimage->setAddressMode(LLTexUnit::TAM_CLAMP);
 
@@ -1064,9 +1064,9 @@ void LLWorldMapView::drawFrustum()
     gRender.getTexUnit(0)->bindWhite();
 
     // Since we don't rotate the map, we have to rotate the frustum.
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, ctr_x, ctr_y, 0);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, ctr_x, ctr_y, 0);
 
         // Draw triangle with more alpha in far pixels to make it
         // fade out in distance.
@@ -1106,7 +1106,7 @@ void LLWorldMapView::drawFrustum()
         }
         gRender.end();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 
@@ -1499,10 +1499,10 @@ void LLWorldMapView::drawTrackingCircle( const LLRect& rect, S32 x, S32 y, const
         end_theta -= angle_adjust_y;
     }
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)x * LLUI::getScaleFactor().mV[VX], (F32)y * LLUI::getScaleFactor().mV[VY], 0.f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)x * LLUI::getScaleFactor().mV[VX], (F32)y * LLUI::getScaleFactor().mV[VY], 0.f);
     gl_washer_segment_2d(inner_radius, outer_radius, start_theta, end_theta, 40, color, color);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
 }
 

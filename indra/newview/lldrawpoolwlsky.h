@@ -29,7 +29,7 @@
 
 #include "lldrawpool.h"
 
-class LLShaderProgram;
+class RKShaderProgram;
 
 class LLDrawPoolWLSky : public LLDrawPool {
 public:
@@ -66,10 +66,10 @@ public:
     static void cleanupResources();
     static void restoreResources();
 private:
-    void renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, LLShaderProgram * shader) const;
+    void renderDome(const LLVector3& camPosLocal, F32 camHeightLocal, RKShaderProgram * shader) const;
 
     void renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 camHeightLocal) const;
-    void renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 camHeightLocal, LLShaderProgram* cloudshader) const;
+    void renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 camHeightLocal, RKShaderProgram* cloudshader) const;
 
     void renderStarsDeferred(const LLVector3& camPosLocal) const;
     void renderHeavenlyBodies();

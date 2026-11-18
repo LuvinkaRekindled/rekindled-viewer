@@ -133,7 +133,7 @@ void LLHUDText::render()
         // So it turns out when the LLGLDepthTest object goes out of scope, it reverts back
         // to the previous state. So by having the LLGLDepthTest in the if statements, they were
         // never applied.
-        LLRenderState::DepthScope gls_depth(mbUseHoverHighlight && mbIsHighlighted ? false : true, false);
+        RKRenderState::DepthScope gls_depth(mbUseHoverHighlight && mbIsHighlighted ? false : true, false);
         // </FS:minerjr> [FIRE-35019] </FS:minerjr> [FIRE-35102]	
         //LLGLDisable gls_stencil(GL_STENCIL_TEST);
         renderText();
@@ -148,7 +148,7 @@ void LLHUDText::renderText()
     }
 
 
-    LLRenderState::BlendScope gls_blend(true);
+    RKRenderState::BlendScope gls_blend(true);
 
     LLColor4 shadow_color(0.f, 0.f, 0.f, 1.f);
     F32 alpha_factor = 1.f;
@@ -271,7 +271,7 @@ void LLHUDText::renderText()
         LLRect screen_rect;        
         screen_rect.setCenterAndSize(0, static_cast<S32>(lltrunc(-mBackgroundHeight / 2 + mOffsetY + mBackgroundOffsetY)), // <FS:minerjr> [FIRE-35078] llSetText(...) differences in latest Nightly Builds
                                      static_cast<S32>(lltrunc(mBackgroundWidth)), static_cast<S32>(lltrunc(mBackgroundHeight))); // Added background width independent of the LLHUDTexts mWidth </FS:minerjr>
-        LLUnjitteredScope unjittered;
+        RKUnjitteredScope unjittered;
         mRoundedRectImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, screen_rect, bg_color);
     }
     // </FS:minerjr> [FIRE-35019]
@@ -761,7 +761,7 @@ void LLHUDText::renderAllHUD()
 {
 
     {
-        LLRenderState::DepthScope depth(false, false);
+        RKRenderState::DepthScope depth(false, false);
 
         VisibleTextObjectIterator text_it;
 

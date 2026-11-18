@@ -18,7 +18,7 @@
 typedef struct NVSDK_NGX_Parameter NVSDK_NGX_Parameter;
 typedef struct NVSDK_NGX_FeatureDiscoveryInfo NVSDK_NGX_FeatureDiscoveryInfo;
 
-namespace LLVkDlssNr
+namespace RKVkDlssNr
 {
     // the value of LL_VK_DLSS_NR (0 when unset): 1 probe only, 2 create and evaluate, 3 show the result
     int requested();
@@ -45,10 +45,10 @@ namespace LLVkDlssNr
 
     struct Params
     {
-        LLVk::Image* mColor = nullptr;      // the finished picture, output size, sampled
-        LLVk::Image* mDepth = nullptr;      // scene depth, render size (depth aspect)
-        LLVk::Image* mMotion = nullptr;     // motion vectors, render size, RG: previous minus current position in render pixels
-        LLVk::Image* mOutput = nullptr;     // output size, storage
+        RKVk::Image* mColor = nullptr;      // the finished picture, output size, sampled
+        RKVk::Image* mDepth = nullptr;      // scene depth, render size (depth aspect)
+        RKVk::Image* mMotion = nullptr;     // motion vectors, render size, RG: previous minus current position in render pixels
+        RKVk::Image* mOutput = nullptr;     // output size, storage
         U32 mRenderWidth = 0, mRenderHeight = 0;    // of the depth and the motion vectors
         U32 mOutputWidth = 0, mOutputHeight = 0;    // of the colour and the output
         float mMotionScaleX = 1.f, mMotionScaleY = 1.f;
@@ -61,7 +61,7 @@ namespace LLVkDlssNr
         float mStyle = 0.f, mIntensity = 1.f, mGlobalTone = 1.f, mLocalTone = 1.f, mLocalStructure = 1.f, mSkinStructure = -1.f;
     };
 
-    // Records the evaluation into 'cmd'. The images must already be in the layouts LLVkNgx::inputLayout / outputLayout name. Creates the feature on first
+    // Records the evaluation into 'cmd'. The images must already be in the layouts RKVkNgx::inputLayout / outputLayout name. Creates the feature on first
     // use and when the output size, quality or preset change (the old one is released once its frame has completed). False if anything failed; a failed
     // creation turns the feature off for the session.
     bool evaluate(VkCommandBuffer cmd, const Params& p);

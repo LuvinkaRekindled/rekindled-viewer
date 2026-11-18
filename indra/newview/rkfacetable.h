@@ -18,7 +18,7 @@
 #include "v2math.h"
 #include "llvector4a.h"
 
-struct LLFaceRow
+struct RKFaceRow
 {
     // ---- the hot slice (64 bytes): what the rebuild writes and the draw info creation, the picking and the tools read together
     LLColor4 faceColor;             // overrides material color if state has USE_FACE_COLOR
@@ -37,7 +37,7 @@ struct LLFaceRow
     U32 drawOrderIndex;             // preserves the draw order of faces that are batched together (alpha sorting of rigged attachments)
     const void* owner;
 
-    // ---- C3.3 the priority line (64 bytes): the texture system's state about this face (distance, times, pixel area, importance, the LLTexRecs record per channel)
+    // ---- C3.3 the priority line (64 bytes): the texture system's state about this face (distance, times, pixel area, importance, the RKTexRecs record per channel)
     F32 distance;
     F32 lastUpdateTime;
     F32 lastSkinTime;
@@ -47,7 +47,7 @@ struct LLFaceRow
     F32 pixelArea;                  // pixel area the face covers on screen
     F32 importanceToCamera;         // [0, 1]: from the distance to the view point and the angle from the face center to the view direction
     U32 lastTextureUpdate;          // gFrameCount the last time the face was touched by LLViewerTextureList::updateImageDecodePriority
-    U32 recIdx[7];                  // the record of this face for each texture channel in LLTexRecs (0: none); 7 = LLRender::NUM_TEXTURE_CHANNELS (static_assert in llface.cpp)
+    U32 recIdx[7];                  // the record of this face for each texture channel in RKTexRecs (0: none); 7 = LLRender::NUM_TEXTURE_CHANNELS (static_assert in llface.cpp)
 
     // ---- C3.2 the bounds group (128 bytes, 16-byte aligned): the octree, the picking and the texture priority read these together
     LLVector4a extents[2];          // bounding box of the face in drawable space
@@ -57,10 +57,10 @@ struct LLFaceRow
     LLVector2 texExtents[2];
     U8 pad2[24];
 };
-static_assert(sizeof(LLFaceRow) == 256, "four cache lines: the hot slice, the priority line, the bounds");
-static_assert(alignof(LLFaceRow) == 16, "rows are 16 byte aligned for the LLVector4a members");
-static_assert(offsetof(LLFaceRow, owner) == 56 && offsetof(LLFaceRow, distance) == 64 && offsetof(LLFaceRow, extents) == 128, "the three groups start on their lines");
+static_assert(sizeof(RKFaceRow) == 256, "four cache lines: the hot slice, the priority line, the bounds");
+static_assert(alignof(RKFaceRow) == 16, "rows are 16 byte aligned for the LLVector4a members");
+static_assert(offsetof(RKFaceRow, owner) == 56 && offsetof(RKFaceRow, distance) == 64 && offsetof(RKFaceRow, extents) == 128, "the three groups start on their lines");
 
-using LLFaceRows = LLRowTable<LLFaceRow, (1u << 20), 10>;
+using RKFaceRows = RKRowTable<RKFaceRow, (1u << 20), 10>;
 
 #endif // LL_LLFACETABLE_H

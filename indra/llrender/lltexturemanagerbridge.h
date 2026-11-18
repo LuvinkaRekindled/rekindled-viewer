@@ -36,9 +36,9 @@ class LLTextureManagerBridge
 public:
     virtual ~LLTextureManagerBridge() {}
 
-    virtual LLPointer<LLBaseTexture> getLocalTexture(bool usemipmaps = true, bool generate_gl_tex = true) = 0;
-    virtual LLPointer<LLBaseTexture> getLocalTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps, bool generate_gl_tex = true) = 0;
-    virtual LLBaseTexture* getFetchedTexture(const LLUUID &image_id) = 0;
+    virtual LLPointer<RKBaseTexture> getLocalTexture(bool usemipmaps = true, bool generate_gl_tex = true) = 0;
+    virtual LLPointer<RKBaseTexture> getLocalTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps, bool generate_gl_tex = true) = 0;
+    virtual RKBaseTexture* getFetchedTexture(const LLUUID &image_id) = 0;
 };
 
 extern LLTextureManagerBridge* gTextureManagerBridgep;

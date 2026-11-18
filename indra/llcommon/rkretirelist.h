@@ -4,7 +4,7 @@
  *
  * doc/vulkan/PLAN-clean-core.md step C2 (C2.2 for textures, C2.4 generalised). Render-side data that refers to an object by handle (a draw info, a row) owns no reference: it resolves the handle where it
  * reads. The readers run a few frames behind the main thread (the render map, the packet builders, the render worker), so an object must stay intact for the frames that could still read it after its last
- * OWNER let go. LLThreadSafeRefCount::unref() asks the virtual retireOnLastRef(); an object that takes part answers LLRetireList::park(this): it is queued with the frame number, and pump() (main thread,
+ * OWNER let go. LLThreadSafeRefCount::unref() asks the virtual retireOnLastRef(); an object that takes part answers RKRetireList::park(this): it is queued with the frame number, and pump() (main thread,
  * every frame) destroys it once it is old enough (with a time budget: a teleport can release thousands at once). What must not wait for the list is done when the object is parked (onRetire()). A parked
  * object whose reference count rose again is left alone. Only on the main thread: another thread's last unref deletes at once, as before.
  *
@@ -25,7 +25,7 @@
 #include <deque>
 #include <mutex>
 
-class LLRetireList
+class RKRetireList
 {
 public:
     static constexpr U32 kKinds = 8;            // retireKind() values (0 texture, 1 glTF material, 2 mesh skin info, 3 avatar, 4 vertex buffer; 5-7 free)

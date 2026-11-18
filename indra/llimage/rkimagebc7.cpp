@@ -93,7 +93,7 @@ bool block_harmed(const color_rgba* a, const color_rgba* b, bool has_alpha)
 }
 }
 
-namespace LLImageBC7
+namespace RKImageBC7
 {
 
 void setEnabled(bool on) { sEnabled.store(on, std::memory_order_relaxed); }
@@ -158,7 +158,7 @@ void buildChain(const U8* src, U32 width, U32 height, U32 components, std::vecto
     }
 }
 
-// LLImageTex::analyzeAlpha, line for line (the histogram of the quantised alpha plus a 2x2 box-sampled one; its three rules)
+// RKImageTex::analyzeAlpha, line for line (the histogram of the quantised alpha plus a 2x2 box-sampled one; its three rules)
 S8 classifyAlpha(const U8* data, U32 w, U32 h, U32 components)
 {
     if (components != 4 && components != 2)
@@ -240,7 +240,7 @@ LLPointer<LLImageRaw> assemble(const std::vector<std::vector<U8>>& block_levels,
     {
         return nullptr;
     }
-    // the smallest level first, the finest last (what LLImageTex::setImage(data_hasmips) reads: it walks down from the finest by subtracting each smaller level's size)
+    // the smallest level first, the finest last (what RKImageTex::setImage(data_hasmips) reads: it walks down from the finest by subtracting each smaller level's size)
     U8* p = data;
     for (size_t k = block_levels.size(); k-- > 0;)
     {

@@ -1,14 +1,14 @@
 // texcompare.frag: the absolute difference of two pictures, a channel that is under the dither picture's value (times dither_scale) set to zero (the scene monitor). A line for line translation of "Two Texture
 // Compare Shader" (interface/twotexturecompareF.glsl); pairs with texcompare.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float dither_scale;
     float dither_scale_s;
     float dither_scale_t;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_tex0;

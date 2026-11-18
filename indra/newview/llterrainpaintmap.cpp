@@ -112,15 +112,15 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     F32 ogl_matrix[16];
     camera.getOpenGLTransform(ogl_matrix);
     modelview *= glm::make_mat4(ogl_matrix);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, glm::value_ptr(modelview));
     // Override the projection matrix from the camera
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
     llassert(camera_origin.mV[VZ] >= surface.getMaxZ());
     const F32 region_high_near = camera_origin.mV[VZ] - surface.getMaxZ();
     constexpr F32 far_plane_delta = 0.25f;
     const F32 region_low_far = camera_origin.mV[VZ] - surface.getMinZ() + far_plane_delta;
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -region_half_width, region_half_width, -region_half_width, region_half_width, region_high_near, region_low_far);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, -region_half_width, region_half_width, -region_half_width, region_half_width, region_high_near, region_low_far);
     // No need to call camera.setPerspective because we don't need the clip planes. It would be inaccurate due to the perspective rendering anyway.
 
     // Need to get the full resolution vertices in order to get an accurate
@@ -134,7 +134,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     // *NOTE: The actual getTerrainGeometry fits the terrain vertices snugly
     // under the 16-bit indices limit. For the sake of simplicity, that has not
     // been replicated here.
-    std::vector<LLPointer<LLDrawBatch>> infos;
+    std::vector<LLPointer<RKDrawBatch>> infos;
     // Vertex and index counts adapted from LLVOSurfacePatch::getGeomSizesMain,
     // with additional vertices added as we are including the north and east
     // edges here.
@@ -145,7 +145,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     const U32 ni = 6 * (vert_size - 1) * (vert_size - 1);
     const U32 region_vertices = n * patch_count * patch_count;
     const U32 region_indices = ni * patch_count * patch_count;
-    if (LLShaderProgram::sCurBoundShaderPtr == nullptr)
+    if (RKShaderProgram::sCurBoundShaderPtr == nullptr)
     { // make sure a shader is bound to satisfy mVertexBuffer->setBuffer
         gDebugProgram.bind();
     }
@@ -219,17 +219,17 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
     // Draw the region in agent space at full resolution
     {
 
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
         // *NOTE: A theoretical non-PBR terrain bake program would be
         // *slightly* different, due the texture terrain shader not having an
         // alpha ramp threshold (TERRAIN_RAMP_MIX_THRESHOLD)
-        LLShaderProgram& shader = gPBRTerrainBakeProgram;
+        RKShaderProgram& shader = gPBRTerrainBakeProgram;
         shader.bind();
 
-        LLRenderState::StencilScope stencil(false);
-        LLRenderState::ScissorScope scissor(false);
-        LLRenderState::CullScope cull_face(true);
-        LLRenderState::DepthScope depth_test(false, false, LLRenderState::CompareOp::Always);
+        RKRenderState::StencilScope stencil(false);
+        RKRenderState::ScissorScope scissor(false);
+        RKRenderState::CullScope cull_face(true);
+        RKRenderState::DepthScope depth_test(false, false, RKRenderState::CompareOp::Always);
 
         S32 alpha_ramp = shader.enableTexture(LLViewerShaderMgr::TERRAIN_ALPHARAMP);
         LLPointer<LLViewerTexture> alpha_ramp_texture = LLViewerTextureManager::getFetchedTexture(IMG_ALPHA_GRAD_2D);
@@ -258,7 +258,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
         shader.unbind();
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
     gRender.flush();
     LLVertexBuffer::unbind();
@@ -272,7 +272,7 @@ bool LLTerrainPaintMap::bakeHeightNoiseIntoPBRPaintMapRGB(const LLViewerRegion& 
 
     pass_91.end();
 
-    LLShaderProgram::unbind();
+    RKShaderProgram::unbind();
 
     return success;
 }

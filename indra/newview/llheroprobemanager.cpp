@@ -479,17 +479,17 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
     const S32 destIdx = probe->mCubeIndex;
 
     gRender.setColorMask(true, true);
-    LLRenderState::DepthScope depth(false, false);
-    LLRenderState::CullScope cull(false);
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::DepthScope depth(false, false);
+    RKRenderState::CullScope cull(false);
+    RKRenderState::BlendScope blend(false);
 
     // downsample to placeholder map
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
 
         gRender.flush();
         U32 res = mProbeResolution * 2;
@@ -570,8 +570,8 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             }
         }
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         gRender.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();

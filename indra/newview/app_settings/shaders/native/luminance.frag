@@ -5,12 +5,12 @@
 #define GBUFFER_FLAG_HAS_HDRI     1.0
 #define GET_GBUFFER_FLAG(data, flag)    (abs(data-flag)< 0.1)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float diffuse_luminance_scale;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_emissiveRect;

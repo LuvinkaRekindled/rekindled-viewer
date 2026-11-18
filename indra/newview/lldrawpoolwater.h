@@ -33,7 +33,7 @@
 class LLFace;
 class LLHeavenBody;
 class LLWaterSurface;
-class LLShaderProgram;
+class RKShaderProgram;
 
 class LLDrawPoolWater final: public LLFacePool
 {

@@ -1,6 +1,6 @@
 // reflectionmip.frag: a texture's colour with alpha 0 (a mip step of the probe blur). A line for line translation of "Reflection Mip Shader" (interface/reflectionmipF.glsl); pairs with reflectionmip.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_diffuseRect;

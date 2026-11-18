@@ -24,7 +24,7 @@
 #include <cstring>
 
 template <typename T, U32 INDEX_BITS = 18>
-class LLHandleTable
+class RKHandleTable
 {
 public:
     static_assert(INDEX_BITS >= 8 && INDEX_BITS <= 24, "index bits");

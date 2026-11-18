@@ -2,7 +2,7 @@
  * @file rkasyncpool.h
  * @brief Non-blocking worker pool for pure builders (see doc/vulkan/F2-start.md, "how parallel recording is made safe")
  *
- * LLForkJoinPool::run() blocks the caller until everything is done. This pool does not: submit() queues a job and returns at once; the thread that needs the result calls
+ * RKForkJoinPool::run() blocks the caller until everything is done. This pool does not: submit() queues a job and returns at once; the thread that needs the result calls
  * Job::wait(). A job that no worker has started yet is run by the waiting thread itself (so a wait never idles behind a queue, and with no workers at all every job simply runs
  * at its wait()). A job writes only its own output and reads only what nobody changes until the wait (that is the builders' contract); the wait is the join: everything the job wrote is
  * visible to the waiter afterwards.
@@ -36,7 +36,7 @@
 #include <thread>
 #include <vector>
 
-class LLAsyncPool
+class RKAsyncPool
 {
 public:
     class Job
@@ -78,7 +78,7 @@ public:
         long long waitedNs() const { return mWaitedNs; }
 
     private:
-        friend class LLAsyncPool;
+        friend class RKAsyncPool;
         enum { QUEUED = 0, RUNNING = 1, DONE = 2 };
 
         // a worker takes it if the waiter has not
@@ -117,7 +117,7 @@ public:
     // when set, jobs are not handed to the workers: each runs on the thread that waits for it (a live switch, see FSAsyncBuilders)
     static inline std::atomic<bool> sRunInline{false};
 
-    explicit LLAsyncPool(unsigned num_workers)
+    explicit RKAsyncPool(unsigned num_workers)
     {
         for (unsigned i = 0; i < num_workers; ++i)
         {
@@ -125,7 +125,7 @@ public:
         }
     }
 
-    ~LLAsyncPool()
+    ~RKAsyncPool()
     {
         {
             std::lock_guard<std::mutex> lock(mMutex);
@@ -184,16 +184,16 @@ public:
     }
 
     // the pool the builders share: LL_VK_BUILDER_THREADS workers (default 2; 0 = every job runs at its wait(), on the thread that waits)
-    static LLAsyncPool& shared()
+    static RKAsyncPool& shared()
     {
-        static LLAsyncPool* pool = []()
+        static RKAsyncPool* pool = []()
         {
             unsigned n = 2;
             if (const char* e = getenv("LL_VK_BUILDER_THREADS"))
             {
                 n = (unsigned)atoi(e);
             }
-            return new LLAsyncPool(n);
+            return new RKAsyncPool(n);
         }();
         return *pool;
     }
@@ -230,7 +230,7 @@ private:
 // What a pure builder reads (a group's draw infos, its vertex buffers) must not change under it. The few places that change them call beforeMutation() first: it waits for
 // every builder in flight, and when the render map of the main view is live (made by the early sort and not yet drawn) it counts a change of what that map points to, so the
 // frame can sort again instead of drawing from a map with freed entries.
-struct LLBuilderGuard
+struct RKBuilderGuard
 {
     static inline std::atomic<bool> sMainMapLive{false};
     static inline std::atomic<unsigned> sEpoch{0};
@@ -239,7 +239,7 @@ struct LLBuilderGuard
     // 'in_main_map': the thing about to change is part of the main view's render map
     static void beforeMutation(bool in_main_map)
     {
-        LLAsyncPool& pool = LLAsyncPool::shared();
+        RKAsyncPool& pool = RKAsyncPool::shared();
         if (pool.anyPending())
         {
             pool.quiesce();

@@ -7,7 +7,7 @@
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     vec2 screen_res;
@@ -15,7 +15,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float pen_lod;              // a bias in mip levels on the taps' level
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_lightMap;        // r: the sun shadow (the hard answer of the centre ray), g: SSAO, b and a: the spot shadows
     uint ll_ti_depthMap;

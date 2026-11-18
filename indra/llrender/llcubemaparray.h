@@ -74,7 +74,7 @@ public:
 protected:
     friend class LLTexUnit;
     ~LLCubeMapArray();
-    LLPointer<LLImageTex> mImage;
+    LLPointer<RKImageTex> mImage;
     U32 mWidth = 0;
     U32 mCount = 0;
     S32 mTextureStage;

@@ -48,7 +48,7 @@
 constexpr F32 MIN_VRAM_BUDGET = 768.f; // <FS:Ansariel> Expose max texture VRAM setting
 
 class LLFace;
-class LLImageTex ;
+class RKImageTex ;
 class LLImageRaw;
 class LLViewerObject;
 class LLViewerTexture;
@@ -96,22 +96,22 @@ public:
 class LLTextureBar;
 
 class LLViewerTexture;
-using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handles of viewer textures (rkhandletable.h)
+using RKTexHandles = RKHandleTable<LLViewerTexture>;       // <FS> C2: the handles of viewer textures (rkhandletable.h)
 
 // <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): the retire list. A texture whose last counted reference goes is not deleted at once: it is parked here and destroyed a few frames later,
 // so that anything that still READS it through a handle (the render map, the packet builders, the render worker, a few frames behind the main thread) finds it intact. What must not wait
 // for the list (the fetch request, the texture lists) is done when the texture is parked (onRetire). A parked texture whose reference count rose again in the meantime is left alone.
 // LL_VK_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
-// <FS> C2.4: the list itself is generic now (llcommon/rkretirelist.h, LLRetireList, shared with the glTF materials); this is what is texture specific: the pump and the shutdown call it, the counter and the log line are ours
-class LLTexRetire
+// <FS> C2.4: the list itself is generic now (llcommon/rkretirelist.h, RKRetireList, shared with the glTF materials); this is what is texture specific: the pump and the shutdown call it, the counter and the log line are ours
+class RKTexRetire
 {
 public:
-    static void pump();                              // main thread, every frame: LLRetireList::pump() and the texture handle log
-    static void shutdown();                          // main thread: LLRetireList::shutdown()
+    static void pump();                              // main thread, every frame: RKRetireList::pump() and the texture handle log
+    static void shutdown();                          // main thread: RKRetireList::shutdown()
     static std::atomic<U64> sResolvedParked;         // handle resolutions that returned a parked texture (the reads the list exists for)
 };
 
-class LLViewerTexture : public LLBaseTexture
+class LLViewerTexture : public RKBaseTexture
 {
 public:
     enum
@@ -251,16 +251,16 @@ public:
     bool mWakeQueued = false;
     S32 mListIndex = -1;
     U32 mLastWakeFrame = 0;
-    U32 mRecSlot = 0;       // <FS> its slot in LLTexRecs (generation << 24 | index; 0: none)
+    U32 mRecSlot = 0;       // <FS> its slot in RKTexRecs (generation << 24 | index; 0: none)
     // <FS> C2 (doc/vulkan/PLAN-clean-core.md): a stable handle that render-side data (faces, draw infos, rows) can hold instead of a counted pointer; made on the first ask, given back in the destructor.
-    // LLTexHandles::resolve(handle) gives this texture back from any thread while it lives, nullptr after. 0 = none yet (or the table is full)
+    // RKTexHandles::resolve(handle) gives this texture back from any thread while it lives, nullptr after. 0 = none yet (or the table is full)
     U32 getRenderHandle();
     static LLViewerTexture* fromRenderHandle(U32 handle);
     std::atomic<U32> mRenderHandle{0};
-    // <FS> C2.2: the last unref parks the texture in the retire list (LLTexRetire); onRetire is what must happen at that moment, not later
+    // <FS> C2.2: the last unref parks the texture in the retire list (RKTexRetire); onRetire is what must happen at that moment, not later
     /*virtual*/ bool retireOnLastRef() const override;
     void wakeForList() const;
-    void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, LLTexRecs tells its worker
+    void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, RKTexRecs tells its worker
     void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }
 protected:
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
@@ -325,25 +325,25 @@ enum FTType
 const std::string& fttype_to_string(const FTType& fttype);
 
 // <FS> C2.3 (doc/vulkan/PLAN-clean-core.md section 7): a texture reference that is a handle, not a counted pointer. It holds no reference count and owns nothing: the texture's owners (the faces, the
-// texture lists) keep it alive, and the retire list (LLTexRetire) keeps it intact for the frames that could still read it after the last owner let go. It reads like the LLPointer it replaces
+// texture lists) keep it alive, and the retire list (RKTexRetire) keeps it intact for the frames that could still read it after the last owner let go. It reads like the LLPointer it replaces
 // (get(), ->, *, conversion to a pointer, isNull / notNull, comparison through the pointer); get() resolves the handle each time. A handle whose texture is gone answers the default image (never
 // nullptr while a texture was assigned), and counts it (sDeadResolved, logged with the retire list): in a healthy run it stays 0.
-class LLTexRef
+class RKTexRef
 {
 public:
-    LLTexRef() = default;
-    LLTexRef(std::nullptr_t) {}
-    LLTexRef(LLViewerTexture* tex) : mHandle(tex ? tex->getRenderHandle() : 0) {}
+    RKTexRef() = default;
+    RKTexRef(std::nullptr_t) {}
+    RKTexRef(LLViewerTexture* tex) : mHandle(tex ? tex->getRenderHandle() : 0) {}
     template <class U, class = std::enable_if_t<std::is_base_of<LLViewerTexture, U>::value>>
-    LLTexRef(const LLPointer<U>& p) : LLTexRef(static_cast<LLViewerTexture*>(p.get())) {}
-    LLTexRef& operator=(LLViewerTexture* tex) { mHandle = tex ? tex->getRenderHandle() : 0; return *this; }
+    RKTexRef(const LLPointer<U>& p) : RKTexRef(static_cast<LLViewerTexture*>(p.get())) {}
+    RKTexRef& operator=(LLViewerTexture* tex) { mHandle = tex ? tex->getRenderHandle() : 0; return *this; }
     template <class U, class = std::enable_if_t<std::is_base_of<LLViewerTexture, U>::value>>
-    LLTexRef& operator=(const LLPointer<U>& p) { return *this = static_cast<LLViewerTexture*>(p.get()); }
+    RKTexRef& operator=(const LLPointer<U>& p) { return *this = static_cast<LLViewerTexture*>(p.get()); }
 
     LLViewerTexture* get() const
     {
         if (!mHandle) return nullptr;
-        LLViewerTexture* tex = LLTexHandles::resolve(mHandle);
+        LLViewerTexture* tex = RKTexHandles::resolve(mHandle);
         return tex ? tex : deadTexture();
     }
     operator LLViewerTexture*() const { return get(); }
@@ -668,7 +668,7 @@ protected:
     /*virtual*/ ~LLViewerMediaTexture() ;
 
 public:
-    LLViewerMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
+    LLViewerMediaTexture(const LLUUID& id, bool usemipmaps = true, RKImageTex* gl_image = NULL) ;
 
     /*virtual*/ S8 getType() const;
     void reinit(bool usemipmaps = true);
@@ -747,12 +747,12 @@ public:
     static LLViewerFetchedTexture*    findFetchedTexture(const LLUUID& id, S32 tex_type);
     static LLViewerMediaTexture*      findMediaTexture(const LLUUID& id) ;
 
-    static LLViewerMediaTexture*      createMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
+    static LLViewerMediaTexture*      createMediaTexture(const LLUUID& id, bool usemipmaps = true, RKImageTex* gl_image = NULL) ;
 
     //
     //"get-texture" will create a new texture if the texture does not exist.
     //
-    static LLViewerMediaTexture*      getMediaTexture(const LLUUID& id, bool usemipmaps = true, LLImageTex* gl_image = NULL) ;
+    static LLViewerMediaTexture*      getMediaTexture(const LLUUID& id, bool usemipmaps = true, RKImageTex* gl_image = NULL) ;
 
     static LLPointer<LLViewerTexture> getLocalTexture(bool usemipmaps = true, bool generate_gl_tex = true);
     static LLPointer<LLViewerTexture> getLocalTexture(const LLUUID& id, bool usemipmaps, bool generate_gl_tex = true) ;
@@ -764,7 +764,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTexture(const LLUUID &image_id,
                                      FTType f_type = FTT_DEFAULT,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -774,7 +774,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTextureFromFile(const std::string& filename,
                                      FTType f_type = FTT_LOCAL_FILE,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,
@@ -784,7 +784,7 @@ public:
     static LLViewerFetchedTexture* getFetchedTextureFromUrl(const std::string& url,
                                      FTType f_type,
                                      bool usemipmap = true,
-                                     LLViewerTexture::EBoostLevel boost_priority = LLBaseTexture::BOOST_NONE,
+                                     LLViewerTexture::EBoostLevel boost_priority = RKBaseTexture::BOOST_NONE,
                                      S8 texture_type = LLViewerTexture::FETCHED_TEXTURE,
                                      TexelFormat internal_format = TexelFormat::None,
                                      PixelFormat primary_format = PixelFormat::None,

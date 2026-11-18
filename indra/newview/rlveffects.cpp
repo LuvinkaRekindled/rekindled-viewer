@@ -104,9 +104,9 @@ void RlvOverlayEffect::setImage(const LLUUID& idTexture)
         return;
 
     clearImage();
-    m_pImage = LLViewerTextureManager::getFetchedTexture(idTexture, FTT_DEFAULT, MIPMAP_YES, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    m_pImage = LLViewerTextureManager::getFetchedTexture(idTexture, FTT_DEFAULT, MIPMAP_YES, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     m_nImageOrigBoost = m_pImage->getBoostLevel();
-    m_pImage->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
+    m_pImage->setBoostLevel(RKBaseTexture::BOOST_PREVIEW);
     m_pImage->forceToSaveRawImage(0);
 }
 
@@ -122,12 +122,12 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
         m_pImage->addTextureStats((F32)(nWidth * nHeight));
         m_pImage->setKnownDrawSize(nWidth, nHeight);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderPresetUIDefault glsUI;
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderPresetUIDefault glsUI;
         gViewerWindow->setup2DRender();
 
         const LLVector2& displayScale = gViewerWindow->getDisplayScale();
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, displayScale.mV[VX], displayScale.mV[VY], 1.f);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, displayScale.mV[VX], displayScale.mV[VY], 1.f);
 
         gRender.getTexUnit(0)->bind(m_pImage);
         const LLColor3 col = m_Color.get();
@@ -137,7 +137,7 @@ void RlvOverlayEffect::run(const LLVisualEffectParams*)
 
         gRender.getTexUnit(0)->bindWhite();
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         gRender.flush();
         gViewerWindow->setup3DRender();
 
@@ -296,7 +296,7 @@ ERlvCmdRet RlvSphereEffect::onValueMaxChanged(const LLUUID& idRlvObj, const boos
     return RLV_RET_SUCCESS;
 }
 
-void RlvSphereEffect::setShaderUniforms(LLShaderProgram* pShader)
+void RlvSphereEffect::setShaderUniforms(RKShaderProgram* pShader)
 {
     pShader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)gPipeline.mRT->screen.getWidth(), (F32)gPipeline.mRT->screen.getHeight());
     pShader->uniform1i(LLShaderMgr::RLV_EFFECT_MODE, llclamp((int)m_eMode, 0, (int)ESphereMode::Count));
@@ -331,7 +331,7 @@ void RlvSphereEffect::setShaderUniforms(LLShaderProgram* pShader)
     pShader->uniform4fv(LLShaderMgr::RLV_EFFECT_PARAM4, 1, glm::value_ptr(effectParams));
 }
 
-void RlvSphereEffect::renderPass(LLShaderProgram* pShader, const LLShaderEffectParams* pParams) const
+void RlvSphereEffect::renderPass(RKShaderProgram* pShader, const LLShaderEffectParams* pParams) const
 {
     RenderPassScope pass;       // F3.5b: only when there is a destination buffer
     if (pParams->m_pDstBuffer)
@@ -377,7 +377,7 @@ void RlvSphereEffect::run(const LLVisualEffectParams* pParams)
     LL_RECORD_BLOCK_TIME(FTM_RLV_EFFECT_SPHERE);
     if (gRlvSphereProgram.isComplete())
     {
-        LLRenderState::DepthScope depth(false, false);
+        RKRenderState::DepthScope depth(false, false);
 
         gRlvSphereProgram.bind();
         setShaderUniforms(&gRlvSphereProgram);

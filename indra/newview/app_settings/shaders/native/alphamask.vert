@@ -1,7 +1,7 @@
 // alphamask.vert: the alpha mask of the avatar's baked texture layers (LLTexLayer: the layers' shapes drawn into the bake, the vertex colour times the texture, thrown away under a minimum alpha). A line for
 // line translation of "Alpha Mask Shader" (interface/alphamaskV.glsl); pairs with alphamask.frag. (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;

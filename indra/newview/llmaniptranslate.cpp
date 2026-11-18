@@ -271,7 +271,7 @@ void LLManipTranslate::restoreResources()
                 }
             }
         }
-        LLImageTex::setManualImage(sGridTex->getTexName(), TextureTarget::Tex2D, mip, TexelFormat::RGBA8, rez, rez, PixelFormat::RGBA, ComponentType::U8, d);
+        RKImageTex::setManualImage(sGridTex->getTexName(), TextureTarget::Tex2D, mip, TexelFormat::RGBA8, rez, rez, PixelFormat::RGBA, ComponentType::U8, d);
         rez = rez >> 1;
         mip++;
     }
@@ -1090,14 +1090,14 @@ bool LLManipTranslate::handleMouseUp(S32 x, S32 y, MASK mask)
 
 void LLManipTranslate::render()
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
     {
         F32 zoom = gAgentCamera.mHUDCurZoom;
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
     }
     {
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
         renderGuidelines();
     }
     {
@@ -1105,7 +1105,7 @@ void LLManipTranslate::render()
         renderTranslationHandles();
         renderSnapGuides();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     renderText();
 }
@@ -1121,8 +1121,8 @@ void LLManipTranslate::renderSnapGuides()
     F32 line_alpha = gSavedSettings.getF32("GridOpacity");
 
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::CullScope gls_cull(false);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::CullScope gls_cull(false);
     LLVector3 translate_axis;
 
     if (mManipPart == LL_NO_PART)
@@ -1284,12 +1284,12 @@ void LLManipTranslate::renderSnapGuides()
         S32 sub_div_offset = ll_round(fmodf(dist_grid_axis - offset_nearest_grid_unit, getMinGridScale() / sGridMinSubdivisionLevel) / smallest_grid_unit_scale);
         S32 num_ticks_per_side = llmax(1, llfloor(0.5f * guide_size_meters / smallest_grid_unit_scale));
 
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
 
         for (S32 pass = 0; pass < 3; pass++)
         {
             LLColor4 line_color = setupSnapGuideRenderPass(pass);
-            LLRenderState::DepthScope gls_depth(pass != 1);
+            RKRenderState::DepthScope gls_depth(pass != 1);
 
             gRender.begin(LLRender::LINES);
             {
@@ -1531,17 +1531,17 @@ void LLManipTranslate::renderSnapGuides()
 
         gRender.getTexUnit(0)->bindWhite();
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
         F32 x,y,z,angle_radians;
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
-        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
+        RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
         F32 sz = mGridSizeMeters;
         F32 tiles = sz;
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Texture0);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Texture0);
         usc = 1.0f/usc;
         vsc = 1.0f/vsc;
 
@@ -1554,19 +1554,19 @@ void LLManipTranslate::renderSnapGuides()
             vsc *= 0.5f;
         }
 
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Texture0, usc, vsc, 1.0f);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Texture0, u, v, 0);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Texture0, usc, vsc, 1.0f);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Texture0, u, v, 0);
 
         float a = line_alpha;
 
         {
             //draw grid behind objects
-            LLRenderState::DepthScope gls_depth(true, false);
+            RKRenderState::DepthScope gls_depth(true, false);
 
             {
                 //LLGLDisable stencil(GL_STENCIL_TEST);
                 {
-                    LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::Greater);
+                    RKRenderState::DepthScope gls_depth(true, false, RKRenderState::CompareOp::Greater);
                     gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
                     gRender.flush();
                     gRender.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
@@ -1584,17 +1584,17 @@ void LLManipTranslate::renderSnapGuides()
                     gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, getGridTexName());
                     renderGrid(u,v,tiles,1,1,1,a);
 
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Texture0);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
 
                 {
-                    LLRenderState::DepthScope gls_depth(true, false);
+                    RKRenderState::DepthScope gls_depth(true, false);
                     renderGuidelines();
                 }
 
                 {
-                    LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::Greater);
+                    RKRenderState::DepthScope gls_depth(true, false, RKRenderState::CompareOp::Greater);
                     gRender.flush();
 
                     switch (mManipPart)
@@ -1678,7 +1678,7 @@ void LLManipTranslate::renderTranslationHandles()
     LLVector3 grid_origin;
     LLVector3 grid_scale;
     LLQuaternion grid_rotation;
-    LLRenderState::DepthScope gls_depth(false);
+    RKRenderState::DepthScope gls_depth(false);
 
     LLSelectMgr::getInstance()->getGrid(grid_origin, grid_rotation, grid_scale);
     LLVector3 at_axis;
@@ -1769,14 +1769,14 @@ void LLManipTranslate::renderTranslationHandles()
     mGridSizeMeters = gSavedSettings.getF32("GridDrawSize");
     mConeSize = mArrowLengthMeters / 4.f;
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, selection_center.mV[VX], selection_center.mV[VY], selection_center.mV[VZ]);
 
         F32 angle_radians, x, y, z;
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
 
-        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+        RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
         LLQuaternion invRotation = grid_rotation;
         invRotation.conjQuat();
@@ -1795,7 +1795,7 @@ void LLManipTranslate::renderTranslationHandles()
 
         {
             gRender.getTexUnit(0)->bindWhite();
-            LLRenderState::CullScope cull_face(false);
+            RKRenderState::CullScope cull_face(false);
 
             LLColor4 color1;
             LLColor4 color2;
@@ -1823,10 +1823,10 @@ void LLManipTranslate::renderTranslationHandles()
             if ((mManipPart == LL_NO_PART || mManipPart == LL_YZ_PLANE) && llabs(relative_camera_dir.mV[VX]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render YZ plane manipulator
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
-                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VX], mPlaneScales.mV[VX], mPlaneScales.mV[VX]);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, 0.f, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneScales.mV[VX], mPlaneScales.mV[VX], mPlaneScales.mV[VX]);
                 if (mHighlightedPart == LL_YZ_PLANE)
                 {
                     // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -1879,16 +1879,16 @@ void LLManipTranslate::renderTranslationHandles()
                 }
                 gRender.end();
                 LLUI::setLineWidth(1.0f);
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
 
             if ((mManipPart == LL_NO_PART || mManipPart == LL_XZ_PLANE) && llabs(relative_camera_dir.mV[VY]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render XZ plane manipulator
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
-                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, 0.f, mPlaneManipOffsetMeters);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VY], mPlaneScales.mV[VY], mPlaneScales.mV[VY]);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, 0.f, mPlaneManipOffsetMeters);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneScales.mV[VY], mPlaneScales.mV[VY], mPlaneScales.mV[VY]);
                 if (mHighlightedPart == LL_XZ_PLANE)
                 {
                     // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -1943,14 +1943,14 @@ void LLManipTranslate::renderTranslationHandles()
                 gRender.end();
                 LLUI::setLineWidth(1.0f);
 
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
 
             if ((mManipPart == LL_NO_PART || mManipPart == LL_XY_PLANE) && llabs(relative_camera_dir.mV[VZ]) > MIN_PLANE_MANIP_DOT_PRODUCT)
             {
                 // render XY plane manipulator
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneManipPositions.mV[VX], mPlaneManipPositions.mV[VY], mPlaneManipPositions.mV[VZ]);
 
 /*                            Y
                               ^
@@ -1963,19 +1963,19 @@ void LLManipTranslate::renderTranslationHandles()
                     LLVector3 v0,v1,v2,v3;
 #if 0
                     // This should theoretically work but looks off; could be tuned later -SJB
-                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, -mPlaneManipOffsetMeters, -mPlaneManipOffsetMeters, 0.f);
+                    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, -mPlaneManipOffsetMeters, -mPlaneManipOffsetMeters, 0.f);
                     v0 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), 0.f);
                     v1 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.75f), 0.f);
                     v2 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f);
                     v3 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.75f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f);
 #else
-                    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters, 0.f);
+                    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, mPlaneManipOffsetMeters, mPlaneManipOffsetMeters, 0.f);
                     v0 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.25f), 0.f);
                     v1 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), 0.f);
                     v2 = LLVector3(mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), 0.f);
                     v3 = LLVector3(mPlaneManipOffsetMeters * (-PLANE_TICK_SIZE * 0.75f), mPlaneManipOffsetMeters * ( PLANE_TICK_SIZE * 0.25f), 0.f);
 #endif
-                    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mPlaneScales.mV[VZ], mPlaneScales.mV[VZ], mPlaneScales.mV[VZ]);
+                    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mPlaneScales.mV[VZ], mPlaneScales.mV[VZ], mPlaneScales.mV[VZ]);
                     if (mHighlightedPart == LL_XY_PLANE)
                     {
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -2032,7 +2032,7 @@ void LLManipTranslate::renderTranslationHandles()
                     gRender.end();
                     LLUI::setLineWidth(1.0f);
 
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
         {
@@ -2104,19 +2104,19 @@ void LLManipTranslate::renderTranslationHandles()
             }
         }
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 
 void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_size, F32 arrow_size, F32 handle_size, bool reverse_direction)
 {
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::BlendScope gls_blend(true);
+    RKRenderState::BlendScope gls_blend(true);
 
     for (S32 pass = 1; pass <= 2; pass++)
     {
-        LLRenderState::DepthScope gls_depth(true, false, pass == 1 ? LLRenderState::CompareOp::LessEqual : LLRenderState::CompareOp::Greater);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderState::DepthScope gls_depth(true, false, pass == 1 ? RKRenderState::CompareOp::LessEqual : RKRenderState::CompareOp::Greater);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
         S32 index = 0;
 
@@ -2174,8 +2174,8 @@ void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_
             LLUI::setLineWidth(1.0f);
         }
 
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, vec.mV[0], vec.mV[1], vec.mV[2]);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, handle_size, handle_size, handle_size);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, vec.mV[0], vec.mV[1], vec.mV[2]);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, handle_size, handle_size, handle_size);
 
         F32 rot = 0.0f;
         LLVector3 axis;
@@ -2200,12 +2200,12 @@ void LLManipTranslate::renderArrow(S32 which_arrow, S32 selected_arrow, F32 box_
         }
 
         gRender.diffuseColor4fv(color.mV);
-        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, rot, axis.mV[0], axis.mV[1], axis.mV[2]);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mArrowScales.mV[index], mArrowScales.mV[index], mArrowScales.mV[index] * 1.5f);
+        RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, rot, axis.mV[0], axis.mV[1], axis.mV[2]);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mArrowScales.mV[index], mArrowScales.mV[index], mArrowScales.mV[index] * 1.5f);
 
         gCone.render();
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 

@@ -2,7 +2,7 @@
 // maximum). A translation of "Glow Extract Shader (Post)" and "... (+Noise)" (effects/glowExtractF.glsl, HAS_NOISE for the dithered one); pairs with fullscreen.vert.
 // What is different: only the term that counts is made (warmthAmount is 0 unless the user asks for the warmth: mix(lum, warmth, 0) is the luminance, and mix(lum, warmth, 1) the warmth).
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
 #ifdef HAS_NOISE
     vec2 screen_res;
@@ -14,7 +14,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float warmthAmount;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;
 #ifdef HAS_NOISE

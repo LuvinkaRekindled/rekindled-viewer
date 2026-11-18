@@ -93,12 +93,12 @@ public:
 typedef std::list<LLVertexBufferData> buffer_data_list_t;
 
 class LLVertexBuffer;
-using LLVBHandles = LLHandleTable<LLVertexBuffer>;       // <FS> C3.5: the handles of vertex buffers (rkhandletable.h)
+using RKVBHandles = RKHandleTable<LLVertexBuffer>;       // <FS> C3.5: the handles of vertex buffers (rkhandletable.h)
 
 class LLVertexBuffer final : public LLRefCount
 {
 public:
-    // <FS> C3.5 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLVBRef, below) and the retire list (llcommon/rkretirelist.h, kind 4): the last owner letting go parks the buffer for
+    // <FS> C3.5 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (RKVBRef, below) and the retire list (llcommon/rkretirelist.h, kind 4): the last owner letting go parks the buffer for
     // a few frames, so a draw info that still reads it through its handle finds it intact. Only on the main thread: another thread's last unref deletes at once, as before.
     U32 getRenderHandle() const;
     /*virtual*/ bool retireOnLastRef() const override;
@@ -380,27 +380,27 @@ public:
 
 
 
-// <FS> C3.5: a vertex buffer reference that is a handle, not a counted pointer (the buffer counterpart of LLTexRef, LLGLTFMatRef, LLSkinRef, LLAvatarRef). It holds no reference count and owns nothing: the owners
+// <FS> C3.5: a vertex buffer reference that is a handle, not a counted pointer (the buffer counterpart of RKTexRef, RKGLTFMatRef, RKSkinRef, RKAvatarRef). It holds no reference count and owns nothing: the owners
 // (the group, the face) keep the buffer alive and the retire list keeps it intact for the frames that could still read it after the last owner let go. It reads like the LLPointer it replaces (get(), ->, *,
 // conversion to a pointer, isNull / notNull, explicit bool). get() resolves the handle each time; a buffer that is gone answers an EMPTY buffer (no vertices, no GPU buffer: every user already skips a buffer
 // without an id) and counts it (sDeadResolved, in the retire log line: healthy runs 0).
-class LLVBRef
+class RKVBRef
 {
 public:
-    LLVBRef() = default;
-    LLVBRef(std::nullptr_t) {}
-    LLVBRef(LLVertexBuffer* vb) : mHandle(vb ? vb->getRenderHandle() : 0) {}
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLVBRef>::value && !std::is_convertible<P, LLVertexBuffer*>::value, decltype(std::declval<const P&>().get())>>
-    LLVBRef(const P& p) : LLVBRef(static_cast<LLVertexBuffer*>(p.get())) {}
-    LLVBRef& operator=(LLVertexBuffer* vb) { mHandle = vb ? vb->getRenderHandle() : 0; return *this; }
-    LLVBRef& operator=(std::nullptr_t) { mHandle = 0; return *this; }
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLVBRef>::value && !std::is_convertible<P, LLVertexBuffer*>::value, decltype(std::declval<const P&>().get())>>
-    LLVBRef& operator=(const P& p) { return *this = static_cast<LLVertexBuffer*>(p.get()); }
+    RKVBRef() = default;
+    RKVBRef(std::nullptr_t) {}
+    RKVBRef(LLVertexBuffer* vb) : mHandle(vb ? vb->getRenderHandle() : 0) {}
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKVBRef>::value && !std::is_convertible<P, LLVertexBuffer*>::value, decltype(std::declval<const P&>().get())>>
+    RKVBRef(const P& p) : RKVBRef(static_cast<LLVertexBuffer*>(p.get())) {}
+    RKVBRef& operator=(LLVertexBuffer* vb) { mHandle = vb ? vb->getRenderHandle() : 0; return *this; }
+    RKVBRef& operator=(std::nullptr_t) { mHandle = 0; return *this; }
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKVBRef>::value && !std::is_convertible<P, LLVertexBuffer*>::value, decltype(std::declval<const P&>().get())>>
+    RKVBRef& operator=(const P& p) { return *this = static_cast<LLVertexBuffer*>(p.get()); }
 
     LLVertexBuffer* get() const
     {
         if (!mHandle) return nullptr;
-        LLVertexBuffer* vb = LLVBHandles::resolve(mHandle);
+        LLVertexBuffer* vb = RKVBHandles::resolve(mHandle);
         return vb ? vb : deadBuffer();
     }
     operator LLVertexBuffer*() const { return get(); }

@@ -1,7 +1,7 @@
 // resolve_pass.inc: the loose uniform blocks of the native lighting resolve (resolve.frag). Every name and type is the one the viewer's soften program uses: the renderer copies the values by name when the native
 // program stands in (Program::adoptFrom). Defines of the manifest line: RESOLVE_PASS, ALPHA_PROBES (the probe block below); the viewer's own HAS_EMISSIVE, SSR, REFMAP_LEVEL, REF_SAMPLE_COUNT, HERO_PROBES.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     vec2 screen_res;
@@ -59,7 +59,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 
 #include "lib/probe_block.glsl"
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_specularRect;

@@ -6,11 +6,11 @@
 #ifndef LL_LLVKZONES_H
 #define LL_LLVKZONES_H
 
-namespace LLVkZones
+namespace RKVkZones
 {
     // true on the thread that writes the Vulkan command queue while the Vulkan worker runs
     bool available();
-    // a named GPU zone begins (name) / ends (name ignored) at this point of the frame; see LLVkAsync::gpuZone
+    // a named GPU zone begins (name) / ends (name ignored) at this point of the frame; see RKVkAsync::gpuZone
     void zone(const char* name, bool begin);
 }
 

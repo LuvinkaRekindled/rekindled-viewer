@@ -2414,7 +2414,7 @@ void RlvBehaviourModifierHandler<RLV_MODIFIER_SETCAM_TEXTURE>::onValueChange() c
         if (pBhvrModifier->hasValue())
         {
             RLV_INFOS << "Toggling diffuse textures for @setcam_textures" << RLV_ENDL;
-            LLViewerFetchedTexture::sDefaultDiffuseImagep = LLViewerTextureManager::getFetchedTexture(pBhvrModifier->getValue<LLUUID>(), FTT_DEFAULT, MIPMAP_YES, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+            LLViewerFetchedTexture::sDefaultDiffuseImagep = LLViewerTextureManager::getFetchedTexture(pBhvrModifier->getValue<LLUUID>(), FTT_DEFAULT, MIPMAP_YES, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
             gObjectList.setAllObjectDefaultTextures(LLRender::DIFFUSE_MAP, true);
             gObjectList.setAllObjectPBRDefaultTextures(pBhvrModifier->getValue<LLUUID>(), true);
         }

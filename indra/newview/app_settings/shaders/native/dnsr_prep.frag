@@ -5,13 +5,13 @@
 #define LEGACY_COLOR 1
 #define LEGACY_DEPTH 1
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     mat3 view_to_world;         // the rotation from the eye space the G-buffer normals are in to the world space the denoiser is told about
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_specularRect;

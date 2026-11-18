@@ -689,7 +689,7 @@ LLFontGlyphInfo* LLFontFreetype::addGlyphFromFont(const LLFontFreetype *fontp, l
         llassert(false);
     }
 
-    LLImageTex *image_gl = mFontBitmapCachep->getImageGL(bitmap_glyph_type, bitmap_num);
+    RKImageTex *image_gl = mFontBitmapCachep->getImageGL(bitmap_glyph_type, bitmap_num);
     LLImageRaw *image_raw = mFontBitmapCachep->getImageRaw(bitmap_glyph_type, bitmap_num);
     if (image_gl && image_raw)
     {

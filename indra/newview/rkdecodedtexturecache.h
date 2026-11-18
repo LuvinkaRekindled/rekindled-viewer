@@ -8,7 +8,7 @@
  * produced, rkimagebc7.h), the format in the name so the index needs no file opened. Texture assets are immutable by id, so a stored level is valid for ever;
  * the only invalidations are the user's "clear cache", a format version change, and the texture cache removing a texture it found corrupt.
  *
- * Threads: reads run on the image decode pool, in place of the decode (LLDecodedImageCache, llimageworker.h); writes are queued (a copy of the decoded
+ * Threads: reads run on the image decode pool, in place of the decode (RKDecodedImageCache, llimageworker.h); writes are queued (a copy of the decoded
  * image, 256 MB of queue at most, a full queue drops the write and the texture is decoded again next time) to one writer thread, which also builds the
  * index at start-up (one directory listing) and keeps the cache under its size cap by removing the files read least recently (a hit touches the file's time).
  * Nothing here runs on the main thread except the once-a-minute report and the settings read.
@@ -31,7 +31,7 @@
 #include <unordered_set>
 #include <string>
 
-class FSDecodedTextureCache : public LLDecodedImageCache
+class FSDecodedTextureCache : public RKDecodedImageCache
 {
 public:
     static FSDecodedTextureCache& instance();
@@ -42,7 +42,7 @@ public:
     // Main thread, after the image decode pool has shut down (no reader is running then): closes the writer, drops the index.
     void shutdown();
 
-    // LLDecodedImageCache (decode pool threads)
+    // RKDecodedImageCache (decode pool threads)
     LLPointer<LLImageRaw> read(const LLUUID& id, S32 discard, bool allow_compressed, bool* checked_raw) override;
     void write(const LLUUID& id, S32 discard, const LLImageRaw* raw, bool checked_raw) override;
 
@@ -66,7 +66,7 @@ private:
     struct Entry
     {
         S32 mDiscard = 0;       // the finest level in the file
-        U8 mFormat = 0;         // 0 raw texels, LLImageBC7::FORMAT_BC7 a BC7 chain
+        U8 mFormat = 0;         // 0 raw texels, RKImageBC7::FORMAT_BC7 a BC7 chain
         U64 mSize = 0;          // bytes on disk
         S64 mTime = 0;          // last read or write, seconds (the eviction order)
     };

@@ -302,8 +302,8 @@ public:
                     size_t  samples = 0;
                     int64_t elapsed = 0;
                     int64_t ntp     = 0;
-                    audio_transport_.NeedMorePlayData(frames, LLWinMediaPlayout::kChannels * sizeof(int16_t), LLWinMediaPlayout::kChannels,
-                                                      LLWinMediaPlayout::kRate, buffer, samples, &elapsed, &ntp);
+                    audio_transport_.NeedMorePlayData(frames, RKWinMediaPlayout::kChannels * sizeof(int16_t), RKWinMediaPlayout::kChannels,
+                                                      RKWinMediaPlayout::kRate, buffer, samples, &elapsed, &ntp);
                 });
             if (!ok)
             {
@@ -446,7 +446,7 @@ private:
 
     bool tuning_;
 #if defined(_WIN32)
-    LLWinMediaPlayout mMediaPlayout;
+    RKWinMediaPlayout mMediaPlayout;
     bool              mUseMedia           = true;
     bool              mPlayoutInitialized = false;
     std::string       mPlayoutEndpointId; // empty = the default playback device

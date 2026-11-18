@@ -35,14 +35,14 @@
 #include "llrefcount.h"
 #include "lltrace.h"
 
-class LLImageTex ;
+class RKImageTex ;
 class LLTexUnit ;
 class LLFontGL ;
 
 //
-//this is an abstract class as the parent for the class LLBaseTexture
+//this is an abstract class as the parent for the class RKBaseTexture
 //
-class LLTexture : public virtual LLAssetRefCount
+class LLTexture : public virtual RKAssetRefCount
 {
     friend class LLTexUnit ;
     friend class LLFontGL ;
@@ -55,7 +55,7 @@ public:
     {}
 
     //
-    //interfaces to access LLBaseTexture
+    //interfaces to access RKBaseTexture
     //
     virtual S8         getType() const;
     virtual void       setKnownDrawSize(S32 width, S32 height);
@@ -67,7 +67,7 @@ public:
     virtual S32        getWidth(S32 discard_level = -1) const;
     virtual S32        getHeight(S32 discard_level = -1) const;
     virtual bool       isActiveFetching();
-    virtual LLImageTex* getImageTexture() const;
+    virtual RKImageTex* getImageTexture() const;
 
 private:
     virtual void updateBindStatsForTester();

@@ -26,14 +26,14 @@
 
 #include "rkshaderprogram.h"
 
-void LLShaderProgram::uniform1f(const std::string& uniform, F32 num)
+void RKShaderProgram::uniform1f(const std::string& uniform, F32 num)
 {
 }
 
-void LLShaderProgram::uniform3fv(const std::string& uniform, U32 count, const F32 *v)
+void RKShaderProgram::uniform3fv(const std::string& uniform, U32 count, const F32 *v)
 {
 }
 
-void LLShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
+void RKShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
 {
 }

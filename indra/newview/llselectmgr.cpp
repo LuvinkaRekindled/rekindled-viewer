@@ -1963,7 +1963,7 @@ struct TextureApplyFunctor : public LLSelectedTEFunctor
         }
         else // not an inventory item
         {
-            objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+            objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
         }
 
         return true;
@@ -2026,7 +2026,7 @@ bool LLSelectMgr::selectionSetImage(const LLUUID& imageid, bool isPBR)
     //          // Texture picker defaults aren't inventory items
     //          // * Don't need to worry about permissions for them
     //          // * Can just apply the texture and be done with it.
-    //          objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+    //          objectp->setTEImage(te, LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
     //      }
 
     //      return true;
@@ -2448,7 +2448,7 @@ bool LLSelectMgr::selectionRevertTextures()
                     }
                     else
                     {
-                        object->setTEImage(te, LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+                        object->setTEImage(te, LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
 
                     }
                 }
@@ -6537,7 +6537,7 @@ void LLSelectMgr::updateSilhouettes()
 
     if (!mSilhouetteImagep)
     {
-        mSilhouetteImagep = LLViewerTextureManager::getFetchedTextureFromFile("silhouette.j2c", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI);
+        mSilhouetteImagep = LLViewerTextureManager::getFetchedTextureFromFile("silhouette.j2c", FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_UI);
     }
 
     mHighlightedObjects->cleanupNodes();
@@ -6812,9 +6812,9 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
     }
 
     gRender.getTexUnit(0)->bind(mSilhouetteImagep);
-    LLRenderPresetPipelineSelection gls_select;
-    LLRenderState::BlendScope blend(true);
-    LLRenderState::DepthScope gls_depth(true, false);
+    RKRenderPresetPipelineSelection gls_select;
+    RKRenderState::BlendScope blend(true);
+    RKRenderState::DepthScope gls_depth(true, false);
 
     if (isAgentAvatarValid() && for_hud)
     {
@@ -6825,20 +6825,20 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         // set up transform to encompass bounding box of HUD
         F32 aspect = LLViewerCamera::getInstance()->getAspect(); // <FS:Ansariel> Performance improvement
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
         F32 depth = llmax(1.f, hud_bbox.getExtentLocal().mV[VX] * 1.1f);
         // <FS:Ansariel> Performance improvement
         //gRender.ortho(-0.5f * LLViewerCamera::getInstance()->getAspect(), 0.5f * LLViewerCamera::getInstance()->getAspect(), -0.5f, 0.5f, 0.f, depth);
-        LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
+        RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, -0.5f * aspect, 0.5f * aspect, -0.5f, 0.5f, 0.f, depth);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         gRender.pushUIMatrix();
         gRender.loadUIIdentity();
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, -hud_bbox.getCenterLocal().mV[VX] + (depth *0.5f), 0.f, 0.f);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, cur_zoom, cur_zoom, cur_zoom);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, OGL_TO_CFR_ROTATION);        // Load Cory's favorite reference frame
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, -hud_bbox.getCenterLocal().mV[VX] + (depth *0.5f), 0.f, 0.f);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, cur_zoom, cur_zoom, cur_zoom);
     }
 
     bool wireframe_selection = (gFloaterTools && gFloaterTools->getVisible()) || LLSelectMgr::sRenderHiddenSelections;
@@ -6851,31 +6851,31 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
     auto renderMeshSelection_f = [fogCfx, wireframe_selection](LLSelectNode* node, LLViewerObject* objectp, LLColor4 hlColor)
     {
-        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+        RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
         if (shader)
         {
             gDebugProgram.bind();
         }
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
         bool is_hud_object = objectp->isHUDAttachment();
 
         if (!is_hud_object)
         {
-            LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+            RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, gRenderModelView);
         }
 
         if (objectp->mDrawable->isActive())
         {
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)objectp->getRenderMatrix().mMatrix);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)objectp->getRenderMatrix().mMatrix);
         }
         else if (!is_hud_object)
         {
             LLVector3 trans = objectp->getRegion()->getOriginAgent();
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, trans.mV[0], trans.mV[1], trans.mV[2]);
         }
 
         bool bRenderHidenSelection = node->isTransient() ? false : LLSelectMgr::sRenderHiddenSelections;
@@ -6885,8 +6885,8 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         if (vobj)
         {
             LLVertexBuffer::unbind();
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)vobj->getRelativeXform().mMatrix);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)vobj->getRelativeXform().mMatrix);
 
             if (objectp->mDrawable->isState(LLDrawable::RIGGED))
             {
@@ -6895,7 +6895,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
             }
         }
 
-        gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+        gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
 
         S32 num_tes = llmin((S32)objectp->getNumTEs(), (S32)objectp->getNumFaces()); // avatars have TEs but no faces
         {
@@ -6909,11 +6909,11 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
             }
         }
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         gRender.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
-        gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+        gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
 
         if (shader)
         {
@@ -7042,9 +7042,9 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
 
     if (isAgentAvatarValid() && for_hud)
     {
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         gRender.popUIMatrix();
     }
 
@@ -7522,27 +7522,27 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     }
 
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
     if (shader)
     { //use UI program for selection highlights (texture color modulated by vertex color)
         gUIProgram.bind();
     }
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     gRender.pushUIMatrix();
     gRender.loadUIIdentity();
 
     if (!is_hud_object)
     {
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, gRenderModelView);
     }
 
 
     if (drawable->isActive())
     {
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*) objectp->getRenderMatrix().mMatrix);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*) objectp->getRenderMatrix().mMatrix);
     }
 
     LLVolume *volume = objectp->getVolume();
@@ -7572,7 +7572,7 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
             gRender.flush();
             gRender.blendFunc(LLRender::BF_SOURCE_COLOR, LLRender::BF_ONE);
 
-            LLRenderState::DepthScope gls_depth(true, false, LLRenderState::CompareOp::GreaterEqual);
+            RKRenderState::DepthScope gls_depth(true, false, RKRenderState::CompareOp::GreaterEqual);
             gRender.flush();
             gRender.begin(LLRender::LINES);
             {
@@ -7645,7 +7645,7 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
         gRender.end();
         gRender.flush();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     gRender.popUIMatrix();
 
     if (shader)

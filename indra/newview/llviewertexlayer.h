@@ -78,7 +78,7 @@ class LLViewerTexLayerSetBuffer : public LLTexLayerSetBuffer, public LLViewerDyn
     LOG_CLASS(LLViewerTexLayerSetBuffer);
 
 public:
-    // <FS> C2.2: both bases reach the reference count's retire hook (LLTexLayerSetBuffer through LLAssetRefCount, LLViewerDynamicTexture through LLViewerTexture): this is a viewer texture, so it follows the texture's rule
+    // <FS> C2.2: both bases reach the reference count's retire hook (LLTexLayerSetBuffer through RKAssetRefCount, LLViewerDynamicTexture through LLViewerTexture): this is a viewer texture, so it follows the texture's rule
     /*virtual*/ bool retireOnLastRef() const override { return LLViewerTexture::retireOnLastRef(); }
     /*virtual*/ void onRetire() override { LLViewerTexture::onRetire(); }                       // (both bases reach these hooks too)
     /*virtual*/ U32 retireKind() const override { return LLViewerTexture::retireKind(); }

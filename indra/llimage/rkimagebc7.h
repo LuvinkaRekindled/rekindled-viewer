@@ -21,7 +21,7 @@
 
 class LLImageRaw;
 
-namespace LLImageBC7
+namespace RKImageBC7
 {
     // RenderCompressTextures, mirrored from the main thread (read on the decode threads)
     void setEnabled(bool on);
@@ -43,10 +43,10 @@ namespace LLImageBC7
     // The mip chain of a texel image: levels[0] a copy of src, each next the 2x2 box filter of the one before (what the GPU's mip generation does), down to 1x1.
     void buildChain(const U8* src, U32 width, U32 height, U32 components, std::vector<std::vector<U8>>& levels);
 
-    // The alpha classification LLImageTex::analyzeAlpha makes from texels: -1 no alpha channel, 0 blend, 1 mask (the same histogram and rules).
+    // The alpha classification RKImageTex::analyzeAlpha makes from texels: -1 no alpha channel, 0 blend, 1 mask (the same histogram and rules).
     S8 classifyAlpha(const U8* data, U32 width, U32 height, U32 components);
 
-    // Encodes every level of a chain (levels[0] the finest) and checks the finest. Returns the compressed image, the chain in the order LLImageTex::setImage(data_hasmips)
+    // Encodes every level of a chain (levels[0] the finest) and checks the finest. Returns the compressed image, the chain in the order RKImageTex::setImage(data_hasmips)
     // reads it (the smallest level first, the finest last), or null when more than max_harmed_percent of the finest level's blocks are harmed; harmed_percent says how many
     // either way. alpha_is_mask goes into the image.
     LLPointer<LLImageRaw> compress(const std::vector<std::vector<U8>>& levels, U32 width, U32 height, U32 components, F32 max_harmed_percent, F32& harmed_percent, S8 alpha_is_mask);

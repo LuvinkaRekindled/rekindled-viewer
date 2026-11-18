@@ -44,7 +44,7 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
 {                                             // render invisiprims
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; // LL_RECORD_BLOCK_TIME(FTM_RENDER_INVISIBLE);
 
-    LLShaderProgram* color_program = &gDrawColorProgram;      // S6.6: the water planes and the invisible draws come as records of entries
+    RKShaderProgram* color_program = &gDrawColorProgram;      // S6.6: the water planes and the invisible draws come as records of entries
     const bool pull = true;
     if (gPipeline.shadersLoaded())
     {
@@ -52,14 +52,14 @@ void LLDrawPoolWaterExclusion::render(S32 pass)
     }
 
 
-    LLRenderState::DepthScope depth(true);
+    RKRenderState::DepthScope depth(true);
     color_program->uniform4f(LLShaderMgr::DIFFUSE_COLOR, 1, 1, 1, 1);
 
     LLDrawPoolWater* pwaterpool = (LLDrawPoolWater*)gPipeline.getPool(LLDrawPool::POOL_WATER);
     if (pwaterpool)
     {
         // Just treat our water planes as double sided for the purposes of generating the exclusion mask.
-        LLRenderState::CullScope cullface(false);
+        RKRenderState::CullScope cullface(false);
         // (the planes once: the edge water tiles are faces of the same pool, and a second push of the same entries wrote the same mask)
         pwaterpool->pushWaterPlanes();
     }

@@ -14,7 +14,7 @@
 #include <atomic>
 #include <cmath>
 
-namespace LLVkUpscale
+namespace RKVkUpscale
 {
 
 namespace
@@ -56,13 +56,13 @@ bool requested()
 
 void addInstanceExtensions(std::vector<const char*>& out)
 {
-    LLVkNgx::addInstanceExtensions(out);        // (DLSS-NR, local builds only: nothing in a release build)
+    RKVkNgx::addInstanceExtensions(out);        // (DLSS-NR, local builds only: nothing in a release build)
 }
 
 void addDeviceExtensions(VkInstance instance, VkPhysicalDevice device, std::vector<const char*>& out)
 {
-    LLVkNgx::addDeviceExtensions(instance, device, out);
-    LLVkFsr::addDeviceExtensions(device, out);
+    RKVkNgx::addDeviceExtensions(instance, device, out);
+    RKVkFsr::addDeviceExtensions(device, out);
 }
 
 bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
@@ -71,11 +71,11 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
     {
         return true;
     }
-    gFsr = LLVkFsr::init(instance, physical, device);
+    gFsr = RKVkFsr::init(instance, physical, device);
     LL_INFOS("VkUpscale") << "upscaler: " << backendName() << LL_ENDL;
     if (gFsr)
     {
-        LLVkNgx::init(instance, physical, device);      // (DLSS-NR, local builds only; not fatal)
+        RKVkNgx::init(instance, physical, device);      // (DLSS-NR, local builds only; not fatal)
     }
     return gFsr;
 }
@@ -87,8 +87,8 @@ bool ready()
 
 void shutdown()
 {
-    LLVkNgx::shutdown();
-    LLVkFsr::shutdown();
+    RKVkNgx::shutdown();
+    RKVkFsr::shutdown();
     gFsr = false;
 }
 
@@ -104,7 +104,7 @@ bool backendIsFsr()
 
 bool evaluate(VkCommandBuffer cmd, const Params& p)
 {
-    return gFsr && LLVkFsr::evaluate(cmd, p);
+    return gFsr && RKVkFsr::evaluate(cmd, p);
 }
 
 float lodBias()
@@ -123,14 +123,14 @@ void setLodBias(float bias)
     }
 }
 
-VkImageLayout inputLayout(const LLVk::Image& image)
+VkImageLayout inputLayout(const RKVk::Image& image)
 {
-    return LLVkFsr::inputLayout(image);
+    return RKVkFsr::inputLayout(image);
 }
 
 VkImageLayout outputLayout()
 {
-    return LLVkFsr::outputLayout();
+    return RKVkFsr::outputLayout();
 }
 
 }

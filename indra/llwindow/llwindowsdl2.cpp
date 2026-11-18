@@ -731,7 +731,7 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     if (mWindow)
     {
         // <FS> native-vk: the renderer presents into this window (Vulkan makes the surface through SDL); there is no OpenGL context
-        LLVkBridge::setMainWindow(mWindow);
+        RKVkBridge::setMainWindow(mWindow);
     }
 
     if( mFullscreen )
@@ -2600,7 +2600,7 @@ std::vector<std::string> LLWindowSDL::getDynamicFallbackFontList()
 // <FS:Zi> Make shared context work on Linux for multithreaded OpenGL
 void* LLWindowSDL::createSharedContext()
 {
-    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (LLImageTexThread, LLVertexBuffer's) only start when they get
+    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (RKImageTexThread, LLVertexBuffer's) only start when they get
     // a context from here, so a dummy token keeps them running (makeContextCurrent and destroySharedContext ignore it).
     return (void*)1;
 }

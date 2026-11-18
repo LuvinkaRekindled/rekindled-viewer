@@ -92,8 +92,8 @@ extern U32 gFrameCount;
 //
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class LLVOAvatar;
-struct LLFlatSkeleton;      // <FS> stage B0 (llvoavatar.cpp): the avatar's world matrices as a flat array by joint number
-using LLAvatarHandles = LLHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (rkhandletable.h)
+struct RKFlatSkeleton;      // <FS> stage B0 (llvoavatar.cpp): the avatar's world matrices as a flat array by joint number
+using RKAvatarHandles = RKHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (rkhandletable.h)
 
 class LLVOAvatar :
     public LLAvatarAppearance,
@@ -130,7 +130,7 @@ public:
 
 protected:
 public:
-    // <FS> C2.4d (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLAvatarRef, rkavatarref.h) and the retire list (llcommon/rkretirelist.h, kind 3): the last owner letting go
+    // <FS> C2.4d (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (RKAvatarRef, rkavatarref.h) and the retire list (llcommon/rkretirelist.h, kind 3): the last owner letting go
     // parks the avatar for a few frames, so a draw info that still reads it through its handle finds it intact
     U32 getRenderHandle();
     /*virtual*/ bool retireOnLastRef() const override;
@@ -312,13 +312,13 @@ public:
     virtual void    updateDebugText();
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
-    // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (rkavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a LLAvatarTable::Mode
+    // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (rkavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a RKAvatarTable::Mode
     unsigned char   decideFrameMode(bool& visible, bool& needs_update);
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
-    std::shared_ptr<LLFlatSkeleton> mFlatSkel;          // <FS> stage B0
+    std::shared_ptr<RKFlatSkeleton> mFlatSkel;          // <FS> stage B0
     bool            flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor);       // <FS> avatar relative skinning: the same palette from world matrices made relative to the anchor (false: not possible, the plain one stands)
     void            flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin);       // the skin's palette from the flat array (the old per-joint build only where the array lacks a joint)
-    mutable S32     mAvTableSlot = -1;                  // <FS> the avatar's row in LLAvatarTable's array this frame (valid when the row at the slot names this avatar)
+    mutable S32     mAvTableSlot = -1;                  // <FS> the avatar's row in RKAvatarTable's array this frame (valid when the row at the slot names this avatar)
     bool            computeTooSlowLive() const;         // isTooSlow() derived from the avatar's state (what the table caches at endFrame)
     bool            computeVisuallyMutedLive();         // isVisuallyMuted() derived likewise
     bool            computeImpostorLive();      // isImpostor() derived from the avatar's state (what the table caches at endFrame)
@@ -355,7 +355,7 @@ public:
     // <FS> PLAN-avatars.md stage B3a (LL_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
     void            buildPalettesInJob();
-    // <FS> PLAN-avatars.md stage C: the flat world array (LLFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
+    // <FS> PLAN-avatars.md stage C: the flat world array (RKFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
     // walk's result; the attachment rows and the palette job read it, and the palette job fills it again only when a joint was touched after (skeletonDirty)
     void            ensureJointLocals();        // the joints' locals into the flat array
     void            releaseJointViews();        // the joints stop pointing into this avatar's arrays
@@ -623,9 +623,9 @@ public:
  **/
 
 public:
-    // <FS> 2026-11-10: the impostor's quad is a row of the pass's one impostor record (LLVkBridge kind 41), not an immediate mode draw: fillImpostorQuad makes the row (false: no picture yet),
+    // <FS> 2026-11-10: the impostor's quad is a row of the pass's one impostor record (RKVkBridge kind 41), not an immediate mode draw: fillImpostorQuad makes the row (false: no picture yet),
     // renderImpostorDebug draws the outline of the quad (the RENDER_DEBUG_IMPOSTORS view)
-    bool        fillImpostorQuad(LLVkBridge::ImpostorQuadRow& row) const;
+    bool        fillImpostorQuad(RKVkBridge::ImpostorQuadRow& row) const;
     void        renderImpostorDebug(S32 diffuse_channel);
     bool        isVisuallyMuted();
     bool        isInMuteList() const;
@@ -954,8 +954,8 @@ private:
     // Constants
     //--------------------------------------------------------------------
 public:
-    virtual LLViewerTexture::EBoostLevel    getAvatarBoostLevel() const { return LLBaseTexture::BOOST_AVATAR; }
-    virtual LLViewerTexture::EBoostLevel    getAvatarBakedBoostLevel() const { return LLBaseTexture::BOOST_AVATAR_BAKED; }
+    virtual LLViewerTexture::EBoostLevel    getAvatarBoostLevel() const { return RKBaseTexture::BOOST_AVATAR; }
+    virtual LLViewerTexture::EBoostLevel    getAvatarBakedBoostLevel() const { return RKBaseTexture::BOOST_AVATAR_BAKED; }
     virtual S32                         getTexImageSize() const;
     /*virtual*/ S32                     getTexImageArea() const { return getTexImageSize()*getTexImageSize(); }
 
@@ -1108,7 +1108,7 @@ public:
         bool mBadBindNamed = false; // <FS> the wearer of a mesh whose inverse bind matrices the parse refused was logged once (MeshSkin)
 
         // <FS> stage B3a: the skin this entry was built from (kept so the avatar's job can rebuild it without a request), and the frame the avatar's job built it for (0xFFFFFFFF: not by a job)
-        LLSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
+        RKSkinRef mSkin;                        // (a handle, not a counted pointer: the refcount of a skin info is not atomic; a gone skin info reads as null)
         // <FS> stage B3b: where this palette sits in the frame's shared palette list (ll_frame_palette): frame << 32 | float offset, ~0 none. A request that finds its frame needs no lock.
         mutable std::atomic<U64> mListSlot{ ~0ull };
         U32 mJobFor = 0xFFFFFFFFu;

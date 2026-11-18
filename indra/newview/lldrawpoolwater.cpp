@@ -140,7 +140,7 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
     {
         // copy framebuffer contents so far to a texture to be used for
         // reflections and refractions
-        LLRenderState::DepthScope depth(true, true, LLRenderState::CompareOp::Always);
+        RKRenderState::DepthScope depth(true, true, RKRenderState::CompareOp::Always);
 
         LLRenderTarget& src = gPipeline.mRT->screen;
         LLRenderTarget& depth_src = gPipeline.mRT->deferredScreen;
@@ -164,7 +164,7 @@ void LLDrawPoolWater::beginPostDeferredPass(S32 pass)
 void LLDrawPoolWater::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::BlendScope blend(false);
 
     gRender.setColorMask(true, true);
 
@@ -213,7 +213,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
 
     LLColor4      specular(sun_up ? psky->getSunlightColor() : psky->getMoonlightColor());
     F32           phase_time = (F32) LLFrameTimer::getElapsedSeconds() * 0.5f;
-    LLShaderProgram *shader     = nullptr;
+    RKShaderProgram *shader     = nullptr;
 
     // One pass, one of two shaders.  Void water and region water share state.
     // There isn't a good reason anymore to really have void water run in a separate pass.
@@ -225,8 +225,8 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // and reflection (manifest: Water Pull RT Shader)
     // the ray traced reflection of the water (rt-debug.txt waterrt, or the preference FSVkRTWater with the material table): decided here, the reflection is a program of its own
     static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
-    S32 rt_water_mode = LLVkBridge::rtWaterReflections();
-    if (rt_water_mode == 0 && rt_water_setting && LLVkBridge::rtMaterialsAvailable())
+    S32 rt_water_mode = RKVkBridge::rtWaterReflections();
+    if (rt_water_mode == 0 && rt_water_setting && RKVkBridge::rtMaterialsAvailable())
     {
         rt_water_mode = 1;      // the preference (Graphics > Vulkan); rt-debug.txt waterrt=N still overrides it for tests
     }
@@ -342,7 +342,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
         shader->uniform1f(LLShaderMgr::WATER_REFSCALE, pwater->getScaleAbove());
     }
 
-    LLRenderState::CullScope cullface(false);
+    RKRenderState::CullScope cullface(false);
 
     // Only push the water planes once.
     // Previously we did this twice: once for void water and one for region water.

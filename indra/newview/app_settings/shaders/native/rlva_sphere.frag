@@ -2,7 +2,7 @@
 // "RLVa Sphere Post Processing Shader" (deferred/rlvF.glsl); pairs with fullscreen.vert. (The source texture of the blurs is always diffuseRect: the helper functions read it by its handle instead of taking a sampler;
 // rlvEffectParam3 is a vec2 of 0 / 1 here: the viewer sets it with two floats, and a bvec2 cannot be a member of a uniform block.)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 screen_res;
     mat4 inv_proj;
@@ -14,7 +14,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec2 rlvEffectParam5;   // Blur direction (not used for blend)
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_depthMap;

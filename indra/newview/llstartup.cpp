@@ -26,7 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 
-#include "rkvkbridge.h"       // <FS> J1: the start-up waits for the GPU pipelines (LLVkBridge::pipelineBuilds)
+#include "rkvkbridge.h"       // <FS> J1: the start-up waits for the GPU pipelines (RKVkBridge::pipelineBuilds)
 
 #include "llappviewer.h"
 #include "llstartup.h"
@@ -624,7 +624,7 @@ void update_texture_fetch()
     LLAppViewer::getTextureFetch()->update(1); // unpauses the texture fetch thread
     gTextureList.updateImages(0.10f);
 
-    if (LLImageTexThread::sEnabledTextures)
+    if (RKImageTexThread::sEnabledTextures)
     {
         std::shared_ptr<LL::WorkQueue> main_queue = LL::WorkQueue::getInstance("mainloop");
         main_queue->runFor(std::chrono::milliseconds(1));
@@ -1715,7 +1715,7 @@ bool idle_startup()
             static LLTimer wait_timer;
             static bool wait_started = false;
             U64 pending = 0, total = 0;
-            LLVkBridge::pipelineBuilds(pending, total);
+            RKVkBridge::pipelineBuilds(pending, total);
             if (wait_on && pending > 0 && (!wait_started || wait_timer.getElapsedTimeF32() < 900.f))
             {
                 if (!wait_started)

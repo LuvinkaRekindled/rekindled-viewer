@@ -22,7 +22,7 @@
 #define TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE 0
 #define TERRAIN_PAINT_TYPE_PBR_PAINTMAP 1
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #if TERRAIN_PAINT_TYPE == TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE
     uint ll_ti_alpha_ramp;

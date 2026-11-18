@@ -89,7 +89,7 @@ public:
     // DO use for render targets that resize often and aren't likely to ruin someone's day if they break
     void resize(U32 resx, U32 resy);
 
-    //point this render target at a particular LLImageTex
+    //point this render target at a particular RKImageTex
     //   Intended usage:
     //      LLRenderTarget target;
     //      target.addColorAttachment(image);
@@ -98,11 +98,11 @@ public:
     //      target.flush();
     //      target.releaseColorAttachment();
     //
-    // attachment -- LLImageTex to render into
+    // attachment -- RKImageTex to render into
     // use_name -- optional texture name to target instead of attachment->getTexName()
     // NOTE: setColorAttachment and releaseColorAttachment cannot be used in conjuction with
     // addColorAttachment, allocateDepth, resize, etc.
-    void setColorAttachment(LLImageTex* attachment, U32 use_name = 0);
+    void setColorAttachment(RKImageTex* attachment, U32 use_name = 0);
 
     // detach from current color attachment
     void releaseColorAttachment();

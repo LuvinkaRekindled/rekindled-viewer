@@ -78,80 +78,80 @@ S32 clamp_terrain_mapping(S32 mapping)
 }
 
 //utility shaders
-LLShaderProgram    gGlowCombineProgram;
-LLShaderProgram    gReflectionMipProgram;
-LLShaderProgram    gGaussianProgram;
-LLShaderProgram    gRadianceGenProgram;
-LLShaderProgram    gIrradianceGenProgram;
-LLShaderProgram    gGlowCombineFXAAProgram;
-LLShaderProgram    gTwoTextureCompareProgram;
-LLShaderProgram    gOneTextureFilterProgram;
-LLShaderProgram    gDebugProgram;
-LLShaderProgram    gSkinnedDebugProgram;
-LLShaderProgram    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-LLShaderProgram    gAlphaMaskProgram;
-LLShaderProgram    gBenchmarkProgram;
-LLShaderProgram    gReflectionProbeDisplayProgram;
-LLShaderProgram    gCopyProgram;
-LLShaderProgram    gCopyDepthProgram;
-LLShaderProgram    gPBRTerrainBakeProgram;
-LLShaderProgram    gDrawColorProgram;
+RKShaderProgram    gGlowCombineProgram;
+RKShaderProgram    gReflectionMipProgram;
+RKShaderProgram    gGaussianProgram;
+RKShaderProgram    gRadianceGenProgram;
+RKShaderProgram    gIrradianceGenProgram;
+RKShaderProgram    gGlowCombineFXAAProgram;
+RKShaderProgram    gTwoTextureCompareProgram;
+RKShaderProgram    gOneTextureFilterProgram;
+RKShaderProgram    gDebugProgram;
+RKShaderProgram    gSkinnedDebugProgram;
+RKShaderProgram    gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
+RKShaderProgram    gAlphaMaskProgram;
+RKShaderProgram    gBenchmarkProgram;
+RKShaderProgram    gReflectionProbeDisplayProgram;
+RKShaderProgram    gCopyProgram;
+RKShaderProgram    gCopyDepthProgram;
+RKShaderProgram    gPBRTerrainBakeProgram;
+RKShaderProgram    gDrawColorProgram;
 
 //object shaders
-LLShaderProgram        gObjectPreviewProgram;
-LLShaderProgram        gSkinnedObjectPreviewProgram;
-LLShaderProgram        gPhysicsPreviewProgram;
-LLShaderProgram        gObjectFullbrightAlphaMaskProgram;
-LLShaderProgram        gObjectAlphaMaskNoColorProgram;
+RKShaderProgram        gObjectPreviewProgram;
+RKShaderProgram        gSkinnedObjectPreviewProgram;
+RKShaderProgram        gPhysicsPreviewProgram;
+RKShaderProgram        gObjectFullbrightAlphaMaskProgram;
+RKShaderProgram        gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
-LLShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
-LLShaderProgram        gUnderWaterPullProgram;
-LLShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting FSVkRTWater; needs the material table)
-LLShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, LL_RT_QUERY), made in a session with ray queries
+RKShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
+RKShaderProgram        gUnderWaterPullProgram;
+RKShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting FSVkRTWater; needs the material table)
+RKShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, LL_RT_QUERY), made in a session with ray queries
 static bool            sWaterRtReflectionMade = false;
 static bool            sWaterRtMade = false;       // the program above was made in this session
 static bool            sRtSessionShaders = false;     // the stock programs of this session carry ray query code (the `rt` lines of the manifest keep them): the water planes keep the stock water program then
 
 //interface shaders
-LLShaderProgram        gHighlightProgram;
-LLShaderProgram        gSkinnedHighlightProgram;
-LLShaderProgram        gHighlightPullSkinProgram;       // <FS> K6 B1: "Highlight Pull Skin Shader": a placeholder (the highlight shaders with HAS_SKIN) for its native stand-in (highlight.frag + alpha.vert), which draws the rigged table items of the Highlight Transparent view
-LLShaderProgram        gDebugBatchPullProgram;          // <FS> K6 B1: "Debug Batch Pull Shader" and its skinned twin: placeholders (the highlight shaders) for the native programs of the Batch Size and Texture Animation views
-LLShaderProgram        gDebugBatchPullSkinProgram;
-LLShaderProgram        gHighlightNormalProgram;
-LLShaderProgram        gHighlightSpecularProgram;
+RKShaderProgram        gHighlightProgram;
+RKShaderProgram        gSkinnedHighlightProgram;
+RKShaderProgram        gHighlightPullSkinProgram;       // <FS> K6 B1: "Highlight Pull Skin Shader": a placeholder (the highlight shaders with HAS_SKIN) for its native stand-in (highlight.frag + alpha.vert), which draws the rigged table items of the Highlight Transparent view
+RKShaderProgram        gDebugBatchPullProgram;          // <FS> K6 B1: "Debug Batch Pull Shader" and its skinned twin: placeholders (the highlight shaders) for the native programs of the Batch Size and Texture Animation views
+RKShaderProgram        gDebugBatchPullSkinProgram;
+RKShaderProgram        gHighlightNormalProgram;
+RKShaderProgram        gHighlightSpecularProgram;
 
-LLShaderProgram        gDeferredHighlightProgram;
+RKShaderProgram        gDeferredHighlightProgram;
 
-LLShaderProgram        gPathfindingProgram;
-LLShaderProgram        gPathfindingNoNormalsProgram;
+RKShaderProgram        gPathfindingProgram;
+RKShaderProgram        gPathfindingNoNormalsProgram;
 
 //avatar shader handles
-LLShaderProgram        gAvatarProgram;
-LLShaderProgram        gImpostorProgram;
+RKShaderProgram        gAvatarProgram;
+RKShaderProgram        gImpostorProgram;
 
 // Effects Shaders
-LLShaderProgram            gGlowProgram;
-LLShaderProgram            gGlowExtractProgram;
-LLShaderProgram            gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
-LLShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapshot frame guide
+RKShaderProgram            gGlowProgram;
+RKShaderProgram            gGlowExtractProgram;
+RKShaderProgram            gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
+RKShaderProgram            gPostSnapshotFrameProgram;   // <FS:Beq/> Add Snapshot frame guide
 
 // Deferred rendering shaders
-LLShaderProgram            gDeferredImpostorProgram;
-LLShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
-LLShaderProgram            gDeferredTerrainPullProgram;
+RKShaderProgram            gDeferredImpostorProgram;
+RKShaderProgram            gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
+RKShaderProgram            gDeferredTerrainPullProgram;
 
-LLShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
-LLShaderProgram            gDeferredTreePullProgram;
-LLShaderProgram            gDeferredAvatarProgram;
-LLShaderProgram            gDeferredAvatarAlphaProgram;
-LLShaderProgram            gDeferredMultiLightProgram;
-LLShaderProgram            gDeferredMultiSpotLightProgram;
-LLShaderProgram            gDeferredSunProgram;
-LLShaderProgram            gDeferredSunProbeProgram;
-LLShaderProgram            gHazeProgram;
-LLShaderProgram            gWaterHazePullProgram;        // <FS> the table form of the water patches of the haze (native only: waterhaze.vert / waterhaze.frag with WATER_PULL)
+RKShaderProgram            gDeferredPBRTerrainPullProgram[TERRAIN_PAINT_TYPE_COUNT];
+RKShaderProgram            gDeferredTreePullProgram;
+RKShaderProgram            gDeferredAvatarProgram;
+RKShaderProgram            gDeferredAvatarAlphaProgram;
+RKShaderProgram            gDeferredMultiLightProgram;
+RKShaderProgram            gDeferredMultiSpotLightProgram;
+RKShaderProgram            gDeferredSunProgram;
+RKShaderProgram            gDeferredSunProbeProgram;
+RKShaderProgram            gHazeProgram;
+RKShaderProgram            gWaterHazePullProgram;        // <FS> the table form of the water patches of the haze (native only: waterhaze.vert / waterhaze.frag with WATER_PULL)
 
 // <FS> the water seen from above in a session with ray queries (the ray traced sun shadow and reflection of the water): the pull program with the ray queries, native/manifest.txt `Water Pull RT Shader`
 bool ll_water_rt()
@@ -163,114 +163,114 @@ bool ll_water_rt_reflection()
 {
     return sWaterRtReflectionMade;
 }
-LLShaderProgram            gDeferredBlurLightProgram;
-LLShaderProgram            gNativeSunHalfProgram;
-LLShaderProgram            gNativeLightUpsampleProgram;
-LLShaderProgram            gDeferredSoftenProgram;
-LLShaderProgram            gDeferredRtReflectionProgram;
-LLShaderProgram            gDeferredShadowCubeProgram;
-LLShaderProgram            gDeferredShadowPullProgram;
-LLShaderProgram            gDeferredShadowAlphaPullProgram;
-LLShaderProgram            gDeferredShadowSkinPullProgram;
-LLShaderProgram            gDeferredDiffusePullProgram;
-LLShaderProgram            gDeferredAlphaPullProgram;
-LLShaderProgram            gDeferredFullbrightAlphaPullProgram;
-LLShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
-LLShaderProgram            gDeferredFullbrightPullSkinProgram;
-LLShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
-LLShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
-LLShaderProgram            gHUDFullbrightPullProgram;       // J1 K6 S1: the HUD's fullbright pass from the scene table
-LLShaderProgram            gHUDFullbrightMaskPullProgram;
-LLShaderProgram            gHUDFullbrightShinyPullProgram;
-LLShaderProgram            gHUDPBROpaquePullProgram;        // J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table
-LLShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
-LLShaderProgram            gDeferredBumpPullSkinProgram;
-LLShaderProgram            gDeferredEmbossPullProgram;       // J1 K4: the post deferred emboss pass from the scene table
-LLShaderProgram            gDeferredEmbossPullSkinProgram;
-LLShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
-LLShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
-LLShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
-LLShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
-LLShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
-LLShaderProgram            gDeferredPBROpaquePullSkinProgram;
-LLShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (native light_volume.vert + light_spot.frag)
-LLShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (native light_volume.vert + light_point.frag)
-LLShaderProgram            gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws the fullbright alpha draws (alphaF.glsl with ALPHA_UBER)
-LLShaderProgram            gDeferredAlphaUberPullSkinProgram;
-LLShaderProgram            gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws (ALPHA_UBER_MAT)
-LLShaderProgram            gDeferredAlphaUberMatPullSkinProgram;
-LLShaderProgram            gDeferredPBRAlphaPullProgram;
-LLShaderProgram            gDeferredAlphaPullSkinProgram;
-LLShaderProgram            gDeferredFullbrightAlphaPullSkinProgram;
-LLShaderProgram            gDeferredPBRAlphaPullSkinProgram;
-LLShaderProgram            gDeferredEmissivePullProgram;
-LLShaderProgram            gDeferredEmissivePullSkinProgram;
-LLShaderProgram            gPBRGlowPullProgram;
-LLShaderProgram            gPBRGlowPullSkinProgram;
-LLShaderProgram            gHUDFullbrightAlphaPullProgram;
-LLShaderProgram            gHUDPBRAlphaPullProgram;
-LLShaderProgram            gDeferredAlphaImpostorPullProgram;
-LLShaderProgram            gDeferredAlphaImpostorPullSkinProgram;
-LLShaderProgram            gDeferredFullbrightMaskPullProgram;
-LLShaderProgram            gDeferredFullbrightMaskPullSkinProgram;
-LLShaderProgram            gDeferredMaterialPullProgram[16];
-LLShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
-LLShaderProgram            gDeferredMaterialPullSkinProgram[16];
-LLShaderProgram            gDeferredAvatarShadowProgram;
-LLShaderProgram            gDeferredAvatarAlphaShadowProgram;
-LLShaderProgram            gDeferredAvatarAlphaMaskShadowProgram;
-LLShaderProgram            gDeferredPostProgram;
-LLShaderProgram            gDeferredCoFProgram;
-LLShaderProgram            gDeferredDoFCombineProgram;
-LLShaderProgram            gDeferredPostTonemapProgram;
-LLShaderProgram            gNoPostTonemapProgram;
-LLShaderProgram            gDeferredPostTonemapGammaCorrectProgram;
-LLShaderProgram            gNoPostTonemapGammaCorrectProgram;
-LLShaderProgram            gDeferredPostTonemapLegacyGammaCorrectProgram;
-LLShaderProgram            gNoPostTonemapLegacyGammaCorrectProgram;
-LLShaderProgram            gDeferredPostGammaCorrectProgram;
-LLShaderProgram            gLegacyPostGammaCorrectProgram;
-LLShaderProgram            gExposureProgram;
-LLShaderProgram            gExposureProgramNoFade;
-LLShaderProgram            gLuminanceProgram;
-LLShaderProgram            gMotionVectorProgram;
-LLShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
-LLShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
-LLShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
-LLShaderProgram            gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
-LLShaderProgram            gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
-LLShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
-LLShaderProgram            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
-LLShaderProgram            gFXAAProgram[4];
-LLShaderProgram            gSMAAEdgeDetectProgram[4];
-LLShaderProgram            gSMAABlendWeightsProgram[4];
-LLShaderProgram            gSMAANeighborhoodBlendProgram[4];
-LLShaderProgram            gCASProgram;
-LLShaderProgram            gCASLegacyGammaProgram;
-LLShaderProgram            gDeferredPostNoDoFProgram;
-LLShaderProgram            gDeferredPostNoDoFNoiseProgram;
-LLShaderProgram            gDeferredWLSkyProgram;
-LLShaderProgram            gEnvironmentMapProgram;
-LLShaderProgram            gDeferredWLCloudProgram;
-LLShaderProgram            gDeferredWLSunProgram;
-LLShaderProgram            gDeferredWLMoonProgram;
-LLShaderProgram            gDeferredStarProgram;
-LLShaderProgram            gNormalMapGenProgram;
-LLShaderProgram            gDeferredGenBrdfLutProgram;
-LLShaderProgram            gDeferredBufferVisualProgram;
+RKShaderProgram            gDeferredBlurLightProgram;
+RKShaderProgram            gNativeSunHalfProgram;
+RKShaderProgram            gNativeLightUpsampleProgram;
+RKShaderProgram            gDeferredSoftenProgram;
+RKShaderProgram            gDeferredRtReflectionProgram;
+RKShaderProgram            gDeferredShadowCubeProgram;
+RKShaderProgram            gDeferredShadowPullProgram;
+RKShaderProgram            gDeferredShadowAlphaPullProgram;
+RKShaderProgram            gDeferredShadowSkinPullProgram;
+RKShaderProgram            gDeferredDiffusePullProgram;
+RKShaderProgram            gDeferredAlphaPullProgram;
+RKShaderProgram            gDeferredFullbrightAlphaPullProgram;
+RKShaderProgram            gDeferredFullbrightPullProgram;        // S6 X1: the OPAQUE fullbright pass from the scene table (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF, no alpha, no blending in the shader)
+RKShaderProgram            gDeferredFullbrightPullSkinProgram;
+RKShaderProgram            gDeferredFullbrightShinyPullProgram;       // J1 K4: the fullbright shiny pass from the scene table
+RKShaderProgram            gDeferredFullbrightShinyPullSkinProgram;
+RKShaderProgram            gHUDFullbrightPullProgram;       // J1 K6 S1: the HUD's fullbright pass from the scene table
+RKShaderProgram            gHUDFullbrightMaskPullProgram;
+RKShaderProgram            gHUDFullbrightShinyPullProgram;
+RKShaderProgram            gHUDPBROpaquePullProgram;        // J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table
+RKShaderProgram            gDeferredBumpPullProgram;       // J1 K4: the deferred bump pass from the scene table
+RKShaderProgram            gDeferredBumpPullSkinProgram;
+RKShaderProgram            gDeferredEmbossPullProgram;       // J1 K4: the post deferred emboss pass from the scene table
+RKShaderProgram            gDeferredEmbossPullSkinProgram;
+RKShaderProgram            gDeferredDiffuseAlphaMaskPullProgram;           // S6 X3: the alpha masked diffuse G-buffer pass and the alpha masked fullbright pass from the table (the cutoff of each draw as a flat varying)
+RKShaderProgram            gDeferredDiffuseAlphaMaskPullSkinProgram;
+RKShaderProgram            gDeferredFullbrightAlphaMaskPullProgram;
+RKShaderProgram            gDeferredFullbrightAlphaMaskPullSkinProgram;
+RKShaderProgram            gDeferredPBROpaquePullProgram;                 // S6 X4: the glTF opaque / mask G-buffer pass from the scene table (pbrAlphaPullV + pbropaqueF)
+RKShaderProgram            gDeferredPBROpaquePullSkinProgram;
+RKShaderProgram            gDeferredSpotLightPullProgram;                 // S6 LV2: the projectors of a lighting pass from one record (native light_volume.vert + light_spot.frag)
+RKShaderProgram            gDeferredLightPullProgram;                     // S6 LV1: the point light volumes of a lighting pass from one record (native light_volume.vert + light_point.frag)
+RKShaderProgram            gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws the fullbright alpha draws (alphaF.glsl with ALPHA_UBER)
+RKShaderProgram            gDeferredAlphaUberPullSkinProgram;
+RKShaderProgram            gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws (ALPHA_UBER_MAT)
+RKShaderProgram            gDeferredAlphaUberMatPullSkinProgram;
+RKShaderProgram            gDeferredPBRAlphaPullProgram;
+RKShaderProgram            gDeferredAlphaPullSkinProgram;
+RKShaderProgram            gDeferredFullbrightAlphaPullSkinProgram;
+RKShaderProgram            gDeferredPBRAlphaPullSkinProgram;
+RKShaderProgram            gDeferredEmissivePullProgram;
+RKShaderProgram            gDeferredEmissivePullSkinProgram;
+RKShaderProgram            gPBRGlowPullProgram;
+RKShaderProgram            gPBRGlowPullSkinProgram;
+RKShaderProgram            gHUDFullbrightAlphaPullProgram;
+RKShaderProgram            gHUDPBRAlphaPullProgram;
+RKShaderProgram            gDeferredAlphaImpostorPullProgram;
+RKShaderProgram            gDeferredAlphaImpostorPullSkinProgram;
+RKShaderProgram            gDeferredFullbrightMaskPullProgram;
+RKShaderProgram            gDeferredFullbrightMaskPullSkinProgram;
+RKShaderProgram            gDeferredMaterialPullProgram[16];
+RKShaderProgram            gDeferredDiffusePullSkinProgram;        // <FS> S4 A1: the same for rigged draws (kind 25 records: weights and palette by address)
+RKShaderProgram            gDeferredMaterialPullSkinProgram[16];
+RKShaderProgram            gDeferredAvatarShadowProgram;
+RKShaderProgram            gDeferredAvatarAlphaShadowProgram;
+RKShaderProgram            gDeferredAvatarAlphaMaskShadowProgram;
+RKShaderProgram            gDeferredPostProgram;
+RKShaderProgram            gDeferredCoFProgram;
+RKShaderProgram            gDeferredDoFCombineProgram;
+RKShaderProgram            gDeferredPostTonemapProgram;
+RKShaderProgram            gNoPostTonemapProgram;
+RKShaderProgram            gDeferredPostTonemapGammaCorrectProgram;
+RKShaderProgram            gNoPostTonemapGammaCorrectProgram;
+RKShaderProgram            gDeferredPostTonemapLegacyGammaCorrectProgram;
+RKShaderProgram            gNoPostTonemapLegacyGammaCorrectProgram;
+RKShaderProgram            gDeferredPostGammaCorrectProgram;
+RKShaderProgram            gLegacyPostGammaCorrectProgram;
+RKShaderProgram            gExposureProgram;
+RKShaderProgram            gExposureProgramNoFade;
+RKShaderProgram            gLuminanceProgram;
+RKShaderProgram            gMotionVectorProgram;
+RKShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
+RKShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
+RKShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
+RKShaderProgram            gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
+RKShaderProgram            gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
+RKShaderProgram            gAvatarVelocityDebugProgram;    // <FS> debug view of a motion target
+RKShaderProgram            gRtMaterialDebugProgram;        // <FS> debug view of the ray scene's material table (RenderBufferVisualization 9)
+RKShaderProgram            gFXAAProgram[4];
+RKShaderProgram            gSMAAEdgeDetectProgram[4];
+RKShaderProgram            gSMAABlendWeightsProgram[4];
+RKShaderProgram            gSMAANeighborhoodBlendProgram[4];
+RKShaderProgram            gCASProgram;
+RKShaderProgram            gCASLegacyGammaProgram;
+RKShaderProgram            gDeferredPostNoDoFProgram;
+RKShaderProgram            gDeferredPostNoDoFNoiseProgram;
+RKShaderProgram            gDeferredWLSkyProgram;
+RKShaderProgram            gEnvironmentMapProgram;
+RKShaderProgram            gDeferredWLCloudProgram;
+RKShaderProgram            gDeferredWLSunProgram;
+RKShaderProgram            gDeferredWLMoonProgram;
+RKShaderProgram            gDeferredStarProgram;
+RKShaderProgram            gNormalMapGenProgram;
+RKShaderProgram            gDeferredGenBrdfLutProgram;
+RKShaderProgram            gDeferredBufferVisualProgram;
 // [RLVa:KB] - @setsphere
-LLShaderProgram            gRlvSphereProgram;
+RKShaderProgram            gRlvSphereProgram;
 // [/RLVa:KB]
 
 // Deferred materials shaders
-LLShaderProgram            gDeferredPBRAlphaProgram;
+RKShaderProgram            gDeferredPBRAlphaProgram;
 
-LLShaderProgram            gGLTFPBRMetallicRoughnessProgram;
+RKShaderProgram            gGLTFPBRMetallicRoughnessProgram;
 
 
 //helper for making a rigged variant of a given shader
 
-static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& riggedShader)
+static bool make_rigged_variant(RKShaderProgram& shader, RKShaderProgram& riggedShader)
 {
     riggedShader.mName = llformat("Skinned %s", shader.mName.c_str());
     riggedShader.mFeatures = shader.mFeatures;
@@ -283,7 +283,7 @@ static bool make_rigged_variant(LLShaderProgram& shader, LLShaderProgram& rigged
     return riggedShader.createShader();
 }
 
-static void add_common_permutations(LLShaderProgram* shader)
+static void add_common_permutations(RKShaderProgram* shader)
 {
     static LLCachedControl<bool> emissive(gSavedSettings, "RenderEnableEmissiveBuffer", false);
 
@@ -293,7 +293,7 @@ static void add_common_permutations(LLShaderProgram* shader)
 }
 
 
-static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant, bool alpha_blend, bool rigged, bool unlit, bool multi_uv, bool use_sun_shadow)
+static bool make_gltf_variant(RKShaderProgram& shader, RKShaderProgram& variant, bool alpha_blend, bool rigged, bool unlit, bool multi_uv, bool use_sun_shadow)
 {
     // each variant is a program of its own (a manifest line each: gltf_scene.vert / gltf_scene.frag with ALPHA_BLEND, HAS_SKIN, UNLIT, MULTI_UV)
     variant.mName = shader.mName + (alpha_blend ? " blend" : "") + (rigged ? " rigged" : "") + (unlit ? " unlit" : "") + (multi_uv ? " multiuv" : "");
@@ -308,7 +308,7 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
 
     U32 material_size = 16 * 12;
     U32 max_materials = gDeviceCaps.mMaxUniformBlockSize / material_size;
-    LLShaderProgram::sMaxGLTFMaterials = max_materials;
+    RKShaderProgram::sMaxGLTFMaterials = max_materials;
 
 
     U32 max_vec4s = gDeviceCaps.mMaxUniformBlockSize / 16;
@@ -353,16 +353,16 @@ static bool make_gltf_variant(LLShaderProgram& shader, LLShaderProgram& variant,
     }
 }
 
-static bool make_gltf_variants(LLShaderProgram& shader, bool use_sun_shadow)
+static bool make_gltf_variants(RKShaderProgram& shader, bool use_sun_shadow)
 {
-    shader.mGLTFVariants.resize(LLShaderProgram::NUM_GLTF_VARIANTS);
+    shader.mGLTFVariants.resize(RKShaderProgram::NUM_GLTF_VARIANTS);
 
-    for (U32 i = 0; i < LLShaderProgram::NUM_GLTF_VARIANTS; ++i)
+    for (U32 i = 0; i < RKShaderProgram::NUM_GLTF_VARIANTS; ++i)
     {
-        bool alpha_blend = i & LLShaderProgram::GLTFVariant::ALPHA_BLEND;
-        bool rigged = i & LLShaderProgram::GLTFVariant::RIGGED;
-        bool unlit = i & LLShaderProgram::GLTFVariant::UNLIT;
-        bool multi_uv = i & LLShaderProgram::GLTFVariant::MULTI_UV;
+        bool alpha_blend = i & RKShaderProgram::GLTFVariant::ALPHA_BLEND;
+        bool rigged = i & RKShaderProgram::GLTFVariant::RIGGED;
+        bool unlit = i & RKShaderProgram::GLTFVariant::UNLIT;
+        bool multi_uv = i & RKShaderProgram::GLTFVariant::MULTI_UV;
 
         if (!make_gltf_variant(shader, shader.mGLTFVariants[i], alpha_blend, rigged, unlit, multi_uv, use_sun_shadow))
         {
@@ -449,10 +449,10 @@ void LLViewerShaderMgr::setShaders()
     // when using indexed texture rendering, leave some texture units available for shadow and reflection maps
     static LLCachedControl<S32> reserved_texture_units(gSavedSettings, "RenderReservedTextureIndices", 14);
 
-    LLShaderProgram::sIndexedTextureChannels = 4;
+    RKShaderProgram::sIndexedTextureChannels = 4;
     if (const char* channels = getenv("LL_VK_INDEXED_CHANNELS"))      // test switch: 1 = every draw one texture, no per-vertex texture index
     {
-        LLShaderProgram::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
+        RKShaderProgram::sIndexedTextureChannels = llclamp<S32>(atoi(channels), 1, 4);
     }
         //llclamp<S32>(max_texture_index, 1, gDeviceCaps.mNumTextureImageUnits-reserved_texture_units);
 
@@ -613,10 +613,10 @@ void LLViewerShaderMgr::setShaders()
 
 void LLViewerShaderMgr::unloadShaders()
 {
-    LLShaderProgram::dumpProgramCensus();       // <FS> LL_VK_PROGRAM_CENSUS=1: what was loaded and bound (before the programs forget their files)
-    while (!LLShaderProgram::sInstances.empty())
+    RKShaderProgram::dumpProgramCensus();       // <FS> LL_VK_PROGRAM_CENSUS=1: what was loaded and bound (before the programs forget their files)
+    while (!RKShaderProgram::sInstances.empty())
     {
-        LLShaderProgram* shader = *(LLShaderProgram::sInstances.begin());
+        RKShaderProgram* shader = *(RKShaderProgram::sInstances.begin());
         shader->unload();
     }
 
@@ -662,7 +662,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         attribs["SUN_SHADOW"] = "1";
 
         // <FS> ray query sun shadows (LL_VK_RT_SHADOWS, doc/vulkan/PLAN-rt-shadows.md): 1 replace the cascades, 4 and 5 debug views (2 split screen and 3 disagreement map are retired)
-        if (const U32 rt_mode = LLVkBridge::rtShadowMode())
+        if (const U32 rt_mode = RKVkBridge::rtShadowMode())
         {
             attribs["LL_RT_SHADOWS"] = std::to_string(rt_mode);
             // <FS> the sun ray's limit of masked candidates (see shadowUtil.glsl) and the debug that shows the rays that stopped at it
@@ -837,7 +837,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         attribs["TERRAIN_PBR_DETAIL"] = llformat("%d", detail);
     }
 
-    LLShaderProgram::sGlobalDefines = attribs;
+    RKShaderProgram::sGlobalDefines = attribs;
     {   // <FS> the native shaders (rkvknative.h) are built with the defines the graphics settings decide, like the viewer's own shaders
         static const char* const native_keys[] = { "SSR", "REFMAP_LEVEL", "REF_SAMPLE_COUNT", "HERO_PROBES", "SUN_SHADOW", "HAS_EMISSIVE", "TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", "TERRAIN_TRIPLANAR_BLEND_FACTOR", "TERRAIN_PBR_DETAIL" };
         std::vector<std::pair<std::string, std::string>> native_defines;
@@ -878,15 +878,15 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         {
             native_defines.push_back({ "RT_REFL_DEBUG", "1" });        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
         }
-        LLVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
-        LLVkBridge::nativeGlobalDefines(native_defines);
+        RKVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
+        RKVkBridge::nativeGlobalDefines(native_defines);
     }
 
     return std::string();
 }
 
 // <FS> ray traced reflections (rtReflection in shadowUtil.glsl): the programs that use it see them as the permutation LL_RT_REFLECTIONS. The device is not up yet when the water is configured
-// (LLVkBridge::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
+// (RKVkBridge::rtShadowMode() still says 0), so the launcher's environment is the early answer: ray shadows on and the material table on.
 static bool rt_reflections_possible()
 {
     const char* rt_env = getenv("LL_VK_RT_SHADOWS");
@@ -921,7 +921,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterPullProgram.mFeatures.calculatesAtmospherics = true;
         gWaterPullProgram.mFeatures.hasReflectionProbes = true;
         gWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
-        gWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullProgram.createShader();
         llassert(success);
@@ -933,7 +933,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterPullRtProgram.mName = "Water Pull RT Shader";
         gWaterPullRtProgram.mFeatures = gWaterPullProgram.mFeatures;
         gWaterPullRtProgram.addPermutation("LL_VERTEX_PULL", "1");
-        gWaterPullRtProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullRtProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullRtProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullRtProgram.createShader();
         llassert(success);
@@ -947,7 +947,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gWaterPullRtReflectionProgram.mName = "Water Pull RT Reflection Shader";
         gWaterPullRtReflectionProgram.mFeatures = gWaterPullProgram.mFeatures;
         gWaterPullRtReflectionProgram.addPermutation("LL_VERTEX_PULL", "1");
-        gWaterPullRtReflectionProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gWaterPullRtReflectionProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gWaterPullRtReflectionProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gWaterPullRtReflectionProgram.createShader();
         llassert(success);
@@ -959,7 +959,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         gUnderWaterPullProgram.mName = "Underwater Pull Shader";
         gUnderWaterPullProgram.mFeatures.calculatesAtmospherics = true;
         gUnderWaterPullProgram.addPermutation("LL_VERTEX_PULL", "1");
-        gUnderWaterPullProgram.mShaderGroup = LLShaderProgram::SG_WATER;
+        gUnderWaterPullProgram.mShaderGroup = RKShaderProgram::SG_WATER;
         gUnderWaterPullProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
         success = gUnderWaterPullProgram.createShader();
         llassert(success);
@@ -1109,7 +1109,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        LLShaderProgram* shader = &gDeferredPBRAlphaProgram;
+        RKShaderProgram* shader = &gDeferredPBRAlphaProgram;
         shader->mName = "Deferred PBR Alpha Shader";
 
         shader->mFeatures.calculatesLighting = false;
@@ -1137,7 +1137,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         {
             // <FS> the PBR terrain pass from the geometry packet path (the patch's vertex buffer read by address): native only programs, one for each detail level, paint type and mapping (native/manifest.txt, family
             // gbuffer: pbrterrain.vert + pbrterrain.frag); required (PLAN-twin-removal.md, section 8)
-            LLShaderProgram* shader = &gDeferredPBRTerrainPullProgram[paint_type];
+            RKShaderProgram* shader = &gDeferredPBRTerrainPullProgram[paint_type];
             shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s pull",
                     detail,
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
@@ -1180,7 +1180,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     // <FS> the local light passes (native/manifest.txt, family light): native only programs, no stock files. The point light volumes and the projectors are drawn from one record each (the table of their rows),
     // the lights that have the camera inside their box on the full screen triangle: one program for any number of point lights (it loops to light_count) and one for a projector.
-    for (LLShaderProgram* shader : { &gDeferredLightPullProgram, &gDeferredSpotLightPullProgram, &gDeferredMultiLightProgram, &gDeferredMultiSpotLightProgram })
+    for (RKShaderProgram* shader : { &gDeferredLightPullProgram, &gDeferredSpotLightPullProgram, &gDeferredMultiLightProgram, &gDeferredMultiSpotLightProgram })
     {
         if (!success)
         {
@@ -1253,7 +1253,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool fullbright = i == 1;
-            LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram;
+            RKShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullProgram : &gDeferredAlphaPullProgram;
             shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Shader" : "Deferred Alpha Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
             if (fullbright)
@@ -1285,7 +1285,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> S5c: the PBR (glTF) blend program with the vertices read by address (pbrAlphaPullV + pbralphaF with LL_BINDLESS_PBR). Required.
     if (success)
     {
-        LLShaderProgram* shader = &gDeferredPBRAlphaPullProgram;
+        RKShaderProgram* shader = &gDeferredPBRAlphaPullProgram;
         shader->mName = "Deferred PBR Alpha Pull Shader";
         shader->mFeatures.calculatesLighting = false;
         shader->mFeatures.hasLighting = false;
@@ -1312,7 +1312,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool fullbright = i == 1;
-            LLShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredAlphaPullSkinProgram;
+            RKShaderProgram* shader = fullbright ? &gDeferredFullbrightAlphaPullSkinProgram : &gDeferredAlphaPullSkinProgram;
             shader->mName = fullbright ? "Deferred Fullbright Alpha Pull Skin Shader" : "Deferred Alpha Pull Skin Shader";
             shader->mFeatures.calculatesAtmospherics = true;
             if (fullbright)
@@ -1342,7 +1342,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // ... and the PBR one
         if (success)
         {
-            LLShaderProgram* shader = &gDeferredPBRAlphaPullSkinProgram;
+            RKShaderProgram* shader = &gDeferredPBRAlphaPullSkinProgram;
             shader->mName = "Deferred PBR Alpha Pull Skin Shader";
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
@@ -1374,7 +1374,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool skin = i == 1;
-            LLShaderProgram* shader = skin ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram;
+            RKShaderProgram* shader = skin ? &gDeferredAlphaUberPullSkinProgram : &gDeferredAlphaUberPullProgram;
             shader->mName = skin ? "Deferred Alpha Uber Pull Skin Shader" : "Deferred Alpha Uber Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
             shader->mFeatures.calculatesLighting = false;
@@ -1406,7 +1406,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool skin = i == 1;
-            LLShaderProgram* shader = skin ? &gDeferredAlphaUberMatPullSkinProgram : &gDeferredAlphaUberMatPullProgram;
+            RKShaderProgram* shader = skin ? &gDeferredAlphaUberMatPullSkinProgram : &gDeferredAlphaUberMatPullProgram;
             shader->mName = skin ? "Deferred Alpha Uber Material Pull Skin Shader" : "Deferred Alpha Uber Material Pull Shader";
             shader->mFeatures.calculatesAtmospherics = true;
             shader->mFeatures.calculatesLighting = false;
@@ -1436,7 +1436,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
-        LLShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
+        RKShaderProgram* shader = skin ? &gDeferredFullbrightPullSkinProgram : &gDeferredFullbrightPullProgram;
         shader->mName = skin ? "Deferred Fullbright Pull Skin Shader" : "Deferred Fullbright Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         // <FS> a native only program (native/manifest.txt): no stock files
@@ -1452,7 +1452,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> J1 K6 S1: the HUD's fullbright pass from the table: the fullbright pull program of the world with IS_HUD (no atmospherics, as the HUD fullbright shader). Required.
     if (success)
     {
-        LLShaderProgram* shader = &gHUDFullbrightPullProgram;
+        RKShaderProgram* shader = &gHUDFullbrightPullProgram;
         shader->mName = "HUD Fullbright Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         // <FS> a native only program (native/manifest.txt): no stock files
@@ -1469,7 +1469,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // that cannot be made ends the shader load.
     if (success)
     {
-        LLShaderProgram* shader = &gHUDFullbrightShinyPullProgram;
+        RKShaderProgram* shader = &gHUDFullbrightShinyPullProgram;
         shader->mName = "HUD Fullbright Shiny Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         shader->mFeatures.hasReflectionProbes = true;
@@ -1488,7 +1488,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
-        LLShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
+        RKShaderProgram* shader = skin ? &gDeferredFullbrightShinyPullSkinProgram : &gDeferredFullbrightShinyPullProgram;
         shader->mName = skin ? "Deferred Fullbright Shiny Pull Skin Shader" : "Deferred Fullbright Shiny Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         shader->mFeatures.hasReflectionProbes = true;
@@ -1507,7 +1507,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
-        LLShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
+        RKShaderProgram* shader = skin ? &gDeferredBumpPullSkinProgram : &gDeferredBumpPullProgram;
         shader->mName = skin ? "Deferred Bump Pull Skin Shader" : "Deferred Bump Pull Shader";
         // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_bump.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -1524,7 +1524,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
-        LLShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
+        RKShaderProgram* shader = skin ? &gDeferredEmbossPullSkinProgram : &gDeferredEmbossPullProgram;
         shader->mName = skin ? "Deferred Emboss Pull Skin Shader" : "Deferred Emboss Pull Shader";
         // <FS> a native only program (native/manifest.txt, family gbuffer: gbuffer.vert + emboss.frag): no stock files
         shader->mShaderLevel = mShaderLevel[SHADER_OBJECT];
@@ -1541,7 +1541,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         // <FS> all of these are native only programs (native/manifest.txt, families gbuffer and post: the diffuse and the fullbright alpha mask pull programs, static, rigged and the HUD's): no stock files
-        auto make_mask = [&](LLShaderProgram* shader, const char* name, bool fullbright) -> bool
+        auto make_mask = [&](RKShaderProgram* shader, const char* name, bool fullbright) -> bool
         {
             shader->mName = name;
             if (fullbright)
@@ -1571,7 +1571,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     for (int i = 0; i < 2 && success; ++i)
     {
         const bool skin = i == 1;
-        LLShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
+        RKShaderProgram* shader = skin ? &gDeferredPBROpaquePullSkinProgram : &gDeferredPBROpaquePullProgram;
         shader->mName = skin ? "Deferred PBR Opaque Pull Skin Shader" : "Deferred PBR Opaque Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
@@ -1588,7 +1588,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> J1 K6 S1: the HUD's glTF opaque and mask pass from the table: the PBR opaque pull program with IS_HUD (pbropaqueF has no lighting outputs in a HUD). Required.
     if (success)
     {
-        LLShaderProgram* shader = &gHUDPBROpaquePullProgram;
+        RKShaderProgram* shader = &gHUDPBROpaquePullProgram;
         shader->mName = "HUD PBR Opaque Pull Shader";
         shader->mFeatures.calculatesAtmospherics = true;
         shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
@@ -1605,7 +1605,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // <FS> S5e: the glow second draw of the alpha items from the table: emissiveF / pbrglowF (alpha only) with the vertices read by address, static and rigged. Required.
     if (success)
     {
-        auto make_glow = [&](LLShaderProgram* shader, const char* name, const char* bindless, bool skin, bool srgb) -> bool
+        auto make_glow = [&](RKShaderProgram* shader, const char* name, const char* bindless, bool skin, bool srgb) -> bool
         {
             shader->mName = name;
             shader->addPermutation(bindless, "1");
@@ -1632,7 +1632,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // Required (PLAN-twin-removal.md, section 8).
     if (success)
     {
-        auto make_pull = [&](LLShaderProgram* shader, const char* name, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
+        auto make_pull = [&](RKShaderProgram* shader, const char* name, std::initializer_list<std::pair<const char*, const char*> > permutations, bool skin, bool sun_shadow = false) -> bool
         {
             shader->mName = name;
             for (const auto& p : permutations)
@@ -1656,7 +1656,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         };
         // the HUD's fullbright alpha program (all the HUD's plain draws: its lit program is never used) and its glTF program
         {
-            LLShaderProgram* shader = &gHUDFullbrightAlphaPullProgram;
+            RKShaderProgram* shader = &gHUDFullbrightAlphaPullProgram;
             shader->mFeatures.calculatesAtmospherics = true;
             success = make_pull(shader, "HUD Fullbright Alpha Pull Shader", {}, false);
             if (success)
@@ -1669,7 +1669,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool rigged = i == 1;
-            LLShaderProgram* shader = rigged ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram;
+            RKShaderProgram* shader = rigged ? &gDeferredAlphaImpostorPullSkinProgram : &gDeferredAlphaImpostorPullProgram;
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
             shader->mFeatures.hasReflectionProbes = true;
@@ -1686,7 +1686,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         for (int i = 0; i < 2 && success; ++i)
         {
             const bool rigged = i == 1;
-            LLShaderProgram* shader = rigged ? &gDeferredFullbrightMaskPullSkinProgram : &gDeferredFullbrightMaskPullProgram;
+            RKShaderProgram* shader = rigged ? &gDeferredFullbrightMaskPullSkinProgram : &gDeferredFullbrightMaskPullProgram;
             shader->mFeatures.calculatesAtmospherics = true;
             success = make_pull(shader, rigged ? "Skinned Deferred Fullbright Alpha Mask Pull Shader" : "Deferred Fullbright Mask Alpha Pull Shader", {}, rigged);
         }
@@ -1740,7 +1740,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <FS> a native only program (native/manifest.txt, family post: waterhaze.vert + waterhaze.frag): no stock files. The water patches above the water and the full screen triangle under it are entries of
         // a record (the vertex buffers read by address)
         gWaterHazePullProgram.mName = "Water Haze Pull Shader";
-        gWaterHazePullProgram.mShaderGroup           = LLShaderProgram::SG_WATER;
+        gWaterHazePullProgram.mShaderGroup           = RKShaderProgram::SG_WATER;
         gWaterHazePullProgram.mFeatures.calculatesAtmospherics = true;
         gWaterHazePullProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
         gWaterHazePullProgram.addPermutation("LL_VERTEX_PULL", "1");
@@ -1760,7 +1760,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> Render packets: the shadow program that reads vertices and indices by address. Required (there is no other shadow path): a failure to make it is a failure to load the shaders.
-    if (success && LLVkBridge::shadowPacketsAvailable())
+    if (success && RKVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowPullProgram.mName = "Deferred Shadow Pull Shader";
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
@@ -1770,7 +1770,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> ... and the one for the alpha masked casters, which needs the device to index sampled images at run time (a required device feature). Also required.
-    if (success && LLVkBridge::shadowAlphaPacketsAvailable())
+    if (success && RKVkBridge::shadowAlphaPacketsAvailable())
     {
         gDeferredShadowAlphaPullProgram.mName = "Deferred Shadow Alpha Pull Shader";
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
@@ -1780,7 +1780,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <FS> ... and the one for rigged casters
-    if (success && LLVkBridge::shadowPacketsAvailable())
+    if (success && RKVkBridge::shadowPacketsAvailable())
     {
         gDeferredShadowSkinPullProgram.mName = "Deferred Shadow Skin Pull Shader";
         // <FS> a native only program (native/manifest.txt, family shadow): no stock files
@@ -1825,7 +1825,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         static const U32 pull_indices[] = { 0, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 1, 5, 9, 13 };
         for (U32 i : pull_indices)
         {
-            LLShaderProgram& pull = gDeferredMaterialPullProgram[i];
+            RKShaderProgram& pull = gDeferredMaterialPullProgram[i];
             pull.mName = llformat("Material Pull Shader %d", i);
             // <FS> the programs of the alpha modes 0, 2 and 3 are native only (native/manifest.txt, family gbuffer: gbuffer.vert + gbuffer_material.frag): no stock files; the blend variants (1, 5, 9, 13: native
             // outside the sessions with ray queries) keep theirs
@@ -1862,7 +1862,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             }
 
             // <FS> S4 A1: the rigged variant of the same pass (HAS_SKIN)
-            LLShaderProgram& skin = gDeferredMaterialPullSkinProgram[i];
+            RKShaderProgram& skin = gDeferredMaterialPullSkinProgram[i];
             skin.mName = llformat("Material Pull Skin Shader %d", i);
             skin.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             if (alpha_mode != 0)
@@ -2089,7 +2089,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         // <FS> made whenever the ray traced shadows are on: its mode 17 (the blocker distance, PLAN-rt-shadow-penumbra.md) needs no material table; the material modes 1-16 do, and
         // visualizeRtMaterials keeps them out of reach when the table is not there (their table reads would go through a zero address)
-        if (LLVkBridge::rtShadowMode())
+        if (RKVkBridge::rtShadowMode())
         {
             gRtMaterialDebugProgram.mName = "Ray Scene Material Debug";
         // <FS> a native only program (native/manifest.txt, family post): no stock files
@@ -2376,7 +2376,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gEnvironmentMapProgram.mFeatures.calculatesAtmospherics = true;
         gEnvironmentMapProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw)
         gEnvironmentMapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gEnvironmentMapProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gEnvironmentMapProgram.mShaderGroup = RKShaderProgram::SG_SKY;
 
         success = gEnvironmentMapProgram.createShader();
         llassert(success);
@@ -2389,7 +2389,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSkyProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSkyProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSkyProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLSkyProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLSkyProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredWLSkyProgram.createShader();
         llassert(success);
     }
@@ -2401,7 +2401,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLCloudProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLCloudProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLCloudProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLCloudProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLCloudProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredWLCloudProgram.createShader();
         llassert(success);
     }
@@ -2413,7 +2413,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLSunProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLSunProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLSunProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLSunProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLSunProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredWLSunProgram.createShader();
         llassert(success);
     }
@@ -2425,7 +2425,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredWLMoonProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredWLMoonProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredWLMoonProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredWLMoonProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredWLMoonProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredWLMoonProgram.createShader();
         llassert(success);
     }
@@ -2436,7 +2436,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredStarProgram.mName = "Deferred Star Program pull";
         gDeferredStarProgram.addPermutation("LL_VERTEX_PULL", "1");       // (a draw of a vertex buffer under it is one entry of a geometry record: LLVertexBuffer::pullDraw; the twin set this)
         gDeferredStarProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gDeferredStarProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gDeferredStarProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gDeferredStarProgram.createShader();
         llassert(success);
     }
@@ -2446,7 +2446,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNormalMapGenProgram.mName = "Normal Map Generation Program";
         // <FS> a native only program (native/manifest.txt, family post: normgen.vert + normgen.frag): no stock files
         gNormalMapGenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        gNormalMapGenProgram.mShaderGroup = LLShaderProgram::SG_SKY;
+        gNormalMapGenProgram.mShaderGroup = RKShaderProgram::SG_SKY;
         success = gNormalMapGenProgram.createShader();
     }
 
@@ -2590,7 +2590,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     if (success)
     {
         // <FS> K6 B1: the rigged highlight draws (the table's rigged items, the alpha loop's kind 29 record) go through this program: the native stand-in is the only one that draws. Required (PLAN-twin-removal.md, section 8)
-        LLShaderProgram& pull = gHighlightPullSkinProgram;
+        RKShaderProgram& pull = gHighlightPullSkinProgram;
         pull.mName = "Highlight Pull Skin Shader";
         // <FS> a native only program (native/manifest.txt, family alpha): no stock files (it declares `color` and the table's address itself)
         pull.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
@@ -2604,7 +2604,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         // <FS> K6 B1: the Batch Size and Texture Animation views draw the table's items with these (native programs: alpha.vert + debug_batch.frag; the `color` uniform selects the view)
         for (int skin = 0; skin < 2 && success; ++skin)
         {
-            LLShaderProgram& debug_program = skin ? gDebugBatchPullSkinProgram : gDebugBatchPullProgram;
+            RKShaderProgram& debug_program = skin ? gDebugBatchPullSkinProgram : gDebugBatchPullProgram;
             debug_program.mName = skin ? "Debug Batch Pull Skin Shader" : "Debug Batch Pull Shader";
             // <FS> a native only program (native/manifest.txt, family alpha): no stock files
             if (skin)
@@ -2749,7 +2749,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
         for (S32 variant = 0; variant < NORMAL_DEBUG_SHADER_COUNT; ++variant)
         {
             // native only (native/manifest.txt, family post: normal_debug.vert + normal_debug.geom + normal_debug.frag, the tangent form with HAS_ATTRIBUTE_TANGENT); the skinned form was never bound
-            LLShaderProgram& shader = gNormalDebugProgram[variant];
+            RKShaderProgram& shader = gNormalDebugProgram[variant];
             shader.mName = variant == NORMAL_DEBUG_SHADER_WITH_TANGENTS ? "Normal Debug Tangents Shader" : "Normal Debug Shader";
             shader.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
             success = shader.createShader();
@@ -2802,7 +2802,7 @@ bool LLViewerShaderMgr::loadShadersInterface()
     {
         if (success)
         {
-            LLShaderProgram* shader = &gPBRTerrainBakeProgram;
+            RKShaderProgram* shader = &gPBRTerrainBakeProgram;
             U32 bit_depth = gSavedSettings.getU32("TerrainPaintBitDepth");
             // LLTerrainPaintMap currently uses an RGB8 texture internally
             bit_depth = llclamp(bit_depth, 1, 8);
@@ -2876,7 +2876,7 @@ std::string LLViewerShaderMgr::getShaderDirPrefix(void)
     return gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders", "class");
 }
 
-void LLViewerShaderMgr::updateShaderUniforms(LLShaderProgram * shader)
+void LLViewerShaderMgr::updateShaderUniforms(RKShaderProgram * shader)
 {
     LLEnvironment::instance().updateShaderUniforms(shader);
 }

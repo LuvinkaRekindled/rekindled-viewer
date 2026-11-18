@@ -14,7 +14,7 @@
 
 #include <vector>
 
-namespace LLVkNgx
+namespace RKVkNgx
 {
     // before the instance / device are created: the extensions NGX wants for DLSS-NR (only the ones that exist are added)
     void addInstanceExtensions(std::vector<const char*>& out);
@@ -26,7 +26,7 @@ namespace LLVkNgx
     void shutdown();
 
     // layouts NGX reads / writes the images in
-    VkImageLayout inputLayout(const LLVk::Image& image);
+    VkImageLayout inputLayout(const RKVk::Image& image);
     VkImageLayout outputLayout();
 }
 

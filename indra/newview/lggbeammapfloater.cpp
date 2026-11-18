@@ -59,7 +59,7 @@ void lggBeamMapFloater::draw()
     LLFloater::draw();
     const LLRect& rec = mBeamshapePanel->getRect();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     gRender.color4fv(LLColor4::white.mV);
     gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 2.0f, 30, false);
     gRender.color4fv(LLColor4::black.mV);
@@ -82,7 +82,7 @@ void lggBeamMapFloater::draw()
         gRender.color4fv(dot.c.mV);
         gl_circle_2d((F32)dot.x, (F32)dot.y, 7.0f, 30, true);
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 bool lggBeamMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)

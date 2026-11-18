@@ -53,7 +53,7 @@
 #pragma warning (pop)
 #endif
 
-LLPointer<LLImageTex> gEXRImage;
+LLPointer<RKImageTex> gEXRImage;
 
 void load_exr(const std::string& filename)
 {
@@ -70,9 +70,9 @@ void load_exr(const std::string& filename)
     if (ret == TINYEXR_SUCCESS)
     {
         U32 texName = 0;
-        LLImageTex::generateTextures(1, &texName);
+        RKImageTex::generateTextures(1, &texName);
 
-        gEXRImage = new LLImageTex(texName, 4, TextureTarget::Tex2D, TexelFormat::RGBA16F, PixelFormat::RGBA, ComponentType::F32, LLTexUnit::TAM_CLAMP);
+        gEXRImage = new RKImageTex(texName, 4, TextureTarget::Tex2D, TexelFormat::RGBA16F, PixelFormat::RGBA, ComponentType::F32, LLTexUnit::TAM_CLAMP);
         gEXRImage->setHasMipMaps(true);
         gEXRImage->setUseMipMaps(true);
         gEXRImage->setFilteringOption(LLTexUnit::TFO_TRILINEAR);
@@ -81,7 +81,7 @@ void load_exr(const std::string& filename)
 
         gRender.texImage2D(texName, TextureTarget::Tex2D, 0, TexelFormat::RGBA16F, width, height, PixelFormat::RGBA, ComponentType::F32, out);
 
-        LLImageTexMemory::alloc_tex_image(width, height, TexelFormat::RGBA16F, 1);
+        RKImageTexMemory::alloc_tex_image(width, height, TexelFormat::RGBA16F, 1);
 
         free(out); // release memory of image data
 
@@ -825,17 +825,17 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
     }
 
     gRender.setColorMask(true, true);
-    LLRenderState::DepthScope depth(false, false);
-    LLRenderState::CullScope cull(false);
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::DepthScope depth(false, false);
+    RKRenderState::CullScope cull(false);
+    RKRenderState::BlendScope blend(false);
 
     // downsample to placeholder map
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
 
         gRender.flush();
         U32 res = mProbeResolution * 2;
@@ -912,8 +912,8 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             }
         }
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         gRender.getTexUnit(diffuseChannel)->bindWhite();
         gReflectionMipProgram.unbind();
@@ -956,7 +956,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     F32 mat[16];
                     frame.getOpenGLRotation(mat);
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
+                    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, mat);
 
                     mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
@@ -1005,7 +1005,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     F32 mat[16];
                     frame.getOpenGLRotation(mat);
-                    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, mat);
+                    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, mat);
 
                     mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
@@ -1343,7 +1343,7 @@ void LLReflectionMapManager::setUniforms()
     {
         updateUniforms();
     }
-    gRender.bindUniformBlock(LLShaderProgram::UB_REFLECTION_PROBES, mUBO);
+    gRender.bindUniformBlock(RKShaderProgram::UB_REFLECTION_PROBES, mUBO);
 }
 
 

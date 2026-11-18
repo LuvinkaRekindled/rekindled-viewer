@@ -99,7 +99,7 @@ void LLVOGrass::updateSpecies()
         SpeciesMap::const_iterator it = sSpeciesTable.begin();
         mSpecies = (*it).first;
     }
-    setTEImage(0, LLViewerTextureManager::getFetchedTexture(sSpeciesTable[mSpecies]->mTextureID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+    setTEImage(0, LLViewerTextureManager::getFetchedTexture(sSpeciesTable[mSpecies]->mTextureID, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
 }
 
 
@@ -765,7 +765,7 @@ void LLGrassPartition::getGeometry(LLSpatialGroup* group)
             U32 end = start + facep->getGeomCount()-1;
             U32 offset = facep->getIndicesStart();
             U32 count = facep->getIndicesCount();
-            LLDrawBatch* info = new LLDrawBatch(start,end,count,offset,facep->getTexture(),
+            RKDrawBatch* info = new RKDrawBatch(start,end,count,offset,facep->getTexture(),
                 //facep->getTexture(),
                 buffer, object->isSelected(), fullbright);
 

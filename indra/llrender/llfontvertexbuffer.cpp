@@ -226,7 +226,7 @@ void LLFontVertexBuffer::renderBuffers()
 
     // Depth translation, so that floating text appears 'in-world'
     // and is correctly occluded.
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f, 0.f, LLFontGL::sCurDepth);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, 0.f, 0.f, LLFontGL::sCurDepth);
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
 
     // Note: ellipses should technically be covered by push/load/translate of their own

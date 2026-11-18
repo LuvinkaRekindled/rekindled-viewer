@@ -29,7 +29,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace LLVk
+namespace RKVk
 {
 
 struct PipelineKey
@@ -71,7 +71,7 @@ public:
     void writeRange(U32 cls, U32 offset, U32 size, const U8* data);
     // the loose uniform block of a class as built (initial values from the shader text): the producer's own copy starts from it
     const std::vector<U8>& shadowOf(U32 cls) const { return mShadow[cls]; }
-    LLVkPassCensus::ProgState mCensus;      // S6.0: when the stream last wrote each uniform class block (LL_VK_PASSCENSUS)
+    RKVkPassCensus::ProgState mCensus;      // S6.0: when the stream last wrote each uniform class block (LL_VK_PASSCENSUS)
     static bool isLive(const Program* p);   // S6.3: created and not destroyed
     static void poisonAll();                // S6.2 (LL_VK_PASSCLOSE=3): every program's loose uniform blocks are overwritten with a pattern and marked for upload
 
@@ -470,7 +470,7 @@ private:
     void tracyShutdown();
     void tracyBeginPass();
     void tracyEndPass();
-    // named GPU zones (see LLVkAsync::gpuZone): the stamps that attribute GPU time to the viewer's own zones, nested
+    // named GPU zones (see RKVkAsync::gpuZone): the stamps that attribute GPU time to the viewer's own zones, nested
     std::vector<U32> mZoneStack;
     U32 mPassTag = 0;
     U32 mBeginTag = 0;
@@ -495,11 +495,11 @@ private:
 public:
     std::string describeDraw(U64 serial) const;
     std::string describeSlot(U32 slot) const;      // one slot of the 2D table: age, writes, image size, mips, layout (device lost report)
-    // <FS> the bindless probe (LLVkWorker::describe_textures): the set 2 layout and the set of a frame slot, and the descriptor writes made now (instead of at the next draw)
+    // <FS> the bindless probe (RKVkWorker::describe_textures): the set 2 layout and the set of a frame slot, and the descriptor writes made now (instead of at the next draw)
     VkDescriptorSetLayout bindlessLayout() const { return mSet2Layout; }
     VkDescriptorSet bindlessSet(U32 frame_slot) const { return frame_slot < Context::FRAMES_IN_FLIGHT ? mBindlessSet[frame_slot] : VK_NULL_HANDLE; }
     void bindlessWritesNow() { flushPendingWrites(); }
-    // <FS> the deferred uploads queued for the image at `from` follow it to `to` (the image struct moved to another texture record: a staged image committed into a texture, LLVkWorker::tex_commit_image)
+    // <FS> the deferred uploads queued for the image at `from` follow it to `to` (the image struct moved to another texture record: a staged image committed into a texture, RKVkWorker::tex_commit_image)
     void retargetDeferredUploads(Image* from, Image* to);
     std::string auditBindless() const;     // the slots that still point at an image destroyed lately (a draw sampling one reads memory that is not its own)
 private:      // the description of the draw about to be made (a stamp tag), see drawTag
@@ -563,7 +563,7 @@ private:
     void flushPendingWrites();
     void handleMapSet(U32 table, U32 handle, U32 d);     // GPU-LIFETIMES.md step 5: the one write into the current frame's handle map (refused in a split frame for a handle that shows something)
 public:
-    // <FS> what the textures cost and where they fail (logged every 1800 frames by LLVkWorker::after_frame; reset by each read)
+    // <FS> what the textures cost and where they fail (logged every 1800 frames by RKVkWorker::after_frame; reset by each read)
     struct TexStats
     {
         U32 mBindlessPeak = 0;          // most slots one table had in use
@@ -788,7 +788,7 @@ private:
     void startPendingQuery();
 };
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN
 

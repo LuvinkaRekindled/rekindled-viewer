@@ -234,11 +234,11 @@ void LLColorSwatchCtrl::draw()
             gRender.color4fv(opaque_color.mV);
             if (mAlphaGradientImage.notNull())
             {
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                 {
                     mAlphaGradientImage->draw(interior, mColor % alpha);
                 }
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
     }

@@ -47,7 +47,7 @@
 #include <memory>
 #include <stack>
 
-namespace LLVkBridge { struct SpotVolumeRow; }
+namespace RKVkBridge { struct SpotVolumeRow; }
 
 class LLViewerTexture;
 class LLFace;
@@ -57,7 +57,7 @@ class LLCullResult;
 class LLVOAvatar;
 class LLVOVolume;
 class LLVOPartGroup;
-class LLShaderProgram;
+class RKShaderProgram;
 class LLDrawPoolAlpha;
 class LLSettingsSky;
 
@@ -265,7 +265,7 @@ public:
     void        markMoved(LLDrawable *drawablep, bool damped_motion = false);
     void        markShift(LLDrawable *drawablep);
     void        markTextured(LLDrawable *drawablep);
-    void        markRenderRebuild(LLRenderUpdate* glu);
+    void        markRenderRebuild(RKRenderUpdate* glu);
     void        markRebuild(LLSpatialGroup* group);
     void        markRebuild(LLDrawable *drawablep, LLDrawable::EDrawableFlags flag = LLDrawable::REBUILD_ALL);
     void        markPartitionMove(LLDrawable* drawablep);
@@ -427,13 +427,13 @@ public:
         std::vector<LLDrawable*> mAvatars;      // ... and the avatars' drawables (kind 2, after the bridges)
         std::shared_ptr<ShadowSkinBuild> mSkinBuild;        // the same for the rigged ones (their palettes included)
         // (the builders run on the async pool while the main thread draws the cascades before this one; renderShadow waits for them)
-        LLAsyncPool::JobPtr mSkinJob;
+        RKAsyncPool::JobPtr mSkinJob;
         std::shared_ptr<ShadowAlphaBuild> mAlphaBuild[2];   // the casters with a texture, static and rigged
-        LLAsyncPool::JobPtr mAlphaJob[2];
+        RKAsyncPool::JobPtr mAlphaJob[2];
     };
     void shadowPrepCull(ShadowCascadePrep& prep, const std::vector<LLSpatialPartition*>& partitions);
     // <FS> LL_VK_SC_SPLIT: the cull of all the pending cascades as pool jobs by partition and subtree (what a serial shadowPrepCull per cascade finds, in the same order)
-    void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class LLForkJoinPool* pool);
+    void shadowPrepCullSplit(std::vector<ShadowCascadePrep>& pending, const std::vector<LLSpatialPartition*>& partitions, class RKForkJoinPool* pool);
     // the marking half of the cull, for a range of the cascade's drawable groups (kind 0) or visible groups (kind 1): chunks of it run on the pool (MAINTHREAD-candidates.md, A); the drawables left to the main thread go into `deferred`
     void shadowPrepMark(ShadowCascadePrep& prep, int kind, U32 begin, U32 end, std::vector<LLDrawable*>& deferred, LLCullResult& local);
     void setShadowJobFlags(bool rt_raster = false);        // J1 K6 B: sViewJobsSkipStatic / sViewJobsSkipAlpha for the render map job of the shadow pass about to be prepared (the batch and the serial pass)
@@ -462,25 +462,25 @@ public:
     void renderGeomDeferred(LLCamera& camera, bool do_occlusion = false);
     void renderGeomPostDeferred(LLCamera& camera);
     void renderGeomShadow(LLCamera& camera);
-    void bindLightFunc(LLShaderProgram& shader);
+    void bindLightFunc(RKShaderProgram& shader);
 
     // bind shadow maps
     // if setup is true, wil lset texture compare mode function and filtering options
-    void bindShadowMaps(LLShaderProgram& shader);
-    void bindDeferredShaderFast(LLShaderProgram& shader);
-    void bindDeferredFill(LLShaderProgram& shader);         // the Fast bind in full
-    void bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
-    void setupSpotLight(LLShaderProgram& shader, LLDrawable* drawablep);
-    void spotLightRow(LLDrawable* drawablep, struct LLVkBridge::SpotVolumeRow& row, LLViewerTexture*& image);        // <FS> S6 LV2: setupSpotLight's values as a row of the projector record (and its side effects)
+    void bindShadowMaps(RKShaderProgram& shader);
+    void bindDeferredShaderFast(RKShaderProgram& shader);
+    void bindDeferredFill(RKShaderProgram& shader);         // the Fast bind in full
+    void bindDeferredShader(RKShaderProgram& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
+    void setupSpotLight(RKShaderProgram& shader, LLDrawable* drawablep);
+    void spotLightRow(LLDrawable* drawablep, struct RKVkBridge::SpotVolumeRow& row, LLViewerTexture*& image);        // <FS> S6 LV2: setupSpotLight's values as a row of the projector record (and its side effects)
 
-    void unbindDeferredShader(LLShaderProgram& shader);
+    void unbindDeferredShader(RKShaderProgram& shader);
 
     // set env_mat parameter in given shader
-    void setEnvMat(LLShaderProgram& shader);
+    void setEnvMat(RKShaderProgram& shader);
 
-    void bindReflectionProbes(LLShaderProgram& shader);
-    void stepPoissonOffset(LLShaderProgram& shader);
-    void unbindReflectionProbes(LLShaderProgram& shader);
+    void bindReflectionProbes(RKShaderProgram& shader);
+    void stepPoissonOffset(RKShaderProgram& shader);
+    void unbindReflectionProbes(RKShaderProgram& shader);
 
     void renderDeferredLighting();
     void rtSceneEarly(int where);            // <FS> LL_VK_RT_EARLY: the ray scene is built before the G-buffer (see renderDeferredLighting for the wait)

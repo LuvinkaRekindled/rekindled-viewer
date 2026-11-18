@@ -23,9 +23,9 @@
 #include "llerror.h"
 #include "llthread.h"
 
-namespace LLPhaseCheck
+namespace RKPhaseCheck
 {
-    // fork-join batches between the slot taken in launch and the end of the join (LLForkJoinPool keeps it)
+    // fork-join batches between the slot taken in launch and the end of the join (RKForkJoinPool keeps it)
     inline std::atomic<unsigned> sPhaseDepth{ 0 };
 
     struct Slot
@@ -92,11 +92,11 @@ namespace LLPhaseCheck
 inline void ll_phase_check(const char* writer)
 {
     const bool main_thread = on_main_thread();
-    if (main_thread && LLPhaseCheck::sPhaseDepth.load(std::memory_order_relaxed) == 0)
+    if (main_thread && RKPhaseCheck::sPhaseDepth.load(std::memory_order_relaxed) == 0)
     {
         return;
     }
-    LLPhaseCheck::report(writer, !main_thread);
+    RKPhaseCheck::report(writer, !main_thread);
 }
 
 #endif // LL_LLPHASECHECK_H

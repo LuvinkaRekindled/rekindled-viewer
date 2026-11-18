@@ -80,9 +80,9 @@ void render_hull_with_outline(LLModel::PhysicsMesh& mesh, const LLColor4& color,
     Make every effort to keep size minimal.
     Member ordering is important for cache coherency
 */
-struct LLSceneFragment;
+struct RKSceneFragment;
 struct GeoRigSource;
-void ll_scene_fragment_free(LLSceneFragment*& fragment);        // pipeline.cpp (S1)
+void ll_scene_fragment_free(RKSceneFragment*& fragment);        // pipeline.cpp (S1)
 class LLSpatialGroup;
 void ll_scene_fragment_build(LLSpatialGroup* group);
 class LLCullResult;
@@ -102,10 +102,10 @@ void ll_scene_geo_count(U32 what, U64 n);                       // 0 builder dra
 
 // <FS> S5a-1 (doc/vulkan/S5-design.md section 8): the plan of a group's static alpha draws, kept by its fragment (LL_VK_SCENE_ALPHA=1): the draw infos the alpha loop draws, in its order, as segments of
 // draws a table can serve (mServed, equal mKey: one run) and draws it cannot (the old path draws them in place)
-struct LLAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; U32 mRank; };      // mRank: served segments: the number of the first item among the fragment's alpha items
-struct LLAlphaPlanView
+struct RKAlphaPlanSeg { U32 mFirst, mCount, mKey; bool mServed; U32 mRank; };      // mRank: served segments: the number of the first item among the fragment's alpha items
+struct RKAlphaPlanView
 {
-    const LLAlphaPlanSeg* mSegs = nullptr;
+    const RKAlphaPlanSeg* mSegs = nullptr;
     U32 mSegCount = 0;
     U32 mHandle = 0;            // the fragment's handle at the worker (0: not attached, nothing is served)
     const U32* mGlowIdx = nullptr;      // the plan indices of the served draws that have a glow buffer, ascending
@@ -116,7 +116,7 @@ struct LLAlphaPlanView
     U32 mGlowCount = 0;
     bool mGlow = false;         // a draw of the group has an emissive buffer (the loop draws a glow pass after the group, post water)
 };
-int ll_alpha_plan(const LLSpatialGroup* group, LLAlphaPlanView& out, bool rigged = false);
+int ll_alpha_plan(const LLSpatialGroup* group, RKAlphaPlanView& out, bool rigged = false);
 bool ll_alpha_blend_pair(U32 id, int* src, int* dst);       // pipeline.cpp (S5b): a run key carries the id of its blend function pair in bits 8 and up (0 = the standard alpha blend)
 bool ll_alpha_glow_table(bool pbr);      // pipeline.cpp (S5e): the glow second draw of the alpha items is drawn from the table (plain / glTF items)
 bool ll_alpha_ab_on();           // pipeline.cpp (S5f F4): the alpha pull programs draw this frame in any view (transient records), not only the main view's fragments (LL_VK_SCENE_ALPHA=1 and the AB phase)
@@ -128,43 +128,43 @@ bool ll_group_has_alpha_key(const LLSpatialGroup* group);                       
 bool ll_group_has_rigged_alpha_key(const LLSpatialGroup* group);                            // ... a PASS_ALPHA_RIGGED entry
 bool ll_group_first_draw_model(const LLSpatialGroup* group, const LLMatrix4*& model);       // the model matrix of the first draw of the draw map (false: the map is empty or the fragment is not current)
 
-class LLDrawBatch final : public LLRefCount
+class RKDrawBatch final : public LLRefCount
 {
     LL_ALIGN_NEW;
 protected:
-    ~LLDrawBatch();
+    ~RKDrawBatch();
 
 public:
-    LLDrawBatch(const LLDrawBatch& rhs) = delete;
-    const LLDrawBatch& operator=(const LLDrawBatch& rhs) = delete;
+    RKDrawBatch(const RKDrawBatch& rhs) = delete;
+    const RKDrawBatch& operator=(const RKDrawBatch& rhs) = delete;
 
-    // return a hash of this LLDrawBatch as a debug color
+    // return a hash of this RKDrawBatch as a debug color
     LLColor4U getDebugColor() const;
 
-    LLDrawBatch(U16 start, U16 end, U32 count, U32 offset,
+    RKDrawBatch(U16 start, U16 end, U32 count, U32 offset,
                 LLViewerTexture* image, LLVertexBuffer* buffer,
                 bool fullbright = false, U8 bump = 0);
 
     // return mSkinHash->mHash, or 0 if mSkinHash is null
     U64 getSkinHash();
 
-    LLVBRef mVertexBuffer;     // <FS> C3.5: a handle (llvertexbuffer.h), not a counted pointer
+    RKVBRef mVertexBuffer;     // <FS> C3.5: a handle (llvertexbuffer.h), not a counted pointer
     U16 mStart = 0;
     U16 mEnd = 0;
     U32 mCount = 0;
     U32 mOffset = 0;
 
-    // <FS> C2.3 (doc/vulkan/PLAN-clean-core.md section 7): handles, not counted pointers (LLTexRef, llviewertexture.h): the draw info owns no texture; the faces and the texture lists keep it alive and the retire list
+    // <FS> C2.3 (doc/vulkan/PLAN-clean-core.md section 7): handles, not counted pointers (RKTexRef, llviewertexture.h): the draw info owns no texture; the faces and the texture lists keep it alive and the retire list
     // keeps it intact for the frames in flight
-    LLTexRef     mTexture;
-    LLTexRef mSpecularMap;
-    LLTexRef mNormalMap;
+    RKTexRef     mTexture;
+    RKTexRef mSpecularMap;
+    RKTexRef mNormalMap;
 
     const LLMatrix4* mTextureMatrix = nullptr;
     const LLMatrix4* mModelMatrix = nullptr;
 
-    LLAvatarRef mAvatar;       // <FS> C2.4d: a handle (rkavatarref.h), not a counted pointer
-    LLSkinRef mSkinInfo;       // <FS> C2.4c: a handle (llmodel.h), not a counted pointer (<FS:Beq/> had made it a const pointer to be defensive about UAF with skinInfo during LocalMesh)
+    RKAvatarRef mAvatar;       // <FS> C2.4d: a handle (rkavatarref.h), not a counted pointer
+    RKSkinRef mSkinInfo;       // <FS> C2.4c: a handle (llmodel.h), not a counted pointer (<FS:Beq/> had made it a const pointer to be defensive about UAF with skinInfo during LocalMesh)
 
     // <FS> C2.4a: this was a counted LLPointer<LLMaterial> that was only ever tested for null (the batching test in registerFace, the materials pull program choice in the scene table): a flag, no lifetime to carry
     bool mHasMaterial = false;
@@ -175,11 +175,11 @@ public:
     bool mRigAlphaSrc = false;          // <FS> J1 K3d: this rigged alpha masked caster is read by the cascades' alpha builder from its fragment item (GeoRigSource: mAlphaOk), not from the render map list
 
     // PBR material parameters
-    LLGLTFMatRef mGLTFMaterial;        // <FS> C2.4: a handle (llfetchedgltfmaterial.h), not a counted pointer
+    RKGLTFMatRef mGLTFMaterial;        // <FS> C2.4: a handle (llfetchedgltfmaterial.h), not a counted pointer
 
     LLVector4 mSpecColor = LLVector4(1.f, 1.f, 1.f, 0.5f); // XYZ = Specular RGB, W = Specular Exponent
 
-    std::vector<LLTexRef> mTextureList;     // <FS> C2.3: handles
+    std::vector<RKTexRef> mTextureList;     // <FS> C2.3: handles
 
     LLUUID mMaterialID; // id of LLGLTFMaterial or LLMaterial applied to this draw info
 
@@ -211,7 +211,7 @@ struct GeoRange
     U32 mStart = 0;         // first vertex
     U32 mEnd = 0;           // last vertex
 };
-inline GeoRange ll_geo_range(const LLDrawBatch* p)
+inline GeoRange ll_geo_range(const RKDrawBatch* p)
 {
     GeoRange r;
     if (p && p->mVertexBuffer.notNull())
@@ -237,11 +237,11 @@ struct RtMatCache
 };
 struct RtMatSource
 {
-    LLGLTFMatRef mGltf;
-    LLTexRef mTexture;
-    LLTexRef mList[4];
+    RKGLTFMatRef mGltf;
+    RKTexRef mTexture;
+    RKTexRef mList[4];
     U32 mListSize = 0;
-    LLTexRef mNormalMap, mSpecularMap;
+    RKTexRef mNormalMap, mSpecularMap;
     bool mFullbright = false, mEmissiveLegacy = false, mSet = false;
     F32 mCutoff = 0.5f;
     F32 mSpec[4] = { 1.f, 1.f, 1.f, 0.5f };
@@ -253,15 +253,15 @@ struct RtMatSource
 // the buffer (held, so the range stays valid) and the range. The palette bindings, the LOD choices and their census read this; the draw info is only read when the fragment is made.
 struct GeoRigSource
 {
-    LLAvatarRef mAvatar;
-    LLSkinRef mSkin;
+    RKAvatarRef mAvatar;
+    RKSkinRef mSkin;
     LLPointer<LLVertexBuffer> mVb;
     U32 mOffset = 0, mCount = 0, mStart = 0, mEnd = 0;
     // J1 K3d: what a cascade's alpha caster entry needs besides that (the draw's textures as handles, the batch of textures if it has more than one, the texture matrix, the cutoff): the alpha builder makes the
     // entry of a rigged alpha masked caster from this, without the draw info. mAlphaOk: the draw is one a record can carry (shadow_alpha_packet_ok when the fragment was made)
-    LLTexRef mTextures[16];             // (a batch of up to sixteen textures: the shadow entries are made in windows of four, see LLVkBridge::kAlphaWindowShift)
-    LLTexRef mTexture;
-    LLGLTFMatRef mGltf;                 // (the rigged glTF casters: the material is read when the entry is made, as the list path does)
+    RKTexRef mTextures[16];             // (a batch of up to sixteen textures: the shadow entries are made in windows of four, see RKVkBridge::kAlphaWindowShift)
+    RKTexRef mTexture;
+    RKGLTFMatRef mGltf;                 // (the rigged glTF casters: the material is read when the entry is made, as the list path does)
     U32 mTextureListSize = 0;
     const LLMatrix4* mTextureMatrix = nullptr;
     F32 mAlphaCutoff = 0.5f;
@@ -278,7 +278,7 @@ struct GeoRigSource
         return r;
     }
 };
-inline GeoRigSource ll_geo_rig_source(const LLDrawBatch* p)
+inline GeoRigSource ll_geo_rig_source(const RKDrawBatch* p)
 {
     GeoRigSource s;
     if (p)
@@ -306,7 +306,7 @@ inline GeoRigSource ll_geo_rig_source(const LLDrawBatch* p)
 class LLSpatialGroup;
 // <FS> C5 J2: one draw of a particle group: a run of rows of the group's row buffer (the GPU particle path, PLAN-gpu-particles.md) with one texture and blend state. A particle group keeps these instead of draw
 // infos: the alpha pass makes its entries from them directly (ll_particle_transient), nothing is allocated per rebuild or classified per draw
-struct LLParticleRun
+struct RKParticleRun
 {
     LLPointer<LLViewerTexture> mTexture;
     U32 mFirst = 0;                     // the first row
@@ -318,7 +318,7 @@ struct LLParticleRun
 
 // <FS> C4.1: the groups that have (or had, until the next prune) a state bit the rebuild loops of the shadow preparation look for (MESH_DIRTY, GEOM_DIRTY, NEW_DRAWINFO), kept as they are set, so that those loops
 // ask the few groups instead of reading the state word of every visible group of every cascade
-namespace LLDirtyGroups
+namespace RKDirtyGroups
 {
     void add(LLSpatialGroup* group);
     void forget(LLSpatialGroup* group);                         // a group that is destroyed
@@ -342,7 +342,7 @@ public:
 
     typedef std::vector<LLPointer<LLSpatialGroup> > sg_vector_t;
     typedef std::vector<LLPointer<LLSpatialBridge> > bridge_list_t;
-    typedef std::vector<LLPointer<LLDrawBatch> > drawmap_elem_t;
+    typedef std::vector<LLPointer<RKDrawBatch> > drawmap_elem_t;
     typedef std::unordered_map<U32, drawmap_elem_t > draw_map_t;
 
     struct CompareDistanceGreater
@@ -427,7 +427,7 @@ public:
     void rebuildGeom();
     void rebuildMesh();
 
-    void setState(U32 state)       { row().state |= state; if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO)) { LLDirtyGroups::add(this); } }
+    void setState(U32 state)       { row().state |= state; if (state & (MESH_DIRTY | GEOM_DIRTY | NEW_DRAWINFO)) { RKDirtyGroups::add(this); } }
     void dirtyGeom() { setState(GEOM_DIRTY); }
     void dirtyMesh() { setState(MESH_DIRTY); }
 
@@ -464,7 +464,7 @@ protected:
 public:
     LLPointer<LLVertexBuffer> mVertexBuffer;
     draw_map_t mPendingDraws;
-    std::vector<LLParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mPendingDraws[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
+    std::vector<RKParticleRun> mParticleRuns;       // <FS> C5 J2: a particle group's draws (rows of mVertexBuffer); mPendingDraws[PASS_ALPHA] exists (empty) while there are any, so the alpha group lists find the group
     // <FS> S1 phase 0 (doc/vulkan/PLAN-retained-records.md): bumped whenever the draw infos are cleared (every creation of draw infos follows a clear), so the same serial on two frames
     // means the same draw info set. mSceneSeenSerial: what the main view saw last (LL_VK_SCENE_STATS counters only).
     U32 mGeometrySerial = 1;
@@ -472,14 +472,14 @@ public:
     U32 mSceneSeenSerial = 0;
     U32 mSceneSeenFrame = 0;
     // <FS> S1: the retained shadow fragment of this group (pipeline.cpp), valid while its serial is mGeometrySerial; freed with the group
-    struct LLSceneFragment* mSceneFragment = nullptr;
+    struct RKSceneFragment* mSceneFragment = nullptr;
     U64 mGeoServedMask = 0;             // <FS> S3 G4 (S4 B: the bits after the static types are the rigged variants): the bits (kGeoTypes order) of the pass types whose draw infos in this group are ALL drawn by the scene table: postSort does not list those
     U32 mGeoServedTris = 0;             // ... their index count (the triangle statistic)
     bool mGeoAllServed = false;         // <FS> R2 (S-retire-views-design.md): every non-empty draw map type of the group is served by the table: postSort has nothing to put in the render map for it
     // <FS> C4.1: the sun cascades' render map job asks this before it walks the group's draw map: bits 0-3 the answer (1 nothing to push, 2 the group has an alpha draw map entry, 4 a rigged alpha one, 8 resident), the rest a key of what the
     // answer was made from (draw map serial, fragment state, render type mask, the job's switches). Written by the jobs of several cascades at once: one atomic word.
     std::atomic<U64> mMapPlan{ 0 };
-    std::atomic<bool> mInDirtyReg{ false };        // <FS> C4.1: listed in LLDirtyGroups
+    std::atomic<bool> mInDirtyReg{ false };        // <FS> C4.1: listed in RKDirtyGroups
     U32 mDirtyIdx = 0;
     U32 mGeoHandle = 0;                 // <FS> S3 G3: the worker's handle of this group's scene geometry fragment (0 = none, or the table does not hold it): what postSort lists for the passes
     static U32 sGuardFragmentOnly;      // <FS> clearDrawMap calls that found a fragment and an empty draw map (the normal case since the map is emptied after the build): the builder guard fired for the fragment alone
@@ -580,7 +580,7 @@ public:
 };
 
 // class for creating bridges between spatial partitions
-class LLSpatialBridge : public LLDrawable, public LLSpatialPartition, public LLHizTarget
+class LLSpatialBridge : public LLDrawable, public LLSpatialPartition, public RKHizTarget
 {
 protected:
     ~LLSpatialBridge();
@@ -883,11 +883,11 @@ private:
 // <FS> group rebuild R3b3: the fills of the groups a loop rebuilds, launched on the pool once instead of once a group (LL_VK_REBUILD_PARALLEL=2). While a scope is open, a volume group's rebuild plans its batches and allocates
 // their buffers as it always did, and hands the fill tasks to the batch; the group's state is as after a rebuild at once, but its draw map and the scene fragment wait for flush(), which the scope's owner calls after the loop
 // (and which a rebuild or a mesh rebuild of a pending group calls first). Main thread only.
-class LLRebuildBatch
+class RKRebuildBatch
 {
 public:
     struct Scope;
-    static LLRebuildBatch* current() { return sCurrent; }
+    static RKRebuildBatch* current() { return sCurrent; }
     bool pending(const LLSpatialGroup* group) const { return mIndex.find(group) != mIndex.end(); }
     void add(LLVolumeGeometryManager* manager, LLSpatialGroup* group, std::vector<LLVolumeGeometryManager::FillTask>& tasks);
     void fragmentLater(LLSpatialGroup* group);
@@ -903,12 +903,12 @@ private:
     };
     std::vector<Entry> mEntries;
     std::unordered_map<const LLSpatialGroup*, size_t> mIndex;
-    static thread_local LLRebuildBatch* sCurrent;
+    static thread_local RKRebuildBatch* sCurrent;
 };
 
-struct LLRebuildBatch::Scope
+struct RKRebuildBatch::Scope
 {
-    LLRebuildBatch mBatch;
+    RKRebuildBatch mBatch;
     bool mOwner;
     Scope();
     ~Scope();

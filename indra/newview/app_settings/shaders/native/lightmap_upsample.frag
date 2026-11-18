@@ -9,7 +9,7 @@
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     vec2 screen_res;
@@ -17,7 +17,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec2 half_offset;           // the pixel of its 2x2 block a half resolution pixel was computed at (sun_lightmap.frag)
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_lightMap;        // the half resolution lightmap
     uint ll_ti_depthMap;

@@ -37,9 +37,9 @@ class LLFace;
 class LLViewerTexture;
 class LLViewerFetchedTexture;
 class LLSpatialGroup;
-class LLDrawBatch;
+class RKDrawBatch;
 class LLVOAvatar;
-class LLShaderProgram;
+class RKShaderProgram;
 class LLMeshSkinInfo;
 
 class LLDrawPool
@@ -131,9 +131,9 @@ public:
 
 // <FS> what a materials pass adds to a geometry record: which maps its draws carry
 class LLCullResult;
-namespace LLVkBridge { struct GeoEntry; }
+namespace RKVkBridge { struct GeoEntry; }
 
-struct LLGeometryPassInfo
+struct RKGeometryPassInfo
 {
     bool mNormalMap = false;
     bool mSpecularMap = false;
@@ -143,7 +143,7 @@ struct LLGeometryPassInfo
 bool ll_rigged_packets_enabled();
 enum { LL_PASS_ARRAY_NORMALS = 1, LL_PASS_ARRAY_EMISSIVE = 2, LL_PASS_ARRAY_BUMP = 4, LL_PASS_ARRAY_EMBOSS = 8 };       // (J1 K4: BUMP: the tangent array and the draw's bump image, one texture)
 U32 ll_pass_arrays(U32 type);       // S6 X1 / X2: the arrays a pass type needs besides position, texcoord 0, colour (fullbright: none, glow: emissive)
-int ll_geometry_reject_reason(const LLDrawBatch& p, bool batch_textures, const LLGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
+int ll_geometry_reject_reason(const RKDrawBatch& p, bool batch_textures, const RKGeometryPassInfo* materials, bool rigged, bool texture_matrix, U32 arrays = 1);       // S6 census: why a draw is refused by the table / packets (0: it is not)
 // <FS> S4 A2: the frame's shared palette list: a palette of an (avatar, skin) is added once per frame (12 floats per joint) and named by its absolute float offset by every record that needs it (rigged geometry records,
 // rigged shadow records); the new part of the list is sent (kind 27) by ll_frame_palette_flush() before a record that names it. Thread safe (the builders run on the pool). False when the old path draws nothing either.
 bool ll_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offset, U32& joints);
@@ -168,12 +168,12 @@ U64 ll_frame_palette_frame();       // the frame the list belongs to (a build ma
 // vertex lands on that lattice on its own (the jagged face and chin under DLSS). Above a height the palettes are made relative to an anchor (a 64 m grid point near the camera) and the shaders add the
 // anchor back after the camera matrices (rig_transform in rows.glsl), so the large numbers meet once per draw instead of once per vertex. The anchor travels in the palette itself: a palette has one more
 // joint than its mesh, a tail entry whose first row holds (anchor x, y, z, 1); all zeros when the palette is not relative. The anchor of a frame is decided once (thread safe).
-struct LLRigAnchor
+struct RKRigAnchor
 {
     F32 mA[3] = { 0.f, 0.f, 0.f };
     bool mActive = false;
 };
-LLRigAnchor ll_rig_anchor(U32 frame);      // when the camera is high
+RKRigAnchor ll_rig_anchor(U32 frame);      // when the camera is high
 
 class LLRenderPass : public LLDrawPool
 {
@@ -397,8 +397,8 @@ public:
     bool isDead() { return false; }
     void resetDrawOrders() { }
 
-    static void applyModelMatrix(const LLDrawBatch& params);
-    // For rendering that doesn't use LLDrawBatch for some reason
+    static void applyModelMatrix(const RKDrawBatch& params);
+    // For rendering that doesn't use RKDrawBatch for some reason
     static void applyModelMatrix(const LLMatrix4* model_matrix);
     // S6.6: the draw infos of a render map type as one record of entries, drawn with the pull program bound now (draws its buffers cannot give to the packet path are skipped with a warning)
 
@@ -409,17 +409,17 @@ public:
     static void pushGeometryPackets(U32 type, bool rigged = false);
     // S3 (doc/vulkan/S3-design.md): the entry a geometry record gets for one draw, with the textures as pointers: textures[0..3] the diffuse ones, [4] the normal map, [5] the specular map; the entry's
     // texture fields hold 1 + the index into textures (0 = none), its matrix is 0. False: the draw takes the old path (the same decision as the builder's). Kept in step with build_geometry by the verify mode.
-    static bool pbrAlphaEntry(const LLDrawBatch& params, LLVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
-    static bool geometryEntry(const LLDrawBatch& params, const LLGeometryPassInfo* materials, LLVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
+    static bool pbrAlphaEntry(const RKDrawBatch& params, RKVkBridge::GeoEntry& entry, bool rigged = false);       // S5c: the arrays of a draw with a glTF blend material (textures and values: the caller)
+    static bool geometryEntry(const RKDrawBatch& params, const RKGeometryPassInfo* materials, RKVkBridge::GeoEntry& entry, LLViewerTexture* textures[6], bool rigged = false, bool texture_matrix = false, U32 arrays = LL_PASS_ARRAY_NORMALS);
     // the builds of the geometry records start on the async pool at the top of renderGeomDeferred (the main thread draws its own things meanwhile), pushGeometryPackets takes them
     // <FS:Beq> be defensive about UAF with skinInfo during LocalMesh
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo);
     // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);
-    // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const LLShaderProgram*& lastAvatarShader, bool& skipLastSkin);
+    // static bool uploadMatrixPalette(LLVOAvatar* avatar, LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const RKShaderProgram*& lastAvatarShader, bool& skipLastSkin);
     // </FS:Beq>
     static bool uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo);
     static bool uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, bool& skipLastSkin);
-    static bool uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const LLShaderProgram*& lastAvatarShader, bool& skipLastSkin);
+    static bool uploadMatrixPalette(LLVOAvatar* avatar, const LLMeshSkinInfo* skinInfo, const LLVOAvatar*& lastAvatar, U64& lastMeshId, const RKShaderProgram*& lastAvatarShader, bool& skipLastSkin);
 };
 
 void ll_pull_draw_range(const LLVertexBuffer* vb, U32 first_index, U32 index_count);       // S6.6d
@@ -519,7 +519,7 @@ public:
 };
 
 // <FS> Shadow draw statistics (render packets, stage P0): how the draws of the shadow passes split up, and how often consecutive static untextured draws change vertex buffer
-struct LLShadowDrawStats
+struct RKShadowDrawStats
 {
     U64 mPasses = 0, mTotalDraws = 0;
     U64 mStaticUntex = 0, mStaticVBChanges = 0, mStaticDistinctVB = 0;
@@ -549,14 +549,14 @@ struct LLShadowDrawStats
     void beginStaticPass() { mLastVB = nullptr; mLastMatrix = nullptr; mPassVBs.clear(); mTable.clear(); }
     void endStaticPass();
 };
-extern LLShadowDrawStats gShadowDrawStats;
+extern RKShadowDrawStats gShadowDrawStats;
 
 // <FS> geometry packet statistics (logged with the DeferredDraws report)
-struct LLGeometryPacketStats
+struct RKGeometryPacketStats
 {
     U64 mEntries = 0, mFallback = 0, mRecords = 0, mTextures = 0, mMatrices = 0;
 };
-extern LLGeometryPacketStats gGeometryPacketStats;
+extern RKGeometryPacketStats gGeometryPacketStats;
 
 
 #endif //LL_LLDRAWPOOL_H

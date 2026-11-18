@@ -1,7 +1,7 @@
 // glow.vert: the blur step of the glow chain: eight taps along glowDelta, their coordinates computed per vertex. A line for line translation of "Glow Shader (Post)" (effects/glowV.glsl); pairs with glow.frag.
 // (the uniform block is declared the same in both stages: glowDelta here, glowStrength there)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 glowDelta;
     float glowStrength;

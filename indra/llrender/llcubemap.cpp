@@ -75,11 +75,11 @@ void LLCubeMap::initRenderDevice()
         {
             U32 texname = 0;
 
-            LLImageTex::generateTextures(1, &texname);
+            RKImageTex::generateTextures(1, &texname);
 
             for (int i = 0; i < 6; i++)
             {
-                mImages[i] = new LLImageTex(RESOLUTION, RESOLUTION, 4, false);
+                mImages[i] = new RKImageTex(RESOLUTION, RESOLUTION, 4, false);
             #if USE_SRGB_DECODE
                 if (mIssRGB) {
                     mImages[i]->setExplicitFormat(TexelFormat::SRGBA8, PixelFormat::RGBA);
@@ -177,9 +177,9 @@ void LLCubeMap::initReflectionMap(U32 resolution, U32 components)
 {
     U32 texname = 0;
 
-    LLImageTex::generateTextures(1, &texname);
+    RKImageTex::generateTextures(1, &texname);
 
-    mImages[0] = new LLImageTex(resolution, resolution, components, true);
+    mImages[0] = new RKImageTex(resolution, resolution, components, true);
     mImages[0]->setTexName(texname);
     mImages[0]->setTarget(mTargets[0], LLTexUnit::TT_CUBE_MAP);
     gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_CUBE_MAP, texname);
@@ -192,7 +192,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
 
     U32 texname = 0;
 
-    LLImageTex::generateTextures(1, &texname);
+    RKImageTex::generateTextures(1, &texname);
 
     U32 resolution = rawimages[0]->getWidth();
     U32 components = rawimages[0]->getComponents();
@@ -203,7 +203,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
         llassert(rawimages[i]->getHeight() == resolution);
         llassert(rawimages[i]->getComponents() == components);
 
-        mImages[i] = new LLImageTex(resolution, resolution, components, true);
+        mImages[i] = new RKImageTex(resolution, resolution, components, true);
         mImages[i]->setTarget(mTargets[i], LLTexUnit::TT_CUBE_MAP);
         mRawImages[i] = rawimages[i];
         if (!mImages[i]->createImageTexture(0, mRawImages[i], texname))
@@ -219,7 +219,7 @@ void LLCubeMap::initEnvironmentMap(const std::vector<LLPointer<LLImageRaw> >& ra
     enableTexture(0);
     bind();
     mImages[0]->setFilteringOption(LLTexUnit::TFO_ANISOTROPIC);
-    LLVkTex::generateMipmap(mImages[0]->getTexName());
+    RKVkTex::generateMipmap(mImages[0]->getTexName());
     gRender.getTexUnit(0)->clear();
     disable();
 }
@@ -235,7 +235,7 @@ void LLCubeMap::generateMipMaps()
     mImages[0]->setFilteringOption(LLTexUnit::TFO_BILINEAR);
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cmgmm - glGenerateMipmap");
-        LLVkTex::generateMipmap(mImages[0]->getTexName());
+        RKVkTex::generateMipmap(mImages[0]->getTexName());
     }
     gRender.getTexUnit(0)->clear();
     disable();
@@ -299,8 +299,8 @@ void LLCubeMap::setMatrix(S32 stage)
     LLMatrix4 trans(mat3);
     trans.transpose();
 
-    LLRenderMatrix::push(LLRenderMatrix::textureKind(mMatrixStage));
-    LLRenderMatrix::load(LLRenderMatrix::textureKind(mMatrixStage), (F32 *)trans.mMatrix);
+    RKRenderMatrix::push(RKRenderMatrix::textureKind(mMatrixStage));
+    RKRenderMatrix::load(RKRenderMatrix::textureKind(mMatrixStage), (F32 *)trans.mMatrix);
 
     /*if (stage > 0)
     {
@@ -314,7 +314,7 @@ void LLCubeMap::restoreMatrix()
     //if (mMatrixStage > 0)
     {
     }
-    LLRenderMatrix::pop(LLRenderMatrix::textureKind(mMatrixStage));
+    RKRenderMatrix::pop(RKRenderMatrix::textureKind(mMatrixStage));
 
     /*if (mMatrixStage > 0)
     {

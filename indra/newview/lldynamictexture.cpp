@@ -100,7 +100,7 @@ void LLViewerDynamicTexture::generateImageTexture(TexelFormat internal_format, P
     {
         setExplicitFormat(internal_format, primary_format, type_format);
     }
-    createImageTexture(0, raw_image, 0, true, LLBaseTexture::DYNAMIC_TEX);
+    createImageTexture(0, raw_image, 0, true, RKBaseTexture::DYNAMIC_TEX);
     setAddressMode((mClamp) ? LLTexUnit::TAM_CLAMP : LLTexUnit::TAM_WRAP);
     mImageTexp->setImageTextureCreated(false);
 }
@@ -207,7 +207,7 @@ bool LLViewerDynamicTexture::updateAllInstances()
 
     RenderPassScope pass_208(preview_target, RenderPass::LoadOp::Clear);
 
-    LLShaderProgram::unbind();
+    RKShaderProgram::unbind();
     LLVertexBuffer::unbind();
 
     bool result = false;

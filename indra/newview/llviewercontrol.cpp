@@ -379,22 +379,22 @@ static bool handleLUTBufferChanged(const LLSD& newvalue)
 
 static bool handleAnisotropicChanged(const LLSD& newvalue)
 {
-    LLImageTex::sGlobalUseAnisotropic = newvalue.asBoolean();
-    LLImageTex::dirtyTexOptions();
+    RKImageTex::sGlobalUseAnisotropic = newvalue.asBoolean();
+    RKImageTex::dirtyTexOptions();
     return true;
 }
 
 // <FS> Vulkan present mode: follows FSVkPresentMode, and the Vertical Sync preference while that is 0
 static bool handleVkPresentModeChanged(const LLSD& newvalue)
 {
-    LLVkBridge::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
+    RKVkBridge::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
     return true;
 }
 
 static bool handleVSyncChanged(const LLSD& newvalue)
 {
     LLPerfStats::tunables.vsyncEnabled = newvalue.asBoolean();
-    LLVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
+    RKVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     {
         gViewerWindow->getWindow()->toggleVSync(newvalue.asBoolean());

@@ -11,7 +11,7 @@
 #include "alpha_pass.inc"
 #include "lib/clip.glsl"
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_detail_0;
     uint ll_ti_detail_1;

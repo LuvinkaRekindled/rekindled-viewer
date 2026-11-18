@@ -50,7 +50,7 @@ class LLTextureEntry;
 class LLVertexProgram;
 class LLViewerTexture;
 class LLGeometryManager;
-class LLDrawBatch;
+class RKDrawBatch;
 // class LLMeshSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 
 const F32 MIN_ALPHA_SIZE = 1024.f;
@@ -85,14 +85,14 @@ public:
     LLFace(LLDrawable* drawablep, LLViewerObject* objp)
     {
         LL_PROFILE_ZONE_SCOPED;
-        mRowId = LLFaceRows::acquire(this);     // <FS> C3.1: a zeroed row: the geometry slice, the state, the colour ... (rkfacetable.h)
+        mRowId = RKFaceRows::acquire(this);     // <FS> C3.1: a zeroed row: the geometry slice, the state, the colour ... (rkfacetable.h)
         if (!mRowId)
         {
-            LL_ERRS() << "the face table is full (" << LLFaceRows::kCapacity << " faces)" << LL_ENDL;
+            LL_ERRS() << "the face table is full (" << RKFaceRows::kCapacity << " faces)" << LL_ENDL;
         }
         init(drawablep, objp);
     }
-    ~LLFace()  { destroy(); LLFaceRows::release(mRowId, 0); }
+    ~LLFace()  { destroy(); RKFaceRows::release(mRowId, 0); }
 
     const LLMatrix4& getWorldMatrix()   const   { return mVObjp->getWorldMatrix(mXform); }
     const LLMatrix4& getRenderMatrix() const;
@@ -255,11 +255,11 @@ public: //aligned members
 
     // <FS> C3.2: the bounds group (row().extents, row().riggedExtents, row().centerLocal, row().centerAgent, row().texExtents) is in the face's row: row().extents[2] (bounding box of the face in drawable space), row().riggedExtents[2]
     // (cached bounding box of a rigged face in world space, calculated on demand by calcPixelArea, may be stale), row().centerLocal, row().centerAgent, row().texExtents[2]
-    LLFaceRow& row() const { return LLFaceRows::row(mRowId); }
+    RKFaceRow& row() const { return RKFaceRows::row(mRowId); }
 
 private:
     friend class LLViewerTextureList;
-    friend class LLTexRecs;
+    friend class RKTexRecs;
     F32         adjustPartialOverlapPixelArea(F32 cos_angle_to_view_dir, F32 radius );
     bool        calcPixelArea(F32& cos_angle_to_view_dir, F32& radius) ;
 public:
@@ -280,7 +280,7 @@ public:
 
     // true if face was recently in the main camera frustum according to LLViewerTextureList updates
     // value of gFrameCount the last time the face was touched by LLViewerTextureList::updateImageDecodePriority
-    // <FS> the record of this face for each texture channel in LLTexRecs (0: none)
+    // <FS> the record of this face for each texture channel in RKTexRecs (0: none)
     F32 getBoundingSphereRadius() const { return row().boundingSphereRadius; }
 
 private:

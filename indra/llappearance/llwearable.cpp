@@ -450,7 +450,7 @@ LLWearable::EImportResult LLWearable::importStream( std::istream& input_stream, 
                 return LLWearable::FAILURE;
         }
         LLUUID id = LLUUID(uuid_buffer);
-        LLBaseTexture* image = gTextureManagerBridgep->getFetchedTexture( id );
+        RKBaseTexture* image = gTextureManagerBridgep->getFetchedTexture( id );
         if( mTEMap.find(te) != mTEMap.end() )
         {
                 delete mTEMap[te];
@@ -588,7 +588,7 @@ void LLWearable::syncImages(te_map_t &src, te_map_t &dst)
         {
             te_map_t::const_iterator iter = src.find(te);
             LLUUID image_id;
-            LLBaseTexture *image = NULL;
+            RKBaseTexture *image = NULL;
             LLLocalTextureObject *lto = NULL;
             if(iter != src.end())
             {

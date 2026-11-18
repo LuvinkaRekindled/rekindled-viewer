@@ -185,7 +185,7 @@ protected:
 //LL_ALIGN_PREFIX(16)
 // stage 8b (LL_VK_KSTAMP=1, needs LL_VK_KEPT=2): the world stamp of a group in the worker's kept set is the frame the set was applied, derived from the set's bits by the group's slot (mCullId - 1), not written per group; a group that leaves
 // the set has its stamp written back by the pass that applies the next set
-struct LLKeptStamps
+struct RKKeptStamps
 {
     struct View
     {
@@ -235,7 +235,7 @@ public:
     void setVisible();
     bool isVisible() const;
     virtual bool isRecentlyVisible() const;
-    S32  keptFrame() const { const LLKeptStamps::View* k = LLKeptStamps::sView.load(std::memory_order_relaxed); return (k && mCullId && k->has(mCullId - 1)) ? k->mFrame : 0; }
+    S32  keptFrame() const { const RKKeptStamps::View* k = RKKeptStamps::sView.load(std::memory_order_relaxed); return (k && mCullId && k->has(mCullId - 1)) ? k->mFrame : 0; }
     S32  getVisible(LLViewerCamera::eCameraID id) const
     {
         S32 v = row().visible[id];
@@ -255,9 +255,9 @@ public:
     void clearState(U32 state)     {row().state &= ~state;}
 
     // <FS> C1b: this group's row in the group table (what getBounds / getExtents / the stamps read)
-    LLGroupRows::Row&   row() const { return LLGroupRows::row(mRowId); }
+    RKGroupRows::Row&   row() const { return RKGroupRows::row(mRowId); }
     U32                 getRowId() const { return mRowId; }
-    bool                ownsRow() const { return LLGroupRows::ownedBy(mRowId, this); }
+    bool                ownsRow() const { return RKGroupRows::ownedBy(mRowId, this); }
 
     //LISTENER FUNCTIONS
     virtual void handleInsertion(const TreeNode* node, LLViewerOctreeEntry* obj);
@@ -306,7 +306,7 @@ public:
 
 //octree group which has capability to support occlusion culling
 //LL_ALIGN_PREFIX(16)
-class LLOcclusionCullingGroup : public LLViewerOctreeGroup, public LLHizTarget
+class LLOcclusionCullingGroup : public LLViewerOctreeGroup, public RKHizTarget
 {
 public:
     typedef enum

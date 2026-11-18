@@ -126,14 +126,14 @@ LLMatrix4 gRenderObliqueProjectionInverse;
 
 #define LL_GL_NAME_POOLING 0
 
-std::list<LLRenderUpdate*> LLRenderUpdate::sUpdateQueue;
+std::list<RKRenderUpdate*> RKRenderUpdate::sUpdateQueue;
 
 // <FS:Zi> Linux support
 // #if (LL_WINDOWS || LL_LINUX)  && !LL_MESA_HEADLESS
 
-LLDeviceCaps gDeviceCaps;
+RKDeviceCaps gDeviceCaps;
 
-LLDeviceCaps::LLDeviceCaps() :
+RKDeviceCaps::RKDeviceCaps() :
     mInited(false),
     mIsDisabled(false),
     mMaxSamples(0),
@@ -186,17 +186,17 @@ static const char* gl_info_string(InfoString which)
 // Global initialization for GL
 //---------------------------------------------------------------------
 // return false if unable (or unwilling due to old drivers) to init GL
-bool LLDeviceCaps::initRenderDevice()
+bool RKDeviceCaps::initRenderDevice()
 {
     LL_INFOS("RenderInit") << "Initializing the graphics device (Vulkan, no OpenGL)" << LL_ENDL;
     if (mInited)
     {
-        LL_ERRS("RenderInit") << "Calling init on LLDeviceCaps after already initialized!" << LL_ENDL;
+        LL_ERRS("RenderInit") << "Calling init on RKDeviceCaps after already initialized!" << LL_ENDL;
     }
     return initFromDevice();
 }
 
-void LLDeviceCaps::getGLInfo(LLSD& info)
+void RKDeviceCaps::getGLInfo(LLSD& info)
 {
     if (gHeadlessClient)
     {
@@ -223,7 +223,7 @@ void LLDeviceCaps::getGLInfo(LLSD& info)
 #endif
 }
 
-std::string LLDeviceCaps::getGLInfoString()
+std::string RKDeviceCaps::getGLInfoString()
 {
     std::string info_str;
 
@@ -249,7 +249,7 @@ std::string LLDeviceCaps::getGLInfoString()
     return info_str;
 }
 
-void LLDeviceCaps::printDeviceInfoString()
+void RKDeviceCaps::printDeviceInfoString()
 {
     if (gHeadlessClient)
     {
@@ -271,7 +271,7 @@ void LLDeviceCaps::printDeviceInfoString()
 #endif
 }
 
-std::string LLDeviceCaps::getRawDeviceString()
+std::string RKDeviceCaps::getRawDeviceString()
 {
     std::string gl_string;
     if (gHeadlessClient)
@@ -285,7 +285,7 @@ std::string LLDeviceCaps::getRawDeviceString()
     return gl_string;
 }
 
-void LLDeviceCaps::asLLSD(LLSD& info)
+void RKDeviceCaps::asLLSD(LLSD& info)
 {
     // Currently these are duplicates of fields in "system".
     info["gpu_vendor"] = mVendorShort;
@@ -313,7 +313,7 @@ void LLDeviceCaps::asLLSD(LLSD& info)
     info["gl_renderer"] = mDeviceString;
 }
 
-void LLDeviceCaps::shutdownRenderDevice()
+void RKDeviceCaps::shutdownRenderDevice()
 {
     if (mInited)
     {
@@ -327,12 +327,12 @@ void LLDeviceCaps::shutdownRenderDevice()
 #endif
 
 // <FS> LL_VK_NOGL start-up: what initRenderDevice and initExtensions work out from a GL context, worked out from the Vulkan device instead
-bool LLDeviceCaps::initFromDevice()
+bool RKDeviceCaps::initFromDevice()
 {
     LL_INFOS("RenderInit") << "Initializing without OpenGL (LL_VK_NOGL): the renderer is Vulkan only" << LL_ENDL;
 
-    LLVkBridge::DeviceInfo dev;
-    if (!LLVkBridge::describeDevice(dev))
+    RKVkBridge::DeviceInfo dev;
+    if (!RKVkBridge::describeDevice(dev))
     {
         LL_WARNS("RenderInit") << "Vulkan could not be started: there is no OpenGL to fall back on" << LL_ENDL;
         return false;
@@ -424,7 +424,7 @@ void rotate_quat(LLQuaternion& rotation)
 {
     F32 angle_radians, x, y, z;
     rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+    RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 }
 
 // <FS> native-vk: there is no OpenGL error state; these stay as the viewer's error-check points
@@ -561,7 +561,7 @@ void parse_glsl_version(S32& major, S32& minor)
     LLStringUtil::convertToS32(minor_str, minor);
 }
 
-LLRenderUserClipPlane::LLRenderUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
+RKRenderUserClipPlane::RKRenderUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
 {
     mApply = apply;
 
@@ -575,16 +575,16 @@ LLRenderUserClipPlane::LLRenderUserClipPlane(const LLPlane& p, const glm::mat4& 
     }
 }
 
-void LLRenderUserClipPlane::disable()
+void RKRenderUserClipPlane::disable()
 {
     if (mApply)
     {
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
     }
     mApply = false;
 }
 
-void LLRenderUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
+void RKRenderUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
 {
     const glm::mat4& P = mProjection;
     const glm::mat4& M = mModelview;
@@ -602,28 +602,28 @@ void LLRenderUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
     glm::mat4 suffix = glm::identity<glm::mat4>();
     suffix = glm::row(suffix, 2, cplane);
     glm::mat4 newP = suffix * P;
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(newP));
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(newP));
     gRenderObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
 }
 
-LLRenderUserClipPlane::~LLRenderUserClipPlane()
+RKRenderUserClipPlane::~RKRenderUserClipPlane()
 {
     disable();
 }
 
-LLRenderSquashToFarClip::LLRenderSquashToFarClip()
+RKRenderSquashToFarClip::RKRenderSquashToFarClip()
 {
     glm::mat4 proj = get_current_projection();
     setProjectionMatrix(proj, 0);
 }
 
-LLRenderSquashToFarClip::LLRenderSquashToFarClip(const glm::mat4& P, U32 layer)
+RKRenderSquashToFarClip::RKRenderSquashToFarClip(const glm::mat4& P, U32 layer)
 {
     setProjectionMatrix(P, layer);
 }
 
-void LLRenderSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
+void RKRenderSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
 {
     F32 depth = 0.99999f - 0.0001f * layer;
 
@@ -631,39 +631,39 @@ void LLRenderSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 laye
     projection = glm::row(projection, 2, P_row_3);
 
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(projection));
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(projection));
 
 }
 
-LLRenderSquashToFarClip::~LLRenderSquashToFarClip()
+RKRenderSquashToFarClip::~RKRenderSquashToFarClip()
 {
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
 }
 
 
 
-LLRenderPresetPipelineSkyBox::LLRenderPresetPipelineSkyBox()
+RKRenderPresetPipelineSkyBox::RKRenderPresetPipelineSkyBox()
 : mCullFace(false)
 , mSquashClip()
 {
 }
 
-LLRenderPresetPipelineSkyBox::~LLRenderPresetPipelineSkyBox()
+RKRenderPresetPipelineSkyBox::~RKRenderPresetPipelineSkyBox()
 {
 }
 
-LLRenderPresetPipelineDepthTestSkyBox::LLRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
-: LLRenderPresetPipelineSkyBox()
-, mDepth(depth_test, depth_write, LLRenderState::CompareOp::LessEqual)
+RKRenderPresetPipelineDepthTestSkyBox::RKRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write)
+: RKRenderPresetPipelineSkyBox()
+, mDepth(depth_test, depth_write, RKRenderState::CompareOp::LessEqual)
 {
 
 }
 
-LLRenderPresetPipelineBlendSkyBox::LLRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write)
-: LLRenderPresetPipelineDepthTestSkyBox(depth_test, depth_write)
+RKRenderPresetPipelineBlendSkyBox::RKRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write)
+: RKRenderPresetPipelineDepthTestSkyBox(depth_test, depth_write)
 , mBlend(true)
 {
     gRender.setSceneBlendType(LLRender::BT_ALPHA);

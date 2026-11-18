@@ -2478,7 +2478,7 @@ void LLFloater::drawConeToOwner(F32 &context_cone_opacity,
         LLRect local_rect = getLocalRect();
 
         gRender.getTexUnit(0)->bindWhite();
-        LLRenderState::CullScope cull_face(true);
+        RKRenderState::CullScope cull_face(true);
         gRender.begin(LLRender::TRIANGLE_STRIP);
         {
             gRender.color4f(0.f, 0.f, 0.f, contex_cone_in_alpha * context_cone_opacity);
