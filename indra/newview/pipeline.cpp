@@ -7256,6 +7256,7 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
 // with the world camera; the block itself skips shadow renders and cube snapshots).
 void LLPipeline::addBeacons()
 {
+    LL_CPU_ZONE("pipeline: addBeacons");
     LL_PUSH_CALLSTACKS();
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("beacon rendering flags");
@@ -12183,6 +12184,10 @@ void ll_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             if ((e.mWhat & RECENT_BOX) && now - e.mFrame <= 3 && slot < n && sSlotGroup[slot] && !in_set(slot) && !added.count(slot))
             {
                 LLSpatialGroup* g = (LLSpatialGroup*)sSlotGroup[slot];
+                if (g->isDead())
+                {
+                    continue;       // (a dead group stays in the table until it is destroyed, and its partition can be gone by then: nothing of it is read before this test; crash 2026-11-18 at gpart->asBridge())
+                }
                 LLSpatialPartition* gpart = g->getSpatialPartition();
                 if (!gpart || gpart->asBridge() || !ll_cull_derived_covers(gpart))       // (the covered partitions: the ordinary ones)
                 {
@@ -15592,6 +15597,7 @@ void LLPipeline::renderGeomDeferred(LLCamera& camera, bool do_occlusion)
         if (LLViewerShaderMgr::instance()->mShaderLevel[LLViewerShaderMgr::SHADER_DEFERRED] > 1)
         {
             //update reflection probe uniform
+            LL_CPU_ZONE("probes: updateUniforms (cpu)");
             mReflectionMapManager.updateUniforms();
             if (!LLPipeline::sReflectionProbesEnabled)
             {

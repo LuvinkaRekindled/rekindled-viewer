@@ -82,6 +82,7 @@
 // [/RLVa:KB]
 
 #include "llviewernetwork.h"    // <FS:CR> For prim equivilance hiding
+#include "llgpuzonetimer.h"
 
 extern bool gDebugClicks;
 
@@ -869,7 +870,7 @@ bool LLToolPie::handleHover(S32 x, S32 y, MASK mask)
         }
     }
     // <FS:minerjr> [FIRE-35019]
-    mHoverPick = gViewerWindow->pickImmediate(x, y, false, pick_rigged);
+    { LL_CPU_ZONE("tool: hover pick"); mHoverPick = gViewerWindow->pickImmediate(x, y, false, pick_rigged); }
     LLViewerObject *parent = NULL;
     LLViewerObject *object = mHoverPick.getObject();
 // [RLVa:KB] - Checked: RLVa-1.1.0
@@ -919,8 +920,8 @@ bool LLToolPie::handleHover(S32 x, S32 y, MASK mask)
     }
     else
     {
-        // perform a separate pick that detects transparent objects since they respond to 1-click actions
-        LLPickInfo click_action_pick = gViewerWindow->pickImmediate(x, y, false, pick_rigged);
+        // (the pick below was a second pickImmediate with the very same arguments as the hover pick above, in the same frame: the result is the hover pick)
+        const LLPickInfo& click_action_pick = mHoverPick;
 
         LLViewerObject* click_action_object = click_action_pick.getObject();
 
